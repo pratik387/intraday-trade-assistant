@@ -1,0 +1,157 @@
+from __future__ import annotations
+"""
+Orchestrator — the ONLY entrypoint.
+Keeps Screener focused on screening. This file owns:
+  - Config + logging bootstrap
+  - WebSocket adapter (KiteClient) and Broker (KiteBroker)
+  - OrderQueue with rate limits
+  - TradeExecutor & ExitExecutor threads
+  - Position store & RiskState
+  - Clean shutdown
+
+Strict contracts:
+  - Symbols are always "EXCH:TRADINGSYMBOL" (e.g., "NSE:RELIANCE")
+  - Intraday only: product MIS, variety regular, validity DAY
+  - No hidden defaults: load_filters() must provide required keys
+
+Optional: set DRY_RUN=1 in env to log orders without placing.
+"""
+import os
+import signal
+import sys
+import threading
+import time
+from typing import Optional
+
+from config.logging_config import get_loggers
+from config.filters_setup import load_filters
+
+from services.orders.order_queue import OrderQueue
+from services.screener_live import ScreenerLive
+from services.execution.trade_executor import TradeExecutor, RiskState, Position
+
+from services.execution.exit_executor import ExitExecutor
+
+# Strict adapters
+from broker.kite.kite_client import KiteClient  # WS only
+from broker.kite.kite_broker import KiteBroker  # REST orders/LTP
+
+logger, _ = get_loggers()
+
+
+class _PositionStore:
+    def __init__(self) -> None:
+        self._by_sym: dict[str, Position] = {}
+        self._lock = threading.RLock()
+    def upsert(self, p: Position) -> None:
+        with self._lock:
+            self._by_sym[p.symbol] = p
+    def get(self, sym: str) -> Optional[Position]:
+        with self._lock:
+            return self._by_sym.get(sym)
+    def all(self) -> list[Position]:
+        with self._lock:
+            return list(self._by_sym.values())
+
+
+class _DryRunBroker:
+    """Wrapper that logs orders instead of placing them when DRY_RUN=1."""
+    def __init__(self, real):
+        self._real = real
+    def place_order(self, **kwargs):
+        logger.info(f"[DRY_RUN] place_order skipped: {kwargs}")
+        return "dryrun-order-id"
+    def get_ltp(self, symbol: str) -> float:
+        return self._real.get_ltp(symbol)
+    def get_ltp_batch(self, symbols):
+        return self._real.get_ltp_batch(symbols)
+
+
+def main() -> int:
+    # ---- bootstrap ----
+    cfg = load_filters()  # HARD fail if keys missing
+
+    # Order queue: OrderQueue reads its own config via load_filters() (no kwargs accepted)
+    oq = OrderQueue()
+
+    # WS + Broker
+    sdk = KiteClient()   # requires KITE_API_KEY + KITE_ACCESS_TOKEN
+    broker = KiteBroker()
+
+    if os.getenv("DRY_RUN", "0") == "1":
+        logger.warning("DRY_RUN=1 — orders will NOT be placed")
+        broker = _DryRunBroker(broker)
+
+    # Screener: screens only
+    screener = ScreenerLive(sdk=sdk, order_queue=oq)
+
+    # Risk + positions
+    risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
+    positions = _PositionStore()
+
+    # Executors    
+    trader = TradeExecutor(
+        broker=broker,
+        order_queue=oq,
+        risk_state=risk,
+        positions=positions,
+        )
+
+    exit_exec = None
+    if ExitExecutor is not None:
+        for ctor in (
+            lambda: ExitExecutor(),
+            lambda: ExitExecutor(broker=broker, order_queue=oq),
+            lambda: ExitExecutor(broker=broker, order_queue=oq, get_df5m=getattr(screener, "_bars5", {}).get),
+        ):
+            try:
+                exit_exec = ctor()
+                logger.info("ExitExecutor constructed")
+                break
+            except TypeError:
+                continue
+            except Exception as e:
+                logger.warning(f"ExitExecutor ctor failed: {e}")
+
+    # ---- start ----
+    screener.start()  # WS connect, subscribe, aggregate, 5m pipeline
+    logger.info("screener: started")
+
+    threads: list[threading.Thread] = []
+
+    t_trade = threading.Thread(target=trader.run_forever, name="TradeExecutor", daemon=True)
+    t_trade.start(); threads.append(t_trade)
+    logger.info("trade-executor: started")
+
+    if exit_exec is not None and hasattr(exit_exec, "run_forever"):
+        t_exit = threading.Thread(target=exit_exec.run_forever, name="ExitExecutor", daemon=True)
+        t_exit.start(); threads.append(t_exit)
+        logger.info("exit-executor: started")
+    else:
+        logger.info("exit-executor: not started")
+
+    # ---- lifecycle ----
+    stop = threading.Event()
+    def _sig_handler(signum, frame):
+        logger.warning(f"signal {signum} received — shutting down")
+        stop.set()
+    signal.signal(signal.SIGINT, _sig_handler)
+    signal.signal(signal.SIGTERM, _sig_handler)
+
+    try:
+        while not stop.is_set():
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        logger.info("keyboard interrupt — stopping")
+    finally:
+        try:
+            screener.stop()
+        except Exception as e:
+            logger.warning(f"screener.stop failed: {e}")
+        logger.info("shutdown complete")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,4 @@
+.env.development
+*.pyc
+*.log
+.vscode/launch.json

@@ -1,0 +1,17 @@
+python-dotenv
+numpy
+pandas
+ta
+kiteconnect
+tinydb
+fastapi
+uvicorn
+httpx
+requests
+apscheduler
+joblib
+loguru
+matplotlib
+scipy
+pytest
+pytest-asyncio
