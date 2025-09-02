@@ -1,6 +1,6 @@
 from __future__ import annotations
 """
-WebSocket client wrapper for the broker SDK (Kite).
+WebSocket client wrapper for the broker SDK (Kite or Feather via DRY_RUN).
 
 Goals
 -----
@@ -10,7 +10,7 @@ Goals
 
 Public API (used elsewhere)
 ---------------------------
-ws = WSClient(sdk)
+ws = WSClient(sdk, on_tick)
 ws.on_message(lambda raw: ...)
 ws.start()            # non-blocking; spawns reader thread
 ws.stop()
@@ -24,14 +24,12 @@ Notes
 - Reconnects: we follow the SDK's built-in reconnect logic if available.
 - Threading: background thread owns the SDK event loop; stop() joins it.
 """
-import logging
 import threading
 import time
 from typing import Callable, Optional, Any, List
-import json
+from config.logging_config import get_loggers
 
-logger = logging.getLogger(__name__)
-
+logger, _ = get_loggers()
 
 class WSClient:
     """Lightweight wrapper around the broker's ticker/stream.
@@ -51,7 +49,7 @@ class WSClient:
 
     def __init__(self, sdk: Any, on_tick: Callable[[dict], None]) -> None:
         self._sdk = sdk
-        self._ticker: Any = None  # Delayed until start(); avoid type coupling
+        self._ticker: Any = None
         self._on_message: Optional[Callable[[Any], None]] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -79,45 +77,37 @@ class WSClient:
         self._stop.set()
         try:
             if self._ticker is not None:
-                # Graceful close if SDK exposes it
                 close = getattr(self._ticker, "close", None)
                 if callable(close):
                     close()
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             logger.warning(f"WSClient.stop: close failed: {e}")
         if self._thread:
             self._thread.join(timeout=5.0)
 
     # ------------------------------ Subscriptions ---------------------------
     def subscribe_batch(self, tokens: List[int]) -> None:
-        if not tokens:
-            return
-        if self._ticker is None:
-            logger.debug("WSClient.subscribe_batch before start; dropping")
+        if not tokens or self._ticker is None:
             return
         try:
             self._ticker.subscribe(tokens)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             logger.error(f"WSClient.subscribe_batch failed: {e}")
 
     def unsubscribe_batch(self, tokens: List[int]) -> None:
-        if not tokens:
-            return
-        if self._ticker is None:
+        if not tokens or self._ticker is None:
             return
         try:
             self._ticker.unsubscribe(tokens)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             logger.error(f"WSClient.unsubscribe_batch failed: {e}")
 
     def set_mode(self, mode: str, tokens: List[int]) -> None:
-        if not tokens:
-            return
-        if self._ticker is None:
+        if not tokens or self._ticker is None:
             return
         try:
             self._ticker.set_mode(mode, tokens)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             logger.error(f"WSClient.set_mode({mode}) failed: {e}")
 
     # ------------------------------- Internals ------------------------------
@@ -139,7 +129,7 @@ class WSClient:
                     close = getattr(self._ticker, "close", None)
                     if callable(close):
                         close()
-            except Exception:  # pragma: no cover
+            except Exception:
                 pass
             logger.info("WSClient thread exit")
 
@@ -155,13 +145,12 @@ class WSClient:
         # on_ticks: Zerodha-style batch callback; pass through to router
         on_ticks = getattr(ticker, "on_ticks", None)
         if callable(on_ticks):
-            def _ticks(_ws, ticks):  # signature expected by KiteTicker
+            def _ticks(_ws, ticks):
                 if self._on_message:
                     try:
-                        # Emit each tick; if you prefer batches, send list as-is
                         for tk in ticks or []:
                             self._on_message(tk)
-                    except Exception as e:  # pragma: no cover
+                    except Exception as e:
                         logger.error(f"on_message callback failed: {e}")
             on_ticks(_ticks)
 
@@ -171,8 +160,6 @@ class WSClient:
             connect = getattr(ticker, "connect", None)
             if not callable(connect):
                 raise RuntimeError("WSClient: ticker has no connect()")
-            # Many SDKs block inside connect(); others spin a background thread.
-            # We call it here inside our own daemon thread; it can block safely.
-            connect()  # type: ignore[arg-type]
+            connect()
         except Exception as e:
             raise RuntimeError(f"WSClient: connect() failed: {e}") from e

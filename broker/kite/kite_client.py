@@ -8,8 +8,9 @@ import logging
 from kiteconnect import KiteConnect
 from config.env_setup import env
 from kiteconnect import KiteTicker
+from config.logging_config import get_loggers
 
-logger = logging.getLogger(__name__)
+logger, _ = get_loggers()
 
 @dataclass(frozen=True)
 class _Inst:

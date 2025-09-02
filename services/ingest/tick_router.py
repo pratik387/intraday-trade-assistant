@@ -18,10 +18,10 @@ This module is broker-agnostic but ships with Zerodha Kite-friendly parsing.
 Kite tick usually contains keys: instrument_token, last_price, last_traded_quantity,
 last_trade_time (tz-aware), volume (cumulative), ohlc, etc.
 """
-import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
+from config.logging_config import get_loggers
 
 try:  # Python 3.9+
     from zoneinfo import ZoneInfo  # type: ignore
@@ -29,7 +29,7 @@ try:  # Python 3.9+
 except Exception:  # pragma: no cover
     _IST = None  # fallback: keep whatever tz or naive is provided
 
-logger = logging.getLogger(__name__)
+logger, _ = get_loggers()
 
 OnTick = Callable[[str, float, float, datetime], None]
 
@@ -147,11 +147,24 @@ class TickRouter:
         except Exception:
             qty = 0.0
 
-        ts = t.get("last_trade_time") or t.get("exchange_timestamp") or datetime.now()
-        if isinstance(ts, datetime):
-            ts = _to_ist_naive(ts)
-        else:
-            ts = datetime.now()
+        
+        ts = (
+            t.get("timestamp")
+            or t.get("last_trade_time")
+            or t.get("exchange_timestamp")
+            or datetime.now()
+        )
+
+        # Coerce pandas.Timestamp -> datetime
+        if hasattr(ts, "to_pydatetime"):
+            ts = ts.to_pydatetime()
+
+        # Handle epoch ints (ms vs s) just in case
+        if isinstance(ts, (int, float)):
+            ts = datetime.fromtimestamp(ts / 1000.0 if ts > 1_000_000_000_000 else ts)
+
+        # Make sure it's naive (IST wall time preserved if your _to_ist_naive already handles tz)
+        ts = _to_ist_naive(ts)
 
         self._emit(token, price, qty, ts)
 
@@ -168,4 +181,4 @@ class TickRouter:
         try:
             self._on_tick(sym, price, qty, ts)
         except Exception as e:  # pragma: no cover
-            logger.debug("tick_router: on_tick callback failed: %s", e)
+            logger.exception("tick_router: on_tick callback failed: %s", e)

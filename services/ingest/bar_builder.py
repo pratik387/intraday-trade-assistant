@@ -29,6 +29,9 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+from config.logging_config import get_loggers
+
+logger, _ = get_loggers()
 
 Bar = pd.Series  # readability alias
 
@@ -148,12 +151,20 @@ class BarBuilder:
         ser["vwap"] = vwap
 
         df = self._bars_1m[symbol]
-        self._bars_1m[symbol] = pd.concat([df, ser.to_frame().T])
+        # Ensure the appended 1-row DataFrame uses the minute timestamp as its index
+        row_df = ser.to_frame().T
+        row_df.index = [ser.name]
+        if df is None or getattr(df, "empty", True):
+            self._bars_1m[symbol] = row_df
+        else:
+            # Preserve DatetimeIndex; no ignore_index to avoid integer index creation
+            self._bars_1m[symbol] = pd.concat([df, row_df], copy=False)
 
         # Callback (non-fatal)
         try:
             self._on_1m_close(symbol, ser)
-        except Exception:
+        except Exception as e:
+            logger.exception("BarBuilder: on_1m_close callback failed: %s", e)
             pass
 
         # Try rolling into 5m
@@ -171,6 +182,11 @@ class BarBuilder:
         df1 = self._bars_1m.get(symbol)
         if df1 is None or df1.empty:
             return
+        # Coerce to DatetimeIndex defensively (in case of legacy rows)
+        if not isinstance(df1.index, pd.DatetimeIndex):
+            df1 = df1.copy()
+            df1.index = pd.to_datetime(df1.index, errors="coerce")
+            df1 = df1[~df1.index.isna()]
         window = df1[(df1.index > start_ts) & (df1.index <= end_ts)]
         if window.empty:
             return
@@ -179,12 +195,18 @@ class BarBuilder:
         bar5.name = end_ts
 
         df5 = self._bars_5m[symbol]
-        self._bars_5m[symbol] = pd.concat([df5, bar5.to_frame().T])
+        row5 = bar5.to_frame().T
+        row5.index = [end_ts]
+        if df5 is None or getattr(df5, "empty", True):
+            self._bars_5m[symbol] = row5
+        else:
+            self._bars_5m[symbol] = pd.concat([df5, row5], copy=False)
 
         # 5m close callback
         try:
             self._on_5m_close(symbol, bar5)
-        except Exception:
+        except Exception as e:
+            logger.exception("BarBuilder: on_5m_close callback failed: %s", e)
             pass
 
 

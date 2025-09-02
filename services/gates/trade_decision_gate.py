@@ -81,7 +81,7 @@ class RegimeGate(Protocol):  # pragma: no cover (interface only)
     def compute_regime(self, index_df5m: pd.DataFrame) -> Tuple[str, float]:
         ...
 
-    def is_setup_allowed(self, setup_type: SetupType, regime: str) -> bool:
+    def allow_setup(self, setup_type: SetupType, regime: str) -> bool:
         ...
 
     # Optional sizing bias by regime
@@ -151,7 +151,7 @@ class TradeDecisionGate:
 
         # 2) Regime: classify index and check matrix
         regime, rconf = self.regime_gate.compute_regime(index_df5m)
-        if not self.regime_gate.is_setup_allowed(best.setup_type, regime):
+        if not self.regime_gate.allow_setup(best.setup_type, regime):
             reasons.append(f"regime_block:{regime}")
             return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime, regime_conf=rconf)
         size_mult = 1.0

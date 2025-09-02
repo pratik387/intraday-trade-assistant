@@ -38,6 +38,7 @@ from config.logging_config import get_loggers
 from services.ingest.stream_client import WSClient
 from services.ingest.subscription_manager import SubscriptionManager
 from services.ingest.bar_builder import BarBuilder
+from services.ingest.tick_router import TickRouter
 
 # gates
 from services.gates.regime_gate import MarketRegimeGate
@@ -98,7 +99,6 @@ class ScreenerLive:
 
         # WS client forwards parsed ticks → BarBuilder.on_tick
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)  # adapter set elsewhere
-
         
         self.detector = StructureEventDetector()
         news_cfg = raw.get("news_gate")
@@ -131,6 +131,12 @@ class ScreenerLive:
 
         # Universe (core set we keep subscribed all day)
         self._load_core_universe()
+        self.router = TickRouter(
+            on_tick=self.agg.on_tick,
+            token_to_symbol=self.token_map,   # built in _load_core_universe()
+        )
+        self.ws.on_message(self.router.handle_raw)
+
         self.subs = SubscriptionManager(self.ws)
 
         logger.info(
@@ -146,7 +152,7 @@ class ScreenerLive:
         """Connect WS and subscribe the core universe. Non-blocking."""
         # Subscribe first to avoid missing ticks immediately after connect
         self.subs.set_core(self.token_map)
-
+        self.subs.start()
         self.ws.start()
         logger.info("WS connected; core subscriptions scheduled: %d symbols", len(self.core_symbols))
 
@@ -156,7 +162,7 @@ class ScreenerLive:
         except Exception:
             pass
         try:
-            self.ws.close()
+            self.ws.stop()
         except Exception:
             pass
         logger.info("ScreenerLive stopped")
@@ -172,7 +178,7 @@ class ScreenerLive:
         """Main driver: called on every CLOSED 5m bar per symbol."""
         # Keep store size bounded (BarBuilder retains full day; we just read tails when needed)
         # Guard cutoff time for new entries
-        now = bar_5m.name.to_pydatetime() if hasattr(bar_5m, "name") else datetime.now()
+        now = bar_5m.name if hasattr(bar_5m, "name") else datetime.now()
         if self._is_after_cutoff(now):
             return
 
@@ -181,10 +187,20 @@ class ScreenerLive:
             return
         self._last_produced_at = now
 
-        # ---------- Stage‑0 shortlist (cheap, vectorized) ----------
+        # ---------- Stage‑0 shortlist (EnergyScanner) ----------
+        shortlist: List[str] = []
         if self.scanner is not None:
             try:
-                shortlist = self.scanner.select_shortlist(self.agg, self.core_symbols)
+                # Build 5m tails for the whole core universe (scanner operates on features_df)
+                df5_by_symbol: Dict[str, pd.DataFrame] = {}
+                for s in self.core_symbols:
+                    df5 = self.agg.get_df_5m_tail(s, self.cfg.screener_store_5m_max)
+                    if df5 is not None and not df5.empty and len(df5) >= 3:
+                        df5_by_symbol[s] = df5
+                if df5_by_symbol:
+                    feats = self.scanner.compute_features(df5_by_symbol, lookback_bars=20)
+                    picks = self.scanner.select_shortlist(feats)
+                    shortlist = (picks.get("long", []) + picks.get("short", []))
             except Exception as e:
                 logger.exception("EnergyScanner failed; falling back to naive shortlist: %s", e)
                 shortlist = self._fallback_shortlist()
@@ -208,13 +224,13 @@ class ScreenerLive:
 
             # Evaluate gates + structure to get a trade decision
             try:
-                decision = self.decision_gate.evaluate_candidate(
+                decision = self.decision_gate.evaluate(
                     symbol=sym,
-                    df5=df5,
-                    df1=self.agg.get_df_1m_tail(sym, 60),
-                    index_df5=index_df5,
-                    levels=lvl,
                     now=now,
+                    df1m_tail=self.agg.get_df_1m_tail(sym, 60),
+                    df5m_tail=df5,
+                    index_df5m=index_df5,
+                    levels=lvl,
                 )
             except Exception as e:  # gate failures should not break the producer
                 logger.exception("decision_gate failed for %s: %s", sym, e)

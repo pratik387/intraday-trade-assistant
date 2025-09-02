@@ -16,7 +16,6 @@ Strict contracts:
 
 Optional: set DRY_RUN=1 in env to log orders without placing.
 """
-import os
 import signal
 import sys
 import threading
@@ -35,6 +34,8 @@ from services.execution.exit_executor import ExitExecutor
 # Strict adapters
 from broker.kite.kite_client import KiteClient  # WS only
 from broker.kite.kite_broker import KiteBroker  # REST orders/LTP
+from config.env_setup import env
+from broker.mock.mock_broker import MockBroker
 
 logger, _ = get_loggers()
 
@@ -74,14 +75,19 @@ def main() -> int:
     # Order queue: OrderQueue reads its own config via load_filters() (no kwargs accepted)
     oq = OrderQueue()
 
-    # WS + Broker
-    sdk = KiteClient()   # requires KITE_API_KEY + KITE_ACCESS_TOKEN
-    broker = KiteBroker()
-
-    if os.getenv("DRY_RUN", "0") == "1":
+    if env.DRY_RUN == "1":
         logger.warning("DRY_RUN=1 — orders will NOT be placed")
-        broker = _DryRunBroker(broker)
-
+         # Setup mock SDK and Broker
+        sdk = MockBroker(
+            path_json="nse_all.json",     # or env var if preferred
+            from_date="2025-08-01",
+            to_date="2025-08-04",
+        )
+        broker = _DryRunBroker(sdk)
+    else:
+        sdk = KiteClient()
+        broker = KiteBroker()
+        
     # Screener: screens only
     screener = ScreenerLive(sdk=sdk, order_queue=oq)
 

@@ -26,5 +26,6 @@ class EnvConfig:
     KITE_API_KEY       = os.getenv("KITE_API_KEY")
     KITE_API_SECRET    = os.getenv("KITE_API_SECRET")
     KITE_ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN")
+    DRY_RUN           = os.getenv("DRY_RUN")
 
 env = EnvConfig()

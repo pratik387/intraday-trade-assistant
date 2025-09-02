@@ -23,7 +23,6 @@ Requires env OR explicit params: KITE_API_KEY, KITE_ACCESS_TOKEN
 Requires: `pip install kiteconnect`
 """
 from typing import Dict, List, Optional, Tuple
-import os
 from config.env_setup import env
 
 from kiteconnect import KiteConnect

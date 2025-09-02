@@ -253,3 +253,38 @@ class StructureEventDetector:
         except Exception as e:
             logger.exception(f"structure_event: detect_level_failure_fade error: {e}")
             return []
+        
+    # put this inside class StructureEventDetector
+    def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame, levels: Dict[str, float] | None):
+        """
+        Adapter for TradeDecisionGate:
+        - runs our specific detectors
+        - maps StructureEvent -> SetupCandidate
+        - returns List[SetupCandidate] sorted by strength desc
+        """
+        # local import avoids any chance of circular import at module load time
+        from services.gates.trade_decision_gate import SetupCandidate
+
+        d = ensure_naive_ist_index(df5m_tail.copy())
+
+        evts = []
+        evts += self.detect_level_breakouts(d, levels or {})
+        evts += self.detect_vwap_cross_and_hold(d)
+        evts += self.detect_squeeze_release(d)
+        evts += self.detect_level_failure_fade(d, levels or {})
+
+        setups = []
+        for e in evts or []:
+            # e.setup should be one of:
+            #   'breakout_long','breakout_short','vwap_reclaim_long','vwap_lose_short',
+            #   'squeeze_release_long','squeeze_release_short','failure_fade_long','failure_fade_short'
+            reasons = []
+            lvl = getattr(e, "level_name", None)
+            if lvl:
+                reasons.append(f"level:{lvl}")
+            strength = float(getattr(e, "strength", 1.0))
+            setups.append(SetupCandidate(setup_type=e.setup, strength=strength, reasons=reasons))
+
+        # strongest first (gate will pick the max anyway)
+        setups.sort(key=lambda s: s.strength, reverse=True)
+        return setups

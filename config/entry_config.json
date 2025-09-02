@@ -9,7 +9,7 @@
         "vol_z": 0.3,
         "vwap_dist": 0.3
     },
-    "intraday_cutoff_hhmm": "1510",
+    "intraday_cutoff_hhmm": "15:10",
     "min_bars_1m": 30,
     "min_bars_5m": 10,
     "index_ret_5m_min": 0.0005,
