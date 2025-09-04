@@ -6,12 +6,8 @@ import pandas as pd
 from pathlib import Path
 import math
 import json
-import time
-import functools
 from datetime import datetime, timedelta
 from jobs.refresh_holidays import download_nse_holidays
-from exceptions.exceptions import InvalidTokenException, DataUnavailableException
-from broker.kite.kite_client import set_access_token_from_file
 from config.logging_config import get_loggers
 
 logger, trade_logger = get_loggers()
@@ -79,42 +75,6 @@ def is_market_active(date=None):
     except Exception as e:
         logger.error(f"⚠️ Could not determine market status: {e}")
         return False
-    
-def retry(max_attempts=3, delay=2, exceptions=(Exception,), exclude=(InvalidTokenException,)):
-    """
-    Decorator to retry a function if it raises specified exceptions.
-
-    Args:
-        max_attempts (int): Number of retry attempts before giving up.
-        delay (int): Delay between retries in seconds.
-        exceptions (tuple): Tuple of exception classes to catch.
-
-    Example:
-        @retry(max_attempts=5, delay=1)
-        def fetch_data(): ...
-    """
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    return func(*args, **kwargs)
-                except InvalidTokenException as e:
-                    logger.warning(f"[Retry {attempt}/{max_attempts}] Token error: {e}")
-                    logger.info("🔄 Refreshing Kite token...")
-                    set_access_token_from_file()  # reapply valid token
-                    time.sleep(delay)
-                except exceptions as e:
-                    logger.warning(f"[Retry {attempt}/{max_attempts}] Exception: {e}")
-                    if attempt == max_attempts:
-                        logger.error(f"Exceeded max retries for {func.__name__}")
-                        raise
-                    if  'invalid token' in str(e).lower():
-                        logger.error(f"Symbol not available in NSE {func.__name__}")
-                        raise DataUnavailableException(f"Symbol not available in NSE : {e}")
-                    time.sleep(delay)
-        return wrapper
-    return decorator
 
 import math
 

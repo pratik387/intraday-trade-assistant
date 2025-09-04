@@ -100,7 +100,7 @@ class KiteBroker:
             return str(resp)
 
     # ------------------------------ Market data -------------------------
-    def get_ltp(self, symbol: str) -> float:
+    def get_ltp(self, symbol: str, **kwargs) -> float:
         exch, tsym = _split_symbol(symbol)
         key = f"{exch}:{tsym}"
         data = self.kc.ltp([key])

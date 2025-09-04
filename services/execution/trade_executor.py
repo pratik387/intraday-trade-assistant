@@ -103,7 +103,7 @@ class TradeExecutor:
         logger.info(f"executor.order_placed sym={sym} side={side} qty={qty} mode={self.order_mode} id={order_id}")
 
         if self.order_mode == "MARKET":
-            fill_price = float(self.broker.get_ltp(sym))
+            fill_price = float(self.broker.get_ltp(sym, ltp=price_hint))
         else:
             fill_price = float(price_hint)
 

@@ -115,7 +115,7 @@ def yesterday_levels(df_daily: pd.DataFrame) -> Tuple[float, float]:
         prev = d.iloc[-2]
         y_high = float(prev["high"])
         y_low = float(prev["low"])
-        logger.info(f"levels.yesterday_levels: y_high={y_high:.4f} y_low={y_low:.4f}")
+        logger.debug(f"levels.yesterday_levels: y_high={y_high:.4f} y_low={y_low:.4f}")
         return y_high, y_low
 
     except Exception as e:

@@ -65,6 +65,14 @@
             "squeeze_release_short"
         ]
     },
+    "regime_thresholds": {
+        "vwap_min_strength": 2.5,
+        "vwap_min_adx": 12.0,
+        "vwap_min_vol_mult": 1.15,
+        "bo_min_adx": 20.0,
+        "bo_min_vol_mult": 1.35,
+        "ff_min_vol_mult": 1.00
+    },
     "decision_require_structure_event": true,
     "news_min_hold_bars": 2,
     "bar_1m_freq": "1min",

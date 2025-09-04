@@ -49,7 +49,7 @@ from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision a
 # planning & ranking
 from services import levels
 from services import metrics_intraday as mi
-from services.planner_internal import generate_trade_plan, PlannerConfig
+from services.planner_internal import generate_trade_plan
 from services.events.structure_events import StructureEventDetector
 from services.ranker import rank_candidates
 
@@ -103,7 +103,7 @@ class ScreenerLive:
         self.detector = StructureEventDetector()
         news_cfg = raw.get("news_gate")
         # Gates (pure, stateless)
-        self.regime_gate = MarketRegimeGate()
+        self.regime_gate = MarketRegimeGate(cfg=raw)
         self.event_gate = EventPolicyGate()
         self.news_gate = NewsSpikeGate(
             window_bars=news_cfg.get("window_bars"),
@@ -138,6 +138,10 @@ class ScreenerLive:
         self.ws.on_message(self.router.handle_raw)
 
         self.subs = SubscriptionManager(self.ws)
+
+        # EOD state flags (set at cutoff; main.py can exit when _request_exit flips)
+        self._eod_done: bool = False
+        self._request_exit: bool = False
 
         logger.info(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
@@ -180,6 +184,8 @@ class ScreenerLive:
         # Guard cutoff time for new entries
         now = bar_5m.name if hasattr(bar_5m, "name") else datetime.now()
         if self._is_after_cutoff(now):
+            if not getattr(self, "_eod_done", False):
+                self._handle_eod(now)
             return
 
         # Pace Stage‑0 and planning; only run every producer_min_interval_sec
@@ -237,9 +243,29 @@ class ScreenerLive:
                 continue
 
             if not decision.accept:
-                # Log top‑level reason once per flush interval
-                logger.debug("BLOCK %s: %s", sym, ";".join(decision.reasons))
+                rb = next((r for r in decision.reasons if r.startswith("regime_block:")), None)
+                top_reason = rb or (decision.reasons[0] if decision.reasons else "reject")
+
+                # Log at INFO with full context (symbol, setup, regime, regime_conf)
+                logger.info(
+                    "DECISION:REJECT sym=%s setup=%s regime=%s reason=%s | all=%s",
+                    sym,
+                    decision.setup_type,
+                    decision.regime,
+                    top_reason,
+                    ";".join(decision.reasons),
+                )
                 continue
+            
+            logger.info(
+                "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
+                sym,
+                decision.setup_type,
+                decision.regime,
+                decision.size_mult,
+                decision.min_hold_bars,
+                ";".join(decision.reasons),
+            )
 
             decisions.append((sym, decision))
 
@@ -253,22 +279,69 @@ class ScreenerLive:
                 continue
 
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
-            or_levels = levels.opening_range(df5)
+            daily_df = self.sdk.get_daily(sym, days=90)
 
             try:
-                plan = generate_trade_plan(
-                    symbol=sym,
-                    df5=df5,
-                    or_levels=or_levels,
-                    cfg=PlannerConfig(),
-                )
+                plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df)
             except Exception as e:
                 logger.exception("planner failed for %s: %s", sym, e)
                 continue
+            
+            if not plan:
+                logger.info("SKIP %s: empty plan (no_setup)", sym)
+                continue
 
-            # Enqueue (or log in DRY-RUN inside OrderQueue)
-            self.oq.enqueue(plan)
+            # 1) Eligibility
+            if not plan.get("eligible", False):
+                logger.info("SKIP %s: ineligible plan reasons=%s",
+                            sym, ";".join((plan.get("notes") or {}).get("cautions", [])))
+                continue
+
+            # 2) Qty
+            qty = int((plan.get("sizing") or {}).get("qty") or 0)
+            if qty <= 0:
+                logger.info("SKIP %s: qty<=0", sym)
+                continue
+
+            # 3) Bias → side
+            bias = str(plan.get("bias", "")).lower()
+            if bias not in ("long", "short"):
+                logger.info("SKIP %s: bad bias=%r", sym, bias)
+                continue
+            
+            exec_item = {
+                "symbol": plan["symbol"],       
+                "plan": {
+                    "side": "BUY" if plan["bias"] == "long" else "SELL",
+                    "qty": int(plan["sizing"]["qty"]),
+                    "entry_zone": (plan["entry"] or {}).get("zone"),
+                    "price": (plan["entry"] or {}).get("reference"),
+                    "hard_sl": (plan.get("stop") or {}).get("hard"),
+                    "targets": plan.get("targets"),
+                    "trail": plan.get("trail"),
+                },
+                "meta": plan,
+            }
+
+            self.oq.enqueue(exec_item)
             logger.info("ENQUEUE %s score=%.3f reasons=%s", sym, score, ";".join(self._reasons_for(sym, decisions)))
+        # ---------- EOD handler ----------
+    def _handle_eod(self, now: datetime) -> None:
+        """Stop subscriptions and stream at cutoff and request clean exit."""
+        try:
+            logger.warning("EOD: cutoff reached at %s — stopping for the day", now)
+        except Exception:
+            pass
+        self._eod_done = True
+        try:
+            self.subs.stop()
+        except Exception:
+            pass
+        try:
+            self.ws.stop()
+        except Exception:
+            pass
+        self._request_exit = True
 
     # ---------------------------------------------------------------------
     # Helpers
@@ -302,7 +375,7 @@ class ScreenerLive:
         if cache:
             return cache
         try:
-            pdh, pdl, pdc = levels.prev_day_levels(df5)
+            pdh, pdl, pdc = levels.yesterday_levels(df5)
             orh, orl = levels.opening_range(df5)
         except Exception:
             pdh = pdl = pdc = orh = orl = float("nan")
@@ -328,22 +401,59 @@ class ScreenerLive:
         return out[:60]  # keep it bounded
 
     def _rank_by_intraday_edge(self, symbols: List[str]) -> List[Tuple[str, float]]:
-        rows: List[Tuple[str, float]] = []
+        rows_for_ranker: List[Dict] = []
+
         for sym in symbols:
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
             if df5 is None or df5.empty:
                 continue
-            try:
-                edge = rank_candidates(sym, df5)
-            except Exception:
-                # fallback to metric score
-                try:
-                    edge = mi.compute_intraday_breakout_score(df5)
-                except Exception:
-                    edge = -1.0
-            rows.append((sym, float(edge)))
-        rows.sort(key=lambda x: x[1], reverse=True)
-        return rows
+
+            last = df5.iloc[-1]
+
+            # --- minimal, robust intraday feature pack for ranker ---
+            # volume ratio = last5m / median of recent non-zero vols (~2h)
+            if "volume" in df5.columns:
+                recent_vol = df5["volume"].tail(24)
+                med_vol = float(recent_vol[recent_vol > 0].median() or 1.0)
+                volume_ratio = float(last.get("volume", 0.0) or 0.0) / (med_vol or 1.0)
+            else:
+                volume_ratio = 1.0
+
+            # ADX from 5m bar (BarBuilder now sets this)
+            adx = float(last.get("adx", 0.0) or 0.0)
+
+            # above/below VWAP
+            vwap = float(last.get("vwap", last.get("close", 0.0)) or 0.0)
+            close = float(last.get("close", 0.0) or 0.0)
+            above_vwap = bool(close >= vwap) if vwap else False
+
+            # squeeze percentile from bb_width_proxy (optional)
+            sq_pct = None
+            if "bb_width_proxy" in df5.columns:
+                recent_bw = df5["bb_width_proxy"].tail(24).dropna()
+                if len(recent_bw) > 1:
+                    cur_bw = float(last.get("bb_width_proxy", 0.0) or 0.0)
+                    sq_pct = float((recent_bw <= cur_bw).mean() * 100.0)
+
+            rows_for_ranker.append({
+                "symbol": sym,
+                "daily_score": 0.0,  # keep neutral unless you have a daily model
+                "intraday": {
+                    "volume_ratio": volume_ratio,
+                    "adx": adx,
+                    "above_vwap": above_vwap,
+                    "squeeze_pctile": sq_pct,
+                    # other keys (rsi, slopes, dist_from_level_bpct, acceptance_ok, bias) are optional
+                },
+            })
+
+        if not rows_for_ranker:
+            return []
+
+        # Ask ranker to score and sort; keep all returned rows
+        ranked_rows = rank_candidates(rows_for_ranker, top_n=len(rows_for_ranker))
+        return [(r.get("symbol", "?"), float(r.get("rank_score", 0.0))) for r in ranked_rows]
+
 
     def _reasons_for(self, sym: str, decisions: List[Tuple[str, Decision]]) -> List[str]:
         for s, d in decisions:

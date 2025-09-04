@@ -30,7 +30,6 @@ from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
 
-
 @dataclass(frozen=True)
 class RegimeMetrics:
     ema_fast: float
@@ -39,26 +38,45 @@ class RegimeMetrics:
     width_proxy: float
     vol_z: float
 
-
 class MarketRegimeGate:
-    """Computes regime using only the provided 5‑minute index bars.
+    """
+    Computes regime from 5m index bars and decides if a setup is allowed
+    using config-driven, evidence-based thresholds.
 
-    Heuristics (simple and robust):
-      • Trend up   → EMA(20) > EMA(50) and recent slope of EMA(20) > 0
-      • Trend down → EMA(20) < EMA(50) and recent slope of EMA(20) < 0
-      • Squeeze    → Bollinger‑width proxy in bottom ~30% of last 2 hours
-      • Else       → Chop
-
-    We keep constants internal to avoid config sprawl. No external reads.
+    Public:
+      compute_regime(df5) -> (regime, metrics_dict)
+      allow_setup(setup_type, regime, strength, adx_5m, vol_mult_5m) -> bool
+      size_multiplier(regime, counter_trend=False) -> float
     """
 
+    def __init__(self, cfg: Dict, log=None):
+        self.log = log
+        # strict: require thresholds to exist (no hidden defaults)
+        rt = (cfg.get("regime_thresholds"))
+        required = [
+            "vwap_min_strength", "vwap_min_adx", "vwap_min_vol_mult",
+            "bo_min_adx", "bo_min_vol_mult",
+            "ff_min_vol_mult",
+        ]
+        missing = [k for k in required if k not in rt]
+        if missing:
+            raise ValueError(f"[regime_gate] Missing regime_thresholds keys: {missing}. "
+                             f"Add them under entry_config.json -> regime_thresholds")
+        self.VWAP_MIN_STRENGTH = float(rt["vwap_min_strength"])
+        self.VWAP_MIN_ADX      = float(rt["vwap_min_adx"])
+        self.VWAP_MIN_VOL_MULT = float(rt["vwap_min_vol_mult"])
+        self.BO_MIN_ADX        = float(rt["bo_min_adx"])
+        self.BO_MIN_VOL_MULT   = float(rt["bo_min_vol_mult"])
+        self.FF_MIN_VOL_MULT   = float(rt["ff_min_vol_mult"])
+
+    # ---------------- Regime computation ----------------
     def compute_regime(self, df5: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
         if df5 is None or df5.empty:
-            # No data → assume chop; callers can decide to be conservative
             return "chop", {}
 
         c = df5["close"].astype(float).copy()
-        # guard for short warmup
+
+        # EMA warmup guards
         if len(c) < 55:
             ema20 = c.ewm(span=20, adjust=False, min_periods=20).mean()
             ema50 = c.ewm(span=50, adjust=False, min_periods=50).mean()
@@ -66,7 +84,7 @@ class MarketRegimeGate:
             ema20 = c.ewm(span=20, adjust=False).mean()
             ema50 = c.ewm(span=50, adjust=False).mean()
 
-        # slope over the last 6 bars (~30 minutes)
+        # slope over ~30 minutes
         window = 6 if len(ema20) >= 6 else max(2, len(ema20))
         slope_fast = float((ema20.diff().tail(window)).mean())
 
@@ -78,7 +96,7 @@ class MarketRegimeGate:
             mean20 = float(c.tail(20).mean()) if len(c) >= 1 else 1.0
             width_proxy = (std20 / mean20) if mean20 else 0.0
 
-        # intraday volume z against recent 24 bars (~2 hours)
+        # volume z vs last ~2 hours
         if "volume" in df5.columns and len(df5) >= 10:
             vol = df5["volume"].astype(float)
             recent = vol.tail(min(24, len(vol)))
@@ -95,7 +113,7 @@ class MarketRegimeGate:
             vol_z=vol_z,
         )
 
-        # squeeze if width is very low vs its recent range
+        # squeeze if width very low vs recent distribution
         width_series = (df5["bb_width_proxy"] if "bb_width_proxy" in df5.columns else c.pct_change().abs())
         recent_w = width_series.tail(min(24, len(width_series)))
         if len(recent_w) >= 8:
@@ -113,40 +131,74 @@ class MarketRegimeGate:
         else:
             regime = "chop"
 
-        return regime, {
-            "ema_fast": m.ema_fast,
-            "ema_slow": m.ema_slow,
-            "slope_fast": m.slope_fast,
-            "width_proxy": m.width_proxy,
-            "vol_z": m.vol_z,
-        }
+        return regime
 
-    # ---------------- Permissions & sizing ----------------
-    def allow_setup(self, setup_type: str, regime: str) -> bool:
-        """Simple allow matrix by regime.
-
-        • Trend up: allow long breakouts/reclaims; disallow fresh short breakouts
-        • Trend down: mirror of trend up
-        • Chop: disable breakouts; allow failure fades only
-        • Squeeze: allow squeeze releases both sides
+    # ---------------- Evidence-based permissioning ----------------
+    def allow_setup(
+        self,
+        setup_type: str,
+        regime: str,
+        strength: float,
+        adx_5m: float,
+        vol_mult_5m: float,
+    ) -> bool:
         """
-        if regime == "trend_up":
-            return setup_type in {"breakout_long", "vwap_reclaim_long", "failure_fade_short"}
-        if regime == "trend_down":
-            return setup_type in {"breakout_short", "vwap_lose_short", "failure_fade_long"}
+        Returns True iff the setup is allowed by regime AND passes evidence thresholds.
+
+        Params:
+          setup_type   : 'breakout_long'|'breakout_short'|'vwap_reclaim_long'|'vwap_lose_short'|
+                         'squeeze_release_long'|'squeeze_release_short'|'failure_fade_long'|'failure_fade_short'
+          regime       : 'trend_up'|'trend_down'|'chop'|'squeeze'
+          strength     : structure score (0..5 normalized)
+          adx_5m       : 5m ADX
+          vol_mult_5m  : last5m_vol / median5m_vol (~2h)
+        """
+        # NA-safe casts
+        s = float(strength) if pd.notna(strength) else 0.0
+        a = float(adx_5m) if pd.notna(adx_5m) else 0.0
+        v = float(vol_mult_5m) if pd.notna(vol_mult_5m) else 0.0
+
         if regime == "chop":
-            return setup_type in {"failure_fade_long", "failure_fade_short"}
+            # Only strong VWAP reclaims/loses and failure fades with some liquidity
+            if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
+                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
+            if setup_type in {"failure_fade_long", "failure_fade_short"}:
+                return v >= self.FF_MIN_VOL_MULT
+            return False
+
+        if regime == "trend_up":
+            if setup_type == "breakout_long":
+                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
+            if setup_type == "vwap_reclaim_long":
+                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
+            if setup_type == "failure_fade_short":
+                return v >= self.FF_MIN_VOL_MULT
+            return False
+
+        if regime == "trend_down":
+            if setup_type == "breakout_short":
+                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
+            if setup_type == "vwap_lose_short":
+                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
+            if setup_type == "failure_fade_long":
+                return v >= self.FF_MIN_VOL_MULT
+            return False
+
         if regime == "squeeze":
-            return setup_type in {"squeeze_release_long", "squeeze_release_short"}
+            if setup_type in {"squeeze_release_long", "squeeze_release_short"}:
+                return v >= self.VWAP_MIN_VOL_MULT  # need participation on release
+            if setup_type in {"breakout_long", "breakout_short"}:
+                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
+            if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
+                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
+            return False
+
         return False
 
+    # ---------------- Sizing bias ----------------
     def size_multiplier(self, regime: str, *, counter_trend: bool = False) -> float:
-        """Return a simple sizing bias. Caller can multiply their base size.
-
-        We keep the values conservative and deterministic.
-        """
-        if regime == "trend_up" or regime == "trend_down":
-            return 0.7 if counter_trend else 1.15
+        if regime in ("trend_up", "trend_down"):
+            return 0.70 if counter_trend else 1.15
         if regime == "squeeze":
-            return 0.9  # uncertainty until release confirms
+            return 0.90
         return 0.85  # chop

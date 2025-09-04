@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from typing import Optional
+import argparse
 
 from config.logging_config import get_loggers
 from config.filters_setup import load_filters
@@ -34,7 +35,6 @@ from services.execution.exit_executor import ExitExecutor
 # Strict adapters
 from broker.kite.kite_client import KiteClient  # WS only
 from broker.kite.kite_broker import KiteBroker  # REST orders/LTP
-from config.env_setup import env
 from broker.mock.mock_broker import MockBroker
 
 logger, _ = get_loggers()
@@ -62,8 +62,8 @@ class _DryRunBroker:
     def place_order(self, **kwargs):
         logger.info(f"[DRY_RUN] place_order skipped: {kwargs}")
         return "dryrun-order-id"
-    def get_ltp(self, symbol: str) -> float:
-        return self._real.get_ltp(symbol)
+    def get_ltp(self, symbol: str, **kwargs) -> float:
+        return self._real.get_ltp(symbol, **kwargs)
     def get_ltp_batch(self, symbols):
         return self._real.get_ltp_batch(symbols)
 
@@ -75,15 +75,18 @@ def main() -> int:
     # Order queue: OrderQueue reads its own config via load_filters() (no kwargs accepted)
     oq = OrderQueue()
 
-    if env.DRY_RUN == "1":
-        logger.warning("DRY_RUN=1 — orders will NOT be placed")
-         # Setup mock SDK and Broker
-        sdk = MockBroker(
-            path_json="nse_all.json",     # or env var if preferred
-            from_date="2025-08-01",
-            to_date="2025-08-04",
-        )
+    if args.dry_run:
+        if not args.session_date:
+            print("error: --dry-run requires --session-date YYYY-MM-DD", file=sys.stderr)
+            sys.exit(2)
+
+        from_date = _hhmm_on(args.session_date, args.from_hhmm)
+        to_date   = _hhmm_on(args.session_date, args.to_hhmm)
+
+        sdk = MockBroker(path_json="nse_all.json", from_date=from_date, to_date=to_date)
+        sdk.set_session_date(args.session_date)  # PDH/PDL/PDC = day before session_date
         broker = _DryRunBroker(sdk)
+        logger.warning("DRY RUN: %s %s-%s", args.session_date, args.from_hhmm, args.to_hhmm)
     else:
         sdk = KiteClient()
         broker = KiteBroker()
@@ -119,10 +122,6 @@ def main() -> int:
             except Exception as e:
                 logger.warning(f"ExitExecutor ctor failed: {e}")
 
-    # ---- start ----
-    screener.start()  # WS connect, subscribe, aggregate, 5m pipeline
-    logger.info("screener: started")
-
     threads: list[threading.Thread] = []
 
     t_trade = threading.Thread(target=trader.run_forever, name="TradeExecutor", daemon=True)
@@ -135,7 +134,7 @@ def main() -> int:
         logger.info("exit-executor: started")
     else:
         logger.info("exit-executor: not started")
-
+        
     # ---- lifecycle ----
     stop = threading.Event()
     def _sig_handler(signum, frame):
@@ -143,21 +142,44 @@ def main() -> int:
         stop.set()
     signal.signal(signal.SIGINT, _sig_handler)
     signal.signal(signal.SIGTERM, _sig_handler)
+    run_until_eod(screener)
 
+    return 0
+
+def run_until_eod(screener: ScreenerLive, poll_sec: float = 0.2) -> None:
+    """
+    Start the screener and block until it requests exit (EOD),
+    then stop it cleanly. Works for both live and dry runs.
+    """
+    logger.info("session start")
     try:
-        while not stop.is_set():
-            time.sleep(1.0)
+        screener.start()
+        while not getattr(screener, "_request_exit", False):
+            time.sleep(poll_sec)
     except KeyboardInterrupt:
         logger.info("keyboard interrupt — stopping")
     finally:
         try:
             screener.stop()
         except Exception as e:
-            logger.warning(f"screener.stop failed: {e}")
-        logger.info("shutdown complete")
+            logger.warning("screener.stop failed: %s", e)
+    logger.info("session end (EOD)")
+    
+def _hhmm_on(day_str: str, hhmm: str) -> str:
+    y, m, d = map(int, day_str.split("-"))
+    h, mm = map(int, hhmm.split(":"))
+    return f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{mm:02d}:00"
 
-    return 0
+def _parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Use mock broker + archived ticks")
+    ap.add_argument("--session-date", help="YYYY-MM-DD (required with --dry-run)")
+    ap.add_argument("--from-hhmm", default="09:00")
+    ap.add_argument("--to-hhmm",   default="16:00")
+    return ap.parse_args()
 
 
 if __name__ == "__main__":
+    args = _parse_args()
     sys.exit(main())

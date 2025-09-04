@@ -21,6 +21,7 @@ Notes:
   - Thread-safe: single RLock protects state. Callbacks are wrapped in try/except.
 """
 
+import math
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
@@ -41,6 +42,58 @@ class _LastTick:
     price: float
     volume: float
     ts: datetime
+
+
+# ------------------------------- Minimal ADX state ------------------------------
+
+@dataclass
+class _ADXState:
+    prev_high: float = math.nan
+    prev_low: float = math.nan
+    prev_close: float = math.nan
+    tr_s: float = 0.0         # Wilder-smoothed True Range
+    plus_s: float = 0.0       # Wilder-smoothed +DM
+    minus_s: float = 0.0      # Wilder-smoothed -DM
+    adx: float = 0.0          # Wilder-smoothed DX (the ADX)
+
+
+# --------------------------------- Builder ------------------------------------
+
+def _empty_df() -> pd.DataFrame:
+    # Initial columns; new fields (bb_width_proxy, adx) will be added on first append
+    return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "vwap"])  # type: ignore
+
+
+def _aggregate_window_to_ohlcv(window: pd.DataFrame) -> pd.Series:
+    o = float(window.iloc[0]["open"]) if len(window) else np.nan
+    h = float(window["high"].max()) if len(window) else np.nan
+    l = float(window["low"].min()) if len(window) else np.nan
+    c = float(window.iloc[-1]["close"]) if len(window) else np.nan
+    v = float(window["volume"].sum()) if len(window) else 0.0
+
+    # 5m VWAP from 1m vwap * volume (more stable than simple average)
+    if "vwap" in window.columns:
+        vwap_num = float((window["vwap"] * window["volume"]).sum())
+        vwap_den = float(window["volume"].sum())
+        vwap = vwap_num / vwap_den if vwap_den > 0 else c
+    else:
+        vwap = c
+
+    # BB width proxy: std(close, N=20) / vwap (dimensionless)
+    closes = window["close"].tail(20)
+    bb_width_proxy = float(closes.std(ddof=0) / vwap) if len(closes) >= 5 and vwap else 0.0
+
+    return pd.Series(
+        {
+            "open": o,
+            "high": h,
+            "low": l,
+            "close": c,
+            "volume": v,
+            "vwap": float(vwap),
+            "bb_width_proxy": bb_width_proxy,
+        }
+    )
 
 
 class BarBuilder:
@@ -64,6 +117,10 @@ class BarBuilder:
         self._bars_1m: Dict[str, pd.DataFrame] = defaultdict(_empty_df)
         self._bars_5m: Dict[str, pd.DataFrame] = defaultdict(_empty_df)
         self._index_symbols = set(index_symbols or [])
+
+        # ADX state (minimal, incremental)
+        self._adx_state: Dict[str, _ADXState] = {}
+        self._adx_alpha: float = 1.0 / 14.0  # Wilder α for ADX(14)
 
     # ----------------------------- Public API -----------------------------
     def on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
@@ -194,6 +251,13 @@ class BarBuilder:
         bar5 = _aggregate_window_to_ohlcv(window)
         bar5.name = end_ts
 
+        # --- Incremental ADX(14) update (O(1)) ---
+        try:
+            adx_val = self._update_adx_5m(symbol, float(bar5["high"]), float(bar5["low"]), float(bar5["close"]))
+        except Exception:
+            adx_val = 0.0
+        bar5["adx"] = float(adx_val)
+
         df5 = self._bars_5m[symbol]
         row5 = bar5.to_frame().T
         row5.index = [end_ts]
@@ -209,40 +273,55 @@ class BarBuilder:
             logger.exception("BarBuilder: on_5m_close callback failed: %s", e)
             pass
 
+    # ------------------------ Incremental ADX(14) -------------------------
+    def _update_adx_5m(self, symbol: str, high: float, low: float, close: float) -> float:
+        """
+        O(1) Wilder-style ADX update for the new 5m bar. Returns the latest ADX.
+        """
+        st = self._adx_state.get(symbol)
+        if st is None:
+            st = _ADXState()
+            self._adx_state[symbol] = st
 
-# ------------------------------ Helpers --------------------------------
+        # First bar warmup: initialize smoothed values
+        if not math.isfinite(st.prev_close):
+            st.prev_high = high
+            st.prev_low = low
+            st.prev_close = close
+            tr = max(high - low, abs(high - close), abs(low - close))
+            st.tr_s = tr
+            st.plus_s = 0.0
+            st.minus_s = 0.0
+            st.adx = 0.0
+            return 0.0
 
-def _empty_df() -> pd.DataFrame:
-    return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "vwap"])  # type: ignore
+        up_move = high - st.prev_high
+        dn_move = st.prev_low - low
+        plus_dm = up_move if (up_move > dn_move and up_move > 0.0) else 0.0
+        minus_dm = dn_move if (dn_move > up_move and dn_move > 0.0) else 0.0
 
+        tr1 = high - low
+        tr2 = abs(high - st.prev_close)
+        tr3 = abs(st.prev_close - low)
+        tr = max(tr1, tr2, tr3)
 
-def _aggregate_window_to_ohlcv(window: pd.DataFrame) -> pd.Series:
-    o = float(window.iloc[0]["open"]) if len(window) else np.nan
-    h = float(window["high"].max()) if len(window) else np.nan
-    l = float(window["low"].min()) if len(window) else np.nan
-    c = float(window.iloc[-1]["close"]) if len(window) else np.nan
-    v = float(window["volume"].sum()) if len(window) else 0.0
+        a = self._adx_alpha
+        # Wilder EMA (RMA) updates
+        st.tr_s    = st.tr_s    + a * (tr      - st.tr_s)
+        st.plus_s  = st.plus_s  + a * (plus_dm - st.plus_s)
+        st.minus_s = st.minus_s + a * (minus_dm - st.minus_s)
 
-    # 5m VWAP from 1m vwap * volume (more stable than simple average)
-    if "vwap" in window.columns:
-        vwap_num = float((window["vwap"] * window["volume"]).sum())
-        vwap_den = float(window["volume"].sum())
-        vwap = vwap_num / vwap_den if vwap_den > 0 else c
-    else:
-        vwap = c
+        if st.tr_s <= 1e-12:
+            cur_adx = st.adx
+        else:
+            plus_di  = 100.0 * (st.plus_s  / st.tr_s)
+            minus_di = 100.0 * (st.minus_s / st.tr_s)
+            denom = plus_di + minus_di
+            dx = 0.0 if denom <= 1e-12 else 100.0 * abs(plus_di - minus_di) / denom
+            st.adx = st.adx + a * (dx - st.adx)
+            cur_adx = st.adx
 
-    # BB width proxy: std(close, N=20) / vwap (dimensionless)
-    closes = window["close"].tail(20)
-    bb_width_proxy = float(closes.std(ddof=0) / vwap) if len(closes) >= 5 and vwap else 0.0
-
-    return pd.Series(
-        {
-            "open": o,
-            "high": h,
-            "low": l,
-            "close": c,
-            "volume": v,
-            "vwap": float(vwap),
-            "bb_width_proxy": bb_width_proxy,
-        }
-    )
+        st.prev_high = high
+        st.prev_low = low
+        st.prev_close = close
+        return float(cur_adx)

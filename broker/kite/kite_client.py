@@ -2,13 +2,15 @@
 # Zerodha Kite SDK wrapper for managing instrument metadata, token/symbol maps, and equity universe filtering.
 # Efficient in-memory maps for symbol/token resolution, with optional CSV fallback.
 
-from typing import Dict, List, Iterable
+from typing import Dict, List, Iterable, Optional
 from dataclasses import dataclass
-import logging
 from kiteconnect import KiteConnect
 from config.env_setup import env
 from kiteconnect import KiteTicker
 from config.logging_config import get_loggers
+from datetime import datetime, timedelta
+import threading, time, random
+import pandas as pd
 
 logger, _ = get_loggers()
 
@@ -28,6 +30,17 @@ class KiteClient:
         self._sym2inst: Dict[str, _Inst] = {}
         self._tok2sym: Dict[int, str] = {}
         self._equity_instruments: List[str] = []
+                # ---- Daily history: per-day in-memory cache + simple rate limiter (tz-naive) ----
+        self._daily_cache_day: Optional[str] = None   # "YYYY-MM-DD"
+        self._daily_cache: Dict[str, pd.DataFrame] = {}
+        self._daily_cache_lock = threading.RLock()
+
+        # conservative historical RPS (~2.5 rps)
+        self._rps = 2.5
+        self._rl_min_dt = 1.0 / float(self._rps)
+        self._rl_last = 0.0
+        self._rl_lock = threading.Lock()
+
 
         self._load_instruments()
         
@@ -129,3 +142,106 @@ class KiteClient:
         if miss:
             logger.debug("KiteClient.resolve_tokens: %d symbols not found", miss)
         return out
+    
+        # ----------------------- Daily (historical) helpers -----------------------
+
+    def _rate_limit(self) -> None:
+        """Simple thread-safe RPS limiter for historical_data calls."""
+        with self._rl_lock:
+            now = time.monotonic()
+            dt = now - self._rl_last
+            if dt < self._rl_min_dt:
+                time.sleep(self._rl_min_dt - dt)
+            self._rl_last = time.monotonic()
+
+    def _reset_daily_cache_if_new_day(self) -> None:
+        today = datetime.now().date().isoformat()  # tz-naive
+        with self._daily_cache_lock:
+            if self._daily_cache_day != today:
+                self._daily_cache.clear()
+                self._daily_cache_day = today
+
+    def _token_for(self, symbol: str) -> int:
+        inst = self._sym2inst.get(symbol.upper())
+        if not inst:
+            raise KeyError(f"KiteClient: unknown symbol {symbol}")
+        return inst.token
+
+    def _historical_daily_df(self, symbol: str, days: int) -> pd.DataFrame:
+        """
+        Fetch daily candles from Kite for `symbol` and return tz-naive daily DataFrame.
+        Index: naive dates (normalized), columns: ['open','high','low','close','volume'].
+        Drops today's partial if present.
+        """
+        token = self._token_for(symbol)
+        end_date = datetime.now().date()  # naive
+        start_date = (datetime.now() - timedelta(days=max(days + 5, 20))).date()  # pad for weekends/holidays
+
+        for attempt in range(3):
+            try:
+                self._rate_limit()
+                candles = self._kc.historical_data(
+                    instrument_token=token,
+                    from_date=start_date.isoformat(),
+                    to_date=end_date.isoformat(),
+                    interval="day",
+                )
+                if not candles:
+                    return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+                df = pd.DataFrame(candles)
+                # 'date' from Kite is typically tz-naive; normalize and drop any tz if present
+                dates = pd.to_datetime(df["date"], errors="coerce", utc=False)
+                # If somehow tz-aware slipped in, strip it to make naive
+                if getattr(dates.dt, "tz", None) is not None:
+                    dates = dates.dt.tz_localize(None)
+                df["date"] = dates.dt.normalize()
+                df.set_index("date", inplace=True)
+
+                df = df[["open", "high", "low", "close", "volume"]].astype(float)
+
+                # Drop today's partial bar if present
+                if not df.empty and df.index[-1].date() == datetime.now().date():
+                    df = df.iloc[:-1]
+
+                return df.tail(days).copy()
+            except Exception as e:
+                if attempt == 2:
+                    logger.exception("KiteClient._historical_daily_df failed for %s: %s", symbol, e)
+                    return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+                time.sleep(0.5 + 0.4 * attempt + random.random() * 0.2)
+
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+    def get_daily(self, symbol: str, days: int) -> pd.DataFrame:
+        """
+        Return last `days` daily bars for `symbol` (tz-naive).
+        Cached per day; at most one broker call per symbol per session.
+        """
+        self._reset_daily_cache_if_new_day()
+        with self._daily_cache_lock:
+            cached = self._daily_cache.get(symbol)
+            if cached is not None and len(cached) >= min(days, len(cached)):
+                return cached.tail(days).copy()
+
+        df = self._historical_daily_df(symbol, days)
+        with self._daily_cache_lock:
+            self._daily_cache[symbol] = df
+        return df
+
+    def get_prevday_levels(self, symbol: str) -> Dict[str, float]:
+        """
+        Previous trading day's high/low/close as tz-naive floats:
+        {'PDH': ..., 'PDL': ..., 'PDC': ...}
+        """
+        df = self.get_daily(symbol, days=2)
+        if df is None or df.empty:
+            return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
+        row = df.iloc[-1]  # last completed day
+        return {"PDH": float(row.high), "PDL": float(row.low), "PDC": float(row.close)}
+
+    def set_hist_rate_limit(self, rps: float) -> None:
+        """Optional: tune historical RPS dynamically."""
+        self._rps = max(0.5, float(rps))
+        self._rl_min_dt = 1.0 / self._rps
+

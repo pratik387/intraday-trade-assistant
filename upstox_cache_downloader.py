@@ -19,9 +19,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 # --- Constants ---
-START_DATE = "2025-08-01"
+START_DATE = "2025-07-01"
 END_DATE = "2025-08-29"
 INTERVAL = "1"
+INTERVAL_UNIT = "days"  # "minutes", "days", "weeks", "hours"
 MAX_WORKERS = 5
 
 # --- Output Path ---
@@ -96,7 +97,7 @@ def fetch_upstox_data(symbol: str, instrument_key: str, max_retries=3):
 
         url = (
             f"https://api.upstox.com/v3/historical-candle/"
-            f"{instrument_key}/minutes/{INTERVAL}/{chunk_end_str}/{chunk_start_str}"
+            f"{instrument_key}/{INTERVAL_UNIT}/{INTERVAL}/{chunk_end_str}/{chunk_start_str}"
         )
 
         for attempt in range(1, max_retries + 1):
@@ -135,14 +136,14 @@ def fetch_upstox_data(symbol: str, instrument_key: str, max_retries=3):
 
     out_dir = OUTPUT_BASE / symbol
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{symbol}_5m_{START_DATE}_{END_DATE}.feather"
+    out_path = out_dir / f"{symbol}_{INTERVAL_UNIT}_{START_DATE}_{END_DATE}.feather"
     df.to_feather(out_path)
     return f"\u2705 {symbol}: {len(df)} rows"
 
 # --- Runner ---
 if __name__ == "__main__":
     instrument_map = load_instrument_map_ndjson(UPSTOX_JSON_PATH)
-    print(f"🚀 Starting Upstox 5m downloader for {len(instrument_map)} NSE symbols")
+    print(f"🚀 Starting Upstox downloader for {len(instrument_map)} NSE symbols")
     results = []
     success_count = 0
     failure_count = 0

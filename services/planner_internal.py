@@ -43,7 +43,7 @@ def calculate_atr(df: pd.DataFrame, period: int) -> float:
         h, l, c = df["high"].to_numpy(), df["low"].to_numpy(), df["close"].to_numpy()
         prev_close = np.r_[c[0], c[:-1]]
         tr = np.maximum(h - l, np.maximum(np.abs(h - prev_close), np.abs(l - prev_close)))
-        atr = pd.Series(tr).rolling(period, min_periods=period).mean().iloc[-1]
+        atr = pd.Series(tr).ewm(span=period, adjust=False).mean().iloc[-1]
         return float(atr)
     except Exception as e:
         logger.exception(f"planner.atr error: {e}")
@@ -126,10 +126,10 @@ def _prev_day_levels(daily_df: Optional[pd.DataFrame]) -> Dict[str, float]:
             d = d.sort_index()
         if len(d) < 2:
             return {"PDH": np.nan, "PDL": np.nan, "PDC": np.nan}
-        prev = d.iloc[-2:]
-        pdh = float(prev["high"].iloc[-2])
-        pdl = float(prev["low"].iloc[-2])
-        pdc = float(prev["close"].iloc[-2])
+        prev = d.iloc[-1:]
+        pdh = float(prev["high"].iloc[0])
+        pdl = float(prev["low"].iloc[0])
+        pdc = float(prev["close"].iloc[0])
         return {"PDH": pdh, "PDL": pdl, "PDC": pdc}
     except Exception as e:
         logger.exception(f"planner.prev_day_levels error: {e}")
@@ -479,7 +479,6 @@ def _compose_exits_and_size(
 def generate_trade_plan(
     df: pd.DataFrame,
     symbol: str,
-    config: Optional[Union[PlannerConfig, Dict[str, Any]]] = None,
     daily_df: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
     """
@@ -502,18 +501,7 @@ def generate_trade_plan(
         Serializable plan with eligibility, entry/stop/targets, sizing, context, and quality fields.
     """
     try:
-        # Load strict config + optional extras overrides
-        if isinstance(config, dict):
-            cfg = _load_planner_config(user_overrides=config)
-        elif isinstance(config, PlannerConfig) or config is None:
-            cfg = _load_planner_config()  # strict JSON
-            if isinstance(config, PlannerConfig) and hasattr(config, "_extras"):
-                # allow extras-only merge if someone passed a dataclass with extras
-                for k in cfg._extras.keys():
-                    if isinstance(getattr(config, "_extras", {}).get(k), dict):
-                        cfg._extras[k].update(getattr(config, "_extras")[k])
-        else:
-            cfg = _load_planner_config()
+        cfg = _load_planner_config()
 
         # Focus on the latest session
         df = ensure_naive_ist_index(df)
@@ -555,6 +543,10 @@ def generate_trade_plan(
 
         regime = _regime(sess, cfg)
         strat = _strategy_selector(sess, cfg, regime, orh, orl, or_end, sess["vwap"], pd_levels)
+        
+        if strat["name"] == "no_setup":
+            logger.info(f"planner: {symbol} no_setup (regime={regime}, ORH={orh:.2f}, ORL={orl:.2f})")
+            return {}
 
         # Soft sizing / checklist using EXTRAS (no hard gating)
         late_penalty = cfg._extras.get("late_entry_penalty", {})
@@ -602,10 +594,6 @@ def generate_trade_plan(
             if not (float(adxmin) <= adx_now <= float(adxmax)):
                 qty_scale *= 0.9
                 cautions.append("adx_out_of_band")
-
-        if strat["name"] == "no_setup":
-            logger.info(f"planner: {symbol} no_setup (regime={regime}, ORH={orh:.2f}, ORL={orl:.2f})")
-            return {}
 
         entry_ref_price = float(sess.iloc[-1]["close"])
         exits = _compose_exits_and_size(entry_ref_price, strat["bias"], atr, strat["structure_stop"], cfg, qty_scale=qty_scale)
