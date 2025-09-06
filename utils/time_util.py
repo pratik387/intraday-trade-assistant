@@ -1,6 +1,6 @@
 from __future__ import annotations
 import pandas as pd
-from typing import Tuple
+from typing import Tuple, Optional, Union
 
 IST_TZ = "Asia/Kolkata"
 
@@ -116,3 +116,36 @@ def is_after_cutoff(now: pd.Timestamp, cfg: dict) -> bool:
     # If now >= cutoff -> block new entries
     n = _to_naive_ist(now)
     return _hhmm(n) >= cutoff
+
+# --- NEW shared helpers (used by planner, trade & exit executors) ---
+
+def _minute_of_day(ts: Union[pd.Timestamp, str]) -> int:
+    """
+    Convert a timestamp (or parseable string) to minutes since midnight IST.
+    """
+    t = pd.Timestamp(ts)
+    t = _to_naive_ist(t)
+    return t.hour * 60 + t.minute
+
+def _parse_hhmm_to_md(val: Optional[Union[str, int]]) -> Optional[int]:
+    """
+    Parse 'HH:MM', 'HHMM', or int like 1510 -> minute-of-day.
+    Returns None if unparsable.
+    """
+    if val is None:
+        return None
+    try:
+        s = str(val).strip()
+        if ":" in s:
+            hh, mm = s.split(":")
+            return int(hh) * 60 + int(mm)
+        if s.isdigit() and len(s) >= 3:
+            hh = int(s[:-2]); mm = int(s[-2:])
+            return hh * 60 + mm
+        v = int(s)
+        if v >= 1000:
+            hh, mm = divmod(v, 100)
+            return hh * 60 + mm
+        return v
+    except Exception:
+        return None

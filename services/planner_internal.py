@@ -30,6 +30,7 @@ from typing import Dict, Any, Optional, List, Tuple, Union
 from config.logging_config import get_loggers
 from config.filters_setup import load_filters
 from utils.time_util import ensure_naive_ist_index
+from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 
 logger, _ = get_loggers()
 
@@ -347,7 +348,6 @@ def _strategy_selector(
         }
 
     # Strategy 3b: PDL Break + Hold Short
-    # Strategy 3b: PDL Break + Hold Short
     if (
         (pd_levels.get("PDL") is not None)
         and (not np.isnan(pd_levels.get("PDL")))
@@ -506,6 +506,16 @@ def generate_trade_plan(
         # Focus on the latest session
         df = ensure_naive_ist_index(df)
         sess = _ensure_session_df(df)
+
+        # --- added: hard late-entry cutoff at planner level (tick/bar-ts aware) ---
+        if not sess.empty:
+            last_ts = sess.index[-1]
+            cut_md = _parse_hhmm_to_md(load_filters().get("entry_cutoff_hhmm", "14:45"))
+            if cut_md is not None:
+                bar_ts = pd.Timestamp(last_ts)
+                if _minute_of_day(bar_ts) >= cut_md:
+                    return {"eligible": False, "reason": "after_entry_cutoff"}
+        # --- /added ---
 
         # Warn if too few bars for a robust plan
         min_needed = max(20, cfg.orb_minutes // cfg.bar_minutes + 2)

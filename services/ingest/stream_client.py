@@ -163,3 +163,18 @@ class WSClient:
             connect()
         except Exception as e:
             raise RuntimeError(f"WSClient: connect() failed: {e}") from e
+        
+        # --- Compatibility wrappers for SubscriptionManager ---
+    def subscribe(self, tokens: list[int]) -> None:
+        """Compat: SubscriptionManager expects ws.subscribe(list[int])."""
+        try:
+            self.subscribe_batch(tokens)
+        except Exception as e:
+            logger.error(f"WSClient.subscribe failed: {e}")
+
+    def unsubscribe(self, tokens: list[int]) -> None:
+        """Compat: SubscriptionManager expects ws.unsubscribe(list[int])."""
+        try:
+            self.unsubscribe_batch(tokens)
+        except Exception as e:
+            logger.error(f"WSClient.unsubscribe failed: {e}")

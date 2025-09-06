@@ -1,18 +1,22 @@
+# broker/mock/mock_broker.py
+from __future__ import annotations
 import os
 import json
-from typing import List, Dict, Iterable, Optional, Union
+from typing import List, Dict, Iterable, Optional, Union, Callable
+from pathlib import Path
+from datetime import datetime, date
+import threading
+
+import pandas as pd
 
 from broker.mock.feather_tick_loader import FeatherTickLoader
 from broker.mock.feather_ticker import FeatherTicker
 from config.logging_config import get_loggers
-from pathlib import Path
-from datetime import datetime, date
-import pandas as pd
-from threading import RLock
 
 logger, _ = get_loggers()
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_BASE = ROOT / "cache" / "ohlcv_archive"
+
 
 class _Inst:
     def __init__(self, token: int, exch: str, tsym: str, instrument_type: str):
@@ -23,6 +27,15 @@ class _Inst:
 
 
 class MockBroker:
+    """
+    Dry-run broker that:
+      • Replays 1m 'ticks' via FeatherTicker
+      • Maintains a thread-safe last-price cache (symbol -> LTP) from the replay
+      • Serves get_ltp(symbol) from that cache (or from explicit kwarg 'ltp' for backward-compat)
+
+    Note: No changes required in FeatherTicker/FeatherTickLoader.
+    """
+
     def __init__(self, path_json: str = "nse_all.json", from_date: str = None, to_date: str = None):
         self._sym2inst: Dict[str, _Inst] = {}
         self._tok2sym: Dict[int, str] = {}
@@ -33,8 +46,12 @@ class MockBroker:
         # Daily cache (tz-naive), namespaced by session date
         self._daily_cache_day: Optional[str] = None      # e.g. "YYYY-MM-DD" (session key)
         self._daily_cache: Dict[str, pd.DataFrame] = {}
-        self._daily_lock = RLock()
+        self._daily_lock = threading.RLock()
         self._dry_session_date: Optional[date] = None    # slice strictly < this date
+
+        # --- live LTP cache for replay ---
+        self._lp_lock = threading.RLock()
+        self._last_price: Dict[str, float] = {}          # updated by ticker proxy
 
         self._load_instruments(path_json)
 
@@ -100,8 +117,12 @@ class MockBroker:
             logger.warning(f"MockBroker.resolve_tokens: {miss} symbols not found")
         return out
 
-    # -------------------- ticker --------------------
-    def make_ticker(self) -> FeatherTicker:
+    # -------------------- ticker (with last-price proxy) --------------------
+    def make_ticker(self):
+        """
+        Returns a FeatherTicker proxy that updates the broker's last-price cache
+        and forwards ticks/connect/close to the client's callbacks.
+        """
         if not self._from_date or not self._to_date:
             raise ValueError("MockBroker: from_date and to_date must be set")
 
@@ -114,13 +135,79 @@ class MockBroker:
         tok2sym = self.get_token_map()
         sym2tok = {v: k for k, v in tok2sym.items()}
 
-        return FeatherTicker(
+        inner = FeatherTicker(
             loader=loader,
             tok2sym=tok2sym,
             sym2tok=sym2tok,
             replay_sleep=0.01,
             use_close_as_price=True,
         )
+
+        broker_self = self  # capture for closures
+
+        class _ProxyTicker:
+            def __init__(self, inner_ticker: FeatherTicker):
+                self._inner = inner_ticker
+                self._client_on_ticks: Optional[Callable] = None
+                self._client_on_connect: Optional[Callable] = None
+                self._client_on_close: Optional[Callable] = None
+
+                # Bind our wrappers to inner so we always see ticks/connect/close
+                self._inner.on_ticks(self._mux_on_ticks)
+                self._inner.on_connect(self._mux_on_connect)
+                self._inner.on_close(self._mux_on_close)
+
+            # --- client registration (we forward to these after caching LTP) ---
+            def on_ticks(self, fn: Callable):   self._client_on_ticks = fn
+            def on_connect(self, fn: Callable): self._client_on_connect = fn
+            def on_close(self, fn: Callable):   self._client_on_close = fn
+
+            # --- mux wrappers ---
+            def _mux_on_connect(self, ws):
+                try:
+                    if callable(self._client_on_connect):
+                        self._client_on_connect(ws)
+                except Exception:
+                    logger.exception("ProxyTicker.on_connect (client) failed")
+
+            def _mux_on_close(self, ws, code, reason):
+                try:
+                    if callable(self._client_on_close):
+                        self._client_on_close(ws, code, reason)
+                except Exception:
+                    logger.exception("ProxyTicker.on_close (client) failed")
+
+            def _mux_on_ticks(self, ws, ticks: List[dict]):
+                # Update broker's last-price cache
+                try:
+                    with broker_self._lp_lock:
+                        for t in ticks or []:
+                            tok = int(t.get("instrument_token"))
+                            sym = tok2sym.get(tok)
+                            if not sym:
+                                continue
+                            lp = t.get("last_price")
+                            if lp is None:
+                                continue
+                            broker_self._last_price[sym] = float(lp)
+                except Exception:
+                    logger.exception("ProxyTicker: failed updating last price cache")
+
+                # Forward to the client's callback unchanged
+                try:
+                    if callable(self._client_on_ticks):
+                        self._client_on_ticks(ws, ticks)
+                except Exception:
+                    logger.exception("ProxyTicker.on_ticks (client) failed")
+
+            # --- pass-through API ---
+            def subscribe(self, tokens):  self._inner.subscribe(tokens)
+            def unsubscribe(self, tokens): self._inner.unsubscribe(tokens)
+            def set_mode(self, mode, tokens): self._inner.set_mode(mode, tokens)
+            def connect(self, threaded=True): self._inner.connect(threaded=threaded)
+            def close(self): self._inner.close()
+
+        return _ProxyTicker(inner)
 
     # -------------------- daily OHLCV (tz-naive) --------------------
     def _archive_key(self, symbol: str) -> str:
@@ -227,10 +314,28 @@ class MockBroker:
             return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
         row = df.iloc[-1]
         return {"PDH": float(row.high), "PDL": float(row.low), "PDC": float(row.close)}
-    
+
+    # -------------------- LTP API (now works without kwargs) --------------------
     def get_ltp(self, symbol: str, **kwargs) -> float:
-        """DRY-RUN: caller must pass last price as `ltp`."""
+        """
+        DRY-RUN:
+          - If caller passes ltp=..., return that (compat with existing code).
+          - Else, return last price seen in the replay for `symbol`.
+          - If still unavailable, raise.
+        """
         v = kwargs.get("ltp")
-        if v is None:
-            raise TypeError("MockBroker.get_ltp requires 'ltp' kwarg in dry-run")
-        return float(v)
+        if v is not None:
+            return float(v)
+        sym = str(symbol).upper()
+        with self._lp_lock:
+            if sym in self._last_price:
+                return float(self._last_price[sym])
+        raise TypeError("MockBroker.get_ltp: no cached LTP yet for symbol (and no 'ltp' kwarg provided)")
+
+    def get_ltp_batch(self, symbols: Iterable[str]) -> Dict[str, Optional[float]]:
+        out: Dict[str, Optional[float]] = {}
+        with self._lp_lock:
+            for s in symbols or []:
+                key = str(s).upper()
+                out[key] = float(self._last_price[key]) if key in self._last_price else None
+        return out

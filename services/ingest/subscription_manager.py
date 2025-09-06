@@ -143,7 +143,7 @@ class SubscriptionManager:
             for i in range(0, len(dels), self.batch_size):
                 batch = dels[i : i + self.batch_size]
                 try:
-                    self.ws.unsubscribe(batch)
+                    self.ws.unsubscribe_batch(batch)
                     for t in batch:
                         self._current.discard(t)
                 except Exception as e:
@@ -155,7 +155,7 @@ class SubscriptionManager:
             for i in range(0, len(adds), self.batch_size):
                 batch = adds[i : i + self.batch_size]
                 try:
-                    self.ws.subscribe(batch)
+                    self.ws.subscribe_batch(batch)
                     for t in batch:
                         self._current.add(t)
                 except Exception as e:
@@ -164,4 +164,4 @@ class SubscriptionManager:
         logger.debug(
             "subscription-manager applied diffs: now=%d (core=%d, hot=%d)",
             len(self._current), len(self._core), len(self._hot)
-        )
+        )     

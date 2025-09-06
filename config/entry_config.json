@@ -202,7 +202,7 @@
     "rank_exec_threshold": 0.78,
     "producer_min_interval_sec": 120,
     "screener_store_5m_max": 120,
-    "max_concurrent_positions": 5,
+    "max_concurrent_positions": 100,
     "ws_batch_size": 400,
     "ws_debounce_ms": 1500,
     "ws_flush_enabled": true,
@@ -250,5 +250,9 @@
     "energy_scanner": {
         "top_k_long": 10,
         "top_k_short": 10
-    }
+    },
+    "entry_cutoff_hhmm": "14:45",
+    "eod_squareoff_hhmm": "15:10",
+    "exit_t1_book_pct": 50.0,
+    "exit_t1_move_sl_to_be": true
 }

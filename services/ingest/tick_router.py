@@ -33,6 +33,19 @@ logger, _ = get_loggers()
 
 OnTick = Callable[[str, float, float, datetime], None]
 
+_tick_listeners: list[OnTick] = []
+
+def register_tick_listener(cb: OnTick) -> None:
+    """Main (or tests) can subscribe to raw normalized ticks."""
+    if cb not in _tick_listeners:
+        _tick_listeners.append(cb)
+
+def unregister_tick_listener(cb: OnTick) -> None:
+    try:
+        _tick_listeners.remove(cb)
+    except ValueError:
+        pass
+
 
 @dataclass
 class _Maps:
@@ -180,5 +193,11 @@ class TickRouter:
             return
         try:
             self._on_tick(sym, price, qty, ts)
+            
         except Exception as e:  # pragma: no cover
             logger.exception("tick_router: on_tick callback failed: %s", e)
+        for cb in list(_tick_listeners):
+            try:
+                cb(sym, price, qty, ts)
+            except Exception as e:
+                logger.exception(f"tick_listener error: {e}")
