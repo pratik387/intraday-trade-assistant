@@ -9,7 +9,6 @@
         "vol_z": 0.3,
         "vwap_dist": 0.3
     },
-    "intraday_cutoff_hhmm": "15:10",
     "min_bars_1m": 30,
     "min_bars_5m": 10,
     "index_ret_5m_min": 0.0005,
@@ -251,8 +250,8 @@
         "top_k_long": 10,
         "top_k_short": 10
     },
-    "entry_cutoff_hhmm": "14:45",
-    "eod_squareoff_hhmm": "15:10",
+    "entry_cutoff_hhmm": "15:00",
+    "eod_squareoff_hhmm": "15:15",
     "exit_t1_book_pct": 50.0,
     "exit_t1_move_sl_to_be": true
 }

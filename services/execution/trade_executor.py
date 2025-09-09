@@ -9,7 +9,8 @@ import pandas as pd
 from config.logging_config import get_loggers
 from config.filters_setup import load_filters
 from services.orders.order_queue import OrderQueue
-from utils.time_util import _now_naive_ist, _minute_of_day, _parse_hhmm_to_md
+from utils.time_util import _minute_of_day, _parse_hhmm_to_md
+from diagnostics.diag_event_log import diag_event_log
 
 logger, trade_logger = get_loggers()
 
@@ -254,9 +255,6 @@ class TradeExecutor:
         else:  # LIMIT
             px = float(price_hint) if price_hint is not None else px
 
-        if ts is None:
-            ts = _now_naive_ist()
-
         return px, ts
 
     def _update_risk_on_fill(self, sym: str, side: str, qty: int, price: float) -> None:
@@ -292,35 +290,42 @@ class TradeExecutor:
                     _px_now, ts_now = get_ts(sym)
                 except Exception:
                     ts_now = None
-            if ts_now is None:
-                ts_now = _now_naive_ist()
 
-            # --- HARD GATES: Entry cutoff + EOD ---
-            try:
-                md = _minute_of_day(pd.Timestamp(ts_now))
-                if self._entry_cutoff_md is not None and md >= int(self._entry_cutoff_md):
-                    logger.info(f"executor.block {sym} reason=after_entry_cutoff_{self.entry_cutoff_hhmm}")
-                    return
-                if self._eod_md is not None and md >= int(self._eod_md):
-                    logger.info(f"executor.block {sym} reason=after_eod_{self.eod_hhmm}")
-                    return
-            except Exception:
-                md_now = _minute_of_day(_now_naive_ist())
-                if self._entry_cutoff_md is not None and md_now >= int(self._entry_cutoff_md):
-                    logger.info(f"executor.block {sym} reason=after_entry_cutoff_{self.entry_cutoff_hhmm}")
-                    return
-                if self._eod_md is not None and md_now >= int(self._eod_md):
-                    logger.info(f"executor.block {sym} reason=after_eod_{self.eod_hhmm}")
-                    return
+            # If no tick timestamp yet, do not place this order (avoid wall-clock fallbacks)
+            if ts_now is None:
+                logger.info(f"executor.block {sym} reason=no_tick_ts_for_cutoff")
+                return
+
+            # Hard gates based on the tick timestamp
+            md = _minute_of_day(pd.Timestamp(ts_now))
+            if self._entry_cutoff_md is not None and md >= int(self._entry_cutoff_md):
+                logger.info(f"executor.block {sym} reason=after_entry_cutoff_{self.entry_cutoff_hhmm}")
+                return
+            if self._eod_md is not None and md >= int(self._eod_md):
+                logger.info(f"executor.block {sym} reason=after_eod_{self.eod_hhmm}")
+                return
 
             # --- Place order (fill price + tick ts) ---
             fill_price, entry_ts = self._place_order(sym, side, qty, price_hint)
+            
             if fill_price is None:
                 return
+            
+            try:
+                dec_ts_raw = (plan.get("decision_ts") or None)
+                dec_ts = pd.Timestamp(dec_ts_raw) if dec_ts_raw else None
+                if (entry_ts is not None) and (dec_ts is not None) and (pd.Timestamp(entry_ts) < dec_ts):
+                    entry_ts = dec_ts
+            except Exception:
+                pass
 
             # --- Stamp entry time on plan ---
-            plan["entry_ts"] = str(pd.Timestamp(entry_ts))
-            plan["entry_epoch_ms"] = int(pd.Timestamp(entry_ts).value // 1_000_000)
+            if entry_ts is not None:
+                plan["entry_ts"] = str(pd.Timestamp(entry_ts))
+                try:
+                    plan["entry_epoch_ms"] = int(pd.Timestamp(entry_ts).value // 1_000_000)
+                except Exception:
+                    pass
 
             # --- Sanitize exits at entry (prevents instant-exit anomalies) ---
             try:
@@ -329,13 +334,91 @@ class TradeExecutor:
                 logger.warning(f"executor.sanitize_exits error sym={sym}: {e}")
 
             # --- Persist position & log entry ---
-            if self.positions is not None:
-                try:
-                    self.positions.upsert(Position(symbol=sym, side=side, qty=qty, avg_price=float(fill_price), plan=plan))
-                except Exception as e:
-                    logger.warning(f"executor: positions.upsert failed sym={sym}: {e}")
+            scaled_in = False
+            prev = None
+            try:
+                prev = self.positions.get(sym)
+            except Exception:
+                prev = None
 
-            trade_logger.info(f"ENTRY | {sym} | Side: {side} | Qty: {qty} | Price: ₹{float(fill_price):.2f}")
+            # If a position already exists for this symbol, reuse its trade_id
+            if prev and getattr(prev, "plan", None) and prev.plan.get("trade_id"):
+                plan["trade_id"] = prev.plan["trade_id"]
+
+            # Accumulate qty and recompute weighted avg price on scale-in
+            if prev and getattr(prev, "qty", 0) > 0 and prev.side == side:
+                scaled_in = True
+                prev_qty = int(prev.qty)
+                prev_avg = float(prev.avg_price)
+                new_qty = prev_qty + int(qty)
+                new_avg = ((prev_avg * prev_qty) + (float(fill_price) * int(qty))) / float(new_qty)
+
+                merged_plan = dict(prev.plan or {})
+                merged_plan.update(plan)  # keep existing trade_id, enrich latest stamps
+
+                pos_obj = Position(
+                    symbol=sym,
+                    side=side,
+                    qty=new_qty,
+                    avg_price=float(new_avg),
+                    plan=merged_plan,
+                )
+
+                self.positions.upsert(pos_obj)
+
+                # trade log: explicit scale-in + new avg
+                trade_logger.info(
+                    f"SCALE-IN | {sym} | +{int(qty)} @ ₹{float(fill_price):.2f} → qty {prev_qty}->{new_qty}, avg ₹{prev_avg:.2f}->{new_avg:.2f}"
+                )
+
+                pos_after_qty = new_qty
+                pos_after_avg = new_avg
+            else:
+                pos_obj = Position(
+                    symbol=sym,
+                    side=side,
+                    qty=int(qty),
+                    avg_price=float(fill_price),
+                    plan=plan,
+                )
+                self.positions.upsert(pos_obj)
+
+                trade_logger.info(
+                    f"ENTRY | {sym} | {side} | qty {int(qty)} @ ₹{float(fill_price):.2f}"
+                )
+
+                pos_after_qty = int(qty)
+                pos_after_avg = float(fill_price)
+
+            # diagnostics: include a position-after snapshot alongside the fill
+            try:
+                if entry_ts is not None:
+                    plan["entry_ts"] = str(pd.Timestamp(entry_ts))
+                    try:
+                        plan["entry_epoch_ms"] = int(pd.Timestamp(entry_ts).value // 1_000_000)
+                    except Exception:
+                        pass
+
+                diag_event_log.log_entry_fill(
+                    symbol=sym,
+                    plan=plan,                     # unified trade_id when scaling in
+                    side=side,
+                    qty=int(qty),
+                    price=float(fill_price),
+                    entry_ts=entry_ts,
+                    order_meta={
+                        "mode": self.order_mode,
+                        "product": self.order_product,
+                        "variety": self.order_variety,
+                        "scaled_in": bool(scaled_in),
+                        "pos_after_qty": int(pos_after_qty),
+                        "pos_after_avg": float(pos_after_avg),
+                    },
+                )
+            except Exception as _e:
+                logger.warning("diag_event_log.log_entry_fill failed sym=%s err=%s", sym, _e)
+
+
 
             # --- Update risk ---
             self._update_risk_on_fill(sym, side, qty, float(fill_price))

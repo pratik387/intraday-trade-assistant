@@ -29,7 +29,8 @@ from services.orders.order_queue import OrderQueue
 from services.screener_live import ScreenerLive
 from services.execution.trade_executor import TradeExecutor, RiskState, Position
 from services.execution.exit_executor import ExitExecutor
-from services.ingest.tick_router import register_tick_listener  # <- tap the tick stream
+from services.ingest.tick_router import register_tick_listener  
+from diagnostics.diagnostics_report_builder import build_csv_from_events
 
 # Live adapters
 from broker.kite.kite_client import KiteClient      # WebSocket client
@@ -199,11 +200,11 @@ def main() -> int:
     logger.info("exit-executor: started")
 
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener)
+    _run_until_eod(screener, exit_exec)
     return 0
 
 
-def _run_until_eod(screener: ScreenerLive, poll_sec: float = 0.2) -> None:
+def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, poll_sec: float = 0.2) -> None:
     logger.info("session start")
     stop = threading.Event()
 
@@ -223,9 +224,22 @@ def _run_until_eod(screener: ScreenerLive, poll_sec: float = 0.2) -> None:
         logger.info("keyboard interrupt — stopping")
     finally:
         try:
+            exit_exec.square_off_all_open_positions()
+        except Exception as e:
+            logger.warning("final EOD sweep failed: %s", e)
+        
+        try:
             screener.stop()
         except Exception as e:
             logger.warning("screener.stop failed: %s", e)
+            
+        try:
+            csv_path = build_csv_from_events()
+            logger.info("Diagnostics CSV written: %s", csv_path)
+        except Exception as e:
+            logger.warning("Failed to build diagnostics CSV: %s", e)
+
+
     logger.info("session end (EOD)")
 
 

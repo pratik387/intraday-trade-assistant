@@ -10,6 +10,8 @@ import pandas as pd  # for Timestamp typing only
 from config.logging_config import get_loggers
 from config.filters_setup import load_filters
 from utils.time_util import _to_naive_ist, _now_naive_ist
+from diagnostics.diag_event_log import diag_event_log
+import uuid
 
 # Both loggers (as requested)
 logger, trade_logger = get_loggers()
@@ -144,11 +146,9 @@ class ExitExecutor:
             f"t1_pct={self.t1_book_pct}% sl2be={self.t1_move_sl_to_be}"
         )
 
-        # per-symbol runtime state
         self._peak_price: Dict[str, float] = {}
         self._trail_price: Dict[str, float] = {}
-
-    # ------------------- loop -------------------
+        self._closing_state = {} 
 
     def run_once(self) -> None:
         open_pos = self.positions.list_open()
@@ -159,7 +159,6 @@ class ExitExecutor:
             try:
                 px, ts = self._get_px_ts(sym)
                 if px is None or ts is None:
-                    # Need both price and tick timestamp (for EOD, time-stop)
                     continue
 
                 # 0) EOD square-off by tick timestamp
@@ -186,7 +185,6 @@ class ExitExecutor:
                 # 2b) T1 (one-time partial)
                 if (not t1_done) and self._target_hit(pos.side, float(px), t1):
                     self._partial_exit_t1(sym, pos, float(px), ts)
-                    # After partial, do not evaluate further rules this tick
                     continue
 
                 # 3) Dynamic trail (tighten-only)
@@ -251,7 +249,6 @@ class ExitExecutor:
     def _get_plan_sl(self, plan: Dict[str, Any]) -> float:
         sl = plan.get("hard_sl", plan.get("stop"))
         try:
-            # support nested {"stop":{"hard":...}}
             if isinstance(sl, dict) and "hard" in sl:
                 return float(sl["hard"])
             return float(sl) if sl is not None else float("nan")
@@ -414,6 +411,15 @@ class ExitExecutor:
 
     def _place_and_log_exit(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> None:
         try:
+            cur = self.positions.list_open().get(sym)
+            cur_qty = int(getattr(cur, "qty", 0) or 0) if cur is not None else int(pos.qty)
+        except Exception:
+            cur_qty = int(pos.qty)
+        qty_exit = int(max(0, min(int(qty_exit), cur_qty)))
+        if qty_exit <= 0:
+            return
+
+        try:
             exit_side = "SELL" if pos.side.upper() == "BUY" else "BUY"
             args = {
                 "symbol": sym,
@@ -432,36 +438,65 @@ class ExitExecutor:
         trade_logger.info(
             f"EXIT | {sym} | Qty: {qty_exit} | Entry: ₹{entry_price:.2f} | Exit: ₹{exit_px:.2f} | PnL: ₹{pnl:.2f} {reason}"
         )
+        try:
+            diag_event_log.log_exit(
+                symbol=sym,
+                plan=pos.plan,          # same plan with trade_id & entry stamps
+                reason=str(reason),     # e.g., hard_sl, t1_partial, target_t2, trail_stop(...), or_kill, time_stop_.., eod_squareoff_HHMM
+                exit_price=float(exit_px),
+                exit_qty=int(qty_exit),
+                ts=ts,                  # tick-ts (time-naive)
+            )
+        except Exception as _e:
+            logger.warning("diag_event_log.log_exit failed sym=%s err=%s", sym, _e)
         logger.info(f"exit_executor: {sym} qty={qty_exit} reason={reason}")
 
     def _exit(self, sym: str, pos: Position, exit_px: float, ts: Optional[pd.Timestamp], reason: str) -> None:
-        # Full close
-        self._place_and_log_exit(sym, pos, exit_px, int(pos.qty), ts, reason)
-        # Update store & cleanup
+        # re-read current qty from store just before the full exit
+        try:
+            cur = self.positions.list_open().get(sym)
+            qty_now = int(getattr(cur, "qty", 0) or 0) if cur is not None else int(pos.qty)
+        except Exception:
+            qty_now = int(pos.qty)
+
+        if qty_now <= 0:
+            return
+
+        self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
         self.positions.close(sym)
         try:
             st = pos.plan.get("_state") or {}
-            st.pop("t1_done", None)
-            st.pop("sl_moved_to_be", None)
+            st.pop("t1_done", None); st.pop("sl_moved_to_be", None)
             pos.plan["_state"] = st
         except Exception:
             pass
-        self._peak_price.pop(sym, None)
-        self._trail_price.pop(sym, None)
+        self._peak_price.pop(sym, None); self._trail_price.pop(sym, None)
+
+        rem = 0
+        try:
+            cur = self.positions.list_open().get(sym)
+            rem = int(getattr(cur, "qty", 0) or 0)
+        except Exception:
+            pass
+        trade_logger.info(f"EXIT | {sym} | qty {qty_now} @ ₹{float(exit_px):.2f} → remaining {rem}")
 
     def _partial_exit_t1(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
-        # book configurable percent at T1
         pct = max(1.0, float(getattr(self, "t1_book_pct", 50.0)))
-        qty_exit = int(max(1, round(int(pos.qty) * (pct / 100.0))))
-        qty_exit = min(qty_exit, int(pos.qty))
+        qty = int(pos.qty)
 
-        # place partial
-        self._place_and_log_exit(sym, pos, px, qty_exit, ts, "t1_partial")
+        qty_exit = int(max(1, round(qty * (pct / 100.0))))
+        qty_exit = min(qty_exit, qty)
 
-        # reduce in store
-        self.positions.reduce(sym, qty_exit)
+        if qty_exit >= qty:
+            if qty > 1:
+                qty_exit = qty - 1
+            else:
+                self._exit(sym, pos, float(px), ts, "target_t1_full")
+                return
 
-        # mark state + move SL->BE once
+        self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
+        self.positions.reduce(sym, int(qty_exit))
+
         st = pos.plan.get("_state") or {}
         st["t1_done"] = True
         if getattr(self, "t1_move_sl_to_be", True) and not st.get("sl_moved_to_be"):
@@ -475,5 +510,78 @@ class ExitExecutor:
             except Exception:
                 pass
         pos.plan["_state"] = st
+
+        if self.eod_md is not None and ts is not None:
+            try:
+                if _minute_of_day(ts) >= int(self.eod_md):
+                    cur = self.positions.list_open().get(sym)
+                    if cur and int(cur.qty) > 0:
+                        self._exit(sym, cur, float(px), ts, f"eod_squareoff_{self.eod_hhmm}")
+                        return
+            except Exception:
+                pass
+
+    def _fabricate_eod_ts(self, pos: Position) -> pd.Timestamp:
+        try:
+            ts_src = pos.plan.get("entry_ts") or pos.plan.get("decision_ts")
+            d = pd.Timestamp(ts_src).date() if ts_src else None
+        except Exception:
+            d = None
+        try:
+            hh, mm = self.eod_hhmm.split(":")
+            hh = int(hh); mm = int(mm)
+        except Exception:
+            hh = 15; mm = 10
+        if d is not None:
+            return pd.Timestamp(f"{d} {hh:02d}:{mm:02d}:00")
+        return _now_naive_ist()
+
+    def square_off_all_open_positions(self, reason_prefix: Optional[str] = None) -> None:
+        reason = reason_prefix or f"eod_squareoff_{self.eod_hhmm}"
+        try:
+            open_pos = self.positions.list_open()
+        except Exception:
+            open_pos = {}
+
+        for sym, pos in list(open_pos.items()):
+            try:
+                ltp, ts = (self.get_ltp_ts(sym) if callable(self.get_ltp_ts) else (None, None))
+                if ltp is None:
+                    try:
+                        ltp = float(self.broker.get_ltp(sym))
+                    except Exception:
+                        ltp = None
+                use_px = float(ltp) if ltp is not None else float(pos.avg_price)
+                use_reason = reason if ltp is not None else reason + "_mkt_noltp"
+                ts_obj = pd.Timestamp(ts) if ts is not None else self._fabricate_eod_ts(pos)
+                self._flatten_to_closed(sym, pos, use_px, ts_obj, use_reason)
+            except Exception as e:
+                logger.warning("square_off_all_open_positions: sym=%s err=%s", sym, e)
+                
+    def _is_open(self, sym: str) -> bool:
+        try:
+            open_map = self.positions.list_open() or {}
+            return sym in open_map
+        except Exception:
+            try:
+                pos = self.positions.get(sym)
+            except Exception:
+                pos = None
+            return bool(pos is not None and getattr(pos, "qty", 0) > 0)
+
+    def _flatten_to_closed(self, sym: str, pos, px: float, ts, reason: str) -> None:
+        intent_id = uuid.uuid4().hex[:8]
+        self._closing_state[sym] = {"state": "closing", "intent_id": intent_id, "reason": reason}
+        attempts = 0
+        while self._is_open(sym):
+            self._exit(sym, pos, float(px), ts, reason if attempts == 0 else f"{reason}_retry{attempts}")
+            attempts += 1
+            if attempts >= 12:
+                break
+            try:
+                pos = self.positions.get(sym) or pos
+            except Exception:
+                pass
+        self._closing_state[sym] = {"state": "closed", "intent_id": intent_id, "reason": reason}
 
 # (end)

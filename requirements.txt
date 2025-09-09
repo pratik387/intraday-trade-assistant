@@ -16,3 +16,4 @@ scipy
 pytest
 pytest-asyncio
 pyarrow
+portalocker

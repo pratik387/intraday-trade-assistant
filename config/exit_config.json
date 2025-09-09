@@ -1,7 +1,6 @@
 {
   "hard_sl_bps": 70,
   "trail_after_t1": true,
-  "eod_squareoff_hhmm": "1512",
   "score_drop_exit": { "enabled": true, "threshold": 0.15 },
   "sl_atr_mult": 1.25,
   "sl_below_swing_ticks": 0.0,

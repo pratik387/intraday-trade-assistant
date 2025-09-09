@@ -1,0 +1,108 @@
+# services/diagnostics/report_view.yaml
+# Config-driven report view for materializing a single-sheet trade report
+# from the JSONL events produced by diag_event_log.py.
+#
+# Used by a view builder (e.g., the diag_view_builder.py you already have / plan to add):
+#   build_view(events_path, "services/diagnostics/report_view.yaml", out_csv="...csv")
+#
+# You can add/remove/reorder columns here WITHOUT changing logger code.
+
+exits:
+  # Max number of exits to flatten into columns e1_* ... eN_*
+  max: 6
+
+columns:
+  # ---- identity / timing ----
+  - { name: run_id,            path: id.run_id }
+  - { name: trade_id,          path: id.trade_id }
+  - { name: ts,                path: id.ts }
+  - { name: symbol,            path: id.symbol }
+
+  # ---- decision / gate ----
+  - { name: setup_type,        path: decision.setup_type }
+  - { name: regime,            path: decision.regime }
+  # Prefer to store reasons upstream as a single string with ';' separator.
+  - { name: reasons,           path: decision.reasons }
+  - { name: size_mult,         path: decision.size_mult }
+  - { name: min_hold_bars,     path: decision.min_hold_bars }
+
+  # ---- 5m snapshot (BarBuilder) ----
+  - { name: open5,             path: bar5.open }
+  - { name: high5,             path: bar5.high }
+  - { name: low5,              path: bar5.low }
+  - { name: close5,            path: bar5.close }
+  - { name: volume5,           path: bar5.volume }
+  - { name: vwap5,             path: bar5.vwap }
+  - { name: adx5,              path: bar5.adx }
+  - { name: bb_width_proxy,    path: bar5.bb_width_proxy }
+
+  # ---- ranker / energy features (exact dict you fed the Ranker) ----
+  - { name: volume_ratio,      path: features.volume_ratio }
+  - { name: rsi,               path: features.rsi }
+  - { name: rsi_slope,         path: features.rsi_slope }
+  - { name: adx,               path: features.adx }
+  - { name: adx_slope,         path: features.adx_slope }
+  - { name: above_vwap,        path: features.above_vwap }
+  - { name: dist_from_level_bpct, path: features.dist_from_level_bpct }
+  - { name: squeeze_pctile,    path: features.squeeze_pctile }
+  - { name: acceptance_ok,     path: features.acceptance_ok }
+  - { name: bias,              path: features.bias }
+  - { name: ret_1,             path: features.ret_1 }
+  - { name: ret_3,             path: features.ret_3 }
+  - { name: vol_z20,           path: features.vol_z20 }
+  - { name: dist_to_vwap_pct,  path: features.dist_to_vwap_pct }
+  - { name: rank_score,        path: features.rank_score }
+  - { name: ranker_intraday_json, path: features.ranker_intraday_json }
+
+  # ---- optional: index and news contexts ----
+  - { name: index_ret_1,       path: index.ret_1 }
+  - { name: index_vol_mult_24, path: index.vol_mult_24 }
+  - { name: index_adx,         path: index.adx }
+  - { name: news_vol_z,        path: news.vol_z }
+  - { name: news_ret_z,        path: news.ret_z }
+  - { name: news_body_atr_ratio, path: news.body_atr_ratio }
+
+  # ---- time context ----
+  - { name: minute_of_day,     path: timectx.minute_of_day }
+  - { name: day_of_week,       path: timectx.day_of_week }
+  - { name: counter_trend,     path: timectx.counter_trend }
+
+  # ---- planner snapshot (no recompute; stored exactly as planned) ----
+  - { name: plan_bias,         path: plan.bias }
+  - { name: plan_strategy,     path: plan.strategy }
+  - { name: plan_price_ref,    path: plan.price }
+  - { name: entry_zone_low,    path: plan.entry.zone[0] }
+  - { name: entry_zone_high,   path: plan.entry.zone[1] }
+  - { name: hard_sl,           path: plan.hard_sl }
+  - { name: t1,                path: plan.targets[0].level }
+  - { name: t1_rr,             path: plan.targets[0].rr }
+  - { name: t1_action,         path: plan.targets[0].action }
+  - { name: t2,                path: plan.targets[1].level }
+  - { name: t2_rr,             path: plan.targets[1].rr }
+  - { name: t2_action,         path: plan.targets[1].action }
+  - { name: plan_qty,          path: plan.sizing.qty }
+  - { name: plan_notional,     path: plan.sizing.notional }
+  - { name: risk_per_share,    path: plan.sizing.risk_per_share }
+  - { name: risk_rupees,       path: plan.sizing.risk_rupees }
+  - { name: trail_points,      path: plan.trail.points }
+  - { name: trail_ticks,       path: plan.trail.ticks }
+  - { name: trail_tick_size,   path: plan.trail.tick_size }
+  - { name: trail_atr_cached,  path: plan.trail.atr_cached }
+  - { name: trail_atr_mult,    path: plan.trail.atr_mult }
+  # ---- levels ----
+  - { name: PDH, path: plan.levels.PDH }
+  - { name: PDL, path: plan.levels.PDL }
+  - { name: PDC, path: plan.levels.PDC }
+  - { name: ORH, path: plan.levels.ORH }
+  - { name: ORL, path: plan.levels.ORL }
+
+  # ---- entry fill (execution) ----
+  - { name: side,              path: entry.side }
+  - { name: qty,               path: entry.qty }
+  - { name: entry_price,       path: entry.price }
+  - { name: entry_time,        path: id.entry_ts }
+
+  - { name: pos_after_qty_entry, path: order.pos_after_qty }
+  - { name: pos_after_avg_entry, path: order.pos_after_avg }
+  - { name: scaled_in,           path: order.scaled_in }
+

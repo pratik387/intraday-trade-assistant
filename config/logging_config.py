@@ -28,7 +28,7 @@ def get_loggers():
     # Agent Logger
     _agent_logger = logging.getLogger("agent")
     if not _agent_logger.hasHandlers():
-        _agent_logger.setLevel(logging.DEBUG)
+        _agent_logger.setLevel(logging.INFO)
         agent_file = logging.FileHandler(log_dir / "agent.log",  encoding="utf-8")
         agent_file.setFormatter(formatter)
         _agent_logger.addHandler(agent_file)
@@ -36,7 +36,7 @@ def get_loggers():
     # Trade Logger
     _trade_logger = logging.getLogger("trade")
     if not _trade_logger.hasHandlers():
-        _trade_logger.setLevel(logging.DEBUG)
+        _trade_logger.setLevel(logging.INFO)
         trade_file = logging.FileHandler(log_dir / "trade_logs.log",  encoding="utf-8")
         trade_file.setFormatter(formatter)
         _trade_logger.addHandler(trade_file)

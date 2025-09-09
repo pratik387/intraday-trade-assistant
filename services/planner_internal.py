@@ -31,6 +31,7 @@ from config.logging_config import get_loggers
 from config.filters_setup import load_filters
 from utils.time_util import ensure_naive_ist_index
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
+import datetime
 
 logger, _ = get_loggers()
 
@@ -111,30 +112,43 @@ def _adx(df: pd.DataFrame, period: int) -> pd.Series:
     adx = dx.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
     return adx.bfill()
 
-def _prev_day_levels(daily_df: Optional[pd.DataFrame]) -> Dict[str, float]:
-    """Return PDH/PDL/PDC from the previous session (NaN if unavailable)."""
+def _prev_day_levels(
+    daily_df: Optional[pd.DataFrame],
+    session_date: Optional[datetime.date],
+) -> Dict[str, float]:
+    """Return PDH/PDL/PDC from the last completed trading day strictly before session_date."""
     try:
         if daily_df is None or daily_df.empty:
-            return {"PDH": np.nan, "PDL": np.nan, "PDC": np.nan}
+            return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
         d = daily_df.copy()
         if "date" in d.columns:
             d["date"] = pd.to_datetime(d["date"])
-            d = d.sort_values("date")
-        elif isinstance(d.index, pd.DatetimeIndex):
-            d = d.sort_index()
+            d = d.sort_values("date").set_index("date")
         else:
             d.index = pd.to_datetime(d.index)
             d = d.sort_index()
-        if len(d) < 2:
-            return {"PDH": np.nan, "PDL": np.nan, "PDC": np.nan}
-        prev = d.iloc[-1:]
-        pdh = float(prev["high"].iloc[0])
-        pdl = float(prev["low"].iloc[0])
-        pdc = float(prev["close"].iloc[0])
-        return {"PDH": pdh, "PDL": pdl, "PDC": pdc}
-    except Exception as e:
-        logger.exception(f"planner.prev_day_levels error: {e}")
-        return {"PDH": np.nan, "PDL": np.nan, "PDC": np.nan}
+
+        if session_date is not None:
+            d = d[d.index.date < session_date]
+
+        if "volume" in d.columns:
+            d = d[d["volume"].fillna(0) > 0]
+        d = d[d["high"].notna() & d["low"].notna()]
+
+        if d.empty:
+            return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
+
+        prev = d.iloc[-1]
+        return {
+            "PDH": float(prev["high"]),
+            "PDL": float(prev["low"]),
+            "PDC": float(prev.get("close", float("nan"))),
+        }
+    except Exception:
+        return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
+
+
+
 
 def _choppiness_index(df_sess: pd.DataFrame, lookback: int) -> float:
     """CHOP = 100 * log10(sum(TR) / (max(H)-min(L))) / log10(n)"""
@@ -542,7 +556,10 @@ def generate_trade_plan(
         # Context
         atr = calculate_atr(df.tail(200), period=cfg.atr_period)
         orh, orl, or_end = _opening_range(sess, cfg.orb_minutes)
-        pd_levels = _prev_day_levels(daily_df)
+        session_date = sess.index[-1].date() if (sess is not None and not sess.empty) else None
+        pd_levels = _prev_day_levels(daily_df, session_date)
+
+
 
         # Gap vs prev close (contextual)
         gap_pct = np.nan
