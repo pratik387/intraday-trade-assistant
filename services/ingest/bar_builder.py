@@ -121,6 +121,10 @@ class BarBuilder:
         # ADX state (minimal, incremental)
         self._adx_state: Dict[str, _ADXState] = {}
         self._adx_alpha: float = 1.0 / 14.0  # Wilder α for ADX(14)
+    
+        # Additional handlers for trigger system
+        self._additional_1m_handlers: List[Callable[[str, Bar], None]] = []
+        self._additional_5m_handlers: List[Callable[[str, Bar], None]] = []
 
     # ----------------------------- Public API -----------------------------
     def on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
@@ -223,6 +227,12 @@ class BarBuilder:
         except Exception as e:
             logger.exception("BarBuilder: on_1m_close callback failed: %s", e)
             pass
+        
+        for handler in self._additional_1m_handlers:
+            try:
+                handler(symbol, ser)
+            except Exception as e:
+                logger.exception("BarBuilder: additional 1m handler failed: %s", e)
 
         # Try rolling into 5m
         self._attempt_close_5m(symbol, ser.name)
@@ -272,6 +282,12 @@ class BarBuilder:
         except Exception as e:
             logger.exception("BarBuilder: on_5m_close callback failed: %s", e)
             pass
+        
+        for handler in self._additional_5m_handlers:
+            try:
+                handler(symbol, bar5)
+            except Exception as e:
+                logger.exception("BarBuilder: additional 5m handler failed: %s", e)
 
     # ------------------------ Incremental ADX(14) -------------------------
     def _update_adx_5m(self, symbol: str, high: float, low: float, close: float) -> float:
@@ -325,3 +341,37 @@ class BarBuilder:
         st.prev_low = low
         st.prev_close = close
         return float(cur_adx)
+    
+    def get_df_1m_tail(self, symbol: str, n: int) -> pd.DataFrame:
+        """Get last n 1-minute bars for a symbol"""
+        with self._lock:
+            df = self._bars_1m.get(symbol)
+            if df is None or df.empty:
+                return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "vwap"])
+            return df.tail(int(n)).copy()
+
+    def get_df_5m_tail(self, symbol: str, n: int) -> pd.DataFrame:
+        """Get last n 5-minute bars for a symbol"""
+        with self._lock:
+            df = self._bars_5m.get(symbol)
+            if df is None or df.empty:
+                return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "vwap", "bb_width_proxy", "adx"])
+            return df.tail(int(n)).copy()
+
+    def get_current_vwap(self, symbol: str) -> float:
+        """Get current VWAP for a symbol"""
+        with self._lock:
+            df = self._bars_1m.get(symbol)
+            if df is None or df.empty:
+                return 0.0
+            return float(df.iloc[-1].get("vwap", 0.0))
+        
+    def register_1m_handler(self, handler: Callable[[str, Bar], None]) -> None:
+        """Register additional 1m bar handler (for trigger system)"""
+        if handler not in self._additional_1m_handlers:
+            self._additional_1m_handlers.append(handler)
+
+    def register_5m_handler(self, handler: Callable[[str, Bar], None]) -> None:
+        """Register additional 5m bar handler"""
+        if handler not in self._additional_5m_handlers:
+            self._additional_5m_handlers.append(handler)

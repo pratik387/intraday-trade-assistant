@@ -31,9 +31,34 @@ class RiskState:
     gross_exposure_rupees: float = 0.0
     sector_exposure: Dict[str, float] = field(default_factory=dict)
     correlation_buckets: Dict[str, List[str]] = field(default_factory=dict)
-
+    
     def can_open_more(self) -> bool:
-        return len(self.open_positions) < int(self.max_concurrent)
+        """Check if we can open more positions based on risk limits"""
+        return len(self.open_positions) < self.max_concurrent
+
+    def get_position_count(self) -> int:
+        """Get current number of open positions"""
+        return len(self.open_positions)
+
+    def get_symbol_exposure(self, symbol: str) -> float:
+        """Get current exposure for a specific symbol"""
+        pos = self.open_positions.get(symbol)
+        if pos:
+            return pos.get("qty", 0) * pos.get("avg_price", 0)
+        return 0.0
+
+    def update_position(self, symbol: str, side: str, qty: int, avg_price: float) -> None:
+        """Update position in risk state"""
+        self.open_positions[symbol] = {
+            "side": side,
+            "qty": qty, 
+            "avg_price": avg_price
+        }
+        # Recalculate gross exposure
+        self.gross_exposure_rupees = sum(
+            pos["qty"] * pos["avg_price"] 
+            for pos in self.open_positions.values()
+        )
 
 
 class TradeExecutor:
@@ -308,6 +333,12 @@ class TradeExecutor:
             # --- Place order (fill price + tick ts) ---
             fill_price, entry_ts = self._place_order(sym, side, qty, price_hint)
             
+            # Check slippage after getting fill price
+            ref = float(plan.get("reference") or plan.get("entry", {}).get("reference") or 0.0)
+            if ref and fill_price and (not self._slippage_ok(side, ref, float(fill_price))):
+                logger.info("ENTRY_SKIP %s slip_bps>max (ref=%.2f ltp=%.2f)", sym, ref, float(fill_price))
+                return
+            
             if fill_price is None:
                 return
             
@@ -433,3 +464,16 @@ class TradeExecutor:
                 time.sleep(max(0.0, sleep_ms / 1000.0))
         except KeyboardInterrupt:
             logger.info("executor.stop (KeyboardInterrupt)")
+            
+    def _slippage_ok(self, side: str, ref_px: float, ltp: float) -> bool:
+        try:
+            max_bps = float(self.cfg.get("execution_max_slip_bps", 20.0))
+            if ref_px and ltp and max_bps > 0:
+                slip_bps = abs((ltp - ref_px) / ref_px) * 10000.0
+                return slip_bps <= max_bps
+            return True
+        except Exception:
+            return True
+        
+
+

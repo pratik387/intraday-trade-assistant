@@ -118,6 +118,17 @@ def _safe_float(x, default: float = 0.0) -> float:
         return float(x)
     except Exception:
         return default
+    
+def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    s = series.astype(float)
+    delta = s.diff()
+    gain = delta.clip(lower=0.0)
+    loss = (-delta).clip(lower=0.0)
+    avg_gain = gain.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0.0, pd.NA)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
 
 # ---------------------------- TradeDecisionGate --------------------------------
@@ -184,6 +195,20 @@ class TradeDecisionGate:
         else:
             adx_5m = 0.0
             vol_mult_5m = 1.0
+            
+        try:
+            if df5m_tail is not None and not df5m_tail.empty:
+                c = df5m_tail["close"].astype(float)
+                rsi14_last = float(_rsi(c, 14).iloc[-1])
+                if best.setup_type in ("breakout_long", "vwap_reclaim_long", "squeeze_release_long") and rsi14_last > 65.0:
+                    reasons.append(f"rsi_block_long:{rsi14_last:.1f}>65")
+                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                if best.setup_type in ("breakout_short", "vwap_lose_short", "squeeze_release_short") and rsi14_last < 35.0:
+                    reasons.append(f"rsi_block_short:{rsi14_last:.1f}<35")
+                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+        except Exception:
+            # RSI is a guardrail; if it fails, do not block the trade solely on this.
+            pass
 
         if not self.regime_gate.allow_setup(best.setup_type, regime, strength, adx_5m, vol_mult_5m):
             reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f}]")

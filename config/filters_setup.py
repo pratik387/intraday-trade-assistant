@@ -6,8 +6,7 @@ from config.logging_config import get_loggers
 logger, trade_logger = get_loggers()
 
 ROOT = Path(__file__).resolve().parent
-ENTRY_CONFIG_PATH = ROOT / "entry_config.json"
-EXIT_CONFIG_PATH  = ROOT / "exit_config.json"
+ENTRY_CONFIG_PATH = ROOT / "configuration.json"
 
 _CFG = None  # memoized merged config
 
@@ -39,14 +38,11 @@ def load_filters(force_reload: bool = False) -> dict:
         return _CFG
 
     entry = _load_json(ENTRY_CONFIG_PATH, required=True)
-    exit_ = _load_json(EXIT_CONFIG_PATH, required=False)  # optional overlay
 
     cfg = {}
     cfg.update(entry)
-    if exit_:
-        cfg.update(exit_)
 
-    logger.info(f"[config] loaded: entry={'yes' if entry else 'no'}, exit={'yes' if exit_ else 'no'}, keys={len(cfg)}")
+    logger.info(f"[config] loaded: entry={'yes' if entry else 'no'}, keys={len(cfg)}")
     _CFG = cfg
     return cfg
 

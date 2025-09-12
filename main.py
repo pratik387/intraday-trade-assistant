@@ -3,9 +3,9 @@ from __future__ import annotations
 """
 Single entrypoint that wires:
   - ScreenerLive (producer)
-  - TradeExecutor (entries)
+  - TriggerAwareExecutor (trigger-based entries)
   - ExitExecutor (exits, LTP-only)
-  - Shared PositionStore via TradeExecutor
+  - Shared PositionStore via TriggerAwareExecutor
   - Broker (live or dry-run)
 
 Dry-run:
@@ -27,10 +27,11 @@ from config.filters_setup import load_filters
 
 from services.orders.order_queue import OrderQueue
 from services.screener_live import ScreenerLive
-from services.execution.trade_executor import TradeExecutor, RiskState, Position
+from services.execution.trade_executor import RiskState, Position
 from services.execution.exit_executor import ExitExecutor
 from services.ingest.tick_router import register_tick_listener  
 from diagnostics.diagnostics_report_builder import build_csv_from_events
+from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 
 # Live adapters
 from broker.kite.kite_client import KiteClient      # WebSocket client
@@ -46,7 +47,7 @@ logger, _ = get_loggers()
 
 class _PositionStore:
     """
-    Thread-safe in-memory store shared by TradeExecutor (writer) and ExitExecutor (reader/updater).
+    Thread-safe in-memory store shared by TriggerAwareExecutor (writer) and ExitExecutor (reader/updater).
     """
     def __init__(self) -> None:
         self._by_sym: dict[str, Position] = {}
@@ -171,14 +172,14 @@ def main() -> int:
     # Risk + shared positions
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
     positions = _PositionStore()
-
-    # Executors
-    trader = TradeExecutor(
+    
+    trader = TriggerAwareExecutor(
         broker=broker,
         order_queue=oq,
         risk_state=risk,
         positions=positions,
-        get_ltp_ts=ltp_cache.get_ltp_ts,   # <- entry fill & timestamp from the same tick source
+        get_ltp_ts=ltp_cache.get_ltp_ts,
+        bar_builder=screener.agg  # Pass the BarBuilder instance
     )
 
     # ExitExecutor is LTP-only; wire it directly to broker.get_ltp and shared store
@@ -191,25 +192,45 @@ def main() -> int:
     # Start background threads
     threads: list[threading.Thread] = []
 
-    t_trade = threading.Thread(target=trader.run_forever, name="TradeExecutor", daemon=True)
+    t_trade = threading.Thread(target=trader.run_forever, name="TriggerAwareExecutor", daemon=True)
     t_trade.start(); threads.append(t_trade)
-    logger.info("trade-executor: started")
+    logger.info("trigger-aware-executor: started")
 
     t_exit = threading.Thread(target=exit_exec.run_forever, name="ExitExecutor", daemon=True)
     t_exit.start(); threads.append(t_exit)
     logger.info("exit-executor: started")
 
+    # Add monitoring thread for trigger status
+    def monitor_triggers():
+        while True:
+            try:
+                summary = trader.get_pending_trades_summary()
+                if summary["total_pending"] > 0 or summary["total_triggered"] > 0:
+                    logger.info(
+                        f"TRIGGER_STATUS: pending={summary['total_pending']} "
+                        f"triggered={summary['total_triggered']} "
+                        f"symbols={list(summary['by_symbol'].keys())}"
+                    )
+                time.sleep(30)  # Log every 30 seconds
+            except Exception as e:
+                logger.exception(f"Monitor thread error: {e}")
+                time.sleep(30)
+
+    t_monitor = threading.Thread(target=monitor_triggers, name="TriggerMonitor", daemon=True)
+    t_monitor.start(); threads.append(t_monitor)
+    logger.info("trigger-monitor: started")
+
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec)
+    _run_until_eod(screener, exit_exec, trader)
     return 0
 
 
-def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, poll_sec: float = 0.2) -> None:
+def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: TriggerAwareExecutor, poll_sec: float = 0.2) -> None:
     logger.info("session start")
     stop = threading.Event()
 
     def _sig_handler(signum, frame):
-        logger.warning(f"signal {signum} received — shutting down")
+        logger.warning(f"signal {signum} received – shutting down")
         stop.set()
 
     # Handle Ctrl+C / SIGTERM cleanly
@@ -221,8 +242,18 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, poll_sec: fl
         while not getattr(screener, "_request_exit", False) and not stop.is_set():
             time.sleep(poll_sec)
     except KeyboardInterrupt:
-        logger.info("keyboard interrupt — stopping")
+        logger.info("keyboard interrupt – stopping")
     finally:
+        try:
+            # Cancel all pending trades before EOD
+            with trader._lock:
+                for trade in trader.pending_trades.values():
+                    if trade.state == TradeState.WAITING_TRIGGER:
+                        trade.state = TradeState.CANCELLED
+            logger.info("Cancelled all pending trades for EOD")
+        except Exception as e:
+            logger.warning("Failed to cancel pending trades: %s", e)
+        
         try:
             exit_exec.square_off_all_open_positions()
         except Exception as e:
@@ -232,13 +263,17 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, poll_sec: fl
             screener.stop()
         except Exception as e:
             logger.warning("screener.stop failed: %s", e)
+        
+        try:
+            trader.stop()
+        except Exception as e:
+            logger.warning("trader.stop failed: %s", e)
             
         try:
             csv_path = build_csv_from_events()
             logger.info("Diagnostics CSV written: %s", csv_path)
         except Exception as e:
             logger.warning("Failed to build diagnostics CSV: %s", e)
-
 
     logger.info("session end (EOD)")
 

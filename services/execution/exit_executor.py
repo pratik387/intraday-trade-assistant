@@ -166,8 +166,18 @@ class ExitExecutor:
                     self._exit(sym, pos, float(px), ts, f"eod_squareoff_{self.eod_hhmm}")
                     continue
 
-                # 1) Hard SL first
+                # 1) Hard SL first, but anchor to ATR sanity if available
                 plan_sl = self._get_plan_sl(pos.plan)
+                if not math.isnan(plan_sl):
+                    atr_min_mult = float(load_filters().get("exit_sl_atr_mult_min", 1.0))
+                    atr_cached = float(pos.plan.get("indicators", {}).get("atr", float("nan")))
+                    if (not math.isnan(atr_cached)) and atr_min_mult > 0:
+                        # expand stop slightly if it's inside 1.0x ATR noise
+                        if pos.side.upper() == "BUY":
+                            plan_sl = min(plan_sl, float(pos.avg_price) - atr_min_mult * atr_cached)
+                        else:
+                            plan_sl = max(plan_sl, float(pos.avg_price) + atr_min_mult * atr_cached)
+
                 if self._breach_sl(pos.side, float(px), plan_sl):
                     self._exit(sym, pos, float(px), ts, "hard_sl")
                     continue
@@ -188,7 +198,7 @@ class ExitExecutor:
                     continue
 
                 # 3) Dynamic trail (tighten-only)
-                if self._has_trail(pos.plan):
+                if self._has_trail(pos.plan) and self._trail_allowed(pos, ts):
                     level, why = self._trail_from_plan(sym, pos, float(px))
                     if self._breach_sl(pos.side, float(px), level):
                         self._exit(sym, pos, float(px), ts, f"trail_stop({why})")
@@ -583,5 +593,24 @@ class ExitExecutor:
             except Exception:
                 pass
         self._closing_state[sym] = {"state": "closed", "intent_id": intent_id, "reason": reason}
+        
+    def _bars_since_entry(self, pos: Position, now_ts: pd.Timestamp) -> int:
+        try:
+            ets = pos.plan.get("entry_ts")
+            if ets is None: return 9999
+            i = pd.to_datetime(ets)
+            return int(max(0, (now_ts - i).total_seconds() // 300))  # 5m bars
+        except Exception:
+            return 9999
+
+    def _trail_allowed(self, pos: Position, now_ts: pd.Timestamp) -> bool:
+        cfg = load_filters()
+        need_t1 = bool(cfg.get("exit_trail_requires_t1", True))
+        delay_bars = int(cfg.get("exit_trail_delay_bars", 4))
+        st = pos.plan.get("_state") or {}
+        if need_t1 and not st.get("t1_done", False):
+            return False
+        return self._bars_since_entry(pos, now_ts) >= delay_bars
+
 
 # (end)

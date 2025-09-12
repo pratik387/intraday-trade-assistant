@@ -131,6 +131,18 @@ class EnergyScanner:
                 score_short += 0.10 * (-abs(dist_pdl))
             if not np.isnan(dist_orl):
                 score_short += 0.05 * (-abs(dist_orl))
+                
+            # --- NEW: volume persistency & simple vol_ratio ---
+            if len(dft) >= 4:
+                vol_series = dft["volume"].astype(float).tail(4)
+                vol_persist = int((vol_series.iloc[-1] >= vol_series.tail(3).mean() * 1.0) and
+                                (vol_series.iloc[-2] >= vol_series.tail(3).mean() * 1.0))
+            else:
+                vol_persist = 0
+
+            vol_ratio = float(dft["volume"].iloc[-1] / (dft["volume"].tail(20).mean() or 1.0))
+            
+            turnover = close * float(dft["volume"].iloc[-1])
 
             rows.append(
                 {
@@ -149,6 +161,9 @@ class EnergyScanner:
                     "dist_to_PDL": dist_pdl,
                     "dist_to_ORH": dist_orh,
                     "dist_to_ORL": dist_orl,
+                    "turnover": turnover,    
+                    "vol_ratio": vol_ratio,
+                    "vol_persist_ok": int(vol_persist),
                     "score_long": float(score_long),
                     "score_short": float(score_short),
                 }

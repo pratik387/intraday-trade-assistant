@@ -226,7 +226,7 @@ class MockBroker:
 
     def _reset_daily_cache_if_new_day(self) -> None:
         # Cache namespace tied to the session date (or today if unset)
-        key = (self._dry_session_date or datetime.now().date()).isoformat()
+        key = (self._dry_session_date).isoformat()
         with self._daily_lock:
             if self._daily_cache_day != key:
                 self._daily_cache.clear()
@@ -299,7 +299,7 @@ class MockBroker:
         df = df[~df.index.duplicated(keep="last")].sort_index()
 
         # slice strictly before session date (so prev-day is 'yesterday' for that session)
-        cutoff = self._dry_session_date or datetime.now().date()
+        cutoff = self._dry_session_date
         df = df[df.index.date < cutoff]
 
         with self._daily_lock:
