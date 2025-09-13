@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from config.filters_setup import load_filters
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
 # ingest / streaming
 from services.ingest.stream_client import WSClient
@@ -71,7 +71,7 @@ from diagnostics.diag_event_log import diag_event_log, mint_trade_id
 import uuid
 
 
-logger, trade_logger = get_loggers()
+logger = get_agent_logger()
 
 @dataclass
 class ScreenerConfig:

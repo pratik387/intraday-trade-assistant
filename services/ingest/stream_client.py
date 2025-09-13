@@ -27,9 +27,9 @@ Notes
 import threading
 import time
 from typing import Callable, Optional, Any, List
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 class WSClient:
     """Lightweight wrapper around the broker's ticker/stream.

@@ -1,9 +1,9 @@
 import time, threading
 from typing import Callable, Optional, Dict, List, Iterable
 import pandas as pd
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 class FeatherTicker:
     """

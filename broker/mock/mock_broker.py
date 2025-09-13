@@ -11,9 +11,9 @@ import pandas as pd
 
 from broker.mock.feather_tick_loader import FeatherTickLoader
 from broker.mock.feather_ticker import FeatherTicker
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_BASE = ROOT / "cache" / "ohlcv_archive"
 

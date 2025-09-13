@@ -34,9 +34,9 @@ import time
 from typing import Iterable, List, Optional, Set
 
 from config.filters_setup import load_filters
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 
 class SubscriptionManager:

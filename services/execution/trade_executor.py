@@ -6,13 +6,13 @@ import time
 import math
 import pandas as pd
 
-from config.logging_config import get_loggers
+from config.logging_config import get_execution_loggers
 from config.filters_setup import load_filters
 from services.orders.order_queue import OrderQueue
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 from diagnostics.diag_event_log import diag_event_log
 
-logger, trade_logger = get_loggers()
+logger, trade_logger = get_execution_loggers()
 
 
 @dataclass
@@ -82,12 +82,14 @@ class TradeExecutor:
         risk_state: RiskState,
         positions: Optional[Any] = None,   # must expose .upsert(Position) if provided
         get_ltp_ts=None,                   # <— NEW: accept optional hook for tick LTP + timestamp
+        trading_logger=None,               # <— NEW: Enhanced logging service
     ) -> None:
         self.broker = broker
         self.oq = order_queue
         self.risk = risk_state
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts      # <— store the hook if provided
+        self.trading_logger = trading_logger  # <— Enhanced logging service
 
         self.cfg = load_filters()
         # STRICT config (KeyError if missing – by design)
@@ -243,7 +245,7 @@ class TradeExecutor:
         """
         # LIMIT requires a price; no silent fallback
         if self.order_mode == "LIMIT" and price_hint is None:
-            logger.info(f"executor.block {sym} reason=limit_without_price_hint")
+            logger.debug(f"executor.block {sym} reason=limit_without_price_hint")
             return None, None
 
         args = {
@@ -258,7 +260,7 @@ class TradeExecutor:
             args["price"] = float(price_hint)
 
         order_id = self.broker.place_order(**args)
-        logger.info(f"executor.order_placed sym={sym} side={side} qty={qty} mode={self.order_mode} id={order_id}")
+        logger.debug(f"executor.order_placed sym={sym} side={side} qty={qty} mode={self.order_mode} id={order_id}")
 
         # Fill price & ts
         ts: Optional[pd.Timestamp] = None
@@ -298,13 +300,13 @@ class TradeExecutor:
             sym = str(item.get("symbol"))
             plan: Dict[str, Any] = dict(item.get("plan") or {})
             if not sym or not plan:
-                logger.info("executor.skip empty item")
+                logger.debug("executor.skip empty item")
                 return
 
             side, qty, price_hint = self._extract_plan_fields(sym, plan)
 
             if not self.risk.can_open_more():
-                logger.info(f"executor.block {sym} reason=max_concurrent positions={len(self.risk.open_positions)}")
+                logger.debug(f"executor.block {sym} reason=max_concurrent positions={len(self.risk.open_positions)}")
                 return
 
             # --- TICK-CLOCK TIME NOW (for gates) ---
@@ -318,16 +320,16 @@ class TradeExecutor:
 
             # If no tick timestamp yet, do not place this order (avoid wall-clock fallbacks)
             if ts_now is None:
-                logger.info(f"executor.block {sym} reason=no_tick_ts_for_cutoff")
+                logger.debug(f"executor.block {sym} reason=no_tick_ts_for_cutoff")
                 return
 
             # Hard gates based on the tick timestamp
             md = _minute_of_day(pd.Timestamp(ts_now))
             if self._entry_cutoff_md is not None and md >= int(self._entry_cutoff_md):
-                logger.info(f"executor.block {sym} reason=after_entry_cutoff_{self.entry_cutoff_hhmm}")
+                logger.debug(f"executor.block {sym} reason=after_entry_cutoff_{self.entry_cutoff_hhmm}")
                 return
             if self._eod_md is not None and md >= int(self._eod_md):
-                logger.info(f"executor.block {sym} reason=after_eod_{self.eod_hhmm}")
+                logger.debug(f"executor.block {sym} reason=after_eod_{self.eod_hhmm}")
                 return
 
             # --- Place order (fill price + tick ts) ---
@@ -336,11 +338,27 @@ class TradeExecutor:
             # Check slippage after getting fill price
             ref = float(plan.get("reference") or plan.get("entry", {}).get("reference") or 0.0)
             if ref and fill_price and (not self._slippage_ok(side, ref, float(fill_price))):
-                logger.info("ENTRY_SKIP %s slip_bps>max (ref=%.2f ltp=%.2f)", sym, ref, float(fill_price))
+                logger.debug("ENTRY_SKIP %s slip_bps>max (ref=%.2f ltp=%.2f)", sym, ref, float(fill_price))
                 return
             
             if fill_price is None:
                 return
+            
+            # --- Enhanced logging: Log trigger execution ---
+            if self.trading_logger:
+                trigger_data = {
+                    'symbol': sym,
+                    'trade_id': plan.get('trade_id', ''),
+                    'price': fill_price,
+                    'qty': qty,
+                    'timestamp': str(entry_ts) if entry_ts else str(pd.Timestamp.now()),
+                    'strategy': plan.get('strategy', ''),
+                    'setup_type': plan.get('setup_type', ''),
+                    'regime': plan.get('regime', ''),
+                    'order_id': f"dryrun-order-id",  # Replace with actual order ID
+                    'risk_amount': 500.0  # From config
+                }
+                self.trading_logger.log_trigger(trigger_data)
             
             try:
                 dec_ts_raw = (plan.get("decision_ts") or None)
@@ -399,7 +417,7 @@ class TradeExecutor:
 
                 # trade log: explicit scale-in + new avg
                 trade_logger.info(
-                    f"SCALE-IN | {sym} | +{int(qty)} @ ₹{float(fill_price):.2f} → qty {prev_qty}->{new_qty}, avg ₹{prev_avg:.2f}->{new_avg:.2f}"
+                    f"SCALE-IN | {sym} | +{int(qty)} @ Rs.{float(fill_price):.2f} → qty {prev_qty}->{new_qty}, avg Rs.{prev_avg:.2f}->{new_avg:.2f}"
                 )
 
                 pos_after_qty = new_qty
@@ -415,7 +433,7 @@ class TradeExecutor:
                 self.positions.upsert(pos_obj)
 
                 trade_logger.info(
-                    f"ENTRY | {sym} | {side} | qty {int(qty)} @ ₹{float(fill_price):.2f}"
+                    f"ENTRY | {sym} | {side} | qty {int(qty)} @ Rs.{float(fill_price):.2f}"
                 )
 
                 pos_after_qty = int(qty)

@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 from config.filters_setup import load_filters
 from utils.time_util import ensure_naive_ist_index, _drop_forming_last_bar
 
@@ -36,7 +36,7 @@ from ta.momentum import RSIIndicator
 from ta.trend import ADXIndicator
 from ta.volume import OnBalanceVolumeIndicator
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 
 def calculate_slope(series: pd.Series, window: int) -> pd.Series:

@@ -2,10 +2,10 @@
 from __future__ import annotations
 from typing import List, Dict, Optional
 
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 from config.filters_setup import load_filters
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 
 def _intraday_strength(iv: Dict) -> float:

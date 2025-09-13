@@ -8,9 +8,9 @@ import math
 import json
 from datetime import datetime, timedelta
 from jobs.refresh_holidays import download_nse_holidays
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
-logger, trade_logger = get_loggers()
+logger = get_agent_logger()
 
 HOLIDAY_FILE = Path(__file__).resolve().parents[1] / "assets" / "nse_holidays.json"
 def is_market_active(date=None):

@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Any, Callable
 import pandas as pd
 import uuid
 
-from config.logging_config import get_loggers
+from config.logging_config import get_execution_loggers
 from config.filters_setup import load_filters
 from services.orders.order_queue import OrderQueue
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
@@ -25,7 +25,7 @@ from services.execution.trigger_validation_engine import (
     TradeState
 )
 
-logger, trade_logger = get_loggers()
+logger, trade_logger = get_execution_loggers()
 
 # ======================== DATA CLASSES ========================
 
@@ -65,19 +65,19 @@ class TriggerAwareExecutor:
             if trade.trigger_timestamp:
                 staleness_seconds = (now - trade.trigger_timestamp).total_seconds()
                 if staleness_seconds > self.staleness_seconds:
-                    logger.info(f"Trade stale: {trade.symbol} age={staleness_seconds:.1f}s (limit={self.staleness_seconds:.0f}s) - marking expired")
+                    logger.debug(f"Trade stale: {trade.symbol} age={staleness_seconds:.1f}s (limit={self.staleness_seconds:.0f}s) - marking expired")
                     trade.state = TradeState.EXPIRED  # Mark as expired to avoid repeated checks
                     return False
             
             # Check market hours
             minute_of_day = _minute_of_day(now)
             if self.entry_cutoff_md and minute_of_day >= self.entry_cutoff_md:
-                logger.info(f"Past entry cutoff: {trade.symbol}")
+                logger.debug(f"Past entry cutoff: {trade.symbol}")
                 return False
             
             # Check risk limits
             if not self.risk.can_open_more():
-                logger.info(f"Risk limit reached: {trade.symbol}")
+                logger.debug(f"Risk limit reached: {trade.symbol}")
                 return False
             
             return True
@@ -156,7 +156,7 @@ class TriggerAwareExecutor:
                 if trade.expiry_time and now > trade.expiry_time:
                     if trade.state == TradeState.WAITING_TRIGGER:
                         trade.state = TradeState.EXPIRED
-                        logger.info(f"EXPIRED: {trade.symbol} {trade.plan.get('strategy', '')}")
+                        logger.debug(f"EXPIRED: {trade.symbol} {trade.plan.get('strategy', '')}")
                 
                 # Remove completed/expired trades
                 if trade.state in [TradeState.EXECUTED, TradeState.EXPIRED, TradeState.CANCELLED]:
@@ -175,7 +175,7 @@ class TriggerAwareExecutor:
                 cancelled_count += 1
         
         if cancelled_count > 0:
-            logger.info(f"Cancelled {cancelled_count} pending trades for {symbol}")
+            logger.debug(f"Cancelled {cancelled_count} pending trades for {symbol}")
     
     def run_forever(self, sleep_ms: int = 200) -> None:
         """Run the executor continuously"""
@@ -223,10 +223,12 @@ class TriggerAwareExecutor:
         risk_state,
         positions,
         get_ltp_ts: Callable[[str], Tuple[Optional[float], Optional[pd.Timestamp]]],
-        bar_builder  # We'll hook into the BarBuilder's 1m callbacks
+        bar_builder,  # We'll hook into the BarBuilder's 1m callbacks
+        trading_logger=None  # Enhanced logging service
     ):
         self.broker = broker
         self.oq = order_queue
+        self.trading_logger = trading_logger
         self.risk = risk_state
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts
@@ -395,7 +397,7 @@ class TriggerAwareExecutor:
                 condition, symbol, bar_1m, context
             )
             
-            condition.last_check_ts = pd.Timestamp.now()
+            condition.last_check_ts = pd.Timestamp(bar_1m.name) if hasattr(bar_1m, 'name') and bar_1m.name else pd.Timestamp.now()
             
             if current_result:
                 condition.consecutive_hits += 1
@@ -505,7 +507,7 @@ class TriggerAwareExecutor:
                 
                 if success:
                     trade.state = TradeState.EXECUTED
-                    logger.info(f"EXECUTED: {trade.symbol} {trade.plan.get('strategy', '')}")
+                    logger.debug(f"EXECUTED: {trade.symbol} {trade.plan.get('strategy', '')}")
                 else:
                     trade.state = TradeState.EXPIRED
                     logger.warning(f"EXECUTION_FAILED: {trade.symbol}")

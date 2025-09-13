@@ -30,9 +30,9 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 Bar = pd.Series  # readability alias
 

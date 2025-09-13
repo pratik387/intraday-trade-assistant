@@ -7,12 +7,12 @@ from dataclasses import dataclass
 from kiteconnect import KiteConnect
 from config.env_setup import env
 from kiteconnect import KiteTicker
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 from datetime import datetime, timedelta
 import threading, time, random
 import pandas as pd
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 @dataclass(frozen=True)
 class _Inst:

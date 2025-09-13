@@ -22,7 +22,7 @@ from typing import Optional
 from threading import Lock
 import pandas as pd
 
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger, get_trading_logger
 from config.filters_setup import load_filters
 
 from services.orders.order_queue import OrderQueue
@@ -30,7 +30,6 @@ from services.screener_live import ScreenerLive
 from services.execution.trade_executor import RiskState, Position
 from services.execution.exit_executor import ExitExecutor
 from services.ingest.tick_router import register_tick_listener  
-from diagnostics.diagnostics_report_builder import build_csv_from_events
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 
 # Live adapters
@@ -40,7 +39,8 @@ from broker.kite.kite_broker import KiteBroker      # REST orders/LTP
 # Dry-run adapter (patched MockBroker with LTP cache + Feather replay)
 from broker.mock.mock_broker import MockBroker
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
+trading_logger = get_trading_logger()
 
 
 # ------------------------ Shared Position Store ------------------------
@@ -179,7 +179,8 @@ def main() -> int:
         risk_state=risk,
         positions=positions,
         get_ltp_ts=ltp_cache.get_ltp_ts,
-        bar_builder=screener.agg  # Pass the BarBuilder instance
+        bar_builder=screener.agg,  # Pass the BarBuilder instance
+        trading_logger=trading_logger  # Enhanced logging
     )
 
     # ExitExecutor is LTP-only; wire it directly to broker.get_ltp and shared store
@@ -187,6 +188,7 @@ def main() -> int:
         broker=broker,
         positions=positions,
         get_ltp_ts=ltp_cache.get_ltp_ts,   # <- EOD uses tick timestamps, not wall clock
+        trading_logger=trading_logger  # Enhanced logging
     )
 
     # Start background threads
@@ -222,6 +224,7 @@ def main() -> int:
 
     # Lifecycle: start screener and block until EOD / request_exit
     _run_until_eod(screener, exit_exec, trader)
+    
     return 0
 
 
@@ -269,11 +272,6 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: Trig
         except Exception as e:
             logger.warning("trader.stop failed: %s", e)
             
-        try:
-            csv_path = build_csv_from_events()
-            logger.info("Diagnostics CSV written: %s", csv_path)
-        except Exception as e:
-            logger.warning("Failed to build diagnostics CSV: %s", e)
 
     logger.info("session end (EOD)")
 

@@ -2,9 +2,9 @@ import os, glob
 from typing import List, Optional, Dict
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 class FeatherTickLoader:
     """

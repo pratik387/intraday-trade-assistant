@@ -306,7 +306,25 @@
   "rank_weight_daily": 0.3,
   "rank_weight_intraday": 0.7,
   "rank_top_n": 50,
-  "_comment_trigger_system": "=== TRIGGER-BASED EXECUTION SYSTEM ===",
+  "quality_filters": {
+    "enabled": true,
+    "min_rank_score": 2.0,
+    "min_structural_rr": 1.2,
+    "time_windows": {
+      "morning_start": "10:30",
+      "morning_end": "12:30",
+      "afternoon_start": "14:15",
+      "afternoon_end": "15:00"
+    }
+  },
+  "logging": {
+    "enable_enhanced_logging": true,
+    "enable_performance_tracking": true,
+    "enable_analytics_stream": true,
+    "enable_trade_lifecycle": true,
+    "performance_update_frequency": "realtime"
+  },
+
   "trigger_system": {
     "enabled": true,
     "expiry_minutes": 45,

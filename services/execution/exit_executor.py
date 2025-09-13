@@ -7,14 +7,14 @@ import math
 import time
 import pandas as pd  # for Timestamp typing only
 
-from config.logging_config import get_loggers
+from config.logging_config import get_execution_loggers
 from config.filters_setup import load_filters
 from utils.time_util import _to_naive_ist, _now_naive_ist
 from diagnostics.diag_event_log import diag_event_log
 import uuid
 
 # Both loggers (as requested)
-logger, trade_logger = get_loggers()
+logger, trade_logger = get_execution_loggers()
 
 
 # ---------- Data model (matches earlier executors) ----------
@@ -98,6 +98,7 @@ class ExitExecutor:
       • Optional trail from cached plan (points/ticks/ATR_cached*mult) — still LTP-only
       • Optional precomputed indicator kills (ORH/ORL, custom kill_levels)
       • Optional score-drop & time-stop
+      • Enhanced logging for trade lifecycle tracking
 
     Single interface:
       - get_ltp_ts(symbol) -> (ltp, ts)
@@ -115,10 +116,12 @@ class ExitExecutor:
         broker,
         positions: PositionStore,
         get_ltp_ts: Callable[[str], Tuple[Optional[float], Optional[pd.Timestamp]]],
+        trading_logger=None,  # Enhanced logging service
     ) -> None:
         self.broker = broker
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts
+        self.trading_logger = trading_logger
 
         cfg = load_filters()
         # Config knobs
@@ -446,7 +449,7 @@ class ExitExecutor:
         entry_price = float(pos.avg_price)
         pnl = ((exit_px - entry_price) if pos.side.upper() == "BUY" else (entry_price - exit_px)) * int(qty_exit)
         trade_logger.info(
-            f"EXIT | {sym} | Qty: {qty_exit} | Entry: ₹{entry_price:.2f} | Exit: ₹{exit_px:.2f} | PnL: ₹{pnl:.2f} {reason}"
+            f"EXIT | {sym} | Qty: {qty_exit} | Entry: Rs.{entry_price:.2f} | Exit: Rs.{exit_px:.2f} | PnL: Rs.{pnl:.2f} {reason}"
         )
         try:
             diag_event_log.log_exit(
@@ -459,7 +462,7 @@ class ExitExecutor:
             )
         except Exception as _e:
             logger.warning("diag_event_log.log_exit failed sym=%s err=%s", sym, _e)
-        logger.info(f"exit_executor: {sym} qty={qty_exit} reason={reason}")
+        logger.debug(f"exit_executor: {sym} qty={qty_exit} reason={reason}")
 
     def _exit(self, sym: str, pos: Position, exit_px: float, ts: Optional[pd.Timestamp], reason: str) -> None:
         # re-read current qty from store just before the full exit
@@ -471,6 +474,23 @@ class ExitExecutor:
 
         if qty_now <= 0:
             return
+
+        # Calculate PnL for enhanced logging
+        pnl = qty_now * (exit_px - pos.avg_price) if pos.side.upper() == "BUY" else qty_now * (pos.avg_price - exit_px)
+
+        # Enhanced logging: Log exit execution
+        if self.trading_logger:
+            exit_data = {
+                'symbol': sym,
+                'trade_id': pos.plan.get('trade_id', ''),
+                'qty': qty_now,
+                'entry_price': pos.avg_price,
+                'exit_price': exit_px,
+                'pnl': round(pnl, 2),
+                'reason': reason,
+                'timestamp': str(ts) if ts else str(pd.Timestamp.now())
+            }
+            self.trading_logger.log_exit(exit_data)
 
         self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
         self.positions.close(sym)
@@ -488,35 +508,57 @@ class ExitExecutor:
             rem = int(getattr(cur, "qty", 0) or 0)
         except Exception:
             pass
-        trade_logger.info(f"EXIT | {sym} | qty {qty_now} @ ₹{float(exit_px):.2f} → remaining {rem}")
+        trade_logger.info(f"EXIT | {sym} | qty {qty_now} @ Rs.{float(exit_px):.2f} → remaining {rem}")
 
     def _partial_exit_t1(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
+        # Enhanced partial exit logic - always use partial exits for better R:R
         pct = max(1.0, float(getattr(self, "t1_book_pct", 50.0)))
         qty = int(pos.qty)
 
-        qty_exit = int(max(1, round(qty * (pct / 100.0))))
+        # Calculate partial exit quantity - ensure minimum 30% book
+        min_book_pct = 30.0  # Minimum partial booking percentage
+        actual_pct = max(min_book_pct, pct)
+        
+        qty_exit = int(max(1, round(qty * (actual_pct / 100.0))))
         qty_exit = min(qty_exit, qty)
 
+        # Enhanced logic for small quantities
         if qty_exit >= qty:
-            if qty > 1:
-                qty_exit = qty - 1
+            if qty > 2:  # Changed from 1 to 2 - allow partial even for small positions
+                qty_exit = max(1, qty // 2)  # Take 50% minimum
             else:
                 self._exit(sym, pos, float(px), ts, "target_t1_full")
                 return
 
+        # Log enhanced partial exit info  
+        profit_booked = qty_exit * (px - pos.avg_price)
+        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f}")
+        
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
         self.positions.reduce(sym, int(qty_exit))
 
         st = pos.plan.get("_state") or {}
         st["t1_done"] = True
-        if getattr(self, "t1_move_sl_to_be", True) and not st.get("sl_moved_to_be"):
+        st["t1_booked_qty"] = qty_exit
+        st["t1_booked_price"] = px
+        st["t1_profit"] = profit_booked
+        
+        # Enhanced breakeven logic - always move to BE after T1
+        if not st.get("sl_moved_to_be"):
             try:
                 be = float(pos.avg_price)
+                # Add small buffer above BE for long positions, below for short
+                if pos.side.upper() == "BUY":
+                    be_buffer = be + (be * 0.001)  # 0.1% above BE
+                else:
+                    be_buffer = be - (be * 0.001)  # 0.1% below BE
+                
                 if isinstance(pos.plan.get("stop"), dict):
-                    pos.plan["stop"]["hard"] = be
-                pos.plan["hard_sl"] = be
+                    pos.plan["stop"]["hard"] = be_buffer
+                pos.plan["hard_sl"] = be_buffer
                 st["sl_moved_to_be"] = True
-                logger.info(f"exit_executor: {sym} T1 hit — moved SL->BE @{be}")
+                st["be_price"] = be_buffer
+                logger.debug(f"exit_executor: {sym} T1 hit — moved SL to BE+ @{be_buffer:.2f} (buffer: {be_buffer-be:.3f})")
             except Exception:
                 pass
         pos.plan["_state"] = st

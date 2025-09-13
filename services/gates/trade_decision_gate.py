@@ -162,10 +162,33 @@ class TradeDecisionGate:
         df5m_tail: pd.DataFrame,
         index_df5m: pd.DataFrame,
         levels: Optional[dict],
+        plan: Optional[dict] = None,  # Add plan parameter for quality filters
+        features: Optional[dict] = None,  # Add features for rank score
     ) -> GateDecision:
         reasons: List[str] = []
 
-        # 1) Structure: propose setups from closed 5m bars
+        # FAST QUALITY FILTERS - Applied first to save computation
+        # 1) Rank score threshold filter (pre-computed value)
+        if features and 'rank_score' in features:
+            rank_score = _safe_float(features['rank_score'], 0.0)
+            if rank_score < 2.0:
+                return GateDecision(accept=False, reasons=[f"rank_score_low:{rank_score:.2f}<2.0"])
+        
+        # 2) Structural risk-reward filter (pre-computed value)
+        if plan and 'quality' in plan:
+            structural_rr = _safe_float(plan['quality'].get('structural_rr', 0.0), 0.0)
+            if structural_rr < 1.2:
+                return GateDecision(accept=False, reasons=[f"structural_rr_low:{structural_rr:.2f}<1.2"])
+        
+        # 3) Time window filter (microsecond operation)
+        import datetime
+        if hasattr(now, 'hour') and hasattr(now, 'minute'):
+            minute_of_day = now.hour * 60 + now.minute
+            # 10:30-12:30 (630-750) and 14:15-15:00 (855-900)
+            if not ((630 <= minute_of_day <= 750) or (855 <= minute_of_day <= 900)):
+                return GateDecision(accept=False, reasons=[f"time_window_block:{minute_of_day}"])
+
+        # 4) Structure: propose setups from closed 5m bars
         setups = self.structure.detect_setups(symbol, df5m_tail, levels)
         if not setups:
             return GateDecision(accept=False, reasons=["no_structure_event"])

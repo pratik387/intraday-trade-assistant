@@ -21,7 +21,7 @@ last_trade_time (tz-aware), volume (cumulative), ohlc, etc.
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, Mapping, Optional
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
 try:  # Python 3.9+
     from zoneinfo import ZoneInfo  # type: ignore
@@ -29,7 +29,7 @@ try:  # Python 3.9+
 except Exception:  # pragma: no cover
     _IST = None  # fallback: keep whatever tz or naive is provided
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 OnTick = Callable[[str, float, float, datetime], None]
 

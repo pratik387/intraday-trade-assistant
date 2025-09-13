@@ -27,13 +27,13 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List, Tuple, Union
 
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 from config.filters_setup import load_filters
 from utils.time_util import ensure_naive_ist_index
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 import datetime
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 # ----------------------------
 # Helpers (math/indicators)

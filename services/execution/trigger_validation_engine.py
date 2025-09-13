@@ -8,9 +8,9 @@ from enum import Enum
 from typing import Dict, List, Tuple, Any, Optional
 from utils.time_util import _minute_of_day
 from config.filters_setup import load_filters
-from config.logging_config import get_loggers
+from config.logging_config import get_agent_logger
 
-logger, _ = get_loggers()
+logger = get_agent_logger()
 
 # ======================== CORE DATA STRUCTURES ========================
 
