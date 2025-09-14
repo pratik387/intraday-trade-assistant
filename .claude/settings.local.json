@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(find:*)",
+      "Bash(for dir in /c/Users/pratikhegde/OneDrive - Nagarro/Desktop/Pratik/intraday-trade-assistant/logs/20250914_*/)",
+      "Bash(ls:*)",
+      "Bash(done)",
+      "Read(//c/Users/pratikhegde/OneDrive/**)",
+      "Bash(cd:*)",
+      "Bash(for dir in logs/20250914_*/)",
+      "Bash(do echo \"=== $dir ===\")",
+      "Bash(if [ -f \"$dir/performance.json\" ])",
+      "Bash(then echo \"Performance:\")",
+      "Bash(else echo \"No performance.json\")",
+      "Bash(fi)"
     ],
     "deny": [],
     "ask": []

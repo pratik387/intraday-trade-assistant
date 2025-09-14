@@ -23,7 +23,15 @@ Setup types (consistent with our structure detectors):
   "breakout_long", "breakout_short",
   "vwap_reclaim_long", "vwap_lose_short",
   "squeeze_release_long", "squeeze_release_short",
-  "failure_fade_long", "failure_fade_short"
+  "failure_fade_long", "failure_fade_short",
+  "gap_fill_long", "gap_fill_short",
+  "flag_continuation_long", "flag_continuation_short",
+  "support_bounce_long", "resistance_bounce_short",
+  "orb_breakout_long", "orb_breakout_short",
+  "vwap_mean_reversion_long", "vwap_mean_reversion_short",
+  "volume_spike_reversal_long", "volume_spike_reversal_short",
+  "trend_pullback_long", "trend_pullback_short",
+  "range_rejection_long", "range_rejection_short"
 """
 from dataclasses import dataclass
 from typing import Dict, Tuple
@@ -147,7 +155,12 @@ class MarketRegimeGate:
 
         Params:
           setup_type   : 'breakout_long'|'breakout_short'|'vwap_reclaim_long'|'vwap_lose_short'|
-                         'squeeze_release_long'|'squeeze_release_short'|'failure_fade_long'|'failure_fade_short'
+                         'squeeze_release_long'|'squeeze_release_short'|'failure_fade_long'|'failure_fade_short'|
+                         'gap_fill_long'|'gap_fill_short'|'flag_continuation_long'|'flag_continuation_short'|
+                         'support_bounce_long'|'resistance_bounce_short'|'orb_breakout_long'|'orb_breakout_short'|
+                         'vwap_mean_reversion_long'|'vwap_mean_reversion_short'|'volume_spike_reversal_long'|
+                         'volume_spike_reversal_short'|'trend_pullback_long'|'trend_pullback_short'|
+                         'range_rejection_long'|'range_rejection_short'
           regime       : 'trend_up'|'trend_down'|'chop'|'squeeze'
           strength     : structure score (0..5 normalized)
           adx_5m       : 5m ADX
@@ -164,6 +177,13 @@ class MarketRegimeGate:
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
             if setup_type in {"failure_fade_long", "failure_fade_short"}:
                 return v >= self.FF_MIN_VOL_MULT
+            # Mean reversion and range setups work well in chop
+            if setup_type in {"vwap_mean_reversion_long", "vwap_mean_reversion_short"}:
+                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
+            if setup_type in {"range_rejection_long", "range_rejection_short"}:
+                return v >= self.FF_MIN_VOL_MULT
+            if setup_type in {"support_bounce_long", "resistance_bounce_short"}:
+                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
             return False
 
         if regime == "trend_up":
@@ -172,6 +192,16 @@ class MarketRegimeGate:
             if setup_type == "vwap_reclaim_long":
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
             if setup_type == "failure_fade_short":
+                return v >= self.FF_MIN_VOL_MULT
+            # Trend continuation setups in uptrend
+            if setup_type in {"orb_breakout_long", "flag_continuation_long"}:
+                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
+            if setup_type in {"trend_pullback_long", "support_bounce_long"}:
+                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
+            if setup_type == "gap_fill_long":
+                return v >= self.VWAP_MIN_VOL_MULT
+            # Volume spike reversals can work as counter-trend in strong trends
+            if setup_type == "volume_spike_reversal_short":
                 return v >= self.FF_MIN_VOL_MULT
             return False
 
@@ -182,6 +212,16 @@ class MarketRegimeGate:
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
             if setup_type == "failure_fade_long":
                 return v >= self.FF_MIN_VOL_MULT
+            # Trend continuation setups in downtrend
+            if setup_type in {"orb_breakout_short", "flag_continuation_short"}:
+                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
+            if setup_type in {"trend_pullback_short", "resistance_bounce_short"}:
+                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
+            if setup_type == "gap_fill_short":
+                return v >= self.VWAP_MIN_VOL_MULT
+            # Volume spike reversals can work as counter-trend in strong trends
+            if setup_type == "volume_spike_reversal_long":
+                return v >= self.FF_MIN_VOL_MULT
             return False
 
         if regime == "squeeze":
@@ -191,6 +231,14 @@ class MarketRegimeGate:
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
             if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
+            # ORB breakouts and volume spike reversals work well in squeeze
+            if setup_type in {"orb_breakout_long", "orb_breakout_short"}:
+                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
+            if setup_type in {"volume_spike_reversal_long", "volume_spike_reversal_short"}:
+                return v >= self.VWAP_MIN_VOL_MULT
+            # Gap fills can trigger squeeze releases
+            if setup_type in {"gap_fill_long", "gap_fill_short"}:
+                return v >= self.VWAP_MIN_VOL_MULT
             return False
 
         return False

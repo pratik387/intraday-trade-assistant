@@ -23,10 +23,9 @@ def _initialize_loggers():
     if _agent_logger and _trade_logger and _trading_logger:
         return
 
-    # Create timestamped session directory
+    # Create timestamped session directory only when actually needed
     _session_id = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
     log_dir = Path(__file__).resolve().parents[1] / "logs" / _session_id
-    os.makedirs(log_dir, exist_ok=True)
     dir_path = log_dir
 
     formatter = logging.Formatter('%(asctime)s — %(levelname)s — %(name)s — %(message)s')
@@ -35,6 +34,8 @@ def _initialize_loggers():
     _agent_logger = logging.getLogger("agent")
     if not _agent_logger.hasHandlers():
         _agent_logger.setLevel(logging.INFO)
+        # Create directory only when we actually create the file handler
+        os.makedirs(log_dir, exist_ok=True)
         agent_file = logging.FileHandler(log_dir / "agent.log",  encoding="utf-8")
         agent_file.setFormatter(formatter)
         _agent_logger.addHandler(agent_file)

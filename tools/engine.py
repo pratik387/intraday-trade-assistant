@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
@@ -17,13 +18,18 @@ if str(ROOT) not in sys.path:
 
 from utils.util import is_trading_day  # noqa: E402
 from diagnostics.diagnostics_report_builder import build_csv_from_events  # noqa: E402
+from config.filters_setup import load_filters  # noqa: E402
 
 # ====== SETTINGS ======
 START_DATE = "2025-08-06"   # YYYY-MM-DD
-END_DATE   = "2025-08-11"   # YYYY-MM-DD (inclusive)
-FROM_HHMM  = "09:10"
-TO_HHMM    = "15:30"
+END_DATE   = "2025-08-20"   # YYYY-MM-DD (inclusive)
 MAIN_PATH  = ROOT / "main.py"
+
+# Load time windows from config to respect time_window_block
+config = load_filters()
+time_windows = config.get("time_windows", {})
+FROM_HHMM = time_windows.get("morning_start", "09:10")  # Start at first trading window
+TO_HHMM = time_windows.get("afternoon_end", "15:30")    # End at last trading window
 
 # parallelism: 2–4 is usually safe
 MAX_WORKERS = 4
@@ -54,52 +60,47 @@ def _run_one_day(day: date) -> Tuple[date, int, str]:
     try:
         # launch with cwd=ROOT so relative paths (e.g., nse_all.json) work exactly like prod
         rc = subprocess.run(cmd, cwd=str(ROOT)).returncode
-        
+
         # Generate analytics after session completes successfully
         if rc == 0:
-            _generate_session_analytics(day)
-            
+            _generate_analytics_for_current_session()
+
         return (day, rc, "ok" if rc == 0 else f"non-zero exit {rc}")
     except Exception as e:
         return (day, 999, f"exception: {e!r}")
 
-def _generate_session_analytics(day: date) -> None:
-    """Generate analytics for completed session"""
+def _generate_analytics_for_current_session() -> None:
+    """Generate analytics for the current session using the active log directory"""
     try:
-        print(f"[analytics] Generating analytics for {day}...")
-        
-        # Find the latest log directory for this day
-        from config.logging_config import get_log_directory
+        from config.logging_config import get_log_directory, get_session_id
         from services.logging.trading_logger import TradingLogger
-        
-        log_base = Path(get_log_directory())
-        day_str = day.strftime("%Y%m%d")
-        
-        # Find the most recent log directory for this day
-        log_dirs = list(log_base.glob(f"{day_str}_*"))
-        if not log_dirs:
-            print(f"[analytics] No log directory found for {day}")
+
+        # Get current session info
+        log_dir = get_log_directory()
+        session_id = get_session_id()
+
+        if not log_dir or not session_id:
+            print("[analytics] No active session found")
             return
-            
-        latest_log_dir = max(log_dirs, key=lambda p: p.name)
-        session_id = latest_log_dir.name
-        
-        print(f"[analytics] Processing {latest_log_dir}")
-        
+
+        print(f"[analytics] Generating analytics for current session {session_id}")
+        print(f"[analytics] Processing {log_dir}")
+
         # Populate analytics.jsonl and performance.json from events.jsonl
         try:
-            logger = TradingLogger(session_id, latest_log_dir)
+            logger = TradingLogger(session_id, log_dir)
             logger.populate_analytics_from_events()
             print(f"[analytics] Enhanced analytics populated")
         except Exception as e:
             print(f"[analytics] Failed to populate enhanced analytics: {e}")
-        
+
         # Generate CSV report
-        csv_path = build_csv_from_events(log_dir=latest_log_dir)
+        csv_path = build_csv_from_events(log_dir=log_dir)
         print(f"[analytics] Diagnostics CSV written: {csv_path}")
-        
+
     except Exception as e:
-        print(f"[analytics] Failed to generate analytics for {day}: {e}")
+        print(f"[analytics] Failed to generate analytics for current session: {e}")
+
 
 def run() -> int:
     if not MAIN_PATH.exists():

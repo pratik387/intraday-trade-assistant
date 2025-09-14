@@ -37,6 +37,7 @@ import pandas as pd
 
 from .event_policy_gate import EventPolicyGate
 from .news_spike_gate import NewsSpikeGate
+from .market_sentiment_gate import MarketSentimentGate
 
 SetupType = Literal[
     "breakout_long",
@@ -47,6 +48,22 @@ SetupType = Literal[
     "squeeze_release_short",
     "failure_fade_long",
     "failure_fade_short",
+    "gap_fill_long",
+    "gap_fill_short",
+    "flag_continuation_long",
+    "flag_continuation_short",
+    "support_bounce_long",
+    "resistance_bounce_short",
+    "orb_breakout_long",
+    "orb_breakout_short",
+    "vwap_mean_reversion_long",
+    "vwap_mean_reversion_short",
+    "volume_spike_reversal_long",
+    "volume_spike_reversal_short",
+    "trend_pullback_long",
+    "trend_pullback_short",
+    "range_rejection_long",
+    "range_rejection_short",
 ]
 
 
@@ -104,11 +121,22 @@ def _is_breakout(setup: SetupType) -> bool:
         "breakout_short",
         "squeeze_release_long",
         "squeeze_release_short",
+        "orb_breakout_long",
+        "orb_breakout_short",
+        "flag_continuation_long",
+        "flag_continuation_short",
     }
 
 
 def _is_fade(setup: SetupType) -> bool:
-    return setup in {"failure_fade_long", "failure_fade_short"}
+    return setup in {
+        "failure_fade_long", 
+        "failure_fade_short",
+        "volume_spike_reversal_long",
+        "volume_spike_reversal_short",
+        "range_rejection_long",
+        "range_rejection_short",
+    }
 
 
 def _safe_float(x, default: float = 0.0) -> float:
@@ -146,11 +174,13 @@ class TradeDecisionGate:
         regime_gate: RegimeGate,
         event_policy_gate: EventPolicyGate,
         news_spike_gate: NewsSpikeGate,
+        market_sentiment_gate=None,
     ) -> None:
         self.structure = structure_detector
         self.regime_gate = regime_gate
         self.event_gate = event_policy_gate
         self.news_gate = news_spike_gate
+        self.sentiment_gate = market_sentiment_gate
 
     # ------------------------------ Public API ------------------------------
     def evaluate(
@@ -272,7 +302,41 @@ class TradeDecisionGate:
             size_mult *= float(adj.size_mult)
             reasons.append("news_spike:" + ";".join(sig.reasons))
 
-        # 5) Accept with accumulated adjustments
+        # 5) Market Sentiment Analysis & Bias Application
+        if self.sentiment_gate is not None:
+            try:
+                # Get BankNifty data if available (would need to be passed in)
+                banknifty_df = None  # TODO: Pass BankNifty data from screener
+                
+                # Analyze market sentiment
+                sentiment = self.sentiment_gate.analyze_sentiment(
+                    nifty_df5=index_df5m,
+                    banknifty_df5=banknifty_df,
+                    breadth_data=None,  # TODO: Add breadth data integration
+                    vix_level=None      # TODO: Add VIX data integration
+                )
+                
+                # Apply sentiment filter - reject if setup not suitable for current sentiment
+                if not self.sentiment_gate.should_trade_setup(best.setup_type, sentiment):
+                    reasons.append(f"sentiment_block:{sentiment.sentiment_level.value}")
+                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                
+                # Apply sentiment bias to size multiplier
+                sentiment_bias = self.sentiment_gate.get_setup_bias(best.setup_type, sentiment)
+                size_mult *= sentiment_bias
+                
+                # Add sentiment context to reasons
+                reasons.append(f"sentiment:{sentiment.sentiment_level.value}_{sentiment.market_trend.value}")
+                reasons.append(f"sentiment_bias:{sentiment_bias:.2f}")
+                
+            except Exception as e:
+                # Sentiment analysis is enhancement; don't fail trades if it breaks
+                if hasattr(e, '__class__'):
+                    reasons.append(f"sentiment_error:{e.__class__.__name__}")
+                else:
+                    reasons.append("sentiment_error:unknown")
+
+        # 6) Accept with accumulated adjustments
         return GateDecision(
             accept=True,
             reasons=reasons,

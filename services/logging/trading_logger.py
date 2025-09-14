@@ -408,6 +408,22 @@ class TradingLogger:
             events_file = self.log_dir / 'events.jsonl'
             if not events_file.exists():
                 return
+            
+            # Track processed trades to avoid duplicates
+            processed_trades = set()
+                
+            # Reset session stats
+            self.session_stats = {
+                'total_decisions': 0,
+                'triggered_trades': 0,
+                'completed_trades': 0,
+                'total_pnl': 0.0,
+                'wins': 0,
+                'losses': 0,
+                'breakevens': 0,
+                'rank_scores_triggered': [],
+                'rank_scores_skipped': []
+            }
                 
             with open(events_file, 'r') as f:
                 for line in f:
@@ -416,13 +432,19 @@ class TradingLogger:
                         continue
                     try:
                         event = json.loads(line)
-                        if event.get('type') == 'EXIT':
-                            # Convert event data to analytics format
-                            analytics_data = self._convert_event_to_analytics(event)
-                            if analytics_data:
-                                self.analytics_logger.info(json.dumps(analytics_data))
-                                # Update session stats
-                                self._update_session_stats_from_event(event)
+                        if event.get('type') == 'DECISION':
+                            # Process decision events for stats
+                            self._update_session_stats_from_decision(event)
+                        elif event.get('type') == 'EXIT':
+                            trade_id = event.get('trade_id', '')
+                            if trade_id not in processed_trades:
+                                # Convert event data to analytics format
+                                analytics_data = self._convert_event_to_analytics(event)
+                                if analytics_data:
+                                    self.analytics_logger.info(json.dumps(analytics_data))
+                                    # Update session stats
+                                    self._update_session_stats_from_event(event)
+                                    processed_trades.add(trade_id)
                     except Exception as e:
                         continue
             
@@ -438,7 +460,11 @@ class TradingLogger:
             return None
             
         exit_data = event.get('exit', {})
-        return {
+        
+        # Calculate PnL by finding matching DECISION event
+        pnl = self._calculate_pnl_from_events(event)
+        
+        analytics_data = {
             'symbol': event.get('symbol', ''),
             'trade_id': event.get('trade_id', ''),
             'timestamp': event.get('ts', ''),
@@ -448,10 +474,101 @@ class TradingLogger:
             'reason': exit_data.get('reason', ''),
             'lifecycle_id': event.get('trade_id', ''),  # Use trade_id as lifecycle_id
         }
+        
+        if pnl is not None:
+            analytics_data['pnl'] = pnl
+            analytics_data['entry_price'] = self._find_entry_price_for_trade(event.get('trade_id', ''))
+            
+        # Add analytics fields
+        analytics_data['analytics'] = {
+            'time_decay_factor': 1.0,
+            'execution_probability': 0.15
+        }
+        
+        return analytics_data
     
     def _update_session_stats_from_event(self, event: Dict[str, Any]):
-        """Update session stats from event data"""
+        """Update session stats from exit event data"""
         if event.get('type') == 'EXIT':
             self.session_stats['completed_trades'] += 1
-            # Note: PnL calculation would require entry price, which isn't in exit events
-            # This will be a limitation of this approach
+            
+            # Calculate and track PnL
+            pnl = self._calculate_pnl_from_events(event)
+            if pnl is not None:
+                self.session_stats['total_pnl'] += pnl
+                if pnl > 0:
+                    self.session_stats['wins'] += 1
+                elif pnl < 0:
+                    self.session_stats['losses'] += 1
+                else:
+                    self.session_stats['breakevens'] += 1
+            
+    def _update_session_stats_from_decision(self, event: Dict[str, Any]):
+        """Update session stats from decision event data"""
+        if event.get('type') == 'DECISION':
+            self.session_stats['total_decisions'] += 1
+            # Assume all decisions lead to triggered trades (entry)
+            self.session_stats['triggered_trades'] += 1
+            
+            # Extract rank score if available
+            rank_score = event.get('features', {}).get('rank_score', 0)
+            if rank_score > 0:
+                self.session_stats['rank_scores_triggered'].append(rank_score)
+    
+    def _calculate_pnl_from_events(self, exit_event: Dict[str, Any]) -> Optional[float]:
+        """Calculate PnL by finding the matching DECISION event"""
+        try:
+            trade_id = exit_event.get('trade_id', '')
+            if not trade_id:
+                return None
+            
+            # Find matching DECISION event from events.jsonl
+            events_file = self.log_dir / 'events.jsonl'
+            if not events_file.exists():
+                return None
+                
+            entry_price = None
+            exit_data = exit_event.get('exit', {})
+            exit_price = exit_data.get('price', 0)
+            qty = exit_data.get('qty', 0)
+            
+            with open(events_file, 'r') as f:
+                for line in f:
+                    try:
+                        event = json.loads(line.strip())
+                        if (event.get('type') == 'DECISION' and 
+                            event.get('trade_id') == trade_id):
+                            entry_price = event.get('price', event.get('plan', {}).get('entry', {}).get('reference', 0))
+                            break
+                    except:
+                        continue
+            
+            if entry_price and exit_price and qty:
+                # Simple PnL calculation (assumes LONG positions)
+                # TODO: Consider position side from plan.bias
+                pnl = (exit_price - entry_price) * qty
+                return round(pnl, 2)
+                
+        except Exception:
+            pass
+        return None
+        
+    def _find_entry_price_for_trade(self, trade_id: str) -> Optional[float]:
+        """Find entry price for a trade from DECISION event"""
+        try:
+            events_file = self.log_dir / 'events.jsonl'
+            if not events_file.exists():
+                return None
+                
+            with open(events_file, 'r') as f:
+                for line in f:
+                    try:
+                        event = json.loads(line.strip())
+                        if (event.get('type') == 'DECISION' and 
+                            event.get('trade_id') == trade_id):
+                            return event.get('price', event.get('plan', {}).get('entry', {}).get('reference', 0))
+                    except:
+                        continue
+        except Exception:
+            pass
+        return None
