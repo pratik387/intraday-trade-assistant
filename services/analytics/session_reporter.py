@@ -7,8 +7,10 @@ Handles generation and export of trading session analytics, including:
 - Session summary logging
 - Trade export to CSV
 - Performance metrics reporting
+- Trading run management
 """
 
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 from config.logging_config import get_agent_logger
@@ -127,8 +129,7 @@ class SessionReporter:
         try:
             analytics = lifecycle_manager.get_session_analytics()
             analytics_file = log_dir / "session_analytics.json"
-            
-            import json
+
             with open(analytics_file, 'w', encoding='utf-8') as f:
                 json.dump(analytics, f, indent=2, ensure_ascii=False)
             
@@ -140,17 +141,81 @@ class SessionReporter:
             return None
 
 
-def generate_session_report(lifecycle_manager: TradeLifecycleManager, 
+def generate_session_report(lifecycle_manager: TradeLifecycleManager,
                           log_dir: Optional[Path] = None) -> bool:
     """
     Convenience function for generating session analytics report.
-    
+
     Args:
         lifecycle_manager: TradeLifecycleManager instance with session data
         log_dir: Optional directory for exports
-        
+
     Returns:
         bool: True if report generated successfully
     """
     reporter = SessionReporter(log_dir)
     return reporter.generate_session_report(lifecycle_manager, log_dir)
+
+
+# ========== TRADING RUN MANAGEMENT ==========
+
+def start_new_trading_run(description: str = "") -> str:
+    """
+    Start a new trading run and return run_id.
+
+    Args:
+        description: Description for the trading run
+
+    Returns:
+        str: Run ID of the started run
+    """
+    try:
+        from services.logging.run_manager import get_run_manager
+        run_manager = get_run_manager()
+        run_id = run_manager.start_new_run(description)
+        logger.info(f"Started new trading run: {run_id} - {description}")
+        return run_id
+    except Exception as e:
+        logger.error(f"Failed to start trading run: {e}")
+        raise
+
+
+def end_current_trading_run() -> Optional[Dict[str, Any]]:
+    """
+    End the current trading run and return manifest.
+
+    Returns:
+        Dict with run information or None if failed
+    """
+    try:
+        from services.logging.run_manager import get_run_manager
+        run_manager = get_run_manager()
+        manifest = run_manager.end_current_run()
+
+        if manifest:
+            logger.info(f"Completed trading run: {manifest['run_id']}")
+            logger.info(f"Total sessions: {len(manifest.get('sessions', []))}")
+        else:
+            logger.warning("No active run to end")
+
+        return manifest
+    except Exception as e:
+        logger.error(f"Failed to end trading run: {e}")
+        return None
+
+
+def generate_combined_run_report() -> Optional[Path]:
+    """
+    Generate combined CSV report for the current trading run.
+
+    Returns:
+        Path to generated CSV or None if failed
+    """
+    try:
+        from diagnostics.diagnostics_report_builder import build_combined_csv_from_current_run
+        csv_path = build_combined_csv_from_current_run()
+        logger.info(f"Combined report generated: {csv_path}")
+        return Path(csv_path)
+    except Exception as e:
+        logger.error(f"Failed to generate combined report: {e}")
+        return None

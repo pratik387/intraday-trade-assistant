@@ -355,8 +355,8 @@
   "metrics_enable_vwap": false,
   "_comment_energy_scanner": "=== ENERGY SCANNER (STAGE-0) ===",
   "energy_scanner": {
-    "top_k_long": 75,
-    "top_k_short": 75
+    "top_k_long": 80,
+    "top_k_short": 80
   },
   "_comment_scanner_filters": "=== SCANNER FILTERS ===",
   "scanner_min_bar5_volume": 1000,
@@ -401,14 +401,21 @@
   "rank_top_n": 50,
   "quality_filters": {
     "enabled": true,
-    "min_rank_score": 2.5,
-    "min_structural_rr": 2.0,
+    "min_rank_score": 1.5,
+    "min_structural_rr": 1.4,
+    "min_t1_rr": 1.0,
+    "min_t2_rr": 1.5,
     "time_windows": {
-      "morning_start": "10:30",
+      "morning_start": "09:30",
       "morning_end": "12:30",
-      "afternoon_start": "14:15",
-      "afternoon_end": "15:00"
-    }
+      "afternoon_start": "13:30",
+      "afternoon_end": "14:45"
+    },
+    "pattern_filters_enabled": true,
+    "momentum_consolidation_enabled": true,
+    "momentum_consolidation_threshold": 1.0,
+    "range_compression_enabled": true,
+    "range_compression_threshold": 0.8
   },
   "logging": {
     "enable_enhanced_logging": true,
@@ -577,5 +584,89 @@
   "cache_cleanup_interval_minutes": 60,
   "order_idle_ms": 250,
   "order_rate_limit": 1,
-  "order_retry_max": 3
+  "order_retry_max": 3,
+  "acceptance": {
+    "bars": 2,
+    "retest_bpct": 1.5,
+    "need_vwap_hold": false
+  },
+  "strategy_ranking_profiles": {
+    "mean_reversion": {
+      "strategies": [
+        "failure_fade_long", "failure_fade_short",
+        "vwap_mean_reversion_long", "vwap_mean_reversion_short",
+        "volume_spike_reversal_long", "volume_spike_reversal_short"
+      ],
+      "rank_vol_ratio_divisor": 4.0,
+      "rank_vol_cap": 2.0,
+      "rank_adx_mid": 35.0,
+      "rank_adx_divisor": 25.0,
+      "rank_vwap_bonus": 0.2,
+      "rank_vwap_penalty": -0.1,
+      "rank_dist_near_score": 0.2,
+      "rank_acceptance_bonus": 0.5,
+      "base_threshold": 0.5
+    },
+    "momentum_breakout": {
+      "strategies": [
+        "breakout_long", "breakout_short",
+        "orb_breakout_long", "orb_breakout_short",
+        "flag_continuation_long", "flag_continuation_short",
+        "trend_pullback_long", "trend_pullback_short"
+      ],
+      "rank_vol_ratio_divisor": 1.5,
+      "rank_vol_cap": 4.0,
+      "rank_adx_mid": 20.0,
+      "rank_adx_divisor": 15.0,
+      "rank_vwap_bonus": 0.4,
+      "rank_vwap_penalty": -0.3,
+      "rank_dist_near_score": 0.6,
+      "rank_acceptance_bonus": 0.2,
+      "base_threshold": 1.8
+    },
+    "range_bound": {
+      "strategies": [
+        "range_rejection_long", "range_rejection_short",
+        "support_bounce_long", "resistance_bounce_short",
+        "vwap_reclaim_long", "vwap_lose_short"
+      ],
+      "rank_vol_ratio_divisor": 3.0,
+      "rank_vol_cap": 2.5,
+      "rank_adx_mid": 30.0,
+      "rank_adx_divisor": 20.0,
+      "rank_sq_score_le_50": 0.5,
+      "rank_sq_score_le_70": 0.3,
+      "rank_acceptance_bonus": 0.4,
+      "base_threshold": 1.0
+    },
+    "gap_fill": {
+      "strategies": [
+        "gap_fill_long", "gap_fill_short"
+      ],
+      "rank_vol_ratio_divisor": 2.5,
+      "rank_vol_cap": 3.0,
+      "rank_adx_mid": 25.0,
+      "rank_adx_divisor": 20.0,
+      "rank_vwap_bonus": 0.3,
+      "rank_acceptance_bonus": 0.3,
+      "base_threshold": 1.6
+    },
+    "squeeze_expansion": {
+      "strategies": [
+        "squeeze_release_long", "squeeze_release_short"
+      ],
+      "rank_vol_ratio_divisor": 1.8,
+      "rank_vol_cap": 3.5,
+      "rank_adx_mid": 22.0,
+      "rank_sq_score_le_50": 0.6,
+      "rank_acceptance_bonus": 0.4,
+      "base_threshold": 1.7
+    }
+  },
+  "planner_strategy_mapping": {
+    "pdl_break_hold_short": "momentum_breakout",
+    "generic_long_from_failure_fade_long": "mean_reversion",
+    "generic_long_from_range_rejection_long": "range_bound",
+    "generic_long_from_support_bounce_long": "range_bound"
+  }
 }

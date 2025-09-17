@@ -20,7 +20,7 @@ import time
 
 # --- Constants ---
 START_DATE = "2025-07-01"
-END_DATE = "2025-08-29"
+END_DATE = "2025-09-15"
 INTERVAL = "1"
 INTERVAL_UNIT = "days"  # "minutes", "days", "weeks", "hours"
 MAX_WORKERS = 5

@@ -68,33 +68,37 @@ class EnergyScanner:
             if dft.empty:
                 continue
 
-            # Basic returns
-            dft["ret"] = dft["close"].pct_change()
-            ret_1 = float(dft["ret"].iloc[-1]) if len(dft) >= 2 else 0.0
-            ret_3 = float(dft["close"].pct_change(3).iloc[-1]) if len(dft) >= 4 else 0.0
+            #  Pre-compute series once (symbol-safe)
+            close_series = dft["close"].astype(float)
+            volume_series = dft["volume"].astype(float)
 
-            # ATR% proxy (mean absolute return over 14 bars)
+            #  Single vectorized operations per symbol
+            returns = close_series.pct_change()
+            ret_1 = float(returns.iloc[-1]) if len(dft) >= 2 else 0.0
+            ret_3 = float(close_series.pct_change(3).iloc[-1]) if len(dft) >= 4 else 0.0
+
+            #  ATR calculation (symbol-safe)
             if len(dft) >= 5:
-                atr_pct14 = float(dft["ret"].abs().rolling(14, min_periods=5).mean().iloc[-1] or 0.0)
+                atr_pct14 = float(returns.abs().rolling(14, min_periods=5).mean().iloc[-1] or 0.0)
             else:
                 atr_pct14 = 0.0
 
-            # Volume z‑score (intraday baseline over last 20 bars)
+            #  Volume statistics (symbol-safe)
             if len(dft) >= 6:
-                vol = dft["volume"].astype(float)
-                mu = float(vol.tail(20).mean())
-                sd = float(vol.tail(20).std(ddof=0) or 0.0)
-                vol_z20 = (float(vol.iloc[-1]) - mu) / sd if sd > 0 else 0.0
+                vol_tail20 = volume_series.tail(20)
+                vol_mean = float(vol_tail20.mean())
+                vol_std = float(vol_tail20.std(ddof=0) or 0.0)
+                vol_z20 = (float(volume_series.iloc[-1]) - vol_mean) / vol_std if vol_std > 0 else 0.0
             else:
                 vol_z20 = 0.0
 
-            # Distance to VWAP (dimensionless)
-            close = float(dft["close"].iloc[-1])
-            vwap = float(dft.get("vwap", dft["close"]).iloc[-1])
+            #  Direct value extraction
+            close = float(close_series.iloc[-1])
+            vwap = float(dft["vwap"].iloc[-1]) if "vwap" in dft.columns else close
             dist_to_vwap = (close - vwap) / vwap if vwap else 0.0
 
-            # Compression proxy (if present)
-            bb_width_proxy = float(dft.get("bb_width_proxy", pd.Series([0.0])).iloc[-1] or 0.0)
+            #  Compression proxy
+            bb_width_proxy = float(dft["bb_width_proxy"].iloc[-1]) if "bb_width_proxy" in dft.columns else 0.0
 
             # Optional: distances to structural levels to nudge rank
             lvs = (levels_by_symbol or {}).get(sym, {})
@@ -102,55 +106,86 @@ class EnergyScanner:
             dist_pdl = ((close - float(lvs.get("PDL", np.nan))) / close) if "PDL" in lvs else np.nan
             dist_orh = ((close - float(lvs.get("ORH", np.nan))) / close) if "ORH" in lvs else np.nan
             dist_orl = ((close - float(lvs.get("ORL", np.nan))) / close) if "ORL" in lvs else np.nan
+            # PROFESSIONAL: Winning-focused energy scores
+            # Focus on extreme volume + directional bias + gap momentum
+            
+            # Calculate vol_ratio first
+            if len(dft) >= 6:
+                vol_ratio = float(volume_series.iloc[-1]) / float(vol_mean) if vol_mean > 0 else 1.0
+            else:
+                vol_ratio = 1.0
 
-            # Energy scores (dimensionless). Keep it cheap & stable.
-            # Long likes: +volume, +momentum, near levels above, small compression, near VWAP or above
+            # PROFESSIONAL STAGE-0: Capture quality opportunities, not just extremes
+
+            # 1. PARTICIPATION FILTER (not extremes)
+            vol_participation = min(vol_z20 * 1.0, 2.0) if vol_z20 > 0.8 else 0.0  # Above average volume
+            vol_ratio_factor = min((vol_ratio - 1.5) * 0.8, 2.0) if vol_ratio > 1.5 else 0.0  # 1.5x+ volume
+
+            # 2. MOVEMENT FILTER (not momentum)
+            movement_factor = 0.0
+            if abs(ret_1) > 0.003:  # 0.3%+ movement
+                movement_factor = min(abs(ret_1) * 100, 2.0)  # Scale movement
+
+            # 3. VOLATILITY AVAILABILITY
+            atr_availability = min(atr_pct14 * 50, 1.5) if atr_pct14 > 0.008 else 0.0  # Some volatility
+
+            # 4. STRUCTURE PROXIMITY (fast check)
+            structure_factor = 0.0
+            if abs(dist_to_vwap) < 0.02:  # Within 2% of VWAP
+                structure_factor = 1.0
+
+            # 5. TIME-DECAY URGENCY
+            current_hour = dft.index[-1].hour
+            current_minute = dft.index[-1].minute
+            time_multiplier = 1.0
+
+            if current_hour < 10 or (current_hour == 10 and current_minute < 30):
+                # Early session: more lenient
+                time_multiplier = 1.2
+            elif current_hour >= 14:
+                # Late session: require more movement
+                time_multiplier = 0.8 if movement_factor < 1.0 else 1.1
+
+            # 6. PROFESSIONAL SCORING (capture more quality candidates)
+            base_score = (
+                0.30 * vol_participation +        # Volume participation
+                0.25 * movement_factor +          # Price movement
+                0.20 * vol_ratio_factor +         # Volume ratio
+                0.15 * atr_availability +         # Volatility available
+                0.10 * structure_factor           # Near key levels
+            ) * time_multiplier
+
+            # Directional bias (simple)
             mom = ret_1 + 0.5 * ret_3
-            atr_nz = atr_pct14 if atr_pct14 > 1e-9 else 1e-9
-            mom_norm = mom / atr_nz
-            score_long = (
-                0.40 * vol_z20 +
-                0.35 * mom_norm +
-                0.15 * (-abs(dist_to_vwap)) +
-                0.10 * (0.0 if np.isnan(bb_width_proxy) else -bb_width_proxy)
-            )
-            # Nudge if near PDH/ORH (potential breakout magnet)
-            if not np.isnan(dist_pdh):
-                score_long += 0.10 * (-abs(dist_pdh))
-            if not np.isnan(dist_orh):
-                score_long += 0.05 * (-abs(dist_orh))
+            directional_bias = 1.0
+            if abs(mom) > 0.005:  # 0.5%+ directional movement
+                directional_bias = 1.2
 
-            # Short likes: mirror signals
-            score_short = (
-                0.40 * vol_z20 +
-                0.35 * (-mom_norm) +
-                0.15 * (-abs(dist_to_vwap)) +
-                0.10 * (0.0 if np.isnan(bb_width_proxy) else -bb_width_proxy)
-            )
-            if not np.isnan(dist_pdl):
-                score_short += 0.10 * (-abs(dist_pdl))
-            if not np.isnan(dist_orl):
-                score_short += 0.05 * (-abs(dist_orl))
-                
-            # --- NEW: volume persistency & simple vol_ratio ---
+            score_long = base_score * directional_bias if mom >= 0 else base_score * 0.8
+            score_short = base_score * directional_bias if mom <= 0 else base_score * 0.8
+
+            # Calculate gap for logging (removed from scoring)
+            if len(close_series) >= 2:
+                gap_pct = abs(close - close_series.iloc[-2]) / close_series.iloc[-2]
+            else:
+                gap_pct = 0.0
+
+            #  Volume persistence (symbol-safe)
             if len(dft) >= 4:
-                vol_series = dft["volume"].astype(float).tail(4)
-                vol_persist = int((vol_series.iloc[-1] >= vol_series.tail(3).mean() * 1.0) and
-                                (vol_series.iloc[-2] >= vol_series.tail(3).mean() * 1.0))
+                vol_tail4 = volume_series.tail(4)
+                vol_mean_3 = vol_tail4.tail(3).mean()
+                vol_persist = int((vol_tail4.iloc[-1] >= vol_mean_3) and (vol_tail4.iloc[-2] >= vol_mean_3))
             else:
                 vol_persist = 0
 
-            vol_ratio = float(dft["volume"].iloc[-1] / (dft["volume"].tail(20).mean() or 1.0))
-            
-            turnover = close * float(dft["volume"].iloc[-1])
-
+            turnover = close * float(volume_series.iloc[-1])
             rows.append(
                 {
                     "symbol": sym,
                     "ts": dft.index[-1],
                     "close": close,
                     "vwap": vwap,
-                    "volume": float(dft["volume"].iloc[-1]),
+                    "volume": float(volume_series.iloc[-1]),
                     "ret_1": ret_1,
                     "ret_3": ret_3,
                     "atr_pct14": atr_pct14,
@@ -164,6 +199,7 @@ class EnergyScanner:
                     "turnover": turnover,    
                     "vol_ratio": vol_ratio,
                     "vol_persist_ok": int(vol_persist),
+                    "gap_pct": gap_pct,
                     "score_long": float(score_long),
                     "score_short": float(score_short),
                 }

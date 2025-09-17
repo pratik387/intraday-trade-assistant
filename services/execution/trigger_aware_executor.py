@@ -369,21 +369,70 @@ class TriggerAwareExecutor:
                     primary_satisfied, must_satisfied, should_score
                 )
                 
-                # Check if trade should be triggered
+                # Check if trade should be triggered - REAL TRADER LOGIC
                 if primary_satisfied and must_satisfied:
-                    # Store trigger context
-                    trade.trigger_price = float(bar_1m.get("close", 0))
-                    trade.trigger_timestamp = trade.last_validation_ts
-                    trade.state = TradeState.TRIGGERED
-                    
-                    logger.info(
-                        f"TRIGGERED: {symbol} {trade.plan.get('strategy', '')} "
-                        f"price={trade.trigger_price:.2f} confidence={trade.confidence_score:.2f}"
-                    )
+                    current_price = float(bar_1m.get("close", 0))
+
+                    # CRITICAL: Check if price is within entry zone (like real traders)
+                    entry_zone = (trade.plan.get("entry") or {}).get("zone", [])
+                    price_in_zone = self._is_price_in_entry_zone(current_price, entry_zone, trade.plan.get("bias"))
+
+                    if price_in_zone:
+                        # Price is in acceptable entry zone AND conditions met - TRIGGER!
+                        trade.trigger_price = current_price
+                        trade.trigger_timestamp = trade.last_validation_ts
+                        trade.state = TradeState.TRIGGERED
+
+                        logger.info(
+                            f"TRIGGERED: {symbol} {trade.plan.get('strategy', '')} "
+                            f"price={trade.trigger_price:.2f} zone={entry_zone} confidence={trade.confidence_score:.2f}"
+                        )
+                    else:
+                        # Conditions met but price outside zone - wait like real traders
+                        logger.debug(
+                            f"CONDITIONS MET but price outside zone: {symbol} "
+                            f"price={current_price:.2f} zone={entry_zone} - WAITING"
+                        )
                 
             except Exception as e:
                 logger.exception(f"Trigger validation error for {symbol}: {e}")
-    
+
+    def _is_price_in_entry_zone(self, current_price: float, entry_zone: List[float], bias: str) -> bool:
+        """
+        Check if current price is within acceptable entry zone (like real traders).
+
+        Args:
+            current_price: Current market price
+            entry_zone: [min_price, max_price] from plan
+            bias: "long" or "short"
+
+        Returns:
+            True if price is in zone, False otherwise
+        """
+        if not entry_zone or len(entry_zone) != 2:
+            # No entry zone defined - allow trigger (fallback behavior)
+            return True
+
+        min_price, max_price = sorted(entry_zone)  # Ensure min < max
+
+        # For both long and short trades, price must be within the defined zone
+        in_zone = min_price <= current_price <= max_price
+
+        if not in_zone:
+            # Additional logging for analysis
+            distance_from_zone = 0
+            if current_price < min_price:
+                distance_from_zone = min_price - current_price
+            elif current_price > max_price:
+                distance_from_zone = current_price - max_price
+
+            logger.debug(
+                f"Price outside zone: {current_price:.2f} vs [{min_price:.2f}, {max_price:.2f}] "
+                f"bias={bias} distance={distance_from_zone:.2f}"
+            )
+
+        return in_zone
+
     def _validate_condition_group(
         self, 
         conditions: List[TriggerCondition], 

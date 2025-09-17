@@ -118,6 +118,19 @@ def run() -> int:
         print("ERROR: END_DATE must be >= START_DATE", file=sys.stderr)
         return 2
 
+    # START NEW TRADING RUN with unique ID
+    import datetime
+    unique_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_description = f"Engine Backtest {START_DATE} to {END_DATE} [{unique_id}]"
+
+    try:
+        from services.analytics.session_reporter import start_new_trading_run
+        print(f"[+] Starting new trading run: {run_description}")
+        run_id = start_new_trading_run(run_description)
+    except Exception as e:
+        print(f"WARNING: Failed to start trading run: {e}")
+        # Continue anyway - run management is not critical
+
     # Build trading-day list and report skips
     days_all = list(_daterange(start, end))
     days = [d for d in days_all if is_trading_day(d)]
@@ -155,8 +168,25 @@ def run() -> int:
     if failures:
         for d, rc, m in failures:
             print(f"- {d}: rc={rc}, note={m}")
-        return 1
-    return 0
+
+    # END TRADING RUN
+    try:
+        from services.analytics.session_reporter import end_current_trading_run, generate_combined_run_report
+
+        print(f"[+] Ending trading run: {run_description}")
+        manifest = end_current_trading_run()
+
+        # Generate combined report for completed run
+        print("[+] Generating combined CSV report...")
+        csv_path = generate_combined_run_report()
+
+        if csv_path:
+            print(f"[+] Combined CSV report saved: {csv_path}")
+
+    except Exception as e:
+        print(f"WARNING: Failed to end trading run or generate report: {e}")
+
+    return 1 if failures else 0
 
 if __name__ == "__main__":
     raise SystemExit(run())

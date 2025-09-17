@@ -12,7 +12,7 @@ Consolidates:
 from pathlib import Path
 from typing import Optional
 from config.logging_config import get_agent_logger
-from diagnostics.diagnostics_report_builder import build_csv_from_events
+from diagnostics.diagnostics_report_builder import build_csv_from_events, build_combined_csv_from_current_run
 from services.analytics.trade_lifecycle import TradeLifecycleManager
 from services.analytics.session_reporter import generate_session_report, SessionReporter
 
@@ -47,10 +47,16 @@ class AnalyticsEngine:
         return success
     
     def _generate_diagnostics_csv(self) -> bool:
-        """Generate diagnostics CSV from events"""
+        """Generate both per-session and combined diagnostics CSV"""
         try:
+            # Generate per-session CSV
             csv_path = build_csv_from_events()
-            logger.info("Diagnostics CSV written: %s", csv_path)
+            logger.info("Per-session CSV written: %s", csv_path)
+
+            # Generate combined CSV from current run sessions
+            combined_csv_path = build_combined_csv_from_current_run()
+            logger.info("Combined CSV written: %s", combined_csv_path)
+
             return True
         except Exception as e:
             logger.warning("Failed to build diagnostics CSV: %s", e)

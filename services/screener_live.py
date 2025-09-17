@@ -63,7 +63,7 @@ from services import levels
 from services import metrics_intraday as mi
 from services.planner_internal import generate_trade_plan
 from services.events.structure_events import StructureEventDetector
-from services.ranker import rank_candidates
+from services.ranker import rank_candidates, get_strategy_threshold
 
 # orders
 from services.orders.order_queue import OrderQueue
@@ -92,6 +92,7 @@ class ScreenerLive:
         self.oq = order_queue
 
         raw = load_filters()
+        self.raw_cfg = raw  # Store raw config for other methods
         try:
             self.cfg = ScreenerConfig(
                 screener_store_5m_max=int(raw["screener_store_5m_max"]),
@@ -102,6 +103,9 @@ class ScreenerLive:
             )
         except KeyError as e:
             raise KeyError(f"ScreenerLive: missing config key {e!s}") from e
+
+        # Timestamp tracking for logging throttle
+        self._last_logged_timestamp = None
 
         # Core ingest / aggregation
         self.agg = BarBuilder(
@@ -133,6 +137,7 @@ class ScreenerLive:
             event_policy_gate=self.event_gate,
             news_spike_gate=self.news_gate,
             market_sentiment_gate=self.sentiment_gate,
+            quality_filters=raw.get("quality_filters", {}),
         )
 
         # Stage-0 scanner
@@ -158,7 +163,7 @@ class ScreenerLive:
             str(raw.get("opening_block_end_hhmm", "")) or None,
         )
 
-        logger.info(
+        logger.debug(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
             len(self.core_symbols),
             self.cfg.screener_store_5m_max,
@@ -202,6 +207,12 @@ class ScreenerLive:
             return
         self._last_produced_at = now
 
+        # ENHANCED LOGGING: Progress tracking (only log once per unique timestamp)
+        current_time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        if self._last_logged_timestamp != current_time_str:
+            logger.info("SCANNER_PROGRESS | Bar: %s | Stage-0 starting", current_time_str)
+            self._last_logged_timestamp = current_time_str
+
         # ---------- Stage-0: EnergyScanner (single unified path) ----------
         shortlist: List[str] = []
         feats_df = None
@@ -219,6 +230,14 @@ class ScreenerLive:
             logger.exception("EnergyScanner failed; fallback shortlist: %s", e)
             shortlist = self._fallback_shortlist()
 
+        # ENHANCED LOGGING: Stage-0 completion with accurate counts
+        eligible_symbols = len(df5_by_symbol) if df5_by_symbol else 0
+        total_symbols = len(self.core_symbols)
+        shortlist_count = len(shortlist)
+
+        logger.info("SCANNER_COMPLETE | Processed %d eligible of %d total symbols → %d shortlisted (%.1f%%) | Stage-0→Gates",
+                   eligible_symbols, total_symbols, shortlist_count,
+                   (shortlist_count/max(eligible_symbols,1))*100)
         if not shortlist:
             return
 
@@ -260,13 +279,15 @@ class ScreenerLive:
             )
             decisions.append((sym, decision))
 
+        gate_accept_count = len(decisions)
+        logger.info("GATES_COMPLETE | %d→%d symbols (%.1f%%) | Gates→Ranking", shortlist_count, gate_accept_count, (gate_accept_count/max(shortlist_count,1))*100)
         if not decisions:
             return
 
         dec_map = {s: d for (s, d) in decisions}
 
         # ---------- Rank (distribution clamp) ----------
-        ranked: List[Tuple[str, float]] = self._rank_by_intraday_edge([s for s, _ in decisions])
+        ranked: List[Tuple[str, float]] = self._rank_by_intraday_edge([s for s, _ in decisions], decisions)
         if not ranked:
             return
 
@@ -275,8 +296,15 @@ class ScreenerLive:
 
         # ---------- Plan & de-dupe & enqueue ----------
         for sym, score in ranked:
+            # Get strategy-specific threshold
+            decision = dec_map.get(sym)
+            strategy_type = getattr(decision, "setup_type", None) if decision else None
+            threshold = get_strategy_threshold(strategy_type) if strategy_type else self.cfg.rank_exec_threshold
+
             # absolute threshold gate
-            if score < self.cfg.rank_exec_threshold:
+            if score < threshold:
+                logger.info("RANK:REJECT sym=%s score=%.3f < threshold=%.3f (strategy=%s)",
+                           sym, score, threshold, strategy_type)
                 continue
             # percentile gate
             if score < pctl_score:
@@ -286,7 +314,8 @@ class ScreenerLive:
             daily_df = self.sdk.get_daily(sym, days=90)
 
             try:
-                plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df)
+                decision = dec_map[sym]
+                plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_type=decision.setup_type)
             except Exception as e:
                 logger.exception("planner failed for %s: %s", sym, e)
                 continue
@@ -296,8 +325,10 @@ class ScreenerLive:
 
             # 1) Eligibility
             if not plan.get("eligible", False):
-                logger.info("SKIP %s: ineligible plan reasons=%s",
-                            sym, ";".join((plan.get("notes") or {}).get("cautions", [])))
+                rejection_reason = (plan.get("quality") or {}).get("rejection_reason", "unknown")
+                cautions = ";".join((plan.get("notes") or {}).get("cautions", []))
+                logger.info("SKIP %s: ineligible plan rejection_reason=%s cautions=%s",
+                            sym, rejection_reason, cautions)
                 continue
 
             # 2) Qty
@@ -474,7 +505,7 @@ class ScreenerLive:
                 out.append(sym)
         return out[:60]
 
-    def _rank_by_intraday_edge(self, symbols: List[str]) -> List[Tuple[str, float]]:
+    def _rank_by_intraday_edge(self, symbols: List[str], decisions: List[Tuple[str, Decision]]) -> List[Tuple[str, float]]:
         """Map symbols → rank_scores via ranker (kept identical to your current wiring)."""
         rows_for_ranker: List[Dict] = []
         for sym in symbols:
@@ -503,8 +534,18 @@ class ScreenerLive:
                     cur_bw = float(last.get("bb_width_proxy", 0.0) or 0.0)
                     sq_pct = float((recent_bw <= cur_bw).mean() * 100.0)
 
+            # Get strategy type from decisions
+            strategy_type = None
+            for s, d in decisions:
+                if s == sym:
+                    strategy_type = getattr(d, "setup_type", None)
+                    break
+
+            # Strategy type detection (debug logging removed for cleaner output)
+
             rows_for_ranker.append({
                 "symbol": sym,
+                "strategy_type": strategy_type,
                 "daily_score": 0.0,
                 "intraday": {
                     "volume_ratio": volume_ratio,
@@ -516,6 +557,15 @@ class ScreenerLive:
 
         if not rows_for_ranker:
             return []
+
+        # Log strategy distribution
+        strategy_counts = {}
+        for row in rows_for_ranker:
+            strategy = row.get("strategy_type") or "unknown"
+            strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
+        strategy_summary = ", ".join(f"{k}:{v}" for k, v in strategy_counts.items())
+        logger.info(f"RANKER_INPUT | {len(rows_for_ranker)} symbols by strategy: {strategy_summary}")
+
         ranked_rows = rank_candidates(rows_for_ranker, top_n=len(rows_for_ranker))
         return [(r.get("symbol", "?"), float(r.get("rank_score", 0.0))) for r in ranked_rows]
 

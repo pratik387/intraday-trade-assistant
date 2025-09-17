@@ -78,7 +78,7 @@ def opening_range(df_5m: pd.DataFrame) -> Tuple[float, float]:
 
         orb_high = float(win["high"].max())
         orb_low = float(win["low"].min())
-        logger.info(
+        logger.debug(
             f"levels.opening_range: date={last_date} "
             f"high={orb_high:.4f} low={orb_low:.4f} rows={len(win)}"
         )

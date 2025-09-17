@@ -337,18 +337,55 @@ class ExitExecutor:
     # ---------- OR / custom kill ----------
 
     def _or_kill(self, side: str, px: float, plan: Dict[str, Any]) -> bool:
+        """
+        Professional OR kill logic with ATR-based buffers.
+        Only kills on significant range breaks, not minor slippage.
+        """
         try:
             orh = plan.get("orh"); orl = plan.get("orl")
             orh = None if orh is None else float(orh)
             orl = None if orl is None else float(orl)
+
+            # Get ATR for buffer calculation
+            atr = float(plan.get("indicators", {}).get("atr", 0))
+            if atr <= 0:
+                # Fallback: estimate ATR as 1% of price
+                atr = abs(px * 0.01)
+
         except Exception:
             return False
+
+        if orh is None and orl is None:
+            return False
+
         side = side.upper()
-        if side == "BUY" and (orl is not None):
-            return px < orl
-        if side == "SELL" and (orh is not None):
-            return px > orh
-        return False
+
+        # Professional approach: Add ATR-based buffer to avoid noise kills
+        # Regime-specific buffer multipliers
+        regime = plan.get("regime", "").lower()
+        if regime in ["chop", "choppy"]:
+            buffer_mult = 0.75  # Larger buffer in choppy markets (3/4 ATR)
+        else:
+            buffer_mult = 0.5   # Smaller buffer in trending markets (1/2 ATR)
+
+        buffer = atr * buffer_mult
+
+        # Apply buffers - only kill on convincing breaks beyond normal noise
+        if side == "BUY" and orl is not None:
+            # For longs: only kill if price breaks significantly below ORL
+            kill_level = orl - buffer
+            if px < kill_level:
+                logger.debug(f"OR_KILL: {plan.get('symbol')} LONG breach {px:.2f} < {kill_level:.2f} (ORL-{buffer:.2f})")
+                return True
+
+        if side == "SELL" and orh is not None:
+            # For shorts: only kill if price breaks significantly above ORH
+            kill_level = orh + buffer
+            if px > kill_level:
+                logger.debug(f"OR_KILL: {plan.get('symbol')} SHORT breach {px:.2f} > {kill_level:.2f} (ORH+{buffer:.2f})")
+                return True
+
+        return False   
 
     def _custom_kill(self, side: str, px: float, plan: Dict[str, Any]) -> Optional[str]:
         kills: List[Dict[str, Any]] = plan.get("kill_levels") or []

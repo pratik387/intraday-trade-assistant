@@ -250,6 +250,7 @@ def _load_planner_config(user_overrides: Optional[Dict[str, Any]] = None) -> Pla
         "late_entry_penalty": config.get("late_entry_penalty", {}),
         "planner_precision": config.get("planner_precision", {}),
         "acceptance": config.get("acceptance", {}),
+        "quality_filters": config.get("quality_filters", {}),
     }
 
     # Allow user overrides to update extras ONLY (strict knobs stay JSON-driven)
@@ -308,36 +309,29 @@ def _regime(df_sess: pd.DataFrame, cfg: PlannerConfig) -> str:
         return "choppy"
     return "range"
 
-def _strategy_selector(
-    df_sess: pd.DataFrame,
-    cfg: PlannerConfig,
-    regime: str,
+def _select_long_strategy(
+    df_sess: pd.DataFrame, cfg: PlannerConfig, regime: str,
     orh: float, orl: float, or_end: pd.Timestamp,
-    vwap: pd.Series,
-    pd_levels: Dict[str, float]
+    vwap: pd.Series, pd_levels: Dict[str, float],
+    close: float, ema20: pd.Series, ema50: pd.Series,
+    setup_type: str
 ) -> Dict[str, Any]:
-    """Pick a single best structure-led setup candidate."""
-    last = df_sess.iloc[-1]
-    close = float(last["close"])
+    """Select appropriate long strategy based on market conditions and setup type."""
 
-    ema20 = _ema(df_sess["close"], 20)
-    ema50 = _ema(df_sess["close"], 50)
-
-    # Strategy 1: ORB Pullback Long (trend_up)
-    if regime == "trend_up" and close > orh and close > vwap.iloc[-1] and ema20.iloc[-1] > ema50.iloc[-1]:
+    # Strategy 1: ORB Pullback Long - prioritize if setup is ORB-related
+    if ("orb" in setup_type or "breakout_long" in setup_type) and regime == "trend_up" and close > orh and close > vwap.iloc[-1] and ema20.iloc[-1] > ema50.iloc[-1]:
         basis = "orb_pullback_long"
         stop_structure = max(orl, _pivot_swing_low(df_sess, 12))
         return {
-            "name": basis,
-            "bias": "long",
+            "name": basis, "bias": "long",
             "entry_trigger": f"pullback to ~ORH({orh:.2f}) with hold above VWAP",
             "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_up", "above_ORH", "above_VWAP", "ema20>ema50"],
+            "context": {"reason": ["trend_up", "above_ORH", "above_VWAP", "ema20>ema50", f"setup:{setup_type}"],
                         "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
-    # Strategy 2: VWAP Reclaim Long
-    if close > vwap.iloc[-1] and df_sess["close"].tail(cfg.vwap_reclaim_min_bars_above).gt(
+    # Strategy 2: VWAP Reclaim Long - prioritize for VWAP-related setups
+    if ("vwap" in setup_type or "reclaim" in setup_type) and close > vwap.iloc[-1] and df_sess["close"].tail(cfg.vwap_reclaim_min_bars_above).gt(
         vwap.tail(cfg.vwap_reclaim_min_bars_above)
     ).all():
         basis = "vwap_reclaim_long"
@@ -346,10 +340,10 @@ def _strategy_selector(
             "name": basis, "bias": "long",
             "entry_trigger": "reclaim VWAP with N closes above, enter on minor dip",
             "structure_stop": float(stop_structure),
-            "context": {"reason": ["VWAP_reclaim"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+            "context": {"reason": ["VWAP_reclaim", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
-    # Strategy 2b: PDH Break + Hold Long
+    # Strategy 3: PDH Break + Hold Long - for range breakout setups
     if (pd_levels.get("PDH") is not None and not np.isnan(pd_levels.get("PDH"))) \
        and close > pd_levels["PDH"] and close > vwap.iloc[-1] and ema20.iloc[-1] > ema50.iloc[-1]:
         basis = "pdh_break_hold_long"
@@ -358,27 +352,39 @@ def _strategy_selector(
             "name": basis, "bias": "long",
             "entry_trigger": f"retest/hold above PDH({pd_levels['PDH']:.2f})",
             "structure_stop": float(stop_structure),
-            "context": {"reason": ["above_PDH","above_VWAP","ema20>ema50"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+            "context": {"reason": ["above_PDH","above_VWAP","ema20>ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
-    # Strategy 3b: PDL Break + Hold Short
-    if (
-        (pd_levels.get("PDL") is not None)
-        and (not np.isnan(pd_levels.get("PDL")))
-        and (close < pd_levels["PDL"])
-        and (close < vwap.iloc[-1])
-        and (ema20.iloc[-1] < ema50.iloc[-1])
-    ):
+    # Fallback: Generic long setup
+    return {
+        "name": f"generic_long_from_{setup_type}", "bias": "long",
+        "entry_trigger": f"align with {setup_type} bias",
+        "structure_stop": _pivot_swing_low(df_sess, 10),
+        "context": {"reason": [f"forced_long_from_{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+    }
+
+def _select_short_strategy(
+    df_sess: pd.DataFrame, cfg: PlannerConfig, regime: str,
+    orh: float, orl: float, or_end: pd.Timestamp,
+    vwap: pd.Series, pd_levels: Dict[str, float],
+    close: float, ema20: pd.Series, ema50: pd.Series,
+    setup_type: str
+) -> Dict[str, Any]:
+    """Select appropriate short strategy based on market conditions and setup type."""
+
+    # Strategy 1: PDL Break + Hold Short - prioritize for range breakdown setups
+    if (pd_levels.get("PDL") is not None and not np.isnan(pd_levels.get("PDL"))) \
+       and close < pd_levels["PDL"] and close < vwap.iloc[-1] and ema20.iloc[-1] < ema50.iloc[-1]:
         basis = "pdl_break_hold_short"
         stop_structure = min(orh, _pivot_swing_high(df_sess, 10))
         return {
             "name": basis, "bias": "short",
             "entry_trigger": f"retest/hold below PDL({pd_levels['PDL']:.2f})",
             "structure_stop": float(stop_structure),
-            "context": {"reason": ["below_PDL","below_VWAP","ema20<ema50"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+            "context": {"reason": ["below_PDL","below_VWAP","ema20<ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
-    # Strategy 3: Range Break + Retest Short (trend_down)
+    # Strategy 2: Range Break + Retest Short - for breakdown setups
     if regime == "trend_down" and close < orl and close < vwap.iloc[-1] and ema20.iloc[-1] < ema50.iloc[-1]:
         basis = "range_break_retest_short"
         stop_structure = min(orh, _pivot_swing_high(df_sess, 12))
@@ -386,16 +392,51 @@ def _strategy_selector(
             "name": basis, "bias": "short",
             "entry_trigger": f"retest of ~ORL({orl:.2f}) rejecting under VWAP",
             "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_down", "below_ORL", "below_VWAP", "ema20<ema50"],
+            "context": {"reason": ["trend_down", "below_ORL", "below_VWAP", "ema20<ema50", f"setup:{setup_type}"],
                         "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
-    # Fallback
+    # Fallback: Generic short setup
     return {
-        "name": "no_setup", "bias": "flat", "entry_trigger": "wait",
-        "structure_stop": np.nan,
-        "context": {"reason": ["no_clear_edge"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+        "name": f"generic_short_from_{setup_type}", "bias": "short",
+        "entry_trigger": f"align with {setup_type} bias",
+        "structure_stop": _pivot_swing_high(df_sess, 10),
+        "context": {"reason": [f"forced_short_from_{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
     }
+
+def _strategy_selector(
+    df_sess: pd.DataFrame,
+    cfg: PlannerConfig,
+    regime: str,
+    orh: float, orl: float, or_end: pd.Timestamp,
+    vwap: pd.Series,
+    pd_levels: Dict[str, float],
+    setup_type: str
+) -> Dict[str, Any]:
+    """Pick a single best structure-led setup candidate."""
+    last = df_sess.iloc[-1]
+    close = float(last["close"])
+
+    ema20 = _ema(df_sess["close"], 20)
+    ema50 = _ema(df_sess["close"], 50)
+
+    # SETUP-AWARE STRATEGY SELECTION - Match strategy bias to detected setup direction
+    if not setup_type:
+        raise ValueError("setup_type is required for strategy selection")
+
+    # Long setups should only get long strategies
+    if setup_type.endswith("_long"):
+        return _select_long_strategy(df_sess, cfg, regime, orh, orl, or_end, vwap, pd_levels, close, ema20, ema50, setup_type)
+    # Short setups should only get short strategies
+    elif setup_type.endswith("_short"):
+        return _select_short_strategy(df_sess, cfg, regime, orh, orl, or_end, vwap, pd_levels, close, ema20, ema50, setup_type)
+    else:
+        # Handle edge case of unknown setup types
+        return {
+            "name": "unknown_setup", "bias": "flat", "entry_trigger": "wait",
+            "structure_stop": np.nan,
+            "context": {"reason": [f"unknown_setup_type:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+        }
 
 # ----------------------------
 # Exits & sizing
@@ -466,6 +507,7 @@ def _compose_exits_and_size(
             entry_zone = [round(price - 0.01, 2), round(price, 2)]
         else:
             entry_width = max(atr * cfg.entry_zone_atr_frac, 0.01)
+            # For range strategies using current price is appropriate
             entry_zone = [round(price - entry_width, 2), round(price + entry_width, 2)]
 
         return {
@@ -494,6 +536,7 @@ def generate_trade_plan(
     df: pd.DataFrame,
     symbol: str,
     daily_df: Optional[pd.DataFrame] = None,
+    setup_type: str = None,
 ) -> Dict[str, Any]:
     """
     Build an intraday trade plan from a 5-min OHLCV DataFrame.
@@ -503,11 +546,11 @@ def generate_trade_plan(
     df : pd.DataFrame
         5m bars with columns [open, high, low, close, volume]; naive IST index expected.
     symbol : str
-    config : PlannerConfig | dict | None
-        If dict, only extras (intraday_gate / planner_precision / late_entry_penalty / acceptance)
-        are applied as overrides; strict knobs always come from JSON.
     daily_df : pd.DataFrame | None
         Daily bars used to compute PDH/PDL/PDC.
+    setup_type : str | None
+        Detected setup type from structure events (e.g., "range_rejection_long", "breakout_short").
+        Used to ensure strategy direction aligns with detected setup bias.
 
     Returns
     -------
@@ -569,7 +612,7 @@ def generate_trade_plan(
                 gap_pct = 100.0 * (first_open - pd_levels["PDC"]) / max(pd_levels["PDC"], 1e-9)
 
         regime = _regime(sess, cfg)
-        strat = _strategy_selector(sess, cfg, regime, orh, orl, or_end, sess["vwap"], pd_levels)
+        strat = _strategy_selector(sess, cfg, regime, orh, orl, or_end, sess["vwap"], pd_levels, setup_type)
         
         if strat["name"] == "no_setup":
             logger.info(f"planner: {symbol} no_setup (regime={regime}, ORH={orh:.2f}, ORL={orl:.2f})")
@@ -672,18 +715,27 @@ def generate_trade_plan(
             exits["targets"][1]["level"] = round(float(t2_feasible), 2)
             exits["targets"][1]["rr"] = round(float(t2_rr_eff), 2)
 
+        # Calculate structural risk-reward based on expected measured move
         if strat["bias"] == "long":
+            # For longs, next objective is ORH + 50% of measured move
             next_objective = orh + 0.5 * measured_move
             structural_rr = (next_objective - entry_ref_price) / max(rps, 1e-6)
         elif strat["bias"] == "short":
+            # For shorts, next objective is ORL - 50% of measured move
             next_objective = orl - 0.5 * measured_move
             structural_rr = (entry_ref_price - next_objective) / max(rps, 1e-6)
         else:
             next_objective = float("nan")
             structural_rr = float("nan")
 
+        # Handle negative structural RR (indicates setup-strategy directional mismatch)
         if not np.isnan(structural_rr):
-            structural_rr = float(np.clip(structural_rr, 0.0, rr_clip_max))
+            if structural_rr < 0:
+                # Log warning for negative structural RR (should not happen with setup alignment)
+                logger.warning(f"Negative structural RR {structural_rr:.2f} for {symbol} - potential setup-strategy mismatch")
+                structural_rr = 0.0  # Set to 0 instead of clipping to preserve the signal
+            else:
+                structural_rr = float(np.clip(structural_rr, 0.0, rr_clip_max))
 
         acc_cfg = cfg._extras.get("acceptance", {})
         acc_bars = int(acc_cfg.get("bars", 2))
@@ -768,10 +820,59 @@ def generate_trade_plan(
         }
         plan["guardrails"] = [g for g in plan["guardrails"] if g]
 
+        # APPLY QUALITY FILTERS - This was missing and causing poor performance!
+        if plan["eligible"]:
+            quality_filters = cfg._extras.get("quality_filters", {})
+            if quality_filters.get("enabled", False):
+                structural_rr_val = plan["quality"].get("structural_rr", 0)
+                min_structural_rr = quality_filters.get("min_structural_rr", 2.0)
+
+                # Note: structural_rr filter already applied at gate level - no need to double-filter
+                # Symbols reaching this stage have already passed structural_rr >= min_structural_rr
+
+                # Professional quality filters - reject poor setups at planning stage
+                if plan["eligible"]:
+                    # Filter: acceptance_ok must be true
+                    if not acceptance_ok:
+                        plan["eligible"] = False
+                        plan["quality"]["rejection_reason"] = "acceptance_ok=false (poor setup quality)"
+                        logger.info(f"planner: {symbol} rejected due to acceptance_ok=false")
+
+                    # Filter: targets must be feasible
+                    elif not plan["quality"]["t1_feasible"]:
+                        plan["eligible"] = False
+                        plan["quality"]["rejection_reason"] = "T1 not feasible"
+                        logger.info(f"planner: {symbol} rejected due to T1 not feasible")
+
+                    elif not plan["quality"]["t2_feasible"]:
+                        plan["eligible"] = False
+                        plan["quality"]["rejection_reason"] = "T2 not feasible"
+                        logger.info(f"planner: {symbol} rejected due to T2 not feasible")
+
+                    # Filter: minimum target risk-reward ratios
+                    elif len(plan["targets"]) >= 2:
+                        t1_rr = plan["targets"][0].get("rr", 0)
+                        t2_rr = plan["targets"][1].get("rr", 0)
+                        min_t1_rr = quality_filters.get("min_t1_rr", 1.0)
+                        min_t2_rr = quality_filters.get("min_t2_rr", 1.8)
+
+                        if t1_rr < min_t1_rr:
+                            plan["eligible"] = False
+                            plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr:.1f} < {min_t1_rr}"
+                            logger.info(f"planner: {symbol} rejected due to low T1_rr {t1_rr:.1f}")
+
+                        elif t2_rr < min_t2_rr:
+                            plan["eligible"] = False
+                            plan["quality"]["rejection_reason"] = f"T2_rr {t2_rr:.1f} < {min_t2_rr}"
+                            logger.info(f"planner: {symbol} rejected due to low T2_rr {t2_rr:.1f}")
+
+                # Note: rank_score filter applied later in execution pipeline when available
+
         logger.info(
             f"planner.plan sym={symbol} eligible={plan['eligible']} "
             f"bias={plan['bias']} strat={plan['strategy']} qty={plan['sizing']['qty']} "
             f"rr_t1={plan['targets'][0]['rr'] if plan['targets'] else None} "
+            f"structural_rr={plan['quality'].get('structural_rr', 'N/A')} "
             f"last_ts={sess.index[-1]}"
         )
         return plan

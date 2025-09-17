@@ -181,6 +181,153 @@ def build_csv_from_events(log_dir: Path | None = None,
     df.to_csv(out_path, index=False)
     return out_path
 
+def build_combined_csv_from_current_run(logs_root_dir: Path | None = None,
+                                        out_name: str = "combined_trade_report.csv") -> Path:
+    """
+    Generate a combined CSV report from sessions in the CURRENT TRADING RUN only.
+
+    Args:
+        logs_root_dir: Root logs directory (defaults to logs/)
+        out_name: Output CSV filename
+
+    Returns:
+        Path to the generated combined CSV
+    """
+    if logs_root_dir is None:
+        logs_root_dir = Path(__file__).resolve().parents[1] / "logs"
+
+    logs_root = Path(logs_root_dir)
+    all_events = []
+    session_count = 0
+
+    # Get sessions from current run
+    try:
+        from services.logging.run_manager import RunManager
+        run_manager = RunManager(logs_root)
+        current_run_sessions = run_manager.get_current_run_sessions()
+        run_info = run_manager.get_current_run_info()
+
+        if not current_run_sessions:
+            print("No current run found or no sessions in current run")
+            empty_path = logs_root / out_name
+            pd.DataFrame().to_csv(empty_path, index=False)
+            return empty_path
+
+        print(f"Current run: {run_info.get('run_id', 'unknown')} with {len(current_run_sessions)} sessions")
+
+    except ImportError:
+        print("Run manager not available, falling back to all recent sessions")
+        current_run_sessions = [d.name for d in sorted(logs_root.glob("*/")) if d.is_dir() and d.name.startswith("20")]
+
+    # Collect events from current run sessions only
+    for session_id in current_run_sessions:
+        session_dir = logs_root / session_id
+        if not session_dir.is_dir():
+            continue
+
+        events_file = session_dir / EVENTS_NAME
+        if events_file.exists():
+            session_events = _load_events(events_file)
+            if session_events:  # Only count sessions with actual events
+                # Add session metadata to each event
+                for event in session_events:
+                    event['session_id'] = session_dir.name
+                all_events.extend(session_events)
+                session_count += 1
+
+    if not all_events:
+        print("No events found across all sessions")
+        empty_path = logs_root / out_name
+        pd.DataFrame().to_csv(empty_path, index=False)
+        return empty_path
+
+    print(f"Found {len(all_events)} events across {session_count} sessions from current run")
+
+    # Process events using the same logic as single-session CSV
+    by_tid: Dict[str, List[Dict[str, Any]]] = {}
+    for ev in all_events:
+        tid = ev.get("trade_id") or _g(ev, "plan", "trade_id")
+        if not tid:
+            continue
+        by_tid.setdefault(tid, []).append(ev)
+
+    rows: List[Dict[str, Any]] = []
+    MAX_EXITS = 12
+
+    # Process each trade (same logic as build_csv_from_events)
+    for tid, evs in by_tid.items():
+        evs.sort(key=lambda e: (_ts(e.get("ts")), {"DECISION":0,"ENTRY":1,"EXIT":2}.get(e.get("type"), 9)))
+        first = evs[0]
+        dec = next((e for e in evs if e.get("type") == "DECISION"), None)
+        exits = [e for e in evs if e.get("type") == "EXIT"]
+
+        if not dec:
+            continue
+
+        row = {
+            "trade_id": tid,
+            "session_id": first.get("session_id", "unknown"),  # Add session tracking
+            "symbol": _g(first, "symbol") or "",
+            "decision_ts": _g(dec, "ts"),
+            "setup_type": _g(dec, "decision", "setup_type"),
+            "regime": _g(dec, "decision", "regime"),
+            "strategy": _g(dec, "plan", "strategy"),
+            "bias": _g(dec, "plan", "bias"),
+            "entry_ref": _g(dec, "plan", "entry", "reference"),
+            "hard_sl": _g(dec, "plan", "stop", "hard"),
+            "qty": _g(dec, "plan", "sizing", "qty"),
+            "rank_score": _g(dec, "features", "rank_score"),
+
+            # Add key levels for analysis
+            "PDH": _g(dec, "plan", "levels", "PDH"),
+            "PDL": _g(dec, "plan", "levels", "PDL"),
+            "ORH": _g(dec, "plan", "levels", "ORH"),
+            "ORL": _g(dec, "plan", "levels", "ORL"),
+        }
+
+        # Add exit data
+        if exits:
+            exit_data = exits[0].get("exit", {})
+            row.update({
+                "exit_ts": _g(exits[0], "ts"),
+                "exit_reason": exit_data.get("reason"),
+                "exit_price": exit_data.get("price"),
+                "exit_qty": exit_data.get("qty"),
+            })
+
+            # Calculate PnL if we have the data
+            entry_price = row["entry_ref"]
+            exit_price = row["exit_price"]
+            qty = row["qty"]
+            bias = row["bias"]
+
+            if all(_ok(x) for x in [entry_price, exit_price, qty]) and bias in ["long", "short"]:
+                if bias == "long":
+                    pnl = (exit_price - entry_price) * qty
+                else:
+                    pnl = (entry_price - exit_price) * qty
+                row["pnl"] = round(pnl, 2)
+
+        rows.append(row)
+
+    # Create DataFrame and sort by timestamp
+    df = pd.DataFrame(rows)
+    if not df.empty and "decision_ts" in df.columns:
+        df = df.sort_values(by=["decision_ts", "symbol", "trade_id"], na_position="last")
+
+    # Write combined CSV to logs root directory
+    out_path = logs_root / out_name
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path, index=False)
+
+    print(f"Combined CSV written: {out_path}")
+    print(f"Total trades: {len(df)} (from {session_count} sessions in current run)")
+    return out_path
+
 if __name__ == "__main__":
+    # Generate both single session and combined reports
     p = build_csv_from_events()
-    print(str(p))
+    print(f"Single session CSV: {p}")
+
+    combined = build_combined_csv_from_current_run()
+    print(f"Combined CSV: {combined}")

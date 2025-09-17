@@ -1,9 +1,6 @@
 # config/filters_setup.py
 import json
 from pathlib import Path
-from config.logging_config import get_agent_logger
-
-logger = get_agent_logger()
 
 ROOT = Path(__file__).resolve().parent
 ENTRY_CONFIG_PATH = ROOT / "configuration.json"
@@ -15,16 +12,15 @@ def _load_json(path: Path, required: bool) -> dict:
     if not path.exists():
         msg = f"[config] file not found: {path.name}"
         if required:
-            logger.error(msg)
             raise FileNotFoundError(f"{path} not found")
-        else:
-            logger.warning(msg)
+        else: 
+            print(msg)
             return {}
     try:
         with path.open("r") as f:
             return json.load(f)
     except Exception as e:
-        logger.exception(f"[config] failed to load {path.name}: {e}")
+        
         # bubble up: no defaults here, as per project policy
         raise
 
@@ -41,8 +37,6 @@ def load_filters(force_reload: bool = False) -> dict:
 
     cfg = {}
     cfg.update(entry)
-
-    logger.info(f"[config] loaded: entry={'yes' if entry else 'no'}, keys={len(cfg)}")
     _CFG = cfg
     return cfg
 
