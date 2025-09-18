@@ -100,7 +100,23 @@ class TriggerAwareExecutor:
             if qty <= 0:
                 logger.warning(f"Invalid qty for {symbol}: {qty}")
                 return False
-            
+
+            # Validate entry price vs hard_sl distance
+            hard_sl = plan.get("hard_sl")
+
+            logger.info(f"VALIDATION CHECK: {symbol} entry={price:.2f} hard_sl={hard_sl} side={side}")
+    
+            if hard_sl is not None:
+                # Check minimum distance (0.2% of price or 10 paisa minimum)
+                min_distance = max(price * 0.002, 0.10)
+
+                if side == "BUY" and price <= (hard_sl + min_distance):
+                    logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
+                    return False
+                elif side == "SELL" and price >= (hard_sl - min_distance):
+                    logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
+                    return False
+
             # Place order
             order_args = {
                 "symbol": symbol,
@@ -371,10 +387,21 @@ class TriggerAwareExecutor:
                 
                 # Check if trade should be triggered - REAL TRADER LOGIC
                 if primary_satisfied and must_satisfied:
-                    current_price = float(bar_1m.get("close", 0))
+                    entry_zone = (trade.plan.get("entry_zone"))
+                    side = "BUY" if (trade.plan.get("bias", "long") == "long") else "SELL"
+
+                    try:
+                        ltp = self.broker.get_ltp(
+                            trade.symbol,
+                            entry_zone=entry_zone if entry_zone else None,
+                            side=side,
+                            bar_1m=bar_1m.to_dict() if hasattr(bar_1m, "to_dict") else None,
+                        )
+                        current_price = float(ltp)
+                    except Exception:
+                        current_price = float(bar_1m.get("close", 0.0))
 
                     # CRITICAL: Check if price is within entry zone (like real traders)
-                    entry_zone = (trade.plan.get("entry") or {}).get("zone", [])
                     price_in_zone = self._is_price_in_entry_zone(current_price, entry_zone, trade.plan.get("bias"))
 
                     if price_in_zone:

@@ -200,21 +200,12 @@ class TradeDecisionGate:
         reasons: List[str] = []
 
         # FAST QUALITY FILTERS - Applied first to save computation
-        # 1) Rank score threshold filter (pre-computed value)
-        if features and 'rank_score' in features:
-            rank_score = _safe_float(features['rank_score'], 0.0)
-            min_rank_score = self.quality_filters.get('min_rank_score', 2.0)
-            if rank_score < min_rank_score:
-                return GateDecision(accept=False, reasons=[f"rank_score_low:{rank_score:.2f}<{min_rank_score}"])
+        # Remove duplicate rank_score filter - already filtered at ranker/screener level
+        # This was causing additional rejections after symbols already passed ranking
+
         
-        # 2) Structural risk-reward filter (pre-computed value)
-        if plan and 'quality' in plan:
-            structural_rr = _safe_float(plan['quality'].get('structural_rr', 0.0), 0.0)
-            min_structural_rr = self.quality_filters.get('min_structural_rr', 1.2)
-            if structural_rr < min_structural_rr:
-                return GateDecision(accept=False, reasons=[f"structural_rr_low:{structural_rr:.2f}<{min_structural_rr}"])
-        
-        # 3) Time window filter (configurable)
+        # Remove duplicate structural_rr filter - already filtered at planner level
+        # Time window filter (configurable)
         import datetime
         if hasattr(now, 'hour') and hasattr(now, 'minute'):
             minute_of_day = now.hour * 60 + now.minute
@@ -245,9 +236,14 @@ class TradeDecisionGate:
             if not (in_morning_window or in_afternoon_window):
                 return GateDecision(accept=False, reasons=[f"time_window_block:{minute_of_day}_outside_{morning_start}-{morning_end}_or_{afternoon_start}-{afternoon_end}"])
 
-        # 4) EVIDENCE-BASED PATTERN FILTERS (from reverse engineering analysis)
+        # EVIDENCE-BASED PATTERN FILTERS (from reverse engineering analysis)
         # These patterns showed 76% and 63% success rates respectively
         pattern_filters_enabled = self.quality_filters.get('pattern_filters_enabled', True)
+
+        # Skip feasible checks for symbols with insufficient bars (early morning edge case)
+        if df5m_tail is None or len(df5m_tail) < 10:
+            reasons.append(f"skip_feasible_checks:insufficient_bars_{len(df5m_tail) if df5m_tail is not None else 0}<10")
+            pattern_filters_enabled = False  # Skip pattern filters for early morning trades
 
         if pattern_filters_enabled and df5m_tail is not None and not df5m_tail.empty:
             pattern_reasons = []
@@ -263,7 +259,8 @@ class TradeDecisionGate:
                     current_close = df5m_tail["close"].iloc[-1]
                     momentum_15min = ((current_close - close_3_bars_ago) / close_3_bars_ago) * 100
 
-                    momentum_threshold = self.quality_filters.get('momentum_consolidation_threshold', 1.0)  # 1% default
+                    # Get strategy-specific momentum threshold (setup_type unknown at this stage)
+                    momentum_threshold = self._get_strategy_momentum_threshold(None)
 
                     if abs(momentum_15min) > momentum_threshold:
                         pattern_reasons.append(f"momentum_consolidation_fail:{momentum_15min:.2f}%>{momentum_threshold}%")
@@ -320,7 +317,7 @@ class TradeDecisionGate:
             else:
                 reasons.extend(pattern_reasons)  # Add pass reasons for logging
 
-        # 5) Structure: propose setups from closed 5m bars
+        # Structure: propose setups from closed 5m bars
         setups = self.structure.detect_setups(symbol, df5m_tail, levels)
         if not setups:
             return GateDecision(accept=False, reasons=["no_structure_event"])
@@ -329,7 +326,7 @@ class TradeDecisionGate:
         best = setups[0]
         reasons.extend([f"structure:{r}" for r in best.reasons])
 
-        # 6) Regime: classify index and check permissions with evidence
+        # Regime: classify index and check permissions with evidence
         df_for_regime = index_df5m if index_df5m is not None and not index_df5m.empty else df5m_tail
         regime = self.regime_gate.compute_regime(df_for_regime)
 
@@ -382,7 +379,7 @@ class TradeDecisionGate:
                 pass
         reasons.append(f"regime:{regime}")
 
-        # 7) Event policy: macro/expiry/symbol windows → allow set & sizing/hold
+        # Event policy: macro/expiry/symbol windows → allow set & sizing/hold
         policy, ctx = self.event_gate.decide_policy(now, symbol)
         # map setup to breakout/fade permission
         if _is_breakout(best.setup_type) and not policy.allow_breakout:
@@ -396,7 +393,7 @@ class TradeDecisionGate:
         if ctx:
             reasons.append("event_ctx:" + ",".join(sorted(ctx.keys())))
 
-        # 8) News spike adjustments from last closed 1m bar
+        # News spike adjustments from last closed 1m bar
         spike, sig = self.news_gate.has_symbol_spike(df1m_tail)
         if spike:
             adj = self.news_gate.adjustment_for(sig)
@@ -404,7 +401,7 @@ class TradeDecisionGate:
             size_mult *= float(adj.size_mult)
             reasons.append("news_spike:" + ";".join(sig.reasons))
 
-        # 9) Market Sentiment Analysis & Bias Application
+        # Market Sentiment Analysis & Bias Application
         if self.sentiment_gate is not None:
             try:
                 # Get BankNifty data if available (would need to be passed in)
@@ -438,7 +435,7 @@ class TradeDecisionGate:
                 else:
                     reasons.append("sentiment_error:unknown")
 
-        # 10) Accept with accumulated adjustments
+        # Accept with accumulated adjustments
         return GateDecision(
             accept=True,
             reasons=reasons,
@@ -447,3 +444,18 @@ class TradeDecisionGate:
             size_mult=max(0.0, size_mult),
             min_hold_bars=max(0, min_hold),
         )
+
+    def _get_strategy_momentum_threshold(self, setup_type: Optional[str]) -> float:
+        """Get strategy-specific momentum consolidation threshold"""
+        if not setup_type:
+            return self.quality_filters.get('momentum_consolidation_threshold', 1.0)
+
+        strategy_filters = self.quality_filters.get('strategy_momentum_filters', {})
+
+        # Check each strategy category
+        for category, config in strategy_filters.items():
+            if setup_type in config.get('strategies', []):
+                return config.get('momentum_consolidation_threshold', 1.0)
+
+        # Fallback to default if setup_type not found in any category
+        return self.quality_filters.get('momentum_consolidation_threshold', 1.0)

@@ -323,9 +323,9 @@
     "require_retest_bars": 2,
     "reduce_size_mult": 0.5
   },
-  "t1_rr": 1.00,
-  "t2_rr": 2.20,
-  "sl_atr_mult": 2.00,
+  "t1_rr": 1.50,
+  "t2_rr": 3.00,
+  "sl_atr_mult": 1.60,
   "sl_below_swing_ticks": 0.0,
   "trail_to": "none",
   "exit_t1_book_pct": 50.0,
@@ -414,6 +414,41 @@
     "pattern_filters_enabled": true,
     "momentum_consolidation_enabled": true,
     "momentum_consolidation_threshold": 1.0,
+    "strategy_momentum_filters": {
+      "mean_reversion": {
+        "strategies": [
+          "failure_fade_long", "failure_fade_short",
+          "vwap_mean_reversion_long", "vwap_mean_reversion_short",
+          "volume_spike_reversal_long", "volume_spike_reversal_short"
+        ],
+        "momentum_consolidation_threshold": 0.7
+      },
+      "momentum_breakout": {
+        "strategies": [
+          "breakout_long", "breakout_short",
+          "orb_breakout_long", "orb_breakout_short",
+          "flag_continuation_long", "flag_continuation_short",
+          "trend_pullback_long", "trend_pullback_short"
+        ],
+        "momentum_consolidation_threshold": 6.0
+      },
+      "range_level_trades": {
+        "strategies": [
+          "support_bounce_long", "resistance_bounce_short",
+          "vwap_reclaim_long", "vwap_lose_short",
+          "range_rejection_long", "range_rejection_short"
+        ],
+        "momentum_consolidation_threshold": 2.5
+      },
+      "gap_trades": {
+        "strategies": ["gap_fill_long", "gap_fill_short"],
+        "momentum_consolidation_threshold": 3.0
+      },
+      "squeeze_expansion": {
+        "strategies": ["squeeze_release_long", "squeeze_release_short"],
+        "momentum_consolidation_threshold": 8.0
+      }
+    },
     "range_compression_enabled": true,
     "range_compression_threshold": 0.8
   },
@@ -586,8 +621,8 @@
   "order_rate_limit": 1,
   "order_retry_max": 3,
   "acceptance": {
-    "bars": 2,
-    "retest_bpct": 1.5,
+    "bars": 3,
+    "retest_bpct": 2.5,
     "need_vwap_hold": false
   },
   "strategy_ranking_profiles": {

@@ -832,41 +832,30 @@ def generate_trade_plan(
 
                 # Professional quality filters - reject poor setups at planning stage
                 if plan["eligible"]:
-                    # Filter: acceptance_ok must be true
-                    if not acceptance_ok:
-                        plan["eligible"] = False
-                        plan["quality"]["rejection_reason"] = "acceptance_ok=false (poor setup quality)"
-                        logger.info(f"planner: {symbol} rejected due to acceptance_ok=false")
+
+                    # Remove acceptance_ok filter - causing 40% rejection of valid trades
+                    # Remove T2_feasible filter - too restrictive for momentum strategies
+                    # Keep only T1_feasible and T1_rr checks for safety
 
                     # Filter: targets must be feasible
-                    elif not plan["quality"]["t1_feasible"]:
+                    if not plan["quality"]["t1_feasible"]:
                         plan["eligible"] = False
                         plan["quality"]["rejection_reason"] = "T1 not feasible"
                         logger.info(f"planner: {symbol} rejected due to T1 not feasible")
 
-                    elif not plan["quality"]["t2_feasible"]:
-                        plan["eligible"] = False
-                        plan["quality"]["rejection_reason"] = "T2 not feasible"
-                        logger.info(f"planner: {symbol} rejected due to T2 not feasible")
 
                     # Filter: minimum target risk-reward ratios
-                    elif len(plan["targets"]) >= 2:
+                    if len(plan["targets"]) >= 2:
                         t1_rr = plan["targets"][0].get("rr", 0)
-                        t2_rr = plan["targets"][1].get("rr", 0)
-                        min_t1_rr = quality_filters.get("min_t1_rr", 1.0)
-                        min_t2_rr = quality_filters.get("min_t2_rr", 1.8)
 
+                        min_t1_rr = quality_filters.get("min_t1_rr", 1.0)
                         if t1_rr < min_t1_rr:
                             plan["eligible"] = False
                             plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr:.1f} < {min_t1_rr}"
                             logger.info(f"planner: {symbol} rejected due to low T1_rr {t1_rr:.1f}")
 
-                        elif t2_rr < min_t2_rr:
-                            plan["eligible"] = False
-                            plan["quality"]["rejection_reason"] = f"T2_rr {t2_rr:.1f} < {min_t2_rr}"
-                            logger.info(f"planner: {symbol} rejected due to low T2_rr {t2_rr:.1f}")
 
-                # Note: rank_score filter applied later in execution pipeline when available
+                # All duplicate filters have been removed - pipeline optimized for maximum trade conversion
 
         logger.info(
             f"planner.plan sym={symbol} eligible={plan['eligible']} "

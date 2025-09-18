@@ -318,19 +318,68 @@ class MockBroker:
     # -------------------- LTP API (now works without kwargs) --------------------
     def get_ltp(self, symbol: str, **kwargs) -> float:
         """
-        DRY-RUN:
-          - If caller passes ltp=..., return that (compat with existing code).
-          - Else, return last price seen in the replay for `symbol`.
-          - If still unavailable, raise.
+        Backtest-friendly LTP with hardcoded zone logic:
+        - If kwargs['ltp'] provided, return it (compat).
+        - Else, if caller passed entry_zone + bar_1m, and the bar touched the zone,
+            synthesize an in-zone price deterministically:
+            * if open is inside zone -> use open (clamped)
+            * else if close >= open (up bar) -> use zone low
+            * else (down bar) -> use zone high
+            then apply fixed 5 bps slippage (BUY:+, SELL:-, unknown:+).
+        - Else, return last cached price from replay (bar close).
         """
+        # 0) explicit override for backwards-compat
         v = kwargs.get("ltp")
         if v is not None:
             return float(v)
+
         sym = str(symbol).upper()
+
+        # Try cached (your replay writes close into _last_price)
         with self._lp_lock:
-            if sym in self._last_price:
-                return float(self._last_price[sym])
-        raise TypeError("MockBroker.get_ltp: no cached LTP yet for symbol (and no 'ltp' kwarg provided)")
+            cached = self._last_price.get(sym)
+
+        entry_zone = kwargs.get("entry_zone")
+        bar = kwargs.get("bar_1m")
+        if entry_zone and isinstance(entry_zone, (list, tuple)) and len(entry_zone) == 2 and isinstance(bar, dict):
+            lo, hi = sorted(map(float, entry_zone))
+
+            # Pull OHLC(VWAP optional) from provided bar dict
+            open_  = float(bar.get("open",  cached or 0.0))
+            high   = float(bar.get("high",  cached or 0.0))
+            low    = float(bar.get("low",   cached or 0.0))
+            close  = float(bar.get("close", cached or 0.0))
+            # vwap = float(bar.get("vwap", close))  # not used in hardcoded path
+
+            touched = (high >= lo) and (low <= hi)
+            if touched:
+                # Hardcoded deterministic fill:
+                if lo <= open_ <= hi:
+                    fill = min(max(open_, lo), hi)  # open clamped to zone
+                else:
+                    # direction by bar body: up -> use zone low, down -> zone high
+                    fill = lo if close >= open_ else hi
+
+                # Fixed 5 bps slippage; side-aware if provided
+                side = (kwargs.get("side") or "").upper()
+                slip = 0.0005  # 5 bps hardcoded
+                if side == "BUY":
+                    fill *= (1.0 + slip)
+                elif side == "SELL":
+                    fill *= (1.0 - slip)
+                else:
+                    # default slight penalty if side unknown
+                    fill *= (1.0 + slip)
+
+                # Clamp to zone after slippage to remain conservative
+                return float(min(max(fill, lo), hi))
+
+        # Fallback to cached replay price (typically bar close)
+        if cached is not None:
+            return float(cached)
+
+        raise TypeError("MockBroker.get_ltp: no cached LTP and no bar/zone kwargs provided")
+
 
     def get_ltp_batch(self, symbols: Iterable[str]) -> Dict[str, Optional[float]]:
         out: Dict[str, Optional[float]] = {}
