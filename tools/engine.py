@@ -21,8 +21,8 @@ from diagnostics.diagnostics_report_builder import build_csv_from_events  # noqa
 from config.filters_setup import load_filters  # noqa: E402
 
 # ====== SETTINGS ======
-START_DATE = "2025-08-06"   # YYYY-MM-DD
-END_DATE   = "2025-08-20"   # YYYY-MM-DD (inclusive)
+START_DATE = "2025-07-01"   # YYYY-MM-DD
+END_DATE   = "2025-07-02"   # YYYY-MM-DD (inclusive)
 MAIN_PATH  = ROOT / "main.py"
 
 # Load time windows from config to respect time_window_block
@@ -32,7 +32,7 @@ FROM_HHMM = time_windows.get("morning_start", "09:10")  # Start at first trading
 TO_HHMM = time_windows.get("afternoon_end", "15:30")    # End at last trading window
 
 # parallelism: 2–4 is usually safe
-MAX_WORKERS = 4
+MAX_WORKERS = 5
 # per-task start stagger (sec) to prevent same-second logger run_id collisions
 STAGGER_SEC = 2
 # ======================
@@ -43,47 +43,83 @@ def _daterange(d0: date, d1: date):
         yield d
         d += timedelta(days=1)
 
-def _build_cmd(py_exe: str, day: date) -> List[str]:
-    return [
-        py_exe,
-        str(MAIN_PATH),
+def _build_cmd(py_exe: str, day: date, run_prefix: str = "") -> List[str]:
+    # Use forward slashes and raw strings to avoid Windows path issues
+    root_path = str(ROOT).replace('\\', '/')
+    main_path = str(MAIN_PATH).replace('\\', '/')
+
+    cmd = [
+        py_exe, "-c",
+        f"import sys; sys.path.insert(0, r'{root_path}'); "
+        f"from config.logging_config import set_global_run_prefix; "
+        f"set_global_run_prefix('{run_prefix}'); "
+        f"exec(open(r'{main_path}').read())",
         "--dry-run",
         "--session-date", day.isoformat(),
         "--from-hhmm", FROM_HHMM,
-        "--to-hhmm",   TO_HHMM,
+        "--to-hhmm", TO_HHMM,
     ]
+    if run_prefix:
+        cmd.extend(["--run-prefix", run_prefix])
+    return cmd
 
-def _run_one_day(day: date) -> Tuple[date, int, str]:
+def _run_one_day(day: date, run_prefix: str = "") -> Tuple[date, int, str]:
     """Run a single day in a separate process, from repo root (CWD=ROOT)."""
     py = sys.executable
-    cmd = _build_cmd(py, day)
+    cmd = _build_cmd(py, day, run_prefix)
     try:
+        # Get timestamp before subprocess to find new session
+        import time
+        start_time = time.time()
+
         # launch with cwd=ROOT so relative paths (e.g., nse_all.json) work exactly like prod
         rc = subprocess.run(cmd, cwd=str(ROOT)).returncode
 
-        # Generate analytics after session completes successfully
+        # Session registration and analytics will be handled post-run via prefix discovery
         if rc == 0:
-            _generate_analytics_for_current_session()
+            print(f"[engine] Subprocess completed successfully for {day}")
+        else:
+            print(f"[engine] Subprocess failed for {day} with return code {rc}")
 
         return (day, rc, "ok" if rc == 0 else f"non-zero exit {rc}")
     except Exception as e:
         return (day, 999, f"exception: {e!r}")
 
-def _generate_analytics_for_current_session() -> None:
-    """Generate analytics for the current session using the active log directory"""
+def _discover_sessions_by_prefix(run_prefix: str) -> list[str]:
+    """Discover all session directories that match the given run prefix"""
     try:
-        from config.logging_config import get_log_directory, get_session_id
+        logs_dir = ROOT / "logs"
+        if not logs_dir.exists():
+            return []
+
+        sessions = []
+        for item in logs_dir.iterdir():
+            if item.is_dir() and item.name.startswith(run_prefix):
+                sessions.append(item.name)
+
+        # Sort by session timestamp for consistent processing order
+        sessions.sort()
+        print(f"[engine] Discovered {len(sessions)} sessions with prefix '{run_prefix}': {sessions}")
+        return sessions
+
+    except Exception as e:
+        print(f"[engine] ERROR discovering sessions by prefix: {e}")
+        return []
+
+def _register_session_with_run(session_id: str) -> None:
+    """Log session discovery (run registration no longer needed with prefix approach)"""
+    print(f"[discovery] Found session: {session_id}")
+
+def _generate_analytics_for_session(session_id: str, log_dir: str) -> None:
+    """Generate analytics for the specified session"""
+    try:
         from services.logging.trading_logger import TradingLogger
 
-        # Get current session info
-        log_dir = get_log_directory()
-        session_id = get_session_id()
-
         if not log_dir or not session_id:
-            print("[analytics] No active session found")
+            print("[analytics] No session info provided")
             return
 
-        print(f"[analytics] Generating analytics for current session {session_id}")
+        print(f"[analytics] Generating analytics for session {session_id}")
         print(f"[analytics] Processing {log_dir}")
 
         # Populate analytics.jsonl and performance.json from events.jsonl
@@ -99,7 +135,43 @@ def _generate_analytics_for_current_session() -> None:
         print(f"[analytics] Diagnostics CSV written: {csv_path}")
 
     except Exception as e:
-        print(f"[analytics] Failed to generate analytics for current session: {e}")
+        print(f"[analytics] Failed to generate analytics for session {session_id}: {e}")
+
+
+def _process_run_sessions(run_prefix: str) -> int:
+    """Discover and process all sessions for the completed run"""
+    print(f"\n=== Post-Run Processing ===")
+    print(f"[+] Discovering sessions with prefix: {run_prefix}")
+
+    # Discover all sessions created with this run prefix
+    discovered_sessions = _discover_sessions_by_prefix(run_prefix)
+
+    if not discovered_sessions:
+        print("[!] No sessions found for this run")
+        return 0
+
+    # Log all discovered sessions
+    print(f"[+] Processing {len(discovered_sessions)} discovered sessions...")
+    for session_id in discovered_sessions:
+        _register_session_with_run(session_id)
+
+    # Process analytics for all sessions with events
+    print(f"[+] Processing analytics for discovered sessions...")
+    processed_count = 0
+
+    for session_id in discovered_sessions:
+        log_dir = str(ROOT / "logs" / session_id)
+        events_file = ROOT / "logs" / session_id / "events.jsonl"
+
+        if events_file.exists() and events_file.stat().st_size > 0:
+            print(f"[+] Processing analytics for session {session_id}")
+            _generate_analytics_for_session(session_id, log_dir)
+            processed_count += 1
+        else:
+            print(f"[~] Skipping session {session_id} (no events)")
+
+    print(f"[+] Processed analytics for {processed_count}/{len(discovered_sessions)} sessions")
+    return processed_count
 
 
 def run() -> int:
@@ -118,18 +190,15 @@ def run() -> int:
         print("ERROR: END_DATE must be >= START_DATE", file=sys.stderr)
         return 2
 
-    # START NEW TRADING RUN with unique ID
+    # START NEW TRADING RUN with unique ID and prefix
     import datetime
+    import uuid
     unique_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_prefix = f"run_{uuid.uuid4().hex[:8]}_"
     run_description = f"Engine Backtest {START_DATE} to {END_DATE} [{unique_id}]"
 
-    try:
-        from services.analytics.session_reporter import start_new_trading_run
-        print(f"[+] Starting new trading run: {run_description}")
-        run_id = start_new_trading_run(run_description)
-    except Exception as e:
-        print(f"WARNING: Failed to start trading run: {e}")
-        # Continue anyway - run management is not critical
+    print(f"[+] Run prefix: {run_prefix}")
+    print(f"[+] Starting new trading run: {run_description}")
 
     # Build trading-day list and report skips
     days_all = list(_daterange(start, end))
@@ -151,9 +220,9 @@ def run() -> int:
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futs = []
         for i, day in enumerate(days):
-            def _task(d=day, k=i):
+            def _task(d=day, k=i, prefix=run_prefix):
                 time.sleep(STAGGER_SEC * k)
-                return _run_one_day(d)
+                return _run_one_day(d, prefix)
             futs.append(pool.submit(_task))
 
         for fut in as_completed(futs):
@@ -169,22 +238,15 @@ def run() -> int:
         for d, rc, m in failures:
             print(f"- {d}: rc={rc}, note={m}")
 
+    # POST-RUN SESSION PROCESSING
+    processed_sessions = _process_run_sessions(run_prefix)
+
     # END TRADING RUN
-    try:
-        from services.analytics.session_reporter import end_current_trading_run, generate_combined_run_report
+    print(f"[+] Completed trading run: {run_description}")
+    print(f"[+] Processed {processed_sessions} sessions with run prefix: {run_prefix}")
 
-        print(f"[+] Ending trading run: {run_description}")
-        manifest = end_current_trading_run()
-
-        # Generate combined report for completed run
-        print("[+] Generating combined CSV report...")
-        csv_path = generate_combined_run_report()
-
-        if csv_path:
-            print(f"[+] Combined CSV report saved: {csv_path}")
-
-    except Exception as e:
-        print(f"WARNING: Failed to end trading run or generate report: {e}")
+    if processed_sessions > 0:
+        print(f"[+] Analytics and CSV reports generated for sessions with trading events")
 
     return 1 if failures else 0
 

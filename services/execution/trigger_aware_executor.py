@@ -442,23 +442,37 @@ class TriggerAwareExecutor:
 
         min_price, max_price = sorted(entry_zone)  # Ensure min < max
 
-        # For both long and short trades, price must be within the defined zone
+        # P0 ENHANCEMENT: Check strict zone first
         in_zone = min_price <= current_price <= max_price
 
-        if not in_zone:
-            # Additional logging for analysis
-            distance_from_zone = 0
-            if current_price < min_price:
-                distance_from_zone = min_price - current_price
-            elif current_price > max_price:
-                distance_from_zone = current_price - max_price
+        if in_zone:
+            return True
 
-            logger.debug(
-                f"Price outside zone: {current_price:.2f} vs [{min_price:.2f}, {max_price:.2f}] "
-                f"bias={bias} distance={distance_from_zone:.2f}"
+        # P0 IMPROVEMENT: Near-miss tolerance (0.05% as per plan document)
+        tolerance = 0.0005 * current_price  # 0.05% tolerance
+        near_zone = (min_price - tolerance <= current_price <= max_price + tolerance)
+
+        if near_zone:
+            # Accept near-zone entries - this reduces "no-trigger" scenarios
+            logger.info(
+                f"NEAR_ZONE_TRIGGER: {current_price:.2f} vs [{min_price:.2f}, {max_price:.2f}] "
+                f"tolerance={tolerance:.4f} ({tolerance/current_price*100:.3f}%)"
             )
+            return True
 
-        return in_zone
+        # Still outside tolerance - log for analysis
+        distance_from_zone = 0
+        if current_price < min_price - tolerance:
+            distance_from_zone = (min_price - tolerance) - current_price
+        elif current_price > max_price + tolerance:
+            distance_from_zone = current_price - (max_price + tolerance)
+
+        logger.debug(
+            f"Price outside zone+tolerance: {current_price:.2f} vs [{min_price:.2f}, {max_price:.2f}] "
+            f"bias={bias} distance={distance_from_zone:.2f} tolerance={tolerance:.4f}"
+        )
+
+        return False
 
     def _validate_condition_group(
         self, 

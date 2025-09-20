@@ -53,6 +53,29 @@ class StructureEventDetector:
 
     # ---- internal helpers -------------------------------------------------
 
+    def _get_time_adjusted_vol_threshold(self, ts: pd.Timestamp) -> float:
+        """
+        Apply time-based multipliers to vol_z_required for early market conditions.
+
+        Before 10:30am: 50% reduction (more lenient)
+        10:30am-12:00pm: 25% reduction
+        After 12:00pm: Standard threshold
+        """
+        base_vol_z = float(self.cfg["vol_z_required"])
+
+        try:
+            time_minutes = ts.hour * 60 + ts.minute
+
+            # Market hours: 9:15am = 555 minutes, 10:30am = 630, 12:00pm = 720
+            if time_minutes < 630:  # Before 10:30am
+                return base_vol_z * 0.5  # 50% reduction for early market
+            elif time_minutes < 720:  # 10:30am - 12:00pm
+                return base_vol_z * 0.75  # 25% reduction for mid-morning
+            else:  # After 12:00pm
+                return base_vol_z  # Standard threshold
+        except Exception:
+            return base_vol_z  # Fallback to standard
+
     @staticmethod
     def _safe_ts(d: pd.DataFrame) -> pd.Timestamp:
         """Return last timestamp from 'ts' column if present, else from index."""
@@ -98,7 +121,10 @@ class StructureEventDetector:
 
             k_atr = float(self.cfg["k_atr"])
             hold_bars = int(self.cfg["hold_bars"])
-            vol_z_required = float(self.cfg["vol_z_required"])
+
+            # Use time-adjusted volume threshold
+            ts = self._safe_ts(d)
+            vol_z_required = self._get_time_adjusted_vol_threshold(ts)
 
             out: List[StructureEvent] = []
             for name, lvl in (levels or {}).items():
@@ -152,7 +178,10 @@ class StructureEventDetector:
             d["vol_z"] = self._vol_z(d)
 
             hold_bars = int(self.cfg["hold_bars"])
-            vol_z_required = float(self.cfg["vol_z_required"])
+
+            # Use time-adjusted volume threshold
+            ts = self._safe_ts(d)
+            vol_z_required = self._get_time_adjusted_vol_threshold(ts)
             out: List[StructureEvent] = []
 
             # Reclaim (close > vwap for hold_bars) + volume
@@ -283,11 +312,16 @@ class StructureEventDetector:
         evts += self.detect_trend_pullbacks(d)
         evts += self.detect_range_rejections(d, levels or {})
 
+        # Momentum-based structures (fallback for early market when level-based fails)
+        evts += self.detect_momentum_structures(d)
+
         setups = []
         for e in evts or []:
             # e.setup should be one of:
             #   'breakout_long','breakout_short','vwap_reclaim_long','vwap_lose_short',
-            #   'squeeze_release_long','squeeze_release_short','failure_fade_long','failure_fade_short'
+            #   'squeeze_release_long','squeeze_release_short','failure_fade_long','failure_fade_short',
+            #   'momentum_breakout_long','momentum_breakout_short','trend_continuation_long','trend_continuation_short',
+            #   and many other setup types defined in trade_decision_gate.py SetupType
             reasons = []
             lvl = getattr(e, "level_name", None)
             if lvl:
@@ -742,6 +776,93 @@ class StructureEventDetector:
             logger.exception(f"detect_trend_pullbacks error: {e}")
             return []
     
+    def detect_momentum_structures(self, df: pd.DataFrame) -> List[StructureEvent]:
+        """
+        Detect momentum-based structure events for early market conditions.
+
+        These are alternative structures when traditional level-based detection fails.
+        Combines price momentum + volume confirmation without requiring specific levels.
+
+        Detects:
+        - Strong momentum breakouts (price + volume surge)
+        - Momentum reversals (exhaustion patterns)
+        - Early trend continuation patterns
+        """
+        try:
+            if df is None or df.empty or len(df) < 10:
+                return []
+
+            d = ensure_naive_ist_index(df.copy())
+            d["vol_z"] = self._vol_z(d)
+
+            # Get time-adjusted volume threshold
+            ts = self._safe_ts(d)
+            vol_z_required = self._get_time_adjusted_vol_threshold(ts)
+
+            # Calculate momentum indicators
+            d["returns_1"] = d["close"].pct_change()
+            d["returns_3"] = d["close"].pct_change(3)  # 3-bar momentum
+            d["returns_5"] = d["close"].pct_change(5)  # 5-bar momentum
+
+            # Volume momentum
+            d["vol_ma"] = d["volume"].rolling(10, min_periods=5).mean()
+            d["vol_surge"] = d["volume"] / d["vol_ma"]
+
+            last = d.iloc[-1]
+            out: List[StructureEvent] = []
+
+            # Momentum Breakout Long - Strong upward momentum + volume
+            if (
+                last["returns_3"] > 0.015  # 1.5% move in 3 bars
+                and last["returns_1"] > 0.005  # Last bar positive
+                and d["returns_1"].tail(2).sum() > 0.01  # 2-bar momentum
+                and last["vol_z"] >= vol_z_required * 0.8  # Slightly relaxed volume
+                and last["vol_surge"] > 1.3  # Volume surge vs average
+            ):
+                evt = StructureEvent("momentum_breakout_long", ts, "MOMENTUM", float(last["returns_3"] * 100))
+                out.append(evt)
+                logger.info(f"structure_event: {evt}")
+
+            # Momentum Breakout Short - Strong downward momentum + volume
+            elif (
+                last["returns_3"] < -0.015  # 1.5% decline in 3 bars
+                and last["returns_1"] < -0.005  # Last bar negative
+                and d["returns_1"].tail(2).sum() < -0.01  # 2-bar momentum
+                and last["vol_z"] >= vol_z_required * 0.8  # Slightly relaxed volume
+                and last["vol_surge"] > 1.3  # Volume surge vs average
+            ):
+                evt = StructureEvent("momentum_breakout_short", ts, "MOMENTUM", float(abs(last["returns_3"]) * 100))
+                out.append(evt)
+                logger.info(f"structure_event: {evt}")
+
+            # Early Trend Continuation Long - Consistent upward pressure
+            elif (
+                last["returns_5"] > 0.02  # 2% move in 5 bars
+                and d["returns_1"].tail(3).sum() > 0.01  # 3-bar upward bias
+                and (d["returns_1"] > 0).tail(3).sum() >= 2  # At least 2 of last 3 bars positive
+                and last["vol_z"] >= vol_z_required * 0.6  # More relaxed volume for continuation
+            ):
+                evt = StructureEvent("trend_continuation_long", ts, "TREND", float(last["returns_5"] * 100))
+                out.append(evt)
+                logger.info(f"structure_event: {evt}")
+
+            # Early Trend Continuation Short - Consistent downward pressure
+            elif (
+                last["returns_5"] < -0.02  # 2% decline in 5 bars
+                and d["returns_1"].tail(3).sum() < -0.01  # 3-bar downward bias
+                and (d["returns_1"] < 0).tail(3).sum() >= 2  # At least 2 of last 3 bars negative
+                and last["vol_z"] >= vol_z_required * 0.6  # More relaxed volume for continuation
+            ):
+                evt = StructureEvent("trend_continuation_short", ts, "TREND", float(abs(last["returns_5"]) * 100))
+                out.append(evt)
+                logger.info(f"structure_event: {evt}")
+
+            return out
+
+        except Exception as e:
+            logger.exception(f"structure_event: detect_momentum_structures error: {e}")
+            return []
+
     def detect_range_rejections(self, df: pd.DataFrame, levels: Dict[str, float]) -> List[StructureEvent]:
         """
         Detect rejections at range boundaries

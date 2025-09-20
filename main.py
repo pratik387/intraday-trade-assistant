@@ -288,6 +288,7 @@ def _parse_args():
     ap.add_argument("--session-date", help="YYYY-MM-DD (required with --dry-run)")
     ap.add_argument("--from-hhmm", default="09:10")
     ap.add_argument("--to-hhmm",   default="15:30")
+    ap.add_argument("--run-prefix", default="", help="Prefix for session folder names (used by engine.py)")
     return ap.parse_args()
 
 

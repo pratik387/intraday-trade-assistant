@@ -16,16 +16,26 @@ _trading_logger = None
 _current_log_month = None
 _session_id = None
 dir_path = None
+_global_run_prefix = ""  # Global run prefix to be set before any logger initialization
 
-def _initialize_loggers():
+def set_global_run_prefix(run_prefix: str):
+    """Set the global run prefix before any logger initialization"""
+    global _global_run_prefix
+    _global_run_prefix = run_prefix
+
+def _initialize_loggers(run_prefix: str = ""):
     """Initialize all loggers (internal function)"""
-    global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path
+    global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path, _global_run_prefix
 
     if _agent_logger and _trade_logger and _trading_logger:
         return
 
-    # Create timestamped session directory
-    _session_id = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+    # Use provided run_prefix, or fall back to global run prefix
+    effective_prefix = run_prefix or _global_run_prefix
+
+    # Create timestamped session directory with optional run prefix
+    timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+    _session_id = f"{effective_prefix}{timestamp}" if effective_prefix else timestamp
     log_dir = Path(__file__).resolve().parents[1] / "logs" / _session_id
     os.makedirs(log_dir, exist_ok=True)
     dir_path = log_dir
@@ -51,11 +61,11 @@ def _initialize_loggers():
     # Enhanced Trading Logger
     _trading_logger = TradingLogger(_session_id, log_dir)
 
-def get_agent_logger():
+def get_agent_logger(run_prefix: str = ""):
     """Get the agent logger for general application logging"""
     global _agent_logger
     if _agent_logger is None:
-        _initialize_loggers()
+        _initialize_loggers(run_prefix)
     return _agent_logger
 
 def get_execution_loggers():
@@ -65,11 +75,11 @@ def get_execution_loggers():
         _initialize_loggers()
     return _agent_logger, _trade_logger
 
-def get_trading_logger():
+def get_trading_logger(run_prefix: str = ""):
     """Get the enhanced trading logger for analytics"""
     global _trading_logger
     if _trading_logger is None:
-        _initialize_loggers()
+        _initialize_loggers(run_prefix)
     return _trading_logger
 
 def switch_agent_log_file(month_str: str):

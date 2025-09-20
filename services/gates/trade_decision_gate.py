@@ -38,6 +38,7 @@ import pandas as pd
 from .event_policy_gate import EventPolicyGate
 from .news_spike_gate import NewsSpikeGate
 from .market_sentiment_gate import MarketSentimentGate
+from services.features import compute_hcet_features
 
 SetupType = Literal[
     "breakout_long",
@@ -64,6 +65,10 @@ SetupType = Literal[
     "trend_pullback_short",
     "range_rejection_long",
     "range_rejection_short",
+    "momentum_breakout_long",
+    "momentum_breakout_short",
+    "trend_continuation_long",
+    "trend_continuation_short",
 ]
 
 
@@ -130,7 +135,7 @@ def _is_breakout(setup: SetupType) -> bool:
 
 def _is_fade(setup: SetupType) -> bool:
     return setup in {
-        "failure_fade_long", 
+        "failure_fade_long",
         "failure_fade_short",
         "volume_spike_reversal_long",
         "volume_spike_reversal_short",
@@ -146,7 +151,7 @@ def _safe_float(x, default: float = 0.0) -> float:
         return float(x)
     except Exception:
         return default
-    
+
 def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
     s = series.astype(float)
     delta = s.diff()
@@ -157,6 +162,17 @@ def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
     rs = avg_gain / avg_loss.replace(0.0, pd.NA)
     rsi = 100 - (100 / (1 + rs))
     return rsi
+
+# Regime allow-list helper (strict by default; HCET can bypass)
+def _regime_allows(setup: str, regime: str) -> bool:
+    if regime in {"choppy", "range"}:
+        # keep chop tight: only allow orb_pullback_long; failure_fade_long only via HCET
+        return setup in {"orb_pullback_long"}
+    if regime == "trend_down":
+        return setup in {"gap_fill_short", "range_break_retest_short", "breakout_short"}
+    if regime == "trend_up":
+        return setup in {"breakout_long", "orb_pullback_long"}
+    return False
 
 
 # ---------------------------- TradeDecisionGate --------------------------------
@@ -184,7 +200,88 @@ class TradeDecisionGate:
         self.sentiment_gate = market_sentiment_gate
         self.quality_filters = quality_filters or {}
 
-    # ------------------------------ Public API ------------------------------
+    # ------------------------------ HCET (High-Conviction Entry Template) ------
+    def _is_high_conviction_candidate(self, setup_type: str, regime: str, features: Optional[dict]) -> tuple[bool, list[str]]:
+        """Return (ok, reasons). Fires only if *all* confirms pass."""
+        f = features or {}
+        reasons = []
+
+        # Shared confirmations
+        sector_ok  = (f.get("sector_momentum", 0.0) * f.get("index_momentum", 0.0)) >= 0  # aligned sign
+        vol_ok     = f.get("volume_ratio", 1.0) >= 1.2
+        rr         = f.get("structural_rr", 0.0)
+        rr_ok      = 1.2 <= rr <= 3.0  # avoid <1.2 and fantasy >3R
+        news_clear = not f.get("news_spike_flag", False)
+
+        if not (sector_ok and vol_ok and rr_ok and news_clear):
+            return (False, ["hcet_shared_fail"])
+
+        # Combo-specific confirmations
+        if regime == "trend_down" and setup_type in {"gap_fill_short", "range_break_retest_short"}:
+            gap_pct  = f.get("gap_pct", 0.0)
+            fill_pct = f.get("gap_fill_pct", 1.0)
+            wick_ok  = f.get("last_bar_upper_wick_bpct", 0.0) >= 35.0
+            return (gap_pct >= 1.2 and fill_pct <= 0.5 and wick_ok, ["hcet_downtrend"])
+
+        if regime in {"choppy", "range"} and setup_type == "orb_pullback_long":
+            or_made      = f.get("orb_high_made", False)
+            pb_frac      = f.get("pullback_frac_of_or", 1.0)   # 0.0–1.0
+            vwap_reclaim = f.get("vwap_reclaim_bar", False)
+            return (or_made and pb_frac <= 0.382 and vwap_reclaim, ["hcet_orb_pb_long"])
+
+        if regime in {"choppy", "range"} and setup_type == "failure_fade_long":
+            ret_z  = f.get("ret_z", 0.0)
+            div_ok = f.get("rsi_divergence_2bar_bull", False)
+            wick_ok = f.get("last_bar_lower_wick_bpct", 0.0) >= 40.0
+            return (ret_z >= 2.5 and div_ok and wick_ok, ["hcet_ff_long"])
+
+        return (False, ["hcet_no_match"])
+
+    def _compute_features(
+        self,
+        symbol: str,
+        df1m_tail: Optional[pd.DataFrame],
+        df5m_tail: Optional[pd.DataFrame],
+        index_df5m: Optional[pd.DataFrame],
+        structural_rr: float
+    ) -> Optional[dict]:
+        """
+        Compute HCET features internally using features.py module.
+
+        Returns None if insufficient data for feature computation.
+        Used ONLY for high-conviction setups when normal filters would block:
+        - Early trading day (< 10 bars)
+        - Regime restrictions
+        - Time window restrictions
+
+        This is an expensive computation, only called when HCET bypasses are needed.
+        """
+        try:
+            # Need at least 5m data to compute meaningful features
+            if df5m_tail is None or len(df5m_tail) == 0:
+                return None
+
+            # Index data is helpful but not strictly required
+            if index_df5m is None or len(index_df5m) == 0:
+                index_df5m = df5m_tail  # fallback to symbol's own data
+
+            # Compute features using the centralized function
+            features = compute_hcet_features(
+                df1m_tail=df1m_tail,
+                df5m_tail=df5m_tail,
+                index_df5m=index_df5m,
+                sector_df5m=None,  # Not available in gate context
+                structural_rr=structural_rr
+            )
+
+            return features
+
+        except Exception as e:
+            # Log but don't fail - return None to indicate features unavailable
+            # logger would need to be imported if we want to log here
+            return None
+
+    # ------------------------------ Public API ---------------------------------
     def evaluate(
         self,
         *,
@@ -194,111 +291,88 @@ class TradeDecisionGate:
         df5m_tail: pd.DataFrame,
         index_df5m: pd.DataFrame,
         levels: Optional[dict],
-        plan: Optional[dict] = None,  # Add plan parameter for quality filters
-        features: Optional[dict] = None,  # Add features for rank score
+        plan: Optional[dict] = None    # planner info (e.g., regime, rr, etc.)
     ) -> GateDecision:
         reasons: List[str] = []
 
-        # FAST QUALITY FILTERS - Applied first to save computation
-        # Remove duplicate rank_score filter - already filtered at ranker/screener level
-        # This was causing additional rejections after symbols already passed ranking
+        # ---------------- FAST QUALITY FILTERS ----------------
+        # Time window filtering with HCET override (we defer the final veto until after HCET computation)
+        import pandas as pd
+        try:
+            ts = pd.to_datetime(now)
+            minute_of_day = ts.hour * 60 + ts.minute
+        except Exception:
+            minute_of_day = None
 
-        
-        # Remove duplicate structural_rr filter - already filtered at planner level
-        # Time window filter (configurable)
-        import datetime
-        if hasattr(now, 'hour') and hasattr(now, 'minute'):
-            minute_of_day = now.hour * 60 + now.minute
+        time_blocked = False
+        if minute_of_day is not None:
+            # Get time windows from config (defaults kept restrictive)
+            tw = self.quality_filters.get('time_windows', {})
 
-            # Get time windows from config (with fallback to restrictive defaults)
-            time_windows = self.quality_filters.get('time_windows', {})
-
-            # Parse time strings to minutes of day
-            def time_to_minutes(time_str, default_minutes):
+            def to_min(s: str, default_min: int) -> int:
                 try:
-                    if isinstance(time_str, str) and ':' in time_str:
-                        hour, minute = map(int, time_str.split(':'))
-                        return hour * 60 + minute
-                    return default_minutes
-                except:
-                    return default_minutes
+                    if isinstance(s, str) and ':' in s:
+                        hh, mm = map(int, s.split(':'))
+                        return hh * 60 + mm
+                except Exception:
+                    pass
+                return default_min
 
-            # Get configurable time windows (defaults match original hardcoded values)
-            morning_start = time_to_minutes(time_windows.get('morning_start', '10:30'), 630)
-            morning_end = time_to_minutes(time_windows.get('morning_end', '12:30'), 750)
-            afternoon_start = time_to_minutes(time_windows.get('afternoon_start', '14:15'), 855)
-            afternoon_end = time_to_minutes(time_windows.get('afternoon_end', '15:00'), 900)
+            morning_start   = to_min(tw.get('morning_start', '10:30'), 630)
+            morning_end     = to_min(tw.get('morning_end', '12:30'),   750)
+            afternoon_start = to_min(tw.get('afternoon_start','14:15'),855)
+            afternoon_end   = to_min(tw.get('afternoon_end',  '15:00'),900)
 
-            # Check if current time is within allowed trading windows
-            in_morning_window = morning_start <= minute_of_day <= morning_end
-            in_afternoon_window = afternoon_start <= minute_of_day <= afternoon_end
+            in_morning   = morning_start   <= minute_of_day <= morning_end
+            in_afternoon = afternoon_start <= minute_of_day <= afternoon_end
 
-            if not (in_morning_window or in_afternoon_window):
-                return GateDecision(accept=False, reasons=[f"time_window_block:{minute_of_day}_outside_{morning_start}-{morning_end}_or_{afternoon_start}-{afternoon_end}"])
+            if not (in_morning or in_afternoon):
+                # mark as blocked for now; allow HCET to override later
+                time_blocked = True
 
-        # EVIDENCE-BASED PATTERN FILTERS (from reverse engineering analysis)
-        # These patterns showed 76% and 63% success rates respectively
+        # Evidence-based pattern filters (momentum consolidation / range compression)
         pattern_filters_enabled = self.quality_filters.get('pattern_filters_enabled', True)
 
-        # Skip feasible checks for symbols with insufficient bars (early morning edge case)
+        # Skip feasible checks for very early data; allow HCET to decide later
         if df5m_tail is None or len(df5m_tail) < 10:
             reasons.append(f"skip_feasible_checks:insufficient_bars_{len(df5m_tail) if df5m_tail is not None else 0}<10")
-            pattern_filters_enabled = False  # Skip pattern filters for early morning trades
+            pattern_filters_enabled = False  # don't apply generic patterns on scarce data
 
         if pattern_filters_enabled and df5m_tail is not None and not df5m_tail.empty:
             pattern_reasons = []
             pattern_passed = True
 
-            # MOMENTUM_CONSOLIDATION filter (76% success rate)
-            # Look for -1% to +1% price momentum in 15-minute window (3 bars @ 5min each)
-            momentum_filter_enabled = self.quality_filters.get('momentum_consolidation_enabled', True)
-            if momentum_filter_enabled and len(df5m_tail) >= 3:
+            # Momentum consolidation
+            if self.quality_filters.get('momentum_consolidation_enabled', True) and len(df5m_tail) >= 3:
                 try:
-                    # Calculate 15-minute momentum using last 3 bars
                     close_3_bars_ago = df5m_tail["close"].iloc[-4] if len(df5m_tail) >= 4 else df5m_tail["close"].iloc[0]
                     current_close = df5m_tail["close"].iloc[-1]
                     momentum_15min = ((current_close - close_3_bars_ago) / close_3_bars_ago) * 100
-
-                    # Get strategy-specific momentum threshold (setup_type unknown at this stage)
                     momentum_threshold = self._get_strategy_momentum_threshold(None)
-
                     if abs(momentum_15min) > momentum_threshold:
                         pattern_reasons.append(f"momentum_consolidation_fail:{momentum_15min:.2f}%>{momentum_threshold}%")
                         pattern_passed = False
                     else:
                         pattern_reasons.append(f"momentum_consolidation_pass:{momentum_15min:.2f}%<={momentum_threshold}%")
-
                 except Exception as e:
                     pattern_reasons.append(f"momentum_consolidation_error:{e.__class__.__name__}")
 
-            # RANGE_COMPRESSION filter (63% success rate)
-            # Look for ATR ratio <= 0.8 (current ATR vs 20-period average ATR)
-            compression_filter_enabled = self.quality_filters.get('range_compression_enabled', True)
-            if compression_filter_enabled and len(df5m_tail) >= 20:
+            # Range compression
+            if self.quality_filters.get('range_compression_enabled', True) and len(df5m_tail) >= 20:
                 try:
-                    # Calculate ATR using True Range over 14 periods
                     high = df5m_tail["high"]
                     low = df5m_tail["low"]
                     close_prev = df5m_tail["close"].shift(1)
-
-                    # True Range calculation
                     tr1 = high - low
                     tr2 = abs(high - close_prev)
                     tr3 = abs(low - close_prev)
-
                     true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-                    # ATR calculation (14-period)
                     atr_14 = true_range.rolling(window=14, min_periods=14).mean()
                     current_atr = atr_14.iloc[-1]
-
-                    # Average ATR over last 20 periods
                     avg_atr_20 = atr_14.rolling(window=20, min_periods=20).mean().iloc[-1]
-
                     if pd.notna(current_atr) and pd.notna(avg_atr_20) and avg_atr_20 > 0:
                         atr_ratio = current_atr / avg_atr_20
-                        compression_threshold = self.quality_filters.get('range_compression_threshold', 0.8)  # 0.8 default
-
+                        compression_threshold = self.quality_filters.get('range_compression_threshold', 0.8)
                         if atr_ratio > compression_threshold:
                             pattern_reasons.append(f"range_compression_fail:{atr_ratio:.3f}>{compression_threshold}")
                             pattern_passed = False
@@ -306,38 +380,37 @@ class TradeDecisionGate:
                             pattern_reasons.append(f"range_compression_pass:{atr_ratio:.3f}<={compression_threshold}")
                     else:
                         pattern_reasons.append("range_compression_insufficient_data")
-
                 except Exception as e:
                     pattern_reasons.append(f"range_compression_error:{e.__class__.__name__}")
 
-            # Reject if any pattern filter failed
             if not pattern_passed:
                 reasons.extend(pattern_reasons)
                 return GateDecision(accept=False, reasons=reasons)
             else:
-                reasons.extend(pattern_reasons)  # Add pass reasons for logging
+                reasons.extend(pattern_reasons)
 
-        # Structure: propose setups from closed 5m bars
+        # ---------------- STRUCTURE ----------------
         setups = self.structure.detect_setups(symbol, df5m_tail, levels)
         if not setups:
             return GateDecision(accept=False, reasons=["no_structure_event"])
-        # pick the strongest for now (you can inject a ranker later)
         setups.sort(key=lambda s: s.strength, reverse=True)
         best = setups[0]
         reasons.extend([f"structure:{r}" for r in best.reasons])
 
-        # Regime: classify index and check permissions with evidence
+        # Setup blacklist
+        blacklisted_setups = self.quality_filters.get('blacklist_setups', [])
+        if best.setup_type in blacklisted_setups:
+            return GateDecision(accept=False, reasons=[f"blacklisted_setup:{best.setup_type}"])
+
+        # ---------------- REGIME ----------------
         df_for_regime = index_df5m if index_df5m is not None and not index_df5m.empty else df5m_tail
-        regime = self.regime_gate.compute_regime(df_for_regime)
+        regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
 
-        # --- Evidence for regime gate ---
+        # Evidence for regime gate
         strength = _safe_float(best.strength, 0.0)
-
-        # last closed 5m row (Series) NA-safe
         if df5m_tail is not None and not df5m_tail.empty:
             last5 = df5m_tail.iloc[-1]
             adx_5m = _safe_float(last5.get("adx", 0.0) if hasattr(last5, "get") else getattr(last5, "adx", 0.0), 0.0)
-
             if "volume" in df5m_tail.columns:
                 recent_vol = df5m_tail["volume"].tail(24)
                 median_vol = _safe_float(recent_vol.median(), 1.0) or 1.0
@@ -347,29 +420,53 @@ class TradeDecisionGate:
         else:
             adx_5m = 0.0
             vol_mult_5m = 1.0
-            
-        try:
-            if df5m_tail is not None and not df5m_tail.empty:
-                c = df5m_tail["close"].astype(float)
-                rsi14_last = float(_rsi(c, 14).iloc[-1])
-                if best.setup_type in ("breakout_long", "vwap_reclaim_long", "squeeze_release_long") and rsi14_last > 65.0:
-                    reasons.append(f"rsi_block_long:{rsi14_last:.1f}>65")
-                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
-                if best.setup_type in ("breakout_short", "vwap_lose_short", "squeeze_release_short") and rsi14_last < 35.0:
-                    reasons.append(f"rsi_block_short:{rsi14_last:.1f}<35")
-                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
-        except Exception:
-            # RSI is a guardrail; if it fails, do not block the trade solely on this.
-            pass
 
-        if not self.regime_gate.allow_setup(best.setup_type, regime, strength, adx_5m, vol_mult_5m):
-            reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f}]")
-            return GateDecision(
-                accept=False,
-                reasons=reasons,
-                setup_type=best.setup_type,
-                regime=regime,
+        # ---------------- HCET check (requires setup, regime, features) ---------
+        # Only compute features if we might need HCET bypasses (early day, blocked regime, blocked time)
+        features = None
+        hc_ok, hc_reasons = False, ["hcet_not_needed"]
+
+        # Check if HCET might be needed for bypasses
+        insufficient_bars = (df5m_tail is None or len(df5m_tail) < 10)
+        regime_blocked = not _regime_allows(best.setup_type, regime)
+        time_blocked_check = time_blocked  # from earlier time window check
+
+        if insufficient_bars or regime_blocked or time_blocked_check:
+            # Only now compute features since HCET might be needed
+            structural_rr = 0.0
+            if plan and "quality" in plan and plan["quality"]:
+                structural_rr = float(plan["quality"].get("structural_rr", 0.0) or 0.0)
+
+            features = self._compute_features(
+                symbol=symbol,
+                df1m_tail=df1m_tail,
+                df5m_tail=df5m_tail,
+                index_df5m=index_df5m,
+                structural_rr=structural_rr
             )
+
+            hc_ok, hc_reasons = self._is_high_conviction_candidate(best.setup_type, regime, features)
+
+        # Insufficient bars veto unless HCET
+        if df5m_tail is None or len(df5m_tail) < 10:
+            if hc_ok:
+                reasons.append(f"hcet_enable_early({len(df5m_tail) if df5m_tail is not None else 0}bars)")
+            else:
+                return GateDecision(accept=False, reasons=reasons)
+
+        # Regime allow-list (strict) unless HCET
+        if not _regime_allows(best.setup_type, regime):
+            # fallback to your injected regime_gate.allow_setup if you want both
+            if hasattr(self.regime_gate, "allow_setup"):
+                base_allow = bool(self.regime_gate.allow_setup(best.setup_type, regime, strength, adx_5m, vol_mult_5m))
+            else:
+                base_allow = False
+
+            if not base_allow and not hc_ok:
+                reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f}]")
+                return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+            elif not base_allow and hc_ok:
+                reasons.append(f"hcet_bypass_regime:{','.join(hc_reasons)}")
 
         size_mult = 1.0
         if hasattr(self.regime_gate, "size_multiplier"):
@@ -379,9 +476,14 @@ class TradeDecisionGate:
                 pass
         reasons.append(f"regime:{regime}")
 
-        # Event policy: macro/expiry/symbol windows → allow set & sizing/hold
+        # If time window blocked, allow only HCET to proceed
+        if time_blocked and not hc_ok:
+            return GateDecision(accept=False, reasons=[f"time_window_block:{minute_of_day}"])
+        elif time_blocked and hc_ok:
+            reasons.append(f"hcet_bypass_time_window:{minute_of_day}")
+
+        # ---------------- EVENT POLICY ----------------
         policy, ctx = self.event_gate.decide_policy(now, symbol)
-        # map setup to breakout/fade permission
         if _is_breakout(best.setup_type) and not policy.allow_breakout:
             reasons.append("event_block:breakout")
             return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
@@ -393,7 +495,7 @@ class TradeDecisionGate:
         if ctx:
             reasons.append("event_ctx:" + ",".join(sorted(ctx.keys())))
 
-        # News spike adjustments from last closed 1m bar
+        # ---------------- NEWS SPIKE -------------------
         spike, sig = self.news_gate.has_symbol_spike(df1m_tail)
         if spike:
             adj = self.news_gate.adjustment_for(sig)
@@ -401,41 +503,107 @@ class TradeDecisionGate:
             size_mult *= float(adj.size_mult)
             reasons.append("news_spike:" + ";".join(sig.reasons))
 
-        # Market Sentiment Analysis & Bias Application
+        # ---------------- SENTIMENT --------------------
         if self.sentiment_gate is not None:
             try:
-                # Get BankNifty data if available (would need to be passed in)
-                banknifty_df = None  # TODO: Pass BankNifty data from screener
-                
-                # Analyze market sentiment
+                banknifty_df = None  # can be wired from caller if available
                 sentiment = self.sentiment_gate.analyze_sentiment(
                     nifty_df5=index_df5m,
                     banknifty_df5=banknifty_df,
-                    breadth_data=None,  # TODO: Add breadth data integration
-                    vix_level=None      # TODO: Add VIX data integration
+                    breadth_data=None,
+                    vix_level=None
                 )
-                
-                # Apply sentiment filter - reject if setup not suitable for current sentiment
                 if not self.sentiment_gate.should_trade_setup(best.setup_type, sentiment):
                     reasons.append(f"sentiment_block:{sentiment.sentiment_level.value}")
                     return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
-                
-                # Apply sentiment bias to size multiplier
                 sentiment_bias = self.sentiment_gate.get_setup_bias(best.setup_type, sentiment)
                 size_mult *= sentiment_bias
-                
-                # Add sentiment context to reasons
                 reasons.append(f"sentiment:{sentiment.sentiment_level.value}_{sentiment.market_trend.value}")
                 reasons.append(f"sentiment_bias:{sentiment_bias:.2f}")
-                
             except Exception as e:
-                # Sentiment analysis is enhancement; don't fail trades if it breaks
-                if hasattr(e, '__class__'):
-                    reasons.append(f"sentiment_error:{e.__class__.__name__}")
-                else:
-                    reasons.append("sentiment_error:unknown")
+                reasons.append(f"sentiment_error:{getattr(e, '__class__', type('E', (), {})).__name__}")
 
-        # Accept with accumulated adjustments
+        # ---------------- ENTRY VALIDATION ------------
+        entry_validation = self.quality_filters.get('entry_validation', {})
+
+        # Volume confirmation
+        if entry_validation.get('volume_confirmation', False) and df5m_tail is not None and len(df5m_tail) >= 5:
+            try:
+                volume_multiplier = entry_validation.get('volume_multiplier', 1.2)
+                recent_volumes = df5m_tail["volume"].tail(10)
+                avg_volume = recent_volumes.mean()
+                current_volume = df5m_tail["volume"].iloc[-1]
+                if current_volume < (avg_volume * volume_multiplier):
+                    reasons.append(f"entry_validation_volume_fail:{current_volume:.0f}<{avg_volume*volume_multiplier:.0f}")
+                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                else:
+                    reasons.append(f"entry_validation_volume_pass:{current_volume:.0f}>={avg_volume*volume_multiplier:.0f}")
+            except Exception as e:
+                reasons.append(f"entry_validation_volume_error:{e.__class__.__name__}")
+
+        # RSI band
+        if entry_validation.get('rsi_min') is not None and entry_validation.get('rsi_max') is not None:
+            try:
+                if df5m_tail is not None and not df5m_tail.empty:
+                    c = df5m_tail["close"].astype(float)
+                    rsi14_last = float(_rsi(c, 14).iloc[-1])
+                    rsi_min = entry_validation.get('rsi_min', 25)
+                    rsi_max = entry_validation.get('rsi_max', 75)
+                    if best.setup_type.endswith('_long') and (rsi14_last < rsi_min or rsi14_last > rsi_max):
+                        reasons.append(f"entry_validation_rsi_long_fail:{rsi14_last:.1f}_not_in_{rsi_min}-{rsi_max}")
+                        return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                    elif best.setup_type.endswith('_short') and (rsi14_last < rsi_min or rsi14_last > rsi_max):
+                        reasons.append(f"entry_validation_rsi_short_fail:{rsi14_last:.1f}_not_in_{rsi_min}-{rsi_max}")
+                        return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                    else:
+                        reasons.append(f"entry_validation_rsi_pass:{rsi14_last:.1f}_in_{rsi_min}-{rsi_max}")
+            except Exception as e:
+                reasons.append(f"entry_validation_rsi_error:{e.__class__.__name__}")
+
+        # Momentum threshold
+        if entry_validation.get('momentum_threshold') is not None:
+            try:
+                if df5m_tail is not None and len(df5m_tail) >= 2:
+                    current_close = df5m_tail["close"].iloc[-1]
+                    prev_close = df5m_tail["close"].iloc[-2]
+                    momentum = abs((current_close - prev_close) / prev_close)
+                    momentum_threshold = entry_validation.get('momentum_threshold', 0.005)
+                    if momentum < momentum_threshold:
+                        reasons.append(f"entry_validation_momentum_fail:{momentum:.4f}<{momentum_threshold}")
+                        return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                    else:
+                        reasons.append(f"entry_validation_momentum_pass:{momentum:.4f}>={momentum_threshold}")
+            except Exception as e:
+                reasons.append(f"entry_validation_momentum_error:{e.__class__.__name__}")
+
+        # Price action directionality
+        if entry_validation.get('price_action_validation', False):
+            try:
+                if df5m_tail is not None and len(df5m_tail) >= 3:
+                    last_3 = df5m_tail["close"].tail(3).values
+                    if best.setup_type.endswith('_long'):
+                        if last_3[-1] < last_3[-3]:
+                            reasons.append("entry_validation_price_action_long_fail:declining_trend")
+                            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                    elif best.setup_type.endswith('_short'):
+                        if last_3[-1] > last_3[-3]:
+                            reasons.append("entry_validation_price_action_short_fail:rising_trend")
+                            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                    reasons.append("entry_validation_price_action_pass")
+            except Exception as e:
+                reasons.append(f"entry_validation_price_action_error:{e.__class__.__name__}")
+
+        # ---------------- HCET sizing/hold tweaks ----------------
+        if hc_ok:
+            reasons.append("hcet:enabled")
+            size_mult *= 1.15               # reward confluence, modestly
+            min_hold = max(min_hold, 2)     # small confirmation hold
+        else:
+            # keep chop smaller by default
+            if regime in {"choppy", "range"}:
+                size_mult *= 0.8
+
+        # ---------------- FINAL ACCEPT ----------------
         return GateDecision(
             accept=True,
             reasons=reasons,
@@ -451,11 +619,7 @@ class TradeDecisionGate:
             return self.quality_filters.get('momentum_consolidation_threshold', 1.0)
 
         strategy_filters = self.quality_filters.get('strategy_momentum_filters', {})
-
-        # Check each strategy category
-        for category, config in strategy_filters.items():
+        for _, config in strategy_filters.items():
             if setup_type in config.get('strategies', []):
                 return config.get('momentum_consolidation_threshold', 1.0)
-
-        # Fallback to default if setup_type not found in any category
         return self.quality_filters.get('momentum_consolidation_threshold', 1.0)

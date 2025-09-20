@@ -65,7 +65,7 @@ from services.planner_internal import generate_trade_plan
 from services.events.structure_events import StructureEventDetector
 from services.ranker import rank_candidates, get_strategy_threshold
 
-# orders
+# orders & execution
 from services.orders.order_queue import OrderQueue
 from services.scan.energy_scanner import EnergyScanner
 from diagnostics.diag_event_log import diag_event_log, mint_trade_id
@@ -147,6 +147,11 @@ class ScreenerLive:
             top_k_short=scanner_cfg["top_k_short"],
         )
 
+        # Trigger-aware executor for live trade execution
+        # Note: This needs proper risk state and position management in production
+        # For now, creating minimal placeholder objects
+        # TriggerAwareExecutor is managed by main.py, not by screener
+
         # State
         self._last_produced_at: Optional[datetime] = None
         self._levels_cache: Dict[tuple, Dict[str, float]] = {}
@@ -177,6 +182,9 @@ class ScreenerLive:
         self.subs.set_core(self.token_map)
         self.subs.start()
         self.ws.start()
+
+        # Trigger executor is managed by main.py
+
         logger.info("WS connected; core subscriptions scheduled: %d symbols", len(self.core_symbols))
 
     def stop(self) -> None:
@@ -184,13 +192,19 @@ class ScreenerLive:
         except Exception: pass
         try: self.ws.stop()
         except Exception: pass
+
+        # Trigger executor is managed by main.py
+
         logger.info("ScreenerLive stopped")
 
     # ---------------------------------------------------------------------
     # BarBuilder callbacks
     # ---------------------------------------------------------------------
     def _on_1m_close(self, symbol: str, bar_1m: pd.Series) -> None:
-        return
+        """Hook 1-minute bar closes - TriggerAwareExecutor handles this automatically"""
+        # Note: TriggerAwareExecutor automatically hooks into BarBuilder's 1m callback
+        # No manual forwarding needed - it replaces this method during initialization
+        pass
 
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
         """Main driver: invoked for each CLOSED 5m bar of any symbol."""
@@ -293,6 +307,8 @@ class ScreenerLive:
 
         # percentile gate: compute once for this batch
         pctl_score = self._compute_percentile_cut(ranked, self.cfg.rank_pctl_min)
+        max_trades_per_cycle = self.raw_cfg.get("max_trades_per_cycle", 10)
+        trades_planned = 0
 
         # ---------- Plan & de-dupe & enqueue ----------
         for sym, score in ranked:
@@ -403,14 +419,21 @@ class ScreenerLive:
                     "orh": (plan.get("levels") or {}).get("ORH"),
                     "orl": (plan.get("levels") or {}).get("ORL"),
                     "decision_ts": plan["decision_ts"],
+                    "strategy": plan.get("strategy", ""),  # Add missing strategy field
                 },
                 "meta": plan,
             }
 
+            # Check trades per cycle limit (only for live trading)
+            if trades_planned >= max_trades_per_cycle:
+                logger.info("CYCLE:LIMIT_REACHED %d/%d trades - skipping %s", trades_planned, max_trades_per_cycle, sym)
+                break
+
             # Update de-dupe memory only when we actually enqueue
             self._last_entry[sym] = {"ts": now, "setup": setup_type, "score": float(score)}
             self.oq.enqueue(exec_item)
-            logger.info("ENQUEUE %s score=%.3f reasons=%s", sym, score, ";".join(self._reasons_for(sym, decisions)))
+            trades_planned += 1
+            logger.info("ENQUEUE %s score=%.3f count=%d/%d reasons=%s", sym, score, trades_planned, max_trades_per_cycle, ";".join(self._reasons_for(sym, decisions)))
 
     # ---------- EOD handler ----------
     def _handle_eod(self, now: datetime) -> None:
@@ -534,11 +557,13 @@ class ScreenerLive:
                     cur_bw = float(last.get("bb_width_proxy", 0.0) or 0.0)
                     sq_pct = float((recent_bw <= cur_bw).mean() * 100.0)
 
-            # Get strategy type from decisions
+            # Get strategy type and regime from decisions
             strategy_type = None
+            regime_context = None
             for s, d in decisions:
                 if s == sym:
                     strategy_type = getattr(d, "setup_type", None)
+                    regime_context = getattr(d, "regime", None)
                     break
 
             # Strategy type detection (debug logging removed for cleaner output)
@@ -546,6 +571,7 @@ class ScreenerLive:
             rows_for_ranker.append({
                 "symbol": sym,
                 "strategy_type": strategy_type,
+                "regime": regime_context,
                 "daily_score": 0.0,
                 "intraday": {
                     "volume_ratio": volume_ratio,
@@ -566,7 +592,53 @@ class ScreenerLive:
         strategy_summary = ", ".join(f"{k}:{v}" for k, v in strategy_counts.items())
         logger.info(f"RANKER_INPUT | {len(rows_for_ranker)} symbols by strategy: {strategy_summary}")
 
-        ranked_rows = rank_candidates(rows_for_ranker, top_n=len(rows_for_ranker))
+        # Determine most common regime for ranking context (diagnostic report insight)
+        regime_counts = {}
+        for _, d in decisions:
+            regime = getattr(d, "regime", None)
+            if regime:
+                regime_counts[regime] = regime_counts.get(regime, 0) + 1
+
+        # Use most common regime as context for ranking
+        common_regime = max(regime_counts.keys(), key=lambda k: regime_counts[k]) if regime_counts else None
+        if common_regime:
+            logger.info(f"REGIME_CONTEXT | Using {common_regime} for ranking (regimes: {regime_counts})")
+
+        # Apply rank_top_n cap from config
+        rank_top_n = self.raw_cfg.get("rank_top_n", 100)
+        ranked_rows = rank_candidates(rows_for_ranker, top_n=rank_top_n, regime_context=common_regime)
+
+        # ENHANCED FILTERING: Apply rank floors and per-cycle caps (from plan document)
+        if ranked_rows:
+            initial_count = len(ranked_rows)
+
+            # Apply rank score floor and percentile floor
+            min_rank_score = float(self.raw_cfg.get("rank_exec_threshold", 1.0))
+            min_percentile = float(self.raw_cfg.get("rank_pctl_min", 0.60))
+
+            # Filter by rank score and percentile
+            filtered_rows = []
+            for row in ranked_rows:
+                rank_score = float(row.get("rank_score", 0.0))
+                rank_percentile = float(row.get("rank_percentile", 0.7))
+
+                if rank_score >= min_rank_score and rank_percentile >= min_percentile:
+                    filtered_rows.append(row)
+
+            # Apply max per cycle cap
+            max_per_cycle = int(self.raw_cfg.get("max_per_cycle", 100))
+            if len(filtered_rows) > max_per_cycle:
+                # Sort by rank_score descending and take top N
+                filtered_rows.sort(key=lambda x: float(x.get("rank_score", 0.0)), reverse=True)
+                filtered_rows = filtered_rows[:max_per_cycle]
+
+            ranked_rows = filtered_rows
+            logger.info(f"ENHANCED_FILTERING | {initial_count} -> {len(ranked_rows)} symbols after rank floor {min_rank_score}, percentile {min_percentile}, max_per_cycle {max_per_cycle}")
+
+        if len(rows_for_ranker) > rank_top_n:
+            logger.info(f"RANKER_OUTPUT | Capped to top {len(ranked_rows)}/{len(rows_for_ranker)} symbols (rank_top_n={rank_top_n})")
+        else:
+            logger.info(f"RANKER_OUTPUT | All {len(ranked_rows)} symbols ranked")
         return [(r.get("symbol", "?"), float(r.get("rank_score", 0.0))) for r in ranked_rows]
 
     def _reasons_for(self, sym: str, decisions: List[Tuple[str, Decision]]) -> List[str]:

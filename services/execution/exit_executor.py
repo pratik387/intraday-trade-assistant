@@ -9,7 +9,7 @@ import pandas as pd  # for Timestamp typing only
 
 from config.logging_config import get_execution_loggers
 from config.filters_setup import load_filters
-from utils.time_util import _to_naive_ist, _now_naive_ist
+from utils.time_util import _to_naive_ist, _now_naive_ist, _minute_of_day, _parse_hhmm_to_md
 from diagnostics.diag_event_log import diag_event_log
 import uuid
 
@@ -56,35 +56,6 @@ class PositionStore:
 
 # ---------- Helpers ----------
 
-def _parse_eod_to_md(eod: str | int) -> Optional[int]:
-    """
-    Accept "15:12", "1512" or minute-of-day int. Return minute-of-day [0..1439].
-    """
-    if eod is None:
-        return None
-    try:
-        if isinstance(eod, int):
-            v = eod
-            if v >= 1000:  # assume HHMM
-                hh, mm = divmod(v, 100)
-                return hh * 60 + mm
-            return v
-        s = str(eod).strip()
-        if ":" in s:
-            hh, mm = s.split(":")
-            return int(hh) * 60 + int(mm)
-        # "1512" form
-        if len(s) >= 3:
-            hh = int(s[:-2]); mm = int(s[-2:])
-            return hh * 60 + mm
-        return int(s)
-    except Exception:
-        return None
-
-def _minute_of_day(ts: pd.Timestamp) -> int:
-    t = _to_naive_ist(ts)
-    return t.hour * 60 + t.minute
-
 
 # ---------- ExitExecutor (LTP-only exits + tick-TS EOD) ----------
 
@@ -126,12 +97,32 @@ class ExitExecutor:
         cfg = load_filters()
         # Config knobs
         self.eod_hhmm = str(cfg.get("eod_squareoff_hhmm", "")) or str(cfg.get("exit_eod_squareoff_hhmm", "1512"))
-        self.eod_md = _parse_eod_to_md(self.eod_hhmm)
+        self.eod_md = _parse_hhmm_to_md(self.eod_hhmm)
 
-        self.score_drop_enabled = bool(cfg.get("exit_score_drop_enabled", False))
-        self.score_drop_bpct = float(cfg.get("exit_score_drop_bpct", 0.0))  # % drop from peak before exit
-        self.time_stop_min = float(cfg.get("exit_time_stop_min", 0.0))      # minutes after entry to check RR
-        self.time_stop_req_rr = float(cfg.get("exit_time_stop_req_rr", 0.0))
+        # Enhanced exit configuration from plan document
+        exits_config = cfg.get("exits", {})
+        self.score_drop_enabled = bool(exits_config.get("score_drop_enabled", cfg.get("exit_score_drop_enabled", True)))
+        self.score_drop_bpct = float(exits_config.get("score_drop_bpct", cfg.get("exit_score_drop_bpct", 30.0)))  # % drop from peak before exit
+        self.time_stop_min = float(exits_config.get("time_stop_min", cfg.get("exit_time_stop_min", 45.0)))      # minutes after entry to check RR
+        self.time_stop_req_rr = float(exits_config.get("time_stop_req_rr", cfg.get("exit_time_stop_req_rr", 0.5)))
+
+        # Breakout short risk control configuration
+        self.breakout_short_risk_control = bool(exits_config.get("breakout_short_risk_control", cfg.get("breakout_short_risk_control", True)))
+        self.breakout_short_initial_stop_mult = float(exits_config.get("breakout_short_initial_stop_mult", 0.7))  # 0.7x recent swing
+        self.breakout_short_partial_rr = float(exits_config.get("breakout_short_partial_rr", 0.6))  # Partial at 0.6R
+        self.breakout_short_partial_pct = float(exits_config.get("breakout_short_partial_pct", 50.0))  # 50% partial
+        self.breakout_short_sl_to_neg = float(exits_config.get("breakout_short_sl_to_neg", -0.1))  # Move SL to -0.1R after partial
+        self.breakout_short_time_stop_min = float(exits_config.get("breakout_short_time_stop_min", 30.0))  # 30-45m time stop
+        self.breakout_short_time_stop_max = float(exits_config.get("breakout_short_time_stop_max", 45.0))
+        self.breakout_short_time_stop_rr = float(exits_config.get("breakout_short_time_stop_rr", 0.4))  # Exit if <0.4R
+
+        # EOD scale-out configuration
+        self.eod_scale_out = bool(exits_config.get("eod_scale_out", cfg.get("eod_scale_out", True)))
+        self.eod_scale_out_time1 = str(exits_config.get("eod_scale_out_time1", "15:00"))  # First scale out time
+        self.eod_scale_out_time2 = str(exits_config.get("eod_scale_out_time2", "15:07"))  # Final exit time
+        self.eod_scale_out_rr1 = float(exits_config.get("eod_scale_out_rr1", 0.7))  # RR threshold for first scale
+        self.eod_scale_out_rr2 = float(exits_config.get("eod_scale_out_rr2", 0.4))  # RR threshold for final exit
+        self.eod_scale_out_pct1 = float(exits_config.get("eod_scale_out_pct1", 50.0))  # First scale percentage
 
         # T1 behavior
         self.t1_book_pct = float(cfg.get("exit_t1_book_pct", 50.0))
@@ -151,7 +142,23 @@ class ExitExecutor:
 
         self._peak_price: Dict[str, float] = {}
         self._trail_price: Dict[str, float] = {}
-        self._closing_state = {} 
+        self._closing_state = {}
+
+        # OR_kill enhancement state tracking
+        self._or_kill_observation: Dict[str, Dict] = {}  # Track OR observation states
+        self._last_momentum_check: Dict[str, float] = {}  # Cache momentum calculations
+
+        # OR_kill enhancement config
+        self.or_kill_time_adaptive = bool(cfg.get("or_kill_time_adaptive", True))
+        self.or_kill_volume_confirmation = bool(cfg.get("or_kill_volume_confirmation", True))
+        self.or_kill_momentum_filter = bool(cfg.get("or_kill_momentum_filter", True))
+        self.or_kill_partial_exit_pct = float(cfg.get("or_kill_partial_exit_pct", 30.0))
+        self.or_kill_observation_minutes = float(cfg.get("or_kill_observation_minutes", 15.0))
+        self.or_kill_volume_multiplier = float(cfg.get("or_kill_volume_multiplier", 1.5))
+        self.or_kill_early_buffer_mult = float(cfg.get("or_kill_early_buffer_mult", 1.0))
+        self.or_kill_mid_buffer_mult = float(cfg.get("or_kill_mid_buffer_mult", 0.75))
+        self.or_kill_late_buffer_mult = float(cfg.get("or_kill_late_buffer_mult", 0.25))
+        self.or_kill_major_break_mult = float(cfg.get("or_kill_major_break_mult", 2.0)) 
 
     def run_once(self) -> None:
         open_pos = self.positions.list_open()
@@ -171,17 +178,45 @@ class ExitExecutor:
 
                 # 1) Hard SL first, but anchor to ATR sanity if available
                 plan_sl = self._get_plan_sl(pos.plan)
+                original_sl = plan_sl  # Store original for logging
                 if not math.isnan(plan_sl):
                     atr_min_mult = float(load_filters().get("exit_sl_atr_mult_min", 1.0))
                     atr_cached = float(pos.plan.get("indicators", {}).get("atr", float("nan")))
                     if (not math.isnan(atr_cached)) and atr_min_mult > 0:
-                        # expand stop slightly if it's inside 1.0x ATR noise
+                        # Calculate ATR-based minimum SL
                         if pos.side.upper() == "BUY":
-                            plan_sl = min(plan_sl, float(pos.avg_price) - atr_min_mult * atr_cached)
+                            atr_based_sl = float(pos.avg_price) - atr_min_mult * atr_cached
+                            new_plan_sl = min(plan_sl, atr_based_sl)
                         else:
-                            plan_sl = max(plan_sl, float(pos.avg_price) + atr_min_mult * atr_cached)
+                            atr_based_sl = float(pos.avg_price) + atr_min_mult * atr_cached
+                            new_plan_sl = max(plan_sl, atr_based_sl)
+
+                        # Log ATR expansion if it changed the SL
+                        if abs(new_plan_sl - plan_sl) > 1e-6:  # Check for meaningful change
+                            expansion_amount = abs(new_plan_sl - plan_sl)
+                            expansion_direction = "expanded" if (
+                                (pos.side.upper() == "BUY" and new_plan_sl < plan_sl) or
+                                (pos.side.upper() == "SELL" and new_plan_sl > plan_sl)
+                            ) else "tightened"
+
+                            logger.info(
+                                f"ATR_SL_ADJUSTMENT | {sym} | {pos.side} | "
+                                f"Original_SL: {plan_sl:.2f} | ATR_Based_SL: {atr_based_sl:.2f} | "
+                                f"Final_SL: {new_plan_sl:.2f} | ATR: {atr_cached:.3f} | "
+                                f"Entry: {pos.avg_price:.2f} | Adjustment: {expansion_direction} by {expansion_amount:.2f}"
+                            )
+
+                        plan_sl = new_plan_sl
 
                 if self._breach_sl(pos.side, float(px), plan_sl):
+                    # Enhanced SL exit logging
+                    slippage = abs(float(px) - plan_sl)
+                    logger.info(
+                        f"SL_BREACH | {sym} | {pos.side} | "
+                        f"Exit_Price: {float(px):.2f} | Final_SL: {plan_sl:.2f} | "
+                        f"Original_SL: {original_sl:.2f} | Slippage: {slippage:.2f} | "
+                        f"Entry: {pos.avg_price:.2f}"
+                    )
                     self._exit(sym, pos, float(px), ts, "hard_sl")
                     continue
 
@@ -222,7 +257,15 @@ class ExitExecutor:
                     self._exit(sym, pos, float(px), ts, sdrop)
                     continue
 
-                # 6) Time-stop (tick timestamp)
+                # 6) Breakout short risk control
+                if self._breakout_short_risk_control_triggered(sym, pos, float(px), ts):
+                    continue  # Handled internally
+
+                # 7) EOD scale-out
+                if self._eod_scale_out_triggered(sym, pos, float(px), ts):
+                    continue  # Handled internally
+
+                # 8) Time-stop (tick timestamp)
                 if self.time_stop_min > 0 and self._time_stop_triggered(pos, float(px), plan_sl, ts):
                     self._exit(sym, pos, float(px), ts, f"time_stop_{self.time_stop_min}m_rr<{self.time_stop_req_rr}")
                     continue
@@ -338,19 +381,19 @@ class ExitExecutor:
 
     def _or_kill(self, side: str, px: float, plan: Dict[str, Any]) -> bool:
         """
-        Professional OR kill logic with ATR-based buffers.
-        Only kills on significant range breaks, not minor slippage.
+        Enhanced OR kill logic with time-adaptive buffers, volume confirmation,
+        momentum filters, and graduated exit strategy.
         """
         try:
             orh = plan.get("orh"); orl = plan.get("orl")
             orh = None if orh is None else float(orh)
             orl = None if orl is None else float(orl)
+            symbol = plan.get("symbol", "unknown")
 
             # Get ATR for buffer calculation
             atr = float(plan.get("indicators", {}).get("atr", 0))
             if atr <= 0:
-                # Fallback: estimate ATR as 1% of price
-                atr = abs(px * 0.01)
+                atr = abs(px * 0.01)  # Fallback: estimate ATR as 1% of price
 
         except Exception:
             return False
@@ -360,31 +403,193 @@ class ExitExecutor:
 
         side = side.upper()
 
-        # Professional approach: Add ATR-based buffer to avoid noise kills
-        # Regime-specific buffer multipliers
+        # Enhanced buffer calculation with time-of-day adaptation
+        buffer_mult = self._get_time_adaptive_buffer_mult()
+
+        # Regime-specific adjustments
         regime = plan.get("regime", "").lower()
         if regime in ["chop", "choppy"]:
-            buffer_mult = 0.75  # Larger buffer in choppy markets (3/4 ATR)
-        else:
-            buffer_mult = 0.5   # Smaller buffer in trending markets (1/2 ATR)
+            buffer_mult *= 1.5  # Larger buffer in choppy markets
+        elif regime in ["trend", "trending"]:
+            buffer_mult *= 0.8  # Smaller buffer in trending markets
 
         buffer = atr * buffer_mult
 
-        # Apply buffers - only kill on convincing breaks beyond normal noise
+        # Determine OR levels and break severity
         if side == "BUY" and orl is not None:
-            # For longs: only kill if price breaks significantly below ORL
+            or_level = orl
+            price_break = orl - px  # positive = breaking below ORL
             kill_level = orl - buffer
-            if px < kill_level:
-                logger.debug(f"OR_KILL: {plan.get('symbol')} LONG breach {px:.2f} < {kill_level:.2f} (ORL-{buffer:.2f})")
-                return True
-
-        if side == "SELL" and orh is not None:
-            # For shorts: only kill if price breaks significantly above ORH
+        elif side == "SELL" and orh is not None:
+            or_level = orh
+            price_break = px - orh  # positive = breaking above ORH
             kill_level = orh + buffer
-            if px > kill_level:
-                logger.debug(f"OR_KILL: {plan.get('symbol')} SHORT breach {px:.2f} > {kill_level:.2f} (ORH+{buffer:.2f})")
+        else:
+            return False
+
+        # Check if price is near or breaking OR level
+        is_major_break = price_break > (buffer * self.or_kill_major_break_mult)
+        is_minor_break = 0 < price_break <= buffer
+        is_touching = abs(price_break) <= (buffer * 0.5)
+
+        # Fast path: Major breaks kill immediately (with volume confirmation if enabled)
+        if is_major_break:
+            if self.or_kill_volume_confirmation and not self._check_volume_confirmation(plan):
+                logger.debug(f"OR_KILL: {symbol} major break but no volume confirmation")
+                return False
+            logger.info(f"OR_KILL: {symbol} major {side} break {px:.2f} vs {or_level:.2f} (break={price_break:.2f}, buffer={buffer:.2f})")
+            return True
+
+        # Graduated path: Minor breaks trigger observation logic
+        if is_minor_break or is_touching:
+            return self._handle_or_observation(symbol, side, px, or_level, price_break, buffer, plan)
+
+        return False
+
+    def _get_time_adaptive_buffer_mult(self) -> float:
+        """Calculate time-of-day adaptive buffer multiplier"""
+        if not self.or_kill_time_adaptive:
+            return 0.75  # Default fallback
+
+        try:
+            current_time = _now_naive_ist()
+            minute_of_day = current_time.hour * 60 + current_time.minute
+
+            # Session time windows (IST)
+            early_end = 11 * 60    # 11:00 AM
+            late_start = 14 * 60   # 2:00 PM
+
+            if minute_of_day < early_end:
+                return self.or_kill_early_buffer_mult  # 1.0 - larger buffer early
+            elif minute_of_day > late_start:
+                return self.or_kill_late_buffer_mult   # 0.25 - smaller buffer late
+            else:
+                return self.or_kill_mid_buffer_mult    # 0.75 - standard buffer mid-day
+        except Exception:
+            return 0.75
+
+    def _check_volume_confirmation(self, plan: Dict[str, Any]) -> bool:
+        """Check if current volume supports the OR break"""
+        try:
+            symbol = plan.get("symbol", "")
+            if not symbol:
                 return True
 
+            # Get recent daily volume data for comparison
+            daily_df = self.broker.get_daily(symbol, days=10)
+            if daily_df.empty or len(daily_df) < 5:
+                return True  # Not enough data, allow the exit
+
+            # Calculate average daily volume from recent 5 days (excluding today)
+            recent_volumes = daily_df['volume'].tail(5)
+            avg_volume = recent_volumes.mean()
+
+            # For OR breaks, we expect above-average volume activity
+            # Current tick should show elevated volume compared to recent average
+            # Since we only have LTP access, we use a conservative threshold
+            # Real implementation would check current 5m volume vs 5m average
+
+            # For now, use a relaxed volume requirement for OR breaks
+            # This is a conservative placeholder that allows most exits
+            return True  # Allow OR exits - volume confirmation would need intraday data
+
+        except Exception as e:
+            logger.debug(f"Volume confirmation check failed for {plan.get('symbol', 'unknown')}: {e}")
+            return True  # Default to allowing exit on error
+
+    def _check_momentum_filter(self, symbol: str, side: str, plan: Dict[str, Any]) -> bool:
+        """Check momentum indicators to filter false OR breaks"""
+        if not self.or_kill_momentum_filter:
+            return True
+
+        try:
+            # Cache momentum checks (expensive calculation)
+            cache_key = f"{symbol}_{side}"
+            current_time = time.time()
+
+            if cache_key in self._last_momentum_check:
+                last_check = self._last_momentum_check[cache_key]
+                if current_time - last_check < 10:  # Cache for 10 seconds
+                    return True
+
+            # Update cache
+            self._last_momentum_check[cache_key] = current_time
+
+            # Get indicators from plan (these should be calculated elsewhere)
+            indicators = plan.get("indicators", {})
+            rsi = float(indicators.get("rsi", 50))
+            adx = float(indicators.get("adx", 20))
+
+            # Momentum filter logic
+            if side == "BUY":
+                # For longs being killed on ORL break, check if oversold with momentum
+                if rsi < 30 and adx > 25:  # Strong oversold momentum
+                    return False  # Don't kill, might bounce
+            else:  # SELL
+                # For shorts being killed on ORH break, check if overbought with momentum
+                if rsi > 70 and adx > 25:  # Strong overbought momentum
+                    return False  # Don't kill, might reverse
+
+            return True
+
+        except Exception:
+            return True  # Default to allowing kill on error
+
+    def _handle_or_observation(self, symbol: str, side: str, px: float, or_level: float,
+                              price_break: float, buffer: float, plan: Dict[str, Any]) -> bool:
+        """Handle graduated exit strategy for OR touches/minor breaks"""
+
+        # Check if already in observation for this symbol
+        obs_key = f"{symbol}_{side}"
+        observation = self._or_kill_observation.get(obs_key, {})
+
+        current_time = time.time()
+
+        if not observation:
+            # First touch/minor break - start observation
+            observation = {
+                "start_time": current_time,
+                "or_level": or_level,
+                "initial_price": px,
+                "partial_exit_done": False,
+                "side": side
+            }
+            self._or_kill_observation[obs_key] = observation
+
+            # Trigger partial exit if configured
+            if self.or_kill_partial_exit_pct > 0:
+                partial_qty = int(pos.qty * self.or_kill_partial_exit_pct / 100.0)
+                if partial_qty > 0:
+                    logger.info(f"OR_KILL: {symbol} OR touch - starting observation, partial exit {self.or_kill_partial_exit_pct}%")
+
+                    # Execute partial exit
+                    exit_result = self._attempt_exit(symbol, partial_qty, px, "OR_KILL_PARTIAL")
+                    if exit_result:
+                        trade_logger.info(f"OR_KILL_PARTIAL | {symbol} | {pos.side} {partial_qty} @ {px:.2f} | remaining: {pos.qty - partial_qty}")
+                        observation["partial_exit_done"] = True
+                        observation["partial_qty_exited"] = partial_qty
+                    else:
+                        logger.warning(f"OR_KILL: {symbol} partial exit failed")
+                        observation["partial_exit_done"] = False
+
+            return False  # Don't kill yet, start observing
+
+        # Check if observation period expired
+        elapsed_minutes = (current_time - observation["start_time"]) / 60.0
+        if elapsed_minutes >= self.or_kill_observation_minutes:
+
+            # Check momentum filter before final kill
+            if not self._check_momentum_filter(symbol, side, plan):
+                logger.debug(f"OR_KILL: {symbol} observation expired but momentum filter blocks kill")
+                # Reset observation for another cycle
+                del self._or_kill_observation[obs_key]
+                return False
+
+            logger.info(f"OR_KILL: {symbol} observation period expired ({elapsed_minutes:.1f}m) - final exit")
+            del self._or_kill_observation[obs_key]  # Clean up
+            return True  # Final kill
+
+        # Still in observation period
         return False   
 
     def _custom_kill(self, side: str, px: float, plan: Dict[str, Any]) -> Optional[str]:
@@ -539,6 +744,16 @@ class ExitExecutor:
             pass
         self._peak_price.pop(sym, None); self._trail_price.pop(sym, None)
 
+        # Clean up OR_kill observation states for this symbol
+        obs_keys_to_remove = [k for k in self._or_kill_observation.keys() if k.startswith(f"{sym}_")]
+        for obs_key in obs_keys_to_remove:
+            self._or_kill_observation.pop(obs_key, None)
+
+        # Clean up momentum check cache
+        momentum_keys_to_remove = [k for k in self._last_momentum_check.keys() if k.startswith(f"{sym}_")]
+        for momentum_key in momentum_keys_to_remove:
+            self._last_momentum_check.pop(momentum_key, None)
+
         rem = 0
         try:
             cur = self.positions.list_open().get(sym)
@@ -549,11 +764,11 @@ class ExitExecutor:
 
     def _partial_exit_t1(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
         # Enhanced partial exit logic - always use partial exits for better R:R
-        pct = max(1.0, float(getattr(self, "t1_book_pct", 50.0)))
+        pct = max(1.0, float(getattr(self, "t1_book_pct", 70)))
         qty = int(pos.qty)
 
         # Calculate partial exit quantity - ensure minimum 30% book
-        min_book_pct = 30.0  # Minimum partial booking percentage
+        min_book_pct = 70.0  # Minimum partial booking percentage
         actual_pct = max(min_book_pct, pct)
         
         qty_exit = int(max(1, round(qty * (actual_pct / 100.0))))
@@ -690,6 +905,145 @@ class ExitExecutor:
         if need_t1 and not st.get("t1_done", False):
             return False
         return self._bars_since_entry(pos, now_ts) >= delay_bars
+
+    def _calculate_rr(self, pos: Position, current_price: float) -> float:
+        """Calculate risk-reward ratio for current position."""
+        try:
+            entry_price = float(pos.avg_price)
+            plan_sl = self._get_plan_sl(pos.plan)
+
+            if math.isnan(plan_sl):
+                return 0.0
+
+            risk_per_share = abs(entry_price - plan_sl)
+            if risk_per_share <= 0:
+                return 0.0
+
+            if pos.side.upper() == "BUY":
+                reward_per_share = current_price - entry_price
+            else:
+                reward_per_share = entry_price - current_price
+
+            return reward_per_share / risk_per_share
+        except Exception:
+            return 0.0
+
+    def _breakout_short_risk_control_triggered(self, sym: str, pos: Position, px: float, ts: pd.Timestamp) -> bool:
+        """
+        Breakout short risk control: High WR but net negative → losses too fat.
+        Initial stop = 0.7× recent swing, partial at 0.6R, move stop to –0.1R after partial,
+        add time-stop 30–45m at <0.4R
+        """
+        if not self.breakout_short_risk_control:
+            return False
+
+        # Only apply to breakout_short strategies
+        strategy_type = pos.plan.get("strategy_type", "")
+        if "breakout_short" not in strategy_type:
+            return False
+
+        st = pos.plan.get("_state") or {}
+        rr = self._calculate_rr(pos, px)
+
+        # Partial exit at 0.6R
+        if not st.get("breakout_short_partial_done", False) and rr >= self.breakout_short_partial_rr:
+            qty = int(pos.qty)
+            qty_exit = int(max(1, round(qty * (self.breakout_short_partial_pct / 100.0))))
+            qty_exit = min(qty_exit, qty)
+
+            if qty_exit > 0:
+                logger.info(f"BREAKOUT_SHORT_RISK: {sym} partial exit at {rr:.2f}R - booking {qty_exit}/{qty}")
+                self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"breakout_short_partial_{rr:.2f}R")
+                self.positions.reduce(sym, qty_exit)
+
+                # Move stop to -0.1R
+                try:
+                    entry_price = float(pos.avg_price)
+                    original_sl = self._get_plan_sl(pos.plan)
+                    risk_per_share = abs(entry_price - original_sl)
+                    new_sl = entry_price + (self.breakout_short_sl_to_neg * risk_per_share)  # -0.1R
+
+                    if isinstance(pos.plan.get("stop"), dict):
+                        pos.plan["stop"]["hard"] = new_sl
+                    pos.plan["hard_sl"] = new_sl
+
+                    st["breakout_short_partial_done"] = True
+                    st["breakout_short_new_sl"] = new_sl
+                    pos.plan["_state"] = st
+
+                    logger.info(f"BREAKOUT_SHORT_RISK: {sym} moved SL to {self.breakout_short_sl_to_neg}R @ {new_sl:.2f}")
+                except Exception as e:
+                    logger.warning(f"BREAKOUT_SHORT_RISK: {sym} failed to move SL: {e}")
+
+                return True
+
+        # Time stop for breakout shorts (30-45m)
+        try:
+            entry_ts = pos.plan.get("entry_ts")
+            if entry_ts:
+                start = pd.Timestamp(entry_ts)
+                mins_live = max(0.0, (ts - start).total_seconds() / 60.0)
+
+                # Check if we're in the time stop window and RR is poor
+                if (self.breakout_short_time_stop_min <= mins_live <= self.breakout_short_time_stop_max
+                    and rr < self.breakout_short_time_stop_rr):
+
+                    logger.info(f"BREAKOUT_SHORT_RISK: {sym} time stop {mins_live:.1f}m @ RR={rr:.2f} < {self.breakout_short_time_stop_rr}")
+                    self._exit(sym, pos, px, ts, f"breakout_short_time_stop_{mins_live:.1f}m_rr{rr:.2f}")
+                    return True
+        except Exception:
+            pass
+
+        return False
+
+    def _eod_scale_out_triggered(self, sym: str, pos: Position, px: float, ts: pd.Timestamp) -> bool:
+        """
+        EOD scale-out: If still <0.7R by 15:00, exit 50%; if <0.4R by 15:07, close the rest.
+        """
+        if not self.eod_scale_out:
+            return False
+
+        try:
+            minute_of_day = _minute_of_day(ts)
+            eod_time1_md = _parse_hhmm_to_md(self.eod_scale_out_time1)  # 15:00
+            eod_time2_md = _parse_hhmm_to_md(self.eod_scale_out_time2)  # 15:07
+
+            if eod_time1_md is None or eod_time2_md is None:
+                return False
+
+            st = pos.plan.get("_state") or {}
+            rr = self._calculate_rr(pos, px)
+
+            # First scale-out at 15:00 if <0.7R
+            if (minute_of_day >= eod_time1_md and
+                not st.get("eod_scale_out_first_done", False) and
+                rr < self.eod_scale_out_rr1):
+
+                qty = int(pos.qty)
+                qty_exit = int(max(1, round(qty * (self.eod_scale_out_pct1 / 100.0))))
+                qty_exit = min(qty_exit, qty)
+
+                if qty_exit > 0:
+                    logger.info(f"EOD_SCALE_OUT: {sym} first scale @ {self.eod_scale_out_time1} RR={rr:.2f} < {self.eod_scale_out_rr1} - exit {qty_exit}/{qty}")
+                    self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"eod_scale_out_1st_{rr:.2f}R")
+                    self.positions.reduce(sym, qty_exit)
+
+                    st["eod_scale_out_first_done"] = True
+                    pos.plan["_state"] = st
+                    return True
+
+            # Final exit at 15:07 if <0.4R
+            if (minute_of_day >= eod_time2_md and
+                rr < self.eod_scale_out_rr2):
+
+                logger.info(f"EOD_SCALE_OUT: {sym} final exit @ {self.eod_scale_out_time2} RR={rr:.2f} < {self.eod_scale_out_rr2}")
+                self._exit(sym, pos, px, ts, f"eod_scale_out_final_{rr:.2f}R")
+                return True
+
+        except Exception as e:
+            logger.warning(f"EOD_SCALE_OUT: {sym} error: {e}")
+
+        return False
 
 
 # (end)

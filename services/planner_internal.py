@@ -148,8 +148,6 @@ def _prev_day_levels(
         return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
 
 
-
-
 def _choppiness_index(df_sess: pd.DataFrame, lookback: int) -> float:
     """CHOP = 100 * log10(sum(TR) / (max(H)-min(L))) / log10(n)"""
     try:
@@ -355,6 +353,28 @@ def _select_long_strategy(
             "context": {"reason": ["above_PDH","above_VWAP","ema20>ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
+    # Strategy 4: Momentum Breakout Long - for momentum-based setups
+    if "momentum_breakout_long" in setup_type and close > vwap.iloc[-1]:
+        basis = "momentum_breakout_long"
+        stop_structure = _pivot_swing_low(df_sess, 6)  # Tighter stops for momentum
+        return {
+            "name": basis, "bias": "long",
+            "entry_trigger": "momentum breakout with volume surge, enter on minor pullback",
+            "structure_stop": float(stop_structure),
+            "context": {"reason": ["momentum_surge", "above_VWAP", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+        }
+
+    # Strategy 5: Trend Continuation Long - for trend following setups
+    if "trend_continuation_long" in setup_type and regime == "trend_up" and ema20.iloc[-1] > ema50.iloc[-1]:
+        basis = "trend_continuation_long"
+        stop_structure = max(_pivot_swing_low(df_sess, 8), ema20.iloc[-1] * 0.985)  # EMA or swing low
+        return {
+            "name": basis, "bias": "long",
+            "entry_trigger": "trend continuation pattern, enter on minor dip to EMA20",
+            "structure_stop": float(stop_structure),
+            "context": {"reason": ["trend_up", "ema20>ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+        }
+
     # Fallback: Generic long setup
     return {
         "name": f"generic_long_from_{setup_type}", "bias": "long",
@@ -394,6 +414,28 @@ def _select_short_strategy(
             "structure_stop": float(stop_structure),
             "context": {"reason": ["trend_down", "below_ORL", "below_VWAP", "ema20<ema50", f"setup:{setup_type}"],
                         "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+        }
+
+    # Strategy 3: Momentum Breakout Short - for momentum-based setups
+    if "momentum_breakout_short" in setup_type and close < vwap.iloc[-1]:
+        basis = "momentum_breakout_short"
+        stop_structure = _pivot_swing_high(df_sess, 6)  # Tighter stops for momentum
+        return {
+            "name": basis, "bias": "short",
+            "entry_trigger": "momentum breakdown with volume surge, enter on minor bounce",
+            "structure_stop": float(stop_structure),
+            "context": {"reason": ["momentum_breakdown", "below_VWAP", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+        }
+
+    # Strategy 4: Trend Continuation Short - for trend following setups
+    if "trend_continuation_short" in setup_type and regime == "trend_down" and ema20.iloc[-1] < ema50.iloc[-1]:
+        basis = "trend_continuation_short"
+        stop_structure = min(_pivot_swing_high(df_sess, 8), ema20.iloc[-1] * 1.015)  # EMA or swing high
+        return {
+            "name": basis, "bias": "short",
+            "entry_trigger": "trend continuation pattern, enter on minor bounce to EMA20",
+            "structure_stop": float(stop_structure),
+            "context": {"reason": ["trend_down", "ema20<ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
     # Fallback: Generic short setup
@@ -493,9 +535,44 @@ def _compose_exits_and_size(
                 "targets": [], "trail": cfg.trail_to, "entry_zone": None, "qty": 0, "notional": 0.0
             }
 
-        # Sizing
+        # Volatility-adjusted sizing
+        volatility_multiplier = 1.0
+        if hasattr(cfg, '_extras') and cfg._extras:
+            volatility_config = cfg._extras.get('volatility_sizing', {})
+            if volatility_config.get('enabled', False):
+                try:
+                    # Calculate volatility based on ATR as percentage of price
+                    price_atr_ratio = (atr / price) * 100 if price > 0 and not np.isnan(atr) else 1.0
+
+                    # Define volatility thresholds
+                    low_vol_threshold = volatility_config.get('low_volatility_threshold', 0.5)   # 0.5% ATR/price
+                    high_vol_threshold = volatility_config.get('high_volatility_threshold', 2.0) # 2.0% ATR/price
+
+                    # Volatility multipliers
+                    low_vol_mult = volatility_config.get('low_volatility_multiplier', 1.3)   # Increase size in low vol
+                    high_vol_mult = volatility_config.get('high_volatility_multiplier', 0.7)  # Decrease size in high vol
+                    normal_vol_mult = volatility_config.get('normal_volatility_multiplier', 1.0)
+
+                    # Apply volatility-based adjustment
+                    if price_atr_ratio < low_vol_threshold:
+                        volatility_multiplier = low_vol_mult  # Low volatility: increase position size
+                    elif price_atr_ratio > high_vol_threshold:
+                        volatility_multiplier = high_vol_mult  # High volatility: decrease position size
+                    else:
+                        volatility_multiplier = normal_vol_mult  # Normal volatility
+
+                    # Apply limits to prevent extreme sizing
+                    max_adjustment = volatility_config.get('max_size_adjustment', 2.0)
+                    min_adjustment = volatility_config.get('min_size_adjustment', 0.5)
+                    volatility_multiplier = max(min_adjustment, min(max_adjustment, volatility_multiplier))
+
+                except Exception:
+                    # If volatility calculation fails, use default multiplier
+                    volatility_multiplier = 1.0
+
+        # Sizing with volatility adjustment
         base_qty = max(int(cfg.risk_per_trade_rupees // rps), 0)
-        qty = max(int(base_qty * qty_scale), 0)
+        qty = max(int(base_qty * qty_scale * volatility_multiplier), 0)
         notional = qty * price
 
         # Targets by RR
@@ -537,6 +614,12 @@ def generate_trade_plan(
     symbol: str,
     daily_df: Optional[pd.DataFrame] = None,
     setup_type: str = None,
+    # -------- NEW OPTIONALS to compute HCET features ----------
+    df1m_tail: Optional[pd.DataFrame] = None,
+    index_df5m: Optional[pd.DataFrame] = None,
+    sector_df5m: Optional[pd.DataFrame] = None,
+    news_spike_gate: Any = None,
+    prev_session_close: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Build an intraday trade plan from a 5-min OHLCV DataFrame.
@@ -551,11 +634,22 @@ def generate_trade_plan(
     setup_type : str | None
         Detected setup type from structure events (e.g., "range_rejection_long", "breakout_short").
         Used to ensure strategy direction aligns with detected setup bias.
+    df1m_tail : pd.DataFrame | None
+        Optional 1m tail for spike/ret_z features (if available).
+    index_df5m : pd.DataFrame | None
+        Optional index 5m bars for index momentum.
+    sector_df5m : pd.DataFrame | None
+        Optional sector 5m bars for sector momentum.
+    news_spike_gate : object | None
+        Optional news spike detector; if provided, used to set news_spike_flag.
+    prev_session_close : float | None
+        Optional previous-day close override for gap metrics (falls back to PDC from daily_df).
 
     Returns
     -------
     plan : dict
         Serializable plan with eligibility, entry/stop/targets, sizing, context, and quality fields.
+        **NEW**: includes `plan["features"]` when optional inputs are provided, for Gate HCET consumption.
     """
     try:
         cfg = _load_planner_config()
@@ -601,8 +695,6 @@ def generate_trade_plan(
         orh, orl, or_end = _opening_range(sess, cfg.orb_minutes)
         session_date = sess.index[-1].date() if (sess is not None and not sess.empty) else None
         pd_levels = _prev_day_levels(daily_df, session_date)
-
-
 
         # Gap vs prev close (contextual)
         gap_pct = np.nan
@@ -731,9 +823,8 @@ def generate_trade_plan(
         # Handle negative structural RR (indicates setup-strategy directional mismatch)
         if not np.isnan(structural_rr):
             if structural_rr < 0:
-                # Log warning for negative structural RR (should not happen with setup alignment)
                 logger.warning(f"Negative structural RR {structural_rr:.2f} for {symbol} - potential setup-strategy mismatch")
-                structural_rr = 0.0  # Set to 0 instead of clipping to preserve the signal
+                structural_rr = 0.0
             else:
                 structural_rr = float(np.clip(structural_rr, 0.0, rr_clip_max))
 
@@ -820,6 +911,7 @@ def generate_trade_plan(
         }
         plan["guardrails"] = [g for g in plan["guardrails"] if g]
 
+
         # APPLY QUALITY FILTERS - This was missing and causing poor performance!
         if plan["eligible"]:
             quality_filters = cfg._extras.get("quality_filters", {})
@@ -827,22 +919,14 @@ def generate_trade_plan(
                 structural_rr_val = plan["quality"].get("structural_rr", 0)
                 min_structural_rr = quality_filters.get("min_structural_rr", 2.0)
 
-                # Note: structural_rr filter already applied at gate level - no need to double-filter
-                # Symbols reaching this stage have already passed structural_rr >= min_structural_rr
-
                 # Professional quality filters - reject poor setups at planning stage
                 if plan["eligible"]:
-
-                    # Remove acceptance_ok filter - causing 40% rejection of valid trades
-                    # Remove T2_feasible filter - too restrictive for momentum strategies
-                    # Keep only T1_feasible and T1_rr checks for safety
 
                     # Filter: targets must be feasible
                     if not plan["quality"]["t1_feasible"]:
                         plan["eligible"] = False
                         plan["quality"]["rejection_reason"] = "T1 not feasible"
                         logger.info(f"planner: {symbol} rejected due to T1 not feasible")
-
 
                     # Filter: minimum target risk-reward ratios
                     if len(plan["targets"]) >= 2:
@@ -853,9 +937,6 @@ def generate_trade_plan(
                             plan["eligible"] = False
                             plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr:.1f} < {min_t1_rr}"
                             logger.info(f"planner: {symbol} rejected due to low T1_rr {t1_rr:.1f}")
-
-
-                # All duplicate filters have been removed - pipeline optimized for maximum trade conversion
 
         logger.info(
             f"planner.plan sym={symbol} eligible={plan['eligible']} "

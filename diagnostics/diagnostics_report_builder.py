@@ -178,7 +178,21 @@ def build_csv_from_events(log_dir: Path | None = None,
                             na_position="last")
     out_path = base / out_name
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out_path, index=False)
+
+    # Write CSV with explicit flush and error handling
+    try:
+        df.to_csv(out_path, index=False)
+
+        # Force flush to disk
+        import os
+        with open(out_path, 'r+b') as f:
+            f.flush()
+            os.fsync(f.fileno())
+
+    except Exception as e:
+        print(f"ERROR: Failed to write CSV to {out_path}: {e}")
+        raise
+
     return out_path
 
 def build_combined_csv_from_current_run(logs_root_dir: Path | None = None,

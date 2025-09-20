@@ -11,7 +11,7 @@ Expected input DataFrame (IST‑aligned, 5‑minute close index):
 
 Public API
 ----------
-MarketRegimeGate.compute_regime(df5) -> (regime: str, metrics: dict)
+MarketRegimeGate.compute_regime(df5) -> (regime: str, confidence: float)
 MarketRegimeGate.allow_setup(setup_type: str, regime: str) -> bool
 MarketRegimeGate.size_multiplier(regime: str, counter_trend: bool=False) -> float
 
@@ -26,8 +26,6 @@ Setup types (consistent with our structure detectors):
   "failure_fade_long", "failure_fade_short",
   "gap_fill_long", "gap_fill_short",
   "flag_continuation_long", "flag_continuation_short",
-  "support_bounce_long", "resistance_bounce_short",
-  "orb_breakout_long", "orb_breakout_short",
   "vwap_mean_reversion_long", "vwap_mean_reversion_short",
   "volume_spike_reversal_long", "volume_spike_reversal_short",
   "trend_pullback_long", "trend_pullback_short",
@@ -59,6 +57,7 @@ class MarketRegimeGate:
 
     def __init__(self, cfg: Dict, log=None):
         self.log = log
+        self.cfg = cfg  # Store config for chop throttle and other features
         # strict: require thresholds to exist (no hidden defaults)
         rt = (cfg.get("regime_thresholds"))
         required = [
@@ -78,9 +77,9 @@ class MarketRegimeGate:
         self.FF_MIN_VOL_MULT   = float(rt["ff_min_vol_mult"])
 
     # ---------------- Regime computation ----------------
-    def compute_regime(self, df5: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
+    def compute_regime(self, df5: pd.DataFrame) -> Tuple[str, float]:
         if df5 is None or df5.empty:
-            return "chop", {}
+            return "chop", 0.5
 
         c = df5["close"].astype(float).copy()
 
@@ -139,7 +138,18 @@ class MarketRegimeGate:
         else:
             regime = "chop"
 
-        return regime
+        # Calculate confidence based on how clear the regime signal is
+        confidence = 0.5  # base confidence
+
+        # Higher confidence for clear trending regimes
+        if regime in ("trend_up", "trend_down"):
+            slope_strength = min(abs(m.slope_fast) * 1000, 0.3)  # normalize slope
+            confidence = min(0.9, 0.6 + slope_strength)
+        elif regime == "squeeze":
+            confidence = 0.8  # squeeze is usually pretty clear
+        # chop gets default 0.5 confidence
+
+        return regime, confidence
 
     # ---------------- Evidence-based permissioning ----------------
     def allow_setup(
@@ -172,18 +182,59 @@ class MarketRegimeGate:
         v = float(vol_mult_5m) if pd.notna(vol_mult_5m) else 0.0
 
         if regime == "chop":
-            # Only strong VWAP reclaims/loses and failure fades with some liquidity
+            # CHOP THROTTLE: Check if this setup is allowed in chop
+            quality_filters = self.cfg.get("quality_filters", {})
+            chop_throttle = quality_filters.get("chop_throttle", {})
+
+            if chop_throttle.get("enabled", False):
+                allowed_setups = chop_throttle.get("allowed_setups", [])
+                if setup_type not in allowed_setups:
+                    if self.log:
+                        self.log.debug(f"CHOP_THROTTLE: blocked {setup_type} in chop regime")
+                    return False
+
+            # Prioritized setups for chop (proven winners)
+            if setup_type == "orb_pullback_long":
+                # Requires strong evidence as per analysis
+                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
+
+            if setup_type == "failure_fade_long":
+                # Enhanced requirements for better performance
+                return (s >= 2.0) and (v >= self.FF_MIN_VOL_MULT * 1.5)  # 1.5x volume requirement
+
+            if setup_type == "range_break_retest_short":
+                # Strong retest pattern
+                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
+
+            # Legacy support for other setups (will be throttled if enabled)
+            # VWAP reclaims/loses - standard requirements
             if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
+
+            # Failure fades - primary chop strategy
             if setup_type in {"failure_fade_long", "failure_fade_short"}:
                 return v >= self.FF_MIN_VOL_MULT
-            # Mean reversion and range setups work well in chop
+
+            # Mean reversion and range setups - work well in chop
             if setup_type in {"vwap_mean_reversion_long", "vwap_mean_reversion_short"}:
                 return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
             if setup_type in {"range_rejection_long", "range_rejection_short"}:
                 return v >= self.FF_MIN_VOL_MULT
             if setup_type in {"support_bounce_long", "resistance_bounce_short"}:
                 return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
+
+            # Volume spike reversals - can work in chop
+            if setup_type in {"volume_spike_reversal_long", "volume_spike_reversal_short"}:
+                return v >= self.FF_MIN_VOL_MULT
+
+            # Allow selective breakouts in chop with VERY strong evidence (reduced size via size_multiplier)
+            # These get 0.6x size multiplier to manage risk while capturing exceptional setups
+            if setup_type in {"breakout_long", "breakout_short"}:
+                # Require exceptional strength + very high ADX + high volume
+                return (s >= 3.5) and (a >= 35.0) and (v >= 2.5)
+
+            # ORB breakouts disabled - poor performance per diagnostic report
+
             return False
 
         if regime == "trend_up":
@@ -194,10 +245,11 @@ class MarketRegimeGate:
             if setup_type == "failure_fade_short":
                 return v >= self.FF_MIN_VOL_MULT
             # Trend continuation setups in uptrend
-            if setup_type in {"orb_breakout_long", "flag_continuation_long"}:
+            if setup_type == "flag_continuation_long":
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
-            if setup_type in {"trend_pullback_long", "support_bounce_long"}:
+            if setup_type == "trend_pullback_long":
                 return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
+            # Support bounce disabled - poor performance per diagnostic report
             if setup_type == "gap_fill_long":
                 return v >= self.VWAP_MIN_VOL_MULT
             # Volume spike reversals can work as counter-trend in strong trends
@@ -213,10 +265,11 @@ class MarketRegimeGate:
             if setup_type == "failure_fade_long":
                 return v >= self.FF_MIN_VOL_MULT
             # Trend continuation setups in downtrend
-            if setup_type in {"orb_breakout_short", "flag_continuation_short"}:
+            if setup_type == "flag_continuation_short":
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
-            if setup_type in {"trend_pullback_short", "resistance_bounce_short"}:
+            if setup_type == "trend_pullback_short":
                 return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
+            # Resistance bounce disabled - poor performance per diagnostic report
             if setup_type == "gap_fill_short":
                 return v >= self.VWAP_MIN_VOL_MULT
             # Volume spike reversals can work as counter-trend in strong trends
@@ -231,9 +284,7 @@ class MarketRegimeGate:
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
             if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
-            # ORB breakouts and volume spike reversals work well in squeeze
-            if setup_type in {"orb_breakout_long", "orb_breakout_short"}:
-                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
+            # ORB breakouts disabled - poor performance per diagnostic report
             if setup_type in {"volume_spike_reversal_long", "volume_spike_reversal_short"}:
                 return v >= self.VWAP_MIN_VOL_MULT
             # Gap fills can trigger squeeze releases
@@ -244,9 +295,15 @@ class MarketRegimeGate:
         return False
 
     # ---------------- Sizing bias ----------------
-    def size_multiplier(self, regime: str, *, counter_trend: bool = False) -> float:
+    def size_multiplier(self, regime: str, *, counter_trend: bool = False, setup_type: str = None) -> float:
         if regime in ("trend_up", "trend_down"):
             return 0.70 if counter_trend else 1.15
         if regime == "squeeze":
             return 0.90
-        return 0.85  # chop
+        if regime == "chop":
+            # Aggressive size reduction for breakouts in chop (ORB breakouts disabled)
+            if setup_type in {"breakout_long", "breakout_short"}:
+                return 0.60  # More conservative for risky chop breakouts
+            # Standard chop reduction for other setups
+            return 0.85
+        return 0.85  # default chop

@@ -136,7 +136,65 @@ def _intraday_strength(iv: Dict, strategy_type: str = None) -> float:
         return 0.0
 
 
-def rank_candidates(rows: List[Dict], top_n: Optional[int] = None) -> List[Dict]:
+def _get_regime_multiplier(strategy_type: Optional[str], regime: Optional[str]) -> float:
+    """
+    Apply regime-based ranking adjustments based on diagnostic report insights.
+
+    Key findings from report:
+    - 0% win rate in trend_up conditions
+    - 25% win rate in trend_down
+    - 29.5% win rate in chop (best performance)
+    - VWAP mean-reversion strategies performed better (44-57% win rates)
+    """
+    if not strategy_type or not regime:
+        return 1.0
+
+    # Boost VWAP mean-reversion strategies - they showed best performance
+    if "vwap_mean_reversion" in strategy_type:
+        if regime == "chop":
+            return 1.3  # Extra boost in chop where they work best
+        return 1.2  # General boost for mean-reversion
+
+    # Boost failure_fade strategies - also performed relatively well
+    if "failure_fade" in strategy_type:
+        if regime == "chop":
+            return 1.2  # Good in chop
+        return 1.1
+
+    # Boost momentum-based strategies - designed for early market conditions
+    if "momentum_breakout" in strategy_type:
+        if regime in ("trend_up", "trend_down"):
+            return 1.4  # Strong boost in trending conditions
+        elif regime == "chop":
+            return 1.3  # Good for momentum bursts in chop
+        return 1.2
+
+    # Boost trend continuation strategies
+    if "trend_continuation" in strategy_type:
+        if regime in ("trend_up", "trend_down"):
+            return 1.5  # Excellent for following established trends
+        return 1.1  # Less useful in non-trending conditions
+
+    # Penalize breakout strategies in wrong regimes
+    if "breakout" in strategy_type:
+        if regime == "chop":
+            return 0.7  # Poor performance in chop per report
+        elif regime in ("trend_up", "trend_down"):
+            return 1.1  # Slightly better in trends but still underperformed
+        return 0.9
+
+    # Regime-specific adjustments for other strategies
+    if regime == "chop":
+        return 1.1  # Chop had best overall performance
+    elif regime in ("trend_up", "trend_down"):
+        return 0.8  # Trending conditions had poor performance
+    elif regime == "squeeze":
+        return 1.0  # Neutral for squeeze
+
+    return 1.0  # Default
+
+
+def rank_candidates(rows: List[Dict], top_n: Optional[int] = None, regime_context: Optional[str] = None) -> List[Dict]:
     """
     Mutate `rows` with 'intraday_score' and 'rank_score', then return the top N.
 
@@ -144,6 +202,10 @@ def rank_candidates(rows: List[Dict], top_n: Optional[int] = None) -> List[Dict]
       - 'intraday': Dict  (features used by _intraday_strength)
       - 'daily_score': float (optional)
       - 'symbol': str (optional; for logging)
+
+    Args:
+      regime_context: Current market regime ('trend_up', 'trend_down', 'chop', 'squeeze')
+                     Used to apply regime-specific scoring adjustments
     """
     try:
         cfg = load_filters()
@@ -155,8 +217,32 @@ def rank_candidates(rows: List[Dict], top_n: Optional[int] = None) -> List[Dict]
         for r in rows:
             iv = r.get("intraday", {}) or {}
             strategy_type = r.get("strategy_type") or r.get("signal_type")
-            r["intraday_score"] = _intraday_strength(iv, strategy_type)
+            base_intraday_score = _intraday_strength(iv, strategy_type)
+
+            # Apply regime-based adjustment (from diagnostic report insights)
+            regime_multiplier = _get_regime_multiplier(strategy_type, regime_context)
+            r["intraday_score"] = base_intraday_score * regime_multiplier
             r["rank_score"] = w_daily * float(r.get("daily_score", 0.0)) + w_intr * r["intraday_score"]
+
+            # OUTCOME-AWARE RANKING: Apply blacklist penalty and RR caps
+            quality_filters = cfg.get("quality_filters", {})
+            outcome_aware = quality_filters.get("outcome_aware_ranking", {})
+
+            if outcome_aware.get("enabled", False):
+                # Apply blacklist penalty
+                blacklisted_setups = quality_filters.get("blacklist_setups", [])
+                if strategy_type in blacklisted_setups:
+                    blacklist_penalty = float(outcome_aware.get("blacklist_penalty", -999.0))
+                    r["rank_score"] += blacklist_penalty
+                    logger.debug(f"BLACKLIST_PENALTY: {r.get('symbol', '?')} {strategy_type} penalty={blacklist_penalty}")
+
+                # Apply unrealistic RR penalty
+                structural_rr = r.get("structural_rr", 0.0)
+                max_rr = float(quality_filters.get("max_structural_rr", 4.0))
+                if structural_rr > max_rr:
+                    rr_penalty = float(outcome_aware.get("unrealistic_rr_penalty", -0.3))
+                    r["rank_score"] += rr_penalty
+                    logger.debug(f"HIGH_RR_PENALTY: {r.get('symbol', '?')} RR={structural_rr:.1f}>{max_rr} penalty={rr_penalty}")
 
         rows.sort(key=lambda x: x.get("rank_score", 0.0), reverse=True)
         out = rows[:top_n]

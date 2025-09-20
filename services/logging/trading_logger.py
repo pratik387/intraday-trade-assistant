@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict
+import pandas as pd
 
 
 @dataclass
@@ -38,11 +39,11 @@ class TradingLogger:
         self.session_id = session_id
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Trade lifecycle tracking
         self.trade_lifecycles: Dict[str, TradeLifecycle] = {}
         self.session_start = datetime.now()
-        
+
         # Performance tracking
         self.session_stats = {
             'total_decisions': 0,
@@ -55,7 +56,7 @@ class TradingLogger:
             'rank_scores_triggered': [],
             'rank_scores_skipped': []
         }
-        
+
         # Initialize loggers
         self._setup_loggers()
 
@@ -122,17 +123,8 @@ class TradingLogger:
         # Add analytics fields
         enhanced_data = self._add_analytics_fields(trade_data)
         enhanced_data['lifecycle_id'] = lifecycle_id
-        
-        # Update session stats
-        self.session_stats['total_decisions'] += 1
-        
-        # Track rank scores for analysis
-        if 'features' in enhanced_data and 'rank_score' in enhanced_data['features']:
-            rank_score = enhanced_data['features']['rank_score']
-            if self._should_trigger(enhanced_data):
-                self.session_stats['rank_scores_triggered'].append(rank_score)
-            else:
-                self.session_stats['rank_scores_skipped'].append(rank_score)
+
+        # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
         
         # Log to events stream
         self.events_logger.info(json.dumps(enhanced_data))
@@ -146,9 +138,8 @@ class TradingLogger:
             timestamp=enhanced_data.get('ts', ''),
             data=enhanced_data
         )
-        
-        # Update performance summary
-        self._update_performance_summary()
+
+        # NOTE: Live performance summary updates removed - performance tracking now done in post-processing only
     
     def log_trigger(self, trade_data: Dict[str, Any]):
         """Log a trade trigger execution"""
@@ -161,15 +152,32 @@ class TradingLogger:
             lifecycle = self.trade_lifecycles[lifecycle_id]
             lifecycle.stage = 'TRIGGER'
             lifecycle.elapsed_from_decision = self._calculate_elapsed(lifecycle)
-            
-            # Update session stats
-            self.session_stats['triggered_trades'] += 1
-            
+
+            # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
+
             # Log to analytics stream (triggered trades only)
             analytics_data = self._add_analytics_fields(trade_data)
             analytics_data['lifecycle_id'] = lifecycle_id
             analytics_data['stage'] = 'TRIGGER'
             self.analytics_logger.info(json.dumps(analytics_data))
+
+            # Log TRIGGER event to events.jsonl for complete audit trail
+            trigger_event = {
+                'schema_version': 'trade.v1',
+                'type': 'TRIGGER',
+                'run_id': None,
+                'trade_id': trade_data.get('trade_id', lifecycle.trade_id),
+                'symbol': trade_data.get('symbol', ''),
+                'ts': trade_data.get('timestamp', str(pd.Timestamp.now())),
+                'trigger': {
+                    'actual_price': trade_data.get('price', 0),
+                    'qty': trade_data.get('qty', 0),
+                    'strategy': trade_data.get('strategy', ''),
+                    'order_id': trade_data.get('order_id', ''),
+                    'side': trade_data.get('side', 'BUY')
+                }
+            }
+            self.events_logger.info(json.dumps(trigger_event))
         
         # Log to trade logs (existing format)
         symbol = trade_data.get('symbol', '')
@@ -181,8 +189,8 @@ class TradingLogger:
         self.trade_logger.info(
             f"TRIGGER_EXEC | {symbol} | BUY {qty} @ {price} | strategy={strategy} | order_id={order_id}"
         )
-        
-        self._update_performance_summary()
+
+        # NOTE: Live performance summary updates removed - performance tracking now done in post-processing only
     
     def log_exit(self, trade_data: Dict[str, Any]):
         """Log a trade exit"""
@@ -195,24 +203,14 @@ class TradingLogger:
             lifecycle = self.trade_lifecycles[lifecycle_id]
             lifecycle.stage = 'EXIT'
             lifecycle.elapsed_from_decision = self._calculate_elapsed(lifecycle)
-            
-            # Update session stats with PnL
-            pnl = trade_data.get('pnl', 0.0)
-            self.session_stats['total_pnl'] += pnl
-            self.session_stats['completed_trades'] += 1
-            
-            if pnl > 0:
-                self.session_stats['wins'] += 1
-            elif pnl < 0:
-                self.session_stats['losses'] += 1
-            else:
-                self.session_stats['breakevens'] += 1
-            
+
+            # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
+
             # Log to analytics stream (exit data)
             analytics_data = self._add_analytics_fields(trade_data)
             analytics_data['lifecycle_id'] = lifecycle_id
             analytics_data['stage'] = 'EXIT'
-            analytics_data['pnl'] = pnl
+            analytics_data['pnl'] = trade_data.get('pnl', 0.0)
             analytics_data['elapsed_from_decision'] = lifecycle.elapsed_from_decision
             self.analytics_logger.info(json.dumps(analytics_data))
         
@@ -227,8 +225,8 @@ class TradingLogger:
         self.trade_logger.info(
             f"EXIT | {symbol} | Qty: {qty} | Entry: Rs.{entry_price} | Exit: Rs.{exit_price} | PnL: Rs.{pnl} {reason}"
         )
-        
-        self._update_performance_summary()
+
+        # NOTE: Live performance summary updates removed - performance tracking now done in post-processing only
     
     def _add_analytics_fields(self, trade_data: Dict[str, Any]) -> Dict[str, Any]:
         """Add derived analytics fields to trade data"""
@@ -352,28 +350,28 @@ class TradingLogger:
     
     def _update_performance_summary(self):
         """Update the performance summary file"""
-        
+
         # Calculate derived metrics
         execution_rate = (
             self.session_stats['triggered_trades'] / self.session_stats['total_decisions']
             if self.session_stats['total_decisions'] > 0 else 0
         )
-        
+
         win_rate = (
             self.session_stats['wins'] / self.session_stats['completed_trades']
             if self.session_stats['completed_trades'] > 0 else 0
         )
-        
+
         avg_rank_triggered = (
             sum(self.session_stats['rank_scores_triggered']) / len(self.session_stats['rank_scores_triggered'])
             if self.session_stats['rank_scores_triggered'] else 0
         )
-        
+
         avg_rank_skipped = (
             sum(self.session_stats['rank_scores_skipped']) / len(self.session_stats['rank_scores_skipped'])
             if self.session_stats['rank_scores_skipped'] else 0
         )
-        
+
         summary = {
             'session_id': self.session_id,
             'session_start': self.session_start.isoformat(),
@@ -386,29 +384,68 @@ class TradingLogger:
                 'avg_rank_skipped': round(avg_rank_skipped, 2)
             }
         }
-        
-        # Write to performance file
+
+        # Write to performance file with explicit flush and error handling
         performance_file = self.log_dir / 'performance.json'
-        with open(performance_file, 'w') as f:
-            json.dump(summary, f, indent=2)
+        try:
+            with open(performance_file, 'w') as f:
+                json.dump(summary, f, indent=2)
+                f.flush()
+                import os
+                os.fsync(f.fileno())
+
+            # Verify file was written successfully
+            if performance_file.exists() and performance_file.stat().st_size > 0:
+                print(f"[analytics] Performance summary written: {performance_file.stat().st_size} bytes")
+            else:
+                print(f"[analytics] ERROR: Performance file empty or missing after write")
+
+        except Exception as e:
+            print(f"[analytics] ERROR: Failed to write performance.json: {e}")
     
     def generate_csv_report(self):
         """Generate CSV report from events.jsonl"""
         try:
             from diagnostics.diagnostics_report_builder import build_csv_from_events
             csv_path = build_csv_from_events(log_dir=self.log_dir)
-            return csv_path
+
+            # Verify CSV was created successfully
+            if csv_path and csv_path.exists() and csv_path.stat().st_size > 0:
+                print(f"[analytics] CSV report written: {csv_path.stat().st_size} bytes")
+                return csv_path
+            else:
+                print(f"[analytics] ERROR: CSV file empty or missing after generation")
+                return None
+
         except Exception as e:
-            print(f"Warning: Could not generate CSV report: {e}")
+            print(f"[analytics] ERROR: Could not generate CSV report: {e}")
             return None
     
     def populate_analytics_from_events(self):
-        """Populate analytics.jsonl from events.jsonl data"""
+        """Populate analytics.jsonl and calculate comprehensive performance metrics from events.jsonl"""
         try:
             events_file = self.log_dir / 'events.jsonl'
             if not events_file.exists():
                 return
-                
+
+            # Reset session stats for clean calculation
+            self.session_stats = {
+                'total_decisions': 0,
+                'triggered_trades': 0,
+                'completed_trades': 0,
+                'total_pnl': 0.0,
+                'wins': 0,
+                'losses': 0,
+                'breakevens': 0,
+                'rank_scores_triggered': [],
+                'rank_scores_skipped': []
+            }
+
+            # Parse all events and organize by type
+            decisions = {}  # trade_id -> decision_event
+            triggers = {}   # trade_id -> trigger_event
+            exits = {}      # trade_id -> exit_event
+
             with open(events_file, 'r') as f:
                 for line in f:
                     line = line.strip()
@@ -416,22 +453,158 @@ class TradingLogger:
                         continue
                     try:
                         event = json.loads(line)
-                        if event.get('type') == 'EXIT':
-                            # Convert event data to analytics format
-                            analytics_data = self._convert_event_to_analytics(event)
-                            if analytics_data:
-                                self.analytics_logger.info(json.dumps(analytics_data))
-                                # Update session stats
-                                self._update_session_stats_from_event(event)
-                    except Exception as e:
+                        event_type = event.get('type')
+                        trade_id = event.get('trade_id')
+
+                        if event_type == 'DECISION':
+                            decisions[trade_id] = event
+                            self.session_stats['total_decisions'] += 1
+
+                            # Track rank scores
+                            if 'features' in event and 'rank_score' in event['features']:
+                                rank_score = event['features']['rank_score']
+                                # For now, add to skipped - will move to triggered if we find TRIGGER event
+                                self.session_stats['rank_scores_skipped'].append(rank_score)
+
+                        elif event_type == 'TRIGGER':
+                            triggers[trade_id] = event
+
+                        elif event_type == 'EXIT':
+                            exits[trade_id] = event
+
+                    except Exception:
                         continue
-            
-            # Update performance summary after processing all events
+
+            # Calculate performance metrics by pairing DECISION + EXIT events
+            for trade_id, exit_event in exits.items():
+                decision_event = decisions.get(trade_id)
+                trigger_event = triggers.get(trade_id)
+
+                if decision_event:
+                    # Calculate complete trade metrics
+                    pnl = self._calculate_trade_pnl(decision_event, exit_event, trigger_event)
+
+                    # Update session stats
+                    self.session_stats['completed_trades'] += 1
+                    self.session_stats['total_pnl'] += pnl
+
+                    if pnl > 0:
+                        self.session_stats['wins'] += 1
+                    elif pnl < 0:
+                        self.session_stats['losses'] += 1
+                    else:
+                        self.session_stats['breakevens'] += 1
+
+                    # Move rank score from skipped to triggered if we have trigger
+                    if trigger_event and 'features' in decision_event and 'rank_score' in decision_event['features']:
+                        rank_score = decision_event['features']['rank_score']
+                        if rank_score in self.session_stats['rank_scores_skipped']:
+                            self.session_stats['rank_scores_skipped'].remove(rank_score)
+                            self.session_stats['rank_scores_triggered'].append(rank_score)
+
+                    # Log enhanced analytics
+                    analytics_data = self._create_enhanced_analytics(decision_event, exit_event, trigger_event, pnl)
+                    self.analytics_logger.info(json.dumps(analytics_data))
+
+            # Count triggered trades
+            self.session_stats['triggered_trades'] = len(triggers)
+
+            # Update performance summary with calculated metrics
             self._update_performance_summary()
-            
+
+            # Generate CSV report for diagnostics
+            self.generate_csv_report()
+
+            # Final validation
+            print(f"[analytics] Enhanced analytics populated: {self.session_stats['completed_trades']} trades processed")
+
         except Exception as e:
-            print(f"Warning: Could not populate analytics from events: {e}")
-    
+            print(f"[analytics] ERROR: Could not populate analytics from events: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _calculate_trade_pnl(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
+                           trigger_event: Optional[Dict[str, Any]] = None) -> float:
+        """Calculate PnL for a completed trade using DECISION + EXIT (+ optional TRIGGER)"""
+        try:
+            # Get entry price (prefer actual trigger price, fallback to decision reference)
+            if trigger_event and 'trigger' in trigger_event:
+                entry_price = float(trigger_event['trigger'].get('actual_price', 0))
+            else:
+                entry_price = float(decision_event['plan']['entry'].get('reference', 0))
+
+            # Get exit details
+            exit_price = float(exit_event['exit'].get('price', 0))
+            qty = int(exit_event['exit'].get('qty', 0))
+            bias = decision_event['plan'].get('bias', 'long')
+
+            # Calculate PnL based on trade direction
+            if bias.lower() == 'long':
+                pnl = (exit_price - entry_price) * qty
+            else:  # short
+                pnl = (entry_price - exit_price) * qty
+
+            return round(pnl, 2)
+
+        except Exception:
+            return 0.0
+
+    def _create_enhanced_analytics(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
+                                 trigger_event: Optional[Dict[str, Any]], pnl: float) -> Dict[str, Any]:
+        """Create enhanced analytics entry combining decision, trigger, and exit data"""
+        # Start with basic exit data
+        analytics = {
+            'symbol': exit_event.get('symbol', ''),
+            'trade_id': exit_event.get('trade_id', ''),
+            'timestamp': exit_event.get('ts', ''),
+            'stage': 'EXIT',
+            'qty': exit_event['exit'].get('qty', 0),
+            'exit_price': exit_event['exit'].get('price', 0),
+            'reason': exit_event['exit'].get('reason', ''),
+            'pnl': pnl,
+            'lifecycle_id': exit_event.get('trade_id', ''),
+        }
+
+        # Add entry information from decision
+        if 'plan' in decision_event:
+            plan = decision_event['plan']
+            analytics.update({
+                'entry_reference': plan['entry'].get('reference', 0),
+                'bias': plan.get('bias', 'long'),
+                'strategy': plan.get('strategy', ''),
+                'setup_type': decision_event.get('decision', {}).get('setup_type', ''),
+                'regime': decision_event.get('decision', {}).get('regime', ''),
+            })
+
+        # Add actual trigger data if available
+        if trigger_event and 'trigger' in trigger_event:
+            trigger_data = trigger_event['trigger']
+            analytics.update({
+                'actual_entry_price': trigger_data.get('actual_price', 0),
+                'slippage_bps': self._calculate_slippage_bps(
+                    analytics.get('entry_reference', 0),
+                    trigger_data.get('actual_price', 0)
+                ),
+                'order_id': trigger_data.get('order_id', ''),
+            })
+
+        # Add analytics fields
+        analytics['analytics'] = {
+            'time_decay_factor': 1.0,
+            'execution_probability': 0.15
+        }
+
+        return analytics
+
+    def _calculate_slippage_bps(self, reference_price: float, actual_price: float) -> float:
+        """Calculate slippage in basis points"""
+        try:
+            if reference_price > 0:
+                return abs(actual_price - reference_price) / reference_price * 10000
+            return 0.0
+        except Exception:
+            return 0.0
+
     def _convert_event_to_analytics(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Convert an events.jsonl event to analytics format"""
         if event.get('type') != 'EXIT':

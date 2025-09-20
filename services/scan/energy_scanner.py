@@ -134,7 +134,17 @@ class EnergyScanner:
             if abs(dist_to_vwap) < 0.02:  # Within 2% of VWAP
                 structure_factor = 1.0
 
-            # 5. TIME-DECAY URGENCY
+            # 5. VOLUME PERSISTENCE (quality filter from diagnostic report)
+            vol_persistence_factor = 0.0
+            if len(dft) >= 4:
+                vol_tail4 = volume_series.tail(4)
+                vol_mean_3 = vol_tail4.tail(3).mean()
+                vol_persist = int((vol_tail4.iloc[-1] >= vol_mean_3) and (vol_tail4.iloc[-2] >= vol_mean_3))
+                vol_persistence_factor = float(vol_persist)  # 0 or 1
+            else:
+                vol_persist = 0
+
+            # 6. TIME-DECAY URGENCY
             current_hour = dft.index[-1].hour
             current_minute = dft.index[-1].minute
             time_multiplier = 1.0
@@ -146,23 +156,62 @@ class EnergyScanner:
                 # Late session: require more movement
                 time_multiplier = 0.8 if movement_factor < 1.0 else 1.1
 
-            # 6. PROFESSIONAL SCORING (capture more quality candidates)
+            # 7. PROFESSIONAL SCORING (capture more quality candidates)
+
             base_score = (
-                0.30 * vol_participation +        # Volume participation
+                0.25 * vol_participation +        # Volume participation (reduced)
                 0.25 * movement_factor +          # Price movement
                 0.20 * vol_ratio_factor +         # Volume ratio
                 0.15 * atr_availability +         # Volatility available
+                0.10 * structure_factor +         # Near key levels
+                0.05 * vol_persistence_factor     # Volume persistence (new)
+            ) * time_multiplier
+
+            # Enhanced directional bias for momentum confirmation (diagnostic report insight)
+            mom = ret_1 + 0.5 * ret_3
+
+            # Stronger momentum requirements for breakout setups
+            momentum_threshold = 0.008  # 0.8% minimum momentum for breakouts
+            strong_momentum = abs(mom) > momentum_threshold
+
+            directional_bias = 1.0
+            if strong_momentum:
+                directional_bias = 1.3  # Reward strong momentum
+            elif abs(mom) > 0.005:  # Moderate momentum
+                directional_bias = 1.1
+            else:
+                # Weak momentum penalty (diagnostic report: breakouts need momentum)
+                directional_bias = 0.7
+
+            # Apply momentum confirmation penalty for breakout patterns
+            # This helps filter out weak breakout signals that failed in diagnostic
+            momentum_confirmation = 1.0
+            if abs(mom) < 0.005:  # Very weak momentum
+                momentum_confirmation = 0.6  # Strong penalty
+            elif abs(mom) < momentum_threshold:  # Weak momentum
+                momentum_confirmation = 0.8  # Moderate penalty
+
+            score_long = base_score * directional_bias * momentum_confirmation if mom >= 0 else base_score * 0.8
+            score_short = base_score * directional_bias * momentum_confirmation if mom <= 0 else base_score * 0.8
+
+            # MEAN REVERSION SCORING (for quiet VWAP/fade candidates)
+            # Look for symbols with low momentum but good structure for reversals
+            mr_base_score = (
+                0.25 * vol_participation +        # Still need some volume
+                0.20 * (1.0 - abs(mom * 100)) +   # Reward low momentum (inverted)
+                0.15 * abs(dist_to_vwap * 100) +  # Reward distance from VWAP
+                0.15 * atr_availability +         # Volatility available
+                0.15 * (bb_width_proxy * 10) +    # Range for mean reversion
                 0.10 * structure_factor           # Near key levels
             ) * time_multiplier
 
-            # Directional bias (simple)
-            mom = ret_1 + 0.5 * ret_3
-            directional_bias = 1.0
-            if abs(mom) > 0.005:  # 0.5%+ directional movement
-                directional_bias = 1.2
+            # Mean reversion scoring: favor VWAP distances and low momentum
+            vwap_distance = abs(dist_to_vwap)
+            low_momentum_bonus = max(0, 1.0 - abs(mom * 200))  # Bonus for very low momentum
 
-            score_long = base_score * directional_bias if mom >= 0 else base_score * 0.8
-            score_short = base_score * directional_bias if mom <= 0 else base_score * 0.8
+            # MR scores favor opposite direction to small moves (fade bias)
+            mr_long = mr_base_score * (1.0 + low_momentum_bonus) if dist_to_vwap < -0.005 else mr_base_score * 0.7  # Below VWAP
+            mr_short = mr_base_score * (1.0 + low_momentum_bonus) if dist_to_vwap > 0.005 else mr_base_score * 0.7   # Above VWAP
 
             # Calculate gap for logging (removed from scoring)
             if len(close_series) >= 2:
@@ -170,13 +219,7 @@ class EnergyScanner:
             else:
                 gap_pct = 0.0
 
-            #  Volume persistence (symbol-safe)
-            if len(dft) >= 4:
-                vol_tail4 = volume_series.tail(4)
-                vol_mean_3 = vol_tail4.tail(3).mean()
-                vol_persist = int((vol_tail4.iloc[-1] >= vol_mean_3) and (vol_tail4.iloc[-2] >= vol_mean_3))
-            else:
-                vol_persist = 0
+            # Volume persistence already calculated above and included in scoring
 
             turnover = close * float(volume_series.iloc[-1])
             rows.append(
@@ -202,6 +245,8 @@ class EnergyScanner:
                     "gap_pct": gap_pct,
                     "score_long": float(score_long),
                     "score_short": float(score_short),
+                    "mr_score_long": float(mr_long),
+                    "mr_score_short": float(mr_short),
                 }
             )
 
@@ -218,6 +263,8 @@ class EnergyScanner:
         df = df.assign(
             rank_long=df["score_long"].rank(ascending=False, method="first").astype(int),
             rank_short=df["score_short"].rank(ascending=False, method="first").astype(int),
+            rank_mr_long=df["mr_score_long"].rank(ascending=False, method="first").astype(int),
+            rank_mr_short=df["mr_score_short"].rank(ascending=False, method="first").astype(int),
         )
         # Just return sorted by long then short; caller can slice either way
         return df.sort_values(["rank_long", "rank_short"])  # no reset; keep ts order
@@ -231,12 +278,42 @@ class EnergyScanner:
         df = features_df.copy()
         if "rank_long" not in df.columns or "rank_short" not in df.columns:
             df = self.rank_candidates(df)
-        long_syms = (
-            df.sort_values("rank_long")["symbol"].head(self.top_k_long).tolist()
-            if self.top_k_long > 0 else []
+
+        # Split allocation: 70% momentum, 30% mean-reversion
+        momentum_long_count = int(self.top_k_long * 0.7) if self.top_k_long > 0 else 0
+        mr_long_count = self.top_k_long - momentum_long_count if self.top_k_long > 0 else 0
+
+        momentum_short_count = int(self.top_k_short * 0.7) if self.top_k_short > 0 else 0
+        mr_short_count = self.top_k_short - momentum_short_count if self.top_k_short > 0 else 0
+
+        # Get momentum candidates (original logic)
+        momentum_long = (
+            df.sort_values("rank_long")["symbol"].head(momentum_long_count).tolist()
+            if momentum_long_count > 0 else []
         )
-        short_syms = (
-            df.sort_values("rank_short")["symbol"].head(self.top_k_short).tolist()
-            if self.top_k_short > 0 else []
+        momentum_short = (
+            df.sort_values("rank_short")["symbol"].head(momentum_short_count).tolist()
+            if momentum_short_count > 0 else []
         )
+
+        # Get mean-reversion candidates (quiet VWAP/fade symbols)
+        mr_long = (
+            df.sort_values("rank_mr_long")["symbol"]
+            .head(mr_long_count * 2)  # Get 2x for filtering
+            .tolist() if mr_long_count > 0 else []
+        )
+        mr_short = (
+            df.sort_values("rank_mr_short")["symbol"]
+            .head(mr_short_count * 2)  # Get 2x for filtering
+            .tolist() if mr_short_count > 0 else []
+        )
+
+        # Remove overlap between momentum and MR candidates
+        mr_long = [s for s in mr_long if s not in momentum_long][:mr_long_count]
+        mr_short = [s for s in mr_short if s not in momentum_short][:mr_short_count]
+
+        # Combine final lists
+        long_syms = momentum_long + mr_long
+        short_syms = momentum_short + mr_short
+
         return {"long": long_syms, "short": short_syms}
