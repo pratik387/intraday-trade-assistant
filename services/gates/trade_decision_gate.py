@@ -39,6 +39,8 @@ from .event_policy_gate import EventPolicyGate
 from .news_spike_gate import NewsSpikeGate
 from .market_sentiment_gate import MarketSentimentGate
 from services.features import compute_hcet_features
+from collections import defaultdict
+from datetime import datetime, timedelta
 
 SetupType = Literal[
     "breakout_long",
@@ -69,6 +71,25 @@ SetupType = Literal[
     "momentum_breakout_short",
     "trend_continuation_long",
     "trend_continuation_short",
+    "order_block_long",
+    "order_block_short",
+    "fair_value_gap_long",
+    "fair_value_gap_short",
+    "liquidity_sweep_long",
+    "liquidity_sweep_short",
+    "premium_zone_short",
+    "discount_zone_long",
+    "equilibrium_breakout_long",
+    "equilibrium_breakout_short",
+    "break_of_structure_long",
+    "break_of_structure_short",
+    "change_of_character_long",
+    "change_of_character_short",
+    # INSTITUTIONAL RANGE TRADING - Profit from choppy markets
+    "range_deviation_long",
+    "range_deviation_short",
+    "range_mean_reversion_long",
+    "range_mean_reversion_short",
 ]
 
 
@@ -130,6 +151,12 @@ def _is_breakout(setup: SetupType) -> bool:
         "orb_breakout_short",
         "flag_continuation_long",
         "flag_continuation_short",
+        "equilibrium_breakout_long",
+        "equilibrium_breakout_short",
+        "break_of_structure_long",
+        "break_of_structure_short",
+        "change_of_character_long",
+        "change_of_character_short",
     }
 
 
@@ -141,6 +168,14 @@ def _is_fade(setup: SetupType) -> bool:
         "volume_spike_reversal_short",
         "range_rejection_long",
         "range_rejection_short",
+        "order_block_long",
+        "order_block_short",
+        "fair_value_gap_long",
+        "fair_value_gap_short",
+        "liquidity_sweep_long",
+        "liquidity_sweep_short",
+        "premium_zone_short",
+        "discount_zone_long",
     }
 
 
@@ -198,7 +233,61 @@ class TradeDecisionGate:
         self.event_gate = event_policy_gate
         self.news_gate = news_spike_gate
         self.sentiment_gate = market_sentiment_gate
+
+        # Setup sequencing tracker - Enhancement 3
+        self.setup_history = defaultdict(list)  # symbol -> [(timestamp, setup_type, success)]
+        self.setup_sequence_patterns = {
+            "failed_breakdown_to_bounce": ["breakout_short", "vwap_reclaim_long"],
+            "failed_breakout_to_fade": ["breakout_long", "failure_fade_short"],
+            "squeeze_to_breakout": ["squeeze_release_long", "breakout_long"],
+            "fake_breakout_reversal": ["breakout_long", "breakout_short"]
+        }
         self.quality_filters = quality_filters or {}
+
+    # ------------------------------ SETUP SEQUENCING (Enhancement 3) ------
+    def _track_setup(self, symbol: str, timestamp, setup_type: str):
+        """Track a setup for sequence analysis."""
+        # Keep only last 24 hours of history to avoid memory bloat
+        cutoff = timestamp - timedelta(hours=24)
+        self.setup_history[symbol] = [
+            (ts, stype, success) for ts, stype, success in self.setup_history[symbol]
+            if ts > cutoff
+        ]
+        # Add current setup (success will be determined later)
+        self.setup_history[symbol].append((timestamp, setup_type, None))
+
+    def _get_sequence_multiplier(self, symbol: str, current_setup: str) -> float:
+        """
+        Analyze recent setup sequence and return confidence multiplier.
+        Returns > 1.0 for favorable sequences, < 1.0 for unfavorable.
+        """
+        history = self.setup_history.get(symbol, [])
+        if len(history) < 2:
+            return 1.0
+
+        # Look at last setup (excluding current one)
+        recent_setups = [setup_type for _, setup_type, _ in history[-3:-1]]  # Last 2 setups before current
+
+        # Pattern recognition - failed setups leading to reversals
+        sequence_bonus = 1.0
+
+        for pattern_name, pattern_sequence in self.setup_sequence_patterns.items():
+            if len(recent_setups) >= len(pattern_sequence) - 1:
+                # Check if recent setups + current setup match a pattern
+                full_sequence = recent_setups + [current_setup]
+                if full_sequence[-len(pattern_sequence):] == pattern_sequence:
+                    if "reversal" in pattern_name or "fade" in pattern_name:
+                        sequence_bonus = 1.4  # 40% bonus for reversal patterns
+                    elif "continuation" in pattern_name or "breakout" in pattern_name:
+                        sequence_bonus = 1.2  # 20% bonus for continuation patterns
+
+        # Additional logic: Multiple failed breakouts → higher reversal probability
+        if current_setup in ["failure_fade_short", "vwap_reclaim_long"]:
+            failed_breakouts = sum(1 for _, setup, _ in history[-5:] if setup == "breakout_long")
+            if failed_breakouts >= 2:
+                sequence_bonus = max(sequence_bonus, 1.3)  # Multiple failures = strong reversal
+
+        return sequence_bonus
 
     # ------------------------------ HCET (High-Conviction Entry Template) ------
     def _is_high_conviction_candidate(self, setup_type: str, regime: str, features: Optional[dict]) -> tuple[bool, list[str]]:
@@ -602,6 +691,21 @@ class TradeDecisionGate:
             # keep chop smaller by default
             if regime in {"choppy", "range"}:
                 size_mult *= 0.8
+
+        # ---------------- SETUP SEQUENCING (Enhancement 3) ----------------
+        # Track this setup for future sequence analysis
+        try:
+            import pandas as pd
+            current_time = pd.to_datetime(now) if hasattr(pd, 'to_datetime') else datetime.now()
+            self._track_setup(symbol, current_time, best.setup_type)
+
+            # Apply sequence-based confidence multiplier
+            sequence_multiplier = self._get_sequence_multiplier(symbol, best.setup_type)
+            if sequence_multiplier != 1.0:
+                size_mult *= sequence_multiplier
+                reasons.append(f"sequence_multiplier:{sequence_multiplier:.2f}")
+        except Exception as e:
+            reasons.append(f"sequence_error:{e.__class__.__name__}")
 
         # ---------------- FINAL ACCEPT ----------------
         return GateDecision(

@@ -1,5 +1,6 @@
 {
   "k_atr": 0.20,
+  "min_breakout_atr_mult": 0.3,
   "hold_bars": 1,
   "vol_z_required": 0.8,
   "width_window": 40,
@@ -413,6 +414,7 @@
     "enabled": true,
     "min_structural_rr": 1.2,
     "min_t1_rr": 1.2,
+    "breakout_min_adx": 20.0,
     "min_t2_rr": 1.5,
     "time_windows": {
       "morning_start": "09:25",
@@ -434,7 +436,8 @@
       "range_rejection_long",
       "support_bounce_long",
       "vwap_lose_short",
-      "pdl_break_hold_short"
+      "pdl_break_hold_short",
+      "breakout_short"
     ],
     "max_structural_rr": 4.0,
     "high_rr_penalty": -0.3,
@@ -637,8 +640,14 @@
   "trigger_ema_period": 9,
   "orb_pullback_tolerance_pct": 0.15,
   "orb_pullback_hold_bars": 2,
+  "orb_pullback_max_minutes": 90,
+  "orb_require_index_alignment": true,
   "vwap_reclaim_min_consecutive": 3,
   "vwap_reclaim_volume_confirmation": true,
+  "vwap_volume_persistence_bars": 3,
+  "vwap_min_resistance_distance_atr": 0.2,
+  "require_higher_timeframe_alignment": true,
+  "daily_trend_ema_period": 20,
   "pdh_break_tolerance_pct": 0.05,
   "pdh_hold_bars": 2,
   "pdl_break_tolerance_pct": 0.05,
@@ -653,6 +662,7 @@
   "volume_persistence_min_ratio": 1.3,
   "volume_persistence_bars": 2,
   "breakout_volume_min_ratio": 1.4,
+  "require_breakout_bar_volume_surge": true,
   "rejection_min_body_pct": 0.6,
   "condition_state_cleanup_hours": 24,
   "cache_cleanup_interval_minutes": 60,

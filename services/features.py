@@ -26,6 +26,56 @@ def _volume_ratio(df5m: pd.DataFrame, med_window: int = 20):
     med = float(v.tail(med_window).median() or 1.0)
     return float(v.iloc[-1] / med) if med > 0 else 1.0
 
+def _volume_profile_patterns(df5m: pd.DataFrame):
+    """
+    Detect volume accumulation/distribution patterns for smart money flow detection.
+    Returns: (accumulation_score, distribution_score, volume_trend_strength)
+    """
+    if df5m is None or len(df5m) < 5:
+        return 0.0, 0.0, 0.0
+
+    volume = df5m["volume"].astype(float)
+    close = df5m["close"].astype(float)
+
+    # Calculate volume trend over last 5 bars
+    vol_recent = volume.tail(5)
+    vol_slope = (vol_recent.iloc[-1] - vol_recent.iloc[0]) / max(vol_recent.iloc[0], 1.0)
+
+    # Calculate price-volume relationship
+    price_change = close.pct_change().tail(5)
+    vol_change = volume.pct_change().tail(5).fillna(0)
+
+    # Smart money patterns
+    accumulation_score = 0.0
+    distribution_score = 0.0
+
+    # Pattern 1: Volume increasing while price consolidating (accumulation)
+    if len(vol_recent) >= 3:
+        vol_increasing = vol_recent.iloc[-1] > vol_recent.iloc[-2] > vol_recent.iloc[-3]
+        price_consolidating = abs(price_change.tail(3).mean()) < 0.005  # <0.5% average move
+
+        if vol_increasing and price_consolidating:
+            accumulation_score = 0.8
+
+    # Pattern 2: Volume decreasing on pullbacks (healthy accumulation)
+    recent_pullbacks = price_change.tail(3) < -0.002  # >0.2% down moves
+    if recent_pullbacks.any():
+        pullback_volumes = vol_change[price_change < -0.002].tail(2)
+        if len(pullback_volumes) > 0 and pullback_volumes.mean() < 0:  # Volume decreasing on pullbacks
+            accumulation_score = max(accumulation_score, 0.6)
+
+    # Pattern 3: High volume with price weakness (distribution)
+    high_vol_bars = vol_change.tail(3) > 0.5  # >50% volume increase
+    weak_price = price_change.tail(3) < 0.001  # <0.1% price gain despite volume
+
+    if high_vol_bars.any() and weak_price.any():
+        distribution_score = 0.7
+
+    # Volume trend strength
+    vol_trend_strength = min(abs(vol_slope), 2.0)  # Cap at 200% change
+
+    return float(accumulation_score), float(distribution_score), float(vol_trend_strength)
+
 def _gap_metrics(df5m: pd.DataFrame):
     # Needs prev day close and today open; if unavailable use first bar open/prev close proxy
     if df5m is None or len(df5m) < 2:
@@ -91,6 +141,9 @@ def compute_hcet_features(
     index_mom  = _momentum_5m(index_df5m, 3)
     vol_ratio  = _volume_ratio(df5m_tail, 20)
 
+    # volume profile patterns - Enhancement 2
+    vol_accumulation, vol_distribution, vol_trend_strength = _volume_profile_patterns(df5m_tail)
+
     # wick %
     up_wick, lo_wick = (0.0, 0.0)
     if df5m_tail is not None and len(df5m_tail) > 0:
@@ -133,4 +186,9 @@ def compute_hcet_features(
         "ret_z": ret_z,
         # add rsi_divergence_2bar_bull if you compute swing points; else default False and keep HCET strict
         "rsi_divergence_2bar_bull": False,
+
+        # volume profile patterns - Enhancement 2
+        "volume_accumulation": vol_accumulation,
+        "volume_distribution": vol_distribution,
+        "volume_trend_strength": vol_trend_strength,
     }

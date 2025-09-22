@@ -89,7 +89,7 @@ def _intraday_strength(iv: Dict, strategy_type: str = None) -> float:
         above_vwap = bool(iv.get("above_vwap", False))
         dist_bpct  = float(iv.get("dist_from_level_bpct", 9.99) or 9.99)
         sq_pct     = iv.get("squeeze_pctile", None)
-        acceptance_ok = bool(iv.get("acceptance_ok", False))
+        acceptance_status = iv.get("acceptance_status", "poor")
         bias = (iv.get("bias") or "long").lower()
 
         # ---- component scores ----
@@ -121,7 +121,13 @@ def _intraday_strength(iv: Dict, strategy_type: str = None) -> float:
             elif sq_pct >= 90:
                 s_sq = sq_90
 
-        s_acc = acc_bonus if acceptance_ok else 0.0
+        # Graduated acceptance scoring
+        if acceptance_status == "excellent":
+            s_acc = acc_bonus  # Full bonus
+        elif acceptance_status == "good":
+            s_acc = acc_bonus * 0.5  # Half bonus
+        else:  # "fair" or "poor" - should be blocked anyway
+            s_acc = 0.0
 
         score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
 
@@ -155,6 +161,14 @@ def _get_regime_multiplier(strategy_type: Optional[str], regime: Optional[str]) 
             return 1.3  # Extra boost in chop where they work best
         return 1.2  # General boost for mean-reversion
 
+    # INSTITUTIONAL RANGE TRADING - Major boost for choppy markets
+    if any(x in strategy_type for x in ["range_deviation", "range_mean_reversion"]):
+        if regime == "chop":
+            return 1.8  # HUGE boost - this is how institutions profit from chop
+        elif regime == "squeeze":
+            return 1.5  # Great for accumulation/distribution zones
+        return 1.1  # Still useful in other conditions
+
     # Boost failure_fade strategies - also performed relatively well
     if "failure_fade" in strategy_type:
         if regime == "chop":
@@ -183,13 +197,71 @@ def _get_regime_multiplier(strategy_type: Optional[str], regime: Optional[str]) 
             return 1.1  # Slightly better in trends but still underperformed
         return 0.9
 
-    # Regime-specific adjustments for other strategies
+    # INSTITUTIONAL CONCEPTS - Regime multipliers
+    if "order_block" in strategy_type:
+        # Order blocks work in all market conditions but prefer trending
+        if regime in ["trend_up", "trend_down"]:
+            return 1.2  # Boost in trending markets
+        elif regime == "chop":
+            return 1.1  # Still effective in choppy markets
+        else:
+            return 1.0
+
+    if "fair_value_gap" in strategy_type:
+        # FVGs work best in trending markets (where gaps form)
+        if regime in ["trend_up", "trend_down"]:
+            return 1.3  # Strong boost in trending markets
+        elif regime == "chop":
+            return 0.9  # Less effective in choppy markets
+        else:
+            return 1.0
+
+    if "liquidity_sweep" in strategy_type:
+        # Sweeps work in all conditions but especially effective in chop
+        if regime == "chop":
+            return 1.4  # Very effective in ranging markets (more stops to hunt)
+        elif regime in ["trend_up", "trend_down"]:
+            return 1.1  # Still good in trending markets
+        else:
+            return 1.0
+
+    if "premium_zone" in strategy_type or "discount_zone" in strategy_type:
+        # Premium/discount zones work best in ranging markets
+        if regime == "chop":
+            return 1.3  # High effectiveness in range-bound markets
+        elif regime in ["trend_up", "trend_down"]:
+            return 0.9  # Less effective in strong trends
+        else:
+            return 1.0
+
+    if "break_of_structure" in strategy_type:
+        # BOS signals trend changes - effective in all conditions
+        return 1.2  # Consistent boost as it identifies structural shifts
+
+    if "change_of_character" in strategy_type:
+        # CHoCH is early reversal signal - works best at trend extremes
+        if regime in ["trend_up", "trend_down"]:
+            return 1.4  # Very effective for catching trend reversals
+        elif regime == "chop":
+            return 0.8  # Less relevant in already choppy markets
+        else:
+            return 1.0
+
+    if "equilibrium" in strategy_type:
+        # Equilibrium breakouts work best when breaking from balance
+        if regime == "chop":
+            return 1.3  # Good for breakouts from balance
+        else:
+            return 1.0
+
+    # INSTITUTIONAL INSIGHT: Chop markets are HIGHLY PROFITABLE for smart money
+    # Transform from avoidance to profit strategy
     if regime == "chop":
-        return 1.1  # Chop had best overall performance
+        return 1.5  # MAJOR BOOST - Institutions profit most in choppy/sideways markets
     elif regime in ("trend_up", "trend_down"):
-        return 0.8  # Trending conditions had poor performance
+        return 1.0  # Neutral for trending conditions
     elif regime == "squeeze":
-        return 1.0  # Neutral for squeeze
+        return 1.2  # Boost squeeze as accumulation/distribution zones
 
     return 1.0  # Default
 

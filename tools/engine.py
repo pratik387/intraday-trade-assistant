@@ -171,6 +171,26 @@ def _process_run_sessions(run_prefix: str) -> int:
             print(f"[~] Skipping session {session_id} (no events)")
 
     print(f"[+] Processed analytics for {processed_count}/{len(discovered_sessions)} sessions")
+
+    # Run comprehensive analysis if we have processed sessions
+    if processed_count > 0:
+        print(f"[+] Running comprehensive analysis for run prefix: {run_prefix}")
+        try:
+            import subprocess
+            import sys
+            result = subprocess.run([
+                sys.executable, "comprehensive_run_analyzer.py", run_prefix
+            ], capture_output=True, text=True, cwd=str(ROOT))
+
+            if result.returncode == 0:
+                print(f"[+] Comprehensive analysis completed successfully")
+                if result.stdout:
+                    print(f"[+] Analysis output: {result.stdout.strip()}")
+            else:
+                print(f"[!] Comprehensive analysis failed: {result.stderr.strip()}")
+        except Exception as e:
+            print(f"[!] Failed to run comprehensive analysis: {e}")
+
     return processed_count
 
 

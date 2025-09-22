@@ -243,7 +243,7 @@ class ExitExecutor:
                         continue
 
                 # 4) Indicator kill-switches (precomputed levels)
-                if self._or_kill(pos.side, float(px), pos.plan):
+                if self._or_kill(sym, pos.side, float(px), pos.plan):
                     self._exit(sym, pos, float(px), ts, "or_kill")
                     continue
                 reason = self._custom_kill(pos.side, float(px), pos.plan)
@@ -379,7 +379,7 @@ class ExitExecutor:
 
     # ---------- OR / custom kill ----------
 
-    def _or_kill(self, side: str, px: float, plan: Dict[str, Any]) -> bool:
+    def _or_kill(self, symbol: str, side: str, px: float, plan: Dict[str, Any]) -> bool:
         """
         Enhanced OR kill logic with time-adaptive buffers, volume confirmation,
         momentum filters, and graduated exit strategy.
@@ -388,7 +388,6 @@ class ExitExecutor:
             orh = plan.get("orh"); orl = plan.get("orl")
             orh = None if orh is None else float(orh)
             orl = None if orl is None else float(orl)
-            symbol = plan.get("symbol", "unknown")
 
             # Get ATR for buffer calculation
             atr = float(plan.get("indicators", {}).get("atr", 0))
@@ -434,7 +433,7 @@ class ExitExecutor:
 
         # Fast path: Major breaks kill immediately (with volume confirmation if enabled)
         if is_major_break:
-            if self.or_kill_volume_confirmation and not self._check_volume_confirmation(plan):
+            if self.or_kill_volume_confirmation and not self._check_volume_confirmation(symbol, plan):
                 logger.debug(f"OR_KILL: {symbol} major break but no volume confirmation")
                 return False
             logger.info(f"OR_KILL: {symbol} major {side} break {px:.2f} vs {or_level:.2f} (break={price_break:.2f}, buffer={buffer:.2f})")
@@ -468,12 +467,9 @@ class ExitExecutor:
         except Exception:
             return 0.75
 
-    def _check_volume_confirmation(self, plan: Dict[str, Any]) -> bool:
+    def _check_volume_confirmation(self, symbol: str, plan: Dict[str, Any]) -> bool:
         """Check if current volume supports the OR break"""
         try:
-            symbol = plan.get("symbol", "")
-            if not symbol:
-                return True
 
             # Get recent daily volume data for comparison
             daily_df = self.broker.get_daily(symbol, days=10)
@@ -494,7 +490,7 @@ class ExitExecutor:
             return True  # Allow OR exits - volume confirmation would need intraday data
 
         except Exception as e:
-            logger.debug(f"Volume confirmation check failed for {plan.get('symbol', 'unknown')}: {e}")
+            logger.debug(f"Volume confirmation check failed for {symbol}: {e}")
             return True  # Default to allowing exit on error
 
     def _check_momentum_filter(self, symbol: str, side: str, plan: Dict[str, Any]) -> bool:
@@ -532,12 +528,19 @@ class ExitExecutor:
 
             return True
 
-        except Exception:
-            return True  # Default to allowing kill on error
+        except Exception as e:
+            logger.debug(f"Momentum filter error for {symbol}: {e}")
+            return False  # Conservative: don't kill on data errors
 
     def _handle_or_observation(self, symbol: str, side: str, px: float, or_level: float,
                               price_break: float, buffer: float, plan: Dict[str, Any]) -> bool:
         """Handle graduated exit strategy for OR touches/minor breaks"""
+
+        # Get the current position
+        pos = self.positions.list_open().get(symbol)
+        if not pos:
+            logger.warning(f"OR_KILL: No position found for {symbol}")
+            return True  # Default to kill if no position
 
         # Check if already in observation for this symbol
         obs_key = f"{symbol}_{side}"
@@ -563,9 +566,16 @@ class ExitExecutor:
                     logger.info(f"OR_KILL: {symbol} OR touch - starting observation, partial exit {self.or_kill_partial_exit_pct}%")
 
                     # Execute partial exit
-                    exit_result = self._attempt_exit(symbol, partial_qty, px, "OR_KILL_PARTIAL")
+                    try:
+                        self._place_and_log_exit(symbol, pos, px, partial_qty, None, "OR_KILL_PARTIAL")
+                        exit_result = True
+                    except Exception as e:
+                        logger.warning(f"OR_KILL: {symbol} partial exit failed: {e}")
+                        exit_result = False
+
                     if exit_result:
                         trade_logger.info(f"OR_KILL_PARTIAL | {symbol} | {pos.side} {partial_qty} @ {px:.2f} | remaining: {pos.qty - partial_qty}")
+                        self.positions.reduce(symbol, partial_qty)  # Update position quantity
                         observation["partial_exit_done"] = True
                         observation["partial_qty_exited"] = partial_qty
                     else:
@@ -868,7 +878,7 @@ class ExitExecutor:
             return sym in open_map
         except Exception:
             try:
-                pos = self.positions.get(sym)
+                pos = self.positions.list_open().get(sym)
             except Exception:
                 pos = None
             return bool(pos is not None and getattr(pos, "qty", 0) > 0)
@@ -883,7 +893,7 @@ class ExitExecutor:
             if attempts >= 12:
                 break
             try:
-                pos = self.positions.get(sym) or pos
+                pos = self.positions.list_open().get(sym) or pos
             except Exception:
                 pass
         self._closing_state[sym] = {"state": "closed", "intent_id": intent_id, "reason": reason}

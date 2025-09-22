@@ -154,12 +154,7 @@ class TradingLogger:
             lifecycle.elapsed_from_decision = self._calculate_elapsed(lifecycle)
 
             # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
-
-            # Log to analytics stream (triggered trades only)
-            analytics_data = self._add_analytics_fields(trade_data)
-            analytics_data['lifecycle_id'] = lifecycle_id
-            analytics_data['stage'] = 'TRIGGER'
-            self.analytics_logger.info(json.dumps(analytics_data))
+            # NOTE: Analytics logging removed - analytics.jsonl populated from events.jsonl in post-processing to avoid duplicates
 
             # Log TRIGGER event to events.jsonl for complete audit trail
             trigger_event = {
@@ -205,14 +200,7 @@ class TradingLogger:
             lifecycle.elapsed_from_decision = self._calculate_elapsed(lifecycle)
 
             # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
-
-            # Log to analytics stream (exit data)
-            analytics_data = self._add_analytics_fields(trade_data)
-            analytics_data['lifecycle_id'] = lifecycle_id
-            analytics_data['stage'] = 'EXIT'
-            analytics_data['pnl'] = trade_data.get('pnl', 0.0)
-            analytics_data['elapsed_from_decision'] = lifecycle.elapsed_from_decision
-            self.analytics_logger.info(json.dumps(analytics_data))
+            # NOTE: Analytics logging removed - analytics.jsonl populated from events.jsonl in post-processing to avoid duplicates
         
         # Log to trade logs (existing format)
         symbol = trade_data.get('symbol', '')
@@ -239,13 +227,21 @@ class TradingLogger:
         if 'features' in enhanced and 'plan' in enhanced:
             rank_score = enhanced['features'].get('rank_score', 0)
             structural_rr = enhanced['plan'].get('quality', {}).get('structural_rr', 0)
-            acceptance_ok = enhanced['plan'].get('quality', {}).get('acceptance_ok', False)
-            
+            acceptance_status = enhanced['plan'].get('quality', {}).get('acceptance_status', 'poor')
+
+            # Graduated acceptance scoring for analytics
+            acceptance_score = {
+                "excellent": 1.0,
+                "good": 0.6,
+                "fair": 0.3,
+                "poor": 0.0
+            }.get(acceptance_status, 0.0)
+
             # Simple quality score calculation
             analytics['setup_quality_score'] = (
                 rank_score * 3 +
                 structural_rr * 2 +
-                (1.0 if acceptance_ok else 0.0)
+                acceptance_score
             )
         
         # Regime confidence
@@ -427,6 +423,26 @@ class TradingLogger:
             events_file = self.log_dir / 'events.jsonl'
             if not events_file.exists():
                 return
+
+            # Clear analytics.jsonl to avoid duplicates from previous real-time logging
+            analytics_file = self.log_dir / 'analytics.jsonl'
+            try:
+                if analytics_file.exists():
+                    # Try to delete the file, but if locked, truncate it instead
+                    try:
+                        analytics_file.unlink()
+                    except PermissionError:
+                        # File is locked, truncate it instead
+                        with open(analytics_file, 'w') as f:
+                            f.truncate(0)
+            except Exception as e:
+                print(f"[analytics] Warning: Could not clear analytics.jsonl: {e}")
+
+            # Recreate analytics logger with fresh file
+            self.analytics_logger = self._create_logger(
+                'analytics',
+                analytics_file
+            )
 
             # Reset session stats for clean calculation
             self.session_stats = {

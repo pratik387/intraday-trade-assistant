@@ -170,6 +170,25 @@ class EnergyScanner:
             # Enhanced directional bias for momentum confirmation (diagnostic report insight)
             mom = ret_1 + 0.5 * ret_3
 
+            # PRE-BREAKOUT MOMENTUM DETECTION - Enhancement 1
+            # Detect energy building before the breakout (low momentum + volume buildup)
+            pre_breakout_signal = 0.0
+
+            # Check for controlled momentum (not too fast, not too slow)
+            controlled_momentum = 0.002 <= abs(mom) <= 0.008  # 0.2% to 0.8% momentum
+
+            # Check for volume accumulation pattern (last 3 bars trending higher)
+            if len(volume_series) >= 3:
+                vol_recent = volume_series.tail(3)
+                vol_trending_up = (vol_recent.iloc[-1] > vol_recent.iloc[-2] > vol_recent.iloc[-3])
+                vol_above_avg = vol_recent.mean() > volume_series.rolling(10, min_periods=5).mean().iloc[-1]
+
+                # Pre-breakout conditions: controlled momentum + volume building + near resistance
+                if controlled_momentum and vol_trending_up and vol_above_avg and structure_factor > 0.5:
+                    pre_breakout_signal = 0.8  # Strong pre-breakout signal
+                elif controlled_momentum and (vol_trending_up or vol_above_avg):
+                    pre_breakout_signal = 0.4  # Moderate pre-breakout signal
+
             # Stronger momentum requirements for breakout setups
             momentum_threshold = 0.008  # 0.8% minimum momentum for breakouts
             strong_momentum = abs(mom) > momentum_threshold
@@ -177,6 +196,8 @@ class EnergyScanner:
             directional_bias = 1.0
             if strong_momentum:
                 directional_bias = 1.3  # Reward strong momentum
+            elif pre_breakout_signal > 0.5:
+                directional_bias = 1.4  # Reward pre-breakout patterns even more (early detection)
             elif abs(mom) > 0.005:  # Moderate momentum
                 directional_bias = 1.1
             else:
@@ -191,8 +212,11 @@ class EnergyScanner:
             elif abs(mom) < momentum_threshold:  # Weak momentum
                 momentum_confirmation = 0.8  # Moderate penalty
 
-            score_long = base_score * directional_bias * momentum_confirmation if mom >= 0 else base_score * 0.8
-            score_short = base_score * directional_bias * momentum_confirmation if mom <= 0 else base_score * 0.8
+            # Include pre-breakout signal in scoring
+            pre_breakout_bonus = 1.0 + (pre_breakout_signal * 0.2)  # Up to 20% bonus for strong pre-breakout patterns
+
+            score_long = (base_score * directional_bias * momentum_confirmation * pre_breakout_bonus) if mom >= 0 else base_score * 0.8
+            score_short = (base_score * directional_bias * momentum_confirmation * pre_breakout_bonus) if mom <= 0 else base_score * 0.8
 
             # MEAN REVERSION SCORING (for quiet VWAP/fade candidates)
             # Look for symbols with low momentum but good structure for reversals
@@ -243,6 +267,7 @@ class EnergyScanner:
                     "vol_ratio": vol_ratio,
                     "vol_persist_ok": int(vol_persist),
                     "gap_pct": gap_pct,
+                    "pre_breakout_signal": pre_breakout_signal,  # New: pre-breakout detection
                     "score_long": float(score_long),
                     "score_short": float(score_short),
                     "mr_score_long": float(mr_long),
