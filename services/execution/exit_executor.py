@@ -385,14 +385,28 @@ class ExitExecutor:
         momentum filters, and graduated exit strategy.
         """
         try:
-            orh = plan.get("orh"); orl = plan.get("orl")
+            # Get ORH/ORL from levels (correct structure)
+            levels = plan.get("levels", {})
+            orh = levels.get("ORH")
+            orl = levels.get("ORL")
             orh = None if orh is None else float(orh)
             orl = None if orl is None else float(orl)
 
-            # Get ATR for buffer calculation
-            atr = float(plan.get("indicators", {}).get("atr", 0))
-            if atr <= 0:
-                atr = abs(px * 0.01)  # Fallback: estimate ATR as 1% of price
+            # Get ATR for buffer calculation - CRITICAL SAFETY FIX
+            atr_raw = plan.get("indicators", {}).get("atr")
+            if atr_raw is None or atr_raw <= 0:
+                # CRITICAL: Use conservative fallback instead of arbitrary 1%
+                # Conservative approach: Use 0.5% of price as minimum safe buffer
+                # This prevents both under-buffering (unsafe) and over-buffering (prevents exits)
+                atr = abs(px * 0.005)  # 0.5% fallback - more conservative than 1%
+                # Log only once per symbol to avoid spam
+                if not hasattr(self, '_atr_fallback_logged'):
+                    self._atr_fallback_logged = set()
+                if symbol not in self._atr_fallback_logged:
+                    logger.debug(f"OR_KILL: {symbol} ATR missing/invalid ({atr_raw}), using conservative 0.5% fallback: {atr:.2f}")
+                    self._atr_fallback_logged.add(symbol)
+            else:
+                atr = float(atr_raw)
 
         except Exception:
             return False
@@ -490,8 +504,10 @@ class ExitExecutor:
             return True  # Allow OR exits - volume confirmation would need intraday data
 
         except Exception as e:
-            logger.debug(f"Volume confirmation check failed for {symbol}: {e}")
-            return True  # Default to allowing exit on error
+            # CRITICAL FIX: Log volume confirmation failures and use conservative approach
+            logger.error(f"VOLUME_CHECK: Volume confirmation failed for {symbol}: {e}")
+            # Conservative approach: If we can't verify volume, don't allow exit without explicit override
+            return False  # Default to blocking exit on error - safety first
 
     def _check_momentum_filter(self, symbol: str, side: str, plan: Dict[str, Any]) -> bool:
         """Check momentum indicators to filter false OR breaks"""
@@ -539,8 +555,9 @@ class ExitExecutor:
         # Get the current position
         pos = self.positions.list_open().get(symbol)
         if not pos:
-            logger.warning(f"OR_KILL: No position found for {symbol}")
-            return True  # Default to kill if no position
+            # CRITICAL FIX: Don't default to kill when no position found - this masks tracking bugs
+            logger.error(f"OR_KILL: No position found for {symbol} - possible position tracking error")
+            return False  # Conservative: don't kill if we can't find the position
 
         # Check if already in observation for this symbol
         obs_key = f"{symbol}_{side}"
@@ -677,8 +694,21 @@ class ExitExecutor:
     def _place_and_log_exit(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> None:
         try:
             cur = self.positions.list_open().get(sym)
-            cur_qty = int(getattr(cur, "qty", 0) or 0) if cur is not None else int(pos.qty)
-        except Exception:
+            if cur is not None:
+                # CRITICAL FIX: Don't default to 0 - log position tracking issues
+                cur_qty_raw = getattr(cur, "qty", None)
+                if cur_qty_raw is None:
+                    logger.error(f"EXIT: Position tracking error for {sym} - qty attribute missing")
+                    cur_qty = int(pos.qty)  # Use original position qty as safer fallback
+                else:
+                    cur_qty = int(cur_qty_raw or 0)
+                    if cur_qty == 0:
+                        logger.warning(f"EXIT: Position {sym} shows 0 quantity, using original: {pos.qty}")
+                        cur_qty = int(pos.qty)
+            else:
+                cur_qty = int(pos.qty)
+        except Exception as e:
+            logger.error(f"EXIT: Failed to get current quantity for {sym}: {e}")
             cur_qty = int(pos.qty)
         qty_exit = int(max(0, min(int(qty_exit), cur_qty)))
         if qty_exit <= 0:
@@ -720,8 +750,21 @@ class ExitExecutor:
         # re-read current qty from store just before the full exit
         try:
             cur = self.positions.list_open().get(sym)
-            qty_now = int(getattr(cur, "qty", 0) or 0) if cur is not None else int(pos.qty)
-        except Exception:
+            if cur is not None:
+                # CRITICAL FIX: Don't default to 0 - log position tracking issues
+                qty_raw = getattr(cur, "qty", None)
+                if qty_raw is None:
+                    logger.error(f"EXIT: Position tracking error for {sym} - qty attribute missing during full exit")
+                    qty_now = int(pos.qty)
+                else:
+                    qty_now = int(qty_raw or 0)
+                    if qty_now == 0:
+                        logger.warning(f"EXIT: Position {sym} shows 0 quantity during full exit, using original: {pos.qty}")
+                        qty_now = int(pos.qty)
+            else:
+                qty_now = int(pos.qty)
+        except Exception as e:
+            logger.error(f"EXIT: Failed to get current quantity for full exit {sym}: {e}")
             qty_now = int(pos.qty)
 
         if qty_now <= 0:
@@ -767,8 +810,15 @@ class ExitExecutor:
         rem = 0
         try:
             cur = self.positions.list_open().get(sym)
-            rem = int(getattr(cur, "qty", 0) or 0)
-        except Exception:
+            if cur is not None:
+                # CRITICAL FIX: Log position tracking issues in remaining quantity check
+                rem_raw = getattr(cur, "qty", None)
+                if rem_raw is None:
+                    logger.error(f"EXIT: Position tracking error for {sym} - qty attribute missing for remaining check")
+                else:
+                    rem = int(rem_raw or 0)
+        except Exception as e:
+            logger.error(f"EXIT: Failed to check remaining quantity for {sym}: {e}")
             pass
         trade_logger.info(f"EXIT | {sym} | qty {qty_now} @ Rs.{float(exit_px):.2f} → remaining {rem}")
 

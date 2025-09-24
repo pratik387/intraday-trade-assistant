@@ -31,6 +31,7 @@ from config.logging_config import get_agent_logger
 from config.filters_setup import load_filters
 from utils.time_util import ensure_naive_ist_index
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
+from services.gates.trade_decision_gate import SetupCandidate
 import datetime
 
 logger = get_agent_logger()
@@ -337,615 +338,164 @@ def _regime(df_sess: pd.DataFrame, cfg: PlannerConfig) -> str:
         return "choppy"
     return "range"
 
-def _select_long_strategy(
-    df_sess: pd.DataFrame, cfg: PlannerConfig, regime: str,
-    orh: float, orl: float, or_end: pd.Timestamp,
-    vwap: pd.Series, pd_levels: Dict[str, float],
-    close: float, ema20: pd.Series, ema50: pd.Series,
-    setup_type: str, index_df5m: Optional[pd.DataFrame] = None,
+def _plan_strategy_for_candidate(
+    candidate: SetupCandidate,
+    df_sess: pd.DataFrame,
+    cfg: PlannerConfig,
+    regime: str,
+    orh: float,
+    orl: float,
+    or_end: pd.Timestamp,
+    vwap: pd.Series,
+    pd_levels: Dict[str, float],
+    close: float,
+    ema20: pd.Series,
+    ema50: pd.Series,
+    index_df5m: Optional[pd.DataFrame] = None,
     daily_df: Optional[pd.DataFrame] = None
 ) -> Dict[str, Any]:
-    """Select appropriate long strategy based on market conditions and setup type."""
+    """
+    NEW APPROACH: Plan trading strategy based on SetupCandidate from structure system.
 
-    # Strategy 1: ORB Pullback Long - prioritize if setup is ORB-related
-    if ("orb" in setup_type or "breakout_long" in setup_type) and regime == "trend_up" and close > orh and close > vwap.iloc[-1] and ema20.iloc[-1] > ema50.iloc[-1]:
-        # Check time restriction for ORB pullback - only allow within first 60-90 minutes
-        from config.filters_setup import load_filters
-        config = load_filters()
-        orb_max_minutes = config.get("orb_pullback_max_minutes", 90)
+    This function focuses ONLY on trade planning (stops, targets, sizing) and does NOT
+    contain setup detection logic. The setup detection is handled by the structure system.
+    """
+    setup_type = str(candidate.setup_type)  # Convert SetupType to string
+    strength = candidate.strength
+    reasons = candidate.reasons
 
-        session_start = df_sess.index.min()
-        current_time = df_sess.index[-1]
-        minutes_elapsed = (current_time - session_start).total_seconds() / 60.0
+    # Determine bias from setup type
+    bias = "long" if "_long" in setup_type else "short" if "_short" in setup_type else "flat"
 
-        if minutes_elapsed <= orb_max_minutes:
-            # Check index alignment if required
-            index_aligned = True
-            index_momentum = 0.0
-
-            # Check if we have index data and alignment requirement
-            require_alignment = config.get("orb_require_index_alignment", True)
-            if require_alignment and index_df5m is not None and len(index_df5m) > 0:
-                from services.features import _momentum_5m
-                index_momentum = _momentum_5m(index_df5m, 3)
-                # For long ORB pullback, require positive index momentum
-                index_aligned = index_momentum > 0
-
-            if index_aligned:
-                basis = "orb_pullback_long"
-                stop_structure = max(orl, _pivot_swing_low(df_sess, 12))
-                trigger_msg = f"pullback to ~ORH({orh:.2f}) with hold above VWAP (within {orb_max_minutes}min)"
-                if require_alignment:
-                    trigger_msg += f" (index aligned: {index_momentum:+.2f}%)"
-
-                return {
-                    "name": basis, "bias": "long",
-                    "entry_trigger": trigger_msg,
-                    "structure_stop": float(stop_structure),
-                    "context": {"reason": ["trend_up", "above_ORH", "above_VWAP", "ema20>ema50", f"setup:{setup_type}", f"time_ok:{minutes_elapsed:.0f}min", f"index_aligned:{index_momentum:+.1f}%"],
-                                "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-                }
-
-    # Strategy 2: VWAP Reclaim Long - prioritize for VWAP-related setups
-    if ("vwap" in setup_type or "reclaim" in setup_type) and close > vwap.iloc[-1] and df_sess["close"].tail(cfg.vwap_reclaim_min_bars_above).gt(
-        vwap.tail(cfg.vwap_reclaim_min_bars_above)
-    ).all():
-        # Check distance to resistance levels (PDH/ORH) - don't buy if too close
-        from config.filters_setup import load_filters
-        config = load_filters()
-        min_resistance_distance_atr = config.get("vwap_min_resistance_distance_atr", 0.2)
-
-        # Calculate ATR for distance check
-        atr_proxy = abs(df_sess["close"].pct_change().rolling(14, min_periods=5).mean().iloc[-1]) * close
-        min_distance = min_resistance_distance_atr * atr_proxy
-
-        # Find nearest resistance level above current price
-        resistance_levels = []
-        if pd_levels.get("PDH") and not np.isnan(pd_levels["PDH"]) and pd_levels["PDH"] > close:
-            resistance_levels.append(pd_levels["PDH"])
-        if orh > close:
-            resistance_levels.append(orh)
-
-        # Check if we have enough room to resistance
-        distance_ok = True
-        nearest_resistance = None
-        if resistance_levels:
-            nearest_resistance = min(resistance_levels)
-            distance_to_resistance = nearest_resistance - close
-            if distance_to_resistance < min_distance:
-                distance_ok = False
-
-        if distance_ok:
-            # Check volume persistence - require last 3 bars volume > avg20
-            volume_persistent = True
-            vol_persistence_bars = config.get("vwap_volume_persistence_bars", 3)
-
-            if config.get("vwap_reclaim_volume_confirmation", True):
-                recent_volumes = df_sess["volume"].tail(vol_persistence_bars)
-                avg_volume = df_sess["volume"].rolling(20, min_periods=10).mean()
-                recent_avg_volumes = avg_volume.tail(vol_persistence_bars)
-
-                # Check if each of the last N bars has volume > its 20-period average
-                volume_persistent = (recent_volumes > recent_avg_volumes).all()
-
-            if volume_persistent:
-                # Check higher timeframe alignment if required
-                htf_aligned = True
-                daily_trend = "neutral"
-
-                require_htf_alignment = config.get("require_higher_timeframe_alignment", True)
-                if require_htf_alignment and daily_df is not None:
-                    daily_ema_period = config.get("daily_trend_ema_period", 20)
-                    daily_trend = _detect_daily_trend(daily_df, daily_ema_period)
-                    # For long VWAP reclaim, require uptrend or neutral (not downtrend)
-                    htf_aligned = daily_trend != "down"
-
-                if htf_aligned:
-                    basis = "vwap_reclaim_long"
-                    stop_structure = _pivot_swing_low(df_sess, 8)
-                    trigger_msg = "reclaim VWAP with N closes above, enter on minor dip"
-                    if nearest_resistance:
-                        trigger_msg += f" (resistance at {nearest_resistance:.2f})"
-                    if config.get("vwap_reclaim_volume_confirmation", True):
-                        trigger_msg += " + volume persistence"
-                    if require_htf_alignment:
-                        trigger_msg += f" + daily trend: {daily_trend}"
-
-                    return {
-                        "name": basis, "bias": "long",
-                        "entry_trigger": trigger_msg,
-                        "structure_stop": float(stop_structure),
-                        "context": {"reason": ["VWAP_reclaim", f"setup:{setup_type}", "resistance_distance_ok", "volume_persistent", f"daily_trend:{daily_trend}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-                    }
-
-    # Reject specific setups that don't meet their criteria (prevent fallback to generic)
-    if ("vwap" in setup_type or "reclaim" in setup_type):
-        logger.info(f"VWAP/reclaim setup {setup_type} rejected - conditions not met")
-        return None
-
-    if ("orb" in setup_type or "breakout_long" in setup_type):
-        logger.debug(f"ORB/breakout setup {setup_type} rejected - conditions not met (regime/price/timing)")
-        return None
-
-
-    # Strategy 3: PDH Break + Hold Long - for range breakout setups
-    if (pd_levels.get("PDH") is not None and not np.isnan(pd_levels.get("PDH"))) \
-       and close > pd_levels["PDH"] and close > vwap.iloc[-1] and ema20.iloc[-1] > ema50.iloc[-1]:
-        basis = "pdh_break_hold_long"
-        stop_structure = max(orl, _pivot_swing_low(df_sess, 10))
+    if bias == "flat":
+        logger.warning(f"Unknown setup bias for {setup_type}, defaulting to flat")
         return {
-            "name": basis, "bias": "long",
-            "entry_trigger": f"retest/hold above PDH({pd_levels['PDH']:.2f})",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["above_PDH","above_VWAP","ema20>ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
+            "name": "unknown_bias", "bias": "flat", "entry_trigger": "wait",
+            "structure_stop": np.nan,
+            "context": {"reason": [f"unknown_bias:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
-    # Strategy 4: Momentum Breakout Long - for momentum-based setups
-    if "momentum_breakout_long" in setup_type and close > vwap.iloc[-1]:
-        basis = "momentum_breakout_long"
-        stop_structure = _pivot_swing_low(df_sess, 6)  # Tighter stops for momentum
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "momentum breakout with volume surge, enter on minor pullback",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["momentum_surge", "above_VWAP", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    # Select stop loss strategy based on setup type category
+    stop_structure = _calculate_structure_stop(setup_type, df_sess, orh, orl, vwap, close, bias, ema20)
 
-    # Strategy 5: Trend Continuation Long - for trend following setups
-    if "trend_continuation_long" in setup_type and regime == "trend_up" and ema20.iloc[-1] > ema50.iloc[-1]:
-        basis = "trend_continuation_long"
-        stop_structure = max(_pivot_swing_low(df_sess, 8), ema20.iloc[-1] * 0.985)  # EMA or swing low
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "trend continuation pattern, enter on minor dip to EMA20",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_up", "ema20>ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    # Generate entry trigger message
+    entry_trigger = _generate_entry_trigger(setup_type, reasons, strength)
 
-    # INSTITUTIONAL CONCEPTS - Long strategies
-    if "order_block_long" in setup_type:
-        basis = "order_block_long"
-        stop_structure = _pivot_swing_low(df_sess, 5) * 0.998  # Tight stop below order block
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "order block support test with rejection",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["order_block_support", "institutional_accumulation", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    # Create context with structure system information
+    context = {
+        "reason": reasons + [f"setup:{setup_type}", f"strength:{strength:.2f}", f"regime:{regime}"],
+        "levels": {"ORH": orh, "ORL": orl, **pd_levels},
+        "structure_strength": strength,
+        "structure_reasons": reasons
+    }
 
-    if "fair_value_gap_long" in setup_type:
-        basis = "fair_value_gap_long"
-        stop_structure = close * 0.996  # Stop below FVG zone
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "fair value gap fill completion",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["fair_value_gap_fill", "price_imbalance_correction", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    return {
+        "name": setup_type,
+        "bias": bias,
+        "entry_trigger": entry_trigger,
+        "structure_stop": float(stop_structure),
+        "context": context
+    }
 
-    if "liquidity_sweep_long" in setup_type:
-        basis = "liquidity_sweep_long"
-        stop_structure = _pivot_swing_low(df_sess, 3) * 0.997  # Stop below swept level
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "post-sweep reversal with volume confirmation",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["liquidity_sweep_reversal", "stop_hunt_complete", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+def _calculate_structure_stop(
+    setup_type: str,
+    df_sess: pd.DataFrame,
+    orh: float,
+    orl: float,
+    vwap: pd.Series,
+    close: float,
+    bias: str,
+    ema20: Optional[pd.Series] = None
+) -> float:
+    """
+    Calculate appropriate structure stop based on setup type and bias.
+    This replaces the individual stop calculations scattered throughout the old setup logic.
+    """
+    if bias == "long":
+        if "orb" in setup_type or "breakout" in setup_type:
+            return max(orl, _pivot_swing_low(df_sess, 8)) * 0.995
+        elif "vwap" in setup_type or "mean_reversion" in setup_type:
+            return _pivot_swing_low(df_sess, 10) * 0.992
+        elif "range" in setup_type:
+            return _pivot_swing_low(df_sess, 8) * 0.990
+        elif "trend" in setup_type or "flag" in setup_type:
+            return max(_pivot_swing_low(df_sess, 8), ema20.iloc[-1] * 0.985) if ema20 is not None else _pivot_swing_low(df_sess, 10) * 0.992
+        elif "momentum" in setup_type:
+            return _pivot_swing_low(df_sess, 6) * 0.998  # Tighter stops for momentum
+        elif "squeeze" in setup_type:
+            return _pivot_swing_low(df_sess, 15) * 0.995
+        elif "support" in setup_type:
+            return _pivot_swing_low(df_sess, 6) * 0.985
+        elif "volume" in setup_type:
+            return _pivot_swing_low(df_sess, 5) * 0.988
+        else:
+            # Default conservative stop
+            return _pivot_swing_low(df_sess, 8) * 0.992
 
-    if "discount_zone_long" in setup_type:
-        basis = "discount_zone_long"
-        stop_structure = _pivot_swing_low(df_sess, 8) * 0.995  # Wider stop for value zone
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "discount zone value buying opportunity",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["discount_zone_buy", "institutional_value_area", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    elif bias == "short":
+        if "orb" in setup_type or "breakdown" in setup_type:
+            return min(orh, _pivot_swing_high(df_sess, 8)) * 1.005
+        elif "vwap" in setup_type:
+            return _pivot_swing_high(df_sess, 10) * 1.008
+        elif "range" in setup_type:
+            return _pivot_swing_high(df_sess, 8) * 1.010
+        elif "trend" in setup_type:
+            return _pivot_swing_high(df_sess, 8) * 1.008
+        elif "momentum" in setup_type:
+            return _pivot_swing_high(df_sess, 6) * 1.002  # Tighter stops for momentum
+        elif "resistance" in setup_type:
+            return _pivot_swing_high(df_sess, 6) * 1.015
+        else:
+            # Default conservative stop
+            return _pivot_swing_high(df_sess, 8) * 1.008
 
-    if "break_of_structure_long" in setup_type and close > vwap.iloc[-1]:
-        basis = "break_of_structure_long"
-        stop_structure = _pivot_swing_low(df_sess, 5) * 0.998  # Stop below broken structure
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "break of structure continuation",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["break_of_structure", "trend_change_up", "above_VWAP", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    return np.nan
 
-    if "change_of_character_long" in setup_type:
-        basis = "change_of_character_long"
-        stop_structure = _pivot_swing_low(df_sess, 3) * 0.997  # Tight stop for reversal
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "change of character reversal signal",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["change_of_character", "early_reversal_signal", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+def _generate_entry_trigger(setup_type: str, reasons: List[str], strength: float) -> str:
+    """
+    Generate human-readable entry trigger message based on setup type and structure reasons.
+    """
+    base_triggers = {
+        "orb_breakout": "opening range breakout with volume expansion",
+        "vwap_reclaim": "VWAP reclaim with volume confirmation",
+        "vwap_mean_reversion": "mean reversion approach to VWAP",
+        "trend_continuation": "trend continuation pattern",
+        "trend_pullback": "pullback completion in established trend",
+        "range_rejection": "rejection at range boundary",
+        "support_bounce": "rejection at key support level",
+        "resistance_bounce": "rejection at key resistance level",
+        "momentum_breakout": "momentum breakout with volume surge",
+        "squeeze_release": "volatility expansion breakout",
+        "flag_continuation": "flag pattern breakout",
+        "volume_spike_reversal": "reversal after climactic volume",
+        "gap_fill": "gap fill approach with momentum weakness",
+        "range_deviation": "range boundary deviation reversal",
+        "order_block": "institutional order block reaction",
+        "fair_value_gap": "fair value gap completion",
+        "liquidity_sweep": "post-sweep reversal",
+        "break_of_structure": "break of structure continuation"
+    }
 
-    if "equilibrium_breakout_long" in setup_type and close > vwap.iloc[-1]:
-        basis = "equilibrium_breakout_long"
-        stop_structure = vwap.iloc[-1] * 0.998  # Stop below VWAP/equilibrium
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "equilibrium breakout above balance",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["equilibrium_breakout", "balance_resolution_up", "above_VWAP", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    # Find matching trigger
+    trigger = "structure-based entry signal"
+    for key, desc in base_triggers.items():
+        if key in setup_type:
+            trigger = desc
+            break
 
-    # INSTITUTIONAL RANGE TRADING STRATEGIES - New professional setups for choppy markets
-    if "range_deviation_long" in setup_type:
-        basis = "range_deviation_long"
-        stop_structure = _pivot_swing_low(df_sess, 5) * 0.995  # Tight stop below deviation point
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "range boundary deviation reversal (liquidity grab completed)",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["range_deviation_reversal", "institutional_accumulation", "liquidity_grab_reversal", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    # Add strength and reason context
+    if strength > 0.8:
+        trigger += " (high confidence)"
+    elif strength > 0.6:
+        trigger += " (medium confidence)"
 
-    if "range_mean_reversion_long" in setup_type:
-        basis = "range_mean_reversion_long"
-        stop_structure = _pivot_swing_low(df_sess, 8) * 0.992  # Wider stop for mean reversion
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "range mean reversion from oversold levels",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["range_mean_reversion", "oversold_bounce", "institutional_buying", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    if reasons:
+        trigger += f" + {', '.join(reasons[:2])}"  # Add first 2 reasons
 
-    # Professional Setup: Squeeze Release Long (Volatility Expansion)
-    if "squeeze_release_long" in setup_type:
-        basis = "squeeze_release_long"
-        stop_structure = _pivot_swing_low(df_sess, 15) * 0.995  # Tight stop after consolidation
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "volatility expansion breakout with volume confirmation",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["volatility_expansion", "squeeze_release", "institutional_breakout", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    return trigger
 
-    # Professional Setup: Gap Fill Long (Gap Fade Strategy)
-    if "gap_fill_long" in setup_type:
-        basis = "gap_fill_long"
-        stop_structure = _pivot_swing_low(df_sess, 8) * 0.990  # Stop below gap low
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "gap fill approach with weakening momentum",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["gap_fill", "mean_reversion", "institutional_fade", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Flag Continuation Long (Trend Continuation)
-    if "flag_continuation_long" in setup_type and regime == "trend_up":
-        basis = "flag_continuation_long"
-        stop_structure = _pivot_swing_low(df_sess, 10) * 0.992  # Stop below flag pattern
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "flag pattern breakout in trend direction",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_continuation", "flag_breakout", "institutional_follow_through", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Support Bounce Long (Key Level Reaction)
-    if "support_bounce_long" in setup_type:
-        basis = "support_bounce_long"
-        stop_structure = _pivot_swing_low(df_sess, 6) * 0.985  # Tight stop below support
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "rejection candle at key support with volume",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["support_bounce", "level_reaction", "institutional_defense", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Volume Spike Reversal Long (Climactic Exhaustion)
-    if "volume_spike_reversal_long" in setup_type:
-        basis = "volume_spike_reversal_long"
-        stop_structure = _pivot_swing_low(df_sess, 5) * 0.988  # Stop below spike low
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "reversal signal after climactic volume spike",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["volume_climax", "exhaustion_reversal", "institutional_absorption", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Trend Pullback Long (Trend Continuation)
-    if "trend_pullback_long" in setup_type and regime == "trend_up":
-        basis = "trend_pullback_long"
-        stop_structure = _pivot_swing_low(df_sess, 12) * 0.994  # Stop below pullback low
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "pullback completion in established uptrend",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_pullback", "continuation", "institutional_accumulation", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Range Rejection Long (Range Boundary Defense)
-    if "range_rejection_long" in setup_type:
-        basis = "range_rejection_long"
-        stop_structure = _pivot_swing_low(df_sess, 8) * 0.990  # Stop below range low
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "rejection at range boundary with institutional volume",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["range_rejection", "boundary_defense", "institutional_support", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: ORB Breakout Long (Opening Range Breakout)
-    if "orb_breakout_long" in setup_type and close > orh:
-        basis = "orb_breakout_long"
-        stop_structure = max(orl, _pivot_swing_low(df_sess, 8)) * 0.995  # Stop below OR or swing low
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "opening range high breakout with volume expansion",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["orb_breakout", "volume_expansion", "institutional_breakout", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: VWAP Mean Reversion Long
-    if "vwap_mean_reversion_long" in setup_type and close < vwap.iloc[-1]:
-        basis = "vwap_mean_reversion_long"
-        stop_structure = _pivot_swing_low(df_sess, 10) * 0.992  # Stop below recent swing
-        return {
-            "name": basis, "bias": "long",
-            "entry_trigger": "mean reversion from oversold levels to VWAP",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["vwap_mean_reversion", "oversold_bounce", "value_reversion", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # No fallback - log unhandled setup and return None
-    logger.warning(f"UNHANDLED_LONG_SETUP: {setup_type} - no specific handler found, rejecting trade")
-    return None
-
-def _select_short_strategy(
-    df_sess: pd.DataFrame, cfg: PlannerConfig, regime: str,
-    orh: float, orl: float, or_end: pd.Timestamp,
-    vwap: pd.Series, pd_levels: Dict[str, float],
-    close: float, ema20: pd.Series, ema50: pd.Series,
-    setup_type: str
-) -> Dict[str, Any]:
-    """Select appropriate short strategy based on market conditions and setup type."""
-
-    # Strategy 1: PDL Break + Hold Short - prioritize for range breakdown setups
-    if (pd_levels.get("PDL") is not None and not np.isnan(pd_levels.get("PDL"))) \
-       and close < pd_levels["PDL"] and close < vwap.iloc[-1] and ema20.iloc[-1] < ema50.iloc[-1]:
-        basis = "pdl_break_hold_short"
-        stop_structure = min(orh, _pivot_swing_high(df_sess, 10))
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": f"retest/hold below PDL({pd_levels['PDL']:.2f})",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["below_PDL","below_VWAP","ema20<ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Strategy 2: Range Break + Retest Short - for breakdown setups
-    if regime == "trend_down" and close < orl and close < vwap.iloc[-1] and ema20.iloc[-1] < ema50.iloc[-1]:
-        basis = "range_break_retest_short"
-        stop_structure = min(orh, _pivot_swing_high(df_sess, 12))
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": f"retest of ~ORL({orl:.2f}) rejecting under VWAP",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_down", "below_ORL", "below_VWAP", "ema20<ema50", f"setup:{setup_type}"],
-                        "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Strategy 3: Momentum Breakout Short - for momentum-based setups
-    if "momentum_breakout_short" in setup_type and close < vwap.iloc[-1]:
-        basis = "momentum_breakout_short"
-        stop_structure = _pivot_swing_high(df_sess, 6)  # Tighter stops for momentum
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "momentum breakdown with volume surge, enter on minor bounce",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["momentum_breakdown", "below_VWAP", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Strategy 4: Trend Continuation Short - for trend following setups
-    if "trend_continuation_short" in setup_type and regime == "trend_down" and ema20.iloc[-1] < ema50.iloc[-1]:
-        basis = "trend_continuation_short"
-        stop_structure = min(_pivot_swing_high(df_sess, 8), ema20.iloc[-1] * 1.015)  # EMA or swing high
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "trend continuation pattern, enter on minor bounce to EMA20",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_down", "ema20<ema50", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # INSTITUTIONAL CONCEPTS - Short strategies
-    if "order_block_short" in setup_type:
-        basis = "order_block_short"
-        stop_structure = _pivot_swing_high(df_sess, 5) * 1.002  # Tight stop above order block
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "order block resistance test with rejection",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["order_block_resistance", "institutional_distribution", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    if "fair_value_gap_short" in setup_type:
-        basis = "fair_value_gap_short"
-        stop_structure = close * 1.004  # Stop above FVG zone
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "fair value gap fill completion",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["fair_value_gap_fill", "price_imbalance_correction", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    if "liquidity_sweep_short" in setup_type:
-        basis = "liquidity_sweep_short"
-        stop_structure = _pivot_swing_high(df_sess, 3) * 1.003  # Stop above swept level
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "post-sweep reversal with volume confirmation",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["liquidity_sweep_reversal", "stop_hunt_complete", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    if "premium_zone_short" in setup_type:
-        basis = "premium_zone_short"
-        stop_structure = _pivot_swing_high(df_sess, 8) * 1.005  # Wider stop for value zone
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "premium zone value selling opportunity",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["premium_zone_sell", "institutional_distribution_area", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    if "break_of_structure_short" in setup_type and close < vwap.iloc[-1]:
-        basis = "break_of_structure_short"
-        stop_structure = _pivot_swing_high(df_sess, 5) * 1.002  # Stop above broken structure
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "break of structure continuation",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["break_of_structure", "trend_change_down", "below_VWAP", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    if "change_of_character_short" in setup_type:
-        basis = "change_of_character_short"
-        stop_structure = _pivot_swing_high(df_sess, 3) * 1.003  # Tight stop for reversal
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "change of character reversal signal",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["change_of_character", "early_reversal_signal", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    if "equilibrium_breakout_short" in setup_type and close < vwap.iloc[-1]:
-        basis = "equilibrium_breakout_short"
-        stop_structure = vwap.iloc[-1] * 1.002  # Stop above VWAP/equilibrium
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "equilibrium breakout below balance",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["equilibrium_breakout", "balance_resolution_down", "below_VWAP", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # INSTITUTIONAL RANGE TRADING STRATEGIES - New professional setups for choppy markets
-    if "range_deviation_short" in setup_type:
-        basis = "range_deviation_short"
-        stop_structure = _pivot_swing_high(df_sess, 5) * 1.005  # Tight stop above deviation point
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "range boundary deviation reversal (liquidity grab completed)",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["range_deviation_reversal", "institutional_distribution", "liquidity_grab_reversal", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    if "range_mean_reversion_short" in setup_type:
-        basis = "range_mean_reversion_short"
-        stop_structure = _pivot_swing_high(df_sess, 8) * 1.008  # Wider stop for mean reversion
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "range mean reversion from overbought levels",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["range_mean_reversion", "overbought_rejection", "institutional_selling", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Squeeze Release Short (Volatility Expansion)
-    if "squeeze_release_short" in setup_type:
-        basis = "squeeze_release_short"
-        stop_structure = _pivot_swing_high(df_sess, 15) * 1.005  # Tight stop after consolidation
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "volatility expansion breakdown with volume confirmation",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["volatility_expansion", "squeeze_release", "institutional_breakdown", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Gap Fill Short (Gap Fade Strategy)
-    if "gap_fill_short" in setup_type:
-        basis = "gap_fill_short"
-        stop_structure = _pivot_swing_high(df_sess, 8) * 1.010  # Stop above gap high
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "gap fill approach with weakening momentum",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["gap_fill", "mean_reversion", "institutional_fade", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Flag Continuation Short (Trend Continuation)
-    if "flag_continuation_short" in setup_type and regime == "trend_down":
-        basis = "flag_continuation_short"
-        stop_structure = _pivot_swing_high(df_sess, 10) * 1.008  # Stop above flag pattern
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "flag pattern breakdown in trend direction",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_continuation", "flag_breakdown", "institutional_follow_through", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Resistance Bounce Short (Key Level Reaction)
-    if "resistance_bounce_short" in setup_type:
-        basis = "resistance_bounce_short"
-        stop_structure = _pivot_swing_high(df_sess, 6) * 1.015  # Tight stop above resistance
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "rejection candle at key resistance with volume",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["resistance_bounce", "level_reaction", "institutional_defense", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Volume Spike Reversal Short (Climactic Exhaustion)
-    if "volume_spike_reversal_short" in setup_type:
-        basis = "volume_spike_reversal_short"
-        stop_structure = _pivot_swing_high(df_sess, 5) * 1.012  # Stop above spike high
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "reversal signal after climactic volume spike",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["volume_climax", "exhaustion_reversal", "institutional_distribution", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Trend Pullback Short (Trend Continuation)
-    if "trend_pullback_short" in setup_type and regime == "trend_down":
-        basis = "trend_pullback_short"
-        stop_structure = _pivot_swing_high(df_sess, 12) * 1.006  # Stop above pullback high
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "pullback completion in established downtrend",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["trend_pullback", "continuation", "institutional_distribution", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: Range Rejection Short (Range Boundary Defense)
-    if "range_rejection_short" in setup_type:
-        basis = "range_rejection_short"
-        stop_structure = _pivot_swing_high(df_sess, 8) * 1.010  # Stop above range high
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "rejection at range boundary with institutional volume",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["range_rejection", "boundary_defense", "institutional_resistance", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: ORB Breakout Short (Opening Range Breakdown)
-    if "orb_breakout_short" in setup_type and close < orl:
-        basis = "orb_breakout_short"
-        stop_structure = min(orh, _pivot_swing_high(df_sess, 8)) * 1.005  # Stop above OR or swing high
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "opening range low breakdown with volume expansion",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["orb_breakdown", "volume_expansion", "institutional_breakdown", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # Professional Setup: VWAP Mean Reversion Short
-    if "vwap_mean_reversion_short" in setup_type and close > vwap.iloc[-1]:
-        basis = "vwap_mean_reversion_short"
-        stop_structure = _pivot_swing_high(df_sess, 10) * 1.008  # Stop above recent swing
-        return {
-            "name": basis, "bias": "short",
-            "entry_trigger": "mean reversion from overbought levels to VWAP",
-            "structure_stop": float(stop_structure),
-            "context": {"reason": ["vwap_mean_reversion", "overbought_rejection", "value_reversion", f"setup:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
-
-    # No fallback - log unhandled setup and return None
-    logger.warning(f"UNHANDLED_SHORT_SETUP: {setup_type} - no specific handler found, rejecting trade")
-    return None
+# STRATEGY SELECTION
+# Strategy selection based on structure detection results from the professional structure system.
 
 def _strategy_selector(
     df_sess: pd.DataFrame,
@@ -954,34 +504,26 @@ def _strategy_selector(
     orh: float, orl: float, or_end: pd.Timestamp,
     vwap: pd.Series,
     pd_levels: Dict[str, float],
-    setup_type: str,
+    setup_candidates: List[SetupCandidate],
     index_df5m: Optional[pd.DataFrame] = None,
     daily_df: Optional[pd.DataFrame] = None
 ) -> Dict[str, Any]:
     """Pick a single best structure-led setup candidate."""
+    if not setup_candidates:
+        raise ValueError("setup_candidates is required for strategy selection")
+
     last = df_sess.iloc[-1]
     close = float(last["close"])
 
     ema20 = _ema(df_sess["close"], 20)
     ema50 = _ema(df_sess["close"], 50)
 
-    # SETUP-AWARE STRATEGY SELECTION - Match strategy bias to detected setup direction
-    if not setup_type:
-        raise ValueError("setup_type is required for strategy selection")
-
-    # Long setups should only get long strategies
-    if setup_type.endswith("_long"):
-        return _select_long_strategy(df_sess, cfg, regime, orh, orl, or_end, vwap, pd_levels, close, ema20, ema50, setup_type, index_df5m, daily_df)
-    # Short setups should only get short strategies
-    elif setup_type.endswith("_short"):
-        return _select_short_strategy(df_sess, cfg, regime, orh, orl, or_end, vwap, pd_levels, close, ema20, ema50, setup_type)
-    else:
-        # Handle edge case of unknown setup types
-        return {
-            "name": "unknown_setup", "bias": "flat", "entry_trigger": "wait",
-            "structure_stop": np.nan,
-            "context": {"reason": [f"unknown_setup_type:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
-        }
+    # Select best setup candidate based on strength
+    best_candidate = max(setup_candidates, key=lambda c: c.strength)
+    return _plan_strategy_for_candidate(
+        best_candidate, df_sess, cfg, regime, orh, orl, or_end,
+        vwap, pd_levels, close, ema20, ema50, index_df5m, daily_df
+    )
 
 # ----------------------------
 # Exits & sizing
@@ -1116,8 +658,8 @@ def generate_trade_plan(
     df: pd.DataFrame,
     symbol: str,
     daily_df: Optional[pd.DataFrame] = None,
-    setup_type: str = None,
-    # -------- NEW OPTIONALS to compute HCET features ----------
+    setup_candidates: List[SetupCandidate] = None,
+    # -------- OPTIONAL FEATURES for enhanced analysis ----------
     df1m_tail: Optional[pd.DataFrame] = None,
     index_df5m: Optional[pd.DataFrame] = None,
     sector_df5m: Optional[pd.DataFrame] = None,
@@ -1134,9 +676,9 @@ def generate_trade_plan(
     symbol : str
     daily_df : pd.DataFrame | None
         Daily bars used to compute PDH/PDL/PDC.
-    setup_type : str | None
-        Detected setup type from structure events (e.g., "range_rejection_long", "breakout_short").
-        Used to ensure strategy direction aligns with detected setup bias.
+    setup_candidates : List[SetupCandidate]
+        Setup candidates from the structure detection system.
+        Each candidate contains setup_type, strength, and reasons.
     df1m_tail : pd.DataFrame | None
         Optional 1m tail for spike/ret_z features (if available).
     index_df5m : pd.DataFrame | None
@@ -1152,7 +694,7 @@ def generate_trade_plan(
     -------
     plan : dict
         Serializable plan with eligibility, entry/stop/targets, sizing, context, and quality fields.
-        **NEW**: includes `plan["features"]` when optional inputs are provided, for Gate HCET consumption.
+        Includes `plan["features"]` when optional inputs are provided, for Gate HCET consumption.
     """
     try:
         cfg = _load_planner_config()
@@ -1207,15 +749,23 @@ def generate_trade_plan(
                 gap_pct = 100.0 * (first_open - pd_levels["PDC"]) / max(pd_levels["PDC"], 1e-9)
 
         regime = _regime(sess, cfg)
-        strat = _strategy_selector(sess, cfg, regime, orh, orl, or_end, sess["vwap"], pd_levels, setup_type, index_df5m, daily_df)
+        if not setup_candidates:
+            return {
+                "eligible": False,
+                "reason": "no_setup_candidates",
+                "quality": {"rejection_reason": "no_setup_candidates_provided"},
+                "notes": {"cautions": ["no_setup_candidates", f"regime_{regime}"]}
+            }
+
+        strat = _strategy_selector(sess, cfg, regime, orh, orl, or_end, sess["vwap"], pd_levels, setup_candidates, index_df5m, daily_df)
 
         if strat is None:
-            logger.info(f"planner: {symbol} setup_rejected={setup_type} (regime={regime}, ORH={orh:.2f}, ORL={orl:.2f})")
+            logger.info(f"planner: {symbol} setup_rejected (regime={regime}, ORH={orh:.2f}, ORL={orl:.2f})")
             return {
                 "eligible": False,
                 "reason": "setup_conditions_not_met",
-                "quality": {"rejection_reason": f"setup_conditions_not_met:{setup_type}"},
-                "notes": {"cautions": [f"rejected_{setup_type}", f"regime_{regime}"]}
+                "quality": {"rejection_reason": "setup_conditions_not_met"},
+                "notes": {"cautions": ["rejected_setup", f"regime_{regime}"]}
             }
 
         if strat["name"] == "no_setup":
@@ -1280,7 +830,10 @@ def generate_trade_plan(
         # Feasibility tightening (from planner_precision extras)
         pp = cfg._extras.get("planner_precision", {})
         measured_move = max(orh - orl, atr) if strat["bias"] in ("long","short") else atr
-        rps = float(exits.get("risk_per_share", 1e-6))
+        # CRITICAL SAFETY FIX: Use conservative fallback instead of dangerous 1e-6
+        # The 1e-6 fallback could create massive position sizes (risk_rupees / 1e-6)
+        eps = max(entry_ref_price * 0.001, 0.01)  # 0.1% of price or ₹0.01 minimum
+        rps = float(exits.get("risk_per_share", eps))
         rr_clip_max = float(pp.get("rr_clip_max", 6.0))
 
         t1_max_pct = float(pp.get("t1_max_pct", 100.0))
@@ -1298,9 +851,8 @@ def generate_trade_plan(
         t1_orig = exits["targets"][0]["level"] if exits.get("targets") else np.nan
         t2_orig = exits["targets"][1]["level"] if exits.get("targets") and len(exits["targets"]) > 1 else np.nan
 
-        eps = max(entry_ref_price * 0.001, 0.01)
         if (not rps) or rps <= 0:
-            # coarse salvage if RPS not computed
+            # coarse salvage if RPS not computed - use the same eps value from above
             rps = eps
 
         if strat["bias"] == "long":

@@ -136,21 +136,37 @@
     "breakout_short": {
       "enabled": true
     },
-    "failure_fade_long": {
-      "enabled": true
-    },
-    "failure_fade_short": {
-      "enabled": true
-    },
     "vwap_reclaim_long": {
-      "enabled": false,
-      "require_confluence": [
-        "level_break"
-      ],
-      "min_bars_above_vwap": 3
+      "enabled": true,
+      "min_distance_bps": 50,
+      "max_distance_bps": 300,
+      "require_oversold_rsi": false,
+      "min_bars_above_vwap": 3,
+      "reclaim_volume_confirmation": true,
+      "min_volume_mult": 1.3,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.75,
+      "vwap_buffer_mult": 0.15,
+      "target_mult_t1": 1.2,
+      "target_mult_t2": 2.0,
+      "confidence_strong_signal": 0.85,
+      "confidence_weak_signal": 0.65
     },
     "vwap_lose_short": {
-      "enabled": false
+      "enabled": true,
+      "min_distance_bps": 50,
+      "max_distance_bps": 300,
+      "require_oversold_rsi": false,
+      "min_bars_above_vwap": 2,
+      "reclaim_volume_confirmation": true,
+      "min_volume_mult": 1.3,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.75,
+      "vwap_buffer_mult": 0.15,
+      "target_mult_t1": 1.2,
+      "target_mult_t2": 2.0,
+      "confidence_strong_signal": 0.8,
+      "confidence_weak_signal": 0.6
     },
     "gap_fill_long": {
       "enabled": true,
@@ -164,77 +180,550 @@
       "max_gap_pct": 2.5,
       "require_volume_confirmation": true
     },
+    "trend_pullback_long": {
+      "enabled": true,
+      "min_pullback_pct": 1.0,
+      "max_pullback_pct": 5.0,
+      "trend_confirmation_bars": 10,
+      "pullback_depth_pct": 38.2,
+      "min_trend_strength": 1.5,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "confidence_level": 0.75
+    },
+    "trend_pullback_short": {
+      "enabled": true,
+      "min_pullback_pct": 1.0,
+      "max_pullback_pct": 5.0,
+      "trend_confirmation_bars": 10,
+      "pullback_depth_pct": 38.2,
+      "min_trend_strength": 1.5,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "confidence_level": 0.75
+    },
+    "trend_continuation_long": {
+      "enabled": true,
+      "min_trend_strength": 1.2,
+      "volume_confirmation": true,
+      "min_volume_mult": 1.3,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "confidence_level": 0.8
+    },
+    "trend_continuation_short": {
+      "enabled": true,
+      "min_trend_strength": 1.2,
+      "volume_confirmation": true,
+      "min_volume_mult": 1.3,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "confidence_level": 0.8
+    },
+    "volume_spike_reversal_long": {
+      "enabled": true,
+      "min_volume_spike_mult": 3.0,
+      "min_body_size_pct": 1.0,
+      "reversal_threshold_pct": 2.0,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "confidence_level": 0.7
+    },
+    "volume_spike_reversal_short": {
+      "enabled": true,
+      "min_volume_spike_mult": 3.0,
+      "min_body_size_pct": 1.0,
+      "reversal_threshold_pct": 2.0,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "confidence_level": 0.7
+    },
+    "volume_breakout_long": {
+      "enabled": false,
+      "min_volume_spike_mult": 2.5,
+      "min_breakout_pct": 0.5,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "confidence_level": 0.75
+    },
+    "volume_breakout_short": {
+      "enabled": false,
+      "min_volume_spike_mult": 2.5,
+      "min_breakout_pct": 0.5,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "confidence_level": 0.75
+    },
+    "gap_breakout_long": {
+      "enabled": false,
+      "min_gap_pct": 0.3,
+      "max_gap_pct": 2.5,
+      "require_volume_confirmation": true,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_level": 0.75
+    },
+    "gap_breakout_short": {
+      "enabled": false,
+      "min_gap_pct": 0.3,
+      "max_gap_pct": 2.5,
+      "require_volume_confirmation": true,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_level": 0.75
+    },
+    "range_bounce_long": {
+      "enabled": true,
+      "min_range_duration": 20,
+      "max_range_height_pct": 3.0,
+      "min_range_height_pct": 0.5,
+      "bounce_tolerance_pct": 0.2,
+      "require_volume_confirmation": true,
+      "min_volume_mult": 1.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "confidence_level": 0.7
+    },
+    "range_bounce_short": {
+      "enabled": true,
+      "min_range_duration": 20,
+      "max_range_height_pct": 3.0,
+      "min_range_height_pct": 0.5,
+      "bounce_tolerance_pct": 0.2,
+      "require_volume_confirmation": true,
+      "min_volume_mult": 1.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "confidence_level": 0.7
+    },
+    "range_breakout_long": {
+      "enabled": false,
+      "min_range_duration": 20,
+      "max_range_height_pct": 3.0,
+      "min_range_height_pct": 0.5,
+      "breakout_confirmation_pct": 0.3,
+      "require_volume_confirmation": true,
+      "min_volume_mult": 1.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "confidence_level": 0.7
+    },
+    "range_breakdown_short": {
+      "enabled": false,
+      "min_range_duration": 20,
+      "max_range_height_pct": 3.0,
+      "min_range_height_pct": 0.5,
+      "breakout_confirmation_pct": 0.3,
+      "require_volume_confirmation": true,
+      "min_volume_mult": 1.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "confidence_level": 0.7
+    },
+    "level_breakout_long": {
+      "enabled": true,
+      "k_atr": 0.25,
+      "min_breakout_atr_mult": 0.3,
+      "hold_bars": 1,
+      "vol_z_required": 1.5,
+      "require_breakout_bar_volume_surge": true,
+      "breakout_volume_min_ratio": 1.4,
+      "enable_smc_filtering": true,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "confidence_strong_breakout": 0.85,
+      "confidence_weak_breakout": 0.65
+    },
+    "level_breakout_short": {
+      "enabled": true,
+      "k_atr": 0.25,
+      "min_breakout_atr_mult": 0.3,
+      "hold_bars": 1,
+      "vol_z_required": 1.5,
+      "require_breakout_bar_volume_surge": true,
+      "breakout_volume_min_ratio": 1.4,
+      "enable_smc_filtering": true,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "confidence_strong_breakout": 0.85,
+      "confidence_weak_breakout": 0.65
+    },
+    "failure_fade_long": {
+      "enabled": true,
+      "min_pierce_size_pct": 0.1,
+      "max_pierce_size_pct": 1.0,
+      "fade_confirmation_bars": 1,
+      "require_volume_confirmation": false,
+      "min_volume_mult": 1.2,
+      "min_fade_strength": 0.3,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "stop_mult": 1.5,
+      "confidence_strong_fade": 0.8,
+      "confidence_weak_fade": 0.6
+    },
+    "failure_fade_short": {
+      "enabled": true,
+      "min_pierce_size_pct": 0.1,
+      "max_pierce_size_pct": 1.0,
+      "fade_confirmation_bars": 1,
+      "require_volume_confirmation": false,
+      "min_volume_mult": 1.2,
+      "min_fade_strength": 0.3,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 2.0,
+      "stop_mult": 1.5,
+      "confidence_strong_fade": 0.8,
+      "confidence_weak_fade": 0.6
+    },
+    "squeeze_release_long": {
+      "enabled": true,
+      "width_window": 40,
+      "expansion_ratio": 1.5,
+      "width_calculation_period": 20,
+      "recent_width_bars": 5,
+      "momentum_period": 3,
+      "min_momentum_threshold": 0.001,
+      "require_volume_confirmation": true,
+      "min_volume_mult": 1.5,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "stop_mult": 1.0,
+      "confidence_strong_expansion": 0.8,
+      "confidence_weak_expansion": 0.6
+    },
+    "squeeze_release_short": {
+      "enabled": true,
+      "width_window": 40,
+      "expansion_ratio": 1.5,
+      "width_calculation_period": 20,
+      "recent_width_bars": 5,
+      "momentum_period": 3,
+      "min_momentum_threshold": 0.001,
+      "require_volume_confirmation": true,
+      "min_volume_mult": 1.5,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "stop_mult": 1.0,
+      "confidence_strong_expansion": 0.8,
+      "confidence_weak_expansion": 0.6
+    },
     "flag_continuation_long": {
       "enabled": true,
       "min_consolidation_bars": 3,
       "max_consolidation_bars": 12,
-      "min_trend_strength": 1.5
+      "min_trend_strength": 1.5,
+      "trend_lookback_period": 10,
+      "max_consolidation_range_pct": 2.0,
+      "breakout_confirmation_pct": 0.1,
+      "require_volume_confirmation": true,
+      "min_volume_mult": 1.5,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "stop_mult": 1.0,
+      "confidence_strong_flag": 0.85,
+      "confidence_weak_flag": 0.65
     },
     "flag_continuation_short": {
       "enabled": true,
       "min_consolidation_bars": 3,
       "max_consolidation_bars": 12,
-      "min_trend_strength": 1.5
+      "min_trend_strength": 1.5,
+      "trend_lookback_period": 10,
+      "max_consolidation_range_pct": 2.0,
+      "breakout_confirmation_pct": 0.1,
+      "require_volume_confirmation": true,
+      "min_volume_mult": 1.5,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "stop_mult": 1.0,
+      "confidence_strong_flag": 0.85,
+      "confidence_weak_flag": 0.65
+    },
+    "momentum_breakout_long": {
+      "enabled": true,
+      "min_momentum_3bar_pct": 1.5,
+      "min_momentum_1bar_pct": 0.5,
+      "min_momentum_2bar_pct": 1.0,
+      "min_trend_5bar_pct": 2.0,
+      "min_trend_3bar_pct": 1.0,
+      "min_positive_bars": 2,
+      "vol_z_breakout_mult": 0.8,
+      "vol_z_continuation_mult": 0.6,
+      "min_volume_surge_ratio": 1.3,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "stop_mult": 1.5,
+      "confidence_strong_momentum": 0.8,
+      "confidence_weak_momentum": 0.6
+    },
+    "momentum_breakout_short": {
+      "enabled": true,
+      "min_momentum_3bar_pct": 1.5,
+      "min_momentum_1bar_pct": 0.5,
+      "min_momentum_2bar_pct": 1.0,
+      "min_trend_5bar_pct": 2.0,
+      "min_trend_3bar_pct": 1.0,
+      "min_positive_bars": 2,
+      "vol_z_breakout_mult": 0.8,
+      "vol_z_continuation_mult": 0.6,
+      "min_volume_surge_ratio": 1.3,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "stop_mult": 1.5,
+      "confidence_strong_momentum": 0.8,
+      "confidence_weak_momentum": 0.6
     },
     "support_bounce_long": {
       "enabled": true,
       "min_touches": 2,
-      "bounce_tolerance_pct": 0.1,
-      "require_volume_spike": true
+      "bounce_tolerance_pct": 0.3,
+      "require_volume_spike": true,
+      "min_volume_mult": 1.5,
+      "min_level_age_bars": 5,
+      "max_level_distance_pct": 2.0,
+      "level_merge_tolerance_pct": 0.3,
+      "breakout_buffer_pct": 0.2,
+      "min_breakout_volume_mult": 1.8,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "level_buffer_mult": 0.1,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "confidence_strong_level": 0.85,
+      "confidence_weak_level": 0.65,
+      "confidence_breakout": 0.8,
+      "confidence_bounce": 0.75
     },
     "resistance_bounce_short": {
       "enabled": true,
       "min_touches": 2,
-      "bounce_tolerance_pct": 0.1,
-      "require_volume_spike": true
+      "bounce_tolerance_pct": 0.3,
+      "require_volume_spike": true,
+      "min_volume_mult": 1.5,
+      "min_level_age_bars": 5,
+      "max_level_distance_pct": 2.0,
+      "level_merge_tolerance_pct": 0.3,
+      "breakout_buffer_pct": 0.2,
+      "min_breakout_volume_mult": 1.8,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "level_buffer_mult": 0.1,
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "confidence_strong_level": 0.85,
+      "confidence_weak_level": 0.65,
+      "confidence_breakout": 0.8,
+      "confidence_bounce": 0.75
+    },
+    "support_breakdown_short": {
+      "enabled": true,
+      "min_touches": 2,
+      "bounce_tolerance_pct": 0.3,
+      "require_volume_spike": true,
+      "min_volume_mult": 1.5,
+      "min_level_age_bars": 5,
+      "max_level_distance_pct": 2.0,
+      "level_merge_tolerance_pct": 0.3,
+      "breakout_buffer_pct": 0.25,
+      "min_breakout_volume_mult": 2.0,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "level_buffer_mult": 0.15,
+      "target_mult_t1": 2.0,
+      "target_mult_t2": 3.0,
+      "confidence_strong_level": 0.85,
+      "confidence_weak_level": 0.65,
+      "confidence_breakout": 0.85,
+      "confidence_bounce": 0.75
+    },
+    "resistance_breakout_long": {
+      "enabled": true,
+      "min_touches": 2,
+      "bounce_tolerance_pct": 0.3,
+      "require_volume_spike": true,
+      "min_volume_mult": 1.5,
+      "min_level_age_bars": 5,
+      "max_level_distance_pct": 2.0,
+      "level_merge_tolerance_pct": 0.3,
+      "breakout_buffer_pct": 0.25,
+      "min_breakout_volume_mult": 2.0,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "level_buffer_mult": 0.15,
+      "target_mult_t1": 2.0,
+      "target_mult_t2": 3.0,
+      "confidence_strong_level": 0.85,
+      "confidence_weak_level": 0.65,
+      "confidence_breakout": 0.85,
+      "confidence_bounce": 0.75
     },
     "orb_breakout_long": {
       "enabled": true,
       "orb_minutes": 15,
       "min_range_pct": 0.5,
-      "breakout_volume_mult": 1.5
+      "breakout_volume_mult": 1.5,
+      "breakout_buffer_pct": 0.5,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_volume_confirmed": 0.8,
+      "confidence_no_volume": 0.6,
+      "or_level_buffer_mult": 0.1,
+      "pullback_zones": {
+        "shallow": 0.25,
+        "medium": 0.50,
+        "deep": 0.75
+      }
     },
     "orb_breakout_short": {
       "enabled": true,
       "orb_minutes": 15,
       "min_range_pct": 0.5,
-      "breakout_volume_mult": 1.5
+      "breakout_volume_mult": 1.5,
+      "breakout_buffer_pct": 0.5,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_volume_confirmed": 0.8,
+      "confidence_no_volume": 0.6,
+      "or_level_buffer_mult": 0.1,
+      "pullback_zones": {
+        "shallow": 0.25,
+        "medium": 0.50,
+        "deep": 0.75
+      }
+    },
+    "orb_breakdown_short": {
+      "enabled": true,
+      "orb_minutes": 15,
+      "min_range_pct": 0.5,
+      "breakout_volume_mult": 1.5,
+      "breakout_buffer_pct": 0.5,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_volume_confirmed": 0.8,
+      "confidence_no_volume": 0.6,
+      "or_level_buffer_mult": 0.1,
+      "pullback_zones": {
+        "shallow": 0.25,
+        "medium": 0.50,
+        "deep": 0.75
+      }
+    },
+    "orb_breakout": {
+      "enabled": true,
+      "orb_minutes": 15,
+      "min_range_pct": 0.5,
+      "breakout_volume_mult": 1.5,
+      "breakout_buffer_pct": 0.5,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_volume_confirmed": 0.8,
+      "confidence_no_volume": 0.6,
+      "or_level_buffer_mult": 0.1,
+      "pullback_zones": {
+        "shallow": 0.25,
+        "medium": 0.50,
+        "deep": 0.75
+      }
+    },
+    "orb_breakdown": {
+      "enabled": true,
+      "orb_minutes": 15,
+      "min_range_pct": 0.5,
+      "breakout_volume_mult": 1.5,
+      "breakout_buffer_pct": 0.5,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_volume_confirmed": 0.8,
+      "confidence_no_volume": 0.6,
+      "or_level_buffer_mult": 0.1,
+      "pullback_zones": {
+        "shallow": 0.25,
+        "medium": 0.50,
+        "deep": 0.75
+      }
+    },
+    "orb_pullback_long": {
+      "enabled": true,
+      "orb_minutes": 15,
+      "min_range_pct": 0.5,
+      "breakout_volume_mult": 1.5,
+      "breakout_buffer_pct": 0.5,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_volume_confirmed": 0.8,
+      "confidence_no_volume": 0.6,
+      "or_level_buffer_mult": 0.1,
+      "pullback_zones": {
+        "shallow": 0.25,
+        "medium": 0.50,
+        "deep": 0.75
+      }
+    },
+    "orb_pullback_short": {
+      "enabled": true,
+      "orb_minutes": 15,
+      "min_range_pct": 0.5,
+      "breakout_volume_mult": 1.5,
+      "breakout_buffer_pct": 0.5,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.5,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_volume_confirmed": 0.8,
+      "confidence_no_volume": 0.6,
+      "or_level_buffer_mult": 0.1,
+      "pullback_zones": {
+        "shallow": 0.25,
+        "medium": 0.50,
+        "deep": 0.75
+      }
     },
     "vwap_mean_reversion_long": {
       "enabled": true,
       "min_distance_bps": 150,
       "max_distance_bps": 400,
-      "require_oversold_rsi": true
+      "require_oversold_rsi": true,
+      "oversold_rsi_threshold": 30,
+      "min_bars_above_vwap": 2,
+      "reclaim_volume_confirmation": true,
+      "min_volume_mult": 1.2,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.75,
+      "vwap_buffer_mult": 0.2,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_strong_signal": 0.8,
+      "confidence_weak_signal": 0.6
     },
     "vwap_mean_reversion_short": {
       "enabled": true,
       "min_distance_bps": 150,
       "max_distance_bps": 400,
-      "require_overbought_rsi": true
-    },
-    "volume_spike_reversal_long": {
-      "enabled": true,
-      "min_volume_mult": 3.0,
-      "min_body_size_pct": 1.0,
-      "require_hammer_pattern": false
-    },
-    "volume_spike_reversal_short": {
-      "enabled": true,
-      "min_volume_mult": 3.0,
-      "min_body_size_pct": 1.0,
-      "require_shooting_star": false
-    },
-    "trend_pullback_long": {
-      "enabled": true,
-      "min_pullback_pct": 0.5,
-      "max_pullback_pct": 2.0,
-      "require_trend_confirmation": true
-    },
-    "trend_pullback_short": {
-      "enabled": true,
-      "min_pullback_pct": 0.5,
-      "max_pullback_pct": 2.0,
-      "require_trend_confirmation": true
+      "require_oversold_rsi": true,
+      "overbought_rsi_threshold": 70,
+      "min_bars_above_vwap": 2,
+      "reclaim_volume_confirmation": true,
+      "min_volume_mult": 1.2,
+      "min_stop_distance_pct": 0.5,
+      "stop_distance_mult": 0.75,
+      "vwap_buffer_mult": 0.2,
+      "target_mult_t1": 1.0,
+      "target_mult_t2": 1.5,
+      "confidence_strong_signal": 0.8,
+      "confidence_weak_signal": 0.6
     },
     "range_rejection_long": {
       "enabled": true,
@@ -248,17 +737,52 @@
       "rejection_wick_pct": 0.6,
       "require_volume_confirmation": true
     },
-    "squeeze_release_long": {
+    "ict_comprehensive": {
       "enabled": true,
-      "min_squeeze_bars": 5,
-      "expansion_ratio": 1.5,
-      "volume_confirmation": true
+      "order_block_min_move_pct": 0.5,
+      "order_block_min_volume_surge": 1.5,
+      "order_block_lookback": 20,
+      "order_block_test_tolerance_pct": 0.15,
+      "fvg_min_gap_pct": 0.1,
+      "fvg_max_gap_pct": 1.5,
+      "fvg_require_volume_spike": true,
+      "fvg_min_volume_mult": 1.5,
+      "fvg_fill_tolerance_pct": 0.05,
+      "sweep_min_distance_pct": 0.05,
+      "sweep_max_distance_pct": 0.3,
+      "sweep_min_volume_surge": 2.0,
+      "sweep_min_wick_ratio": 0.4,
+      "sweep_reversal_bars": 3,
+      "premium_threshold_pct": 70.0,
+      "discount_threshold_pct": 30.0,
+      "range_lookback_bars": 50,
+      "bos_min_structure_bars": 10,
+      "bos_min_break_pct": 0.2,
+      "bos_volume_confirmation": true,
+      "choch_momentum_periods": [3, 5, 8],
+      "choch_min_momentum_change_pct": 1.0,
+      "choch_volume_threshold": 1.8,
+      "risk_pct": 1.0,
+      "reward_risk_ratio": 2.0,
+      "max_bars_hold": 12
     },
-    "squeeze_release_short": {
+    "main_detector": {
       "enabled": true,
-      "min_squeeze_bars": 5,
-      "expansion_ratio": 1.5,
-      "volume_confirmation": true
+      "max_detections_per_symbol": 5,
+      "conflict_resolution_enabled": true,
+      "priority_weights": {
+        "ict": 1.0,
+        "level_breakout_long": 0.9,
+        "level_breakout_short": 0.9,
+        "failure_fade_long": 0.8,
+        "failure_fade_short": 0.8,
+        "squeeze_release_long": 0.7,
+        "squeeze_release_short": 0.7,
+        "flag_continuation_long": 0.6,
+        "flag_continuation_short": 0.6,
+        "momentum_breakout_long": 0.5,
+        "momentum_breakout_short": 0.5
+      }
     }
   },
   "filters": {
@@ -436,8 +960,7 @@
       "range_rejection_long",
       "support_bounce_long",
       "vwap_lose_short",
-      "pdl_break_hold_short",
-      "breakout_short"
+      "pdl_break_hold_short"
     ],
     "max_structural_rr": 4.0,
     "high_rr_penalty": -0.3,
@@ -465,15 +988,6 @@
         ],
         "momentum_consolidation_threshold": 0.7
       },
-      "momentum_breakout": {
-        "strategies": [
-          "breakout_long", "breakout_short",
-          "orb_breakout_long", "orb_breakout_short",
-          "flag_continuation_long", "flag_continuation_short",
-          "trend_pullback_long", "trend_pullback_short"
-        ],
-        "momentum_consolidation_threshold": 6.0
-      },
       "range_level_trades": {
         "strategies": [
           "support_bounce_long", "resistance_bounce_short",
@@ -485,10 +999,6 @@
       "gap_trades": {
         "strategies": ["gap_fill_long", "gap_fill_short"],
         "momentum_consolidation_threshold": 3.0
-      },
-      "squeeze_expansion": {
-        "strategies": ["squeeze_release_long", "squeeze_release_short"],
-        "momentum_consolidation_threshold": 8.0
       }
     },
     "range_compression_enabled": true,
@@ -547,12 +1057,6 @@
         "volume_confirmation"
       ],
       "hold_bars": 2
-    },
-    "vwap_reclaim_long": {
-      "trigger_type": "vwap_reclaim",
-      "consecutive_closes": 3,
-      "allow_minor_dip": true,
-      "volume_required": true
     },
     "pdh_break_hold_long": {
       "trigger_type": "break_and_hold",
@@ -772,5 +1276,28 @@
     "eod_scale_out_rr1": 0.7,
     "eod_scale_out_rr2": 0.4,
     "eod_scale_out_pct1": 50.0
+  },
+  "structure_manager": {
+    "enabled": true,
+    "min_structure_score": 25.0,
+    "max_structures_per_symbol": 3,
+    "structure_priorities": {
+      "orb": 10,
+      "vwap": 20,
+      "support_resistance": 30,
+      "trend": 40,
+      "volume": 50,
+      "gap": 60,
+      "range": 70,
+      "order_block": 80,
+      "liquidity": 90,
+      "pattern": 100
+    },
+    "logging": {
+      "log_all_detections": true,
+      "log_rejection_reasons": true,
+      "log_config_validation": true,
+      "performance_tracking": true
+    }
   }
 }

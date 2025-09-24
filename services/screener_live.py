@@ -62,7 +62,7 @@ from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision a
 from services import levels
 from services import metrics_intraday as mi
 from services.planner_internal import generate_trade_plan
-from services.events.structure_events import StructureEventDetector
+from structure_detector import StructureDetector
 from services.ranker import rank_candidates, get_strategy_threshold
 
 # orders & execution
@@ -119,8 +119,8 @@ class ScreenerLive:
         self.ws.on_message(self.router.handle_raw)
         self.subs = SubscriptionManager(self.ws)
 
-        # Gates
-        self.detector = StructureEventDetector()
+        # Gates - Use new integration adapter instead of legacy detector
+        self.detector = StructureDetector(raw)
         news_cfg = raw.get("news_gate")
         self.regime_gate = MarketRegimeGate(cfg=raw)
         self.event_gate = EventPolicyGate()
@@ -331,7 +331,13 @@ class ScreenerLive:
 
             try:
                 decision = dec_map[sym]
-                plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_type=decision.setup_type)
+                # Use new structure system approach with setup_candidates
+                setup_candidates = getattr(decision, 'setup_candidates', None)
+                if setup_candidates:
+                    plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_candidates=setup_candidates)
+                else:
+                    # Fallback for compatibility during transition
+                    plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_type=decision.setup_type)
             except Exception as e:
                 logger.exception("planner failed for %s: %s", sym, e)
                 continue
@@ -499,13 +505,17 @@ class ScreenerLive:
                 if not d.empty:
                     prev = d.iloc[-1]
                     pdh = float(prev["high"]); pdl = float(prev["low"]); pdc = float(prev.get("close", float("nan")))
-        except Exception:
+        except Exception as e:
+            # CRITICAL FIX: Log previous day level computation failures
+            logger.error(f"LEVELS: Failed to compute PDH/PDL/PDC for {symbol}: {e}")
             pass
 
         try:
             orh, orl = levels.opening_range(df5)
             orh = float(orh); orl = float(orl)
-        except Exception:
+        except Exception as e:
+            # CRITICAL FIX: Log opening range computation failures
+            logger.error(f"LEVELS: Failed to compute ORH/ORL for {symbol}: {e}")
             orh = orl = float("nan")
 
         out = {"PDH": pdh, "PDL": pdl, "PDC": pdc, "ORH": orh, "ORL": orl}
@@ -522,7 +532,9 @@ class ScreenerLive:
                 continue
             try:
                 score = mi.compute_intraday_breakout_score(df5)
-            except Exception:
+            except Exception as e:
+                # CRITICAL FIX: Log breakout score computation failures
+                logger.error(f"SCREENER: Failed to compute breakout score for {sym}: {e}")
                 continue
             if score >= 0.0:
                 out.append(sym)

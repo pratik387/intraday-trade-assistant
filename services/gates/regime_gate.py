@@ -206,7 +206,7 @@ class MarketRegimeGate:
                 # Strong retest pattern
                 return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
 
-            # Legacy support for other setups (will be throttled if enabled)
+            # Standard setup requirements for chop regime (may be throttled if enabled)
             # VWAP reclaims/loses - standard requirements
             if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)

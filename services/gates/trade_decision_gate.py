@@ -104,13 +104,14 @@ class SetupCandidate:
 class GateDecision:
     accept: bool
     reasons: List[str]
-    setup_type: Optional[SetupType] = None
+    setup_type: Optional[SetupType] = None  # DEPRECATED: use setup_candidates instead
     regime: Optional[str] = None
     regime_conf: float = 0.0
     size_mult: float = 1.0
     min_hold_bars: int = 0
     matched_rule: Optional[str] = None  # if you use rule miner/meta later
     p_breakout: Optional[float] = None  # placeholder for meta-prob models
+    setup_candidates: Optional[List[SetupCandidate]] = None  # NEW: full structure detection results
 
 
 # ----------------------------- Component Protocols -----------------------------
@@ -711,10 +712,11 @@ class TradeDecisionGate:
         return GateDecision(
             accept=True,
             reasons=reasons,
-            setup_type=best.setup_type,
+            setup_type=best.setup_type,  # DEPRECATED: for backward compatibility
             regime=regime,
             size_mult=max(0.0, size_mult),
             min_hold_bars=max(0, min_hold),
+            setup_candidates=setups,  # NEW: full setup candidates for structure system
         )
 
     def _get_strategy_momentum_threshold(self, setup_type: Optional[str]) -> float:
