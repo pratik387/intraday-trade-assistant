@@ -41,6 +41,9 @@ from .market_sentiment_gate import MarketSentimentGate
 from services.features import compute_hcet_features
 from collections import defaultdict
 from datetime import datetime, timedelta
+from config.logging_config import get_agent_logger
+
+logger = get_agent_logger()
 
 SetupType = Literal[
     "breakout_long",
@@ -480,8 +483,11 @@ class TradeDecisionGate:
                 reasons.extend(pattern_reasons)
 
         # ---------------- STRUCTURE ----------------
+        logger.debug(f"TRADE_GATE: Calling structure.detect_setups for {symbol}")
         setups = self.structure.detect_setups(symbol, df5m_tail, levels)
+        logger.debug(f"TRADE_GATE: Structure detection returned {len(setups)} setups for {symbol}")
         if not setups:
+            logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
             return GateDecision(accept=False, reasons=["no_structure_event"])
         setups.sort(key=lambda s: s.strength, reverse=True)
         best = setups[0]
@@ -727,5 +733,5 @@ class TradeDecisionGate:
         strategy_filters = self.quality_filters.get('strategy_momentum_filters', {})
         for _, config in strategy_filters.items():
             if setup_type in config.get('strategies', []):
-                return config.get('momentum_consolidation_threshold', 1.0)
+                return config['momentum_consolidation_threshold']  # KeyError if missing
         return self.quality_filters.get('momentum_consolidation_threshold', 1.0)

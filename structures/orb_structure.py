@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, time
 
-from config.logging_config import get_agent_logger
+from config.logging_config import get_agent_logger, get_screener_logger
 from .base_structure import BaseStructure
 from .data_models import (
     StructureEvent,
@@ -45,33 +45,18 @@ class ORBStructure(BaseStructure):
         """Initialize ORB structure with configuration."""
         super().__init__(config)
 
-        # ORB-specific configuration - NO HARDCODED DEFAULTS FOR TRADING PARAMETERS
-        # All trading parameters MUST be provided in config to avoid assumptions
-        if "orb_minutes" not in config:
-            raise ValueError("ORB: orb_minutes must be provided in config - no trading defaults allowed")
-        if "min_range_pct" not in config:
-            raise ValueError("ORB: min_range_pct must be provided in config - no trading defaults allowed")
-        if "breakout_volume_mult" not in config:
-            raise ValueError("ORB: breakout_volume_mult must be provided in config - no trading defaults allowed")
-
+        # KeyError if missing trading parameters
         self.orb_minutes = config["orb_minutes"]
         self.min_range_pct = config["min_range_pct"] / 100.0
         self.breakout_volume_mult = config["breakout_volume_mult"]
-
-        # Configurable parameters with explicit logging
-        self.breakout_buffer_pct = config.get("breakout_buffer_pct", 0.5) / 100.0  # Default: 0.5%
-        self.min_stop_distance_pct = config.get("min_stop_distance_pct", 0.5) / 100.0  # Default: 0.5%
-        self.stop_distance_mult = config.get("stop_distance_mult", 0.5)  # Default: 0.5x of range/ATR
-        self.target_mult_t1 = config.get("target_mult_t1", 1.0)  # Default: 1x OR range
-        self.target_mult_t2 = config.get("target_mult_t2", 1.5)  # Default: 1.5x OR range
-        self.confidence_volume_confirmed = config.get("confidence_volume_confirmed", 0.8)  # Default: 0.8
-        self.confidence_no_volume = config.get("confidence_no_volume", 0.6)  # Default: 0.6
-
-        self.pullback_zones = config.get("pullback_zones", {
-            "shallow": 0.25,  # 25% retracement
-            "medium": 0.50,   # 50% retracement
-            "deep": 0.75      # 75% retracement
-        })
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
+        self.breakout_buffer_pct = config["breakout_buffer_pct"] / 100.0
+        self.min_stop_distance_pct = config["min_stop_distance_pct"] / 100.0
+        self.stop_distance_mult = config["stop_distance_mult"]
+        self.confidence_volume_confirmed = config["confidence_volume_confirmed"]
+        self.confidence_no_volume = config["confidence_no_volume"]
+        self.pullback_zones = config["pullback_zones"]
 
         logger.debug(f"ORB: Initialized with config - Buffer: {self.breakout_buffer_pct:.3f}%, Stop: {self.min_stop_distance_pct:.3f}%, Targets: {self.target_mult_t1}x/{self.target_mult_t2}x")
 
@@ -96,7 +81,7 @@ class ORBStructure(BaseStructure):
         try:
             df = market_context.df_5m
             if df is None:
-                logger.info(f"ORB: {symbol} - No 5m data available")
+                logger.debug(f"ORB: {symbol} - No 5m data available")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -105,7 +90,7 @@ class ORBStructure(BaseStructure):
                 )
 
             if len(df) < 10:
-                logger.info(f"ORB: {symbol} - Insufficient data: {len(df)} bars < 10 minimum")
+                logger.debug(f"ORB: {symbol} - Insufficient data: {len(df)} bars < 10 minimum")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -118,7 +103,7 @@ class ORBStructure(BaseStructure):
             orl = market_context.orl
 
             if orh is None:
-                logger.info(f"ORB: {symbol} - ORH not available")
+                logger.debug(f"ORB: {symbol} - ORH not available")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -127,7 +112,7 @@ class ORBStructure(BaseStructure):
                 )
 
             if orl is None:
-                logger.info(f"ORB: {symbol} - ORL not available")
+                logger.debug(f"ORB: {symbol} - ORL not available")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -140,7 +125,7 @@ class ORBStructure(BaseStructure):
             logger.debug(f"ORB: {symbol} - ORB range: {orb_range_pct:.3f}% (min required: {self.min_range_pct:.3f}%)")
 
             if orb_range_pct < self.min_range_pct:
-                logger.info(f"ORB: {symbol} - Range too small: {orb_range_pct:.3f}% < {self.min_range_pct:.3f}%")
+                logger.debug(f"ORB: {symbol} - Range too small: {orb_range_pct:.3f}% < {self.min_range_pct:.3f}%")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -159,7 +144,7 @@ class ORBStructure(BaseStructure):
                 volume_confirmed = self._check_volume_confirmation(df, "breakout")
 
                 confidence = self._calculate_institutional_strength(market_context, orb_range_pct, volume_confirmed, "long", orh, orl)
-                logger.info(f"ORB: {symbol} - ORH breakout detected | Price: {current_price:.2f} > ORH: {orh:.2f} | Volume confirmed: {volume_confirmed} | Confidence: {confidence:.2f}")
+                logger.debug(f"ORB: {symbol} - ORH breakout detected | Price: {current_price:.2f} > ORH: {orh:.2f} | Volume confirmed: {volume_confirmed} | Confidence: {confidence:.2f}")
 
                 event = StructureEvent(
                     symbol=market_context.symbol,
@@ -179,7 +164,7 @@ class ORBStructure(BaseStructure):
                 volume_confirmed = self._check_volume_confirmation(df, "breakdown")
 
                 confidence = self._calculate_institutional_strength(market_context, orb_range_pct, volume_confirmed, "short", orh, orl)
-                logger.info(f"ORB: {symbol} - ORL breakdown detected | Price: {current_price:.2f} < ORL: {orl:.2f} | Volume confirmed: {volume_confirmed} | Confidence: {confidence:.2f}")
+                logger.debug(f"ORB: {symbol} - ORL breakdown detected | Price: {current_price:.2f} < ORL: {orl:.2f} | Volume confirmed: {volume_confirmed} | Confidence: {confidence:.2f}")
 
                 event = StructureEvent(
                     symbol=market_context.symbol,
@@ -235,11 +220,11 @@ class ORBStructure(BaseStructure):
             orl = market_context.orl
 
             if orh is None:
-                logger.info(f"ORB: {symbol} - Cannot plan long strategy: ORH not available")
+                logger.debug(f"ORB: {symbol} - Cannot plan long strategy: ORH not available")
                 return None
 
             if orl is None:
-                logger.info(f"ORB: {symbol} - Cannot plan long strategy: ORL not available")
+                logger.debug(f"ORB: {symbol} - Cannot plan long strategy: ORL not available")
                 return None
 
             current_price = market_context.current_price
@@ -250,13 +235,37 @@ class ORBStructure(BaseStructure):
             # Only plan long if price is above ORH or in pullback zone
             if current_price < min_breakout_price:  # Not convincingly above ORH
                 rejection_reason = f"Price {current_price:.2f} < min breakout {min_breakout_price:.2f}"
-                logger.info(f"ORB: {symbol} - Long strategy rejected: {rejection_reason}")
+
+                # Log structured rejection for screening stage
+                screener_logger = get_screener_logger()
+                screener_logger.log_reject(
+                    symbol,
+                    rejection_reason,
+                    timestamp=market_context.timestamp.isoformat(),
+                    structure_type="orb",
+                    side="long",
+                    price=current_price,
+                    orh=orh,
+                    min_breakout_price=min_breakout_price
+                )
                 return None
 
             # Check timing validity
             if not self.validate_timing(market_context.timestamp):
                 rejection_reason = f"Invalid timing for ORB at {market_context.timestamp.time()}"
-                logger.info(f"ORB: {symbol} - Long strategy rejected: {rejection_reason}")
+
+                # Log structured rejection for screening stage
+                screener_logger = get_screener_logger()
+                screener_logger.log_reject(
+                    symbol,
+                    rejection_reason,
+                    timestamp=market_context.timestamp.isoformat(),
+                    structure_type="orb",
+                    side="long",
+                    price=current_price,
+                    orh=orh,
+                    current_time=market_context.timestamp.time().isoformat()
+                )
                 return None
 
             logger.info(f"ORB: {symbol} - Long strategy approved: Price {current_price:.2f} > ORH {orh:.2f}")
@@ -301,11 +310,11 @@ class ORBStructure(BaseStructure):
             orl = market_context.orl
 
             if orh is None:
-                logger.info(f"ORB: {symbol} - Cannot plan short strategy: ORH not available")
+                logger.debug(f"ORB: {symbol} - Cannot plan short strategy: ORH not available")
                 return None
 
             if orl is None:
-                logger.info(f"ORB: {symbol} - Cannot plan short strategy: ORL not available")
+                logger.debug(f"ORB: {symbol} - Cannot plan short strategy: ORL not available")
                 return None
 
             current_price = market_context.current_price
@@ -316,13 +325,37 @@ class ORBStructure(BaseStructure):
             # Only plan short if price is below ORL or in pullback zone
             if current_price > max_breakdown_price:  # Not convincingly below ORL
                 rejection_reason = f"Price {current_price:.2f} > max breakdown {max_breakdown_price:.2f}"
-                logger.info(f"ORB: {symbol} - Short strategy rejected: {rejection_reason}")
+
+                # Log structured rejection for screening stage
+                screener_logger = get_screener_logger()
+                screener_logger.log_reject(
+                    symbol,
+                    rejection_reason,
+                    timestamp=market_context.timestamp.isoformat(),
+                    structure_type="orb",
+                    side="short",
+                    price=current_price,
+                    orl=orl,
+                    max_breakdown_price=max_breakdown_price
+                )
                 return None
 
             # Check timing validity
             if not self.validate_timing(market_context.timestamp):
                 rejection_reason = f"Invalid timing for ORB at {market_context.timestamp.time()}"
-                logger.info(f"ORB: {symbol} - Short strategy rejected: {rejection_reason}")
+
+                # Log structured rejection for screening stage
+                screener_logger = get_screener_logger()
+                screener_logger.log_reject(
+                    symbol,
+                    rejection_reason,
+                    timestamp=market_context.timestamp.isoformat(),
+                    structure_type="orb",
+                    side="short",
+                    price=current_price,
+                    orl=orl,
+                    current_time=market_context.timestamp.time().isoformat()
+                )
                 return None
 
             logger.info(f"ORB: {symbol} - Short strategy approved: Price {current_price:.2f} < ORL {orl:.2f}")
@@ -379,7 +412,7 @@ class ORBStructure(BaseStructure):
         stop_distance = max(stop_distance, min_stop_distance)
 
         if stop_distance == min_stop_distance:
-            logger.info(f"ORB: {market_context.symbol} - Using minimum stop distance: {min_stop_distance:.3f} ({self.min_stop_distance_pct:.3f}% of price)")
+            logger.debug(f"ORB: {market_context.symbol} - Using minimum stop distance: {min_stop_distance:.3f} ({self.min_stop_distance_pct:.3f}% of price)")
 
         # Calculate hard stop based on OR levels - CONFIGURABLE
         buffer_mult = self.config.get("or_level_buffer_mult", 0.1)  # Default: 10% of OR range as buffer
@@ -668,7 +701,7 @@ class ORBStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.5)  # Minimum viable strength
 
-            logger.info(f"ORB: {context.symbol} {side} - Base: {base_strength:.2f}, "
+            logger.debug(f"ORB: {context.symbol} {side} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

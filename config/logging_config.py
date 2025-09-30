@@ -1,6 +1,7 @@
 # logging_config.py — Singleton logger factory
 
 import logging
+import json
 from pathlib import Path
 from datetime import datetime
 import os
@@ -13,10 +14,46 @@ india_tz = timezone("Asia/Kolkata")
 _agent_logger = None
 _trade_logger = None
 _trading_logger = None
+# Stage JSONL loggers
+_scanner_logger = None
+_screener_logger = None
+_ranking_logger = None
+_planning_logger = None
+_events_decision_logger = None
 _current_log_month = None
 _session_id = None
 dir_path = None
 _global_run_prefix = ""  # Global run prefix to be set before any logger initialization
+
+
+class JSONLLogger:
+    """Helper class for structured JSONL logging at each pipeline stage"""
+
+    def __init__(self, file_path: Path, stage_name: str):
+        self.file_path = file_path
+        self.stage = stage_name
+
+    def log_accept(self, symbol: str, timestamp: str = None, **data):
+        """Log an accept decision with additional data"""
+        self._write_jsonl("accept", symbol, timestamp=timestamp, **data)
+
+    def log_reject(self, symbol: str, reason: str, timestamp: str = None, **data):
+        """Log a reject decision with reason and additional data"""
+        self._write_jsonl("reject", symbol, reason=reason, timestamp=timestamp, **data)
+
+    def _write_jsonl(self, action: str, symbol: str, timestamp: str = None, **data):
+        """Write structured JSONL entry"""
+        # Use provided timestamp or fall back to current time
+        ts = timestamp if timestamp else datetime.now().isoformat()
+        entry = {
+            "timestamp": ts,
+            "stage": self.stage,
+            "action": action,
+            "symbol": symbol,
+            **data
+        }
+        with open(self.file_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry) + '\n')
 
 def set_global_run_prefix(run_prefix: str):
     """Set the global run prefix before any logger initialization"""
@@ -26,8 +63,10 @@ def set_global_run_prefix(run_prefix: str):
 def _initialize_loggers(run_prefix: str = ""):
     """Initialize all loggers (internal function)"""
     global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path, _global_run_prefix
+    global _scanner_logger, _screener_logger, _ranking_logger, _planning_logger, _events_decision_logger
 
-    if _agent_logger and _trade_logger and _trading_logger:
+    if (_agent_logger and _trade_logger and _trading_logger and
+        _scanner_logger and _screener_logger and _ranking_logger and _planning_logger and _events_decision_logger):
         return
 
     # Use provided run_prefix, or fall back to global run prefix
@@ -60,6 +99,13 @@ def _initialize_loggers(run_prefix: str = ""):
 
     # Enhanced Trading Logger
     _trading_logger = TradingLogger(_session_id, log_dir)
+
+    # Stage JSONL Loggers
+    _scanner_logger = JSONLLogger(log_dir / "scanning.jsonl", "scanner")
+    _screener_logger = JSONLLogger(log_dir / "screening.jsonl", "screener")
+    _ranking_logger = JSONLLogger(log_dir / "ranking.jsonl", "ranking")
+    _planning_logger = JSONLLogger(log_dir / "planning.jsonl", "planning")
+    _events_decision_logger = JSONLLogger(log_dir / "events_decisions.jsonl", "events_decision")
 
 def get_agent_logger(run_prefix: str = ""):
     """Get the agent logger for general application logging"""
@@ -116,3 +162,45 @@ def get_session_id():
         # Initialize logging if not done already
         _initialize_loggers()
     return _session_id
+
+
+# Stage JSONL Logger Getters
+
+def get_scanner_logger():
+    """Get scanner stage logger for energy scanning and shortlisting decisions"""
+    global _scanner_logger
+    if _scanner_logger is None:
+        _initialize_loggers()
+    return _scanner_logger
+
+
+def get_screener_logger():
+    """Get screener stage logger for gates and structure detection decisions"""
+    global _screener_logger
+    if _screener_logger is None:
+        _initialize_loggers()
+    return _screener_logger
+
+
+def get_ranking_logger():
+    """Get ranking stage logger for scoring and percentile filtering decisions"""
+    global _ranking_logger
+    if _ranking_logger is None:
+        _initialize_loggers()
+    return _ranking_logger
+
+
+def get_planning_logger():
+    """Get planning stage logger for trade plan creation and validation decisions"""
+    global _planning_logger
+    if _planning_logger is None:
+        _initialize_loggers()
+    return _planning_logger
+
+
+def get_events_decision_logger():
+    """Get events decision logger for final trading decisions"""
+    global _events_decision_logger
+    if _events_decision_logger is None:
+        _initialize_loggers()
+    return _events_decision_logger

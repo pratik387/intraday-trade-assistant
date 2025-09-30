@@ -33,8 +33,7 @@ class MomentumStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "momentum"
 
-        # Validate required configuration
-        self._validate_required_config(config)
+        # KeyError if missing trading parameters
 
         # Momentum breakout parameters
         self.min_momentum_3bar_pct = config["min_momentum_3bar_pct"]  # 3-bar momentum threshold
@@ -44,38 +43,22 @@ class MomentumStructure(BaseStructure):
         # Trend continuation parameters
         self.min_trend_5bar_pct = config["min_trend_5bar_pct"]  # 5-bar trend momentum
         self.min_trend_3bar_pct = config["min_trend_3bar_pct"]  # 3-bar trend bias
-        self.min_positive_bars = config.get("min_positive_bars", 2)  # Minimum positive bars in trend
+        self.min_positive_bars = config["min_positive_bars"]
 
         # Volume parameters
-        self.vol_z_breakout_mult = config.get("vol_z_breakout_mult", 0.8)  # Volume multiplier for breakouts
-        self.vol_z_continuation_mult = config.get("vol_z_continuation_mult", 0.6)  # Volume multiplier for continuations
-        self.min_volume_surge_ratio = config.get("min_volume_surge_ratio", 1.3)
+        self.vol_z_breakout_mult = config["vol_z_breakout_mult"]
+        self.vol_z_continuation_mult = config["vol_z_continuation_mult"]
+        self.min_volume_surge_ratio = config["min_volume_surge_ratio"]
 
         # Risk management
-        self.target_mult_t1 = config.get("target_mult_t1", 1.5)
-        self.target_mult_t2 = config.get("target_mult_t2", 2.5)
-        self.stop_mult = config.get("stop_mult", 1.5)
-        self.confidence_strong_momentum = config.get("confidence_strong_momentum", 0.8)
-        self.confidence_weak_momentum = config.get("confidence_weak_momentum", 0.6)
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
+        self.stop_mult = config["stop_mult"]
+        self.confidence_strong_momentum = config["confidence_strong_momentum"]
+        self.confidence_weak_momentum = config["confidence_weak_momentum"]
 
         logger.debug(f"MOMENTUM: Initialized with 3-bar threshold: {self.min_momentum_3bar_pct}%, 5-bar trend: {self.min_trend_5bar_pct}%")
 
-    def _validate_required_config(self, config: Dict[str, Any]) -> None:
-        """Validate required configuration parameters."""
-        required_fields = [
-            "min_momentum_3bar_pct", "min_momentum_1bar_pct", "min_momentum_2bar_pct", "min_trend_5bar_pct", "min_trend_3bar_pct"
-        ]
-
-        for field in required_fields:
-            if field not in config:
-                raise ValueError(f"MOMENTUM: {field} must be provided in config - no trading defaults allowed")
-
-        # Validate momentum thresholds are reasonable
-        for field in required_fields:
-            if config[field] <= 0:
-                raise ValueError(f"MOMENTUM: {field} must be > 0, got {config[field]}")
-
-        logger.info(f"MOMENTUM: Configuration validation passed")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect momentum-based structures."""
@@ -168,7 +151,7 @@ class MomentumStructure(BaseStructure):
 
             # Momentum Breakout Long
             if self._check_momentum_breakout_long(df, last_bar, momentum_3bar_threshold, momentum_1bar_threshold, momentum_2bar_threshold, vol_z_required):
-                confidence = self._calculate_institutional_strength(context, abs(last_bar['returns_3']), last_bar.get('vol_z', 1.0), side)
+                confidence = self._calculate_institutional_strength(context, abs(last_bar['returns_3']), last_bar.get('vol_z', 1.0), "long")
 
                 event = StructureEvent(
                     symbol=context.symbol,
@@ -187,11 +170,11 @@ class MomentumStructure(BaseStructure):
                     price=context.current_price
                 )
                 events.append(event)
-                logger.info(f"MOMENTUM: {context.symbol} - Momentum breakout long: 3-bar {last_bar['returns_3']*100:.2f}%")
+                logger.debug(f"MOMENTUM: {context.symbol} - Momentum breakout long: 3-bar {last_bar['returns_3']*100:.2f}%")
 
             # Momentum Breakout Short
             elif self._check_momentum_breakout_short(df, last_bar, momentum_3bar_threshold, momentum_1bar_threshold, momentum_2bar_threshold, vol_z_required):
-                confidence = self._calculate_institutional_strength(context, abs(last_bar['returns_3']), last_bar.get('vol_z', 1.0), side)
+                confidence = self._calculate_institutional_strength(context, abs(last_bar['returns_3']), last_bar.get('vol_z', 1.0), "short")
 
                 event = StructureEvent(
                     symbol=context.symbol,
@@ -210,7 +193,7 @@ class MomentumStructure(BaseStructure):
                     price=context.current_price
                 )
                 events.append(event)
-                logger.info(f"MOMENTUM: {context.symbol} - Momentum breakout short: 3-bar {last_bar['returns_3']*100:.2f}%")
+                logger.debug(f"MOMENTUM: {context.symbol} - Momentum breakout short: 3-bar {last_bar['returns_3']*100:.2f}%")
 
         except Exception as e:
             logger.debug(f"MOMENTUM: Error detecting momentum breakouts: {e}")
@@ -230,7 +213,7 @@ class MomentumStructure(BaseStructure):
 
             # Trend Continuation Long
             if self._check_trend_continuation_long(df, last_bar, trend_5bar_threshold, trend_3bar_threshold, vol_z_required):
-                confidence = self._calculate_institutional_strength(context, abs(last_bar['returns_5']), last_bar.get('vol_z', 1.0), side)
+                confidence = self._calculate_institutional_strength(context, abs(last_bar['returns_5']), last_bar.get('vol_z', 1.0), "long")
 
                 event = StructureEvent(
                     symbol=context.symbol,
@@ -249,11 +232,11 @@ class MomentumStructure(BaseStructure):
                     price=context.current_price
                 )
                 events.append(event)
-                logger.info(f"MOMENTUM: {context.symbol} - Trend continuation long: 5-bar {last_bar['returns_5']*100:.2f}%")
+                logger.debug(f"MOMENTUM: {context.symbol} - Trend continuation long: 5-bar {last_bar['returns_5']*100:.2f}%")
 
             # Trend Continuation Short
             elif self._check_trend_continuation_short(df, last_bar, trend_5bar_threshold, trend_3bar_threshold, vol_z_required):
-                confidence = self._calculate_institutional_strength(context, abs(last_bar['returns_5']), last_bar.get('vol_z', 1.0), side)
+                confidence = self._calculate_institutional_strength(context, abs(last_bar['returns_5']), last_bar.get('vol_z', 1.0), "short")
 
                 event = StructureEvent(
                     symbol=context.symbol,
@@ -272,7 +255,7 @@ class MomentumStructure(BaseStructure):
                     price=context.current_price
                 )
                 events.append(event)
-                logger.info(f"MOMENTUM: {context.symbol} - Trend continuation short: 5-bar {last_bar['returns_5']*100:.2f}%")
+                logger.debug(f"MOMENTUM: {context.symbol} - Trend continuation short: 5-bar {last_bar['returns_5']*100:.2f}%")
 
         except Exception as e:
             logger.debug(f"MOMENTUM: Error detecting trend continuations: {e}")
@@ -437,7 +420,7 @@ class MomentumStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.8)  # Strong minimum for momentum patterns
 
-            logger.info(f"MOMENTUM: {context.symbol} {side} - Base: {base_strength:.2f}, "
+            logger.debug(f"MOMENTUM: {context.symbol} {side} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

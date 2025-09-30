@@ -70,9 +70,14 @@ def opening_range(df_5m: pd.DataFrame) -> Tuple[float, float]:
 
         win = d.loc[(d.index >= session_start) & (d.index <= session_end)]
         if win.empty:
+            # Enhanced diagnostics: show what data is actually available
+            first_ts = d.index[0] if not d.empty else None
+            last_ts = d.index[-1] if not d.empty else None
+            total_rows = len(d)
             logger.warning(
                 f"levels.opening_range: empty window last_date={last_date} "
-                f"start={session_start} end={session_end}"
+                f"start={session_start} end={session_end} | "
+                f"data_range=[{first_ts} to {last_ts}] total_rows={total_rows}"
             )
             return float("nan"), float("nan")
 

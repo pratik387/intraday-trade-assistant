@@ -27,7 +27,7 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List, Tuple, Union
 
-from config.logging_config import get_agent_logger
+from config.logging_config import get_agent_logger, get_planning_logger
 from config.filters_setup import load_filters
 from utils.time_util import ensure_naive_ist_index
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
@@ -273,14 +273,12 @@ def _load_planner_config(user_overrides: Optional[Dict[str, Any]] = None) -> Pla
     if missing2:
         raise KeyError(f"exit_config.json missing keys for planner: {missing2}")
 
-    # Extras are optional but must be dicts if present
-    extras = {
-        "intraday_gate": config.get("intraday_gate", {}),
-        "late_entry_penalty": config.get("late_entry_penalty", {}),
-        "planner_precision": config.get("planner_precision", {}),
-        "acceptance": config.get("acceptance", {}),
-        "quality_filters": config.get("quality_filters", {}),
-    }
+    # Extras are optional but must be explicitly provided as dicts if needed
+    extras = {}
+
+    # Each extra section defaults to empty dict if not provided
+    for key in ["intraday_gate", "late_entry_penalty", "planner_precision", "acceptance", "quality_filters"]:
+        extras[key] = config.get(key, {})  # Empty dict for unused sections
 
     # Allow user overrides to update extras ONLY (strict knobs stay JSON-driven)
     if isinstance(user_overrides, dict):
@@ -589,14 +587,15 @@ def _compose_exits_and_size(
                     # Calculate volatility based on ATR as percentage of price
                     price_atr_ratio = (atr / price) * 100 if price > 0 and not np.isnan(atr) else 1.0
 
-                    # Define volatility thresholds
-                    low_vol_threshold = volatility_config.get('low_volatility_threshold', 0.5)   # 0.5% ATR/price
-                    high_vol_threshold = volatility_config.get('high_volatility_threshold', 2.0) # 2.0% ATR/price
+                    # Define volatility thresholds - must be explicitly configured
+                    # KeyError if missing volatility parameters
+                    low_vol_threshold = volatility_config['low_volatility_threshold']
+                    high_vol_threshold = volatility_config['high_volatility_threshold']
 
-                    # Volatility multipliers
-                    low_vol_mult = volatility_config.get('low_volatility_multiplier', 1.3)   # Increase size in low vol
-                    high_vol_mult = volatility_config.get('high_volatility_multiplier', 0.7)  # Decrease size in high vol
-                    normal_vol_mult = volatility_config.get('normal_volatility_multiplier', 1.0)
+                    # Volatility multipliers - must be explicitly configured
+                    low_vol_mult = volatility_config['low_volatility_multiplier']
+                    high_vol_mult = volatility_config['high_volatility_multiplier']
+                    normal_vol_mult = volatility_config['normal_volatility_multiplier']
 
                     # Apply volatility-based adjustment
                     if price_atr_ratio < low_vol_threshold:
@@ -749,7 +748,17 @@ def generate_trade_plan(
                 gap_pct = 100.0 * (first_open - pd_levels["PDC"]) / max(pd_levels["PDC"], 1e-9)
 
         regime = _regime(sess, cfg)
+        planning_logger = get_planning_logger()
+
         if not setup_candidates:
+            planning_logger.log_reject(
+                symbol,
+                "no_setup_candidates_provided",
+                timestamp=last_ts.isoformat() if last_ts is not None else None,
+                regime=regime,
+                orh=orh,
+                orl=orl
+            )
             return {
                 "eligible": False,
                 "reason": "no_setup_candidates",
@@ -761,6 +770,15 @@ def generate_trade_plan(
 
         if strat is None:
             logger.info(f"planner: {symbol} setup_rejected (regime={regime}, ORH={orh:.2f}, ORL={orl:.2f})")
+            planning_logger.log_reject(
+                symbol,
+                "setup_conditions_not_met",
+                timestamp=last_ts.isoformat() if last_ts is not None else None,
+                regime=regime,
+                orh=orh,
+                orl=orl,
+                setup_candidates_count=len(setup_candidates)
+            )
             return {
                 "eligible": False,
                 "reason": "setup_conditions_not_met",
@@ -769,7 +787,12 @@ def generate_trade_plan(
             }
 
         if strat["name"] == "no_setup":
-            logger.info(f"planner: {symbol} no_setup (regime={regime}, ORH={orh:.2f}, ORL={orl:.2f})")
+            logger.debug(f"planner: {symbol} no_setup (regime={regime}, ORH={orh:.2f}, ORL={orl:.2f})")
+            planning_logger.log_reject(symbol, "no_setup_detected", timestamp=last_ts.isoformat() if last_ts is not None else None,
+                                     strategy_type=str(strat["name"]) if strat["name"] is not None else None,
+                                     regime=str(regime) if regime is not None else None,
+                                     orh=float(orh) if orh is not None else None,
+                                     orl=float(orl) if orl is not None else None)
             return {
                 "eligible": False,
                 "reason": "no_setup_detected",
@@ -1005,7 +1028,36 @@ def generate_trade_plan(
                     if not plan["quality"]["t1_feasible"]:
                         plan["eligible"] = False
                         plan["quality"]["rejection_reason"] = "T1 not feasible"
-                        logger.info(f"planner: {symbol} rejected due to T1 not feasible")
+                        logger.debug(f"planner: {symbol} rejected due to T1 not feasible")
+                        t1_level = plan["targets"][0].get("level") if plan["targets"] else None
+                        entry_price = plan.get("entry_ref_price")
+                        planning_logger.log_reject(symbol, "T1_not_feasible",
+                                                 timestamp=last_ts.isoformat() if last_ts is not None else None,
+                                                 strategy_type=str(plan["strategy"]) if plan["strategy"] is not None else None,
+                                                 t1_orig=float(t1_level) if t1_level is not None else None,
+                                                 entry_ref_price=float(entry_price) if entry_price is not None else None)
+
+                    # Filter: T2 feasibility check (tiered approach)
+                    # If T2 is infeasible, reduce position size to 50% (T1-only scalp mode)
+                    if plan["eligible"] and not plan["quality"]["t2_feasible"]:
+                        t2_level = plan["targets"][1].get("level") if len(plan["targets"]) > 1 else None
+                        entry_price = plan.get("entry_ref_price")
+
+                        # Reduce position size for T1-only exits
+                        original_qty = plan["sizing"]["qty"]
+                        plan["sizing"]["qty"] = max(1, int(original_qty * 0.5))
+                        plan["quality"]["t2_exit_mode"] = "T1_only_scalp"
+
+                        logger.info(f"planner: {symbol} T2 not feasible - reducing qty {original_qty}->{plan['sizing']['qty']} (T1-only mode)")
+                        planning_logger.log_accept(symbol,
+                                                 strategy_type=plan["strategy"],
+                                                 timestamp=last_ts.isoformat() if last_ts is not None else None,
+                                                 bias=plan["bias"],
+                                                 qty=plan["sizing"]["qty"],
+                                                 t1_rr=plan["targets"][0]["rr"] if plan["targets"] else None,
+                                                 quality_status="T1_only_scalp",
+                                                 t2_orig=float(t2_level) if t2_level is not None else None,
+                                                 entry_ref_price=float(entry_price) if entry_price is not None else None)
 
                     # Filter: minimum target risk-reward ratios
                     if len(plan["targets"]) >= 2:
@@ -1015,7 +1067,11 @@ def generate_trade_plan(
                         if t1_rr < min_t1_rr:
                             plan["eligible"] = False
                             plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr:.1f} < {min_t1_rr}"
-                            logger.info(f"planner: {symbol} rejected due to low T1_rr {t1_rr:.1f}")
+                            logger.debug(f"planner: {symbol} rejected due to low T1_rr {t1_rr:.1f}")
+                            planning_logger.log_reject(symbol, "T1_rr_too_low", timestamp=last_ts.isoformat() if last_ts is not None else None,
+                                                     strategy_type=str(plan["strategy"]) if plan["strategy"] is not None else None,
+                                                     t1_rr=float(t1_rr) if t1_rr is not None else None,
+                                                     min_t1_rr=float(min_t1_rr) if min_t1_rr is not None else None)
 
                     # Filter: ADX requirement for breakout setups
                     if plan["eligible"] and "breakout" in plan["strategy"]:
@@ -1025,7 +1081,23 @@ def generate_trade_plan(
                         if current_adx < breakout_min_adx:
                             plan["eligible"] = False
                             plan["quality"]["rejection_reason"] = f"ADX {current_adx:.1f} < {breakout_min_adx} (breakout filter)"
-                            logger.info(f"planner: {symbol} rejected breakout setup due to low ADX {current_adx:.1f}")
+                            logger.debug(f"planner: {symbol} rejected breakout setup due to low ADX {current_adx:.1f}")
+                            planning_logger.log_reject(symbol, "ADX_filter", timestamp=last_ts.isoformat() if last_ts is not None else None,
+                                                     strategy_type=str(plan["strategy"]) if plan["strategy"] is not None else None,
+                                                     current_adx=float(current_adx) if current_adx is not None else None,
+                                                     min_adx=float(breakout_min_adx) if breakout_min_adx is not None else None)
+
+        # Log planning decision
+        if plan["eligible"]:
+            planning_logger.log_accept(symbol,
+                                     strategy_type=plan["strategy"],
+                                     timestamp=last_ts.isoformat() if last_ts is not None else None,
+                                     bias=plan["bias"],
+                                     qty=plan["sizing"]["qty"],
+                                     t1_rr=plan["targets"][0]["rr"] if plan["targets"] else None,
+                                     structural_rr=plan["quality"].get("structural_rr"),
+                                     entry_ref_price=plan.get("entry_ref_price"),
+                                     quality_status=plan["quality"].get("acceptance_status"))
 
         logger.info(
             f"planner.plan sym={symbol} eligible={plan['eligible']} "

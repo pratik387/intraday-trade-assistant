@@ -26,6 +26,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from config.logging_config import get_scanner_logger
+
 
 @dataclass
 class EnergyScanner:
@@ -298,6 +300,8 @@ class EnergyScanner:
         """Return balanced shortlist {'long': [...], 'short': [...]}.
         Uses the rank columns if present, otherwise scores directly.
         """
+        scanner_logger = get_scanner_logger()
+
         if features_df is None or features_df.empty:
             return {"long": [], "short": []}
         df = features_df.copy()
@@ -340,5 +344,40 @@ class EnergyScanner:
         # Combine final lists
         long_syms = momentum_long + mr_long
         short_syms = momentum_short + mr_short
+
+        # Log scanner decisions (accepts and rejects)
+        all_accepted = set(long_syms + short_syms)
+        for _, row in df.iterrows():
+            symbol = row['symbol']
+            if symbol in all_accepted:
+                # Determine if long or short
+                bias = "long" if symbol in long_syms else "short"
+                category = "momentum" if symbol in (momentum_long + momentum_short) else "mean_reversion"
+
+                scanner_logger.log_accept(
+                    symbol,
+                    bias=bias,
+                    category=category,
+                    timestamp=row.get('ts').isoformat() if row.get('ts') is not None else None,
+                    score_long=row.get('score_long', 0),
+                    score_short=row.get('score_short', 0),
+                    rank_long=row.get('rank_long', 0),
+                    rank_short=row.get('rank_short', 0),
+                    volume_z=row.get('vol_z20', 0),
+                    close=row.get('close', 0),
+                    ret_1=row.get('ret_1', 0)
+                )
+            else:
+                scanner_logger.log_reject(
+                    symbol,
+                    "not_shortlisted",
+                    score_long=row.get('score_long', 0),
+                    timestamp=row.get('ts').isoformat() if row.get('ts') is not None else None,
+                    score_short=row.get('score_short', 0),
+                    rank_long=row.get('rank_long', 0),
+                    rank_short=row.get('rank_short', 0),
+                    top_k_long=self.top_k_long,
+                    top_k_short=self.top_k_short
+                )
 
         return {"long": long_syms, "short": short_syms}

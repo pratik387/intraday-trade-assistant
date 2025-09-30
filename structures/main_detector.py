@@ -148,6 +148,21 @@ class MainDetector(BaseStructure):
 
         logger.info(f"MAIN_DETECTOR: Initialization complete with {len(self.detectors)} active detectors: {list(self.detectors.keys())}")
 
+    def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame,
+                     levels: Dict[str, float] | None = None) -> List[SetupCandidate]:
+        """
+        Primary interface for structure detection.
+
+        Args:
+            symbol: Trading symbol
+            df5m_tail: 5-minute dataframe
+            levels: Dict with ORH, ORL, PDH, PDL, PDC levels
+
+        Returns:
+            List of SetupCandidate objects ordered by strength
+        """
+        return self.detect_setups_comprehensive(symbol, df5m_tail, levels or {})
+
     def detect_setups_comprehensive(self, symbol: str, df: pd.DataFrame,
                                   levels: Dict[str, float]) -> List[SetupCandidate]:
         """
@@ -156,25 +171,29 @@ class MainDetector(BaseStructure):
         This is the main entry point for comprehensive structure detection.
         Returns SetupCandidate objects for the trading system.
         """
-        logger.debug(f"MAIN_DETECTOR: {symbol} starting comprehensive detection with {len(self.detectors)} detectors")
 
         try:
             if df is None or len(df) < 10:
                 logger.debug(f"MAIN_DETECTOR: {symbol} insufficient data (len={len(df) if df is not None else 0}) - EARLY RETURN")
                 return []
 
+            logger.debug(f"MAIN_DETECTOR: {symbol} data check passed, creating market context")
+
             # Create market context
             context = self._create_market_context(symbol, df, levels)
+            logger.debug(f"MAIN_DETECTOR: {symbol} market context created successfully")
 
             # Run all detectors
             all_detections = {}
             detection_stats = {}
 
+            logger.debug(f"MAIN_DETECTOR: {symbol} starting detector loop with {len(self.detectors)} detectors")
+
             for detector_name, detector in self.detectors.items():
                 try:
-                    logger.info(f"MAIN_DETECTOR: Running {detector_name} detector for {symbol}")
+                    logger.debug(f"MAIN_DETECTOR: Running {detector_name} detector for {symbol}")
                     analysis = detector.detect(context)
-                    logger.info(f"MAIN_DETECTOR: {detector_name} returned {len(analysis.events) if analysis.events else 0} events for {symbol}")
+                    logger.debug(f"MAIN_DETECTOR: {detector_name} returned {len(analysis.events) if analysis.events else 0} events for {symbol}")
 
                     if analysis.events:
                         all_detections[detector_name] = analysis
@@ -183,10 +202,10 @@ class MainDetector(BaseStructure):
                             'quality': analysis.quality_score,
                             'events': analysis.events
                         }
-                        logger.info(f"MAIN_DETECTOR: {detector_name} found {len(analysis.events)} events "
+                        logger.debug(f"MAIN_DETECTOR: {detector_name} found {len(analysis.events)} events "
                                   f"with quality {analysis.quality_score:.1f} for {symbol}")
                     else:
-                        logger.info(f"MAIN_DETECTOR: {detector_name} found no events for {symbol}")
+                        logger.debug(f"MAIN_DETECTOR: {detector_name} found no events for {symbol}")
                 except Exception as e:
                     logger.error(f"MAIN_DETECTOR: Error in {detector_name} for {symbol}: {e}")
 
@@ -197,7 +216,7 @@ class MainDetector(BaseStructure):
             setup_candidates = self._convert_to_setup_candidates(final_events, symbol)
 
             # Log summary
-            logger.info(f"MAIN_DETECTOR: {symbol} final result: {len(setup_candidates)} setups "
+            logger.debug(f"MAIN_DETECTOR: {symbol} final result: {len(setup_candidates)} setups "
                        f"from {len(all_detections)} active detectors")
 
             return setup_candidates
@@ -377,7 +396,7 @@ class MainDetector(BaseStructure):
                         reasons=reasons
                     ))
 
-                    logger.info(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
+                    logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
                                f"with confidence {event.confidence:.2f} for {symbol}")
                 else:
                     logger.warning(f"MAIN_DETECTOR: {symbol} no setup type mapping for '{event.structure_type}'")

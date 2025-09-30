@@ -266,7 +266,7 @@ class MockBroker:
         dirp = OUTPUT_BASE / key
         if not dirp.exists():
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-        files = sorted(dirp.glob(f"{key}_days_*.feather"), key=lambda p: p.stat().st_mtime)
+        files = sorted(dirp.glob(f"{key}_1days.feather"), key=lambda p: p.stat().st_mtime)
         if not files:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
         fp = files[-1]

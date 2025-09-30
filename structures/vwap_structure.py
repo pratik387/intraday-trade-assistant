@@ -56,15 +56,14 @@ class VWAPStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "vwap"
 
-        # CRITICAL CONFIGURATION VALIDATION - NO TRADING DEFAULTS
-        self._validate_required_config(config)
+        # KeyError if missing trading parameters
 
         # Mean reversion parameters
         self.min_distance_bps = config["min_distance_bps"]
         self.max_distance_bps = config["max_distance_bps"]
         self.require_oversold_rsi = config["require_oversold_rsi"]
-        self.oversold_rsi_threshold = config.get("oversold_rsi_threshold", 30)
-        self.overbought_rsi_threshold = config.get("overbought_rsi_threshold", 70)
+        self.oversold_rsi_threshold = config["oversold_rsi_threshold"]
+        self.overbought_rsi_threshold = config["overbought_rsi_threshold"]
 
         # VWAP reclaim parameters
         self.min_bars_above_vwap = config["min_bars_above_vwap"]
@@ -72,44 +71,21 @@ class VWAPStructure(BaseStructure):
         self.min_volume_mult = config["min_volume_mult"]
 
         # Risk management parameters
-        self.min_stop_distance_pct = config.get("min_stop_distance_pct", 0.5)
-        self.stop_distance_mult = config.get("stop_distance_mult", 0.75)
-        self.vwap_buffer_mult = config.get("vwap_buffer_mult", 0.2)
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]
+        self.stop_distance_mult = config["stop_distance_mult"]
+        self.vwap_buffer_mult = config["vwap_buffer_mult"]
 
         # Target parameters
-        self.target_mult_t1 = config.get("target_mult_t1", 1.0)
-        self.target_mult_t2 = config.get("target_mult_t2", 1.5)
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
 
         # Confidence scoring
-        self.confidence_strong_signal = config.get("confidence_strong_signal", 0.8)
-        self.confidence_weak_signal = config.get("confidence_weak_signal", 0.6)
+        self.confidence_strong_signal = config["confidence_strong_signal"]
+        self.confidence_weak_signal = config["confidence_weak_signal"]
 
         logger.info(f"VWAP: Initialized with mean reversion distance: {self.min_distance_bps}-{self.max_distance_bps} bps")
         logger.info(f"VWAP: Reclaim requirements - bars above: {self.min_bars_above_vwap}, volume conf: {self.reclaim_volume_confirmation}")
 
-    def _validate_required_config(self, config: Dict[str, Any]) -> None:
-        """Validate that all required trading parameters are provided."""
-        required_fields = [
-            "min_distance_bps",
-            "max_distance_bps",
-            "require_oversold_rsi",
-            "min_bars_above_vwap",
-            "reclaim_volume_confirmation",
-            "min_volume_mult"
-        ]
-
-        for field in required_fields:
-            if field not in config:
-                raise ValueError(f"VWAP: {field} must be provided in config - no trading defaults allowed")
-
-        # Validate ranges
-        if config["min_distance_bps"] >= config["max_distance_bps"]:
-            raise ValueError(f"VWAP: min_distance_bps ({config['min_distance_bps']}) must be < max_distance_bps ({config['max_distance_bps']})")
-
-        if config["min_bars_above_vwap"] < 1:
-            raise ValueError(f"VWAP: min_bars_above_vwap must be >= 1, got {config['min_bars_above_vwap']}")
-
-        logger.info(f"VWAP: Configuration validation passed for all {len(required_fields)} required parameters")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect VWAP-based structures in the market context."""
@@ -150,7 +126,7 @@ class VWAPStructure(BaseStructure):
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No VWAP setups detected"
 
-            logger.info(f"VWAP: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}")
+            logger.debug(f"VWAP: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}")
 
             return StructureAnalysis(
                 structure_detected=structure_detected,
@@ -304,7 +280,7 @@ class VWAPStructure(BaseStructure):
                 )
                 events.append(event)
 
-                logger.info(f"VWAP: {context.symbol} - Mean reversion LONG detected: distance {vwap_info.price_distance_bps:.1f} bps, confidence {strength:.2f}")
+                logger.debug(f"VWAP: {context.symbol} - Mean reversion LONG detected: distance {vwap_info.price_distance_bps:.1f} bps, confidence {strength:.2f}")
 
         # Mean reversion short (price above VWAP)
         elif current_price > vwap_info.current_vwap:
@@ -342,7 +318,7 @@ class VWAPStructure(BaseStructure):
                 )
                 events.append(event)
 
-                logger.info(f"VWAP: {context.symbol} - Mean reversion SHORT detected: distance {vwap_info.price_distance_bps:.1f} bps, confidence {strength:.2f}")
+                logger.debug(f"VWAP: {context.symbol} - Mean reversion SHORT detected: distance {vwap_info.price_distance_bps:.1f} bps, confidence {strength:.2f}")
 
         return events, quality_score
 
@@ -389,7 +365,7 @@ class VWAPStructure(BaseStructure):
             )
             events.append(event)
 
-            logger.info(f"VWAP: {context.symbol} - VWAP reclaim LONG detected: {vwap_info.above_vwap_bars} bars above, confidence {strength:.2f}")
+            logger.debug(f"VWAP: {context.symbol} - VWAP reclaim LONG detected: {vwap_info.above_vwap_bars} bars above, confidence {strength:.2f}")
 
         return events, quality_score
 
@@ -436,7 +412,7 @@ class VWAPStructure(BaseStructure):
             )
             events.append(event)
 
-            logger.info(f"VWAP: {context.symbol} - VWAP lose SHORT detected: {vwap_info.below_vwap_bars} bars below, confidence {strength:.2f}")
+            logger.debug(f"VWAP: {context.symbol} - VWAP lose SHORT detected: {vwap_info.below_vwap_bars} bars below, confidence {strength:.2f}")
 
         return events, quality_score
 

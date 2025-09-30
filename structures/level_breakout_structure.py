@@ -33,55 +33,35 @@ class LevelBreakoutStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "level_breakout"
 
-        # Validate required configuration
-        self._validate_required_config(config)
+        # KeyError if missing trading parameters
 
         # Breakout parameters
+        # Required parameters (already validated)
         self.k_atr = config["k_atr"]
-        self.min_breakout_atr_mult = config.get("min_breakout_atr_mult", 0.3)
         self.hold_bars = config["hold_bars"]
         self.vol_z_required = config["vol_z_required"]
 
-        # Volume surge parameters
-        self.require_breakout_bar_volume_surge = config.get("require_breakout_bar_volume_surge", True)
-        self.breakout_volume_min_ratio = config.get("breakout_volume_min_ratio", 1.4)
-
-        # SMC (Smart Money Concepts) parameters
-        self.enable_smc_filtering = config.get("enable_smc_filtering", True)
-        self.liquidity_grab_tolerance_pct = config.get("liquidity_grab_tolerance_pct", 0.1)
-
-        # Risk management
-        self.target_mult_t1 = config.get("target_mult_t1", 1.5)
-        self.target_mult_t2 = config.get("target_mult_t2", 2.5)
-        self.confidence_strong_breakout = config.get("confidence_strong_breakout", 0.85)
-        self.confidence_weak_breakout = config.get("confidence_weak_breakout", 0.65)
+        # KeyError if missing optional trading parameters
+        self.min_breakout_atr_mult = config["min_breakout_atr_mult"]
+        self.require_breakout_bar_volume_surge = config["require_breakout_bar_volume_surge"]
+        self.breakout_volume_min_ratio = config["breakout_volume_min_ratio"]
+        self.enable_smc_filtering = config["enable_smc_filtering"]
+        self.liquidity_grab_tolerance_pct = config["liquidity_grab_tolerance_pct"]
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
+        self.confidence_strong_breakout = config["confidence_strong_breakout"]
+        self.confidence_weak_breakout = config["confidence_weak_breakout"]
 
         logger.debug(f"LEVEL_BREAKOUT: Initialized with k_atr: {self.k_atr}, hold_bars: {self.hold_bars}, vol_z_required: {self.vol_z_required}")
 
-    def _validate_required_config(self, config: Dict[str, Any]) -> None:
-        """Validate required configuration parameters."""
-        required_fields = ["k_atr", "hold_bars", "vol_z_required"]
-
-        for field in required_fields:
-            if field not in config:
-                raise ValueError(f"LEVEL_BREAKOUT: {field} must be provided in config - no trading defaults allowed")
-
-        if config["k_atr"] <= 0:
-            raise ValueError(f"LEVEL_BREAKOUT: k_atr must be > 0, got {config['k_atr']}")
-        if config["hold_bars"] <= 0:
-            raise ValueError(f"LEVEL_BREAKOUT: hold_bars must be > 0, got {config['hold_bars']}")
-        if config["vol_z_required"] <= 0:
-            raise ValueError(f"LEVEL_BREAKOUT: vol_z_required must be > 0, got {config['vol_z_required']}")
-
-        logger.info(f"LEVEL_BREAKOUT: Configuration validation passed")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect level breakout structures."""
-        logger.info(f"LEVEL_BREAKOUT_DETECTOR: Starting detection for {context.symbol}")
+        logger.debug(f"LEVEL_BREAKOUT_DETECTOR: Starting detection for {context.symbol}")
         try:
             df = context.df_5m
             if len(df) < max(5, self.hold_bars + 1):
-                logger.info(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} insufficient data (len={len(df)})")
+                logger.debug(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} insufficient data (len={len(df)})")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -96,10 +76,9 @@ class LevelBreakoutStructure(BaseStructure):
 
             events = []
             levels = self._get_available_levels(context)
-            logger.info(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} checking levels: {list(levels.keys()) if levels else 'None'}")
 
             if not levels:
-                logger.info(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} no levels available")
+                logger.debug(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} no levels available")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -135,7 +114,7 @@ class LevelBreakoutStructure(BaseStructure):
                         events.append(breakdown_event)
 
             quality_score = self._calculate_quality_score(events, vol_z_current) if events else 0.0
-            logger.info(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} detection complete - found {len(events)} events, quality: {quality_score:.2f}")
+            logger.debug(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} detection complete - found {len(events)} events, quality: {quality_score:.2f}")
 
             return StructureAnalysis(
                 structure_detected=len(events) > 0,

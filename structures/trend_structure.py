@@ -51,44 +51,31 @@ class TrendStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "trend"
 
-        # CRITICAL CONFIGURATION VALIDATION
-        self._validate_required_config(config)
+        # KeyError if missing trading parameters
 
         # Trend detection parameters
         self.min_trend_strength = config["min_trend_strength"]
-        self.min_trend_bars = config.get("min_trend_bars", 10)
-        self.max_pullback_pct = config.get("max_pullback_pct", 50.0)
-        self.min_pullback_pct = config.get("min_pullback_pct", 20.0)
+        self.min_trend_bars = config["min_trend_bars"]
+        self.max_pullback_pct = config["max_pullback_pct"]
+        self.min_pullback_pct = config["min_pullback_pct"]
 
         # Volume and momentum requirements
-        self.require_volume_confirmation = config.get("require_volume_confirmation", True)
-        self.min_volume_mult = config.get("min_volume_mult", 1.2)
-        self.min_momentum_score = config.get("min_momentum_score", 60.0)
+        self.require_volume_confirmation = config["require_volume_confirmation"]
+        self.min_volume_mult = config["min_volume_mult"]
+        self.min_momentum_score = config["min_momentum_score"]
 
         # Risk management
-        self.min_stop_distance_pct = config.get("min_stop_distance_pct", 0.5)
-        self.stop_distance_mult = config.get("stop_distance_mult", 1.0)
-        self.target_mult_t1 = config.get("target_mult_t1", 1.5)
-        self.target_mult_t2 = config.get("target_mult_t2", 2.5)
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]
+        self.stop_distance_mult = config["stop_distance_mult"]
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
 
         # Confidence levels
-        self.confidence_strong_trend = config.get("confidence_strong_trend", 0.85)
-        self.confidence_weak_trend = config.get("confidence_weak_trend", 0.65)
+        self.confidence_strong_trend = config["confidence_strong_trend"]
+        self.confidence_weak_trend = config["confidence_weak_trend"]
 
         logger.info(f"TREND: Initialized with min strength: {self.min_trend_strength}, pullback range: {self.min_pullback_pct}-{self.max_pullback_pct}%")
 
-    def _validate_required_config(self, config: Dict[str, Any]) -> None:
-        """Validate required configuration parameters."""
-        required_fields = ["min_trend_strength"]
-
-        for field in required_fields:
-            if field not in config:
-                raise ValueError(f"TREND: {field} must be provided in config - no trading defaults allowed")
-
-        if config["min_trend_strength"] <= 0:
-            raise ValueError(f"TREND: min_trend_strength must be > 0, got {config['min_trend_strength']}")
-
-        logger.info(f"TREND: Configuration validation passed")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect trend-based structures."""
@@ -119,7 +106,7 @@ class TrendStructure(BaseStructure):
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No trend setups detected"
 
-            logger.info(f"TREND: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}")
+            logger.debug(f"TREND: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}")
 
             return StructureAnalysis(
                 structure_detected=structure_detected,
@@ -254,15 +241,15 @@ class TrendStructure(BaseStructure):
             volume_ok = self._check_volume_confirmation(context)
 
         if volume_ok and trend_info.momentum_score >= self.min_momentum_score:
-            confidence = self._calculate_institutional_strength(context, trend_info, "pullback", side, volume_ok)
-            quality_score = min(95.0, trend_info.trend_quality + (confidence * 15))
-
             if trend_info.trend_direction == "up":
                 structure_type = "trend_pullback_long"
                 side = "long"
             else:
                 structure_type = "trend_pullback_short"
                 side = "short"
+
+            confidence = self._calculate_institutional_strength(context, trend_info, "pullback", side, volume_ok)
+            quality_score = min(95.0, trend_info.trend_quality + (confidence * 15))
 
             event = StructureEvent(
                 symbol=context.symbol,
@@ -282,7 +269,7 @@ class TrendStructure(BaseStructure):
             )
             events.append(event)
 
-            logger.info(f"TREND: {context.symbol} - Trend pullback {side.upper()} detected: {trend_info.trend_direction} trend, {trend_info.pullback_depth_pct:.1f}% pullback")
+            logger.debug(f"TREND: {context.symbol} - Trend pullback {side.upper()} detected: {trend_info.trend_direction} trend, {trend_info.pullback_depth_pct:.1f}% pullback")
 
         return events, quality_score
 
@@ -302,15 +289,15 @@ class TrendStructure(BaseStructure):
         volume_ok = self._check_volume_confirmation(context)
 
         if volume_ok and trend_info.momentum_score >= self.min_momentum_score + 10:  # Higher threshold for continuation
-            confidence = self._calculate_institutional_strength(context, trend_info, "continuation", side, volume_ok)
-            quality_score = min(90.0, trend_info.trend_quality + (confidence * 10))
-
             if trend_info.trend_direction == "up":
                 structure_type = "trend_continuation_long"
                 side = "long"
             else:
                 structure_type = "trend_continuation_short"
                 side = "short"
+
+            confidence = self._calculate_institutional_strength(context, trend_info, "continuation", side, volume_ok)
+            quality_score = min(90.0, trend_info.trend_quality + (confidence * 10))
 
             event = StructureEvent(
                 symbol=context.symbol,
@@ -562,7 +549,7 @@ class TrendStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.6)  # Strong minimum for trend patterns
 
-            logger.info(f"TREND: {context.symbol} {side} {setup_type} - Base: {base_strength:.2f}, "
+            logger.debug(f"TREND: {context.symbol} {side} {setup_type} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

@@ -25,11 +25,9 @@ START_DATE = "2025-07-01"   # YYYY-MM-DD
 END_DATE   = "2025-07-02"   # YYYY-MM-DD (inclusive)
 MAIN_PATH  = ROOT / "main.py"
 
-# Load time windows from config to respect time_window_block
-config = load_filters()
-time_windows = config.get("time_windows", {})
-FROM_HHMM = time_windows.get("morning_start", "09:10")  # Start at first trading window
-TO_HHMM = time_windows.get("afternoon_end", "15:30")    # End at last trading window
+# Hardcoded time windows for engine runs
+FROM_HHMM = "09:25"  # Morning trading start
+TO_HHMM = "15:15"    # Afternoon trading end
 
 # parallelism: 2–4 is usually safe
 MAX_WORKERS = 5
@@ -178,9 +176,10 @@ def _process_run_sessions(run_prefix: str) -> int:
         try:
             import subprocess
             import sys
+            print(f"[+] Starting comprehensive analysis (timeout: 300s)...")
             result = subprocess.run([
                 sys.executable, "comprehensive_run_analyzer.py", run_prefix
-            ], capture_output=True, text=True, cwd=str(ROOT))
+            ], capture_output=True, text=True, cwd=str(ROOT), timeout=300)
 
             if result.returncode == 0:
                 print(f"[+] Comprehensive analysis completed successfully")
@@ -188,8 +187,10 @@ def _process_run_sessions(run_prefix: str) -> int:
                     print(f"[+] Analysis output: {result.stdout.strip()}")
             else:
                 print(f"[!] Comprehensive analysis failed: {result.stderr.strip()}")
+        except subprocess.TimeoutExpired:
+            print(f"[!] Comprehensive analysis timed out after 300 seconds - skipping")
         except Exception as e:
-            print(f"[!] Failed to run comprehensive analysis: {e}")
+            print(f"[!] Comprehensive analysis error: {e}")
 
     return processed_count
 

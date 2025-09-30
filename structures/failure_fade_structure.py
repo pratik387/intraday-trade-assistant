@@ -32,20 +32,16 @@ class FailureFadeStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "failure_fade"
 
-        # Basic failure fade parameters
-        self.min_pierce_size_pct = config.get("min_pierce_size_pct", 0.1)  # Minimum pierce size
-        self.max_pierce_size_pct = config.get("max_pierce_size_pct", 1.0)  # Maximum pierce size
-        self.fade_confirmation_bars = config.get("fade_confirmation_bars", 1)  # Bars to confirm fade
-
-        # Volume and strength parameters
-        self.require_volume_confirmation = config.get("require_volume_confirmation", False)
-        self.min_volume_mult = config.get("min_volume_mult", 1.2)
-        self.min_fade_strength = config.get("min_fade_strength", 0.3)  # Minimum fade back strength
-
-        # Risk management
-        self.target_mult_t1 = config.get("target_mult_t1", 1.0)
-        self.target_mult_t2 = config.get("target_mult_t2", 2.0)
-        self.stop_mult = config.get("stop_mult", 1.5)  # Stop loss multiplier
+        # KeyError if missing trading parameters
+        self.min_pierce_size_pct = config["min_pierce_size_pct"]
+        self.max_pierce_size_pct = config["max_pierce_size_pct"]
+        self.fade_confirmation_bars = config["fade_confirmation_bars"]
+        self.require_volume_confirmation = config["require_volume_confirmation"]
+        self.min_volume_mult = config["min_volume_mult"]
+        self.min_fade_strength = config["min_fade_strength"]
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
+        self.stop_mult = config["stop_mult"]
         # Removed deprecated confidence parameters - now using institutional strength calculations
 
         logger.debug(f"FAILURE_FADE: Initialized with pierce range: {self.min_pierce_size_pct}-{self.max_pierce_size_pct}%, confirmation: {self.fade_confirmation_bars} bars")
@@ -530,7 +526,7 @@ class FailureFadeStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.5)  # Minimum viable strength
 
-            logger.info(f"FAILURE_FADE: {context.symbol} {side} - Base: {base_strength:.2f}, "
+            logger.debug(f"FAILURE_FADE: {context.symbol} {side} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

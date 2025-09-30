@@ -33,46 +33,31 @@ class SqueezeReleaseStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "squeeze_release"
 
-        # Validate required configuration
-        self._validate_required_config(config)
+        # KeyError if missing trading parameters
 
         # Squeeze detection parameters
         self.width_window = config["width_window"]
         self.expansion_ratio = config["expansion_ratio"]
-        self.width_calculation_period = config.get("width_calculation_period", 20)
-        self.recent_width_bars = config.get("recent_width_bars", 5)
+        self.width_calculation_period = config["width_calculation_period"]
+        self.recent_width_bars = config["recent_width_bars"]
 
         # Momentum parameters
-        self.momentum_period = config.get("momentum_period", 3)
-        self.min_momentum_threshold = config.get("min_momentum_threshold", 0.001)  # 0.1%
+        self.momentum_period = config["momentum_period"]
+        self.min_momentum_threshold = config["min_momentum_threshold"]
 
         # Volume confirmation
-        self.require_volume_confirmation = config.get("require_volume_confirmation", True)
-        self.min_volume_mult = config.get("min_volume_mult", 1.5)
+        self.require_volume_confirmation = config["require_volume_confirmation"]
+        self.min_volume_mult = config["min_volume_mult"]
 
         # Risk management
-        self.target_mult_t1 = config.get("target_mult_t1", 1.5)
-        self.target_mult_t2 = config.get("target_mult_t2", 2.5)
-        self.stop_mult = config.get("stop_mult", 1.0)
-        self.confidence_strong_expansion = config.get("confidence_strong_expansion", 0.8)
-        self.confidence_weak_expansion = config.get("confidence_weak_expansion", 0.6)
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
+        self.stop_mult = config["stop_mult"]
+        self.confidence_strong_expansion = config["confidence_strong_expansion"]
+        self.confidence_weak_expansion = config["confidence_weak_expansion"]
 
         logger.debug(f"SQUEEZE_RELEASE: Initialized with width_window: {self.width_window}, expansion_ratio: {self.expansion_ratio}")
 
-    def _validate_required_config(self, config: Dict[str, Any]) -> None:
-        """Validate required configuration parameters."""
-        required_fields = ["width_window", "expansion_ratio"]
-
-        for field in required_fields:
-            if field not in config:
-                raise ValueError(f"SQUEEZE_RELEASE: {field} must be provided in config - no trading defaults allowed")
-
-        if config["width_window"] <= 10:
-            raise ValueError(f"SQUEEZE_RELEASE: width_window must be > 10, got {config['width_window']}")
-        if config["expansion_ratio"] <= 1.0:
-            raise ValueError(f"SQUEEZE_RELEASE: expansion_ratio must be > 1.0, got {config['expansion_ratio']}")
-
-        logger.info(f"SQUEEZE_RELEASE: Configuration validation passed")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect squeeze release structures."""
@@ -135,8 +120,11 @@ class SqueezeReleaseStructure(BaseStructure):
             structure_type = "squeeze_release_long" if momentum_direction == "long" else "squeeze_release_short"
             side = momentum_direction
 
+            # Get volume information for strength calculation
+            vol_z = df.get('vol_z', pd.Series([1.0])).iloc[-1] if 'vol_z' in df.columns else 1.0
+
             # Calculate confidence based on expansion strength
-            confidence = self._calculate_institutional_strength(context, expansion_ratio_actual, momentum, vol_z, direction)
+            confidence = self._calculate_institutional_strength(context, expansion_ratio_actual, momentum, vol_z, momentum_direction)
 
             event = StructureEvent(
                 symbol=context.symbol,
@@ -156,7 +144,7 @@ class SqueezeReleaseStructure(BaseStructure):
 
             events.append(event)
 
-            logger.info(f"SQUEEZE_RELEASE: {context.symbol} - {structure_type} detected with expansion ratio: {expansion_ratio_actual:.2f}, momentum: {momentum:.4f}")
+            logger.debug(f"SQUEEZE_RELEASE: {context.symbol} - {structure_type} detected with expansion ratio: {expansion_ratio_actual:.2f}, momentum: {momentum:.4f}")
 
             quality_score = self._calculate_quality_score(expansion_ratio_actual, abs(momentum), df)
 
@@ -428,7 +416,7 @@ class SqueezeReleaseStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.7)  # Strong minimum for squeeze patterns
 
-            logger.info(f"SQUEEZE: {context.symbol} {direction} - Base: {base_strength:.2f}, "
+            logger.debug(f"SQUEEZE: {context.symbol} {direction} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

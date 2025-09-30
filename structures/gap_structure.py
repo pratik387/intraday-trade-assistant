@@ -32,15 +32,15 @@ class GapStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "gap"
 
-        # Gap parameters
-        self.min_gap_pct = config.get("min_gap_pct", 0.3)
-        self.max_gap_pct = config.get("max_gap_pct", 2.5)
-        self.require_volume_confirmation = config.get("require_volume_confirmation", True)
+        # Gap parameters - will crash with KeyError if missing
+        self.min_gap_pct = config["min_gap_pct"]
+        self.max_gap_pct = config["max_gap_pct"]
+        self.require_volume_confirmation = config["require_volume_confirmation"]
 
-        # Risk management
-        self.target_mult_t1 = config.get("target_mult_t1", 1.0)
-        self.target_mult_t2 = config.get("target_mult_t2", 1.5)
-        self.confidence_level = config.get("confidence_level", 0.75)
+        # Risk management - will crash with KeyError if missing
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
+        self.confidence_level = config["confidence_level"]
 
         logger.debug(f"GAP: Initialized with gap range: {self.min_gap_pct}-{self.max_gap_pct}%")
 
@@ -97,7 +97,7 @@ class GapStructure(BaseStructure):
                     )
                     events.append(event)
 
-                    logger.info(f"GAP: {context.symbol} - {structure_type} detected: {gap_pct:.1f}% gap")
+                    logger.debug(f"GAP: {context.symbol} - {structure_type} detected: {gap_pct:.1f}% gap")
 
             return StructureAnalysis(
                 structure_detected=len(events) > 0,
@@ -245,7 +245,7 @@ class GapStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.7)  # Strong minimum for gap patterns
 
-            logger.info(f"GAP: {context.symbol} {side} - Base: {base_strength:.2f}, "
+            logger.debug(f"GAP: {context.symbol} {side} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

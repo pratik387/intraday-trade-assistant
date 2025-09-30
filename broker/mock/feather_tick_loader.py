@@ -46,7 +46,7 @@ class FeatherTickLoader:
                 cands += glob.glob(os.path.join(d, "*.feather"))
         if not cands:
             return None
-        five = [p for p in cands if "_minutes_" in os.path.basename(p).lower()]
+        five = [p for p in cands if "_1minutes" in os.path.basename(p).lower()]
         pool = five or cands
         pool.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         return pool[0]

@@ -33,8 +33,7 @@ class FlagContinuationStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "flag_continuation"
 
-        # Validate required configuration
-        self._validate_required_config(config)
+        # KeyError if missing trading parameters
 
         # Flag pattern parameters
         self.min_consolidation_bars = config["min_consolidation_bars"]
@@ -42,39 +41,23 @@ class FlagContinuationStructure(BaseStructure):
         self.min_trend_strength = config["min_trend_strength"]  # Percentage
 
         # Pattern recognition parameters
-        self.trend_lookback_period = config.get("trend_lookback_period", 10)
-        self.max_consolidation_range_pct = config.get("max_consolidation_range_pct", 2.0)  # 2% max range
-        self.breakout_confirmation_pct = config.get("breakout_confirmation_pct", 0.1)  # 0.1% confirmation
+        self.trend_lookback_period = config["trend_lookback_period"]
+        self.max_consolidation_range_pct = config["max_consolidation_range_pct"]
+        self.breakout_confirmation_pct = config["breakout_confirmation_pct"]
 
         # Volume confirmation
-        self.require_volume_confirmation = config.get("require_volume_confirmation", True)
-        self.min_volume_mult = config.get("min_volume_mult", 1.5)
+        self.require_volume_confirmation = config["require_volume_confirmation"]
+        self.min_volume_mult = config["min_volume_mult"]
 
         # Risk management
-        self.target_mult_t1 = config.get("target_mult_t1", 1.5)
-        self.target_mult_t2 = config.get("target_mult_t2", 2.5)
-        self.stop_mult = config.get("stop_mult", 1.0)
-        self.confidence_strong_flag = config.get("confidence_strong_flag", 0.85)
-        self.confidence_weak_flag = config.get("confidence_weak_flag", 0.65)
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
+        self.stop_mult = config["stop_mult"]
+        self.confidence_strong_flag = config["confidence_strong_flag"]
+        self.confidence_weak_flag = config["confidence_weak_flag"]
 
         logger.info(f"FLAG_CONTINUATION: Initialized with consolidation: {self.min_consolidation_bars}-{self.max_consolidation_bars} bars, trend strength: {self.min_trend_strength}%")
 
-    def _validate_required_config(self, config: Dict[str, Any]) -> None:
-        """Validate required configuration parameters."""
-        required_fields = ["min_consolidation_bars", "max_consolidation_bars", "min_trend_strength"]
-
-        for field in required_fields:
-            if field not in config:
-                raise ValueError(f"FLAG_CONTINUATION: {field} must be provided in config - no trading defaults allowed")
-
-        if config["min_consolidation_bars"] < 3:
-            raise ValueError(f"FLAG_CONTINUATION: min_consolidation_bars must be >= 3, got {config['min_consolidation_bars']}")
-        if config["max_consolidation_bars"] <= config["min_consolidation_bars"]:
-            raise ValueError(f"FLAG_CONTINUATION: max_consolidation_bars must be > min_consolidation_bars")
-        if config["min_trend_strength"] <= 0:
-            raise ValueError(f"FLAG_CONTINUATION: min_trend_strength must be > 0, got {config['min_trend_strength']}")
-
-        logger.info(f"FLAG_CONTINUATION: Configuration validation passed")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect flag continuation structures."""
@@ -142,7 +125,7 @@ class FlagContinuationStructure(BaseStructure):
                 )
 
                 events.append(event)
-                logger.info(f"FLAG_CONTINUATION: {context.symbol} - {structure_type} detected: trend {trend_strength_pct:.2f}%, consol {consol_period} bars")
+                logger.debug(f"FLAG_CONTINUATION: {context.symbol} - {structure_type} detected: trend {trend_strength_pct:.2f}%, consol {consol_period} bars")
 
                 # Only return the first (best) pattern found
                 break
@@ -315,7 +298,7 @@ class FlagContinuationStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.7)  # Strong minimum for flag patterns
 
-            logger.info(f"FLAG: {context.symbol} {side} - Base: {base_strength:.2f}, "
+            logger.debug(f"FLAG: {context.symbol} {side} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

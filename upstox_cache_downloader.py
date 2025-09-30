@@ -1,7 +1,14 @@
 """
-Downloads 5-minute historical candles from Upstox for Jan 1, 2023 to Aug 13, 2025.
-Assumes the Upstox Historical API is open and does not require authentication.
-Uses instrument keys per symbol (filtered to match NSE list in cache) and saves to feather files for backtesting.
+Generic Upstox Historical Data Downloader
+
+Downloads historical candles from Upstox for configurable date ranges and timeframes.
+Supports both single date ranges and multiple discrete date ranges.
+Downloads both minutes and daily data in separate files for backtesting.
+
+Usage:
+    python upstox_cache_downloader.py                    # Download both 1m and 1d data (default)
+    python upstox_cache_downloader.py --data-type daily  # Download only daily data
+    python upstox_cache_downloader.py --data-type minute # Download only minute data
 
 ⚠️ Upstox Rate Limit Guidance:
 - Max ~25 requests/second for historical endpoints.
@@ -13,17 +20,47 @@ import os
 import json
 import requests
 import pandas as pd
+import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
-# --- Constants ---
-START_DATE = "2025-07-01"
-END_DATE = "2025-09-15"
-INTERVAL = "1"
-INTERVAL_UNIT = "days"  # "minutes", "days", "weeks", "hours"
-MAX_WORKERS = 5
+# --- Configuration ---
+# 6 distinct market regimes for structure evaluation
+# DATE_RANGES = [
+#     {"name": "Strong_Uptrend", "start_date": "2023-12-01", "end_date": "2023-12-31"},
+#     {"name": "Shock_Down", "start_date": "2024-01-01", "end_date": "2024-01-31"},
+#     {"name": "Event_Driven_HighVol", "start_date": "2024-06-01", "end_date": "2024-06-30"},
+#     {"name": "Correction_RiskOff", "start_date": "2024-10-01", "end_date": "2024-10-31"},
+#     {"name": "Prolonged_Drawdown", "start_date": "2025-02-01", "end_date": "2025-02-28"},
+#     {"name": "Low_Vol_Range", "start_date": "2025-07-01", "end_date": "2025-07-31"}
+# ]
+
+DATE_RANGES = [{"name": "Strong_Uptrend", "start_date": "2023-01-01", "end_date": "2025-09-26"},
+]
+
+# Timeframes to download (must match Upstox API requirements)
+# URL format: /historical-candle/{instrument_key}/{interval_unit}/{interval}/{to_date}/{from_date}
+# Valid interval_units: "minutes", "days", "weeks", "months" (plural form - corrected based on API error)
+# Valid intervals: 1, 3, 5, 10, 15, 30, 60 (for minutes), 1 (for days/weeks/months)
+
+# Available timeframe options
+TIMEFRAME_OPTIONS = {
+    "minute": [{"interval": "1", "unit": "minutes"}],     # 1-minute candles -> 1minutes
+    "daily": [{"interval": "1", "unit": "days"}],         # Daily candles -> 1days
+    "both": [
+        {"interval": "1", "unit": "minutes"},             # 1-minute candles -> 1minutes
+        {"interval": "1", "unit": "days"}                 # Daily candles -> 1days
+    ]
+    # Other available options:
+    # {"interval": "5", "unit": "minutes"},   # 5-minute candles -> 5minutes
+    # {"interval": "15", "unit": "minutes"},  # 15-minute candles -> 15minutes
+    # {"interval": "30", "unit": "minutes"},  # 30-minute candles -> 30minutes
+    # {"interval": "60", "unit": "minutes"},  # 1-hour candles -> 60minutes
+}
+
+MAX_WORKERS = 8
 
 # --- Output Path ---
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,7 +108,8 @@ def load_instrument_map_ndjson(ndjson_path: str):
             if symbol_ns in allowed_symbols:
                 instrument_map[symbol_ns] = item["instrument_key"]
 
-        except Exception:
+        except Exception as e:
+            print(f"Error processing item: {e}")
             continue
 
     # Save filtered map for reuse
@@ -80,24 +118,49 @@ def load_instrument_map_ndjson(ndjson_path: str):
 
     return instrument_map
 
+# --- Metadata Management ---
+def load_metadata(metadata_path):
+    """Load existing metadata or return empty structure"""
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, Exception) as e:
+            # Corrupted metadata file - remove and start fresh
+            print(f"⚠️ Corrupted metadata file detected: {metadata_path}, resetting: {e}")
+            metadata_path.unlink()  # Remove corrupted file
+    return {"downloaded_ranges": [], "last_updated": None}
+
+def save_metadata(metadata_path, metadata):
+    """Save metadata to file"""
+    metadata["last_updated"] = datetime.now().isoformat()
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+def is_range_downloaded(metadata, date_range):
+    """Check if date range already exists in metadata"""
+    start_date = date_range["start_date"]
+    end_date = date_range["end_date"]
+
+    for existing_range in metadata["downloaded_ranges"]:
+        if existing_range["start_date"] == start_date and existing_range["end_date"] == end_date:
+            return True
+    return False
+
 # --- API Call ---
-def fetch_upstox_data(symbol: str, instrument_key: str, max_retries=3):
-    start_date = datetime.strptime(START_DATE, "%Y-%m-%d")
-    end_date = datetime.strptime(END_DATE, "%Y-%m-%d")
+def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timeframe: dict, max_retries=3):
+    start_date = datetime.strptime(date_range["start_date"], "%Y-%m-%d")
+    end_date = datetime.strptime(date_range["end_date"], "%Y-%m-%d")
     all_chunks = []
 
-    while start_date < end_date:
-        chunk_start = start_date
-        chunk_end = chunk_start + timedelta(days=28)
-        if chunk_end > end_date:
-            chunk_end = end_date
-
-        chunk_start_str = chunk_start.strftime("%Y-%m-%d")
-        chunk_end_str = chunk_end.strftime("%Y-%m-%d")
+    # For daily data, API supports up to decade in single call - no chunking needed
+    if timeframe['unit'] == 'days':
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
 
         url = (
             f"https://api.upstox.com/v3/historical-candle/"
-            f"{instrument_key}/{INTERVAL_UNIT}/{INTERVAL}/{chunk_end_str}/{chunk_start_str}"
+            f"{instrument_key}/{timeframe['unit']}/{timeframe['interval']}/{end_date_str}/{start_date_str}"
         )
 
         for attempt in range(1, max_retries + 1):
@@ -105,12 +168,12 @@ def fetch_upstox_data(symbol: str, instrument_key: str, max_retries=3):
                 resp = requests.get(url, headers=HEADERS)
                 if resp.status_code == 429:
                     wait = 2 ** attempt
-                    print(f"\u23f3 {symbol}: Rate limited. Retrying in {wait}s...")
+                    print(f"\u23f3 {symbol} {timeframe['interval']}{timeframe['unit']}: Rate limited. Retrying in {wait}s...")
                     time.sleep(wait)
                     continue
 
                 if resp.status_code == 400:
-                    return f"\u274c {symbol}: 400 Bad Request"
+                    return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: 400 Bad Request"
 
                 resp.raise_for_status()
                 candles = resp.json()["data"].get("candles", [])
@@ -121,12 +184,51 @@ def fetch_upstox_data(symbol: str, instrument_key: str, max_retries=3):
 
             except Exception as e:
                 if attempt == max_retries:
-                    return f"\u274c {symbol}: Failed on chunk {chunk_start_str}–{chunk_end_str}: {e}"
+                    return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: Failed: {e}"
 
-        start_date = chunk_end
+    else:
+        # For minute data, use chunking to respect API limits
+        while start_date < end_date:
+            chunk_start = start_date
+            chunk_end = chunk_start + timedelta(days=28)
+            if chunk_end > end_date:
+                chunk_end = end_date
+
+            chunk_start_str = chunk_start.strftime("%Y-%m-%d")
+            chunk_end_str = chunk_end.strftime("%Y-%m-%d")
+
+            url = (
+                f"https://api.upstox.com/v3/historical-candle/"
+                f"{instrument_key}/{timeframe['unit']}/{timeframe['interval']}/{chunk_end_str}/{chunk_start_str}"
+            )
+
+            for attempt in range(1, max_retries + 1):
+                try:
+                    resp = requests.get(url, headers=HEADERS)
+                    if resp.status_code == 429:
+                        wait = 2 ** attempt
+                        print(f"\u23f3 {symbol} {timeframe['interval']}{timeframe['unit']}: Rate limited. Retrying in {wait}s...")
+                        time.sleep(wait)
+                        continue
+
+                    if resp.status_code == 400:
+                        return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: 400 Bad Request"
+
+                    resp.raise_for_status()
+                    candles = resp.json()["data"].get("candles", [])
+                    if candles:
+                        all_chunks.extend(candles)
+
+                    break  # success
+
+                except Exception as e:
+                    if attempt == max_retries:
+                        return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: Failed on chunk {chunk_start_str}–{chunk_end_str}: {e}"
+
+            start_date = chunk_end
 
     if not all_chunks:
-        return f"\u274c {symbol}: No candle data retrieved."
+        return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: No candle data retrieved."
 
     df = pd.DataFrame(all_chunks)
     df.columns = ["date", "open", "high", "low", "close", "volume", "_"]
@@ -136,29 +238,141 @@ def fetch_upstox_data(symbol: str, instrument_key: str, max_retries=3):
 
     out_dir = OUTPUT_BASE / symbol
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{symbol}_{INTERVAL_UNIT}_{START_DATE}_{END_DATE}.feather"
-    df.to_feather(out_path)
-    return f"\u2705 {symbol}: {len(df)} rows"
+
+    # File paths
+    data_path = out_dir / f"{symbol}_{timeframe['interval']}{timeframe['unit']}.feather"
+    metadata_path = out_dir / f"{symbol}_{timeframe['interval']}{timeframe['unit']}_metadata.json"
+
+    # Load existing metadata
+    metadata = load_metadata(metadata_path)
+
+    # Check if this range already downloaded
+    if is_range_downloaded(metadata, date_range):
+        return f"⏩ {symbol} {timeframe['interval']}{timeframe['unit']}: Range {date_range['start_date']} to {date_range['end_date']} already exists, skipped"
+
+    # Load existing data if file exists
+    if data_path.exists():
+        try:
+            existing_df = pd.read_feather(data_path)
+            # Combine with new data
+            combined_df = pd.concat([existing_df, df], ignore_index=True)
+            combined_df = combined_df.sort_values("date").reset_index(drop=True)
+            # Remove duplicates if any
+            combined_df = combined_df.drop_duplicates(subset=["date"], keep="last")
+        except (OSError, Exception) as e:
+            # Corrupted feather file - remove and use new data only
+            print(f"⚠️ {symbol} {timeframe['interval']}{timeframe['unit']}: Corrupted file detected, replacing: {e}")
+            data_path.unlink()  # Remove corrupted file
+            combined_df = df
+    else:
+        combined_df = df
+
+    # Save combined data
+    combined_df.to_feather(data_path)
+
+    # Update metadata
+    metadata["downloaded_ranges"].append({
+        "start_date": date_range["start_date"],
+        "end_date": date_range["end_date"],
+        "name": date_range["name"],
+        "rows": len(df)
+    })
+    save_metadata(metadata_path, metadata)
+
+    return f"success: {symbol} {timeframe['interval']}{timeframe['unit']}: Added {len(df)} rows (total: {len(combined_df)})"
+
+# --- Command Line Argument Parsing ---
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Download historical data from Upstox API",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python upstox_cache_downloader.py                    # Download both 1m and 1d data (default)
+  python upstox_cache_downloader.py --data-type daily  # Download only daily data for 3-year coverage
+  python upstox_cache_downloader.py --data-type minute # Download only minute data for backtesting
+        """
+    )
+
+    parser.add_argument(
+        "--data-type",
+        choices=["minute", "daily", "both"],
+        default="both",
+        help="Type of data to download (default: both)"
+    )
+
+    return parser.parse_args()
 
 # --- Runner ---
 if __name__ == "__main__":
+    args = parse_arguments()
+
+    # Select timeframes based on argument
+    TIMEFRAMES = TIMEFRAME_OPTIONS[args.data_type]
+
     instrument_map = load_instrument_map_ndjson(UPSTOX_JSON_PATH)
-    print(f"🚀 Starting Upstox downloader for {len(instrument_map)} NSE symbols")
+
+    total_tasks = len(instrument_map) * len(DATE_RANGES) * len(TIMEFRAMES)
+
+    # Format timeframes for display
+    timeframe_names = [f"{tf['interval']}{tf['unit']}" for tf in TIMEFRAMES]
+
+    print(f"🚀 Starting Upstox downloader")
+    print(f"📊 Data type: {args.data_type}")
+    print(f"📈 Symbols: {len(instrument_map)}")
+    print(f"📅 Date Ranges: {len(DATE_RANGES)}")
+    print(f"⏱️  Timeframes: {len(TIMEFRAMES)} ({timeframe_names})")
+    print(f"🎯 Total Tasks: {total_tasks}")
+    print()
+
     results = []
     success_count = 0
     failure_count = 0
+    skipped = 0
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(fetch_upstox_data, sym, key): sym
-            for sym, key in instrument_map.items()
-        }
+        futures = {}
+
+        # Submit all combinations of symbol x date_range x timeframe
+        for sym, key in instrument_map.items():
+            for date_range in DATE_RANGES:
+                for timeframe in TIMEFRAMES:
+                    future = executor.submit(fetch_upstox_data, sym, key, date_range, timeframe)
+                    futures[future] = f"{sym}_{timeframe['interval']}{timeframe['unit']}_{date_range['name']}"
+
         for fut in as_completed(futures):
             result = fut.result()
             results.append(result)
-            if result.startswith("✅"):
+            if "success" in result:
                 success_count += 1
+            elif "skipped" in result:
+                skipped += 1
             else:
                 failure_count += 1
 
-    print("\n".join(results))
-    print(f"\n✅ Completed: {success_count} succeeded, {failure_count} failed.")
+            # Progress update every 50 completions
+            if len(results) % 50 == 0:
+                print(f"📊 Progress: {len(results)}/{total_tasks} ({len(results)/total_tasks*100:.1f}%) | ✅ {success_count} | ❌ {failure_count} | ⏩ {skipped}", flush=True)
+
+    # Final progress update
+    print(f"📊 Final: {len(results)}/{total_tasks} (100.0%) | ✅ {success_count} | ❌ {failure_count} | ⏩ {skipped}", flush=True)
+
+    print("\n" + "="*80)
+    print("📋 DOWNLOAD SUMMARY")
+    print("="*80)
+    print(f"✅ Completed: {success_count} succeeded, {failure_count} failed out of {total_tasks} total tasks.")
+    print(f"📊 Data type downloaded: {args.data_type}")
+
+    if args.data_type == "daily":
+        print(f"🎯 Daily data now supports 90+ day historic analysis for institutional features!")
+    elif args.data_type == "minute":
+        print(f"🎯 Minute data ready for high-resolution backtesting!")
+    else:
+        print(f"🎯 Complete dataset ready for both backtesting and institutional analysis!")
+    if skipped > 0:
+        print(f"⏩ Skipped: {skipped} ranges already existed.")
+    if failure_count > 0:
+        print("\n❌ Failed downloads:")
+        for result in results:
+            if not result.startswith("✅") and not result.startswith("⏩"):
+                print(f"   {result}")

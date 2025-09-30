@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from config.filters_setup import load_filters
-from config.logging_config import get_agent_logger
+from config.logging_config import get_agent_logger, get_screener_logger, get_ranking_logger, get_events_decision_logger
 
 # ingest / streaming
 from services.ingest.stream_client import WSClient
@@ -62,7 +62,7 @@ from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision a
 from services import levels
 from services import metrics_intraday as mi
 from services.planner_internal import generate_trade_plan
-from structure_detector import StructureDetector
+from structures.main_detector import MainDetector
 from services.ranker import rank_candidates, get_strategy_threshold
 
 # orders & execution
@@ -119,8 +119,8 @@ class ScreenerLive:
         self.ws.on_message(self.router.handle_raw)
         self.subs = SubscriptionManager(self.ws)
 
-        # Gates - Use new integration adapter instead of legacy detector
-        self.detector = StructureDetector(raw)
+        # Gates - Use MainDetector directly for structure detection
+        self.detector = MainDetector(raw)
         news_cfg = raw.get("news_gate")
         self.regime_gate = MarketRegimeGate(cfg=raw)
         self.event_gate = EventPolicyGate()
@@ -239,7 +239,9 @@ class ScreenerLive:
             if df5_by_symbol:
                 feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20)
                 feats_df = self._filter_stage0(feats_df, now)  # liquidity + vwap proximity + momentum + (opt) vol persistence
-                shortlist = feats_df["symbol"].tolist()
+                # Use scanner's select_shortlist for proper structured logging
+                shortlist_dict = self.scanner.select_shortlist(feats_df)
+                shortlist = shortlist_dict.get("long", []) + shortlist_dict.get("short", [])
         except Exception as e:
             logger.exception("EnergyScanner failed; fallback shortlist: %s", e)
             shortlist = self._fallback_shortlist()
@@ -258,12 +260,13 @@ class ScreenerLive:
         # ---------- Gate per candidate (structure + regime + events + news) ----------
         index_df5 = self._index_df5()
         decisions: List[Tuple[str, Decision]] = []
+        screener_logger = get_screener_logger()
         for sym in shortlist:
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
             if df5 is None or df5.empty or len(df5) < 5:
                 continue
 
-            lvl = self._levels_for(sym, df5)
+            lvl = self._levels_for(sym, df5, now)
             try:
                 decision = self.decision_gate.evaluate(
                     symbol=sym,
@@ -280,9 +283,21 @@ class ScreenerLive:
             if not decision.accept:
                 top_reason = next((r for r in decision.reasons if r.startswith("regime_block:")), None) or \
                              (decision.reasons[0] if decision.reasons else "reject")
-                logger.info(
+                logger.debug(
                     "DECISION:REJECT sym=%s setup=%s regime=%s reason=%s | all=%s",
                     sym, decision.setup_type, decision.regime, top_reason, ";".join(decision.reasons),
+                )
+
+                # Log screener rejection with detailed context
+                screener_logger.log_reject(
+                    sym,
+                    top_reason,
+                    timestamp=now.isoformat(),
+                    setup_type=decision.setup_type or "unknown",
+                    regime=decision.regime or "unknown",
+                    all_reasons=decision.reasons,
+                    structure_confidence=getattr(decision, 'structure_confidence', 0),
+                    current_price=df5['close'].iloc[-1] if not df5.empty else 0
                 )
                 continue
 
@@ -290,6 +305,20 @@ class ScreenerLive:
                 "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
                 sym, decision.setup_type, decision.regime, decision.size_mult, decision.min_hold_bars,
                 ";".join(decision.reasons),
+            )
+
+            # Log screener acceptance with detailed context
+            screener_logger.log_accept(
+                sym,
+                timestamp=now.isoformat(),
+                setup_type=decision.setup_type or "unknown",
+                regime=decision.regime or "unknown",
+                size_mult=decision.size_mult,
+                min_hold_bars=decision.min_hold_bars,
+                all_reasons=decision.reasons,
+                structure_confidence=getattr(decision, 'structure_confidence', 0),
+                current_price=df5['close'].iloc[-1] if not df5.empty else 0,
+                vwap=df5.get('vwap', pd.Series([0])).iloc[-1] if not df5.empty else 0
             )
             decisions.append((sym, decision))
 
@@ -311,7 +340,9 @@ class ScreenerLive:
         trades_planned = 0
 
         # ---------- Plan & de-dupe & enqueue ----------
-        for sym, score in ranked:
+        ranking_logger = get_ranking_logger()
+        events_logger = get_events_decision_logger()
+        for i, (sym, score) in enumerate(ranked):
             # Get strategy-specific threshold
             decision = dec_map.get(sym)
             strategy_type = getattr(decision, "setup_type", None) if decision else None
@@ -321,10 +352,46 @@ class ScreenerLive:
             if score < threshold:
                 logger.info("RANK:REJECT sym=%s score=%.3f < threshold=%.3f (strategy=%s)",
                            sym, score, threshold, strategy_type)
+
+                # Log ranking rejection
+                ranking_logger.log_reject(
+                    sym,
+                    "score_below_threshold",
+                    timestamp=now.isoformat(),
+                    rank_score=score,
+                    threshold=threshold,
+                    strategy_type=strategy_type or "unknown",
+                    rank_position=i + 1,
+                    total_candidates=len(ranked),
+                    percentile_score=pctl_score
+                )
                 continue
             # percentile gate
             if score < pctl_score:
+                # Log percentile rejection
+                ranking_logger.log_reject(
+                    sym,
+                    "score_below_percentile",
+                    timestamp=now.isoformat(),
+                    rank_score=score,
+                    percentile_score=pctl_score,
+                    strategy_type=strategy_type or "unknown",
+                    rank_position=i + 1,
+                    total_candidates=len(ranked)
+                )
                 continue
+
+            # Log ranking acceptance (passed both threshold and percentile gates)
+            ranking_logger.log_accept(
+                sym,
+                timestamp=now.isoformat(),
+                rank_score=score,
+                threshold=threshold,
+                percentile_score=pctl_score,
+                strategy_type=strategy_type or "unknown",
+                rank_position=i + 1,
+                total_candidates=len(ranked)
+            )
 
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
             daily_df = self.sdk.get_daily(sym, days=90)
@@ -343,6 +410,7 @@ class ScreenerLive:
                 continue
             if not plan:
                 logger.info("SKIP %s: empty plan (no_setup)", sym)
+                events_logger.log_reject(sym, "empty_plan", timestamp=now.isoformat(), strategy_type=strategy_type or "unknown")
                 continue
 
             # 1) Eligibility
@@ -351,18 +419,28 @@ class ScreenerLive:
                 cautions = ";".join((plan.get("notes") or {}).get("cautions", []))
                 logger.info("SKIP %s: ineligible plan rejection_reason=%s cautions=%s",
                             sym, rejection_reason, cautions)
+                events_logger.log_reject(
+                    sym,
+                    "plan_ineligible",
+                    timestamp=now.isoformat(),
+                    rejection_reason=rejection_reason,
+                    cautions=cautions,
+                    strategy_type=strategy_type or "unknown"
+                )
                 continue
 
             # 2) Qty
             qty = int((plan.get("sizing") or {}).get("qty") or 0)
             if qty <= 0:
                 logger.info("SKIP %s: qty<=0", sym)
+                events_logger.log_reject(sym, "zero_quantity", timestamp=now.isoformat(), qty=qty, strategy_type=strategy_type or "unknown")
                 continue
 
             # 3) Bias → side
             bias = str(plan.get("bias", "")).lower()
             if bias not in ("long", "short"):
                 logger.info("SKIP %s: bad bias=%r", sym, bias)
+                events_logger.log_reject(sym, "invalid_bias", timestamp=now.isoformat(), bias=bias, strategy_type=strategy_type or "unknown")
                 continue
 
             # --- DECISION: canonical payload (no fallbacks) ---
@@ -376,6 +454,14 @@ class ScreenerLive:
             setup_type = getattr(decision_obj, "setup_type", None) if decision_obj is not None else None
             if not self._dedupe_ok(sym=sym, now_ts=now, setup_type=setup_type, score=score, pctl_score=pctl_score):
                 logger.info("DEDUPE:SKIP sym=%s reason=cooloff/setup_not_stronger", sym)
+                events_logger.log_reject(
+                    sym,
+                    "deduplication_block",
+                    timestamp=now.isoformat(),
+                    strategy_type=strategy_type or "unknown",
+                    score=score,
+                    pctl_score=pctl_score
+                )
                 continue
 
             # Minimal bar5/features snapshot for diagnostics
@@ -433,7 +519,29 @@ class ScreenerLive:
             # Check trades per cycle limit (only for live trading)
             if trades_planned >= max_trades_per_cycle:
                 logger.info("CYCLE:LIMIT_REACHED %d/%d trades - skipping %s", trades_planned, max_trades_per_cycle, sym)
+                events_logger.log_reject(
+                    sym,
+                    "cycle_limit_reached",
+                    timestamp=now.isoformat(),
+                    trades_planned=trades_planned,
+                    max_trades_per_cycle=max_trades_per_cycle,
+                    strategy_type=strategy_type or "unknown"
+                )
                 break
+
+            # Log final events decision acceptance
+            events_logger.log_accept(
+                sym,
+                timestamp=now.isoformat(),
+                strategy_type=strategy_type or "unknown",
+                side=plan["bias"],
+                entry_price=plan.get("price"),
+                qty=qty,
+                trade_id=plan["trade_id"],
+                score=score,
+                trades_planned=trades_planned + 1,
+                max_trades_per_cycle=max_trades_per_cycle
+            )
 
             # Update de-dupe memory only when we actually enqueue
             self._last_entry[sym] = {"ts": now, "setup": setup_type, "score": float(score)}
@@ -477,7 +585,7 @@ class ScreenerLive:
             return pd.DataFrame()
         return idx if isinstance(idx, pd.DataFrame) else pd.DataFrame()
 
-    def _levels_for(self, symbol: str, df5: pd.DataFrame) -> Dict[str, float]:
+    def _levels_for(self, symbol: str, df5: pd.DataFrame, now) -> Dict[str, float]:
         """Prev-day PDH/PDL/PDC and today ORH/ORL (cached per (symbol, session_date))."""
         try:
             session_date = df5.index[-1].date() if (df5 is not None and not df5.empty) else None
@@ -490,35 +598,110 @@ class ScreenerLive:
 
         pdh = pdl = pdc = float("nan")
         try:
+            logger.debug(f"LEVELS: Getting daily data for {symbol}, session_date={session_date}")
             daily = self.sdk.get_daily(symbol, days=12)
+            logger.debug(f"LEVELS: Daily data shape: {daily.shape if daily is not None else None}")
+
             if daily is not None and not daily.empty:
                 d = daily.copy()
+                logger.debug(f"LEVELS: Daily data columns: {list(d.columns)}")
+                logger.debug(f"LEVELS: Daily data index type: {type(d.index)}")
+
                 if "date" in d.columns:
                     d["date"] = pd.to_datetime(d["date"]); d = d.sort_values("date").set_index("date")
                 else:
                     d.index = pd.to_datetime(d.index); d = d.sort_index()
+
+                logger.debug(f"LEVELS: After date processing, shape: {d.shape}")
+
                 if session_date is not None:
+                    pre_filter_size = len(d)
                     d = d[d.index.date < session_date]
+                    logger.debug(f"LEVELS: After session_date filter ({session_date}): {len(d)}/{pre_filter_size}")
+
                 if "volume" in d.columns:
+                    pre_vol_size = len(d)
                     d = d[d["volume"].fillna(0) > 0]
+                    logger.debug(f"LEVELS: After volume filter: {len(d)}/{pre_vol_size}")
+
+                pre_clean_size = len(d)
                 d = d[d["high"].notna() & d["low"].notna()]
+                logger.debug(f"LEVELS: After high/low filter: {len(d)}/{pre_clean_size}")
+
                 if not d.empty:
                     prev = d.iloc[-1]
                     pdh = float(prev["high"]); pdl = float(prev["low"]); pdc = float(prev.get("close", float("nan")))
+                    logger.debug(f"LEVELS: Computed PDH={pdh}, PDL={pdl}, PDC={pdc} from date {prev.name}")
+                else:
+                    logger.warning(f"LEVELS: No valid previous day data for {symbol} after filtering")
+                    # For backtests, we might not have previous day data - try to estimate from current session
+                    if df5 is not None and not df5.empty and len(df5) > 10:
+                        # Use early session data as rough estimates
+                        early_bars = df5.iloc[:min(10, len(df5))]
+                        pdh_est = float(early_bars['high'].max() * 1.02)  # 2% above early high
+                        pdl_est = float(early_bars['low'].min() * 0.98)   # 2% below early low
+                        pdc_est = float(early_bars['close'].iloc[-1])
+                        logger.info(f"LEVELS: Using estimated levels for {symbol}: PDH={pdh_est:.2f}, PDL={pdl_est:.2f}, PDC={pdc_est:.2f}")
+                        pdh, pdl, pdc = pdh_est, pdl_est, pdc_est
+            else:
+                logger.warning(f"LEVELS: No daily data available for {symbol}")
+                # Fallback for backtests - estimate from current data if available
+                if df5 is not None and not df5.empty and len(df5) > 10:
+                    early_bars = df5.iloc[:min(10, len(df5))]
+                    pdh = float(early_bars['high'].max() * 1.02)
+                    pdl = float(early_bars['low'].min() * 0.98)
+                    pdc = float(early_bars['close'].iloc[-1])
+                    logger.info(f"LEVELS: Using fallback estimated levels for {symbol}: PDH={pdh:.2f}, PDL={pdl:.2f}, PDC={pdc:.2f}")
         except Exception as e:
             # CRITICAL FIX: Log previous day level computation failures
+            import traceback
             logger.error(f"LEVELS: Failed to compute PDH/PDL/PDC for {symbol}: {e}")
+            logger.error(f"LEVELS: Traceback: {traceback.format_exc()}")
             pass
 
         try:
+            logger.debug(f"LEVELS: Computing opening range for {symbol}, df5 shape: {df5.shape if df5 is not None else None}")
             orh, orl = levels.opening_range(df5)
             orh = float(orh); orl = float(orl)
+            logger.debug(f"LEVELS: Computed ORH={orh}, ORL={orl}")
         except Exception as e:
             # CRITICAL FIX: Log opening range computation failures
+            import traceback
             logger.error(f"LEVELS: Failed to compute ORH/ORL for {symbol}: {e}")
+            logger.error(f"LEVELS: Traceback: {traceback.format_exc()}")
             orh = orl = float("nan")
 
+            # Fallback: compute simple opening range from first few bars
+            if df5 is not None and not df5.empty and len(df5) >= 3:
+                opening_bars = df5.iloc[:min(3, len(df5))]  # First 15 minutes (3 x 5min bars)
+                orh = float(opening_bars['high'].max())
+                orl = float(opening_bars['low'].min())
+                logger.info(f"LEVELS: Using fallback ORH/ORL for {symbol}: ORH={orh:.2f}, ORL={orl:.2f}")
+
         out = {"PDH": pdh, "PDL": pdl, "PDC": pdc, "ORH": orh, "ORL": orl}
+
+        # Log levels to screener structured logging for analysis
+        valid_levels = {k: v for k, v in out.items() if not pd.isna(v)}
+        screener_logger = get_screener_logger()
+
+        if valid_levels:
+            screener_logger.log_accept(
+                symbol,
+                timestamp=now.isoformat(),
+                action_type="levels_computed",
+                levels_count=len(valid_levels),
+                **valid_levels  # PDH, PDL, PDC, ORH, ORL as separate fields
+            )
+            logger.debug(f"LEVELS: Computed levels for {symbol}: {valid_levels} (total: {len(valid_levels)}/5)")
+        else:
+            screener_logger.log_reject(
+                symbol,
+                "no_valid_levels_computed",
+                timestamp=now.isoformat(),
+                action_type="levels_computation_failed"
+            )
+            logger.warning(f"LEVELS: No valid levels computed for {symbol} - structure detection will be skipped")
+
         self._levels_cache.clear()
         self._levels_cache[key] = out
         return out

@@ -46,54 +46,47 @@ class ICTStructureCompatible(BaseStructure):
         """Initialize ICT structure with configuration."""
         super().__init__(config)
 
-        # ICT-specific configuration - NO HARDCODED DEFAULTS FOR TRADING PARAMETERS
-        # All trading parameters MUST be provided in config to avoid assumptions
-        if "order_block_min_move_pct" not in config:
-            raise ValueError("ICT: order_block_min_move_pct must be provided in config - no trading defaults allowed")
-        if "fvg_min_gap_pct" not in config:
-            raise ValueError("ICT: fvg_min_gap_pct must be provided in config - no trading defaults allowed")
-        if "sweep_min_volume_surge" not in config:
-            raise ValueError("ICT: sweep_min_volume_surge must be provided in config - no trading defaults allowed")
+        # ICT-specific configuration - KeyError if missing trading parameters
 
         # Order Blocks parameters
         self.ob_min_move_pct = config["order_block_min_move_pct"] / 100.0
         self.ob_min_volume_surge = config["order_block_min_volume_surge"]
-        self.ob_lookback_bars = config.get("order_block_lookback", 20)
-        self.ob_test_tolerance_pct = config.get("order_block_test_tolerance_pct", 0.15) / 100.0
+        self.ob_lookback_bars = config["order_block_lookback"]
+        self.ob_test_tolerance_pct = config["order_block_test_tolerance_pct"] / 100.0
 
         # Fair Value Gap parameters
         self.fvg_min_gap_pct = config["fvg_min_gap_pct"] / 100.0
-        self.fvg_max_gap_pct = config.get("fvg_max_gap_pct", 1.5) / 100.0
-        self.fvg_require_volume = config.get("fvg_require_volume_spike", True)
-        self.fvg_min_volume_mult = config.get("fvg_min_volume_mult", 1.5)
-        self.fvg_fill_tolerance_pct = config.get("fvg_fill_tolerance_pct", 0.05) / 100.0
+        self.fvg_max_gap_pct = config["fvg_max_gap_pct"] / 100.0
+        self.fvg_require_volume = config["fvg_require_volume_spike"]
+        self.fvg_min_volume_mult = config["fvg_min_volume_mult"]
+        self.fvg_fill_tolerance_pct = config["fvg_fill_tolerance_pct"] / 100.0
 
         # Liquidity Sweep parameters
-        self.sweep_min_distance_pct = config.get("sweep_min_distance_pct", 0.05) / 100.0
-        self.sweep_max_distance_pct = config.get("sweep_max_distance_pct", 0.3) / 100.0
+        self.sweep_min_distance_pct = config["sweep_min_distance_pct"] / 100.0
+        self.sweep_max_distance_pct = config["sweep_max_distance_pct"] / 100.0
         self.sweep_min_volume_surge = config["sweep_min_volume_surge"]
-        self.sweep_min_wick_ratio = config.get("sweep_min_wick_ratio", 0.4)
-        self.sweep_reversal_bars = config.get("sweep_reversal_bars", 3)
+        self.sweep_min_wick_ratio = config["sweep_min_wick_ratio"]
+        self.sweep_reversal_bars = config["sweep_reversal_bars"]
 
         # Premium/Discount parameters
-        self.premium_threshold_pct = config.get("premium_threshold_pct", 70.0) / 100.0
-        self.discount_threshold_pct = config.get("discount_threshold_pct", 30.0) / 100.0
-        self.range_lookback_bars = config.get("range_lookback_bars", 50)
+        self.premium_threshold_pct = config["premium_threshold_pct"] / 100.0
+        self.discount_threshold_pct = config["discount_threshold_pct"] / 100.0
+        self.range_lookback_bars = config["range_lookback_bars"]
 
         # Break of Structure parameters
-        self.bos_min_structure_bars = config.get("bos_min_structure_bars", 10)
-        self.bos_min_break_pct = config.get("bos_min_break_pct", 0.2) / 100.0
-        self.bos_volume_confirmation = config.get("bos_volume_confirmation", True)
+        self.bos_min_structure_bars = config["bos_min_structure_bars"]
+        self.bos_min_break_pct = config["bos_min_break_pct"] / 100.0
+        self.bos_volume_confirmation = config["bos_volume_confirmation"]
 
         # Change of Character parameters
-        self.choch_momentum_periods = config.get("choch_momentum_periods", [3, 5, 8])
-        self.choch_min_momentum_change_pct = config.get("choch_min_momentum_change_pct", 1.0) / 100.0
-        self.choch_volume_threshold = config.get("choch_volume_threshold", 1.8)
+        self.choch_momentum_periods = config["choch_momentum_periods"]
+        self.choch_min_momentum_change_pct = config["choch_min_momentum_change_pct"] / 100.0
+        self.choch_volume_threshold = config["choch_volume_threshold"]
 
         # Confidence levels
-        self.confidence_strong_signal = config.get("confidence_strong_signal", 0.85)
-        self.confidence_medium_signal = config.get("confidence_medium_signal", 0.70)
-        self.confidence_weak_signal = config.get("confidence_weak_signal", 0.55)
+        self.confidence_strong_signal = config["confidence_strong_signal"]
+        self.confidence_medium_signal = config["confidence_medium_signal"]
+        self.confidence_weak_signal = config["confidence_weak_signal"]
 
         logger.info(f"ICT: Initialized with config - OB move: {self.ob_min_move_pct*100:.1f}%, "
                    f"FVG gap: {self.fvg_min_gap_pct*100:.2f}%-{self.fvg_max_gap_pct*100:.1f}%, "
@@ -163,7 +156,7 @@ class ICTStructureCompatible(BaseStructure):
                          premium_discount_events + bos_events + choch_events)
 
             if all_events:
-                logger.info(f"ICT: {symbol} - Detected {len(all_events)} ICT patterns")
+                logger.debug(f"ICT: {symbol} - Detected {len(all_events)} ICT patterns")
 
             # Calculate quality score
             quality_score = self._calculate_ict_quality_score(all_events, df_with_indicators, market_context)

@@ -39,9 +39,9 @@ class StructureManager:
         self.structures: Dict[str, BaseStructure] = {}
         self.structure_priorities: List[str] = []
 
-        # Manager configuration
-        self.max_concurrent_structures = config.get("max_concurrent_structures", 5)
-        self.quality_threshold = config.get("quality_threshold", 60.0)
+        # KeyError if missing trading parameters
+        self.max_concurrent_structures = config["max_concurrent_structures"]
+        self.quality_threshold = config["quality_threshold"]
 
         # Performance tracking
         self._detection_stats: Dict[str, Dict[str, int]] = {}
@@ -218,7 +218,7 @@ class StructureManager:
         best_structure = max(rankings.items(), key=lambda x: x[1])
 
         # Only return if score is above minimum threshold
-        min_score = self.config.get("min_structure_score", 25.0)
+        min_score = self.config["min_structure_score"]  # KeyError if missing
         if best_structure[1] >= min_score:
             return best_structure[0]
 

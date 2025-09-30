@@ -90,8 +90,9 @@ def calculate_dynamic_exit_threshold(config, df, days_held):
     Returns:
         float: The computed dynamic threshold
     """
-    dyn_config = config.get("dynamic_threshold", {})
-    exit_filters = config.get("exit_filters", {})
+    # KeyError if missing trading parameters
+    dyn_config = config["dynamic_threshold"]
+    exit_filters = config["exit_filters"]
 
     max_possible_score = 0
     for name, f in exit_filters.items():
@@ -105,11 +106,11 @@ def calculate_dynamic_exit_threshold(config, df, days_held):
             if weight > 0:
                 max_possible_score += weight
 
-    base_ratio = dyn_config.get("base_weight_ratio", 0.25)
-    min_threshold = dyn_config.get("min_threshold", 5)
-    time_decay_rate = dyn_config.get("time_decay_rate", 0.3)
-    time_weight_reduction = dyn_config.get("time_weight_reduction", 0.5)
-    vol_scaling_factor = dyn_config.get("volatility_scaling_factor", 0.2)
+    base_ratio = dyn_config["base_weight_ratio"]
+    min_threshold = dyn_config["min_threshold"]
+    time_decay_rate = dyn_config["time_decay_rate"]
+    time_weight_reduction = dyn_config["time_weight_reduction"]
+    vol_scaling_factor = dyn_config["volatility_scaling_factor"]
 
     base_threshold = max(min_threshold, base_ratio * max_possible_score)
     time_decay = 1 - math.exp(-time_decay_rate * days_held)

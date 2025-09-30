@@ -33,18 +33,18 @@ class RangeStructure(BaseStructure):
         self.structure_type = "range"
 
         # Range parameters
-        self.min_range_duration = config.get("min_range_duration", 20)  # Minimum bars
-        self.max_range_height_pct = config.get("max_range_height_pct", 3.0)  # Max range height
-        self.min_range_height_pct = config.get("min_range_height_pct", 0.5)  # Min range height
-        self.bounce_tolerance_pct = config.get("bounce_tolerance_pct", 0.2)  # Distance from boundary
-        self.breakout_confirmation_pct = config.get("breakout_confirmation_pct", 0.3)  # Breakout confirmation
-        self.require_volume_confirmation = config.get("require_volume_confirmation", True)
-        self.min_volume_mult = config.get("min_volume_mult", 1.5)
+        self.min_range_duration = config["min_range_duration"]
+        self.max_range_height_pct = config["max_range_height_pct"]
+        self.min_range_height_pct = config["min_range_height_pct"]
+        self.bounce_tolerance_pct = config["bounce_tolerance_pct"]
+        self.breakout_confirmation_pct = config["breakout_confirmation_pct"]
+        self.require_volume_confirmation = config["require_volume_confirmation"]
+        self.min_volume_mult = config["min_volume_mult"]
 
         # Risk management
-        self.target_mult_t1 = config.get("target_mult_t1", 1.0)
-        self.target_mult_t2 = config.get("target_mult_t2", 2.0)
-        self.confidence_level = config.get("confidence_level", 0.7)
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
+        self.confidence_level = config["confidence_level"]
 
         logger.info(f"RANGE: Initialized with range duration: {self.min_range_duration} bars, height: {self.min_range_height_pct}-{self.max_range_height_pct}%")
 
@@ -171,7 +171,7 @@ class RangeStructure(BaseStructure):
                         price=current_price
                     )
                     events.append(event)
-                    logger.info(f"RANGE: {context.symbol} - Support bounce long at {current_price:.2f}")
+                    logger.debug(f"RANGE: {context.symbol} - Support bounce long at {current_price:.2f}")
 
         # Resistance bounce (short)
         resistance_distance_pct = abs(current_price - resistance) / resistance * 100
@@ -194,7 +194,7 @@ class RangeStructure(BaseStructure):
                         price=current_price
                     )
                     events.append(event)
-                    logger.info(f"RANGE: {context.symbol} - Resistance bounce short at {current_price:.2f}")
+                    logger.debug(f"RANGE: {context.symbol} - Resistance bounce short at {current_price:.2f}")
 
         return events
 
@@ -225,7 +225,7 @@ class RangeStructure(BaseStructure):
                         price=current_price
                     )
                     events.append(event)
-                    logger.info(f"RANGE: {context.symbol} - Range breakout long at {current_price:.2f}")
+                    logger.debug(f"RANGE: {context.symbol} - Range breakout long at {current_price:.2f}")
 
         # Support breakdown (short)
         if current_price < support:
@@ -247,7 +247,7 @@ class RangeStructure(BaseStructure):
                         price=current_price
                     )
                     events.append(event)
-                    logger.info(f"RANGE: {context.symbol} - Range breakdown short at {current_price:.2f}")
+                    logger.debug(f"RANGE: {context.symbol} - Range breakdown short at {current_price:.2f}")
 
         return events
 
@@ -469,7 +469,7 @@ class RangeStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.6)  # Strong minimum for range patterns
 
-            logger.info(f"RANGE: {context.symbol} {side} {setup_type} - Base: {base_strength:.2f}, "
+            logger.debug(f"RANGE: {context.symbol} {side} {setup_type} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

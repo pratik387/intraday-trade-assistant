@@ -62,62 +62,41 @@ class SupportResistanceStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "support_resistance"
 
-        # CRITICAL CONFIGURATION VALIDATION - NO TRADING DEFAULTS
-        self._validate_required_config(config)
+        # KeyError if missing trading parameters
 
         # Level detection parameters
         self.min_touches = config["min_touches"]
         self.bounce_tolerance_pct = config["bounce_tolerance_pct"]
         self.require_volume_spike = config["require_volume_spike"]
-        self.min_volume_mult = config.get("min_volume_mult", 1.5)
+        self.min_volume_mult = config["min_volume_mult"]
 
         # Level strength parameters
-        self.min_level_age_bars = config.get("min_level_age_bars", 5)
-        self.max_level_distance_pct = config.get("max_level_distance_pct", 2.0)
-        self.level_merge_tolerance_pct = config.get("level_merge_tolerance_pct", 0.3)
+        self.min_level_age_bars = config["min_level_age_bars"]
+        self.max_level_distance_pct = config["max_level_distance_pct"]
+        self.level_merge_tolerance_pct = config["level_merge_tolerance_pct"]
 
         # Breakout parameters
-        self.breakout_buffer_pct = config.get("breakout_buffer_pct", 0.2)
-        self.min_breakout_volume_mult = config.get("min_breakout_volume_mult", 1.8)
+        self.breakout_buffer_pct = config["breakout_buffer_pct"]
+        self.min_breakout_volume_mult = config["min_breakout_volume_mult"]
 
         # Risk management parameters
-        self.min_stop_distance_pct = config.get("min_stop_distance_pct", 0.5)
-        self.stop_distance_mult = config.get("stop_distance_mult", 0.5)
-        self.level_buffer_mult = config.get("level_buffer_mult", 0.1)
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]
+        self.stop_distance_mult = config["stop_distance_mult"]
+        self.level_buffer_mult = config["level_buffer_mult"]
 
         # Target parameters
-        self.target_mult_t1 = config.get("target_mult_t1", 1.5)
-        self.target_mult_t2 = config.get("target_mult_t2", 2.5)
+        self.target_mult_t1 = config["target_mult_t1"]
+        self.target_mult_t2 = config["target_mult_t2"]
 
         # Confidence scoring
-        self.confidence_strong_level = config.get("confidence_strong_level", 0.85)
-        self.confidence_weak_level = config.get("confidence_weak_level", 0.65)
-        self.confidence_breakout = config.get("confidence_breakout", 0.8)
-        self.confidence_bounce = config.get("confidence_bounce", 0.75)
+        self.confidence_strong_level = config["confidence_strong_level"]
+        self.confidence_weak_level = config["confidence_weak_level"]
+        self.confidence_breakout = config["confidence_breakout"]
+        self.confidence_bounce = config["confidence_bounce"]
 
         logger.debug(f"S/R: Initialized with min touches: {self.min_touches}, tolerance: {self.bounce_tolerance_pct}%")
         logger.debug(f"S/R: Volume spike required: {self.require_volume_spike}, min mult: {self.min_volume_mult}")
 
-    def _validate_required_config(self, config: Dict[str, Any]) -> None:
-        """Validate that all required trading parameters are provided."""
-        required_fields = [
-            "min_touches",
-            "bounce_tolerance_pct",
-            "require_volume_spike"
-        ]
-
-        for field in required_fields:
-            if field not in config:
-                raise ValueError(f"S/R: {field} must be provided in config - no trading defaults allowed")
-
-        # Validate ranges
-        if config["min_touches"] < 2:
-            raise ValueError(f"S/R: min_touches must be >= 2, got {config['min_touches']}")
-
-        if not (0.01 <= config["bounce_tolerance_pct"] <= 2.0):
-            raise ValueError(f"S/R: bounce_tolerance_pct must be between 0.01-2.0%, got {config['bounce_tolerance_pct']}")
-
-        logger.debug(f"S/R: Configuration validation passed for all {len(required_fields)} required parameters")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect Support/Resistance-based structures in the market context."""
@@ -163,7 +142,7 @@ class SupportResistanceStructure(BaseStructure):
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No S/R setups detected"
 
-            logger.info(f"S/R: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}")
 
             return StructureAnalysis(
                 structure_detected=structure_detected,
@@ -462,7 +441,7 @@ class SupportResistanceStructure(BaseStructure):
             )
             events.append(event)
 
-            logger.info(f"S/R: {context.symbol} - Support bounce LONG detected: level {support_level:.2f}, touches {sr_info.support_touches}, confidence {confidence:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Support bounce LONG detected: level {support_level:.2f}, touches {sr_info.support_touches}, confidence {confidence:.2f}")
 
         return events, quality_score
 
@@ -518,7 +497,7 @@ class SupportResistanceStructure(BaseStructure):
             )
             events.append(event)
 
-            logger.info(f"S/R: {context.symbol} - Resistance rejection SHORT detected: level {resistance_level:.2f}, touches {sr_info.resistance_touches}, confidence {confidence:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Resistance rejection SHORT detected: level {resistance_level:.2f}, touches {sr_info.resistance_touches}, confidence {confidence:.2f}")
 
         return events, quality_score
 
@@ -566,7 +545,7 @@ class SupportResistanceStructure(BaseStructure):
             )
             events.append(event)
 
-            logger.info(f"S/R: {context.symbol} - Support breakdown SHORT detected: level {support_level:.2f}, breakdown at {current_price:.2f}, confidence {confidence:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Support breakdown SHORT detected: level {support_level:.2f}, breakdown at {current_price:.2f}, confidence {confidence:.2f}")
 
         return events, quality_score
 
@@ -614,7 +593,7 @@ class SupportResistanceStructure(BaseStructure):
             )
             events.append(event)
 
-            logger.info(f"S/R: {context.symbol} - Resistance breakout LONG detected: level {resistance_level:.2f}, breakout at {current_price:.2f}, confidence {confidence:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Resistance breakout LONG detected: level {resistance_level:.2f}, breakout at {current_price:.2f}, confidence {confidence:.2f}")
 
         return events, quality_score
 
@@ -1010,7 +989,7 @@ class SupportResistanceStructure(BaseStructure):
             # Institutional minimum for regime gate passage (≥2.0)
             final_strength = max(final_strength, 1.5)  # Strong minimum for S/R patterns
 
-            logger.info(f"S/R: {context.symbol} {side} {setup_type} - Base: {base_strength:.2f}, "
+            logger.debug(f"S/R: {context.symbol} {side} {setup_type} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
 
             return final_strength

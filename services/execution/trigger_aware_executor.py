@@ -107,8 +107,13 @@ class TriggerAwareExecutor:
             logger.info(f"VALIDATION CHECK: {symbol} entry={price:.2f} hard_sl={hard_sl} side={side}")
     
             if hard_sl is not None:
-                # Check minimum distance (0.2% of price or 10 paisa minimum)
-                min_distance = max(price * 0.002, 0.10)
+                # Check minimum distance - configurable to avoid hardcoded trading rules
+                from config.filters_setup import load_filters
+                filters_config = load_filters()
+                # KeyError if missing trading parameters
+                min_distance_pct = filters_config["min_entry_sl_distance_pct"]
+                min_distance_abs = filters_config["min_entry_sl_distance_abs"]
+                min_distance = max(price * min_distance_pct, min_distance_abs)
 
                 if side == "BUY" and price <= (hard_sl + min_distance):
                     logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")

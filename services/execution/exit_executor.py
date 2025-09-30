@@ -99,30 +99,29 @@ class ExitExecutor:
         self.eod_hhmm = str(cfg.get("eod_squareoff_hhmm", "")) or str(cfg.get("exit_eod_squareoff_hhmm", "1512"))
         self.eod_md = _parse_hhmm_to_md(self.eod_hhmm)
 
-        # Enhanced exit configuration from plan document
+        # Enhanced exit configuration - KeyError if missing trading parameters
         exits_config = cfg.get("exits", {})
-        self.score_drop_enabled = bool(exits_config.get("score_drop_enabled", cfg.get("exit_score_drop_enabled", True)))
-        self.score_drop_bpct = float(exits_config.get("score_drop_bpct", cfg.get("exit_score_drop_bpct", 30.0)))  # % drop from peak before exit
-        self.time_stop_min = float(exits_config.get("time_stop_min", cfg.get("exit_time_stop_min", 45.0)))      # minutes after entry to check RR
-        self.time_stop_req_rr = float(exits_config.get("time_stop_req_rr", cfg.get("exit_time_stop_req_rr", 0.5)))
 
-        # Breakout short risk control configuration
-        self.breakout_short_risk_control = bool(exits_config.get("breakout_short_risk_control", cfg.get("breakout_short_risk_control", True)))
-        self.breakout_short_initial_stop_mult = float(exits_config.get("breakout_short_initial_stop_mult", 0.7))  # 0.7x recent swing
-        self.breakout_short_partial_rr = float(exits_config.get("breakout_short_partial_rr", 0.6))  # Partial at 0.6R
-        self.breakout_short_partial_pct = float(exits_config.get("breakout_short_partial_pct", 50.0))  # 50% partial
-        self.breakout_short_sl_to_neg = float(exits_config.get("breakout_short_sl_to_neg", -0.1))  # Move SL to -0.1R after partial
-        self.breakout_short_time_stop_min = float(exits_config.get("breakout_short_time_stop_min", 30.0))  # 30-45m time stop
-        self.breakout_short_time_stop_max = float(exits_config.get("breakout_short_time_stop_max", 45.0))
-        self.breakout_short_time_stop_rr = float(exits_config.get("breakout_short_time_stop_rr", 0.4))  # Exit if <0.4R
+        self.score_drop_enabled = bool(exits_config.get("score_drop_enabled", cfg["exit_score_drop_enabled"]))
+        self.score_drop_bpct = float(exits_config.get("score_drop_bpct", cfg["exit_score_drop_bpct"]))
+        self.time_stop_min = float(exits_config.get("time_stop_min", cfg["exit_time_stop_min"]))
+        self.time_stop_req_rr = float(exits_config.get("time_stop_req_rr", cfg["exit_time_stop_req_rr"]))
 
-        # EOD scale-out configuration
-        self.eod_scale_out = bool(exits_config.get("eod_scale_out", cfg.get("eod_scale_out", True)))
-        self.eod_scale_out_time1 = str(exits_config.get("eod_scale_out_time1", "15:00"))  # First scale out time
-        self.eod_scale_out_time2 = str(exits_config.get("eod_scale_out_time2", "15:07"))  # Final exit time
-        self.eod_scale_out_rr1 = float(exits_config.get("eod_scale_out_rr1", 0.7))  # RR threshold for first scale
-        self.eod_scale_out_rr2 = float(exits_config.get("eod_scale_out_rr2", 0.4))  # RR threshold for final exit
-        self.eod_scale_out_pct1 = float(exits_config.get("eod_scale_out_pct1", 50.0))  # First scale percentage
+        self.breakout_short_risk_control = bool(exits_config.get("breakout_short_risk_control", cfg["breakout_short_risk_control"]))
+        self.breakout_short_initial_stop_mult = float(exits_config["breakout_short_initial_stop_mult"])
+        self.breakout_short_partial_rr = float(exits_config["breakout_short_partial_rr"])
+        self.breakout_short_partial_pct = float(exits_config["breakout_short_partial_pct"])
+        self.breakout_short_sl_to_neg = float(exits_config["breakout_short_sl_to_neg"])
+        self.breakout_short_time_stop_min = float(exits_config["breakout_short_time_stop_min"])
+        self.breakout_short_time_stop_max = float(exits_config["breakout_short_time_stop_max"])
+        self.breakout_short_time_stop_rr = float(exits_config["breakout_short_time_stop_rr"])
+
+        self.eod_scale_out = bool(exits_config.get("eod_scale_out", cfg["eod_scale_out"]))
+        self.eod_scale_out_time1 = str(exits_config["eod_scale_out_time1"])
+        self.eod_scale_out_time2 = str(exits_config["eod_scale_out_time2"])
+        self.eod_scale_out_rr1 = float(exits_config["eod_scale_out_rr1"])
+        self.eod_scale_out_rr2 = float(exits_config["eod_scale_out_rr2"])
+        self.eod_scale_out_pct1 = float(exits_config["eod_scale_out_pct1"])
 
         # T1 behavior
         self.t1_book_pct = float(cfg.get("exit_t1_book_pct", 50.0))
@@ -824,13 +823,22 @@ class ExitExecutor:
 
     def _partial_exit_t1(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
         # Enhanced partial exit logic - always use partial exits for better R:R
-        pct = max(1.0, float(getattr(self, "t1_book_pct", 70)))
         qty = int(pos.qty)
+
+        # Check if T2 is infeasible (T1-only scalp mode)
+        t2_exit_mode = pos.plan.get("quality", {}).get("t2_exit_mode", None)
+        if t2_exit_mode == "T1_only_scalp":
+            # Exit 100% at T1 if T2 is not feasible
+            logger.info(f"exit_executor: {sym} T1_only_scalp mode - exiting 100% at T1 (T2 not feasible)")
+            self._exit(sym, pos, float(px), ts, "target_t1_full_t2_infeasible")
+            return
+
+        pct = max(1.0, float(getattr(self, "t1_book_pct", 70)))
 
         # Calculate partial exit quantity - ensure minimum 30% book
         min_book_pct = 70.0  # Minimum partial booking percentage
         actual_pct = max(min_book_pct, pct)
-        
+
         qty_exit = int(max(1, round(qty * (actual_pct / 100.0))))
         qty_exit = min(qty_exit, qty)
 
