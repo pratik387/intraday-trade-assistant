@@ -247,6 +247,25 @@ class EnergyScanner:
 
             # Volume persistence already calculated above and included in scoring
 
+            # Phase 2.3: Micro-trigger detection flags
+            # Per Intraday Scanner Playbook: Detect precise entry moments
+            micro_trigger_volume_spike = vol_ratio >= 2.0  # Volume >2x average
+            micro_trigger_momentum_surge = abs(ret_1) >= 0.003  # >0.3% single-bar move
+
+            # Volatility expansion: current BB width vs recent average
+            micro_trigger_volatility_expansion = False
+            if "bb_width_proxy" in dft.columns and len(dft) >= 6:
+                bb_recent = dft["bb_width_proxy"].tail(6)
+                bb_avg = bb_recent.mean()
+                micro_trigger_volatility_expansion = bb_width_proxy > (bb_avg * 1.3) if bb_avg > 0 else False
+
+            # Composite micro-trigger flag (any 2 of 3 triggers = strong signal)
+            micro_triggers_active = sum([
+                micro_trigger_volume_spike,
+                micro_trigger_momentum_surge,
+                micro_trigger_volatility_expansion
+            ])
+
             turnover = close * float(volume_series.iloc[-1])
             rows.append(
                 {
@@ -265,11 +284,16 @@ class EnergyScanner:
                     "dist_to_PDL": dist_pdl,
                     "dist_to_ORH": dist_orh,
                     "dist_to_ORL": dist_orl,
-                    "turnover": turnover,    
+                    "turnover": turnover,
                     "vol_ratio": vol_ratio,
                     "vol_persist_ok": int(vol_persist),
                     "gap_pct": gap_pct,
                     "pre_breakout_signal": pre_breakout_signal,  # New: pre-breakout detection
+                    # Phase 2.3: Micro-trigger flags
+                    "micro_trigger_volume": int(micro_trigger_volume_spike),
+                    "micro_trigger_momentum": int(micro_trigger_momentum_surge),
+                    "micro_trigger_volatility": int(micro_trigger_volatility_expansion),
+                    "micro_triggers_count": micro_triggers_active,
                     "score_long": float(score_long),
                     "score_short": float(score_short),
                     "mr_score_long": float(mr_long),

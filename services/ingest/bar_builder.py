@@ -6,6 +6,7 @@ Public API:
   - on_tick(symbol: str, price: float, volume: float, ts: datetime) -> None
   - get_df_1m_tail(symbol: str, n: int) -> pd.DataFrame
   - get_df_5m_tail(symbol: str, n: int) -> pd.DataFrame
+  - get_df_15m_tail(symbol: str, n: int) -> pd.DataFrame
   - last_ltp(symbol: str) -> float | None
   - index_df_5m(symbol: str | None = None) -> pd.DataFrame | dict[str, pd.DataFrame]
 
@@ -13,6 +14,7 @@ Constructor (no hidden config):
   - bar_5m_span_minutes: int (must be a multiple of 5)
   - on_1m_close: callable(symbol, bar_1m: pd.Series)
   - on_5m_close: callable(symbol, bar_5m: pd.Series)
+  - on_15m_close: callable(symbol, bar_15m: pd.Series)
   - index_symbols: Optional[list[str]] — symbols treated as index for convenience access
 
 Notes:
@@ -103,6 +105,7 @@ class BarBuilder:
         bar_5m_span_minutes: int,
         on_1m_close: Callable[[str, Bar], None],
         on_5m_close: Callable[[str, Bar], None],
+        on_15m_close: Optional[Callable[[str, Bar], None]] = None,
         index_symbols: Optional[List[str]] = None,
     ) -> None:
         if bar_5m_span_minutes % 5 != 0:
@@ -110,21 +113,24 @@ class BarBuilder:
         self._span5 = int(bar_5m_span_minutes)
         self._on_1m_close = on_1m_close
         self._on_5m_close = on_5m_close
+        self._on_15m_close = on_15m_close or (lambda s, b: None)  # no-op if not provided
 
         self._lock = threading.RLock()
         self._ltp: Dict[str, _LastTick] = {}
         self._cur_1m: Dict[str, Bar] = {}
         self._bars_1m: Dict[str, pd.DataFrame] = defaultdict(_empty_df)
         self._bars_5m: Dict[str, pd.DataFrame] = defaultdict(_empty_df)
+        self._bars_15m: Dict[str, pd.DataFrame] = defaultdict(_empty_df)
         self._index_symbols = set(index_symbols or [])
 
         # ADX state (minimal, incremental)
         self._adx_state: Dict[str, _ADXState] = {}
         self._adx_alpha: float = 1.0 / 14.0  # Wilder α for ADX(14)
-    
+
         # Additional handlers for trigger system
         self._additional_1m_handlers: List[Callable[[str, Bar], None]] = []
         self._additional_5m_handlers: List[Callable[[str, Bar], None]] = []
+        self._additional_15m_handlers: List[Callable[[str, Bar], None]] = []
 
     # ----------------------------- Public API -----------------------------
     def on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
@@ -143,6 +149,13 @@ class BarBuilder:
     def get_df_5m_tail(self, symbol: str, n: int) -> pd.DataFrame:
         with self._lock:
             df = self._bars_5m.get(symbol)
+            if df is None or df.empty:
+                return _empty_df()
+            return df.tail(int(n)).copy()
+
+    def get_df_15m_tail(self, symbol: str, n: int) -> pd.DataFrame:
+        with self._lock:
+            df = self._bars_15m.get(symbol)
             if df is None or df.empty:
                 return _empty_df()
             return df.tail(int(n)).copy()
@@ -234,8 +247,9 @@ class BarBuilder:
             except Exception as e:
                 logger.exception("BarBuilder: additional 1m handler failed: %s", e)
 
-        # Try rolling into 5m
+        # Try rolling into 5m and 15m
         self._attempt_close_5m(symbol, ser.name)
+        self._attempt_close_15m(symbol, ser.name)
 
     def _attempt_close_5m(self, symbol: str, minute_close_ts: datetime) -> None:
         # Close a 5m bar when minute_close_ts.minute % span == 0
@@ -288,6 +302,59 @@ class BarBuilder:
                 handler(symbol, bar5)
             except Exception as e:
                 logger.exception("BarBuilder: additional 5m handler failed: %s", e)
+
+    def _attempt_close_15m(self, symbol: str, minute_close_ts: datetime) -> None:
+        """Close a 15m bar when minute_close_ts.minute % 15 == 0"""
+        if (minute_close_ts.minute % 15) != 0:
+            return
+
+        end_ts = minute_close_ts
+        start_ts = end_ts - timedelta(minutes=15)
+
+        df5 = self._bars_5m.get(symbol)
+        if df5 is None or df5.empty:
+            return
+
+        # Coerce to DatetimeIndex defensively
+        if not isinstance(df5.index, pd.DatetimeIndex):
+            df5 = df5.copy()
+            df5.index = pd.to_datetime(df5.index, errors="coerce")
+            df5 = df5[~df5.index.isna()]
+
+        # Aggregate 3 x 5m bars into 1 x 15m bar
+        window = df5[(df5.index > start_ts) & (df5.index <= end_ts)]
+        if window.empty:
+            return
+
+        bar15 = _aggregate_window_to_ohlcv(window)
+        bar15.name = end_ts
+
+        # 15m bars inherit ADX from the last 5m bar in the window
+        try:
+            bar15["adx"] = float(window.iloc[-1]["adx"]) if "adx" in window.columns else 0.0
+        except Exception:
+            bar15["adx"] = 0.0
+
+        df15 = self._bars_15m[symbol]
+        row15 = bar15.to_frame().T
+        row15.index = [end_ts]
+        if df15 is None or getattr(df15, "empty", True):
+            self._bars_15m[symbol] = row15
+        else:
+            self._bars_15m[symbol] = pd.concat([df15, row15], copy=False)
+
+        # 15m close callback
+        try:
+            self._on_15m_close(symbol, bar15)
+        except Exception as e:
+            logger.exception("BarBuilder: on_15m_close callback failed: %s", e)
+            pass
+
+        for handler in self._additional_15m_handlers:
+            try:
+                handler(symbol, bar15)
+            except Exception as e:
+                logger.exception("BarBuilder: additional 15m handler failed: %s", e)
 
     # ------------------------ Incremental ADX(14) -------------------------
     def _update_adx_5m(self, symbol: str, high: float, low: float, close: float) -> float:

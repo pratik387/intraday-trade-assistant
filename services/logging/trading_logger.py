@@ -143,44 +143,43 @@ class TradingLogger:
     
     def log_trigger(self, trade_data: Dict[str, Any]):
         """Log a trade trigger execution"""
-        
-        # Find matching lifecycle
+
+        # Find matching lifecycle (but don't require it - defensive logging)
         lifecycle_id = self._find_lifecycle_id(trade_data)
-        
+
         if lifecycle_id:
-            # Update lifecycle
+            # Update existing lifecycle if found
             lifecycle = self.trade_lifecycles[lifecycle_id]
             lifecycle.stage = 'TRIGGER'
             lifecycle.elapsed_from_decision = self._calculate_elapsed(lifecycle)
 
-            # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
-            # NOTE: Analytics logging removed - analytics.jsonl populated from events.jsonl in post-processing to avoid duplicates
-
-            # Log TRIGGER event to events.jsonl for complete audit trail
-            trigger_event = {
-                'schema_version': 'trade.v1',
-                'type': 'TRIGGER',
-                'run_id': None,
-                'trade_id': trade_data.get('trade_id', lifecycle.trade_id),
-                'symbol': trade_data.get('symbol', ''),
-                'ts': trade_data.get('timestamp', str(pd.Timestamp.now())),
-                'trigger': {
-                    'actual_price': trade_data.get('price', 0),
-                    'qty': trade_data.get('qty', 0),
-                    'strategy': trade_data.get('strategy', ''),
-                    'order_id': trade_data.get('order_id', ''),
-                    'side': trade_data.get('side', 'BUY')
-                }
+        # ALWAYS log TRIGGER event to events.jsonl (moved outside if block)
+        # This ensures TRIGGER events are logged even if lifecycle tracking fails
+        # (e.g., when diag_event_log logs DECISION instead of trading_logger.log_decision)
+        trigger_event = {
+            'schema_version': 'trade.v1',
+            'type': 'TRIGGER',
+            'run_id': None,
+            'trade_id': trade_data.get('trade_id', ''),
+            'symbol': trade_data.get('symbol', ''),
+            'ts': trade_data.get('timestamp', str(pd.Timestamp.now())),
+            'trigger': {
+                'actual_price': trade_data.get('price', 0),
+                'qty': trade_data.get('qty', 0),
+                'strategy': trade_data.get('strategy', ''),
+                'order_id': trade_data.get('order_id', ''),
+                'side': trade_data.get('side', 'BUY')
             }
-            self.events_logger.info(json.dumps(trigger_event))
-        
+        }
+        self.events_logger.info(json.dumps(trigger_event))
+
         # Log to trade logs (existing format)
         symbol = trade_data.get('symbol', '')
         qty = trade_data.get('qty', 0)
         price = trade_data.get('price', 0)
         strategy = trade_data.get('strategy', '')
         order_id = trade_data.get('order_id', '')
-        
+
         self.trade_logger.info(
             f"TRIGGER_EXEC | {symbol} | BUY {qty} @ {price} | strategy={strategy} | order_id={order_id}"
         )
@@ -460,7 +459,7 @@ class TradingLogger:
             # Parse all events and organize by type
             decisions = {}  # trade_id -> decision_event
             triggers = {}   # trade_id -> trigger_event
-            exits = {}      # trade_id -> exit_event
+            exits = {}      # trade_id -> list of exit_events (to handle partial exits)
 
             with open(events_file, 'r') as f:
                 for line in f:
@@ -486,19 +485,22 @@ class TradingLogger:
                             triggers[trade_id] = event
 
                         elif event_type == 'EXIT':
-                            exits[trade_id] = event
+                            # Support multiple exits per trade (partial exits)
+                            if trade_id not in exits:
+                                exits[trade_id] = []
+                            exits[trade_id].append(event)
 
                     except Exception:
                         continue
 
             # Calculate performance metrics by pairing DECISION + EXIT events
-            for trade_id, exit_event in exits.items():
+            for trade_id, exit_events in exits.items():
                 decision_event = decisions.get(trade_id)
                 trigger_event = triggers.get(trade_id)
 
                 if decision_event:
-                    # Calculate complete trade metrics
-                    pnl = self._calculate_trade_pnl(decision_event, exit_event, trigger_event)
+                    # Calculate complete trade metrics from ALL exits (sum partial exits)
+                    pnl = self._calculate_trade_pnl_all_exits(decision_event, exit_events, trigger_event)
 
                     # Update session stats
                     self.session_stats['completed_trades'] += 1
@@ -518,8 +520,9 @@ class TradingLogger:
                             self.session_stats['rank_scores_skipped'].remove(rank_score)
                             self.session_stats['rank_scores_triggered'].append(rank_score)
 
-                    # Log enhanced analytics
-                    analytics_data = self._create_enhanced_analytics(decision_event, exit_event, trigger_event, pnl)
+                    # Log enhanced analytics for last exit (full trade summary)
+                    last_exit = exit_events[-1]
+                    analytics_data = self._create_enhanced_analytics(decision_event, last_exit, trigger_event, pnl)
                     self.analytics_logger.info(json.dumps(analytics_data))
 
             # Count triggered trades
@@ -539,9 +542,40 @@ class TradingLogger:
             import traceback
             traceback.print_exc()
 
+    def _calculate_trade_pnl_all_exits(self, decision_event: Dict[str, Any], exit_events: list,
+                                      trigger_event: Optional[Dict[str, Any]] = None) -> float:
+        """Calculate total PnL from all exit events (handles partial exits)"""
+        try:
+            # Get entry price (prefer actual trigger price, fallback to decision reference)
+            if trigger_event and 'trigger' in trigger_event:
+                entry_price = float(trigger_event['trigger'].get('actual_price', 0))
+            else:
+                entry_price = float(decision_event['plan']['entry'].get('reference', 0))
+
+            bias = decision_event['plan'].get('bias', 'long')
+            total_pnl = 0.0
+
+            # Sum PnL across all exits
+            for exit_event in exit_events:
+                exit_price = float(exit_event['exit'].get('price', 0))
+                qty = int(exit_event['exit'].get('qty', 0))
+
+                # Calculate PnL based on trade direction
+                if bias.lower() == 'long':
+                    pnl = (exit_price - entry_price) * qty
+                else:  # short
+                    pnl = (entry_price - exit_price) * qty
+
+                total_pnl += pnl
+
+            return round(total_pnl, 2)
+
+        except Exception:
+            return 0.0
+
     def _calculate_trade_pnl(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
                            trigger_event: Optional[Dict[str, Any]] = None) -> float:
-        """Calculate PnL for a completed trade using DECISION + EXIT (+ optional TRIGGER)"""
+        """Calculate PnL for a single exit (legacy method, kept for compatibility)"""
         try:
             # Get entry price (prefer actual trigger price, fallback to decision reference)
             if trigger_event and 'trigger' in trigger_event:

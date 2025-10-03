@@ -578,14 +578,57 @@ class TradeDecisionGate:
         elif time_blocked and hc_ok:
             reasons.append(f"hcet_bypass_time_window:{minute_of_day}")
 
-        # ---------------- EVENT POLICY ----------------
-        policy, ctx = self.event_gate.decide_policy(now, symbol)
+        # ---------------- EVENT POLICY (Phase 4: Enhanced with session/event thresholds) ----------------
+        # Extract lane_type from candidates for fast scalp detection
+        lane_type = None
+        for candidate in setups:
+            for reason in (candidate.reasons if hasattr(candidate, 'reasons') else []):
+                if reason.startswith("lane:"):
+                    lane_type = reason.split(":", 1)[1]
+                    break
+            if lane_type:
+                break
+
+        # Get enhanced policy with session/event thresholds
+        policy, ctx = self.event_gate.decide_policy(
+            now=now,
+            symbol=symbol,
+            adx_5m=adx_5m,
+            vol_mult_5m=vol_mult_5m,
+            strength=strength,
+            lane_type=lane_type
+        )
+        # Check policy permissions
         if _is_breakout(best.setup_type) and not policy.allow_breakout:
             reasons.append("event_block:breakout")
             return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
         if _is_fade(best.setup_type) and not policy.allow_fade:
             reasons.append("event_block:fade")
             return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
+        # Phase 4: Check session/event threshold requirements
+        if policy.min_adx and adx_5m < policy.min_adx:
+            session_or_event = policy.session_type or policy.event_type or "policy"
+            reasons.append(f"{session_or_event}:adx_fail:{adx_5m:.1f}<{policy.min_adx}")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
+        if policy.min_volume_mult and vol_mult_5m < policy.min_volume_mult:
+            session_or_event = policy.session_type or policy.event_type or "policy"
+            reasons.append(f"{session_or_event}:volume_fail:{vol_mult_5m:.2f}<{policy.min_volume_mult}")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
+        if policy.min_strength and strength < policy.min_strength:
+            session_or_event = policy.session_type or policy.event_type or "policy"
+            reasons.append(f"{session_or_event}:strength_fail:{strength:.2f}<{policy.min_strength}")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
+        # Phase 4: Check fast scalp lane permission (e.g., power hour blocks fast scalps)
+        if lane_type == "fast_scalp_lane" and not policy.allow_fast_scalp:
+            session_or_event = policy.session_type or policy.event_type or "policy"
+            reasons.append(f"{session_or_event}:fast_scalp_rejected")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
+        # Apply policy adjustments
         size_mult *= float(policy.size_mult)
         min_hold = int(policy.min_hold_bars)
         if ctx:
@@ -735,3 +778,4 @@ class TradeDecisionGate:
             if setup_type in config.get('strategies', []):
                 return config['momentum_consolidation_threshold']  # KeyError if missing
         return self.quality_filters.get('momentum_consolidation_threshold', 1.0)
+    

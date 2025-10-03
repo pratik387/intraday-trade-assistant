@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 REGIME_CONFIGS = [
-    {"name": "Strong_Uptrend", "start": "2023-12-01", "end": "2023-12-01"},
-    {"name": "Shock_Down", "start": "2024-01-01", "end": "2024-01-01"},
+    {"name": "Strong_Uptrend", "start": "2023-12-01", "end": "2023-12-31"},
+    {"name": "Shock_Down", "start": "2024-01-01", "end": "2024-01-31"},
     {"name": "Event_Driven_HighVol", "start": "2024-06-01", "end": "2024-06-30"},
     {"name": "Correction_RiskOff", "start": "2024-10-01", "end": "2024-10-31"},
     {"name": "Prolonged_Drawdown", "start": "2025-02-01", "end": "2025-02-28"},

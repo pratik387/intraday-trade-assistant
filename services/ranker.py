@@ -266,6 +266,87 @@ def _get_regime_multiplier(strategy_type: Optional[str], regime: Optional[str]) 
     return 1.0  # Default
 
 
+def _get_daily_trend_multiplier(row: Dict, strategy_type: Optional[str], cfg: Dict) -> float:
+    """
+    Apply daily trend alignment multiplier for multi-timeframe confluence.
+
+    Professional traders require higher timeframe alignment for optimal setups.
+    - Long setups in daily uptrend: 20-30% win rate boost
+    - Short setups in daily downtrend: 20-30% win rate boost
+    - Counter-trend trades: Penalty applied
+    """
+    # Extract daily trend from plan notes
+    plan_notes = row.get("notes", {})
+    daily_trend = plan_notes.get("daily_trend", "neutral") if isinstance(plan_notes, dict) else "neutral"
+
+    if not daily_trend or daily_trend == "neutral":
+        return 1.0
+
+    if not strategy_type:
+        return 1.0
+
+    # Determine setup bias from strategy type
+    is_long_setup = any(x in strategy_type for x in ["_long", "bounce", "reclaim", "bullish"])
+    is_short_setup = any(x in strategy_type for x in ["_short", "fade", "rejection", "bearish"])
+
+    # Apply trend alignment bonus/penalty
+    if daily_trend == "up" and is_long_setup:
+        return 1.25  # 25% boost for trend-aligned longs
+    elif daily_trend == "down" and is_short_setup:
+        return 1.25  # 25% boost for trend-aligned shorts
+    elif daily_trend == "up" and is_short_setup:
+        return 0.75  # 25% penalty for counter-trend shorts
+    elif daily_trend == "down" and is_long_setup:
+        return 0.75  # 25% penalty for counter-trend longs
+
+    return 1.0  # Neutral
+
+
+def _get_htf_15m_multiplier(row: Dict, strategy_type: Optional[str], cfg: Dict) -> float:
+    """
+    Apply 15m HTF (Higher TimeFrame) confirmation multiplier.
+
+    Per Intraday Scanner Playbook:
+    - Trend align bonus: +12% (5m + 15m same direction)
+    - Volume multiplier bonus: +8% (15m volume > 20-bar average)
+    - Opposing trend penalty: -10% (5m vs 15m divergence)
+
+    Never blocks entries - only affects ranking scores.
+    """
+    # Extract HTF context from row (populated by screener if available)
+    htf_context = row.get("htf_15m", {})
+    if not htf_context:
+        return 1.0  # No HTF data available, neutral
+
+    # Determine setup bias
+    is_long_setup = any(x in str(strategy_type) for x in ["_long", "bounce", "reclaim", "bullish"])
+    is_short_setup = any(x in str(strategy_type) for x in ["_short", "fade", "rejection", "bearish"])
+
+    multiplier = 1.0
+
+    # Check 15m trend alignment (screener populates "trend_aligned" as boolean)
+    htf_trend_aligned = htf_context.get("trend_aligned", False)
+
+    # Apply alignment bonus or penalty
+    if is_long_setup:
+        if htf_trend_aligned:  # 15m uptrend aligns with long setup
+            multiplier *= 1.12  # +12% bonus
+        else:  # 15m downtrend opposes long setup
+            multiplier *= 0.90  # -10% penalty
+    elif is_short_setup:
+        if not htf_trend_aligned:  # 15m downtrend aligns with short setup
+            multiplier *= 1.12  # +12% bonus
+        else:  # 15m uptrend opposes short setup
+            multiplier *= 0.90  # -10% penalty
+
+    # Check 15m volume context
+    htf_vol_mult = htf_context.get("volume_mult_15m", 1.0)
+    if htf_vol_mult >= 1.3:  # 15m volume surge (>= 1.3x median)
+        multiplier *= 1.08  # +8% bonus
+
+    return multiplier
+
+
 def rank_candidates(rows: List[Dict], top_n: Optional[int] = None, regime_context: Optional[str] = None) -> List[Dict]:
     """
     Mutate `rows` with 'intraday_score' and 'rank_score', then return the top N.
@@ -293,7 +374,14 @@ def rank_candidates(rows: List[Dict], top_n: Optional[int] = None, regime_contex
 
             # Apply regime-based adjustment (from diagnostic report insights)
             regime_multiplier = _get_regime_multiplier(strategy_type, regime_context)
-            r["intraday_score"] = base_intraday_score * regime_multiplier
+
+            # Apply daily trend alignment multiplier (multi-timeframe confluence)
+            daily_trend_multiplier = _get_daily_trend_multiplier(r, strategy_type, cfg)
+
+            # Apply HTF 15m confirmation multiplier (higher timeframe context)
+            htf_multiplier = _get_htf_15m_multiplier(r, strategy_type, cfg)
+
+            r["intraday_score"] = base_intraday_score * regime_multiplier * daily_trend_multiplier * htf_multiplier
             r["rank_score"] = w_daily * float(r.get("daily_score", 0.0)) + w_intr * r["intraday_score"]
 
             # OUTCOME-AWARE RANKING: Apply blacklist penalty and RR caps

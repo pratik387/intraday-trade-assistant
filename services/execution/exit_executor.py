@@ -219,6 +219,14 @@ class ExitExecutor:
                     self._exit(sym, pos, float(px), ts, "hard_sl")
                     continue
 
+                # Phase 2.5: Fast Scalp Lane time-based stops
+                if self._check_fast_scalp_time_stop(sym, pos, float(px), ts):
+                    continue  # Exit handled internally
+
+                # Phase 2.5: Auto-breakeven for fast scalp after favorable move
+                if self._check_fast_scalp_auto_be(sym, pos, float(px)):
+                    pass  # SL updated, continue monitoring
+
                 # 2) Targets & state
                 t1, t2 = self._get_targets(pos.plan)
                 st = pos.plan.get("_state") or {}
@@ -825,12 +833,13 @@ class ExitExecutor:
         # Enhanced partial exit logic - always use partial exits for better R:R
         qty = int(pos.qty)
 
-        # Check if T2 is infeasible (T1-only scalp mode)
+        # Check if T2 is infeasible (T1-only scalp mode) or Fast Scalp Lane
         t2_exit_mode = pos.plan.get("quality", {}).get("t2_exit_mode", None)
-        if t2_exit_mode == "T1_only_scalp":
-            # Exit 100% at T1 if T2 is not feasible
-            logger.info(f"exit_executor: {sym} T1_only_scalp mode - exiting 100% at T1 (T2 not feasible)")
-            self._exit(sym, pos, float(px), ts, "target_t1_full_t2_infeasible")
+        if t2_exit_mode in ("T1_only_scalp", "fast_scalp_T1_only"):
+            # Exit 100% at T1 if T2 is not feasible or in Fast Scalp Lane
+            reason_suffix = "t2_infeasible" if t2_exit_mode == "T1_only_scalp" else "fast_scalp_lane"
+            logger.info(f"exit_executor: {sym} {t2_exit_mode} mode - exiting 100% at T1 ({reason_suffix})")
+            self._exit(sym, pos, float(px), ts, f"target_t1_full_{reason_suffix}")
             return
 
         pct = max(1.0, float(getattr(self, "t1_book_pct", 70)))
@@ -1110,6 +1119,95 @@ class ExitExecutor:
 
         except Exception as e:
             logger.warning(f"EOD_SCALE_OUT: {sym} error: {e}")
+
+        return False
+
+    def _check_fast_scalp_time_stop(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> bool:
+        """
+        Phase 2.5: Time-based stop for Fast Scalp Lane.
+
+        Exit if T1 not hit within N bars (default 5 bars = 25 minutes on 5m chart).
+        This prevents capital being tied up in stagnant fast scalps.
+        """
+        lane_type = pos.plan.get("context", {}).get("lane_type")
+        if lane_type != "fast_scalp_lane":
+            return False
+
+        # Check if already past T1
+        st = pos.plan.get("_state") or {}
+        if st.get("t1_done", False):
+            return False  # Already past T1, let normal exit logic handle
+
+        # Get entry timestamp
+        entry_ts = pos.plan.get("entry_timestamp")
+        if entry_ts is None or ts is None:
+            return False
+
+        # Calculate bars elapsed (5m bars)
+        bars_elapsed = (ts - entry_ts).total_seconds() / 300.0  # 300 seconds = 5 minutes
+
+        # Time stop threshold (default 5 bars = 25 minutes)
+        time_stop_bars = 5
+
+        if bars_elapsed >= time_stop_bars:
+            logger.info(
+                f"FAST_SCALP_TIME_STOP | {sym} | "
+                f"Bars elapsed: {bars_elapsed:.1f} >= {time_stop_bars} | "
+                f"No T1 hit, exiting at market"
+            )
+            self._exit(sym, pos, px, ts, f"fast_scalp_time_stop_{bars_elapsed:.0f}bars")
+            return True
+
+        return False
+
+    def _check_fast_scalp_auto_be(self, sym: str, pos: Position, px: float) -> bool:
+        """
+        Phase 2.5: Auto-breakeven for Fast Scalp Lane.
+
+        Move SL to breakeven after favorable move (>0.5 RPS profit).
+        This locks in zero-loss quickly for fast scalps.
+        """
+        lane_type = pos.plan.get("context", {}).get("lane_type")
+        if lane_type != "fast_scalp_lane":
+            return False
+
+        # Check if already moved to BE
+        st = pos.plan.get("_state") or {}
+        if st.get("sl_moved_to_be_fast_scalp", False):
+            return False
+
+        # Calculate profit in terms of RPS (risk per share)
+        rps = pos.plan.get("sizing", {}).get("risk_per_share", 0.0)
+        if rps <= 0:
+            return False
+
+        # Current P&L
+        side = pos.side.upper()
+        if side == "BUY":
+            pnl_per_share = px - pos.avg_price
+        else:
+            pnl_per_share = pos.avg_price - px
+
+        # Auto-BE threshold: >0.5 RPS profit
+        auto_be_threshold = 0.5 * rps
+
+        if pnl_per_share >= auto_be_threshold:
+            # Move SL to breakeven
+            new_sl = pos.avg_price
+            old_sl = self._get_plan_sl(pos.plan)
+
+            logger.info(
+                f"FAST_SCALP_AUTO_BE | {sym} | "
+                f"Profit: {pnl_per_share:.2f} >= {auto_be_threshold:.2f} ({0.5:.1f}R) | "
+                f"Moving SL: {old_sl:.2f} -> BE {new_sl:.2f}"
+            )
+
+            # Update plan SL
+            pos.plan["hard_sl"] = new_sl
+            st["sl_moved_to_be_fast_scalp"] = True
+            pos.plan["_state"] = st
+
+            return True
 
         return False
 

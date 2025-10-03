@@ -112,6 +112,7 @@ class ScreenerLive:
             bar_5m_span_minutes=5,
             on_1m_close=self._on_1m_close,
             on_5m_close=self._on_5m_close,
+            on_15m_close=self._on_15m_close,
             index_symbols=self._index_symbols(),
         )
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
@@ -123,7 +124,8 @@ class ScreenerLive:
         self.detector = MainDetector(raw)
         news_cfg = raw.get("news_gate")
         self.regime_gate = MarketRegimeGate(cfg=raw)
-        self.event_gate = EventPolicyGate()
+        # Phase 4: Pass config to EventPolicyGate for session/event policies
+        self.event_gate = EventPolicyGate(cfg=raw)
         self.news_gate = NewsSpikeGate(
             window_bars=news_cfg.get("window_bars"),
             vol_z_thresh=news_cfg.get("vol_z_thresh"),
@@ -205,6 +207,107 @@ class ScreenerLive:
         # Note: TriggerAwareExecutor automatically hooks into BarBuilder's 1m callback
         # No manual forwarding needed - it replaces this method during initialization
         pass
+
+    def _on_15m_close(self, symbol: str, bar_15m: pd.Series) -> None:
+        """
+        HTF (15m) bar close handler - triggers re-ranking of candidates.
+
+        Per playbook: 15m bars used for HTF confirmation but NEVER block entries.
+        Only affects ranking scores via HTF bonuses/penalties.
+        """
+        # TODO Phase 1.2: Implement HTF rank update logic
+        # For now, just log that 15m bars are being captured
+        ts = bar_15m.name if hasattr(bar_15m, "name") else datetime.now()
+        logger.debug(f"HTF: 15m bar closed for {symbol} at {ts}")
+        # Future: Trigger rank_candidates() update with HTF context
+
+    def _enhance_candidates_with_htf(self, symbol: str, candidates: List) -> List:
+        """
+        Phase 1.4: Enhance setup candidate strength with 15m HTF confirmation.
+
+        Applies confidence boost/penalty based on 15m trend and volume alignment:
+        - +15% boost if 15m trend aligned with setup direction
+        - -10% penalty if 15m trend opposes setup direction
+        - +5% boost if 15m volume surge (>1.3x median)
+        """
+        from dataclasses import dataclass, replace
+        from services.gates.trade_decision_gate import SetupCandidate
+
+        df15 = self.agg.get_df_15m_tail(symbol, 10)
+        if df15 is None or df15.empty or len(df15) < 2:
+            return candidates  # No HTF data, return as-is
+
+        last_15m = df15.iloc[-1]
+        prev_15m = df15.iloc[-2]
+
+        # 15m trend detection
+        htf_trend_up = float(last_15m.get("close", 0.0)) > float(prev_15m.get("close", 0.0))
+
+        # 15m volume surge detection
+        htf_volume_surge = False
+        if "volume" in df15.columns and len(df15) >= 6:
+            recent_vol_15m = df15["volume"].tail(6).median()
+            current_vol_15m = float(last_15m.get("volume", 0.0) or 0.0)
+            htf_volume_surge = (current_vol_15m / recent_vol_15m) >= 1.3 if recent_vol_15m > 0 else False
+
+        # Adjust each candidate based on setup direction vs HTF trend
+        enhanced = []
+        for candidate in candidates:
+            setup_type = candidate.setup_type if hasattr(candidate, 'setup_type') else None
+            if not setup_type:
+                enhanced.append(candidate)
+                continue
+
+            # Determine setup direction (long vs short)
+            is_long_setup = any(kw in setup_type.lower() for kw in ["long", "bull", "buy"])
+            is_short_setup = any(kw in setup_type.lower() for kw in ["short", "bear", "sell"])
+
+            # Base strength
+            base_strength = candidate.strength if hasattr(candidate, 'strength') else 0.5
+            adjusted_strength = base_strength
+
+            # Apply HTF trend alignment adjustment
+            if is_long_setup and htf_trend_up:
+                adjusted_strength *= 1.15  # +15% for aligned long
+            elif is_short_setup and not htf_trend_up:
+                adjusted_strength *= 1.15  # +15% for aligned short
+            elif is_long_setup and not htf_trend_up:
+                adjusted_strength *= 0.90  # -10% for opposing long
+            elif is_short_setup and htf_trend_up:
+                adjusted_strength *= 0.90  # -10% for opposing short
+
+            # Apply volume surge bonus (additive, regardless of direction)
+            if htf_volume_surge:
+                adjusted_strength *= 1.05  # +5% for volume confirmation
+
+            # Phase 2.1: Determine trading lane (Precision vs Fast Scalp)
+            # Precision Lane: HTF trend aligned + volume surge -> full size + T1+T2
+            # Fast Scalp Lane: HTF not aligned or weak -> 50% size + T1 only
+            htf_aligned = (is_long_setup and htf_trend_up) or (is_short_setup and not htf_trend_up)
+            lane_type = "precision_lane" if (htf_aligned and htf_volume_surge) else "fast_scalp_lane"
+
+            # Add lane info to reasons
+            updated_reasons = list(candidate.reasons if hasattr(candidate, 'reasons') else [])
+            updated_reasons.append(f"lane:{lane_type}")
+            if htf_aligned:
+                updated_reasons.append("htf:aligned")
+            if htf_volume_surge:
+                updated_reasons.append("htf:volume_surge")
+
+            # Create adjusted candidate (immutable dataclass, so use replace if available)
+            try:
+                adjusted_candidate = replace(candidate, strength=adjusted_strength, reasons=updated_reasons)
+            except:
+                # Fallback if not a dataclass - create new SetupCandidate
+                adjusted_candidate = SetupCandidate(
+                    setup_type=candidate.setup_type,
+                    strength=adjusted_strength,
+                    reasons=updated_reasons
+                )
+
+            enhanced.append(adjusted_candidate)
+
+        return enhanced
 
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
         """Main driver: invoked for each CLOSED 5m bar of any symbol."""
@@ -401,6 +504,8 @@ class ScreenerLive:
                 # Use new structure system approach with setup_candidates
                 setup_candidates = getattr(decision, 'setup_candidates', None)
                 if setup_candidates:
+                    # Phase 1.4: Enhance candidate strength with HTF 15m confirmation
+                    setup_candidates = self._enhance_candidates_with_htf(sym, setup_candidates)
                     plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_candidates=setup_candidates)
                 else:
                     # Fallback for compatibility during transition
@@ -761,6 +866,25 @@ class ScreenerLive:
                     regime_context = getattr(d, "regime", None)
                     break
 
+            # Extract HTF 15m context for ranking multipliers (Phase 1.3)
+            htf_15m_context = {}
+            df15 = self.agg.get_df_15m_tail(sym, 10)  # Last 10 x 15m bars
+            if df15 is not None and not df15.empty and len(df15) >= 2:
+                last_15m = df15.iloc[-1]
+                prev_15m = df15.iloc[-2]
+
+                # 15m trend direction (price and ADX)
+                htf_15m_context["trend_aligned"] = float(last_15m.get("close", 0.0)) > float(prev_15m.get("close", 0.0))
+                htf_15m_context["adx_15m"] = float(last_15m.get("adx", 0.0) or 0.0)
+
+                # 15m volume multiplier (relative to 15m average)
+                if "volume" in df15.columns and len(df15) >= 3:
+                    recent_vol_15m = df15["volume"].tail(6).median()
+                    current_vol_15m = float(last_15m.get("volume", 0.0) or 0.0)
+                    htf_15m_context["volume_mult_15m"] = (current_vol_15m / recent_vol_15m) if recent_vol_15m > 0 else 1.0
+                else:
+                    htf_15m_context["volume_mult_15m"] = 1.0
+
             # Strategy type detection (debug logging removed for cleaner output)
 
             rows_for_ranker.append({
@@ -774,6 +898,7 @@ class ScreenerLive:
                     "above_vwap": above_vwap,
                     "squeeze_pctile": sq_pct,
                 },
+                "htf_15m": htf_15m_context,
             })
 
         if not rows_for_ranker:

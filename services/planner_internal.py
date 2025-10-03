@@ -549,12 +549,17 @@ def _compose_exits_and_size(
             fallback_zone = True
 
         # Primary stop from structure, buffered by volatility (ATR multiple)
+        # INSTITUTIONAL FIX: Use TIGHTER stop (min for long, max for short) for precision edge
         vol_stop = price - cfg.sl_atr_mult * atr if bias == "long" else price + cfg.sl_atr_mult * atr
         if bias == "long":
-            hard_sl = max(structure_stop - cfg.sl_below_swing_ticks, vol_stop)
+            # For LONG: SL below entry - use HIGHER value (closer to entry) = TIGHTER stop
+            structure_sl = structure_stop - cfg.sl_below_swing_ticks
+            hard_sl = max(structure_sl, vol_stop)  # Takes closer SL to entry
             rps = max(price - hard_sl, 0.0)
         else:
-            hard_sl = min(structure_stop + cfg.sl_below_swing_ticks, vol_stop)
+            # For SHORT: SL above entry - use LOWER value (closer to entry) = TIGHTER stop
+            structure_sl = structure_stop + cfg.sl_below_swing_ticks
+            hard_sl = min(structure_sl, vol_stop)  # Takes closer SL to entry
             rps = max(hard_sl - price, 0.0)
 
         # Floors for RPS to avoid too-tight stops
@@ -648,6 +653,141 @@ def _compose_exits_and_size(
     except Exception as e:
         logger.exception(f"planner.compose_exits_size error: {e}")
         return {"eligible": False, "reason": "compose_error", "targets": [], "qty": 0, "notional": 0.0}
+
+# ----------------------------
+# Structure-Based Entry Calculation
+# ----------------------------
+
+def _calculate_structure_entry(
+    setup_type: str,
+    bias: str,
+    current_close: float,
+    orh: float,
+    orl: float,
+    pdh: float,
+    pdl: float,
+    vwap_current: Optional[float],
+    atr: float
+) -> float:
+    """
+    Calculate entry reference price based on setup type and structure levels.
+    Uses institutional logic: enter at support for longs, resistance for shorts.
+
+    Key principles:
+    - Breakouts: Enter AFTER break (ORH + buffer for long, ORL - buffer for short)
+    - Fades/Failures: Enter AT reversal level (ORL for long bounce, ORH for short rejection)
+    - Gap Fill: Enter at structure (ORL for gap down/long, ORH for gap up/short)
+    - VWAP: Enter at VWAP level with directional bias
+    """
+    setup_lower = setup_type.lower()
+
+    if bias == "long":
+        # LONG SETUPS - Enter at SUPPORT or after BREAKOUT above RESISTANCE
+
+        # 1. BREAKOUT/BOS - Enter AFTER breakout above ORH
+        if "breakout" in setup_lower or "break_of_structure" in setup_lower:
+            if "orb" in setup_lower:
+                return orh + (atr * 0.05)  # ORB breakout: 5% ATR buffer
+            elif "momentum" in setup_lower:
+                return orh + (atr * 0.03)  # Momentum breakout: 3% ATR buffer
+            else:
+                return orh  # Generic breakout at ORH
+
+        # 2. FADE/FAILURE/REJECTION - Enter AT ORL (support bounce)
+        elif any(kw in setup_lower for kw in ["fade", "failure", "rejection", "choc"]):
+            return orl
+
+        # 3. VWAP SETUPS - Enter at VWAP (with slight buffer)
+        elif "vwap" in setup_lower:
+            if vwap_current and vwap_current > 0:
+                return vwap_current * 0.999  # Just below VWAP for long
+            return current_close
+
+        # 4. PULLBACK/RETEST - Enter at support (ORL or PDL)
+        elif "pullback" in setup_lower or "retest" in setup_lower:
+            return min(orl, pdl) if pdl > 0 else orl
+
+        # 5. CONTINUATION - Enter at current price with momentum
+        elif "continuation" in setup_lower:
+            return current_close
+
+        # 6. REVERSAL - Enter at support (ORL or PDL)
+        elif "reversal" in setup_lower:
+            return min(orl, pdl) if pdl > 0 else orl
+
+        # 7. RANGE - Enter at range low (ORL)
+        elif "range" in setup_lower:
+            return orl
+
+        # 8. SQUEEZE - Enter at support with volatility compression
+        elif "squeeze" in setup_lower:
+            return orl
+
+        # 9. INSIDE BAR - Enter at inside bar low
+        elif "inside" in setup_lower:
+            return orl
+
+        # 10. GAP FILL LONG - Gap DOWN scenario, enter at support (ORL)
+        elif "gap" in setup_lower:
+            return orl  # Gap down fill: enter long at support
+
+        # 11. DEFAULT LONG - Entry at support (ORL)
+        else:
+            return orl
+
+    else:  # SHORT setups
+        # SHORT SETUPS - Enter at RESISTANCE or after BREAKDOWN below SUPPORT
+
+        # 1. BREAKDOWN/BOS - Enter AFTER breakdown below ORL
+        if "breakout" in setup_lower or "break_of_structure" in setup_lower:
+            if "orb" in setup_lower:
+                return orl - (atr * 0.05)  # ORB breakdown: 5% ATR buffer
+            elif "momentum" in setup_lower:
+                return orl - (atr * 0.03)  # Momentum breakdown: 3% ATR buffer
+            else:
+                return orl  # Generic breakdown at ORL
+
+        # 2. FADE/FAILURE/REJECTION - Enter AT ORH (resistance rejection)
+        elif any(kw in setup_lower for kw in ["fade", "failure", "rejection", "choc"]):
+            return orh
+
+        # 3. VWAP SETUPS - Enter at VWAP (with slight buffer)
+        elif "vwap" in setup_lower:
+            if vwap_current and vwap_current > 0:
+                return vwap_current * 1.001  # Just above VWAP for short
+            return current_close
+
+        # 4. PULLBACK/RETEST - Enter at resistance (ORH or PDH)
+        elif "pullback" in setup_lower or "retest" in setup_lower:
+            return max(orh, pdh) if pdh > 0 else orh
+
+        # 5. CONTINUATION - Enter at current price with momentum
+        elif "continuation" in setup_lower:
+            return current_close
+
+        # 6. REVERSAL - Enter at resistance (ORH or PDH)
+        elif "reversal" in setup_lower:
+            return max(orh, pdh) if pdh > 0 else orh
+
+        # 7. RANGE - Enter at range high (ORH)
+        elif "range" in setup_lower:
+            return orh
+
+        # 8. SQUEEZE - Enter at resistance with volatility compression
+        elif "squeeze" in setup_lower:
+            return orh
+
+        # 9. INSIDE BAR - Enter at inside bar high
+        elif "inside" in setup_lower:
+            return orh
+
+        # 10. GAP FILL SHORT - Gap UP scenario, enter at resistance (ORH)
+        elif "gap" in setup_lower:
+            return orh  # Gap up fill: enter short at resistance
+
+        # 11. DEFAULT SHORT - Entry at resistance (ORH)
+        else:
+            return orh
 
 # ----------------------------
 # Public API
@@ -847,7 +987,22 @@ def generate_trade_plan(
                 qty_scale *= 0.9
                 cautions.append("adx_out_of_band")
 
-        entry_ref_price = float(sess.iloc[-1]["close"])
+        # Calculate structure-based entry price instead of using current close
+        current_close = float(sess.iloc[-1]["close"])
+        vwap_current = float(sess.iloc[-1]["vwap"]) if "vwap" in sess.columns and not pd.isna(sess.iloc[-1]["vwap"]) else None
+
+        entry_ref_price = _calculate_structure_entry(
+            setup_type=strat["name"],
+            bias=strat["bias"],
+            current_close=current_close,
+            orh=orh,
+            orl=orl,
+            pdh=pd_levels.get("PDH", np.nan),
+            pdl=pd_levels.get("PDL", np.nan),
+            vwap_current=vwap_current,
+            atr=atr
+        )
+
         exits = _compose_exits_and_size(entry_ref_price, strat["bias"], atr, strat["structure_stop"], cfg, qty_scale=qty_scale)
 
         # Feasibility tightening (from planner_precision extras)
