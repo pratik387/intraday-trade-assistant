@@ -30,7 +30,7 @@ FROM_HHMM = "09:25"  # Morning trading start
 TO_HHMM = "15:15"    # Afternoon trading end
 
 # parallelism: 2–4 is usually safe
-MAX_WORKERS = 5
+MAX_WORKERS = 10
 # per-task start stagger (sec) to prevent same-second logger run_id collisions
 STAGGER_SEC = 2
 # ======================
