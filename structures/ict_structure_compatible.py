@@ -88,7 +88,7 @@ class ICTStructureCompatible(BaseStructure):
         self.confidence_medium_signal = config["confidence_medium_signal"]
         self.confidence_weak_signal = config["confidence_weak_signal"]
 
-        logger.info(f"ICT: Initialized with config - OB move: {self.ob_min_move_pct*100:.1f}%, "
+        logger.debug(f"ICT: Initialized with config - OB move: {self.ob_min_move_pct*100:.1f}%, "
                    f"FVG gap: {self.fvg_min_gap_pct*100:.2f}%-{self.fvg_max_gap_pct*100:.1f}%, "
                    f"Sweep vol: {self.sweep_min_volume_surge}x")
 

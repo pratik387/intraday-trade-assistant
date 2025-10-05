@@ -42,7 +42,7 @@ class VolumeStructure(BaseStructure):
         self.target_mult_t2 = config["target_mult_t2"]
         self.confidence_level = config["confidence_level"]
 
-        logger.info(f"VOLUME: Initialized with min spike: {self.min_volume_spike_mult}x")
+        logger.debug(f"VOLUME: Initialized with min spike: {self.min_volume_spike_mult}x")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect volume-based structures."""

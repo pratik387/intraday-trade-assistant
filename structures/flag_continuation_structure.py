@@ -56,7 +56,7 @@ class FlagContinuationStructure(BaseStructure):
         self.confidence_strong_flag = config["confidence_strong_flag"]
         self.confidence_weak_flag = config["confidence_weak_flag"]
 
-        logger.info(f"FLAG_CONTINUATION: Initialized with consolidation: {self.min_consolidation_bars}-{self.max_consolidation_bars} bars, trend strength: {self.min_trend_strength}%")
+        logger.debug(f"FLAG_CONTINUATION: Initialized with consolidation: {self.min_consolidation_bars}-{self.max_consolidation_bars} bars, trend strength: {self.min_trend_strength}%")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:

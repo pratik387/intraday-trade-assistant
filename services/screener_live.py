@@ -391,17 +391,18 @@ class ScreenerLive:
                     sym, decision.setup_type, decision.regime, top_reason, ";".join(decision.reasons),
                 )
 
-                # Log screener rejection with detailed context
-                screener_logger.log_reject(
-                    sym,
-                    top_reason,
-                    timestamp=now.isoformat(),
-                    setup_type=decision.setup_type or "unknown",
-                    regime=decision.regime or "unknown",
-                    all_reasons=decision.reasons,
-                    structure_confidence=getattr(decision, 'structure_confidence', 0),
-                    current_price=df5['close'].iloc[-1] if not df5.empty else 0
-                )
+                # Only log meaningful rejections (skip common noise like no_structure_event)
+                if top_reason not in ["no_structure_event", "no_valid_levels_computed"]:
+                    screener_logger.log_reject(
+                        sym,
+                        top_reason,
+                        timestamp=now.isoformat(),
+                        setup_type=decision.setup_type or "unknown",
+                        regime=decision.regime or "unknown",
+                        all_reasons=decision.reasons,
+                        structure_confidence=getattr(decision, 'structure_confidence', 0),
+                        current_price=df5['close'].iloc[-1] if not df5.empty else 0
+                    )
                 continue
 
             logger.info(

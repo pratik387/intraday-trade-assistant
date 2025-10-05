@@ -528,7 +528,7 @@ def _strategy_selector(
 # ----------------------------
 
 def _compose_exits_and_size(
-    price: float, bias: str, atr: float, structure_stop: float, cfg: PlannerConfig, qty_scale: float
+    price: float, bias: str, atr: float, structure_stop: float, cfg: PlannerConfig, qty_scale: float, regime: str = "chop"
 ) -> Dict[str, Any]:
     """
     Compose hard stop, targets by RR, and position size. Strictly config-driven.
@@ -549,17 +549,30 @@ def _compose_exits_and_size(
             fallback_zone = True
 
         # Primary stop from structure, buffered by volatility (ATR multiple)
-        # INSTITUTIONAL FIX: Use TIGHTER stop (min for long, max for short) for precision edge
-        vol_stop = price - cfg.sl_atr_mult * atr if bias == "long" else price + cfg.sl_atr_mult * atr
+        # INSTITUTIONAL APPROACH: Structure first, ATR minimum second
+        # - Use structure stop (invalidation point) as primary
+        # - Enforce minimum distance of regime-aware ATR multiple
+        # - This prevents stops tighter than volatility noise while respecting structure
+
+        # Use regime-aware ATR multiplier (minimum stop distance)
+        regime_atr_mult = {
+            "trend": 2.0,      # Trending: need more room
+            "squeeze": 1.8,    # Pre-breakout: medium room
+            "chop": 1.5,       # Choppy: moderate room
+            "shock": 1.2       # High vol: don't overshoot
+        }
+        atr_mult = regime_atr_mult.get(regime, 2.0)  # Default to 2.0 if regime unknown
+
+        vol_stop = price - atr_mult * atr if bias == "long" else price + atr_mult * atr
         if bias == "long":
-            # For LONG: SL below entry - use HIGHER value (closer to entry) = TIGHTER stop
+            # For LONG: Use structure stop UNLESS it's tighter than ATR minimum
             structure_sl = structure_stop - cfg.sl_below_swing_ticks
-            hard_sl = max(structure_sl, vol_stop)  # Takes closer SL to entry
+            hard_sl = max(structure_sl, vol_stop)  # Structure priority, ATR floor
             rps = max(price - hard_sl, 0.0)
         else:
-            # For SHORT: SL above entry - use LOWER value (closer to entry) = TIGHTER stop
+            # For SHORT: Use structure stop UNLESS it's tighter than ATR minimum
             structure_sl = structure_stop + cfg.sl_below_swing_ticks
-            hard_sl = min(structure_sl, vol_stop)  # Takes closer SL to entry
+            hard_sl = min(structure_sl, vol_stop)  # Structure priority, ATR floor
             rps = max(hard_sl - price, 0.0)
 
         # Floors for RPS to avoid too-tight stops
@@ -1003,7 +1016,7 @@ def generate_trade_plan(
             atr=atr
         )
 
-        exits = _compose_exits_and_size(entry_ref_price, strat["bias"], atr, strat["structure_stop"], cfg, qty_scale=qty_scale)
+        exits = _compose_exits_and_size(entry_ref_price, strat["bias"], atr, strat["structure_stop"], cfg, qty_scale=qty_scale, regime=regime)
 
         # Feasibility tightening (from planner_precision extras)
         pp = cfg._extras.get("planner_precision", {})

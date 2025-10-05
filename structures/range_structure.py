@@ -46,7 +46,7 @@ class RangeStructure(BaseStructure):
         self.target_mult_t2 = config["target_mult_t2"]
         self.confidence_level = config["confidence_level"]
 
-        logger.info(f"RANGE: Initialized with range duration: {self.min_range_duration} bars, height: {self.min_range_height_pct}-{self.max_range_height_pct}%")
+        logger.debug(f"RANGE: Initialized with range duration: {self.min_range_duration} bars, height: {self.min_range_height_pct}-{self.max_range_height_pct}%")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect range-based structures."""

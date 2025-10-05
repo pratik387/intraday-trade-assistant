@@ -628,6 +628,16 @@ class TradeDecisionGate:
             reasons.append(f"{session_or_event}:fast_scalp_rejected")
             return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
+        # ---------------- ACCEPTANCE QUALITY CHECK -------------------
+        # Require "good" or "excellent" acceptance quality (2+ closes beyond level + volume confirmation)
+        # This prevents early entries before structure is accepted
+        if plan and "quality" in plan and plan["quality"]:
+            acceptance_status = plan["quality"].get("acceptance_status", "poor")
+            if acceptance_status not in ["good", "excellent"]:
+                reasons.append(f"acceptance_rejected:{acceptance_status}")
+                return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+            reasons.append(f"acceptance:{acceptance_status}")
+
         # Apply policy adjustments
         size_mult *= float(policy.size_mult)
         min_hold = int(policy.min_hold_bars)
