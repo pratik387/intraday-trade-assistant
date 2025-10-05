@@ -155,7 +155,7 @@ class FailureFadeStructure(BaseStructure):
             price=current_price
         )
 
-        logger.info(f"FAILURE_FADE: {context.symbol} - Resistance failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}")
+        logger.debug(f"FAILURE_FADE: {context.symbol} - Resistance failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}")
         return event
 
     def _detect_support_failure_fade(self, context: MarketContext, df: pd.DataFrame,
@@ -209,7 +209,7 @@ class FailureFadeStructure(BaseStructure):
             price=current_price
         )
 
-        logger.info(f"FAILURE_FADE: {context.symbol} - Support failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}")
+        logger.debug(f"FAILURE_FADE: {context.symbol} - Support failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}")
         return event
 
     def _check_resistance_fade_pattern(self, df: pd.DataFrame, resistance: float) -> Optional[Tuple[float, float]]:

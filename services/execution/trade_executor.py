@@ -344,8 +344,26 @@ class TradeExecutor:
             if fill_price is None:
                 return
             
-            # --- Enhanced logging: Log trigger execution ---
+            # --- Enhanced logging: Log trigger execution with edge diagnostics ---
             if self.trading_logger:
+                # Extract diagnostic fields from plan for edge analysis
+                indicators = plan.get('indicators', {})
+                stop_info = plan.get('stop', {})
+                entry_info = plan.get('entry', {})
+                bias = plan.get('bias', '')
+
+                # Calculate structure buffer (distance from structure stop to entry)
+                structure_stop = stop_info.get('structure')
+                structure_buffer_bps = None
+                if structure_stop and fill_price:
+                    structure_buffer_bps = abs(fill_price - structure_stop) / fill_price * 10000
+
+                # Calculate VWAP distance
+                vwap = indicators.get('vwap')
+                vwap_distance_bps = None
+                if vwap and fill_price:
+                    vwap_distance_bps = (fill_price - vwap) / vwap * 10000 if bias == 'long' else (vwap - fill_price) / vwap * 10000
+
                 trigger_data = {
                     'symbol': sym,
                     'trade_id': plan.get('trade_id', ''),
@@ -355,8 +373,20 @@ class TradeExecutor:
                     'strategy': plan.get('strategy', ''),
                     'setup_type': plan.get('setup_type', ''),
                     'regime': plan.get('regime', ''),
-                    'order_id': f"dryrun-order-id",  # Replace with actual order ID
-                    'risk_amount': 500.0  # From config
+                    'order_id': f"dryrun-order-id",
+                    'risk_amount': 500.0,
+                    # Edge diagnostic fields
+                    'diagnostics': {
+                        'bias': bias,
+                        'adx': indicators.get('adx14'),
+                        'rsi': indicators.get('rsi14'),
+                        'vol_ratio': indicators.get('vol_ratio'),
+                        'vwap_distance_bps': round(vwap_distance_bps, 2) if vwap_distance_bps is not None else None,
+                        'structure_buffer_bps': round(structure_buffer_bps, 2) if structure_buffer_bps is not None else None,
+                        'atr': indicators.get('atr'),
+                        'entry_ref': entry_info.get('reference'),
+                        'acceptance_status': plan.get('quality', {}).get('acceptance_status')
+                    }
                 }
                 self.trading_logger.log_trigger(trigger_data)
             

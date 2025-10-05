@@ -67,7 +67,7 @@ class ICTStructure(BaseStructure):
         self.reward_risk_ratio = config.get("reward_risk_ratio", 2.0)
         self.max_bars_hold = config.get("max_bars_hold", 12) or 12
 
-        logger.info(f"ICT structure initialized - OB move: {self.ob_min_move_pct*100:.1f}%, "
+        logger.debug(f"ICT structure initialized - OB move: {self.ob_min_move_pct*100:.1f}%, "
                    f"FVG gap: {self.fvg_min_gap_pct*100:.2f}%-{self.fvg_max_gap_pct*100:.1f}%, "
                    f"Sweep vol: {self.sweep_min_volume_surge}x")
 
@@ -103,7 +103,7 @@ class ICTStructure(BaseStructure):
             bos_events = self._detect_break_of_structure(d, context)
             choch_events = self._detect_change_of_character(d, context)
 
-            logger.info(f"ICT_DETECTOR: {context.symbol} pattern counts - OB:{len(order_block_events)} FVG:{len(fvg_events)} "
+            logger.debug(f"ICT_DETECTOR: {context.symbol} pattern counts - OB:{len(order_block_events)} FVG:{len(fvg_events)} "
                        f"Sweep:{len(sweep_events)} P/D:{len(premium_discount_events)} BOS:{len(bos_events)} CHOCH:{len(choch_events)}")
 
             # Combine all events

@@ -170,6 +170,29 @@ class ExitExecutor:
                 if px is None or ts is None:
                     continue
 
+                # Track MAE/MFE (Maximum Adverse/Favorable Excursion) for exit diagnostics
+                st = pos.plan.get('_state', {})
+                entry_price = pos.avg_price
+                side = pos.side.upper()
+
+                # Calculate current excursion
+                if side == 'BUY':
+                    current_excursion = px - entry_price
+                else:
+                    current_excursion = entry_price - px
+
+                # Update MAE (worst drawdown)
+                current_mae = st.get('mae', 0.0)
+                if current_excursion < current_mae:
+                    st['mae'] = current_excursion
+                    pos.plan['_state'] = st
+
+                # Update MFE (best profit)
+                current_mfe = st.get('mfe', 0.0)
+                if current_excursion > current_mfe:
+                    st['mfe'] = current_excursion
+                    pos.plan['_state'] = st
+
                 # 0) EOD square-off by tick timestamp
                 if self.eod_md is not None and _minute_of_day(ts) >= self.eod_md:
                     self._exit(sym, pos, float(px), ts, f"eod_squareoff_{self.eod_hhmm}")
@@ -207,16 +230,22 @@ class ExitExecutor:
 
                         plan_sl = new_plan_sl
 
+                # Get state early to check if T1 was already hit (for better exit reason labeling)
+                st = pos.plan.get("_state") or {}
+                t1_done = bool(st.get("t1_done", False))
+
                 if self._breach_sl(pos.side, float(px), plan_sl):
-                    # Enhanced SL exit logging
+                    # Enhanced SL exit logging with T1 awareness
                     slippage = abs(float(px) - plan_sl)
+                    # Differentiate SL hit after T1 partial vs initial SL
+                    exit_reason = "sl_post_t1" if t1_done else "hard_sl"
                     logger.info(
                         f"SL_BREACH | {sym} | {pos.side} | "
                         f"Exit_Price: {float(px):.2f} | Final_SL: {plan_sl:.2f} | "
                         f"Original_SL: {original_sl:.2f} | Slippage: {slippage:.2f} | "
-                        f"Entry: {pos.avg_price:.2f}"
+                        f"Entry: {pos.avg_price:.2f} | T1_Done: {t1_done}"
                     )
-                    self._exit(sym, pos, float(px), ts, "hard_sl")
+                    self._exit(sym, pos, float(px), ts, exit_reason)
                     continue
 
                 # Phase 2.5: Fast Scalp Lane time-based stops
@@ -227,10 +256,8 @@ class ExitExecutor:
                 if self._check_fast_scalp_auto_be(sym, pos, float(px)):
                     pass  # SL updated, continue monitoring
 
-                # 2) Targets & state
+                # 2) Targets & state (already retrieved above for SL check)
                 t1, t2 = self._get_targets(pos.plan)
-                st = pos.plan.get("_state") or {}
-                t1_done = bool(st.get("t1_done", False))
 
                 # 2a) T2 (full exit first)
                 if self._target_hit(pos.side, float(px), t2):
@@ -777,20 +804,63 @@ class ExitExecutor:
         if qty_now <= 0:
             return
 
-        # Calculate PnL for enhanced logging
+        # Calculate PnL and diagnostics for enhanced logging
         pnl = qty_now * (exit_px - pos.avg_price) if pos.side.upper() == "BUY" else qty_now * (pos.avg_price - exit_px)
 
-        # Enhanced logging: Log exit execution
+        # Extract edge diagnostic fields for exit analysis
+        entry_price = pos.avg_price
+        side = pos.side.upper()
+
+        # Calculate R-multiple (PnL in units of initial risk)
+        plan_sl = pos.plan.get('stop', {}).get('hard') if isinstance(pos.plan.get('stop'), dict) else pos.plan.get('hard_sl')
+        r_multiple = None
+        if plan_sl:
+            risk_per_unit = abs(entry_price - plan_sl)
+            if risk_per_unit > 0:
+                r_multiple = pnl / (qty_now * risk_per_unit)
+
+        # Get MAE/MFE from state if tracked
+        state = pos.plan.get('_state', {})
+        mae = state.get('mae')
+        mfe = state.get('mfe')
+
+        # Calculate time in trade
+        entry_ts = pos.plan.get('entry_ts')
+        time_since_entry_mins = None
+        if entry_ts and ts:
+            try:
+                entry_time = pd.Timestamp(entry_ts)
+                time_delta = ts - entry_time
+                time_since_entry_mins = time_delta.total_seconds() / 60
+            except:
+                pass
+
+        # Get remaining qty (0 for full exit, >0 for partial)
+        state_after = pos.plan.get('_state', {})
+        remaining_qty = 0  # Will be 0 for full exits in this function
+
+        # Enhanced logging: Log exit execution with edge diagnostics
         if self.trading_logger:
             exit_data = {
                 'symbol': sym,
                 'trade_id': pos.plan.get('trade_id', ''),
                 'qty': qty_now,
-                'entry_price': pos.avg_price,
+                'entry_price': entry_price,
                 'exit_price': exit_px,
                 'pnl': round(pnl, 2),
                 'reason': reason,
-                'timestamp': str(ts) if ts else str(pd.Timestamp.now())
+                'timestamp': str(ts) if ts else str(pd.Timestamp.now()),
+                # Edge diagnostic fields
+                'diagnostics': {
+                    'r_multiple': round(r_multiple, 2) if r_multiple is not None else None,
+                    'mae': round(mae, 2) if mae is not None else None,
+                    'mfe': round(mfe, 2) if mfe is not None else None,
+                    'time_since_entry_mins': round(time_since_entry_mins, 1) if time_since_entry_mins is not None else None,
+                    'remaining_qty': remaining_qty,
+                    'regime': pos.plan.get('regime'),
+                    'setup_type': pos.plan.get('setup_type'),
+                    'acceptance_status': pos.plan.get('quality', {}).get('acceptance_status')
+                }
             }
             self.trading_logger.log_exit(exit_data)
 

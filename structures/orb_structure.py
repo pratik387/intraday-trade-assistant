@@ -268,7 +268,7 @@ class ORBStructure(BaseStructure):
                 )
                 return None
 
-            logger.info(f"ORB: {symbol} - Long strategy approved: Price {current_price:.2f} > ORH {orh:.2f}")
+            logger.debug(f"ORB: {symbol} - Long strategy approved: Price {current_price:.2f} > ORH {orh:.2f}")
 
             # Calculate risk parameters
             risk_params = self.calculate_risk_params(current_price, market_context)
@@ -358,7 +358,7 @@ class ORBStructure(BaseStructure):
                 )
                 return None
 
-            logger.info(f"ORB: {symbol} - Short strategy approved: Price {current_price:.2f} < ORL {orl:.2f}")
+            logger.debug(f"ORB: {symbol} - Short strategy approved: Price {current_price:.2f} < ORL {orl:.2f}")
 
             # Calculate risk parameters
             risk_params = self.calculate_risk_params(current_price, market_context)

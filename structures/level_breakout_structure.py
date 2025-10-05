@@ -205,7 +205,7 @@ class LevelBreakoutStructure(BaseStructure):
             price=current_price
         )
 
-        logger.info(f"LEVEL_BREAKOUT: {context.symbol} - Long breakout {level_name} at {current_price:.2f}, strength: {final_strength:.2f}")
+        logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Long breakout {level_name} at {current_price:.2f}, strength: {final_strength:.2f}")
         return event
 
     def _detect_short_breakdown(self, context: MarketContext, df: pd.DataFrame,
@@ -279,7 +279,7 @@ class LevelBreakoutStructure(BaseStructure):
             price=current_price
         )
 
-        logger.info(f"LEVEL_BREAKOUT: {context.symbol} - Short breakdown {level_name} at {current_price:.2f}, strength: {final_strength:.2f}")
+        logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Short breakdown {level_name} at {current_price:.2f}, strength: {final_strength:.2f}")
         return event
 
     def _get_available_levels(self, context: MarketContext) -> Dict[str, float]:
@@ -591,7 +591,7 @@ class LevelBreakoutStructure(BaseStructure):
         # Calculate final institutional strength
         institutional_strength = base_strength * strength_multiplier
 
-        logger.info(f"LEVEL_BREAKOUT: {context.symbol} - Institutional strength: "
+        logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Institutional strength: "
                    f"base {base_strength:.2f} × multiplier {strength_multiplier:.2f} = {institutional_strength:.2f}")
 
         return institutional_strength

@@ -88,7 +88,7 @@ class ICTStructureCompatible(BaseStructure):
         self.confidence_medium_signal = config["confidence_medium_signal"]
         self.confidence_weak_signal = config["confidence_weak_signal"]
 
-        logger.info(f"ICT: Initialized with config - OB move: {self.ob_min_move_pct*100:.1f}%, "
+        logger.debug(f"ICT: Initialized with config - OB move: {self.ob_min_move_pct*100:.1f}%, "
                    f"FVG gap: {self.fvg_min_gap_pct*100:.2f}%-{self.fvg_max_gap_pct*100:.1f}%, "
                    f"Sweep vol: {self.sweep_min_volume_surge}x")
 
@@ -113,7 +113,7 @@ class ICTStructureCompatible(BaseStructure):
         try:
             df = market_context.df_5m
             if df is None:
-                logger.info(f"ICT: {symbol} - No 5m data available")
+                logger.debug(f"ICT: {symbol} - No 5m data available")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -122,7 +122,7 @@ class ICTStructureCompatible(BaseStructure):
                 )
 
             if len(df) < 20:
-                logger.info(f"ICT: {symbol} - Insufficient data: {len(df)} bars < 20 minimum")
+                logger.debug(f"ICT: {symbol} - Insufficient data: {len(df)} bars < 20 minimum")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],

@@ -24,7 +24,7 @@ class SimplifiedICTStructure(BaseStructure):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.config = config
-        logger.info("Simplified ICT structure initialized")
+        logger.debug("Simplified ICT structure initialized")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Simplified ICT detection for testing."""

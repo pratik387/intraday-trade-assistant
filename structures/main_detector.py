@@ -50,9 +50,9 @@ class MainDetector(BaseStructure):
             self.detectors = {}
             return
 
-        logger.info(f"MAIN_DETECTOR: Found {len(setups_config)} setup configurations")
-        logger.info(f"MAIN_DETECTOR: Setup names: {list(setups_config.keys())}")
-        logger.info(f"MAIN_DETECTOR: Will initialize {len([s for s in setups_config.values() if s.get('enabled', False)])} enabled detectors")
+        logger.debug(f"MAIN_DETECTOR: Found {len(setups_config)} setup configurations")
+        logger.debug(f"MAIN_DETECTOR: Setup names: {list(setups_config.keys())}")
+        logger.debug(f"MAIN_DETECTOR: Will initialize {len([s for s in setups_config.values() if s.get('enabled', False)])} enabled detectors")
 
         # Initialize sub-detectors
         self.detectors = {}
@@ -146,7 +146,7 @@ class MainDetector(BaseStructure):
             'momentum_breakout': 0.5       # Lower priority - momentum only
         })
 
-        logger.info(f"MAIN_DETECTOR: Initialization complete with {len(self.detectors)} active detectors: {list(self.detectors.keys())}")
+        logger.debug(f"MAIN_DETECTOR: Initialization complete with {len(self.detectors)} active detectors: {list(self.detectors.keys())}")
 
     def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame,
                      levels: Dict[str, float] | None = None) -> List[SetupCandidate]:

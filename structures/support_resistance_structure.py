@@ -663,7 +663,7 @@ class SupportResistanceStructure(BaseStructure):
             }
         )
 
-        logger.info(f"S/R: {context.symbol} - Long strategy planned: entry {entry_price:.2f}, SL {risk_params.hard_sl:.2f}, qty {qty}")
+        logger.debug(f"S/R: {context.symbol} - Long strategy planned: entry {entry_price:.2f}, SL {risk_params.hard_sl:.2f}, qty {qty}")
 
         return plan
 
@@ -699,7 +699,7 @@ class SupportResistanceStructure(BaseStructure):
             }
         )
 
-        logger.info(f"S/R: {context.symbol} - Short strategy planned: entry {entry_price:.2f}, SL {risk_params.hard_sl:.2f}, qty {qty}")
+        logger.debug(f"S/R: {context.symbol} - Short strategy planned: entry {entry_price:.2f}, SL {risk_params.hard_sl:.2f}, qty {qty}")
 
         return plan
 

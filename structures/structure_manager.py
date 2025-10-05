@@ -82,7 +82,7 @@ class StructureManager:
                 "errors": 0
             }
 
-            logger.info(f"Registered structure: {structure_name} with priority {priority}")
+            logger.debug(f"Registered structure: {structure_name} with priority {priority}")
 
         except Exception as e:
             logger.error(f"Failed to register structure {structure_class.__name__}: {e}")
@@ -164,7 +164,7 @@ class StructureManager:
         # Sort by confidence (highest first)
         trade_plans.sort(key=lambda plan: plan.confidence, reverse=True)
 
-        logger.info(f"Generated {len(trade_plans)} trade plans for {market_context.symbol}")
+        logger.debug(f"Generated {len(trade_plans)} trade plans for {market_context.symbol}")
         return trade_plans
 
     def rank_all_setups(self, market_context: MarketContext) -> Dict[str, float]:

@@ -83,8 +83,8 @@ class VWAPStructure(BaseStructure):
         self.confidence_strong_signal = config["confidence_strong_signal"]
         self.confidence_weak_signal = config["confidence_weak_signal"]
 
-        logger.info(f"VWAP: Initialized with mean reversion distance: {self.min_distance_bps}-{self.max_distance_bps} bps")
-        logger.info(f"VWAP: Reclaim requirements - bars above: {self.min_bars_above_vwap}, volume conf: {self.reclaim_volume_confirmation}")
+        logger.debug(f"VWAP: Initialized with mean reversion distance: {self.min_distance_bps}-{self.max_distance_bps} bps")
+        logger.debug(f"VWAP: Reclaim requirements - bars above: {self.min_bars_above_vwap}, volume conf: {self.reclaim_volume_confirmation}")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -448,7 +448,7 @@ class VWAPStructure(BaseStructure):
             }
         )
 
-        logger.info(f"VWAP: {context.symbol} - Long strategy planned: entry {entry_price:.2f}, SL {risk_params.hard_sl:.2f}, qty {qty}")
+        logger.debug(f"VWAP: {context.symbol} - Long strategy planned: entry {entry_price:.2f}, SL {risk_params.hard_sl:.2f}, qty {qty}")
 
         return plan
 
@@ -484,7 +484,7 @@ class VWAPStructure(BaseStructure):
             }
         )
 
-        logger.info(f"VWAP: {context.symbol} - Short strategy planned: entry {entry_price:.2f}, SL {risk_params.hard_sl:.2f}, qty {qty}")
+        logger.debug(f"VWAP: {context.symbol} - Short strategy planned: entry {entry_price:.2f}, SL {risk_params.hard_sl:.2f}, qty {qty}")
 
         return plan
 
@@ -756,7 +756,7 @@ class VWAPStructure(BaseStructure):
         # Institutional setups need ≥2.0 strength to pass regime gate
         final_strength = max(final_strength, 0.8)  # Minimum viable strength
 
-        logger.info(f"VWAP: {context.symbol} - Institutional strength calculation: "
+        logger.debug(f"VWAP: {context.symbol} - Institutional strength calculation: "
                    f"base {base_strength:.2f} × multiplier {strength_multiplier:.2f} = {final_strength:.2f}")
 
         return final_strength

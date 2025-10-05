@@ -74,7 +74,7 @@ class TrendStructure(BaseStructure):
         self.confidence_strong_trend = config["confidence_strong_trend"]
         self.confidence_weak_trend = config["confidence_weak_trend"]
 
-        logger.info(f"TREND: Initialized with min strength: {self.min_trend_strength}, pullback range: {self.min_pullback_pct}-{self.max_pullback_pct}%")
+        logger.debug(f"TREND: Initialized with min strength: {self.min_trend_strength}, pullback range: {self.min_pullback_pct}-{self.max_pullback_pct}%")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -316,7 +316,7 @@ class TrendStructure(BaseStructure):
             )
             events.append(event)
 
-            logger.info(f"TREND: {context.symbol} - Trend continuation {side.upper()} detected: strong {trend_info.trend_direction} momentum")
+            logger.debug(f"TREND: {context.symbol} - Trend continuation {side.upper()} detected: strong {trend_info.trend_direction} momentum")
 
         return events, quality_score
 

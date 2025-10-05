@@ -168,7 +168,8 @@ class TradingLogger:
                 'qty': trade_data.get('qty', 0),
                 'strategy': trade_data.get('strategy', ''),
                 'order_id': trade_data.get('order_id', ''),
-                'side': trade_data.get('side', 'BUY')
+                'side': trade_data.get('side', 'BUY'),
+                'diagnostics': trade_data.get('diagnostics', {})
             }
         }
         self.events_logger.info(json.dumps(trigger_event))
@@ -200,6 +201,24 @@ class TradingLogger:
 
             # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
             # NOTE: Analytics logging removed - analytics.jsonl populated from events.jsonl in post-processing to avoid duplicates
+        
+        # Log EXIT event to events.jsonl with diagnostics
+        exit_event = {
+            'schema_version': 'trade.v1',
+            'type': 'EXIT',
+            'run_id': None,
+            'trade_id': trade_data.get('trade_id', ''),
+            'symbol': trade_data.get('symbol', ''),
+            'ts': trade_data.get('timestamp', str(pd.Timestamp.now())),
+            'exit': {
+                'price': trade_data.get('exit_price', 0),
+                'qty': trade_data.get('qty', 0),
+                'reason': trade_data.get('reason', ''),
+                'pnl': trade_data.get('pnl', 0),
+                'diagnostics': trade_data.get('diagnostics', {})
+            }
+        }
+        self.events_logger.info(json.dumps(exit_event))
         
         # Log to trade logs (existing format)
         symbol = trade_data.get('symbol', '')
