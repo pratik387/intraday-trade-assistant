@@ -68,7 +68,16 @@ def opening_range(df_5m: pd.DataFrame) -> Tuple[float, float]:
         session_start = pd.Timestamp(pydt.combine(last_date, open_hhmm))
         session_end = session_start + pd.Timedelta(minutes=orb_minutes)
 
-        win = d.loc[(d.index >= session_start) & (d.index <= session_end)]
+        # CRITICAL: Bars are START-STAMPED (Zerodha/broker convention)
+        # With START-STAMPED 5m bars:
+        #   09:15 bar = [09:15-09:20) data (timestamped at start: 09:15)
+        #   09:20 bar = [09:20-09:25) data (timestamped at start: 09:20)
+        #   09:25 bar = [09:25-09:30) data (timestamped at start: 09:25)
+        #   09:30 bar = [09:30-09:35) data (timestamped at start: 09:30) ← Should NOT be included!
+        # For OR period 09:15-09:30, query: >= session_start AND < session_end
+        # This matches bars timestamped: 09:15, 09:20, 09:25 = 15 minutes ✅
+        win = d.loc[(d.index >= session_start) & (d.index < session_end)]
+
         if win.empty:
             # Enhanced diagnostics: show what data is actually available
             first_ts = d.index[0] if not d.empty else None
@@ -78,6 +87,14 @@ def opening_range(df_5m: pd.DataFrame) -> Tuple[float, float]:
                 f"levels.opening_range: empty window last_date={last_date} "
                 f"start={session_start} end={session_end} | "
                 f"data_range=[{first_ts} to {last_ts}] total_rows={total_rows}"
+            )
+            return float("nan"), float("nan")
+
+        # CRITICAL FIX: Ensure we have full opening range period (3 x 5m bars minimum)
+        if len(win) < 3:
+            logger.warning(
+                f"levels.opening_range: insufficient bars ({len(win)} < 3) for full OR period "
+                f"last_date={last_date} start={session_start} end={session_end}"
             )
             return float("nan"), float("nan")
 

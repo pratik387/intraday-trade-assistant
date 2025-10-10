@@ -189,23 +189,18 @@ class ICTStructureCompatible(BaseStructure):
 
             # Volume surge ratio
             d['vol_ma10'] = d['volume'].rolling(10, min_periods=5).mean()
-            d['vol_surge'] = d['volume'] / d['vol_ma10']
+            d['vol_surge'] = d['volume'] / d['vol_ma10'].replace(0, np.nan)
 
             # Price returns for momentum analysis
             d['returns_1'] = d['close'].pct_change()
             d['returns_3'] = d['close'].pct_change(3)
             d['returns_5'] = d['close'].pct_change(5)
 
-            # Fill NaN values
-            d['vol_z'].fillna(0, inplace=True)
-            d['vol_surge'].fillna(1, inplace=True)
-            d['returns_1'].fillna(0, inplace=True)
-            d['returns_3'].fillna(0, inplace=True)
-            d['returns_5'].fillna(0, inplace=True)
+            # NOTE: We do NOT fill NaN values - instead we check for NaN and skip those bars
+            # Filling with arbitrary values (like 1.0 or 0.0) pollutes the signal quality
 
         except Exception as e:
-            logger.error(f"ICT: Error adding volume indicators: {e}")
-
+            logger.exception(f"ICT: Error adding volume indicators: {e}")
         return d
 
     def _detect_order_blocks(self, df: pd.DataFrame, market_context: MarketContext) -> List[StructureEvent]:
@@ -229,8 +224,9 @@ class ICTStructureCompatible(BaseStructure):
                 move_end_price = move_bars['close'].iloc[-1]
                 move_pct = (move_end_price - move_start_price) / move_start_price
 
-                # Check volume confirmation
-                move_had_volume = (move_bars['vol_surge'] > self.ob_min_volume_surge).any()
+                # Check volume confirmation (skip NaN values)
+                vol_surge_series = move_bars['vol_surge'].dropna()
+                move_had_volume = (vol_surge_series > self.ob_min_volume_surge).any() if len(vol_surge_series) > 0 else False
 
                 if abs(move_pct) >= self.ob_min_move_pct and move_had_volume:
                     # Find the last opposing candle before this move
@@ -243,8 +239,7 @@ class ICTStructureCompatible(BaseStructure):
                             events.append(event)
 
         except Exception as e:
-            logger.error(f"ICT: Order block detection error: {e}")
-
+            logger.exception(f"ICT: Order block detection error: {e}")
         return events
 
     def _find_opposing_candle(self, df: pd.DataFrame, move_start_idx: int, move_pct: float) -> Optional[int]:
@@ -337,7 +332,7 @@ class ICTStructureCompatible(BaseStructure):
                 # Check volume condition
                 if self.fvg_require_volume:
                     vol_surge = df['vol_surge'].iloc[i]
-                    if vol_surge < self.fvg_min_volume_mult:
+                    if pd.isna(vol_surge) or vol_surge < self.fvg_min_volume_mult:
                         continue
 
                 # Bullish FVG
@@ -359,8 +354,7 @@ class ICTStructureCompatible(BaseStructure):
                         events.append(event)
 
         except Exception as e:
-            logger.error(f"ICT: Fair Value Gap detection error: {e}")
-
+            logger.exception(f"ICT: Fair Value Gap detection error: {e}")
         return events
 
     def _create_fvg_event(self, side: str, candle_before: pd.Series, candle_after: pd.Series,
@@ -389,6 +383,7 @@ class ICTStructureCompatible(BaseStructure):
 
         # Calculate confidence
         volume_strength = df['vol_surge'].iloc[gap_index]
+        volume_strength = volume_strength if pd.notna(volume_strength) else 1.0
         confidence = min(self.confidence_strong_signal, gap_pct * 500 + volume_strength * 0.1)
 
         return StructureEvent(
@@ -439,7 +434,7 @@ class ICTStructureCompatible(BaseStructure):
 
                     # Check volume surge
                     vol_surge = df['vol_surge'].iloc[i]
-                    if vol_surge < self.sweep_min_volume_surge:
+                    if vol_surge is None or pd.isna(vol_surge) or vol_surge < self.sweep_min_volume_surge:
                         continue
 
                     event = self._check_liquidity_sweep(df, i, level_name, level_price,
@@ -449,7 +444,7 @@ class ICTStructureCompatible(BaseStructure):
                         events.append(event)
 
         except Exception as e:
-            logger.error(f"ICT: Liquidity sweep detection error: {e}")
+            logger.exception(f"ICT: Liquidity sweep detection error: {e}")
 
         return events
 
@@ -607,8 +602,7 @@ class ICTStructureCompatible(BaseStructure):
                 ))
 
         except Exception as e:
-            logger.error(f"ICT: Premium/Discount zone detection error: {e}")
-
+            logger.exception(f"ICT: Premium/Discount zone detection error: {e}")
         return events
 
     def _detect_break_of_structure(self, df: pd.DataFrame, market_context: MarketContext) -> List[StructureEvent]:
@@ -636,7 +630,7 @@ class ICTStructureCompatible(BaseStructure):
                     volume_confirmed = True
                     if self.bos_volume_confirmation:
                         recent_vol_z = df['vol_z'].tail(3).max()
-                        volume_confirmed = recent_vol_z >= 1.5
+                        volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
                     if volume_confirmed:
                         confidence = min(self.confidence_strong_signal, break_pct * 200)
@@ -669,7 +663,7 @@ class ICTStructureCompatible(BaseStructure):
                     volume_confirmed = True
                     if self.bos_volume_confirmation:
                         recent_vol_z = df['vol_z'].tail(3).max()
-                        volume_confirmed = recent_vol_z >= 1.5
+                        volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
                     if volume_confirmed:
                         confidence = min(self.confidence_strong_signal, break_pct * 200)
@@ -692,8 +686,7 @@ class ICTStructureCompatible(BaseStructure):
                         ))
 
         except Exception as e:
-            logger.error(f"ICT: Break of Structure detection error: {e}")
-
+            logger.exception(f"ICT: Break of Structure detection error: {e}")
         return events
 
     def _find_swing_points(self, df: pd.DataFrame, price_type: str) -> List[float]:
@@ -735,8 +728,10 @@ class ICTStructureCompatible(BaseStructure):
                 if len(df) >= period + 1:
                     old_momentum = df['returns_3'].iloc[-(period+1)]
                     current_momentum = df['returns_3'].iloc[-1]
-                    momentum_change = current_momentum - old_momentum
-                    momentum_changes[period] = momentum_change
+                    # Skip if either value is NaN
+                    if pd.notna(old_momentum) and pd.notna(current_momentum):
+                        momentum_change = current_momentum - old_momentum
+                        momentum_changes[period] = momentum_change
 
             # Check for significant momentum shift
             significant_changes = [abs(change) >= self.choch_min_momentum_change_pct
@@ -749,7 +744,7 @@ class ICTStructureCompatible(BaseStructure):
 
                 # Check volume confirmation
                 recent_vol_z = df['vol_z'].tail(3).max()
-                if recent_vol_z >= self.choch_volume_threshold:
+                if pd.notna(recent_vol_z) and recent_vol_z >= self.choch_volume_threshold:
                     confidence = min(self.confidence_strong_signal, abs(avg_momentum_change) * 100)
 
                     events.append(StructureEvent(
@@ -772,8 +767,7 @@ class ICTStructureCompatible(BaseStructure):
                     ))
 
         except Exception as e:
-            logger.error(f"ICT: Change of Character detection error: {e}")
-
+            logger.exception(f"ICT: Change of Character detection error: {e}")
         return events
 
     def _calculate_ict_quality_score(self, events: List[StructureEvent], df: pd.DataFrame,
@@ -791,10 +785,11 @@ class ICTStructureCompatible(BaseStructure):
 
             # Volume confirmation
             recent_vol_z = df['vol_z'].tail(3).max()
-            if recent_vol_z >= 2.0:
-                score += 20.0
-            elif recent_vol_z >= 1.5:
-                score += 10.0
+            if pd.notna(recent_vol_z):
+                if recent_vol_z >= 2.0:
+                    score += 20.0
+                elif recent_vol_z >= 1.5:
+                    score += 10.0
 
             # Pattern diversity bonus
             pattern_types = set(event.structure_type.split('_')[0] for event in events)
@@ -810,7 +805,7 @@ class ICTStructureCompatible(BaseStructure):
             return min(100.0, score)
 
         except Exception as e:
-            logger.error(f"ICT: Quality score calculation error: {e}")
+            logger.exception(f"ICT: Quality score calculation error: {e}")
             return 0.0
 
     # Abstract method implementations for BaseStructure compatibility
@@ -840,7 +835,7 @@ class ICTStructureCompatible(BaseStructure):
             )
 
         except Exception as e:
-            logger.error(f"ICT: Long strategy planning error: {e}")
+            logger.exception(f"ICT: Long strategy planning error: {e}")
             return StrategyPlanResult(
                 plan=None,
                 rejected=True,
@@ -872,7 +867,7 @@ class ICTStructureCompatible(BaseStructure):
             )
 
         except Exception as e:
-            logger.error(f"ICT: Short strategy planning error: {e}")
+            logger.exception(f"ICT: Short strategy planning error: {e}")
             return StrategyPlanResult(
                 plan=None,
                 rejected=True,

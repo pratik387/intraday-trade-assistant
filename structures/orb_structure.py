@@ -121,7 +121,17 @@ class ORBStructure(BaseStructure):
                 )
 
             # Check ORB range validity
-            orb_range_pct = (orh - orl) / ((orh + orl) / 2)
+            mid_price = (orh + orl) / 2
+            if mid_price <= 0:
+                logger.debug(f"ORB: {symbol} - Invalid price levels: ORH={orh}, ORL={orl}")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason="Invalid price levels"
+                )
+
+            orb_range_pct = (orh - orl) / mid_price
             logger.debug(f"ORB: {symbol} - ORB range: {orb_range_pct:.3f}% (min required: {self.min_range_pct:.3f}%)")
 
             if orb_range_pct < self.min_range_pct:
@@ -202,7 +212,7 @@ class ORBStructure(BaseStructure):
             )
 
         except Exception as e:
-            logger.error(f"ORB detection failed for {market_context.symbol}: {e}")
+            logger.exception(f"ORB detection failed for {market_context.symbol}: {e}")
             return StructureAnalysis(
                 structure_detected=False,
                 events=[],
@@ -297,7 +307,7 @@ class ORBStructure(BaseStructure):
             return trade_plan
 
         except Exception as e:
-            logger.error(f"ORB long strategy planning failed for {market_context.symbol}: {e}")
+            logger.exception(f"ORB long strategy planning failed for {market_context.symbol}: {e}")
             return None
 
     def plan_short_strategy(self, market_context: MarketContext) -> Optional[TradePlan]:
@@ -387,7 +397,7 @@ class ORBStructure(BaseStructure):
             return trade_plan
 
         except Exception as e:
-            logger.error(f"ORB short strategy planning failed for {market_context.symbol}: {e}")
+            logger.exception(f"ORB short strategy planning failed for {market_context.symbol}: {e}")
             return None
 
     def calculate_risk_params(self, entry_price: float, market_context: MarketContext) -> RiskParams:
@@ -450,7 +460,11 @@ class ORBStructure(BaseStructure):
             current_price = market_context.current_price
 
             # Base score from OR range quality
-            orb_range_pct = (orh - orl) / ((orh + orl) / 2)
+            mid_price = (orh + orl) / 2
+            if mid_price <= 0:
+                return 0.0
+
+            orb_range_pct = (orh - orl) / mid_price
             if orb_range_pct >= self.min_range_pct:
                 score += 30.0
 
@@ -480,7 +494,7 @@ class ORBStructure(BaseStructure):
             return min(100.0, score)
 
         except Exception as e:
-            logger.error(f"ORB ranking failed for {market_context.symbol}: {e}")
+            logger.exception(f"ORB ranking failed for {market_context.symbol}: {e}")
             return 0.0
 
     def validate_timing(self, current_time: pd.Timestamp) -> bool:
@@ -505,6 +519,12 @@ class ORBStructure(BaseStructure):
 
             current_volume = df["volume"].iloc[-1]
             avg_volume = df["volume"].tail(10).mean()
+
+            # Check for invalid average volume (zero or NaN)
+            if pd.isna(avg_volume) or avg_volume <= 0:
+                logger.debug(f"ORB: Volume check failed - invalid avg_volume: {avg_volume}")
+                return False
+
             volume_ratio = current_volume / avg_volume
             required_ratio = self.breakout_volume_mult
 
@@ -515,7 +535,7 @@ class ORBStructure(BaseStructure):
             return volume_confirmed
 
         except Exception as e:
-            logger.error(f"ORB: Volume confirmation error: {e}")
+            logger.exception(f"ORB: Volume confirmation error: {e}")
             return False
 
     def _detect_pullback_opportunities(self, market_context: MarketContext) -> List[StructureEvent]:
@@ -563,8 +583,7 @@ class ORBStructure(BaseStructure):
                     events.append(event)
 
         except Exception as e:
-            logger.error(f"ORB pullback detection failed for {market_context.symbol}: {e}")
-
+            logger.exception(f"ORB pullback detection failed for {market_context.symbol}: {e}")
         return events
 
     def _generate_orb_exits(self, entry_price: float, orh: float, orl: float, side: str) -> ExitLevels:
@@ -679,12 +698,12 @@ class ORBStructure(BaseStructure):
                 current_price = context.current_price
 
                 # Clean breakout bonus (not too far from level)
-                if side == "long":
+                if side == "long" and orh > 0:
                     breakout_distance = (current_price - orh) / orh
                     if breakout_distance <= 0.005:  # Within 0.5% of ORH
                         strength_multiplier *= 1.15  # 15% bonus for clean breakout
                         logger.debug(f"ORB: Clean long breakout bonus applied")
-                else:  # short
+                elif side == "short" and orl > 0:  # short
                     breakout_distance = (orl - current_price) / orl
                     if breakout_distance <= 0.005:  # Within 0.5% of ORL
                         strength_multiplier *= 1.15  # 15% bonus for clean breakout
@@ -707,5 +726,5 @@ class ORBStructure(BaseStructure):
             return final_strength
 
         except Exception as e:
-            logger.error(f"ORB: Error calculating institutional strength: {e}")
+            logger.exception(f"ORB: Error calculating institutional strength: {e}")
             return 1.8  # Safe fallback below regime threshold

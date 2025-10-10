@@ -52,6 +52,7 @@ class MockBroker:
         # --- live LTP cache for replay ---
         self._lp_lock = threading.RLock()
         self._last_price: Dict[str, float] = {}          # updated by ticker proxy
+        self._last_bar_ohlc: Dict[str, dict] = {}        # OHLC data for intrabar checks
 
         self._load_instruments(path_json)
 
@@ -178,7 +179,7 @@ class MockBroker:
                     logger.exception("ProxyTicker.on_close (client) failed")
 
             def _mux_on_ticks(self, ws, ticks: List[dict]):
-                # Update broker's last-price cache
+                # Update broker's last-price cache and OHLC data
                 try:
                     with broker_self._lp_lock:
                         for t in ticks or []:
@@ -190,8 +191,18 @@ class MockBroker:
                             if lp is None:
                                 continue
                             broker_self._last_price[sym] = float(lp)
+
+                            # Cache OHLC data for intrabar checks
+                            ohlc = t.get("ohlc")
+                            if ohlc and isinstance(ohlc, dict):
+                                broker_self._last_bar_ohlc[sym] = {
+                                    "open": float(ohlc.get("open", lp)),
+                                    "high": float(ohlc.get("high", lp)),
+                                    "low": float(ohlc.get("low", lp)),
+                                    "close": float(ohlc.get("close", lp))
+                                }
                 except Exception:
-                    logger.exception("ProxyTicker: failed updating last price cache")
+                    logger.exception("ProxyTicker: failed updating last price/OHLC cache")
 
                 # Forward to the client's callback unchanged
                 try:
@@ -318,15 +329,14 @@ class MockBroker:
     # -------------------- LTP API (now works without kwargs) --------------------
     def get_ltp(self, symbol: str, **kwargs) -> float:
         """
-        Backtest-friendly LTP with hardcoded zone logic:
-        - If kwargs['ltp'] provided, return it (compat).
-        - Else, if caller passed entry_zone + bar_1m, and the bar touched the zone,
-            synthesize an in-zone price deterministically:
-            * if open is inside zone -> use open (clamped)
-            * else if close >= open (up bar) -> use zone low
-            * else (down bar) -> use zone high
-            then apply fixed 5 bps slippage (BUY:+, SELL:-, unknown:+).
-        - Else, return last cached price from replay (bar close).
+        Backtest-friendly LTP with multiple logic paths:
+        1. If kwargs['ltp'] provided, return it (compat).
+        2. If kwargs['check_level'] provided (for intrabar SL/target checks):
+           - If level is within current bar's [low, high], return the level
+           - Otherwise, return bar close
+        3. If caller passed entry_zone + bar_1m, and the bar touched the zone,
+            synthesize an in-zone price deterministically (entry logic).
+        4. Else, return last cached price from replay (bar close).
         """
         # 0) explicit override for backwards-compat
         v = kwargs.get("ltp")
@@ -338,7 +348,22 @@ class MockBroker:
         # Try cached (your replay writes close into _last_price)
         with self._lp_lock:
             cached = self._last_price.get(sym)
+            bar_ohlc = self._last_bar_ohlc.get(sym)
 
+        # 1) Intrabar check_level logic (for SL/target exits)
+        check_level = kwargs.get("check_level")
+        if check_level is not None and bar_ohlc:
+            level = float(check_level)
+            low = float(bar_ohlc["low"])
+            high = float(bar_ohlc["high"])
+
+            # If level within [low, high], return it; else return close
+            if low <= level <= high:
+                return level
+            # Level not touched in this bar, return close
+            return float(bar_ohlc["close"])
+
+        # 2) Entry zone logic (for entries)
         entry_zone = kwargs.get("entry_zone")
         bar = kwargs.get("bar_1m")
         if entry_zone and isinstance(entry_zone, (list, tuple)) and len(entry_zone) == 2 and isinstance(bar, dict):
@@ -374,7 +399,7 @@ class MockBroker:
                 # Clamp to zone after slippage to remain conservative
                 return float(min(max(fill, lo), hi))
 
-        # Fallback to cached replay price (typically bar close)
+        # 3) Fallback to cached replay price (typically bar close)
         if cached is not None:
             return float(cached)
 

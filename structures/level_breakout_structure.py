@@ -124,7 +124,7 @@ class LevelBreakoutStructure(BaseStructure):
             )
 
         except Exception as e:
-            logger.error(f"LEVEL_BREAKOUT: Detection error for {context.symbol}: {e}")
+            logger.exception(f"LEVEL_BREAKOUT: Detection error for {context.symbol}: {e}")
             return StructureAnalysis(
                 structure_detected=False,
                 events=[],

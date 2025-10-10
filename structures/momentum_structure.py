@@ -105,7 +105,7 @@ class MomentumStructure(BaseStructure):
             )
 
         except Exception as e:
-            logger.error(f"MOMENTUM: Detection error for {context.symbol}: {e}")
+            logger.exception(f"MOMENTUM: Detection error for {context.symbol}: {e}")
             return StructureAnalysis(
                 structure_detected=False,
                 events=[],
@@ -426,7 +426,7 @@ class MomentumStructure(BaseStructure):
             return final_strength
 
         except Exception as e:
-            logger.error(f"MOMENTUM: Error calculating institutional strength: {e}")
+            logger.exception(f"MOMENTUM: Error calculating institutional strength: {e}")
             return 1.8  # Safe fallback below regime threshold
 
     # Removed deprecated _calculate_trend_confidence method - now using institutional strength

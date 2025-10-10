@@ -234,18 +234,20 @@ class ExitExecutor:
                 st = pos.plan.get("_state") or {}
                 t1_done = bool(st.get("t1_done", False))
 
-                if self._breach_sl(pos.side, float(px), plan_sl):
+                # Check SL with intrabar accuracy
+                if not math.isnan(plan_sl) and self._breach_sl(pos.side, self.broker.get_ltp(sym, check_level=plan_sl), plan_sl):
+                    sl_ltp = self.broker.get_ltp(sym, check_level=plan_sl)
                     # Enhanced SL exit logging with T1 awareness
-                    slippage = abs(float(px) - plan_sl)
+                    slippage = abs(sl_ltp - plan_sl)
                     # Differentiate SL hit after T1 partial vs initial SL
                     exit_reason = "sl_post_t1" if t1_done else "hard_sl"
                     logger.info(
                         f"SL_BREACH | {sym} | {pos.side} | "
-                        f"Exit_Price: {float(px):.2f} | Final_SL: {plan_sl:.2f} | "
+                        f"Exit_Price: {sl_ltp:.2f} | Final_SL: {plan_sl:.2f} | "
                         f"Original_SL: {original_sl:.2f} | Slippage: {slippage:.2f} | "
                         f"Entry: {pos.avg_price:.2f} | T1_Done: {t1_done}"
                     )
-                    self._exit(sym, pos, float(px), ts, exit_reason)
+                    self._exit(sym, pos, sl_ltp, ts, exit_reason)
                     continue
 
                 # Phase 2.5: Fast Scalp Lane time-based stops
@@ -259,21 +261,24 @@ class ExitExecutor:
                 # 2) Targets & state (already retrieved above for SL check)
                 t1, t2 = self._get_targets(pos.plan)
 
-                # 2a) T2 (full exit first)
-                if self._target_hit(pos.side, float(px), t2):
-                    self._exit(sym, pos, float(px), ts, "target_t2")
+                # 2a) T2 (full exit first) - check with intrabar accuracy
+                if not math.isnan(t2) and self._target_hit(pos.side, self.broker.get_ltp(sym, check_level=t2), t2):
+                    t2_ltp = self.broker.get_ltp(sym, check_level=t2)
+                    self._exit(sym, pos, t2_ltp, ts, "target_t2")
                     continue
 
-                # 2b) T1 (one-time partial)
-                if (not t1_done) and self._target_hit(pos.side, float(px), t1):
-                    self._partial_exit_t1(sym, pos, float(px), ts)
+                # 2b) T1 (one-time partial) - check with intrabar accuracy
+                if (not t1_done) and not math.isnan(t1) and self._target_hit(pos.side, self.broker.get_ltp(sym, check_level=t1), t1):
+                    t1_ltp = self.broker.get_ltp(sym, check_level=t1)
+                    self._partial_exit_t1(sym, pos, t1_ltp, ts)
                     continue
 
-                # 3) Dynamic trail (tighten-only)
+                # 3) Dynamic trail (tighten-only) - check with intrabar accuracy
                 if self._has_trail(pos.plan) and self._trail_allowed(pos, ts):
                     level, why = self._trail_from_plan(sym, pos, float(px))
-                    if self._breach_sl(pos.side, float(px), level):
-                        self._exit(sym, pos, float(px), ts, f"trail_stop({why})")
+                    if not math.isnan(level) and self._breach_sl(pos.side, self.broker.get_ltp(sym, check_level=level), level):
+                        trail_ltp = self.broker.get_ltp(sym, check_level=level)
+                        self._exit(sym, pos, trail_ltp, ts, f"trail_stop({why})")
                         continue
 
                 # 4) Indicator kill-switches (precomputed levels)

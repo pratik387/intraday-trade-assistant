@@ -127,7 +127,7 @@ class MainDetector(BaseStructure):
                     self.detectors[detector_key] = detector_class(setup_config)
                     logger.debug(f"MAIN_DETECTOR: Initialized {detector_key} from {setup_name}")
                 except Exception as e:
-                    logger.error(f"MAIN_DETECTOR: Failed to initialize {setup_name}: {e}")
+                    logger.exception(f"MAIN_DETECTOR: Failed to initialize {setup_name}: {e}")                    logger.error(traceback.format_exc())
             else:
                 logger.debug(f"MAIN_DETECTOR: {setup_name} disabled (enabled={setup_config.get('enabled', False)})")
 
@@ -207,8 +207,7 @@ class MainDetector(BaseStructure):
                     else:
                         logger.debug(f"MAIN_DETECTOR: {detector_name} found no events for {symbol}")
                 except Exception as e:
-                    logger.error(f"MAIN_DETECTOR: Error in {detector_name} for {symbol}: {e}")
-
+                    logger.exception(f"MAIN_DETECTOR: Error in {detector_name} for {symbol}: {e}")
             # Resolve conflicts and prioritize
             final_events = self._resolve_conflicts_and_prioritize(all_detections, symbol)
 
@@ -222,7 +221,7 @@ class MainDetector(BaseStructure):
             return setup_candidates
 
         except Exception as e:
-            logger.error(f"MAIN_DETECTOR: Comprehensive detection failed for {symbol}: {e}")
+            logger.exception(f"MAIN_DETECTOR: Comprehensive detection failed for {symbol}: {e}")
             return []
 
     def _create_market_context(self, symbol: str, df: pd.DataFrame,
@@ -265,7 +264,7 @@ class MainDetector(BaseStructure):
             )
 
         except Exception as e:
-            logger.error(f"MAIN_DETECTOR: Error creating market context for {symbol}: {e}")
+            logger.exception(f"MAIN_DETECTOR: Error creating market context for {symbol}: {e}")
             raise
 
     def _resolve_conflicts_and_prioritize(self, all_detections: Dict[str, StructureAnalysis],
@@ -311,7 +310,7 @@ class MainDetector(BaseStructure):
             return final_events[:self.max_detections_per_symbol]
 
         except Exception as e:
-            logger.error(f"MAIN_DETECTOR: Error resolving conflicts for {symbol}: {e}")
+            logger.exception(f"MAIN_DETECTOR: Error resolving conflicts for {symbol}: {e}")
             # Fallback to simple approach
             final_events = []
             for analysis in all_detections.values():
@@ -402,7 +401,7 @@ class MainDetector(BaseStructure):
                     logger.warning(f"MAIN_DETECTOR: {symbol} no setup type mapping for '{event.structure_type}'")
 
             except Exception as e:
-                logger.error(f"MAIN_DETECTOR: Error converting event to setup candidate: {e}")
+                logger.exception(f"MAIN_DETECTOR: Error converting event to setup candidate: {e}")
         # Sort by strength descending
         setup_candidates.sort(key=lambda s: s.strength, reverse=True)
         return setup_candidates
@@ -542,7 +541,7 @@ class MainDetector(BaseStructure):
             return StructureAnalysis(events=events, quality_score=quality_score)
 
         except Exception as e:
-            logger.error(f"MAIN_DETECTOR: detect method error for {context.symbol}: {e}")
+            logger.exception(f"MAIN_DETECTOR: detect method error for {context.symbol}: {e}")
             return StructureAnalysis(events=[], quality_score=0.0)
 
     def _calculate_overall_quality_score(self, events: List[StructureEvent],
@@ -577,7 +576,7 @@ class MainDetector(BaseStructure):
             return min(5.0, base_score)
 
         except Exception as e:
-            logger.error(f"MAIN_DETECTOR: Error calculating quality score: {e}")
+            logger.exception(f"MAIN_DETECTOR: Error calculating quality score: {e}")
             return 1.0
 
     # Abstract method implementations for BaseStructure compatibility

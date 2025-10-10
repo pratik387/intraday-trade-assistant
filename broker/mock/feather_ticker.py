@@ -127,6 +127,12 @@ class FeatherTicker:
                         "last_price": price,
                         "last_quantity": qty,
                         "timestamp": ts,   # naive datetime
+                        "ohlc": {
+                            "open": float(r.get("open", price)),
+                            "high": float(r.get("high", price)),
+                            "low": float(r.get("low", price)),
+                            "close": price
+                        }
                     })
 
                 if batch and callable(self._on_ticks_cb):

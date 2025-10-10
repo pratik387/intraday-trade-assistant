@@ -268,12 +268,16 @@ class BarBuilder:
             df1 = df1.copy()
             df1.index = pd.to_datetime(df1.index, errors="coerce")
             df1 = df1[~df1.index.isna()]
-        window = df1[(df1.index > start_ts) & (df1.index <= end_ts)]
+        # CRITICAL FIX: Use START-STAMPED convention (Zerodha/broker standard)
+        # START-STAMPED: 09:15 bar contains data from [09:15, 09:20) labeled at START (09:15)
+        # 09:20 bar contains [09:20, 09:25) labeled at START (09:20)
+        # Excludes end_ts minute (goes into next bar)
+        window = df1[(df1.index >= start_ts) & (df1.index < end_ts)]
         if window.empty:
             return
 
         bar5 = _aggregate_window_to_ohlcv(window)
-        bar5.name = end_ts
+        bar5.name = start_ts  # ← START-LABELED (matches Zerodha/Upstox convention)
 
         # --- Incremental ADX(14) update (O(1)) ---
         try:
@@ -284,7 +288,7 @@ class BarBuilder:
 
         df5 = self._bars_5m[symbol]
         row5 = bar5.to_frame().T
-        row5.index = [end_ts]
+        row5.index = [start_ts]  # ← START-LABELED timestamp
         if df5 is None or getattr(df5, "empty", True):
             self._bars_5m[symbol] = row5
         else:
@@ -321,13 +325,14 @@ class BarBuilder:
             df5.index = pd.to_datetime(df5.index, errors="coerce")
             df5 = df5[~df5.index.isna()]
 
-        # Aggregate 3 x 5m bars into 1 x 15m bar
-        window = df5[(df5.index > start_ts) & (df5.index <= end_ts)]
+        # Aggregate 3 x 5m bars into 1 x 15m bar (START-STAMPED convention)
+        # With START-STAMPED 5m bars: 09:15, 09:20, 09:25 form the 09:15 15m bar
+        window = df5[(df5.index >= start_ts) & (df5.index < end_ts)]
         if window.empty:
             return
 
         bar15 = _aggregate_window_to_ohlcv(window)
-        bar15.name = end_ts
+        bar15.name = start_ts  # ← START-LABELED (matches convention)
 
         # 15m bars inherit ADX from the last 5m bar in the window
         try:
@@ -337,7 +342,7 @@ class BarBuilder:
 
         df15 = self._bars_15m[symbol]
         row15 = bar15.to_frame().T
-        row15.index = [end_ts]
+        row15.index = [start_ts]  # ← START-LABELED timestamp
         if df15 is None or getattr(df15, "empty", True):
             self._bars_15m[symbol] = row15
         else:

@@ -117,7 +117,7 @@ class ICTStructure(BaseStructure):
             return StructureAnalysis(structure_detected=structure_detected, events=all_events, quality_score=quality_score)
 
         except Exception as e:
-            logger.error(f"ICT detection error: {e}")
+            logger.exception(f"ICT detection error: {e}")
             return StructureAnalysis(structure_detected=False, events=[], quality_score=0.0)
 
     def _add_volume_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -131,7 +131,7 @@ class ICTStructure(BaseStructure):
 
         # Volume surge ratio
         d['vol_ma10'] = d['volume'].rolling(10, min_periods=5).mean()
-        d['vol_surge'] = d['volume'] / d['vol_ma10']
+        d['vol_surge'] = d['volume'] / d['vol_ma10'].replace(0, np.nan)
 
         # Price returns for momentum analysis
         d['returns_1'] = d['close'].pct_change()
@@ -161,8 +161,9 @@ class ICTStructure(BaseStructure):
                 move_end_price = move_bars['close'].iloc[-1]
                 move_pct = (move_end_price - move_start_price) / move_start_price
 
-                # Check volume confirmation
-                move_had_volume = (move_bars['vol_surge'] > self.ob_min_volume_surge).any()
+                # Check volume confirmation (skip NaN values)
+                vol_surge_series = move_bars['vol_surge'].dropna()
+                move_had_volume = (vol_surge_series > self.ob_min_volume_surge).any() if len(vol_surge_series) > 0 else False
 
                 if abs(move_pct) >= self.ob_min_move_pct and move_had_volume:
                     # Find last opposing candle before move
@@ -175,8 +176,7 @@ class ICTStructure(BaseStructure):
                             events.append(event)
 
         except Exception as e:
-            logger.error(f"Order block detection error: {e}")
-
+            logger.exception(f"Order block detection error: {e}")
         return events
 
     def _find_opposing_candle(self, df: pd.DataFrame, move_start_idx: int, move_pct: float) -> Optional[int]:
@@ -277,7 +277,7 @@ class ICTStructure(BaseStructure):
                 # Check volume condition
                 if self.fvg_require_volume:
                     vol_surge = df['vol_surge'].iloc[i]
-                    if vol_surge < self.fvg_min_volume_mult:
+                    if pd.isna(vol_surge) or vol_surge < self.fvg_min_volume_mult:
                         continue
 
                 # Bullish FVG
@@ -299,8 +299,7 @@ class ICTStructure(BaseStructure):
                         events.append(event)
 
         except Exception as e:
-            logger.error(f"FVG detection error: {e}")
-
+            logger.exception(f"FVG detection error: {e}")
         return events
 
     def _create_fvg_event(self, direction: str, candle_before: pd.Series, candle_after: pd.Series,
@@ -329,6 +328,7 @@ class ICTStructure(BaseStructure):
 
         # Calculate strength
         volume_strength = df['vol_surge'].iloc[gap_index]
+        volume_strength = volume_strength if pd.notna(volume_strength) else 1.0
         strength = min(3.0, gap_pct * 500 + volume_strength * 0.5)
 
         trade_plan = self._create_fvg_trade_plan(direction, fvg_top, fvg_bottom,
@@ -362,7 +362,7 @@ class ICTStructure(BaseStructure):
             lookback_bars = min(10, len(df) - self.sweep_reversal_bars)
 
             for level_name, level_price in levels.items():
-                if level_price <= 0 or not np.isfinite(level_price):
+                if level_price is None or level_price <= 0 or not np.isfinite(level_price):
                     continue
 
                 for i in range(lookback_bars, len(df) - 1):
@@ -380,7 +380,7 @@ class ICTStructure(BaseStructure):
 
                     # Check volume surge
                     vol_surge = df['vol_surge'].iloc[i]
-                    if vol_surge < self.sweep_min_volume_surge:
+                    if vol_surge is None or pd.isna(vol_surge) or vol_surge < self.sweep_min_volume_surge:
                         continue
 
                     event = self._check_liquidity_sweep(df, i, level_name, level_price,
@@ -390,8 +390,7 @@ class ICTStructure(BaseStructure):
                         events.append(event)
 
         except Exception as e:
-            logger.error(f"Liquidity sweep detection error: {e}")
-
+            logger.exception(f"Liquidity sweep detection error: {e}")
         return events
 
     def _check_liquidity_sweep(self, df: pd.DataFrame, sweep_idx: int, level_name: str,
@@ -548,8 +547,7 @@ class ICTStructure(BaseStructure):
                 ))
 
         except Exception as e:
-            logger.error(f"Premium/Discount zone detection error: {e}")
-
+            logger.exception(f"Premium/Discount zone detection error: {e}")
         return events
 
     def _detect_break_of_structure(self, df: pd.DataFrame, context: MarketContext) -> List[StructureEvent]:
@@ -577,7 +575,7 @@ class ICTStructure(BaseStructure):
                     volume_confirmed = True
                     if self.bos_volume_confirmation:
                         recent_vol_z = df['vol_z'].tail(3).max()
-                        volume_confirmed = recent_vol_z >= 1.5
+                        volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
                     if volume_confirmed:
                         trade_plan = self._create_bos_trade_plan('long', recent_high, current_price,
@@ -610,7 +608,7 @@ class ICTStructure(BaseStructure):
                     volume_confirmed = True
                     if self.bos_volume_confirmation:
                         recent_vol_z = df['vol_z'].tail(3).max()
-                        volume_confirmed = recent_vol_z >= 1.5
+                        volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
                     if volume_confirmed:
                         trade_plan = self._create_bos_trade_plan('short', recent_low, current_price,
@@ -633,8 +631,7 @@ class ICTStructure(BaseStructure):
                         ))
 
         except Exception as e:
-            logger.error(f"Break of Structure detection error: {e}")
-
+            logger.exception(f"Break of Structure detection error: {e}")
         return events
 
     def _find_swing_points(self, df: pd.DataFrame, price_type: str) -> List[float]:
@@ -676,8 +673,10 @@ class ICTStructure(BaseStructure):
                 if len(df) >= period + 1:
                     old_momentum = df['returns_3'].iloc[-(period+1)]
                     current_momentum = df['returns_3'].iloc[-1]
-                    momentum_change = current_momentum - old_momentum
-                    momentum_changes[period] = momentum_change
+                    # Skip if either value is NaN
+                    if pd.notna(old_momentum) and pd.notna(current_momentum):
+                        momentum_change = current_momentum - old_momentum
+                        momentum_changes[period] = momentum_change
 
             # Check for significant momentum shift
             significant_changes = [abs(change) >= self.choch_min_momentum_change
@@ -690,7 +689,7 @@ class ICTStructure(BaseStructure):
 
                 # Check volume confirmation
                 recent_vol_z = df['vol_z'].tail(3).max()
-                if recent_vol_z >= self.choch_volume_threshold:
+                if pd.notna(recent_vol_z) and recent_vol_z >= self.choch_volume_threshold:
                     trade_plan = self._create_choch_trade_plan(direction, current_price,
                                                              context.indicators.get('atr', 1.0))
 
@@ -711,8 +710,7 @@ class ICTStructure(BaseStructure):
                     ))
 
         except Exception as e:
-            logger.error(f"Change of Character detection error: {e}")
-
+            logger.exception(f"Change of Character detection error: {e}")
         return events
 
     def _calculate_ict_quality_score(self, events: List[StructureEvent], df: pd.DataFrame,
@@ -730,10 +728,11 @@ class ICTStructure(BaseStructure):
 
             # Volume confirmation
             recent_vol_z = df['vol_z'].tail(3).max()
-            if recent_vol_z >= 2.0:
-                score += 1.0
-            elif recent_vol_z >= 1.5:
-                score += 0.5
+            if pd.notna(recent_vol_z):
+                if recent_vol_z >= 2.0:
+                    score += 1.0
+                elif recent_vol_z >= 1.5:
+                    score += 0.5
 
             # Pattern diversity bonus
             pattern_types = set(event.structure_type.split('_')[0] for event in events)
@@ -749,7 +748,7 @@ class ICTStructure(BaseStructure):
             return min(5.0, score)
 
         except Exception as e:
-            logger.error(f"ICT quality score calculation error: {e}")
+            logger.exception(f"ICT quality score calculation error: {e}")
             return 0.0
 
     def _create_order_block_trade_plan(self, direction: str, ob_high: float, ob_low: float,
@@ -980,7 +979,8 @@ class ICTStructure(BaseStructure):
         try:
             # Get volume data for institutional validation
             df = context.df_5m
-            vol_z = df['vol_z'].iloc[-1] if 'vol_z' in df.columns else 1.0
+            vol_z_raw = df['vol_z'].iloc[-1] if 'vol_z' in df.columns else None
+            vol_z = vol_z_raw if pd.notna(vol_z_raw) else 1.0
 
             # Base strength from pattern quality and volume (institutional volume threshold ≥1.5)
             institutional_base = max(1.0, vol_z * (base_strength / 100.0) * 2.0)
@@ -1056,7 +1056,7 @@ class ICTStructure(BaseStructure):
             return final_strength
 
         except Exception as e:
-            logger.error(f"ICT: Error calculating institutional strength: {e}")
+            logger.exception(f"ICT: Error calculating institutional strength: {e}")
             return 1.8  # Safe fallback below regime threshold
 
     # Abstract method implementations for BaseStructure compatibility
