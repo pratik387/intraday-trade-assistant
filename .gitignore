@@ -6,3 +6,11 @@ nse_all.json
 upstox_instruments.json
 upstox_instrument_map.json
 logs/
+analysis_report*
+tests/
+oracle_cloud/
+backtest_results/
+test*
+*.zip
+*.log
+*.pdf

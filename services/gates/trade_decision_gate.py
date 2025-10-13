@@ -115,6 +115,7 @@ class GateDecision:
     matched_rule: Optional[str] = None  # if you use rule miner/meta later
     p_breakout: Optional[float] = None  # placeholder for meta-prob models
     setup_candidates: Optional[List[SetupCandidate]] = None  # NEW: full structure detection results
+    regime_diagnostics: Optional[dict] = None  # Phase 2: Multi-TF regime diagnostics
 
 
 # ----------------------------- Component Protocols -----------------------------
@@ -384,7 +385,8 @@ class TradeDecisionGate:
         df5m_tail: pd.DataFrame,
         index_df5m: pd.DataFrame,
         levels: Optional[dict],
-        plan: Optional[dict] = None    # planner info (e.g., regime, rr, etc.)
+        plan: Optional[dict] = None,    # planner info (e.g., regime, rr, etc.)
+        daily_df: Optional[pd.DataFrame] = None  # Phase 2: Multi-TF regime (210 days)
     ) -> GateDecision:
         reasons: List[str] = []
 
@@ -498,9 +500,53 @@ class TradeDecisionGate:
         if best.setup_type in blacklisted_setups:
             return GateDecision(accept=False, reasons=[f"blacklisted_setup:{best.setup_type}"])
 
-        # ---------------- REGIME ----------------
+        # ---------------- REGIME (Phase 2: Multi-timeframe) ----------------
         df_for_regime = index_df5m if index_df5m is not None and not index_df5m.empty else df5m_tail
-        regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
+
+        # Try multi-timeframe regime if available
+        regime_diagnostics = None
+        if hasattr(self.regime_gate, 'compute_regime_multi_tf') and daily_df is not None:
+            try:
+                regime, regime_confidence, regime_diagnostics = self.regime_gate.compute_regime_multi_tf(
+                    df5=df_for_regime,
+                    daily_df=daily_df,
+                    symbol=symbol
+                )
+            except Exception as e:
+                logger.warning(f"Multi-TF regime failed for {symbol}, falling back to 5m-only: {e}")
+                regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
+        else:
+            # Fallback to 5m-only regime
+            regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
+
+        # Phase 3: Check if setup should be blocked by daily regime (evidence-based)
+        # Linda Raschke MTF filtering: Block counter-trend setups when daily conf ≥ 0.70
+        if regime_diagnostics and "daily" in regime_diagnostics:
+            from services.gates.multi_timeframe_regime import DailyRegimeResult
+            daily_data = regime_diagnostics["daily"]
+            daily_result = DailyRegimeResult(
+                regime=daily_data.get("regime", "chop"),
+                confidence=daily_data.get("confidence", 0.0),
+                trend_strength=daily_data.get("trend_strength", 0.0),
+                metrics=daily_data.get("metrics", {})
+            )
+
+            # Check if multi-TF regime wants to block this setup
+            if hasattr(self.regime_gate, 'multi_tf_regime') and hasattr(self.regime_gate.multi_tf_regime, 'should_block_setup'):
+                should_block, block_reason = self.regime_gate.multi_tf_regime.should_block_setup(
+                    setup_type=best.setup_type,
+                    daily_result=daily_result,
+                    min_daily_confidence=0.70
+                )
+                if should_block:
+                    return GateDecision(
+                        accept=False,
+                        reasons=[f"blocked_by_daily_regime:{block_reason}"],
+                        setup_type=best.setup_type,
+                        regime=regime,
+                        regime_conf=regime_confidence,
+                        regime_diagnostics=regime_diagnostics
+                    )
 
         # Evidence for regime gate
         strength = _safe_float(best.strength, 0.0)
@@ -553,13 +599,29 @@ class TradeDecisionGate:
         # Regime allow-list (strict) unless HCET
         if not _regime_allows(best.setup_type, regime):
             # fallback to your injected regime_gate.allow_setup if you want both
+            # Priority 2: Get cap_segment for cap-aware strategy filtering
+            cap_segment = "unknown"
+            try:
+                import json
+                from pathlib import Path
+                nse_file = Path(__file__).parent.parent.parent / "nse_all.json"
+                if nse_file.exists():
+                    with nse_file.open() as f:
+                        data = json.load(f)
+                    cap_map = {item["symbol"]: item.get("cap_segment", "unknown") for item in data}
+                    cap_segment = cap_map.get(symbol, "unknown")
+            except Exception:
+                cap_segment = "unknown"
+
             if hasattr(self.regime_gate, "allow_setup"):
-                base_allow = bool(self.regime_gate.allow_setup(best.setup_type, regime, strength, adx_5m, vol_mult_5m))
+                base_allow = bool(self.regime_gate.allow_setup(
+                    best.setup_type, regime, strength, adx_5m, vol_mult_5m, cap_segment=cap_segment
+                ))
             else:
                 base_allow = False
 
             if not base_allow and not hc_ok:
-                reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f}]")
+                reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f},cap={cap_segment}]")
                 return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
             elif not base_allow and hc_ok:
                 reasons.append(f"hcet_bypass_regime:{','.join(hc_reasons)}")
@@ -763,9 +825,11 @@ class TradeDecisionGate:
             reasons=reasons,
             setup_type=best.setup_type,  # DEPRECATED: for backward compatibility
             regime=regime,
+            regime_conf=regime_confidence,
             size_mult=max(0.0, size_mult),
             min_hold_bars=max(0, min_hold),
             setup_candidates=setups,  # NEW: full setup candidates for structure system
+            regime_diagnostics=regime_diagnostics,  # Phase 2: Multi-TF regime diagnostics
         )
 
     def _get_strategy_momentum_threshold(self, setup_type: Optional[str]) -> float:

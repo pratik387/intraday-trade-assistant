@@ -63,6 +63,210 @@
     "bo_min_vol_mult": 1.15,
     "ff_min_vol_mult": 0.90
   },
+  "liquidity_gates": {
+    "_comment": "Market Cap Segmentation - Priority 1: Liquidity Filters (evidence-based thresholds)",
+    "enabled": true,
+    "exclude_micro_caps": false,
+    "_rationale_micro_caps": "ENABLED per 3-month baseline analysis: micro-caps generated 84% of profits (Rs.5,550 out of Rs.6,617). failure_fade strategy excels in volatile, illiquid names.",
+    "large_cap": {
+      "min_mcap_cr": 20000,
+      "min_avg_volume_daily": 100000,
+      "min_value_traded_cr_daily": 1.0,
+      "volume_surge_min": 1.3,
+      "_rationale": "Liquid names - lower volume requirements due to deep order books"
+    },
+    "mid_cap": {
+      "min_mcap_cr": 5000,
+      "max_mcap_cr": 20000,
+      "min_avg_volume_daily": 250000,
+      "min_value_traded_cr_daily": 0.5,
+      "volume_surge_min": 2.0,
+      "_rationale": "Need 2x volume confirmation vs large-cap to avoid manipulation"
+    },
+    "small_cap": {
+      "min_mcap_cr": 500,
+      "max_mcap_cr": 5000,
+      "min_avg_volume_daily": 500000,
+      "min_value_traded_cr_daily": 0.3,
+      "volume_surge_min": 3.0,
+      "max_bid_ask_spread_bps": 20,
+      "_rationale": "Strict filters - 3x volume surge required to avoid false breakouts (institutional standard)"
+    },
+    "micro_cap": {
+      "min_mcap_cr": 50,
+      "max_mcap_cr": 500,
+      "min_avg_volume_daily": 750000,
+      "min_value_traded_cr_daily": 0.2,
+      "volume_surge_min": 4.0,
+      "max_bid_ask_spread_bps": 40,
+      "_rationale": "STRICTEST filters - 4x volume surge (vs 3x small-caps) to ensure tradeable liquidity. Baseline data: 43.8% WR, 1.63 PF, Rs.173/trade avg."
+    }
+  },
+  "cap_strategy_preferences": {
+    "_comment": "Market Cap Segmentation - Priority 2: Strategy-Cap Mapping (institutional evidence)",
+    "enabled": true,
+    "large_cap": {
+      "preferred": [
+        "vwap_mean_reversion_long",
+        "vwap_mean_reversion_short",
+        "failure_fade_long",
+        "failure_fade_short",
+        "range_rejection_long",
+        "range_rejection_short"
+      ],
+      "allowed": [
+        "breakout_long",
+        "breakout_short",
+        "trend_pullback_long",
+        "trend_pullback_short",
+        "gap_fill_long",
+        "gap_fill_short",
+        "orb_breakout_long",
+        "orb_breakout_short"
+      ],
+      "blocked": [
+        "momentum_breakout_long",
+        "momentum_breakout_short"
+      ],
+      "_rationale": "Large-caps mean-revert reliably (70% WR), move slowly on momentum. Institutional HFT keeps prices efficient."
+    },
+    "mid_cap": {
+      "preferred": [
+        "orb_breakout_long",
+        "orb_breakout_short",
+        "flag_continuation_long",
+        "flag_continuation_short",
+        "trend_pullback_long",
+        "trend_pullback_short"
+      ],
+      "allowed": [
+        "gap_fill_long",
+        "gap_fill_short",
+        "vwap_reclaim_long",
+        "vwap_lose_short",
+        "breakout_long",
+        "breakout_short",
+        "vwap_mean_reversion_long",
+        "vwap_mean_reversion_short",
+        "failure_fade_long",
+        "failure_fade_short"
+      ],
+      "blocked": [],
+      "_rationale": "Mid-caps: best balance of momentum + structure. All strategies viable."
+    },
+    "small_cap": {
+      "preferred": [
+        "momentum_breakout_long",
+        "momentum_breakout_short",
+        "orb_breakout_long",
+        "orb_breakout_short",
+        "squeeze_release_long",
+        "squeeze_release_short"
+      ],
+      "allowed": [
+        "gap_fill_long",
+        "gap_fill_short",
+        "breakout_long",
+        "breakout_short",
+        "flag_continuation_long",
+        "flag_continuation_short"
+      ],
+      "blocked": [
+        "vwap_mean_reversion_long",
+        "vwap_mean_reversion_short",
+        "failure_fade_long",
+        "failure_fade_short"
+      ],
+      "_rationale": "Small-caps momentum-driven (2-3x faster moves). Mean-reversion unreliable due to low liquidity + manipulation risk."
+    },
+    "micro_cap": {
+      "preferred": [
+        "failure_fade_long",
+        "failure_fade_short",
+        "volume_spike_reversal_long",
+        "volume_spike_reversal_short"
+      ],
+      "allowed": [
+        "orb_breakout_long",
+        "orb_breakout_short",
+        "squeeze_release_long",
+        "squeeze_release_short",
+        "momentum_breakout_long",
+        "momentum_breakout_short"
+      ],
+      "blocked": [
+        "vwap_mean_reversion_long",
+        "vwap_mean_reversion_short",
+        "trend_pullback_long",
+        "trend_pullback_short",
+        "range_rejection_long",
+        "range_rejection_short"
+      ],
+      "_rationale": "BASELINE PROVEN: 43.8% WR, 1.63 PF, Rs.173/trade (best segment!). failure_fade strategy DOMINATES micro-caps due to high volatility + retail-driven failed breakouts. Avoid range/pullback strategies (too choppy)."
+    }
+  },
+  "cap_risk_adjustments": {
+    "_comment": "Market Cap Segmentation - Priority 3: Risk Sizing by Cap (Van Tharp evidence)",
+    "enabled": true,
+    "large_cap": {
+      "size_multiplier": 1.2,
+      "max_position_pct": 5.0,
+      "sl_atr_multiplier": 1.0,
+      "_rationale": "Lower volatility allows larger size (Van Tharp: 90% of performance from sizing)"
+    },
+    "mid_cap": {
+      "size_multiplier": 1.0,
+      "max_position_pct": 3.0,
+      "sl_atr_multiplier": 1.1,
+      "_rationale": "Baseline sizing - balanced risk"
+    },
+    "small_cap": {
+      "size_multiplier": 0.6,
+      "max_position_pct": 2.0,
+      "sl_atr_multiplier": 1.3,
+      "_rationale": "Higher volatility requires smaller size + wider stops (30% wider to avoid noise)"
+    },
+    "micro_cap": {
+      "size_multiplier": 0.5,
+      "max_position_pct": 1.5,
+      "sl_atr_multiplier": 1.5,
+      "_rationale": "ENABLED per baseline data: Best performing segment (43.8% WR, 1.63 PF, Rs.173/trade avg). 50% position size (vs 60% small-caps) + 50% wider stops due to higher volatility. Strict liquidity filters (4x volume surge) ensure tradeable names only."
+    }
+  },
+  "regime_cap_allocation": {
+    "_comment": "Market Cap Segmentation - Priority 4: Regime-Cap Interaction (institutional rotation + baseline data)",
+    "enabled": true,
+    "chop": {
+      "large_cap_weight": 0.50,
+      "mid_cap_weight": 0.15,
+      "small_cap_weight": 0.10,
+      "micro_cap_weight": 0.25,
+      "_rationale": "CHOP → Large-caps + micro-caps excel (mean-reversion edge). Micro-caps 25% weight due to BASELINE: 43.8% WR, 1.63 PF with failure_fade strategy in chop conditions."
+    },
+    "trend_up": {
+      "large_cap_weight": 0.15,
+      "mid_cap_weight": 0.45,
+      "small_cap_weight": 0.25,
+      "micro_cap_weight": 0.15,
+      "_rationale": "TREND_UP → Mid/Small-caps lead momentum. Micro-caps 15% (moderate allocation, prefer liquidity in trends)."
+    },
+    "trend_down": {
+      "large_cap_weight": 0.50,
+      "mid_cap_weight": 0.25,
+      "small_cap_weight": 0.15,
+      "micro_cap_weight": 0.10,
+      "_rationale": "TREND_DOWN → Flight to quality, minimize micro-cap exposure. Micro-caps 10% (lowest allocation due to crash risk)."
+    },
+    "squeeze": {
+      "large_cap_weight": 0.35,
+      "mid_cap_weight": 0.30,
+      "small_cap_weight": 0.20,
+      "micro_cap_weight": 0.15,
+      "_rationale": "SQUEEZE → Balanced allocation awaiting breakout direction. Micro-caps 15% (moderate, can explode either way)."
+    },
+    "_institutional_evidence": "Linda Raschke: market cap rotation patterns follow regime shifts. CTAs rotate from large→mid→small during trend, reverse during chop.",
+    "_baseline_evidence": "3-month baseline: micro-caps generated 84% of profits (Rs.5,550 / Rs.6,617 total). failure_fade strategy dominates micro-caps in CHOP conditions."
+  },
   "decision_require_structure_event": true,
   "news_min_hold_bars": 2,
   "bar_1m_freq": "1min",
@@ -173,7 +377,8 @@
       "confidence_weak_signal": 0.6
     },
     "gap_fill_long": {
-      "enabled": true,
+      "enabled": false,
+      "_comment": "Quick Win: Disabled per Audit Task 4 - 12 signals, 0 executions (waste of compute)",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
       "require_volume_confirmation": true,
@@ -182,7 +387,8 @@
       "confidence_level": 0.7
     },
     "gap_fill_short": {
-      "enabled": true,
+      "enabled": false,
+      "_comment": "Quick Win: Disabled per Audit Task 4 - 12 signals, 0 executions (waste of compute)",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
       "require_volume_confirmation": true,

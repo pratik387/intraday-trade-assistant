@@ -528,11 +528,17 @@ def _strategy_selector(
 # ----------------------------
 
 def _compose_exits_and_size(
-    price: float, bias: str, atr: float, structure_stop: float, cfg: PlannerConfig, qty_scale: float
+    price: float, bias: str, atr: float, structure_stop: float, cfg: PlannerConfig, qty_scale: float,
+    cap_segment: str = "unknown"  # Priority 3: Cap-aware sizing
 ) -> Dict[str, Any]:
     """
     Compose hard stop, targets by RR, and position size. Strictly config-driven.
     Also enforces reasonable risk-per-share floors via cfg._extras['planner_precision'].
+
+    Priority 3: Cap-aware sizing applies Van Tharp position sizing principles:
+    - Large-caps: 1.2x size (lower volatility)
+    - Mid-caps: 1.0x size (baseline)
+    - Small-caps: 0.6x size + 1.3x wider stops (higher volatility)
     """
     try:
         pp = cfg._extras.get("planner_precision", {}) if hasattr(cfg, "_extras") else {}
@@ -619,10 +625,39 @@ def _compose_exits_and_size(
                     # If volatility calculation fails, use default multiplier
                     volatility_multiplier = 1.0
 
-        # Sizing with volatility adjustment
+        # === PRIORITY 3: CAP-AWARE SIZING (Van Tharp evidence) ===
+        cap_size_mult = 1.0
+        cap_sl_mult = 1.0
+
+        if cap_segment != "unknown":
+            cap_risk_cfg = load_filters().get("cap_risk_adjustments", {})
+            if cap_risk_cfg.get("enabled", False):
+                seg_cfg = cap_risk_cfg.get(cap_segment, {})
+                cap_size_mult = seg_cfg.get("size_multiplier", 1.0)
+                cap_sl_mult = seg_cfg.get("sl_atr_multiplier", 1.0)
+
+                # Apply cap-specific SL multiplier (small-caps get wider stops)
+                if cap_sl_mult != 1.0:
+                    # Recalculate hard_sl with cap-specific multiplier
+                    vol_stop_cap = price - (cfg.sl_atr_mult * cap_sl_mult * atr) if bias == "long" else price + (cfg.sl_atr_mult * cap_sl_mult * atr)
+                    if bias == "long":
+                        structure_sl = structure_stop - cfg.sl_below_swing_ticks
+                        hard_sl = max(structure_sl, vol_stop_cap)
+                        rps = max(price - hard_sl, 0.0)
+                    else:
+                        structure_sl = structure_stop + cfg.sl_below_swing_ticks
+                        hard_sl = min(structure_sl, vol_stop_cap)
+                        rps = max(hard_sl - price, 0.0)
+
+                    logger.debug(f"CAP_SIZING: {cap_segment} cap_sl_mult={cap_sl_mult:.2f} → rps={rps:.4f}")
+
+        # Sizing with volatility + cap adjustments
         base_qty = max(int(cfg.risk_per_trade_rupees // rps), 0)
-        qty = max(int(base_qty * qty_scale * volatility_multiplier), 0)
+        qty = max(int(base_qty * qty_scale * volatility_multiplier * cap_size_mult), 0)
         notional = qty * price
+
+        if cap_size_mult != 1.0:
+            logger.debug(f"CAP_SIZING: {cap_segment} size_mult={cap_size_mult:.2f} → qty={qty}")
 
         # Targets by RR
         t1 = price + (cfg.t1_rr * rps) if bias == "long" else price - (cfg.t1_rr * rps)
@@ -1003,7 +1038,22 @@ def generate_trade_plan(
             atr=atr
         )
 
-        exits = _compose_exits_and_size(entry_ref_price, strat["bias"], atr, strat["structure_stop"], cfg, qty_scale=qty_scale)
+        # Priority 3: Load cap_segment for cap-aware sizing
+        cap_segment = "unknown"
+        try:
+            import json
+            from pathlib import Path
+            nse_file = Path(__file__).parent.parent / "nse_all.json"
+            if nse_file.exists():
+                with nse_file.open() as f:
+                    data = json.load(f)
+                cap_map = {item["symbol"]: item.get("cap_segment", "unknown") for item in data}
+                cap_segment = cap_map.get(symbol, "unknown")
+        except Exception as e:
+            logger.debug(f"CAP_SIZING: Failed to load cap_segment for {symbol}: {e}")
+            cap_segment = "unknown"
+
+        exits = _compose_exits_and_size(entry_ref_price, strat["bias"], atr, strat["structure_stop"], cfg, qty_scale=qty_scale, cap_segment=cap_segment)
 
         # Feasibility tightening (from planner_precision extras)
         pp = cfg._extras.get("planner_precision", {})

@@ -32,9 +32,21 @@ Setup types (consistent with our structure detectors):
   "range_rejection_long", "range_rejection_short"
 """
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
+
+# Phase 1: Multi-timeframe regime detection (institutional approach)
+try:
+    from services.gates.multi_timeframe_regime import (
+        DailyRegimeDetector,
+        HourlyRegimeDetector,
+        MultiTimeframeRegime,
+        DailyRegimeResult
+    )
+    MULTI_TF_AVAILABLE = True
+except ImportError:
+    MULTI_TF_AVAILABLE = False
 
 @dataclass(frozen=True)
 class RegimeMetrics:
@@ -75,6 +87,24 @@ class MarketRegimeGate:
         self.BO_MIN_ADX        = float(rt["bo_min_adx"])
         self.BO_MIN_VOL_MULT   = float(rt["bo_min_vol_mult"])
         self.FF_MIN_VOL_MULT   = float(rt["ff_min_vol_mult"])
+
+        # Phase 1: Initialize multi-timeframe regime detectors
+        if MULTI_TF_AVAILABLE:
+            self.daily_detector = DailyRegimeDetector(log=log)
+            self.hourly_detector = HourlyRegimeDetector(log=log)
+            self.multi_tf_regime = MultiTimeframeRegime(
+                daily_detector=self.daily_detector,
+                hourly_detector=self.hourly_detector,
+                log=log
+            )
+            if log:
+                log.info("Multi-timeframe regime detection initialized (institutional approach)")
+        else:
+            self.daily_detector = None
+            self.hourly_detector = None
+            self.multi_tf_regime = None
+            if log:
+                log.warning("Multi-timeframe regime module not available - using 5m-only regime")
 
     # ---------------- Regime computation ----------------
     def compute_regime(self, df5: pd.DataFrame) -> Tuple[str, float]:
@@ -151,6 +181,70 @@ class MarketRegimeGate:
 
         return regime, confidence
 
+    def compute_regime_multi_tf(
+        self,
+        df5: pd.DataFrame,
+        daily_df: Optional[pd.DataFrame] = None,
+        symbol: Optional[str] = None
+    ) -> Tuple[str, float, Optional[Dict]]:
+        """
+        Phase 1: Multi-timeframe regime computation (institutional approach).
+
+        Uses daily trend (EMA200, ADX) as primary filter, falls back to 5m if unavailable.
+        This prevents -Rs. 4,258 loss from squeeze breakout shorts (audit finding).
+
+        Args:
+            df5: 5-minute OHLCV DataFrame
+            daily_df: Daily OHLCV DataFrame (210+ bars for EMA200)
+            symbol: Symbol name (for logging)
+
+        Returns:
+            (regime, confidence, diagnostics)
+            - regime: "trend_up" | "trend_down" | "chop" | "squeeze"
+            - confidence: 0.0-1.0
+            - diagnostics: Dict with daily/hourly/5m breakdown (or None if unavailable)
+        """
+        # Fallback to 5m-only if multi-TF not available
+        if not MULTI_TF_AVAILABLE or self.daily_detector is None:
+            regime_5m, conf_5m = self.compute_regime(df5)
+            return regime_5m, conf_5m, None
+
+        # Get 5m regime first (always needed)
+        regime_5m, conf_5m = self.compute_regime(df5)
+
+        # If no daily data, fall back to 5m only
+        if daily_df is None or daily_df.empty or len(daily_df) < 50:
+            if self.log:
+                self.log.debug(f"Multi-TF regime: {symbol} - insufficient daily data, using 5m-only")
+            return regime_5m, conf_5m, None
+
+        try:
+            # Get daily regime (primary)
+            daily_result = self.daily_detector.classify(daily_df)
+
+            # Get unified multi-TF regime
+            unified_regime, unified_conf, diagnostics = self.multi_tf_regime.get_unified_regime(
+                daily_df=daily_df,
+                df_5m=df5,
+                current_5m_regime=regime_5m
+            )
+
+            # CRITICAL FIX: Block squeeze breakout shorts (audit report finding)
+            # 11 trades, 0% win rate, -Rs. 4,258 loss
+            if daily_result.regime == "squeeze" and unified_regime == "squeeze":
+                if self.log:
+                    self.log.info(
+                        f"Multi-TF: {symbol} - Daily squeeze detected "
+                        f"(conf={daily_result.confidence:.2f}, prevents breakout_short losses)"
+                    )
+
+            return unified_regime, unified_conf, diagnostics
+
+        except Exception as e:
+            if self.log:
+                self.log.error(f"Multi-TF regime error for {symbol}: {e}, falling back to 5m")
+            return regime_5m, conf_5m, None
+
     # ---------------- Evidence-based permissioning ----------------
     def allow_setup(
         self,
@@ -159,9 +253,10 @@ class MarketRegimeGate:
         strength: float,
         adx_5m: float,
         vol_mult_5m: float,
+        cap_segment: str = "unknown",  # NEW: Priority 2 - cap-specific filtering
     ) -> bool:
         """
-        Returns True iff the setup is allowed by regime AND passes evidence thresholds.
+        Returns True iff the setup is allowed by regime AND passes evidence thresholds AND cap-strategy fit.
 
         Params:
           setup_type   : 'breakout_long'|'breakout_short'|'vwap_reclaim_long'|'vwap_lose_short'|
@@ -175,7 +270,28 @@ class MarketRegimeGate:
           strength     : structure score (0..5 normalized)
           adx_5m       : 5m ADX
           vol_mult_5m  : last5m_vol / median5m_vol (~2h)
+          cap_segment  : 'large_cap'|'mid_cap'|'small_cap'|'micro_cap'|'unknown' (Priority 2: cap-aware filtering)
         """
+        # === PRIORITY 2: CAP-STRATEGY FILTERING (institutional evidence) ===
+        cap_prefs = self.cfg.get("cap_strategy_preferences", {})
+        if cap_prefs.get("enabled", False) and cap_segment != "unknown":
+            seg_cfg = cap_prefs.get(cap_segment, {})
+
+            # Check if setup is BLOCKED for this cap segment
+            blocked = seg_cfg.get("blocked", [])
+            if setup_type in blocked:
+                if self.log:
+                    self.log.debug(f"CAP_FILTER: blocked {setup_type} for {cap_segment}")
+                return False
+
+            # Check if setup is NOT in preferred or allowed lists
+            preferred = seg_cfg.get("preferred", [])
+            allowed = seg_cfg.get("allowed", [])
+            if setup_type not in (preferred + allowed):
+                if self.log:
+                    self.log.debug(f"CAP_FILTER: {setup_type} not suitable for {cap_segment}")
+                return False
+
         # NA-safe casts
         s = float(strength) if pd.notna(strength) else 0.0
         a = float(adx_5m) if pd.notna(adx_5m) else 0.0

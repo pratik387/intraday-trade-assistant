@@ -66,7 +66,7 @@ from services import levels
 from services import metrics_intraday as mi
 from services.planner_internal import generate_trade_plan
 from structures.main_detector import MainDetector
-from services.ranker import rank_candidates, get_strategy_threshold
+from services.ranker import rank_candidates, get_strategy_threshold, get_time_of_day_multiplier
 
 # orders & execution
 from services.orders.order_queue import OrderQueue
@@ -122,10 +122,12 @@ def _init_worker(config_dict):
         get_agent_logger().exception(f"Worker init failed: {e}")
         raise
 
-def _worker_process_symbol(symbol, df5_data, df1m_data, index_df5_data, levels, now):
+def _worker_process_symbol(symbol, df5_data, df1m_data, index_df5_data, levels, now, daily_df=None):
     """
     Process single symbol using pre-initialized decision gate.
     This function is called once per task and reuses the gate.
+
+    Phase 2: Added daily_df parameter for multi-timeframe regime detection.
     """
     global _worker_decision_gate
     if _worker_decision_gate is None:
@@ -139,6 +141,7 @@ def _worker_process_symbol(symbol, df5_data, df1m_data, index_df5_data, levels, 
             df5m_tail=df5_data,
             index_df5m=index_df5_data,
             levels=levels,
+            daily_df=daily_df,  # Phase 2: Multi-TF regime (210 days)
         )
         return (symbol, decision)
     except Exception as e:
@@ -444,6 +447,7 @@ class ScreenerLive:
         # This reduces 50s bottleneck to ~15s (3.3x speedup)
 
         # Prepare data for parallel processing
+        # Phase 2: Include daily_df for multi-timeframe regime detection
         symbol_data_map = {}
         for sym in shortlist:
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
@@ -451,7 +455,9 @@ class ScreenerLive:
                 continue
             df1m = self.agg.get_df_1m_tail(sym, 60)
             lvl = self._levels_for(sym, df5, now)
-            symbol_data_map[sym] = (df5, df1m, lvl)
+            # Phase 2: Fetch daily data (210 days for EMA200, uses cache)
+            daily_df = self.sdk.get_daily(sym, days=210)
+            symbol_data_map[sym] = (df5, df1m, lvl, daily_df)
 
         if not symbol_data_map:
             logger.info("GATES_COMPLETE | No symbols with sufficient data")
@@ -469,8 +475,9 @@ class ScreenerLive:
             initargs=(decision_gate_config,)
         ) as executor:
             # Submit all symbols for processing using optimized worker function
+            # Phase 2: Unpack 4-tuple (df5, df1m, lvl, daily_df) for multi-TF regime
             futures = {}
-            for sym, (df5, df1m, lvl) in symbol_data_map.items():
+            for sym, (df5, df1m, lvl, daily_df) in symbol_data_map.items():
                 future = executor.submit(
                     _worker_process_symbol,  # Use new function that reuses initialized gate
                     sym,
@@ -478,7 +485,8 @@ class ScreenerLive:
                     df1m,
                     index_df5,
                     lvl,
-                    now
+                    now,
+                    daily_df  # Phase 2: Pass daily_df for multi-timeframe regime
                 )
                 futures[future] = sym
 
@@ -512,6 +520,7 @@ class ScreenerLive:
                     )
 
                     # Log screener rejection with detailed context
+                    # Phase 2: Include multi-TF regime diagnostics
                     screener_logger.log_reject(
                         sym,
                         top_reason,
@@ -520,7 +529,8 @@ class ScreenerLive:
                         regime=decision.regime or "unknown",
                         all_reasons=decision.reasons,
                         structure_confidence=getattr(decision, 'structure_confidence', 0),
-                        current_price=df5['close'].iloc[-1] if not df5.empty else 0
+                        current_price=df5['close'].iloc[-1] if not df5.empty else 0,
+                        regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
                     )
                     continue
 
@@ -531,6 +541,7 @@ class ScreenerLive:
                 )
 
                 # Log screener acceptance with detailed context
+                # Phase 2: Include multi-TF regime diagnostics
                 screener_logger.log_accept(
                     sym,
                     timestamp=now.isoformat(),
@@ -541,7 +552,8 @@ class ScreenerLive:
                     all_reasons=decision.reasons,
                     structure_confidence=getattr(decision, 'structure_confidence', 0),
                     current_price=df5['close'].iloc[-1] if not df5.empty else 0,
-                    vwap=df5.get('vwap', pd.Series([0])).iloc[-1] if not df5.empty else 0
+                    vwap=df5.get('vwap', pd.Series([0])).iloc[-1] if not df5.empty else 0,
+                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
                 )
                 decisions.append((sym, decision))
 
@@ -584,7 +596,16 @@ class ScreenerLive:
             # Get strategy-specific threshold
             decision = dec_map.get(sym)
             strategy_type = getattr(decision, "setup_type", None) if decision else None
-            threshold = get_strategy_threshold(strategy_type) if strategy_type else self.cfg.rank_exec_threshold
+            base_threshold = get_strategy_threshold(strategy_type) if strategy_type else self.cfg.rank_exec_threshold
+
+            # Quick Win: Apply time-of-day multiplier (Audit Task 3)
+            # Late-day signals have poor quality (39 signals → 3 trades in 14:00-15:00)
+            # Raise threshold 1.5x after 14:00, 2.5x after 14:30
+            time_multiplier = get_time_of_day_multiplier(now)
+            threshold = base_threshold * time_multiplier
+
+            if time_multiplier > 1.0:
+                logger.debug(f"TIME_FILTER | {now.strftime('%H:%M')} - threshold raised {time_multiplier:.1f}x: {base_threshold:.2f} → {threshold:.2f}")
 
             # absolute threshold gate
             if score < threshold:
@@ -592,6 +613,7 @@ class ScreenerLive:
                            sym, score, threshold, strategy_type)
 
                 # Log ranking rejection
+                # Phase 2: Include multi-TF regime diagnostics
                 ranking_logger.log_reject(
                     sym,
                     "score_below_threshold",
@@ -601,12 +623,14 @@ class ScreenerLive:
                     strategy_type=strategy_type or "unknown",
                     rank_position=i + 1,
                     total_candidates=len(ranked),
-                    percentile_score=pctl_score
+                    percentile_score=pctl_score,
+                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
                 )
                 continue
             # percentile gate
             if score < pctl_score:
                 # Log percentile rejection
+                # Phase 2: Include multi-TF regime diagnostics
                 ranking_logger.log_reject(
                     sym,
                     "score_below_percentile",
@@ -615,11 +639,13 @@ class ScreenerLive:
                     percentile_score=pctl_score,
                     strategy_type=strategy_type or "unknown",
                     rank_position=i + 1,
-                    total_candidates=len(ranked)
+                    total_candidates=len(ranked),
+                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
                 )
                 continue
 
             # Log ranking acceptance (passed both threshold and percentile gates)
+            # Phase 2: Include multi-TF regime diagnostics
             ranking_logger.log_accept(
                 sym,
                 timestamp=now.isoformat(),
@@ -628,11 +654,14 @@ class ScreenerLive:
                 percentile_score=pctl_score,
                 strategy_type=strategy_type or "unknown",
                 rank_position=i + 1,
-                total_candidates=len(ranked)
+                total_candidates=len(ranked),
+                regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
             )
 
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
-            daily_df = self.sdk.get_daily(sym, days=90)
+            # Phase 1: Multi-timeframe regime - fetch 210 days for EMA200 + buffer (was 90)
+            # ZERO additional API cost: get_daily() uses in-memory cache (kite_client.py:216-230)
+            daily_df = self.sdk.get_daily(sym, days=210)
 
             try:
                 decision = dec_map[sym]
@@ -723,6 +752,7 @@ class ScreenerLive:
             plan["decision_ts"] = str(now)
 
             # Flatten decision to serializable dict for diag log
+            # Phase 2: Include multi-TF regime diagnostics
             reasons_str = None
             if decision_obj is not None:
                 r = getattr(decision_obj, "reasons", None)
@@ -734,6 +764,7 @@ class ScreenerLive:
                 "reasons": reasons_str,
                 "size_mult": getattr(decision_obj, "size_mult", None) if decision_obj is not None else None,
                 "min_hold_bars": getattr(decision_obj, "min_hold_bars", None) if decision_obj is not None else None,
+                "regime_diagnostics": getattr(decision_obj, "regime_diagnostics", None) if decision_obj is not None else None,  # Phase 2: Multi-TF regime
             }
             diag_event_log.log_decision(symbol=plan["symbol"], now=now, plan=plan, features=features, decision=decision_dict)
 
@@ -839,7 +870,8 @@ class ScreenerLive:
         pdh = pdl = pdc = float("nan")
         try:
             logger.debug(f"LEVELS: Getting daily data for {symbol}, session_date={session_date}")
-            daily = self.sdk.get_daily(symbol, days=12)
+            # Phase 1: Multi-TF regime - levels only need recent days, but caching 210 days for regime
+            daily = self.sdk.get_daily(symbol, days=210)
             logger.debug(f"LEVELS: Daily data shape: {daily.shape if daily is not None else None}")
 
             if daily is not None and not daily.empty:
@@ -1022,10 +1054,20 @@ class ScreenerLive:
 
             # Strategy type detection (debug logging removed for cleaner output)
 
+            # Priority 4: Load cap_segment for regime-cap allocation bonuses
+            cap_segment = "unknown"
+            try:
+                cap_map = self._load_cap_mapping()
+                cap_data = cap_map.get(sym, {})
+                cap_segment = cap_data.get("cap_segment", "unknown")
+            except Exception:
+                cap_segment = "unknown"
+
             rows_for_ranker.append({
                 "symbol": sym,
                 "strategy_type": strategy_type,
                 "regime": regime_context,
+                "cap_segment": cap_segment,  # Priority 4: Cap segment for regime-cap interaction
                 "daily_score": 0.0,
                 "intraday": {
                     "volume_ratio": volume_ratio,
@@ -1059,9 +1101,46 @@ class ScreenerLive:
         if common_regime:
             logger.info(f"REGIME_CONTEXT | Using {common_regime} for ranking (regimes: {regime_counts})")
 
+        # Phase 3: Build regime_diagnostics_map for multi-TF ranking multipliers
+        regime_diagnostics_map = {}
+        for sym, decision in decisions:
+            regime_diag = getattr(decision, 'regime_diagnostics', None)
+            if regime_diag:
+                regime_diagnostics_map[sym] = regime_diag
+
         # Apply rank_top_n cap from config
         rank_top_n = self.raw_cfg.get("rank_top_n", 100)
-        ranked_rows = rank_candidates(rows_for_ranker, top_n=rank_top_n, regime_context=common_regime)
+        ranked_rows = rank_candidates(
+            rows_for_ranker,
+            top_n=rank_top_n,
+            regime_context=common_regime,
+            regime_diagnostics_map=regime_diagnostics_map  # Phase 3: Multi-TF regime multipliers
+        )
+
+        # === PRIORITY 4: REGIME-CAP ALLOCATION BONUSES (institutional rotation) ===
+        regime_cap_cfg = self.raw_cfg.get("regime_cap_allocation", {})
+        if regime_cap_cfg.get("enabled", False) and common_regime and ranked_rows:
+            regime_weights = regime_cap_cfg.get(common_regime, {})
+            if regime_weights:
+                # Apply regime-cap allocation bonuses
+                for row in ranked_rows:
+                    cap_segment = row.get("cap_segment", "unknown")
+                    if cap_segment in ["large_cap", "mid_cap", "small_cap"]:
+                        weight_key = f"{cap_segment}_weight"
+                        weight = regime_weights.get(weight_key, 0.5)
+                        # Convert weight to bonus: 70% weight = +0.2 bonus, 20% weight = -0.15 penalty
+                        # Formula: bonus = (weight - 0.5) * 0.4 (scaled to ±0.2 range)
+                        regime_cap_bonus = (weight - 0.5) * 0.4
+                        old_score = row.get("rank_score", 0.0)
+                        new_score = old_score + regime_cap_bonus
+                        row["rank_score"] = new_score
+                        if abs(regime_cap_bonus) > 0.01:  # Log significant adjustments
+                            logger.debug(f"REGIME_CAP_ALLOC | {row.get('symbol')} {cap_segment} in {common_regime}: "
+                                       f"weight={weight:.2f} bonus={regime_cap_bonus:+.3f} score {old_score:.3f}→{new_score:.3f}")
+
+                # Re-sort by adjusted scores
+                ranked_rows.sort(key=lambda x: x.get("rank_score", 0.0), reverse=True)
+                logger.info(f"REGIME_CAP_ALLOC | Applied {common_regime} regime-cap bonuses to {len(ranked_rows)} symbols")
 
         # ENHANCED FILTERING: Apply rank floors and per-cycle caps (from plan document)
         if ranked_rows:
@@ -1129,6 +1208,47 @@ class ScreenerLive:
         if md <= 13 * 60 + 30: return "mid"
         return "late"
 
+    def _load_cap_mapping(self) -> dict:
+        """
+        Load market cap data from nse_all.json. Cached for performance.
+
+        Returns:
+            Dict mapping symbol → {"market_cap_cr": float, "cap_segment": str}
+
+        Market Cap Segments (NSE India standards):
+        - large_cap: >= Rs.20,000 cr
+        - mid_cap: Rs.5,000 - 20,000 cr
+        - small_cap: Rs.500 - 5,000 cr
+        - micro_cap: < Rs.500 cr (excluded from intraday)
+        """
+        if hasattr(self, "_cap_map_cache"):
+            return self._cap_map_cache
+
+        try:
+            import json
+            from pathlib import Path
+            nse_file = Path(__file__).parent.parent / "nse_all.json"
+
+            with nse_file.open() as f:
+                data = json.load(f)
+
+            # Build symbol → cap_data mapping
+            cap_map = {}
+            for item in data:
+                sym = item["symbol"]
+                cap_map[sym] = {
+                    "market_cap_cr": item.get("market_cap_cr", 0),
+                    "cap_segment": item.get("cap_segment", "unknown")
+                }
+
+            self._cap_map_cache = cap_map
+            logger.info(f"CAP_MAPPING | Loaded market cap data for {len(cap_map)} symbols")
+            return cap_map
+
+        except Exception as e:
+            logger.warning(f"CAP_MAPPING | Failed to load market cap data: {e}")
+            return {}
+
     def _filter_stage0(self, feats: pd.DataFrame, now_ts) -> pd.DataFrame:
         """
         Stage-0 shortlist filter: liquidity + VWAP proximity (time-aware) + momentum clamp.
@@ -1160,6 +1280,46 @@ class ScreenerLive:
             df = df[df["vol_persist_ok"] >= (1 if vp_bars >= 2 else 0)]
         if "vol_ratio" in df.columns:
             df = df[df["vol_ratio"] >= vr_min]
+
+        # ========== CAP-AWARE LIQUIDITY GATES (Priority 1) ==========
+        liq_cfg = cfg.get("liquidity_gates", {})
+        if liq_cfg.get("enabled", False):
+            # Load market cap mapping
+            cap_map = self._load_cap_mapping()
+
+            # Build pass/fail mask for cap-specific volume requirements
+            passes_liquidity = []
+            for sym in df.index:
+                cap_data = cap_map.get(sym, {})
+                cap_segment = cap_data.get("cap_segment", "unknown")
+
+                # Exclude micro-caps if configured (institutional standard)
+                if liq_cfg.get("exclude_micro_caps", True) and cap_segment == "micro_cap":
+                    passes_liquidity.append(False)
+                    continue
+
+                # Get segment-specific requirements
+                seg_cfg = liq_cfg.get(cap_segment, {})
+                if not seg_cfg:
+                    passes_liquidity.append(True)  # No config = allow
+                    continue
+
+                # Check volume surge requirement (cap-specific)
+                # Small-caps need 3x surge, mid-caps 2x, large-caps 1.3x
+                vol_mult = df.loc[sym, "vol_ratio"] if "vol_ratio" in df.columns else 1.0
+                min_surge = seg_cfg.get("volume_surge_min", 1.0)
+
+                passes = vol_mult >= min_surge
+                passes_liquidity.append(passes)
+
+            # Apply filter
+            before_count = len(df)
+            df = df[passes_liquidity]
+            after_count = len(df)
+
+            if before_count > after_count:
+                logger.info(f"LIQUIDITY_GATE | Filtered {before_count}→{after_count} symbols "
+                           f"({before_count - after_count} failed cap-specific volume requirements)")
 
         return df
 
