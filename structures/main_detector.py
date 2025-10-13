@@ -127,7 +127,7 @@ class MainDetector(BaseStructure):
                     self.detectors[detector_key] = detector_class(setup_config)
                     logger.debug(f"MAIN_DETECTOR: Initialized {detector_key} from {setup_name}")
                 except Exception as e:
-                    logger.exception(f"MAIN_DETECTOR: Failed to initialize {setup_name}: {e}")                    logger.error(traceback.format_exc())
+                    logger.exception(f"MAIN_DETECTOR: Failed to initialize {setup_name}: {e}")
             else:
                 logger.debug(f"MAIN_DETECTOR: {setup_name} disabled (enabled={setup_config.get('enabled', False)})")
 

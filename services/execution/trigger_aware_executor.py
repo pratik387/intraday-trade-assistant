@@ -133,13 +133,43 @@ class TriggerAwareExecutor:
             }
             
             order_id = self.broker.place_order(**order_args)
-            
-            # Log execution
-            trade_logger.info(
-                f"TRIGGER_EXEC | {symbol} | {side} {qty} @ {price:.2f} | "
-                f"strategy={plan.get('strategy', '')} | order_id={order_id}"
-            )
-            
+
+            # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
+            # Reason: Both trade_logger.info() (removed) and trading_logger.log_trigger() (below)
+            #         write to the SAME trade_logs.log file, creating duplicate TRIGGER_EXEC entries
+            #
+            # Evidence from logs/run_bb5bf6d6_20251013_084000/trade_logs.log:
+            #   - Line 1: trade_logger format (basic)
+            #   - Line 2: trading_logger format (with diagnostics)
+            #
+            # Decision: Use trading_logger.log_trigger() as single source of truth
+            # Benefits:
+            #   - No duplicates in trade_logs.log
+            #   - Rich diagnostics (confidence_score, validation_count, entry_zone)
+            #   - Consistent with EXIT logging (also uses trading_logger only)
+
+            # Enhanced logging: Log TRIGGER event to events.jsonl
+            if self.trading_logger:
+                trigger_data = {
+                    'symbol': symbol,
+                    'trade_id': trade.trade_id,
+                    'price': price,
+                    'qty': qty,
+                    'timestamp': str(trade.trigger_timestamp) if trade.trigger_timestamp else str(pd.Timestamp.now()),
+                    'strategy': plan.get('strategy', ''),
+                    'setup_type': plan.get('setup_type', ''),
+                    'regime': plan.get('regime', ''),
+                    'order_id': order_id,
+                    'side': side,
+                    'diagnostics': {
+                        'confidence_score': trade.confidence_score,
+                        'trigger_price': trade.trigger_price,
+                        'validation_count': trade.validation_count,
+                        'entry_zone': plan.get('entry', {}).get('zone', [])
+                    }
+                }
+                self.trading_logger.log_trigger(trigger_data)
+
             # Update risk state
             self.risk.open_positions[symbol] = {
                 "side": side, 

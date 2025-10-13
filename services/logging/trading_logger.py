@@ -563,7 +563,11 @@ class TradingLogger:
 
     def _calculate_trade_pnl_all_exits(self, decision_event: Dict[str, Any], exit_events: list,
                                       trigger_event: Optional[Dict[str, Any]] = None) -> float:
-        """Calculate total PnL from all exit events (handles partial exits)"""
+        """Calculate total PnL from all exit events (handles partial exits)
+
+        CRITICAL FIX: This method now ALWAYS recalculates PnL from prices instead of
+        trusting 'pnl' fields in exit events, which may be missing or incorrect for partial exits.
+        """
         try:
             # Get entry price (prefer actual trigger price, fallback to decision reference)
             if trigger_event and 'trigger' in trigger_event:
@@ -571,13 +575,22 @@ class TradingLogger:
             else:
                 entry_price = float(decision_event['plan']['entry'].get('reference', 0))
 
+            # Validate entry price
+            if entry_price <= 0:
+                print(f"[analytics] WARNING: Invalid entry price {entry_price} for {decision_event.get('symbol')}")
+                return 0.0
+
             bias = decision_event['plan'].get('bias', 'long')
             total_pnl = 0.0
 
-            # Sum PnL across all exits
-            for exit_event in exit_events:
+            # CRITICAL: Calculate PnL for EACH exit individually (handles partial exits correctly)
+            for i, exit_event in enumerate(exit_events):
                 exit_price = float(exit_event['exit'].get('price', 0))
                 qty = int(exit_event['exit'].get('qty', 0))
+
+                if exit_price <= 0 or qty <= 0:
+                    print(f"[analytics] WARNING: Invalid exit data price={exit_price} qty={qty} for exit {i+1}")
+                    continue
 
                 # Calculate PnL based on trade direction
                 if bias.lower() == 'long':
@@ -589,7 +602,8 @@ class TradingLogger:
 
             return round(total_pnl, 2)
 
-        except Exception:
+        except Exception as e:
+            print(f"[analytics] ERROR: Failed to calculate PnL for {decision_event.get('symbol')}: {e}")
             return 0.0
 
     def _calculate_trade_pnl(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],

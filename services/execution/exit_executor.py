@@ -769,20 +769,91 @@ class ExitExecutor:
 
         entry_price = float(pos.avg_price)
         pnl = ((exit_px - entry_price) if pos.side.upper() == "BUY" else (entry_price - exit_px)) * int(qty_exit)
-        trade_logger.info(
-            f"EXIT | {sym} | Qty: {qty_exit} | Entry: Rs.{entry_price:.2f} | Exit: Rs.{exit_px:.2f} | PnL: Rs.{pnl:.2f} {reason}"
-        )
-        try:
-            diag_event_log.log_exit(
-                symbol=sym,
-                plan=pos.plan,          # same plan with trade_id & entry stamps
-                reason=str(reason),     # e.g., hard_sl, t1_partial, target_t2, trail_stop(...), or_kill, time_stop_.., eod_squareoff_HHMM
-                exit_price=float(exit_px),
-                exit_qty=int(qty_exit),
-                ts=ts,                  # tick-ts (time-naive)
-            )
-        except Exception as _e:
-            logger.warning("diag_event_log.log_exit failed sym=%s err=%s", sym, _e)
+
+        # REMOVED duplicate trade_logger.info() call for EXIT
+        # Reason: Both trade_logger.info() (removed) and trading_logger.log_exit() (below)
+        #         write to the SAME trade_logs.log file, creating duplicate EXIT entries
+        #
+        # Evidence from logs/run_bb5bf6d6_20251013_084000/trade_logs.log:
+        #   - Line 3: trade_logger format (basic PnL summary)
+        #   - Line 4: trading_logger format (from log_exit with diagnostics)
+        #
+        # Decision: Use trading_logger.log_exit() as single source of truth
+        # Benefits:
+        #   - No duplicates in trade_logs.log
+        #   - Rich diagnostics (R-multiple, MAE/MFE, time in trade, remaining qty)
+        #   - Consistent with TRIGGER logging (also uses trading_logger only)
+
+        # Enhanced logging: Log EXIT to events.jsonl via trading_logger
+        # This ensures all exits (partial and full) are captured with rich diagnostics
+        if self.trading_logger:
+            # Calculate R-multiple (PnL in units of initial risk)
+            plan_sl = pos.plan.get('stop', {}).get('hard') if isinstance(pos.plan.get('stop'), dict) else pos.plan.get('hard_sl')
+            r_multiple = None
+            if plan_sl:
+                risk_per_unit = abs(entry_price - plan_sl)
+                if risk_per_unit > 0:
+                    r_multiple = pnl / (qty_exit * risk_per_unit)
+
+            # Get MAE/MFE from state if tracked
+            state = pos.plan.get('_state', {})
+            mae = state.get('mae')
+            mfe = state.get('mfe')
+
+            # Calculate time in trade
+            entry_ts = pos.plan.get('entry_ts')
+            time_since_entry_mins = None
+            if entry_ts and ts:
+                try:
+                    entry_time = pd.Timestamp(entry_ts)
+                    time_delta = ts - entry_time
+                    time_since_entry_mins = time_delta.total_seconds() / 60
+                except:
+                    pass
+
+            # Determine remaining quantity after this exit
+            remaining_qty = max(0, pos.qty - qty_exit)
+
+            exit_data = {
+                'symbol': sym,
+                'trade_id': pos.plan.get('trade_id', ''),
+                'qty': qty_exit,
+                'entry_price': entry_price,
+                'exit_price': exit_px,
+                'pnl': round(pnl, 2),
+                'reason': reason,
+                'timestamp': str(ts) if ts else str(pd.Timestamp.now()),
+                # Edge diagnostic fields for exit analysis
+                'diagnostics': {
+                    'exit_type': 'partial' if qty_exit < pos.qty else 'full',
+                    'remaining_qty': remaining_qty,
+                    'r_multiple': round(r_multiple, 2) if r_multiple is not None else None,
+                    'mae': round(mae, 2) if mae is not None else None,
+                    'mfe': round(mfe, 2) if mfe is not None else None,
+                    'time_since_entry_mins': round(time_since_entry_mins, 1) if time_since_entry_mins is not None else None,
+                    'regime': pos.plan.get('regime'),
+                    'setup_type': pos.plan.get('setup_type'),
+                    'acceptance_status': pos.plan.get('quality', {}).get('acceptance_status')
+                }
+            }
+            self.trading_logger.log_exit(exit_data)
+
+        # REMOVED diag_event_log.log_exit() call to eliminate duplicate EXIT events
+        # Reason: Both trading_logger.log_exit() (above) and diag_event_log.log_exit() (removed)
+        #         write to the SAME events.jsonl file, creating duplicate EXIT entries
+        #
+        # Evidence from logs/run_3d495b1f_20251013_002316/events.jsonl:
+        #   - Line 5: trading_logger format with rich diagnostics (pnl, mae, mfe, r_multiple)
+        #   - Line 6: diag_event_log format with minimal data (just reason, qty, price)
+        #
+        # Decision: Use trading_logger as single source of truth for EXIT events
+        # Benefits:
+        #   - No duplicates in events.jsonl
+        #   - Rich diagnostics (R-multiple, MAE/MFE, time in trade)
+        #   - Consistent with TRIGGER event logging (also uses trading_logger only)
+        #
+        # Note: diag_event_log is legacy system, trading_logger is the new enhanced system
+
         logger.debug(f"exit_executor: {sym} qty={qty_exit} reason={reason}")
 
     def _exit(self, sym: str, pos: Position, exit_px: float, ts: Optional[pd.Timestamp], reason: str) -> None:
@@ -844,30 +915,9 @@ class ExitExecutor:
         state_after = pos.plan.get('_state', {})
         remaining_qty = 0  # Will be 0 for full exits in this function
 
-        # Enhanced logging: Log exit execution with edge diagnostics
-        if self.trading_logger:
-            exit_data = {
-                'symbol': sym,
-                'trade_id': pos.plan.get('trade_id', ''),
-                'qty': qty_now,
-                'entry_price': entry_price,
-                'exit_price': exit_px,
-                'pnl': round(pnl, 2),
-                'reason': reason,
-                'timestamp': str(ts) if ts else str(pd.Timestamp.now()),
-                # Edge diagnostic fields
-                'diagnostics': {
-                    'r_multiple': round(r_multiple, 2) if r_multiple is not None else None,
-                    'mae': round(mae, 2) if mae is not None else None,
-                    'mfe': round(mfe, 2) if mfe is not None else None,
-                    'time_since_entry_mins': round(time_since_entry_mins, 1) if time_since_entry_mins is not None else None,
-                    'remaining_qty': remaining_qty,
-                    'regime': pos.plan.get('regime'),
-                    'setup_type': pos.plan.get('setup_type'),
-                    'acceptance_status': pos.plan.get('quality', {}).get('acceptance_status')
-                }
-            }
-            self.trading_logger.log_exit(exit_data)
+        # NOTE: _place_and_log_exit() will handle trading_logger.log_exit() call
+        # We don't call it here to avoid duplicate EXIT events in events.jsonl
+        # _place_and_log_exit() has all the necessary logging logic
 
         self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
         self.positions.close(sym)
@@ -902,7 +952,11 @@ class ExitExecutor:
         except Exception as e:
             logger.error(f"EXIT: Failed to check remaining quantity for {sym}: {e}")
             pass
-        trade_logger.info(f"EXIT | {sym} | qty {qty_now} @ Rs.{float(exit_px):.2f} → remaining {rem}")
+
+        # REMOVED third duplicate trade_logger.info() call for EXIT with remaining qty
+        # This was adding yet another EXIT log to trade_logs.log (line 5 in evidence)
+        # The remaining qty info is already included in trading_logger.log_exit() diagnostics
+        # via the 'remaining_qty' field in exit_data['diagnostics']
 
     def _partial_exit_t1(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
         # Enhanced partial exit logic - always use partial exits for better R:R

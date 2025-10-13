@@ -43,6 +43,9 @@ class JSONLLogger:
 
     def _write_jsonl(self, action: str, symbol: str, timestamp: str = None, **data):
         """Write structured JSONL entry"""
+        # Ensure parent directory exists before writing
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+
         # Use provided timestamp or fall back to current time
         ts = timestamp if timestamp else datetime.now().isoformat()
         entry = {
@@ -65,16 +68,40 @@ def _initialize_loggers(run_prefix: str = ""):
     global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path, _global_run_prefix
     global _scanner_logger, _screener_logger, _ranking_logger, _planning_logger, _events_decision_logger
 
-    if (_agent_logger and _trade_logger and _trading_logger and
-        _scanner_logger and _screener_logger and _ranking_logger and _planning_logger and _events_decision_logger):
+    # Quick check - if ANY logger is initialized, reuse the existing session
+    if _agent_logger is not None:
         return
 
     # Use provided run_prefix, or fall back to global run prefix
     effective_prefix = run_prefix or _global_run_prefix
 
-    # Create timestamped session directory with optional run prefix
+    # Check if we're in a worker process (ProcessPoolExecutor)
+    import multiprocessing as mp
+    is_worker_process = mp.current_process().name != 'MainProcess'
+
+    # IMPORTANT: Only create log directories for actual engine runs (with run_prefix)
+    # Worker processes get console-only loggers without creating folders
+    if not effective_prefix:
+        if is_worker_process:
+            # Worker process: Create console-only logger (no files)
+            _agent_logger = logging.getLogger("agent")
+            if not _agent_logger.hasHandlers():
+                _agent_logger.setLevel(logging.WARNING)  # Less verbose for workers
+                console_handler = logging.StreamHandler()
+                console_handler.setFormatter(logging.Formatter('%(levelname)s — %(name)s — %(message)s'))
+                _agent_logger.addHandler(console_handler)
+
+            # Set minimal globals for worker
+            _session_id = "worker_process"
+            dir_path = Path(__file__).resolve().parents[1] / "logs"
+            return
+        else:
+            # Main process test/import: Skip initialization completely
+            return
+
+    # Create timestamped session directory with run prefix (actual engine runs)
     timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
-    _session_id = f"{effective_prefix}{timestamp}" if effective_prefix else timestamp
+    _session_id = f"{effective_prefix}{timestamp}"
     log_dir = Path(__file__).resolve().parents[1] / "logs" / _session_id
     os.makedirs(log_dir, exist_ok=True)
     dir_path = log_dir

@@ -51,6 +51,7 @@ class WSClient:
         self._sdk = sdk
         self._ticker: Any = None
         self._on_message: Optional[Callable[[Any], None]] = None
+        self._on_close_cb: Optional[Callable] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self.on_tick = on_tick
@@ -61,6 +62,10 @@ class WSClient:
         The callback receives whatever payload the SDK emits per tick batch.
         """
         self._on_message = cb
+
+    def on_close(self, cb: Callable) -> None:
+        """Register callback for when WS connection closes (replay ends in dry-run)."""
+        self._on_close_cb = cb
 
     # ------------------------------ Lifecycle -------------------------------
     def start(self) -> None:
@@ -153,6 +158,18 @@ class WSClient:
                     except Exception as e:
                         logger.error(f"on_message callback failed: {e}")
             on_ticks(_ticks)
+
+        # on_close: replay finished or connection lost
+        on_close = getattr(ticker, "on_close", None)
+        if callable(on_close):
+            def _closed(*_args, **_kw):
+                logger.warning("WS closed - replay finished or connection lost")
+                if self._on_close_cb:
+                    try:
+                        self._on_close_cb()
+                    except Exception as e:
+                        logger.error(f"on_close callback failed: {e}")
+            on_close(_closed)
 
     @staticmethod
     def _connect(ticker: Any) -> None:
