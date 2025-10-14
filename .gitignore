@@ -2,9 +2,6 @@
 *.pyc
 .vscode/launch.json
 cache/ohlcv_archive/
-nse_all.json
-upstox_instruments.json
-upstox_instrument_map.json
 logs/
 analysis_report*
 tests/
