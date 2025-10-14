@@ -9,6 +9,7 @@ Usage:
     python upstox_cache_downloader.py                    # Download both 1m and 1d data (default)
     python upstox_cache_downloader.py --data-type daily  # Download only daily data
     python upstox_cache_downloader.py --data-type minute # Download only minute data
+    python upstox_cache_downloader.py --fix-problematic  # Redownload corrupted/incomplete symbols
 
 ⚠️ Upstox Rate Limit Guidance:
 - Max ~25 requests/second for historical endpoints.
@@ -16,7 +17,6 @@ Usage:
 - Use exponential backoff on HTTP 429 responses (2s → 4s → 8s)
 - Pause after every 20–25 requests to avoid hitting burst limits
 """
-import os
 import json
 import requests
 import pandas as pd
@@ -63,11 +63,11 @@ TIMEFRAME_OPTIONS = {
 MAX_WORKERS = 8
 
 # --- Output Path ---
-ROOT = Path(__file__).resolve().parents[1]
-OUTPUT_BASE = ROOT / "intraday-trade-assistant" / "cache" / "ohlcv_archive"
-NSE_SYMBOLS_PATH = ROOT / "intraday-trade-assistant" / "nse_all.json"
-UPSTOX_JSON_PATH = ROOT / "intraday-trade-assistant" / "upstox_instruments.json"
-UPSTOX_MAP_SAVE_PATH = ROOT / "short-trade-assistant"/ "upstox_instrument_map.json"
+ROOT = Path(__file__).resolve().parents[0]  # Changed to parents[0] to point to current directory
+OUTPUT_BASE = ROOT / "cache" / "ohlcv_archive"
+NSE_SYMBOLS_PATH = ROOT / "nse_all.json"
+UPSTOX_JSON_PATH = ROOT / "upstox_instruments.json"
+UPSTOX_MAP_SAVE_PATH = ROOT / "cache" / "upstox_instrument_map.json"  # Save in cache directory
 
 # --- Headers ---
 HEADERS = {
@@ -113,6 +113,7 @@ def load_instrument_map_ndjson(ndjson_path: str):
             continue
 
     # Save filtered map for reuse
+    UPSTOX_MAP_SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
     with open(UPSTOX_MAP_SAVE_PATH, "w") as f:
         json.dump(instrument_map, f, indent=2)
 
@@ -148,7 +149,7 @@ def is_range_downloaded(metadata, date_range):
     return False
 
 # --- API Call ---
-def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timeframe: dict, max_retries=3):
+def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timeframe: dict, max_retries=3, force_redownload=False):
     start_date = datetime.strptime(date_range["start_date"], "%Y-%m-%d")
     end_date = datetime.strptime(date_range["end_date"], "%Y-%m-%d")
     all_chunks = []
@@ -246,26 +247,35 @@ def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timefr
     # Load existing metadata
     metadata = load_metadata(metadata_path)
 
-    # Check if this range already downloaded
-    if is_range_downloaded(metadata, date_range):
+    # Check if this range already downloaded (skip only if not forcing redownload)
+    if not force_redownload and is_range_downloaded(metadata, date_range):
         return f"⏩ {symbol} {timeframe['interval']}{timeframe['unit']}: Range {date_range['start_date']} to {date_range['end_date']} already exists, skipped"
 
-    # Load existing data if file exists
-    if data_path.exists():
-        try:
-            existing_df = pd.read_feather(data_path)
-            # Combine with new data
-            combined_df = pd.concat([existing_df, df], ignore_index=True)
-            combined_df = combined_df.sort_values("date").reset_index(drop=True)
-            # Remove duplicates if any
-            combined_df = combined_df.drop_duplicates(subset=["date"], keep="last")
-        except (OSError, Exception) as e:
-            # Corrupted feather file - remove and use new data only
-            print(f"⚠️ {symbol} {timeframe['interval']}{timeframe['unit']}: Corrupted file detected, replacing: {e}")
-            data_path.unlink()  # Remove corrupted file
-            combined_df = df
-    else:
+    # If forcing redownload, delete existing files and metadata
+    if force_redownload:
+        if data_path.exists():
+            data_path.unlink()
+        if metadata_path.exists():
+            metadata_path.unlink()
+        metadata = {"downloaded_ranges": [], "last_updated": None}
         combined_df = df
+    else:
+        # Load existing data if file exists
+        if data_path.exists():
+            try:
+                existing_df = pd.read_feather(data_path)
+                # Combine with new data
+                combined_df = pd.concat([existing_df, df], ignore_index=True)
+                combined_df = combined_df.sort_values("date").reset_index(drop=True)
+                # Remove duplicates if any
+                combined_df = combined_df.drop_duplicates(subset=["date"], keep="last")
+            except (OSError, Exception) as e:
+                # Corrupted feather file - remove and use new data only
+                print(f"⚠️ {symbol} {timeframe['interval']}{timeframe['unit']}: Corrupted file detected, replacing: {e}")
+                data_path.unlink()  # Remove corrupted file
+                combined_df = df
+        else:
+            combined_df = df
 
     # Save combined data
     combined_df.to_feather(data_path)
@@ -301,6 +311,12 @@ Examples:
         help="Type of data to download (default: both)"
     )
 
+    parser.add_argument(
+        "--fix-problematic",
+        action="store_true",
+        help="Redownload only problematic symbols (from problematic_symbols.json)"
+    )
+
     return parser.parse_args()
 
 # --- Runner ---
@@ -310,19 +326,43 @@ if __name__ == "__main__":
     # Select timeframes based on argument
     TIMEFRAMES = TIMEFRAME_OPTIONS[args.data_type]
 
-    instrument_map = load_instrument_map_ndjson(UPSTOX_JSON_PATH)
+    # Load full instrument map
+    full_instrument_map = load_instrument_map_ndjson(UPSTOX_JSON_PATH)
+
+    # Filter to problematic symbols if flag is set
+    force_redownload = False
+    if args.fix_problematic:
+        problematic_file = Path("problematic_symbols.json")
+        if not problematic_file.exists():
+            print("ERROR: problematic_symbols.json not found!")
+            print("Please run identify_problematic_symbols.py first")
+            exit(1)
+
+        with open(problematic_file) as f:
+            problematic_data = json.load(f)
+
+        problematic_symbols = set(problematic_data["symbols_to_redownload"])
+        instrument_map = {sym: key for sym, key in full_instrument_map.items() if sym in problematic_symbols}
+        force_redownload = True
+
+        print(f"FIX MODE: Redownloading {len(instrument_map)} problematic symbols")
+        print(f"  - {len(problematic_data['corrupted_files'])} corrupted files")
+        print(f"  - {len(problematic_data['missing_morning_data'])} with missing morning data")
+        print()
+    else:
+        instrument_map = full_instrument_map
 
     total_tasks = len(instrument_map) * len(DATE_RANGES) * len(TIMEFRAMES)
 
     # Format timeframes for display
     timeframe_names = [f"{tf['interval']}{tf['unit']}" for tf in TIMEFRAMES]
 
-    print(f"🚀 Starting Upstox downloader")
-    print(f"📊 Data type: {args.data_type}")
-    print(f"📈 Symbols: {len(instrument_map)}")
-    print(f"📅 Date Ranges: {len(DATE_RANGES)}")
-    print(f"⏱️  Timeframes: {len(TIMEFRAMES)} ({timeframe_names})")
-    print(f"🎯 Total Tasks: {total_tasks}")
+    print(f"Starting Upstox downloader")
+    print(f"Data type: {args.data_type}")
+    print(f"Symbols: {len(instrument_map)}")
+    print(f"Date Ranges: {len(DATE_RANGES)}")
+    print(f"Timeframes: {len(TIMEFRAMES)} ({timeframe_names})")
+    print(f"Total Tasks: {total_tasks}")
     print()
 
     results = []
@@ -337,7 +377,7 @@ if __name__ == "__main__":
         for sym, key in instrument_map.items():
             for date_range in DATE_RANGES:
                 for timeframe in TIMEFRAMES:
-                    future = executor.submit(fetch_upstox_data, sym, key, date_range, timeframe)
+                    future = executor.submit(fetch_upstox_data, sym, key, date_range, timeframe, 3, force_redownload)
                     futures[future] = f"{sym}_{timeframe['interval']}{timeframe['unit']}_{date_range['name']}"
 
         for fut in as_completed(futures):
@@ -352,27 +392,29 @@ if __name__ == "__main__":
 
             # Progress update every 50 completions
             if len(results) % 50 == 0:
-                print(f"📊 Progress: {len(results)}/{total_tasks} ({len(results)/total_tasks*100:.1f}%) | ✅ {success_count} | ❌ {failure_count} | ⏩ {skipped}", flush=True)
+                print(f"Progress: {len(results)}/{total_tasks} ({len(results)/total_tasks*100:.1f}%) | Success: {success_count} | Failed: {failure_count} | Skipped: {skipped}", flush=True)
 
     # Final progress update
-    print(f"📊 Final: {len(results)}/{total_tasks} (100.0%) | ✅ {success_count} | ❌ {failure_count} | ⏩ {skipped}", flush=True)
+    print(f"Final: {len(results)}/{total_tasks} (100.0%) | Success: {success_count} | Failed: {failure_count} | Skipped: {skipped}", flush=True)
 
     print("\n" + "="*80)
-    print("📋 DOWNLOAD SUMMARY")
+    print("DOWNLOAD SUMMARY")
     print("="*80)
-    print(f"✅ Completed: {success_count} succeeded, {failure_count} failed out of {total_tasks} total tasks.")
-    print(f"📊 Data type downloaded: {args.data_type}")
+    print(f"Completed: {success_count} succeeded, {failure_count} failed out of {total_tasks} total tasks.")
+    print(f"Data type downloaded: {args.data_type}")
 
-    if args.data_type == "daily":
-        print(f"🎯 Daily data now supports 90+ day historic analysis for institutional features!")
+    if args.fix_problematic:
+        print(f"Fixed {success_count} problematic symbols")
+    elif args.data_type == "daily":
+        print(f"Daily data now supports 90+ day historic analysis for institutional features!")
     elif args.data_type == "minute":
-        print(f"🎯 Minute data ready for high-resolution backtesting!")
+        print(f"Minute data ready for high-resolution backtesting!")
     else:
-        print(f"🎯 Complete dataset ready for both backtesting and institutional analysis!")
+        print(f"Complete dataset ready for both backtesting and institutional analysis!")
     if skipped > 0:
-        print(f"⏩ Skipped: {skipped} ranges already existed.")
+        print(f"Skipped: {skipped} ranges already existed.")
     if failure_count > 0:
-        print("\n❌ Failed downloads:")
+        print("\nFailed downloads:")
         for result in results:
-            if not result.startswith("✅") and not result.startswith("⏩"):
+            if not result.startswith("success") and "skipped" not in result:
                 print(f"   {result}")
