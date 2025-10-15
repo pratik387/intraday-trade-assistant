@@ -22,15 +22,14 @@ from config.filters_setup import load_filters  # noqa: E402
 
 # ====== SETTINGS ======
 START_DATE = "2024-10-01"   # YYYY-MM-DD (Changed to match offline_driver test date)
-END_DATE   = "2024-10-01"   # YYYY-MM-DD (inclusive)
+END_DATE   = "2024-10-31"   # YYYY-MM-DD (inclusive)
 MAIN_PATH  = ROOT / "main.py"
 
 # Hardcoded time windows for engine runs
 FROM_HHMM = "09:15"  # Morning trading start (MUST include opening range from session start)
 TO_HHMM = "15:15"    # Afternoon trading end
 
-# parallelism: 2–4 is usually safe (6+ may cause OOM on Windows with large datasets)
-# With pre-aggregated cache, memory usage is optimized - 6 workers is safe
+# parallelism: 2–4 is usually safe (6+ causes OOM on Windows)
 MAX_WORKERS = 6
 # per-task start stagger (sec) to prevent same-second logger run_id collisions
 STAGGER_SEC = 5

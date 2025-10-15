@@ -68,18 +68,33 @@ class TriggerAwareExecutor:
                     logger.debug(f"Trade stale: {trade.symbol} age={staleness_seconds:.1f}s (limit={self.staleness_seconds:.0f}s) - marking expired")
                     trade.state = TradeState.EXPIRED  # Mark as expired to avoid repeated checks
                     return False
-            
+
             # Check market hours
             minute_of_day = _minute_of_day(now)
             if self.entry_cutoff_md and minute_of_day >= self.entry_cutoff_md:
                 logger.debug(f"Past entry cutoff: {trade.symbol}")
                 return False
-            
+
             # Check risk limits
             if not self.risk.can_open_more():
                 logger.debug(f"Risk limit reached: {trade.symbol}")
                 return False
-            
+
+            # Check capital availability (if enabled)
+            if self.capital_manager:
+                plan = trade.plan
+                qty = int(plan.get("qty", 0))
+                price = trade.trigger_price or plan.get("price", 0)
+                cap_segment = plan.get("cap_segment", "unknown")
+
+                can_enter, reason = self.capital_manager.can_enter_position(
+                    trade.symbol, qty, price, cap_segment
+                )
+
+                if not can_enter:
+                    logger.warning(f"Capital check failed: {trade.symbol} - {reason}")
+                    return False
+
             return True
             
         except Exception as e:
@@ -172,23 +187,34 @@ class TriggerAwareExecutor:
 
             # Update risk state
             self.risk.open_positions[symbol] = {
-                "side": side, 
-                "qty": qty, 
+                "side": side,
+                "qty": qty,
                 "avg_price": price
             }
-            
+
+            # Record position in capital manager (allocate margin)
+            if self.capital_manager:
+                cap_segment = plan.get("cap_segment", "unknown")
+                self.capital_manager.enter_position(
+                    symbol=symbol,
+                    qty=qty,
+                    price=price,
+                    cap_segment=cap_segment,
+                    timestamp=trade.trigger_timestamp
+                )
+
             # Update shared position store for exit executor
             if self.positions:
                 from services.execution.trade_executor import Position
                 pos = Position(
                     symbol=symbol,
-                    side=side, 
+                    side=side,
                     qty=qty,
                     avg_price=price,
                     plan=trade.plan
                 )
                 self.positions.upsert(pos)
-            
+
             return True
             
         except Exception as e:
@@ -275,11 +301,13 @@ class TriggerAwareExecutor:
         positions,
         get_ltp_ts: Callable[[str], Tuple[Optional[float], Optional[pd.Timestamp]]],
         bar_builder,  # We'll hook into the BarBuilder's 1m callbacks
-        trading_logger=None  # Enhanced logging service
+        trading_logger=None,  # Enhanced logging service
+        capital_manager=None  # Capital & MIS management
     ):
         self.broker = broker
         self.oq = order_queue
         self.trading_logger = trading_logger
+        self.capital_manager = capital_manager
         self.risk = risk_state
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts

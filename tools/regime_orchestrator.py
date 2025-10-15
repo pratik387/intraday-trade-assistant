@@ -8,10 +8,15 @@ Leverages existing analytics and comprehensive_run_analyzer.py.
 
 import sys
 import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+# Configuration
+COOLDOWN_SECONDS = 0  # Pause between regimes (0 = no pause, set to 30-60 for cooldown)
+PAUSE_FOR_INPUT = False  # Set True to wait for Enter key between regimes
 
 REGIME_CONFIGS = [
     {"name": "Strong_Uptrend", "start": "2023-12-01", "end": "2023-12-31"},
@@ -46,7 +51,9 @@ if __name__ == "__main__":
         f.write(engine_script)
 
     try:
+        print(f"\n{'='*80}")
         print(f"Running {regime['name']} ({regime['start']} to {regime['end']})")
+        print(f"{'='*80}\n")
         result = subprocess.run([sys.executable, str(temp_path)], cwd=str(ROOT))
         return result.returncode == 0
     finally:
@@ -56,14 +63,28 @@ def main():
     """Run all regime backtests sequentially"""
 
     successful = 0
-    for regime in REGIME_CONFIGS:
+    total = len(REGIME_CONFIGS)
+
+    for idx, regime in enumerate(REGIME_CONFIGS, 1):
         if run_regime_backtest(regime):
             successful += 1
+            print(f"\n[OK] {regime['name']} completed successfully ({idx}/{total})")
         else:
-            print(f"FAILED: {regime['name']}")
+            print(f"\n[FAILED] {regime['name']} ({idx}/{total})")
 
-    print(f"Completed: {successful}/{len(REGIME_CONFIGS)} regimes successful")
-    return 0 if successful == len(REGIME_CONFIGS) else 1
+        # Pause between regimes if configured
+        if idx < total:  # Don't pause after the last regime
+            if PAUSE_FOR_INPUT:
+                print(f"\nCompleted {idx}/{total} regimes. Press Enter to continue to next regime...")
+                input()
+            elif COOLDOWN_SECONDS > 0:
+                print(f"\nCooldown: Waiting {COOLDOWN_SECONDS} seconds before next regime...")
+                time.sleep(COOLDOWN_SECONDS)
+
+    print(f"\n{'='*80}")
+    print(f"Final Results: {successful}/{total} regimes successful")
+    print(f"{'='*80}\n")
+    return 0 if successful == total else 1
 
 if __name__ == "__main__":
     sys.exit(main())

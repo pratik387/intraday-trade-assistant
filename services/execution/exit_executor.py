@@ -88,11 +88,13 @@ class ExitExecutor:
         positions: PositionStore,
         get_ltp_ts: Callable[[str], Tuple[Optional[float], Optional[pd.Timestamp]]],
         trading_logger=None,  # Enhanced logging service
+        capital_manager=None,  # Capital release on exits
     ) -> None:
         self.broker = broker
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts
         self.trading_logger = trading_logger
+        self.capital_manager = capital_manager
 
         cfg = load_filters()
         # Config knobs
@@ -921,6 +923,11 @@ class ExitExecutor:
 
         self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
         self.positions.close(sym)
+
+        # Release capital (free margin) on full exit
+        if self.capital_manager:
+            self.capital_manager.exit_position(sym)
+
         try:
             st = pos.plan.get("_state") or {}
             st.pop("t1_done", None); st.pop("sl_moved_to_be", None)

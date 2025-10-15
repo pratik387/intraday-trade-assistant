@@ -469,8 +469,10 @@ class ScreenerLive:
 
         # Process symbols in parallel with worker initialization
         # Use initializer to create heavy objects once per worker (not per task)
+        # OPTIMIZED: 2 workers per day × 6 days in parallel = 12 processes = full CPU utilization
+        # Previous: 4 workers × 6 days = 24 processes competing for 12 cores (massive overhead)
         with ProcessPoolExecutor(
-            max_workers=4,
+            max_workers=2,
             initializer=_init_worker,
             initargs=(decision_gate_config,)
         ) as executor:
