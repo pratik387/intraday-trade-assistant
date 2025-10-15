@@ -29,8 +29,9 @@ from services.orders.order_queue import OrderQueue
 from services.screener_live import ScreenerLive
 from services.execution.trade_executor import RiskState, Position
 from services.execution.exit_executor import ExitExecutor
-from services.ingest.tick_router import register_tick_listener  
+from services.ingest.tick_router import register_tick_listener
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
+from services.capital_manager import CapitalManager
 
 # Live adapters
 from broker.kite.kite_client import KiteClient      # WebSocket client
@@ -138,6 +139,16 @@ class _DryRunBroker:
 def main() -> int:
     cfg = load_filters()  # validate early; raises if required keys are missing
 
+    # Initialize CapitalManager based on config
+    cap_mgmt_cfg = cfg.get('capital_management', {})
+    capital_manager = CapitalManager(
+        enabled=cap_mgmt_cfg.get('enabled', False),
+        initial_capital=cap_mgmt_cfg.get('initial_capital', 100000),
+        mis_enabled=cap_mgmt_cfg.get('mis_leverage', {}).get('enabled', False),
+        mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file'),
+        max_positions=cap_mgmt_cfg.get('max_concurrent_positions', 25)
+    )
+
     # Order queue handles pacing/retries; it reads its own config internally
     oq = OrderQueue()
 
@@ -180,7 +191,8 @@ def main() -> int:
         positions=positions,
         get_ltp_ts=ltp_cache.get_ltp_ts,
         bar_builder=screener.agg,  # Pass the BarBuilder instance
-        trading_logger=trading_logger  # Enhanced logging
+        trading_logger=trading_logger,  # Enhanced logging
+        capital_manager=capital_manager  # Capital & MIS management
     )
 
     # ExitExecutor is LTP-only; wire it directly to broker.get_ltp and shared store
@@ -188,7 +200,8 @@ def main() -> int:
         broker=broker,
         positions=positions,
         get_ltp_ts=ltp_cache.get_ltp_ts,   # <- EOD uses tick timestamps, not wall clock
-        trading_logger=trading_logger  # Enhanced logging
+        trading_logger=trading_logger,  # Enhanced logging
+        capital_manager=capital_manager  # Capital release on exits
     )
 
     # Start background threads
