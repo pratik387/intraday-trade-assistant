@@ -464,11 +464,13 @@ class LevelBreakoutStructure(BaseStructure):
         if breakout_level is None:
             breakout_level = entry_price
 
-        # Set stop loss back to the breakout level with small buffer
+        # NSE FIX: Set stop loss relative to ENTRY price, not breakout level
+        # Previous bug: stop at level±0.5×ATR gave only 0.75×ATR risk from entry
+        # New: stop at entry±1.5×ATR gives proper risk management (47.4% hit rate per NSE data)
         if side == "long":
-            hard_sl = breakout_level - (atr * 0.5)  # Stop below breakout level
+            hard_sl = entry_price - (atr * 1.5)  # Stop 1.5×ATR below entry
         else:
-            hard_sl = breakout_level + (atr * 0.5)  # Stop above breakdown level
+            hard_sl = entry_price + (atr * 1.5)  # Stop 1.5×ATR above entry
 
         risk_per_share = abs(entry_price - hard_sl)
 

@@ -1,5 +1,5 @@
 {
-  "k_atr": 0.20,
+  "k_atr": 0.2,
   "min_breakout_atr_mult": 0.3,
   "hold_bars": 1,
   "vol_z_required": 0.8,
@@ -61,7 +61,7 @@
     "vwap_min_vol_mult": 1.05,
     "bo_min_adx": 12.0,
     "bo_min_vol_mult": 1.15,
-    "ff_min_vol_mult": 0.90
+    "ff_min_vol_mult": 0.9
   },
   "liquidity_gates": {
     "_comment": "Market Cap Segmentation - Priority 1: Liquidity Filters (evidence-based thresholds)",
@@ -223,7 +223,7 @@
     "small_cap": {
       "size_multiplier": 0.6,
       "max_position_pct": 2.0,
-      "sl_atr_multiplier": 1.7,
+      "sl_atr_multiplier": 2.0,
       "_rationale": "UPDATED: Widened from 1.3x to 1.7x ATR based on spike test (higher volatility needs more room). Higher volatility requires smaller size + wider stops to avoid intraday noise"
     },
     "micro_cap": {
@@ -237,34 +237,34 @@
     "_comment": "Market Cap Segmentation - Priority 4: Regime-Cap Interaction (institutional rotation + baseline data)",
     "enabled": true,
     "chop": {
-      "large_cap_weight": 0.50,
+      "large_cap_weight": 0.5,
       "mid_cap_weight": 0.15,
-      "small_cap_weight": 0.10,
+      "small_cap_weight": 0.1,
       "micro_cap_weight": 0.25,
-      "_rationale": "CHOP → Large-caps + micro-caps excel (mean-reversion edge). Micro-caps 25% weight due to BASELINE: 43.8% WR, 1.63 PF with failure_fade strategy in chop conditions."
+      "_rationale": "CHOP \u00e2\u2020\u2019 Large-caps + micro-caps excel (mean-reversion edge). Micro-caps 25% weight due to BASELINE: 43.8% WR, 1.63 PF with failure_fade strategy in chop conditions."
     },
     "trend_up": {
       "large_cap_weight": 0.15,
       "mid_cap_weight": 0.45,
       "small_cap_weight": 0.25,
       "micro_cap_weight": 0.15,
-      "_rationale": "TREND_UP → Mid/Small-caps lead momentum. Micro-caps 15% (moderate allocation, prefer liquidity in trends)."
+      "_rationale": "TREND_UP \u00e2\u2020\u2019 Mid/Small-caps lead momentum. Micro-caps 15% (moderate allocation, prefer liquidity in trends)."
     },
     "trend_down": {
-      "large_cap_weight": 0.50,
+      "large_cap_weight": 0.5,
       "mid_cap_weight": 0.25,
       "small_cap_weight": 0.15,
-      "micro_cap_weight": 0.10,
-      "_rationale": "TREND_DOWN → Flight to quality, minimize micro-cap exposure. Micro-caps 10% (lowest allocation due to crash risk)."
+      "micro_cap_weight": 0.1,
+      "_rationale": "TREND_DOWN \u00e2\u2020\u2019 Flight to quality, minimize micro-cap exposure. Micro-caps 10% (lowest allocation due to crash risk)."
     },
     "squeeze": {
       "large_cap_weight": 0.35,
-      "mid_cap_weight": 0.30,
-      "small_cap_weight": 0.20,
+      "mid_cap_weight": 0.3,
+      "small_cap_weight": 0.2,
       "micro_cap_weight": 0.15,
-      "_rationale": "SQUEEZE → Balanced allocation awaiting breakout direction. Micro-caps 15% (moderate, can explode either way)."
+      "_rationale": "SQUEEZE \u00e2\u2020\u2019 Balanced allocation awaiting breakout direction. Micro-caps 15% (moderate, can explode either way)."
     },
-    "_institutional_evidence": "Linda Raschke: market cap rotation patterns follow regime shifts. CTAs rotate from large→mid→small during trend, reverse during chop.",
+    "_institutional_evidence": "Linda Raschke: market cap rotation patterns follow regime shifts. CTAs rotate from large\u00e2\u2020\u2019mid\u00e2\u2020\u2019small during trend, reverse during chop.",
     "_baseline_evidence": "3-month baseline: micro-caps generated 84% of profits (Rs.5,550 / Rs.6,617 total). failure_fade strategy dominates micro-caps in CHOP conditions."
   },
   "decision_require_structure_event": true,
@@ -576,8 +576,8 @@
       "breakout_volume_min_ratio": 1.4,
       "enable_smc_filtering": true,
       "liquidity_grab_tolerance_pct": 0.2,
-      "target_mult_t1": 1.5,
-      "target_mult_t2": 2.5,
+      "target_mult_t1": 2.0,
+      "target_mult_t2": 3.0,
       "confidence_strong_breakout": 0.85,
       "confidence_weak_breakout": 0.65
     },
@@ -591,8 +591,8 @@
       "breakout_volume_min_ratio": 1.4,
       "enable_smc_filtering": true,
       "liquidity_grab_tolerance_pct": 0.2,
-      "target_mult_t1": 1.5,
-      "target_mult_t2": 2.5,
+      "target_mult_t1": 2.0,
+      "target_mult_t2": 3.0,
       "confidence_strong_breakout": 0.85,
       "confidence_weak_breakout": 0.65
     },
@@ -636,7 +636,7 @@
       "min_volume_mult": 1.5,
       "target_mult_t1": 1.5,
       "target_mult_t2": 2.5,
-      "stop_mult": 1.0,
+      "stop_mult": 1.5,
       "confidence_strong_expansion": 0.8,
       "confidence_weak_expansion": 0.6
     },
@@ -652,7 +652,7 @@
       "min_volume_mult": 1.5,
       "target_mult_t1": 1.5,
       "target_mult_t2": 2.5,
-      "stop_mult": 1.0,
+      "stop_mult": 1.5,
       "confidence_strong_expansion": 0.8,
       "confidence_weak_expansion": 0.6
     },
@@ -813,7 +813,7 @@
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
       "min_stop_distance_pct": 0.5,
-      "stop_distance_mult": 0.5,
+      "stop_distance_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 1.5,
       "confidence_volume_confirmed": 0.8,
@@ -821,8 +821,8 @@
       "or_level_buffer_mult": 0.1,
       "pullback_zones": {
         "shallow": 0.25,
-        "medium": 0.50,
-        "deep": 0.75
+        "medium": 0.5,
+        "deep": 0.618
       }
     },
     "orb_breakout_short": {
@@ -832,7 +832,7 @@
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
       "min_stop_distance_pct": 0.5,
-      "stop_distance_mult": 0.5,
+      "stop_distance_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 1.5,
       "confidence_volume_confirmed": 0.8,
@@ -840,8 +840,8 @@
       "or_level_buffer_mult": 0.1,
       "pullback_zones": {
         "shallow": 0.25,
-        "medium": 0.50,
-        "deep": 0.75
+        "medium": 0.5,
+        "deep": 0.618
       }
     },
     "orb_breakdown_short": {
@@ -851,7 +851,7 @@
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
       "min_stop_distance_pct": 0.5,
-      "stop_distance_mult": 0.5,
+      "stop_distance_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 1.5,
       "confidence_volume_confirmed": 0.8,
@@ -859,8 +859,8 @@
       "or_level_buffer_mult": 0.1,
       "pullback_zones": {
         "shallow": 0.25,
-        "medium": 0.50,
-        "deep": 0.75
+        "medium": 0.5,
+        "deep": 0.618
       }
     },
     "orb_breakout": {
@@ -870,7 +870,7 @@
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
       "min_stop_distance_pct": 0.5,
-      "stop_distance_mult": 0.5,
+      "stop_distance_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 1.5,
       "confidence_volume_confirmed": 0.8,
@@ -878,8 +878,8 @@
       "or_level_buffer_mult": 0.1,
       "pullback_zones": {
         "shallow": 0.25,
-        "medium": 0.50,
-        "deep": 0.75
+        "medium": 0.5,
+        "deep": 0.618
       }
     },
     "orb_breakdown": {
@@ -889,7 +889,7 @@
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
       "min_stop_distance_pct": 0.5,
-      "stop_distance_mult": 0.5,
+      "stop_distance_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 1.5,
       "confidence_volume_confirmed": 0.8,
@@ -897,8 +897,8 @@
       "or_level_buffer_mult": 0.1,
       "pullback_zones": {
         "shallow": 0.25,
-        "medium": 0.50,
-        "deep": 0.75
+        "medium": 0.5,
+        "deep": 0.618
       }
     },
     "orb_pullback_long": {
@@ -908,7 +908,7 @@
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
       "min_stop_distance_pct": 0.5,
-      "stop_distance_mult": 0.5,
+      "stop_distance_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 1.5,
       "confidence_volume_confirmed": 0.8,
@@ -916,8 +916,8 @@
       "or_level_buffer_mult": 0.1,
       "pullback_zones": {
         "shallow": 0.25,
-        "medium": 0.50,
-        "deep": 0.75
+        "medium": 0.5,
+        "deep": 0.618
       }
     },
     "orb_pullback_short": {
@@ -927,7 +927,7 @@
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
       "min_stop_distance_pct": 0.5,
-      "stop_distance_mult": 0.5,
+      "stop_distance_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 1.5,
       "confidence_volume_confirmed": 0.8,
@@ -935,14 +935,14 @@
       "or_level_buffer_mult": 0.1,
       "pullback_zones": {
         "shallow": 0.25,
-        "medium": 0.50,
-        "deep": 0.75
+        "medium": 0.5,
+        "deep": 0.618
       }
     },
     "vwap_mean_reversion_long": {
       "enabled": true,
-      "min_distance_bps": 150,
-      "max_distance_bps": 400,
+      "min_distance_bps": 80,
+      "max_distance_bps": 250,
       "require_oversold_rsi": true,
       "oversold_rsi_threshold": 30,
       "overbought_rsi_threshold": 70,
@@ -959,8 +959,8 @@
     },
     "vwap_mean_reversion_short": {
       "enabled": true,
-      "min_distance_bps": 150,
-      "max_distance_bps": 400,
+      "min_distance_bps": 80,
+      "max_distance_bps": 250,
       "require_oversold_rsi": true,
       "overbought_rsi_threshold": 70,
       "oversold_rsi_threshold": 30,
@@ -1023,7 +1023,11 @@
       "bos_min_structure_bars": 10,
       "bos_min_break_pct": 0.2,
       "bos_volume_confirmation": true,
-      "choch_momentum_periods": [3, 5, 8],
+      "choch_momentum_periods": [
+        3,
+        5,
+        8
+      ],
       "choch_min_momentum_change_pct": 1.0,
       "choch_volume_threshold": 1.8,
       "risk_pct": 1.0,
@@ -1077,13 +1081,13 @@
       "fear_mean_reversion_bias": 1.4,
       "greed_momentum_bias": 1.2,
       "sector_strength_bonus": 0.15,
-      "sector_weakness_penalty": -0.10
+      "sector_weakness_penalty": -0.1
     }
   },
   "time_policy": {
     "start_trade": "10:15",
     "lunch_block_start": "12:00",
-    "lunch_block_end": "12:45",
+    "lunch_block_end": "13:00",
     "last_entry_cutoff": "14:45"
   },
   "structure": {
@@ -1118,15 +1122,15 @@
     "require_retest_bars": 2,
     "reduce_size_mult": 0.5
   },
-  "t1_rr": 1.50,
-  "t2_rr": 3.00,
-  "sl_atr_mult": 1.60,
+  "t1_rr": 1.5,
+  "t2_rr": 3.0,
+  "sl_atr_mult": 1.6,
   "sl_below_swing_ticks": 0.0,
   "trail_to": "none",
   "exit_t1_book_pct": 50.0,
   "exit_t1_move_sl_to_be": true,
   "exit_time_stop_min": 30.0,
-  "exit_time_stop_req_rr": 0.40,
+  "exit_time_stop_req_rr": 0.4,
   "exit_score_drop_enabled": true,
   "exit_score_drop_bpct": 30.0,
   "breakout_short_risk_control": true,
@@ -1137,7 +1141,7 @@
   "max_per_cycle": 100,
   "producer_min_interval_sec": 5,
   "rank_exec_threshold": 1.0,
-  "rank_pctl_min": 0.60,
+  "rank_pctl_min": 0.6,
   "max_concurrent_positions": 30,
   "time_restricted_trading": true,
   "_comment_execution": "=== EXECUTION SETTINGS ===",
@@ -1246,22 +1250,31 @@
     "strategy_momentum_filters": {
       "mean_reversion": {
         "strategies": [
-          "failure_fade_long", "failure_fade_short",
-          "vwap_mean_reversion_long", "vwap_mean_reversion_short",
-          "volume_spike_reversal_long", "volume_spike_reversal_short"
+          "failure_fade_long",
+          "failure_fade_short",
+          "vwap_mean_reversion_long",
+          "vwap_mean_reversion_short",
+          "volume_spike_reversal_long",
+          "volume_spike_reversal_short"
         ],
         "momentum_consolidation_threshold": 0.7
       },
       "range_level_trades": {
         "strategies": [
-          "support_bounce_long", "resistance_bounce_short",
-          "vwap_reclaim_long", "vwap_lose_short",
-          "range_rejection_long", "range_rejection_short"
+          "support_bounce_long",
+          "resistance_bounce_short",
+          "vwap_reclaim_long",
+          "vwap_lose_short",
+          "range_rejection_long",
+          "range_rejection_short"
         ],
         "momentum_consolidation_threshold": 2.5
       },
       "gap_trades": {
-        "strategies": ["gap_fill_long", "gap_fill_short"],
+        "strategies": [
+          "gap_fill_long",
+          "gap_fill_short"
+        ],
         "momentum_consolidation_threshold": 3.0
       }
     },
@@ -1275,7 +1288,6 @@
     "enable_trade_lifecycle": true,
     "performance_update_frequency": "realtime"
   },
-
   "trigger_system": {
     "enabled": true,
     "expiry_minutes": 45,
@@ -1445,9 +1457,12 @@
   "strategy_ranking_profiles": {
     "mean_reversion": {
       "strategies": [
-        "failure_fade_long", "failure_fade_short",
-        "vwap_mean_reversion_long", "vwap_mean_reversion_short",
-        "volume_spike_reversal_long", "volume_spike_reversal_short"
+        "failure_fade_long",
+        "failure_fade_short",
+        "vwap_mean_reversion_long",
+        "vwap_mean_reversion_short",
+        "volume_spike_reversal_long",
+        "volume_spike_reversal_short"
       ],
       "rank_vol_ratio_divisor": 4.0,
       "rank_vol_cap": 2.0,
@@ -1461,10 +1476,14 @@
     },
     "momentum_breakout": {
       "strategies": [
-        "breakout_long", "breakout_short",
-        "orb_breakout_long", "orb_breakout_short",
-        "flag_continuation_long", "flag_continuation_short",
-        "trend_pullback_long", "trend_pullback_short"
+        "breakout_long",
+        "breakout_short",
+        "orb_breakout_long",
+        "orb_breakout_short",
+        "flag_continuation_long",
+        "flag_continuation_short",
+        "trend_pullback_long",
+        "trend_pullback_short"
       ],
       "rank_vol_ratio_divisor": 1.5,
       "rank_vol_cap": 4.0,
@@ -1478,9 +1497,12 @@
     },
     "range_bound": {
       "strategies": [
-        "range_rejection_long", "range_rejection_short",
-        "support_bounce_long", "resistance_bounce_short",
-        "vwap_reclaim_long", "vwap_lose_short"
+        "range_rejection_long",
+        "range_rejection_short",
+        "support_bounce_long",
+        "resistance_bounce_short",
+        "vwap_reclaim_long",
+        "vwap_lose_short"
       ],
       "rank_vol_ratio_divisor": 3.0,
       "rank_vol_cap": 2.5,
@@ -1493,7 +1515,8 @@
     },
     "gap_fill": {
       "strategies": [
-        "gap_fill_long", "gap_fill_short"
+        "gap_fill_long",
+        "gap_fill_short"
       ],
       "rank_vol_ratio_divisor": 2.5,
       "rank_vol_cap": 3.0,
@@ -1505,7 +1528,8 @@
     },
     "squeeze_expansion": {
       "strategies": [
-        "squeeze_release_long", "squeeze_release_short"
+        "squeeze_release_long",
+        "squeeze_release_short"
       ],
       "rank_vol_ratio_divisor": 1.8,
       "rank_vol_cap": 3.5,
@@ -1578,9 +1602,9 @@
     },
     "_modes": {
       "_comment": "Three operational modes",
-      "mode_1": "capital_management.enabled=false → Unlimited capital (current, for strategy dev)",
-      "mode_2": "capital_management.enabled=true + mis_leverage.enabled=false → Rs.1L, 1x leverage (delivery)",
-      "mode_3": "capital_management.enabled=true + mis_leverage.enabled=true → Rs.1L + MIS 5-20x leverage (intraday)"
+      "mode_1": "capital_management.enabled=false \u00e2\u2020\u2019 Unlimited capital (current, for strategy dev)",
+      "mode_2": "capital_management.enabled=true + mis_leverage.enabled=false \u00e2\u2020\u2019 Rs.1L, 1x leverage (delivery)",
+      "mode_3": "capital_management.enabled=true + mis_leverage.enabled=true \u00e2\u2020\u2019 Rs.1L + MIS 5-20x leverage (intraday)"
     }
   }
 }

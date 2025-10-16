@@ -373,8 +373,27 @@ def _plan_strategy_for_candidate(
             "context": {"reason": [f"unknown_bias:{setup_type}"], "levels": {"ORH": orh, "ORL": orl, **pd_levels}}
         }
 
-    # Select stop loss strategy based on setup type category
-    stop_structure = _calculate_structure_stop(setup_type, df_sess, orh, orl, vwap, close, bias, ema20)
+    # Calculate structure-based entry price first
+    current_close = float(df_sess.iloc[-1]["close"])
+    vwap_current = float(df_sess.iloc[-1]["vwap"]) if "vwap" in df_sess.columns and not pd.isna(df_sess.iloc[-1]["vwap"]) else None
+
+    entry_price = _calculate_structure_entry(
+        setup_type=setup_type,
+        bias=bias,
+        current_close=current_close,
+        orh=orh,
+        orl=orl,
+        pdh=pd_levels.get("PDH", np.nan),
+        pdl=pd_levels.get("PDL", np.nan),
+        vwap_current=vwap_current,
+        atr=calculate_atr(df_sess.tail(200), period=cfg.atr_period)
+    )
+
+    # Calculate ATR for stop calculation
+    atr_for_stop = calculate_atr(df_sess.tail(200), period=cfg.atr_period)
+
+    # Select stop loss strategy based on setup type category (using actual entry price)
+    stop_structure = _calculate_structure_stop(setup_type, df_sess, orh, orl, vwap, entry_price, bias, ema20, atr_for_stop)
 
     # Generate entry trigger message
     entry_trigger = _generate_entry_trigger(setup_type, reasons, strength)
@@ -401,51 +420,36 @@ def _calculate_structure_stop(
     orh: float,
     orl: float,
     vwap: pd.Series,
-    close: float,
+    entry_price: float,
     bias: str,
-    ema20: Optional[pd.Series] = None
+    ema20: Optional[pd.Series] = None,
+    atr: float = None
 ) -> float:
     """
-    Calculate appropriate structure stop based on setup type and bias.
-    This replaces the individual stop calculations scattered throughout the old setup logic.
-    """
-    if bias == "long":
-        if "orb" in setup_type or "breakout" in setup_type:
-            return max(orl, _pivot_swing_low(df_sess, 8)) * 0.995
-        elif "vwap" in setup_type or "mean_reversion" in setup_type:
-            return _pivot_swing_low(df_sess, 10) * 0.992
-        elif "range" in setup_type:
-            return _pivot_swing_low(df_sess, 8) * 0.990
-        elif "trend" in setup_type or "flag" in setup_type:
-            return max(_pivot_swing_low(df_sess, 8), ema20.iloc[-1] * 0.985) if ema20 is not None else _pivot_swing_low(df_sess, 10) * 0.992
-        elif "momentum" in setup_type:
-            return _pivot_swing_low(df_sess, 6) * 0.998  # Tighter stops for momentum
-        elif "squeeze" in setup_type:
-            return _pivot_swing_low(df_sess, 15) * 0.995
-        elif "support" in setup_type:
-            return _pivot_swing_low(df_sess, 6) * 0.985
-        elif "volume" in setup_type:
-            return _pivot_swing_low(df_sess, 5) * 0.988
-        else:
-            # Default conservative stop
-            return _pivot_swing_low(df_sess, 8) * 0.992
+    NSE FIX: Uses entry-relative stops at 1.5× ATR distance from entry price.
 
+    Previous bug: Level-relative stops (e.g., orl * 0.995) gave inconsistent risk distances
+    because the distance from entry to stop varied widely depending on where price was
+    relative to the structure level.
+
+    NSE baseline data (3-month analysis) shows:
+    - 73.8% stop hit rate at 0.5× ATR (too tight)
+    - 47.4% stop hit rate at 1.5× ATR (optimal)
+
+    This implementation ensures consistent risk management by placing stops at exactly
+    1.5× ATR from the actual entry price, regardless of structure levels.
+    """
+    # NSE FIX: Use entry-relative stops at 1.5× ATR for consistent risk management
+    if atr is None or np.isnan(atr):
+        # Fallback: 0.5% of entry price if ATR unavailable
+        atr = entry_price * 0.005
+
+    if bias == "long":
+        # For longs: stop 1.5× ATR below entry price
+        return entry_price - (atr * 1.5)
     elif bias == "short":
-        if "orb" in setup_type or "breakdown" in setup_type:
-            return min(orh, _pivot_swing_high(df_sess, 8)) * 1.005
-        elif "vwap" in setup_type:
-            return _pivot_swing_high(df_sess, 10) * 1.008
-        elif "range" in setup_type:
-            return _pivot_swing_high(df_sess, 8) * 1.010
-        elif "trend" in setup_type:
-            return _pivot_swing_high(df_sess, 8) * 1.008
-        elif "momentum" in setup_type:
-            return _pivot_swing_high(df_sess, 6) * 1.002  # Tighter stops for momentum
-        elif "resistance" in setup_type:
-            return _pivot_swing_high(df_sess, 6) * 1.015
-        else:
-            # Default conservative stop
-            return _pivot_swing_high(df_sess, 8) * 1.008
+        # For shorts: stop 1.5× ATR above entry price
+        return entry_price + (atr * 1.5)
 
     return np.nan
 

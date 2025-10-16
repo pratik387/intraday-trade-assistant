@@ -383,7 +383,7 @@ class ORBStructure(BaseStructure):
                 exit_levels=self._generate_orb_exits(current_price, orh, orl, "short"),
                 qty=0,  # Will be calculated later
                 notional=0.0,
-                confidence=self._calculate_institutional_strength(market_context, 0.0, True, "long", market_context.orh or 0, market_context.orl or 0),
+                confidence=self._calculate_institutional_strength(market_context, 0.0, True, "short", market_context.orh or 0, market_context.orl or 0),
                 timestamp=market_context.timestamp,
                 market_context=market_context
             )
@@ -575,7 +575,7 @@ class ORBStructure(BaseStructure):
                         timestamp=market_context.timestamp,
                         structure_type="orb_pullback_short",
                         side="short",
-                        confidence=self._calculate_institutional_strength(market_context, 0.0, True, "long", market_context.orh or 0, market_context.orl or 0),
+                        confidence=self._calculate_institutional_strength(market_context, 0.0, True, "short", market_context.orh or 0, market_context.orl or 0),
                         levels={"orl": orl, "pullback_level": pullback_level},
                         context={"pullback_type": "shallow"},
                         price=current_price
