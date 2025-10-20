@@ -1,0 +1,102 @@
+# Cloud Upload Exclusions
+# Files and directories to exclude when uploading to cloud (AWS/Azure)
+
+# ========================================
+# Logs and Results (Generated in Cloud)
+# ========================================
+logs/
+backtest_results/
+diagnostics/
+exceptions/
+jobs/
+
+# Analysis folder (local only, cloud generates its own)
+analysis/
+
+# ========================================
+# Development Artifacts
+# ========================================
+tests/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ========================================
+# IDE and Tooling
+# ========================================
+.vscode/
+.idea/
+*.code-workspace
+.venv/
+venv/
+env/
+.git/
+.gitignore
+.claude/
+
+# ========================================
+# Cloud Deployment Scripts (AWS-specific, not Oracle)
+# ========================================
+oracle_cloud/
+
+# ========================================
+# Documentation (Not Needed for Execution)
+# ========================================
+assets/
+*.md
+!README.md
+
+# Backup files
+*.bak
+*.swp
+*~
+.DS_Store
+
+# ========================================
+# Cache (Uploaded Separately)
+# ========================================
+# Cache is uploaded once to S3, not with code
+cache/
+
+# ========================================
+# Config Variants (Upload Main Config Only)
+# ========================================
+config/configuration_*.json
+!config/configuration.json
+
+# ========================================
+# Temporary Files
+# ========================================
+*.tmp
+*.temp
+*.log
+.ipynb_checkpoints/
+
+# ========================================
+# Data Files (Too Large)
+# ========================================
+*.feather
+*.parquet
+*.csv
+*.xlsx
+*.pkl
+*.pickle
+
+# But KEEP configuration JSON
+!config/configuration.json
+
+# ========================================
+# Analysis/Reports (Local Only)
+# ========================================
+REFACTOR_*.md
+BUG_ANALYSIS_*.md
+NSE_*.md
+COMPLETE_*.md
+CLEANUP_*.md
+PARALLEL_*.md
+TODO.md
+CHANGELOG.md

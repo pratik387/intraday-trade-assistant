@@ -47,6 +47,8 @@ import pandas as pd
 
 from config.filters_setup import load_filters
 from config.logging_config import get_agent_logger, get_screener_logger, get_ranking_logger, get_events_decision_logger
+from utils.level_utils import get_previous_day_levels
+from utils.dataframe_utils import validate_df, has_column, safe_get_last
 
 # ingest / streaming
 from services.ingest.stream_client import WSClient
@@ -89,6 +91,21 @@ def _init_worker(config_dict):
     """
     global _worker_decision_gate
     try:
+        # Initialize logging for worker FIRST - set to INFO level so cache messages appear
+        from config.logging_config import get_agent_logger
+        import logging
+        worker_logger = get_agent_logger()
+        if worker_logger and worker_logger.level == logging.WARNING:
+            worker_logger.setLevel(logging.INFO)  # Enable INFO messages in worker
+
+        # Apply structure caching in worker process (if enabled via config flag)
+        if config_dict.get("_enable_structure_cache", False):
+            import tools.cached_engine_structures  # noqa: F401
+            if worker_logger:
+                worker_logger.info("[CACHE] Worker process: Structure caching enabled")
+            else:
+                print("[CACHE] Worker process: Structure caching enabled")
+
         from services.gates.trade_decision_gate import TradeDecisionGate
         from services.gates.regime_gate import MarketRegimeGate
         from services.gates.event_policy_gate import EventPolicyGate
@@ -247,6 +264,21 @@ class ScreenerLive:
             str(raw.get("opening_block_end_hhmm", "")) or None,
         )
 
+        # Create persistent worker pool for structure detection (avoid 3-5s overhead every 5m)
+        self._executor = ProcessPoolExecutor(
+            max_workers=2,
+            initializer=_init_worker,
+            initargs=(self.raw_cfg,)
+        )
+        logger.info("ScreenerLive: Persistent worker pool created (2 workers)")
+
+        # Pre-warm daily data cache for all symbols (avoid 6s per bar disk I/O)
+        if hasattr(self.sdk, 'prewarm_daily_cache'):
+            self.sdk.prewarm_daily_cache(self.core_symbols, days=210)
+            logger.info("ScreenerLive: Daily cache pre-warmed for all symbols")
+        else:
+            logger.info("ScreenerLive: SDK doesn't support cache pre-warming (live mode)")
+
         logger.debug(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
             len(self.core_symbols),
@@ -271,6 +303,14 @@ class ScreenerLive:
         except Exception: pass
         try: self.ws.stop()
         except Exception: pass
+
+        # Shutdown persistent worker pool
+        try:
+            if hasattr(self, '_executor') and self._executor:
+                self._executor.shutdown(wait=True, cancel_futures=True)
+                logger.info("ScreenerLive: Worker pool shut down")
+        except Exception as e:
+            logger.warning(f"ScreenerLive: Worker pool shutdown error: {e}")
 
         # Trigger executor is managed by main.py
 
@@ -388,6 +428,9 @@ class ScreenerLive:
 
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
         """Main driver: invoked for each CLOSED 5m bar of any symbol."""
+        import time
+        _t_bar_start = time.perf_counter()
+
         now = bar_5m.name if hasattr(bar_5m, "name") else datetime.now()
 
         # EOD square-off guard (using configured HH:MM). Leave parser as-is per your preference.
@@ -414,7 +457,7 @@ class ScreenerLive:
             df5_by_symbol: Dict[str, pd.DataFrame] = {}
             for s in self.core_symbols:
                 df5 = self.agg.get_df_5m_tail(s, self.cfg.screener_store_5m_max)
-                if df5 is not None and not df5.empty and len(df5) >= 5:
+                if validate_df(df5, min_rows=5):
                     df5_by_symbol[s] = df5
             if df5_by_symbol:
                 feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20)
@@ -427,13 +470,14 @@ class ScreenerLive:
             shortlist = self._fallback_shortlist()
 
         # ENHANCED LOGGING: Stage-0 completion with accurate counts
+        _t_scanner_end = time.perf_counter()
         eligible_symbols = len(df5_by_symbol) if df5_by_symbol else 0
         total_symbols = len(self.core_symbols)
         shortlist_count = len(shortlist)
 
-        logger.info("SCANNER_COMPLETE | Processed %d eligible of %d total symbols → %d shortlisted (%.1f%%) | Stage-0→Gates",
+        logger.info("SCANNER_COMPLETE | Processed %d eligible of %d total symbols → %d shortlisted (%.1f%%) | Stage-0→Gates | TIME: %.2fs",
                    eligible_symbols, total_symbols, shortlist_count,
-                   (shortlist_count/max(eligible_symbols,1))*100)
+                   (shortlist_count/max(eligible_symbols,1))*100, _t_scanner_end - _t_bar_start)
         if not shortlist:
             return
 
@@ -451,7 +495,7 @@ class ScreenerLive:
         symbol_data_map = {}
         for sym in shortlist:
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
-            if df5 is None or df5.empty or len(df5) < 5:
+            if not validate_df(df5, min_rows=5):
                 continue
             df1m = self.agg.get_df_1m_tail(sym, 60)
             lvl = self._levels_for(sym, df5, now)
@@ -463,36 +507,29 @@ class ScreenerLive:
             logger.info("GATES_COMPLETE | No symbols with sufficient data")
             return
 
-        # Extract decision gate configuration for worker processes
-        # Pass entire raw config - MainDetector/RegimeGate/etc need full config
-        decision_gate_config = self.raw_cfg
+        _t_data_prep_end = time.perf_counter()
+        logger.info("DATA_PREP_COMPLETE | Prepared %d symbols | TIME: %.2fs",
+                   len(symbol_data_map), _t_data_prep_end - _t_scanner_end)
 
-        # Process symbols in parallel with worker initialization
-        # Use initializer to create heavy objects once per worker (not per task)
-        # OPTIMIZED: 2 workers per day × 6 days in parallel = 12 processes = full CPU utilization
-        # Previous: 4 workers × 6 days = 24 processes competing for 12 cores (massive overhead)
-        with ProcessPoolExecutor(
-            max_workers=2,
-            initializer=_init_worker,
-            initargs=(decision_gate_config,)
-        ) as executor:
-            # Submit all symbols for processing using optimized worker function
-            # Phase 2: Unpack 4-tuple (df5, df1m, lvl, daily_df) for multi-TF regime
-            futures = {}
-            for sym, (df5, df1m, lvl, daily_df) in symbol_data_map.items():
-                future = executor.submit(
-                    _worker_process_symbol,  # Use new function that reuses initialized gate
-                    sym,
-                    df5,
-                    df1m,
-                    index_df5,
-                    lvl,
-                    now,
-                    daily_df  # Phase 2: Pass daily_df for multi-timeframe regime
-                )
-                futures[future] = sym
+        # Use persistent worker pool (created once in __init__)
+        # This saves 3-5 seconds per 5m bar by avoiding worker recreation
+        # Phase 2: Unpack 4-tuple (df5, df1m, lvl, daily_df) for multi-TF regime
+        futures = {}
+        for sym, (df5, df1m, lvl, daily_df) in symbol_data_map.items():
+            future = self._executor.submit(
+                _worker_process_symbol,  # Use function that reuses initialized gate
+                sym,
+                df5,
+                df1m,
+                index_df5,
+                lvl,
+                now,
+                daily_df  # Phase 2: Pass daily_df for multi-timeframe regime
+            )
+            futures[future] = sym
 
-            # Collect results as they complete
+        # Collect results as they complete
+        try:
             for future in as_completed(futures):
                 expected_sym = futures[future]
                 try:
@@ -558,13 +595,16 @@ class ScreenerLive:
                     regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
                 )
                 decisions.append((sym, decision))
+        except Exception as e:
+            logger.exception(f"Worker pool processing failed: {e}")
 
         # DATA INTEGRITY CHECK: Verify all accepted symbols are in original shortlist
         accepted_symbols = {sym for sym, _ in decisions}
         assert accepted_symbols.issubset(set(shortlist)), \
             f"Symbol integrity violation! Accepted symbols not in shortlist: {accepted_symbols - set(shortlist)}"
 
-        logger.info(f"PARALLEL_STRUCTURE_COMPLETE | Processed {len(symbol_data_map)} symbols, {len(decisions)} accepted")
+        _t_structure_end = time.perf_counter()
+        logger.info(f"PARALLEL_STRUCTURE_COMPLETE | Processed {len(symbol_data_map)} symbols, {len(decisions)} accepted | TIME: %.2fs", _t_structure_end - _t_data_prep_end)
 
         # EOD check AFTER structure detection (which can take 20+ minutes)
         # Prevents hanging when structure completes after market close
@@ -736,7 +776,11 @@ class ScreenerLive:
                 continue
 
             # Minimal bar5/features snapshot for diagnostics
-            last5 = df5.iloc[-1] if (df5 is not None and not df5.empty) else None
+            last5 = safe_get_last(df5, "close") if validate_df(df5) else None
+            if last5 is not None and validate_df(df5):
+                last5 = df5.iloc[-1]  # Get full row for feature extraction
+            else:
+                last5 = None
             bar5 = {}
             if last5 is not None:
                 for k in ("open", "high", "low", "close", "volume", "vwap", "adx", "bb_width_proxy"):
@@ -822,6 +866,15 @@ class ScreenerLive:
             trades_planned += 1
             logger.info("ENQUEUE %s score=%.3f count=%d/%d reasons=%s", sym, score, trades_planned, max_trades_per_cycle, ";".join(self._reasons_for(sym, decisions)))
 
+        # Final timing for entire bar processing
+        _t_bar_end = time.perf_counter()
+        logger.info("BAR_COMPLETE | Total bar processing time: %.2fs (Scanner: %.2fs, DataPrep: %.2fs, Structure: %.2fs, Ranking+Planning: %.2fs)",
+                   _t_bar_end - _t_bar_start,
+                   _t_scanner_end - _t_bar_start,
+                   _t_data_prep_end - _t_scanner_end,
+                   _t_structure_end - _t_data_prep_end,
+                   _t_bar_end - _t_structure_end)
+
     # ---------- EOD handler ----------
     def _handle_eod(self, now: datetime) -> None:
         try:
@@ -861,7 +914,7 @@ class ScreenerLive:
     def _levels_for(self, symbol: str, df5: pd.DataFrame, now) -> Dict[str, float]:
         """Prev-day PDH/PDL/PDC and today ORH/ORL (cached per (symbol, session_date))."""
         try:
-            session_date = df5.index[-1].date() if (df5 is not None and not df5.empty) else None
+            session_date = df5.index[-1].date() if validate_df(df5) else None
         except Exception:
             session_date = None
         key = (symbol, session_date)
@@ -869,69 +922,29 @@ class ScreenerLive:
         if cached:
             return cached
 
-        pdh = pdl = pdc = float("nan")
+        # Use centralized level calculation to avoid code duplication
         try:
             logger.debug(f"LEVELS: Getting daily data for {symbol}, session_date={session_date}")
-            # Phase 1: Multi-TF regime - levels only need recent days, but caching 210 days for regime
             daily = self.sdk.get_daily(symbol, days=210)
             logger.debug(f"LEVELS: Daily data shape: {daily.shape if daily is not None else None}")
 
-            if daily is not None and not daily.empty:
-                d = daily.copy()
-                logger.debug(f"LEVELS: Daily data columns: {list(d.columns)}")
-                logger.debug(f"LEVELS: Daily data index type: {type(d.index)}")
+            # Use centralized get_previous_day_levels with fallback for backtests
+            level_dict = get_previous_day_levels(
+                daily_df=daily,
+                session_date=session_date,
+                fallback_df=df5,
+                enable_fallback=True  # Enable fallback for backtests
+            )
+            pdh = level_dict.get("PDH", float("nan"))
+            pdl = level_dict.get("PDL", float("nan"))
+            pdc = level_dict.get("PDC", float("nan"))
 
-                if "date" in d.columns:
-                    d["date"] = pd.to_datetime(d["date"]); d = d.sort_values("date").set_index("date")
-                else:
-                    d.index = pd.to_datetime(d.index); d = d.sort_index()
-
-                logger.debug(f"LEVELS: After date processing, shape: {d.shape}")
-
-                if session_date is not None:
-                    pre_filter_size = len(d)
-                    d = d[d.index.date < session_date]
-                    logger.debug(f"LEVELS: After session_date filter ({session_date}): {len(d)}/{pre_filter_size}")
-
-                if "volume" in d.columns:
-                    pre_vol_size = len(d)
-                    d = d[d["volume"].fillna(0) > 0]
-                    logger.debug(f"LEVELS: After volume filter: {len(d)}/{pre_vol_size}")
-
-                pre_clean_size = len(d)
-                d = d[d["high"].notna() & d["low"].notna()]
-                logger.debug(f"LEVELS: After high/low filter: {len(d)}/{pre_clean_size}")
-
-                if not d.empty:
-                    prev = d.iloc[-1]
-                    pdh = float(prev["high"]); pdl = float(prev["low"]); pdc = float(prev.get("close", float("nan")))
-                    logger.debug(f"LEVELS: Computed PDH={pdh}, PDL={pdl}, PDC={pdc} from date {prev.name}")
-                else:
-                    logger.warning(f"LEVELS: No valid previous day data for {symbol} after filtering")
-                    # For backtests, we might not have previous day data - try to estimate from current session
-                    if df5 is not None and not df5.empty and len(df5) > 10:
-                        # Use early session data as rough estimates
-                        early_bars = df5.iloc[:min(10, len(df5))]
-                        pdh_est = float(early_bars['high'].max() * 1.02)  # 2% above early high
-                        pdl_est = float(early_bars['low'].min() * 0.98)   # 2% below early low
-                        pdc_est = float(early_bars['close'].iloc[-1])
-                        logger.info(f"LEVELS: Using estimated levels for {symbol}: PDH={pdh_est:.2f}, PDL={pdl_est:.2f}, PDC={pdc_est:.2f}")
-                        pdh, pdl, pdc = pdh_est, pdl_est, pdc_est
-            else:
-                logger.warning(f"LEVELS: No daily data available for {symbol}")
-                # Fallback for backtests - estimate from current data if available
-                if df5 is not None and not df5.empty and len(df5) > 10:
-                    early_bars = df5.iloc[:min(10, len(df5))]
-                    pdh = float(early_bars['high'].max() * 1.02)
-                    pdl = float(early_bars['low'].min() * 0.98)
-                    pdc = float(early_bars['close'].iloc[-1])
-                    logger.info(f"LEVELS: Using fallback estimated levels for {symbol}: PDH={pdh:.2f}, PDL={pdl:.2f}, PDC={pdc:.2f}")
         except Exception as e:
             # CRITICAL FIX: Log previous day level computation failures
             import traceback
             logger.error(f"LEVELS: Failed to compute PDH/PDL/PDC for {symbol}: {e}")
             logger.error(f"LEVELS: Traceback: {traceback.format_exc()}")
-            pass
+            pdh = pdl = pdc = float("nan")
 
         try:
             logger.debug(f"LEVELS: Computing opening range for {symbol}, df5 shape: {df5.shape if df5 is not None else None}")
@@ -946,7 +959,7 @@ class ScreenerLive:
             orh = orl = float("nan")
 
             # Fallback: compute simple opening range from first few bars
-            if df5 is not None and not df5.empty and len(df5) >= 3:
+            if validate_df(df5, min_rows=3):
                 opening_bars = df5.iloc[:min(3, len(df5))]  # First 15 minutes (3 x 5min bars)
                 orh = float(opening_bars['high'].max())
                 orl = float(opening_bars['low'].min())

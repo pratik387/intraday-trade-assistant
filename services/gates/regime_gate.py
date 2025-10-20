@@ -108,12 +108,47 @@ class MarketRegimeGate:
 
     # ---------------- Regime computation ----------------
     def compute_regime(self, df5: pd.DataFrame) -> Tuple[str, float]:
+        """
+        INSTITUTIONAL REGIME DETECTION (NSE India professional standards)
+
+        Uses ADX as PRIMARY indicator for regime classification (not EMA slope):
+        - ADX < 20: CHOP (ranging/choppy market)
+        - ADX >= 25: TREND (trending market, direction from +DI/-DI)
+        - Squeeze: Very narrow BB width + ADX < 15
+
+        This aligns with professional trading standards where ADX 25 is the
+        preferred threshold (20 produces too many false signals).
+
+        References:
+        - Professional ADX thresholds: ADX > 25 = trending, < 20 = ranging
+        - John Bollinger: Low volatility (squeeze) precedes high volatility
+        - NSE institutional desks: Multi-indicator approach (ADX + BB + EMA)
+        """
         if df5 is None or df5.empty:
             return "chop", 0.5
 
         c = df5["close"].astype(float).copy()
+        h = df5["high"].astype(float).copy()
+        l = df5["low"].astype(float).copy()
 
-        # EMA warmup guards
+        # Calculate ADX (PRIMARY indicator for regime)
+        # Use centralized ADX calculation to avoid duplication across codebase
+        adx_period = 14
+        if len(df5) >= adx_period + 1:
+            from services.indicators.adx import calculate_adx_with_di
+
+            # Calculate ADX with directional indicators (Wilder's smoothing)
+            adx, plus_di, minus_di = calculate_adx_with_di(df5, adx_period)
+
+            adx_value = float(adx.iloc[-1]) if not np.isnan(adx.iloc[-1]) else 0.0
+            plus_di_value = float(plus_di.iloc[-1]) if not np.isnan(plus_di.iloc[-1]) else 0.0
+            minus_di_value = float(minus_di.iloc[-1]) if not np.isnan(minus_di.iloc[-1]) else 0.0
+        else:
+            adx_value = 0.0
+            plus_di_value = 0.0
+            minus_di_value = 0.0
+
+        # EMA for trend direction confirmation (SECONDARY indicator)
         if len(c) < 55:
             ema20 = c.ewm(span=20, adjust=False, min_periods=20).mean()
             ema50 = c.ewm(span=50, adjust=False, min_periods=50).mean()
@@ -121,11 +156,7 @@ class MarketRegimeGate:
             ema20 = c.ewm(span=20, adjust=False).mean()
             ema50 = c.ewm(span=50, adjust=False).mean()
 
-        # slope over ~30 minutes
-        window = 6 if len(ema20) >= 6 else max(2, len(ema20))
-        slope_fast = float((ema20.diff().tail(window)).mean())
-
-        # width proxy: std(close,20)/vwap if available, else std/mean
+        # BB width proxy for squeeze detection
         if "bb_width_proxy" in df5.columns:
             width_proxy = float(df5["bb_width_proxy"].tail(20).mean())
         else:
@@ -133,7 +164,7 @@ class MarketRegimeGate:
             mean20 = float(c.tail(20).mean()) if len(c) >= 1 else 1.0
             width_proxy = (std20 / mean20) if mean20 else 0.0
 
-        # volume z vs last ~2 hours
+        # Volume z-score vs last ~2 hours
         if "volume" in df5.columns and len(df5) >= 10:
             vol = df5["volume"].astype(float)
             recent = vol.tail(min(24, len(vol)))
@@ -145,39 +176,54 @@ class MarketRegimeGate:
         m = RegimeMetrics(
             ema_fast=float(ema20.iloc[-1]),
             ema_slow=float(ema50.iloc[-1]) if not np.isnan(ema50.iloc[-1]) else float(ema20.iloc[-1]),
-            slope_fast=slope_fast,
+            slope_fast=0.0,  # Not used for regime classification anymore
             width_proxy=width_proxy,
             vol_z=vol_z,
         )
 
-        # squeeze if width very low vs recent distribution
+        # SQUEEZE detection: Very narrow BB width + very low ADX
+        # Professional standard: BB squeeze = low volatility period
         width_series = (df5["bb_width_proxy"] if "bb_width_proxy" in df5.columns else c.pct_change().abs())
         recent_w = width_series.tail(min(24, len(width_series)))
         if len(recent_w) >= 8:
             q30 = float(recent_w.quantile(0.30))
-            is_squeeze = m.width_proxy <= q30
+            is_very_tight = m.width_proxy <= q30
+            is_squeeze = is_very_tight and adx_value < 15  # ADX < 15 for squeeze
         else:
             is_squeeze = False
 
-        if m.ema_fast > m.ema_slow and m.slope_fast > 0 and not is_squeeze:
-            regime = "trend_up"
-        elif m.ema_fast < m.ema_slow and m.slope_fast < 0 and not is_squeeze:
-            regime = "trend_down"
-        elif is_squeeze:
+        # REGIME CLASSIFICATION (Professional ADX-based approach)
+        if is_squeeze:
             regime = "squeeze"
-        else:
+            confidence = 0.8
+        elif adx_value < 20:
+            # Low ADX = CHOP (ranging/choppy market)
+            # Professional standard: ADX < 20 = weak trend
             regime = "chop"
+            confidence = 0.6
+        elif adx_value >= 25:
+            # High ADX = TREND (trending market)
+            # Professional standard: ADX >= 25 = strong trend
+            # Use +DI/-DI to determine direction
+            if plus_di_value > minus_di_value:
+                regime = "trend_up"
+            else:
+                regime = "trend_down"
 
-        # Calculate confidence based on how clear the regime signal is
-        confidence = 0.5  # base confidence
-
-        # Higher confidence for clear trending regimes
-        if regime in ("trend_up", "trend_down"):
-            slope_strength = min(abs(m.slope_fast) * 1000, 0.3)  # normalize slope
-            confidence = min(0.9, 0.6 + slope_strength)
-        elif regime == "squeeze":
-            confidence = 0.8  # squeeze is usually pretty clear
-        # chop gets default 0.5 confidence
+            # Higher confidence for stronger trends
+            if adx_value >= 40:
+                confidence = 0.9  # Very strong trend
+            else:
+                confidence = 0.75  # Strong trend
+        else:
+            # Transition zone (ADX 20-25): Use EMA as tiebreaker
+            if m.ema_fast > m.ema_slow:
+                regime = "trend_up"
+            elif m.ema_fast < m.ema_slow:
+                regime = "trend_down"
+            else:
+                regime = "chop"
+            confidence = 0.5  # Low confidence in transition zone
 
         return regime, confidence
 

@@ -137,7 +137,16 @@ class _DryRunBroker:
 # ------------------------ Main orchestration ------------------------
 
 def main() -> int:
+    global args  # Access the module-level args variable
+
     cfg = load_filters()  # validate early; raises if required keys are missing
+
+    # Apply structure caching if requested (monkey-patches TradeDecisionGate.evaluate)
+    # Also set flag in config so worker processes can enable caching
+    if args.enable_cache:
+        import tools.cached_engine_structures  # noqa: F401
+        logger.info("[CACHE] Structure detection caching enabled")
+        cfg["_enable_structure_cache"] = True  # Pass flag to worker processes
 
     # Initialize CapitalManager based on config
     cap_mgmt_cfg = cfg.get('capital_management', {})
@@ -302,6 +311,7 @@ def _parse_args():
     ap.add_argument("--from-hhmm", default="09:10")
     ap.add_argument("--to-hhmm",   default="15:30")
     ap.add_argument("--run-prefix", default="", help="Prefix for session folder names (used by engine.py)")
+    ap.add_argument("--enable-cache", action="store_true", help="Enable structure detection caching")
     return ap.parse_args()
 
 

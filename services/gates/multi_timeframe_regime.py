@@ -94,7 +94,9 @@ class DailyRegimeDetector:
             current_ema200 = float(ema200.iloc[-1])
 
             # Calculate weekly ADX from daily bars (5-day window = 1 trading week)
-            adx = self._calculate_adx(df, period=14)
+            # Use centralized ADX calculation
+            from services.indicators.adx import calculate_adx
+            adx = calculate_adx(df, period=14)
             current_adx = float(adx.iloc[-1]) if len(adx) > 0 and pd.notna(adx.iloc[-1]) else 15.0
 
             # Calculate BB width for squeeze detection
@@ -176,39 +178,6 @@ class DailyRegimeDetector:
                 trend_strength=0.0,
                 metrics={"error": str(e)}
             )
-
-    def _calculate_adx(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calculate ADX (Average Directional Index) from OHLC data"""
-        high = df['high'].astype(float)
-        low = df['low'].astype(float)
-        close = df['close'].astype(float)
-
-        # True Range
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-        # Directional Movement
-        up_move = high - high.shift(1)
-        down_move = low.shift(1) - low
-
-        plus_dm = pd.Series(0.0, index=df.index)
-        minus_dm = pd.Series(0.0, index=df.index)
-
-        plus_dm[(up_move > down_move) & (up_move > 0)] = up_move
-        minus_dm[(down_move > up_move) & (down_move > 0)] = down_move
-
-        # Smoothed averages
-        atr = tr.ewm(span=period, adjust=False, min_periods=period).mean()
-        plus_di = 100 * (plus_dm.ewm(span=period, adjust=False, min_periods=period).mean() / atr)
-        minus_di = 100 * (minus_dm.ewm(span=period, adjust=False, min_periods=period).mean() / atr)
-
-        # ADX calculation
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, 1)
-        adx = dx.ewm(span=period, adjust=False, min_periods=period).mean()
-
-        return adx
 
     def _calculate_bb_width(self, close: pd.Series, period: int = 20) -> pd.Series:
         """Calculate Bollinger Band width (normalized)"""

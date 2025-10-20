@@ -236,9 +236,9 @@ class ExitExecutor:
                 st = pos.plan.get("_state") or {}
                 t1_done = bool(st.get("t1_done", False))
 
-                # Check SL with intrabar accuracy
-                if not math.isnan(plan_sl) and self._breach_sl(pos.side, self.broker.get_ltp(sym, check_level=plan_sl), plan_sl):
-                    sl_ltp = self.broker.get_ltp(sym, check_level=plan_sl)
+                # Check SL with intrabar accuracy (use WebSocket LTP from px)
+                if not math.isnan(plan_sl) and self._breach_sl(pos.side, px, plan_sl):
+                    sl_ltp = px
                     # Enhanced SL exit logging with T1 awareness
                     slippage = abs(sl_ltp - plan_sl)
                     # Differentiate SL hit after T1 partial vs initial SL
@@ -263,23 +263,23 @@ class ExitExecutor:
                 # 2) Targets & state (already retrieved above for SL check)
                 t1, t2 = self._get_targets(pos.plan)
 
-                # 2a) T2 (full exit first) - check with intrabar accuracy
-                if not math.isnan(t2) and self._target_hit(pos.side, self.broker.get_ltp(sym, check_level=t2), t2):
-                    t2_ltp = self.broker.get_ltp(sym, check_level=t2)
+                # 2a) T2 (full exit first) - check with intrabar accuracy (use WebSocket LTP from px)
+                if not math.isnan(t2) and self._target_hit(pos.side, px, t2):
+                    t2_ltp = px
                     self._exit(sym, pos, t2_ltp, ts, "target_t2")
                     continue
 
-                # 2b) T1 (one-time partial) - check with intrabar accuracy
-                if (not t1_done) and not math.isnan(t1) and self._target_hit(pos.side, self.broker.get_ltp(sym, check_level=t1), t1):
-                    t1_ltp = self.broker.get_ltp(sym, check_level=t1)
+                # 2b) T1 (one-time partial) - check with intrabar accuracy (use WebSocket LTP from px)
+                if (not t1_done) and not math.isnan(t1) and self._target_hit(pos.side, px, t1):
+                    t1_ltp = px
                     self._partial_exit_t1(sym, pos, t1_ltp, ts)
                     continue
 
-                # 3) Dynamic trail (tighten-only) - check with intrabar accuracy
+                # 3) Dynamic trail (tighten-only) - check with intrabar accuracy (use WebSocket LTP from px)
                 if self._has_trail(pos.plan) and self._trail_allowed(pos, ts):
                     level, why = self._trail_from_plan(sym, pos, float(px))
-                    if not math.isnan(level) and self._breach_sl(pos.side, self.broker.get_ltp(sym, check_level=level), level):
-                        trail_ltp = self.broker.get_ltp(sym, check_level=level)
+                    if not math.isnan(level) and self._breach_sl(pos.side, px, level):
+                        trail_ltp = px
                         self._exit(sym, pos, trail_ltp, ts, f"trail_stop({why})")
                         continue
 

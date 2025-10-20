@@ -1,0 +1,46 @@
+# Claude Code ignore file - reduce token usage
+# Files/folders ignored won't be in context
+
+# Large data files
+logs/
+cache/
+backtesting/
+*.csv
+*.feather
+*.parquet
+
+# Compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Backups
+*.backup
+*.backup_*
+nse_all.json.backup_*
+
+# Excel files (except the source margin file)
+*.xlsx
+!zerodha_mis_margin.xlsx
+
+# Git
+.git/
+.gitignore
+
+# Documentation (can read on demand)
+*.md
+!README.md
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage

@@ -32,6 +32,8 @@ from config.filters_setup import load_filters
 from utils.time_util import ensure_naive_ist_index
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 from services.gates.trade_decision_gate import SetupCandidate
+from services.indicators.adx import calculate_ema, calculate_rsi, calculate_macd, calculate_adx, calculate_atr
+from utils.level_utils import get_previous_day_levels
 import datetime
 
 logger = get_agent_logger()
@@ -39,18 +41,6 @@ logger = get_agent_logger()
 # ----------------------------
 # Helpers (math/indicators)
 # ----------------------------
-
-def calculate_atr(df: pd.DataFrame, period: int) -> float:
-    """Wilder-style ATR (EMA of True Range) approximated with rolling mean for speed."""
-    try:
-        h, l, c = df["high"].to_numpy(), df["low"].to_numpy(), df["close"].to_numpy()
-        prev_close = np.r_[c[0], c[:-1]]
-        tr = np.maximum(h - l, np.maximum(np.abs(h - prev_close), np.abs(l - prev_close)))
-        atr = pd.Series(tr).ewm(span=period, adjust=False).mean().iloc[-1]
-        return float(atr)
-    except Exception as e:
-        logger.exception(f"planner.atr error: {e}")
-        return float("nan")
 
 def get_date_range_from_df(df: pd.DataFrame) -> Tuple[str, str]:
     idx = pd.to_datetime(df.index)
@@ -77,76 +67,16 @@ def _session_vwap(df_sess: pd.DataFrame) -> pd.Series:
     cum_v = df_sess["volume"].cumsum().replace(0, np.nan)
     return cum_pv / cum_v
 
-def _ema(series: pd.Series, span: int) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
-
-def _rsi(series: pd.Series, period: int) -> pd.Series:
-    s = series.astype(float)
-    delta = s.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
-    avg_gain = gain.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def _macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, pd.Series]:
-    ema_fast = _ema(series, fast)
-    ema_slow = _ema(series, slow)
-    macd_line = ema_fast - ema_slow
-    signal_line = _ema(macd_line, signal)
-    hist = macd_line - signal_line
-    return {"line": macd_line, "signal": signal_line, "hist": hist}
-
-def _adx(df: pd.DataFrame, period: int) -> pd.Series:
-    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-    up = h.diff()
-    down = -l.diff()
-    plus_dm = up.where((up > down) & (up > 0), 0.0)
-    minus_dm = down.where((down > up) & (down > 0), 0.0)
-    tr = pd.concat([(h - l), (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    plus_di = 100 * (plus_dm.ewm(alpha=1/period, adjust=False).mean() / atr)
-    minus_di = 100 * (minus_dm.ewm(alpha=1/period, adjust=False).mean() / atr)
-    dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)).fillna(0)
-    adx = dx.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    return adx.bfill()
-
 def _prev_day_levels(
     daily_df: Optional[pd.DataFrame],
     session_date: Optional[datetime.date],
 ) -> Dict[str, float]:
-    """Return PDH/PDL/PDC from the last completed trading day strictly before session_date."""
-    try:
-        if daily_df is None or daily_df.empty:
-            return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
-        d = daily_df.copy()
-        if "date" in d.columns:
-            d["date"] = pd.to_datetime(d["date"])
-            d = d.sort_values("date").set_index("date")
-        else:
-            d.index = pd.to_datetime(d.index)
-            d = d.sort_index()
+    """
+    Return PDH/PDL/PDC from the last completed trading day strictly before session_date.
 
-        if session_date is not None:
-            d = d[d.index.date < session_date]
-
-        if "volume" in d.columns:
-            d = d[d["volume"].fillna(0) > 0]
-        d = d[d["high"].notna() & d["low"].notna()]
-
-        if d.empty:
-            return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
-
-        prev = d.iloc[-1]
-        return {
-            "PDH": float(prev["high"]),
-            "PDL": float(prev["low"]),
-            "PDC": float(prev.get("close", float("nan"))),
-        }
-    except Exception:
-        return {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")}
+    This now uses the centralized implementation from utils.level_utils to avoid code duplication.
+    """
+    return get_previous_day_levels(daily_df, session_date, fallback_df=None, enable_fallback=False)
 
 
 def _choppiness_index(df_sess: pd.DataFrame, lookback: int) -> float:
@@ -181,7 +111,7 @@ def _detect_daily_trend(daily_df: Optional[pd.DataFrame], ema_period: int = 20) 
             return "neutral"
 
         daily_close = daily_df["close"].astype(float)
-        daily_ema = _ema(daily_close, ema_period)
+        daily_ema = calculate_ema(daily_close, ema_period)
 
         if len(daily_ema) < 3:
             return "neutral"
@@ -325,8 +255,8 @@ def _load_planner_config(user_overrides: Optional[Dict[str, Any]] = None) -> Pla
 def _regime(df_sess: pd.DataFrame, cfg: PlannerConfig) -> str:
     """Simple regime classifier for planner context (independent of gates)."""
     chop = _choppiness_index(df_sess, cfg.choppiness_lookback)
-    ema20 = _ema(df_sess["close"], 20)
-    ema50 = _ema(df_sess["close"], 50)
+    ema20 = calculate_ema(df_sess["close"], 20)
+    ema50 = calculate_ema(df_sess["close"], 50)
     slope = (ema20.iloc[-1] - ema20.iloc[-5]) / max(abs(ema20.iloc[-5]), 1e-9)
     if chop <= cfg.choppiness_low and ema20.iloc[-1] > ema50.iloc[-1] and slope > 0:
         return "trend_up"
@@ -517,8 +447,8 @@ def _strategy_selector(
     last = df_sess.iloc[-1]
     close = float(last["close"])
 
-    ema20 = _ema(df_sess["close"], 20)
-    ema50 = _ema(df_sess["close"], 50)
+    ema20 = calculate_ema(df_sess["close"], 20)
+    ema50 = calculate_ema(df_sess["close"], 50)
 
     # Select best setup candidate based on strength
     best_candidate = max(setup_candidates, key=lambda c: c.strength)
@@ -899,17 +829,17 @@ def generate_trade_plan(
         # Core features
         sess = sess.copy()
         sess["vwap"] = _session_vwap(sess)
-        sess["ema20"] = _ema(sess["close"], 20)
-        sess["ema50"] = _ema(sess["close"], 50)
+        sess["ema20"] = calculate_ema(sess["close"], 20)
+        sess["ema50"] = calculate_ema(sess["close"], 50)
 
         # Optional indicators for soft sizing / checklist
         rsi_len = int(cfg._extras.get("intraday_params", {}).get("rsi_len", 14))
         adx_len = int(cfg._extras.get("intraday_params", {}).get("adx_len", 14))
-        sess["rsi14"] = _rsi(sess["close"], period=rsi_len)
-        sess["adx14"] = _adx(sess, period=adx_len)
-        macd_pack = _macd(sess["close"])
-        sess["macd"] = macd_pack["line"]
-        sess["macd_hist"] = macd_pack["hist"]
+        sess["rsi14"] = calculate_rsi(sess["close"], period=rsi_len)
+        sess["adx14"] = calculate_adx(sess, period=adx_len)
+        macd_pack = calculate_macd(sess["close"])
+        sess["macd"] = macd_pack["macd"]
+        sess["macd_hist"] = macd_pack["histogram"]
         sess["vol_avg20"] = sess["volume"].rolling(20, min_periods=1).mean()
         sess["vol_ratio"] = sess["volume"] / sess["vol_avg20"]
 
@@ -1192,14 +1122,14 @@ def generate_trade_plan(
             },
             "levels": strat["context"]["levels"],
             "indicators": {
-                "vwap": round(float(sess["vwap"].iloc[-1]), 2),
-                "ema20": round(float(sess["ema20"].iloc[-1]), 2),
-                "ema50": round(float(sess["ema50"].iloc[-1]), 2),
+                "vwap": None if pd.isna(sess["vwap"].iloc[-1]) else round(float(sess["vwap"].iloc[-1]), 2),
+                "ema20": None if pd.isna(sess["ema20"].iloc[-1]) else round(float(sess["ema20"].iloc[-1]), 2),
+                "ema50": None if pd.isna(sess["ema50"].iloc[-1]) else round(float(sess["ema50"].iloc[-1]), 2),
                 "atr": None if np.isnan(atr) else round(float(atr), 2),
-                "rsi14": round(float(sess["rsi14"].iloc[-1]), 2),
-                "adx14": round(float(sess["adx14"].iloc[-1]), 2),
-                "macd_hist": round(float(sess["macd_hist"].iloc[-1]), 4),
-                "vol_ratio": round(float(sess["vol_ratio"].iloc[-1]), 2),
+                "rsi14": None if pd.isna(sess["rsi14"].iloc[-1]) else round(float(sess["rsi14"].iloc[-1]), 2),
+                "adx14": None if pd.isna(sess["adx14"].iloc[-1]) else round(float(sess["adx14"].iloc[-1]), 2),
+                "macd_hist": None if pd.isna(sess["macd_hist"].iloc[-1]) else round(float(sess["macd_hist"].iloc[-1]), 4),
+                "vol_ratio": None if pd.isna(sess["vol_ratio"].iloc[-1]) else round(float(sess["vol_ratio"].iloc[-1]), 2),
             },
             "notes": {
                 "gap_pct": None if np.isnan(gap_pct) else round(float(gap_pct), 2),

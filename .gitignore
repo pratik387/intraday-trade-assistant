@@ -1,13 +1,53 @@
+# Environment
 .env.development
+.env
+
+# Python
 *.pyc
+__pycache__/
+*.pyo
+*.pyd
+
+# IDE
 .vscode/launch.json
+.idea/
+
+# Data & Cache
+cache/
 cache/ohlcv_archive/
 logs/
+backtesting/
+*.feather
+*.parquet
+
+# Results & Reports
 analysis_report*
-tests/
-oracle_cloud/
 backtest_results/
-test*
+validation_report*
+*.csv
+
+# Backups
+*.backup
+*.backup_*
+nse_all.json.backup_*
+
+# Archives
 *.zip
+*.tar.gz
+
+# Logs
 *.log
+
+# Documentation builds
 *.pdf
+
+# Test artifacts
+tests/
+test*
+.pytest_cache/
+.coverage
+htmlcov/
+oracle_cloud/
+.claude/
+*.md
+analysis/

@@ -39,6 +39,7 @@ from .event_policy_gate import EventPolicyGate
 from .news_spike_gate import NewsSpikeGate
 from .market_sentiment_gate import MarketSentimentGate
 from services.features import compute_hcet_features
+from services.indicators.adx import calculate_rsi
 from collections import defaultdict
 from datetime import datetime, timedelta
 from config.logging_config import get_agent_logger
@@ -191,17 +192,6 @@ def _safe_float(x, default: float = 0.0) -> float:
         return float(x)
     except Exception:
         return default
-
-def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    s = series.astype(float)
-    delta = s.diff()
-    gain = delta.clip(lower=0.0)
-    loss = (-delta).clip(lower=0.0)
-    avg_gain = gain.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0.0, pd.NA)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
 
 # Regime allow-list helper (strict by default; HCET can bypass)
 def _regime_allows(setup: str, regime: str) -> bool:
@@ -747,7 +737,7 @@ class TradeDecisionGate:
             try:
                 if df5m_tail is not None and not df5m_tail.empty:
                     c = df5m_tail["close"].astype(float)
-                    rsi14_last = float(_rsi(c, 14).iloc[-1])
+                    rsi14_last = float(calculate_rsi(c, 14).iloc[-1])
                     rsi_min = entry_validation.get('rsi_min', 25)
                     rsi_max = entry_validation.get('rsi_max', 75)
                     if best.setup_type.endswith('_long') and (rsi14_last < rsi_min or rsi14_last > rsi_max):

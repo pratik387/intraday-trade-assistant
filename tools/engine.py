@@ -21,8 +21,8 @@ from diagnostics.diagnostics_report_builder import build_csv_from_events  # noqa
 from config.filters_setup import load_filters  # noqa: E402
 
 # ====== SETTINGS ======
-START_DATE = "2024-10-01"   # YYYY-MM-DD (Changed to match offline_driver test date)
-END_DATE   = "2024-10-01"   # YYYY-MM-DD (inclusive)
+START_DATE = "2025-07-01"   # YYYY-MM-DD (Changed to match offline_driver test date)
+END_DATE   = "2025-07-31"   # YYYY-MM-DD (inclusive)
 MAIN_PATH  = ROOT / "main.py"
 
 # Hardcoded time windows for engine runs

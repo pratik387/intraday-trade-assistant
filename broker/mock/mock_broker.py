@@ -326,6 +326,31 @@ class MockBroker:
         row = df.iloc[-1]
         return {"PDH": float(row.high), "PDL": float(row.low), "PDC": float(row.close)}
 
+    def prewarm_daily_cache(self, symbols: List[str], days: int = 210) -> None:
+        """
+        Pre-load daily data for all symbols into cache at session start.
+        Eliminates repeated disk I/O during bar processing (saves ~6s per bar).
+
+        Call once at initialization to populate _daily_cache for all symbols.
+        Subsequent get_daily() calls will return from cache instantly.
+        """
+        import time
+        logger.info(f"MockBroker: Pre-warming daily cache for {len(symbols)} symbols ({days} days)")
+        start = time.time()
+
+        success = 0
+        for i, symbol in enumerate(symbols):
+            try:
+                self.get_daily(symbol, days=days)  # Populates _daily_cache
+                success += 1
+                if (i + 1) % 500 == 0:
+                    logger.info(f"  Pre-warmed {i+1}/{len(symbols)} symbols...")
+            except Exception as e:
+                logger.warning(f"  Failed to pre-warm {symbol}: {e}")
+
+        elapsed = time.time() - start
+        logger.info(f"MockBroker: Daily cache pre-warmed ({success}/{len(symbols)} symbols) in {elapsed:.1f}s")
+
     # -------------------- LTP API (now works without kwargs) --------------------
     def get_ltp(self, symbol: str, **kwargs) -> float:
         """
