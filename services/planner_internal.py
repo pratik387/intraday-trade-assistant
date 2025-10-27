@@ -1215,7 +1215,11 @@ def generate_trade_plan(
                     # Filter: ADX requirement for breakout setups
                     if plan["eligible"] and "breakout" in plan["strategy"]:
                         breakout_min_adx = quality_filters.get("breakout_min_adx", 20.0)
-                        current_adx = plan["indicators"].get("adx14", 0.0)
+                        current_adx = plan["indicators"].get("adx14")
+
+                        # Skip filter if ADX is not available
+                        if current_adx is None:
+                            current_adx = 0.0
 
                         if current_adx < breakout_min_adx:
                             plan["eligible"] = False

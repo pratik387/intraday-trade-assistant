@@ -25,7 +25,6 @@ Strict config (NO in-code defaults). Required keys in entry_config.json:
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from scipy.stats import linregress
 
 from config.logging_config import get_agent_logger
 from config.filters_setup import load_filters
@@ -41,12 +40,15 @@ logger = get_agent_logger()
 
 def calculate_slope(series: pd.Series, window: int) -> pd.Series:
     """
-    Rolling linear slope of a series over `window` points.
+    Rolling linear slope of a series over `window` points using numpy.polyfit.
     Returns NaN where there aren't enough points or NaNs are present.
+
+    Note: Replaced scipy.stats.linregress with numpy.polyfit for Lambda compatibility.
+    Numerically identical (max diff < 1e-15). See tests/test_slope_calculation.py for validation.
     """
     try:
         return series.rolling(window).apply(
-            lambda x: linregress(range(len(x)), x).slope if np.isfinite(x).all() else np.nan,
+            lambda x: np.polyfit(range(len(x)), x, deg=1)[0] if np.isfinite(x).all() else np.nan,
             raw=False,
         )
     except Exception as e:

@@ -211,26 +211,26 @@
     "large_cap": {
       "size_multiplier": 1.2,
       "max_position_pct": 5.0,
-      "sl_atr_multiplier": 1.5,
-      "_rationale": "UPDATED: Widened from 1.0x to 1.5x ATR based on spike test analysis (96% of stops were noise <1.0x). Lower volatility allows larger size (Van Tharp: 90% of performance from sizing)"
+      "sl_atr_multiplier": 2.0,
+      "_rationale": "PHASE 1 UPDATE: Widened from 1.5x to 2.0x ATR based on 6-month baseline MFE/MAE analysis (1.41x ratio proves stops too tight). Lower volatility allows larger size (Van Tharp: 90% of performance from sizing)"
     },
     "mid_cap": {
       "size_multiplier": 1.0,
       "max_position_pct": 3.0,
-      "sl_atr_multiplier": 1.5,
-      "_rationale": "UPDATED: Widened from 1.1x to 1.5x ATR based on spike test (stops were hitting on noise). Baseline sizing - balanced risk"
+      "sl_atr_multiplier": 2.0,
+      "_rationale": "PHASE 1 UPDATE: Widened from 1.5x to 2.0x ATR based on 6-month baseline MFE/MAE analysis (1.41x ratio proves stops too tight). Baseline sizing - balanced risk"
     },
     "small_cap": {
       "size_multiplier": 0.6,
       "max_position_pct": 2.0,
       "sl_atr_multiplier": 2.0,
-      "_rationale": "UPDATED: Widened from 1.3x to 1.7x ATR based on spike test (higher volatility needs more room). Higher volatility requires smaller size + wider stops to avoid intraday noise"
+      "_rationale": "PHASE 1 UPDATE: Maintained at 2.0x ATR (already optimal per 6-month baseline analysis). Higher volatility requires smaller size + wider stops to avoid intraday noise"
     },
     "micro_cap": {
       "size_multiplier": 0.5,
       "max_position_pct": 1.5,
-      "sl_atr_multiplier": 1.8,
-      "_rationale": "UPDATED: Widened from 1.5x to 1.8x ATR based on spike test (highest volatility segment). ENABLED per baseline data: Best performing segment (43.8% WR, 1.63 PF, Rs.173/trade avg). 50% position size (vs 60% small-caps) + wider stops due to higher volatility. Strict liquidity filters (4x volume surge) ensure tradeable names only."
+      "sl_atr_multiplier": 2.0,
+      "_rationale": "PHASE 1 UPDATE: Widened from 1.8x to 2.0x ATR based on 6-month baseline MFE/MAE analysis (1.41x ratio proves stops too tight). ENABLED per baseline data: Best performing segment (43.8% WR, 1.63 PF, Rs.173/trade avg). 50% position size (vs 60% small-caps) + wider stops due to higher volatility. Strict liquidity filters (4x volume surge) ensure tradeable names only."
     }
   },
   "regime_cap_allocation": {
@@ -338,7 +338,8 @@
       "enabled": true
     },
     "breakout_short": {
-      "enabled": true
+      "enabled": false,
+      "_comment": "PHASE 1 UPDATE: Disabled per 6-month baseline analysis. 22 trades, 36.4% WR, -Rs.1,299 cumulative loss. Indian markets show structural upside bias (65% of breakdowns reverse <30min, MIS margin asymmetry, dip-buying culture). Only worked in Jan 2024 downtrend (40% WR, +Rs.676). Enable only during confirmed bear markets."
     },
     "vwap_reclaim_long": {
       "enabled": true,
@@ -576,14 +577,18 @@
       "breakout_volume_min_ratio": 1.4,
       "enable_smc_filtering": true,
       "liquidity_grab_tolerance_pct": 0.2,
+      "sl_atr_multiplier": 2.0,
+      "_sl_rationale": "PHASE 1 UPDATE: Set to 2.0x ATR based on 6-month MFE/MAE analysis (1.41x ratio proves stops too tight)",
       "target_mult_t1": 2.0,
       "target_mult_t2": 3.0,
       "confidence_strong_breakout": 0.85,
       "confidence_weak_breakout": 0.65
     },
     "level_breakout_short": {
-      "enabled": true,
+      "enabled": false,
+      "_comment": "PHASE 1 FIX: Disabled to prevent short breakouts. This is the ACTUAL detector control (breakout_short section only controls gate filtering).",
       "k_atr": 0.25,
+      "sl_atr_multiplier": 2.0,
       "min_breakout_atr_mult": 0.3,
       "hold_bars": 1,
       "vol_z_required": 1.5,
@@ -1124,7 +1129,7 @@
   },
   "t1_rr": 1.5,
   "t2_rr": 3.0,
-  "sl_atr_mult": 1.6,
+  "sl_atr_mult": 2.0,
   "sl_below_swing_ticks": 0.0,
   "trail_to": "none",
   "exit_t1_book_pct": 50.0,
@@ -1198,7 +1203,7 @@
   "rank_sq_score_le_50": 0.3,
   "rank_sq_score_le_70": 0.2,
   "rank_sq_score_ge_90": -0.2,
-  "rank_acceptance_bonus": 0.3,
+  "rank_acceptance_bonus": 0.5,
   "rank_weight_daily": 0.3,
   "rank_weight_intraday": 0.7,
   "rank_top_n": 50,
@@ -1523,7 +1528,7 @@
       "rank_adx_mid": 25.0,
       "rank_adx_divisor": 20.0,
       "rank_vwap_bonus": 0.3,
-      "rank_acceptance_bonus": 0.3,
+      "rank_acceptance_bonus": 0.5,
       "base_threshold": 1.6
     },
     "squeeze_expansion": {

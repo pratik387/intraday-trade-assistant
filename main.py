@@ -33,12 +33,19 @@ from services.ingest.tick_router import register_tick_listener
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
 
-# Live adapters
-from broker.kite.kite_client import KiteClient      # WebSocket client
-from broker.kite.kite_broker import KiteBroker      # REST orders/LTP
-
 # Dry-run adapter (patched MockBroker with LTP cache + Feather replay)
 from broker.mock.mock_broker import MockBroker
+
+# Live adapters (imported conditionally to avoid kiteconnect cryptography dependency in Lambda)
+KiteClient = None
+KiteBroker = None
+try:
+    from broker.kite.kite_client import KiteClient      # WebSocket client
+    from broker.kite.kite_broker import KiteBroker      # REST orders/LTP
+except ImportError as e:
+    # Expected in Lambda where kiteconnect has binary dependencies
+    # Dry-run mode uses MockBroker anyway
+    pass
 
 logger = get_agent_logger()
 trading_logger = get_trading_logger()

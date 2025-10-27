@@ -1,0 +1,32 @@
+# SAFE Docker ignore - only exclude what's truly not needed at runtime
+# Cache is downloaded from S3, logs are generated fresh, venvs not needed in container
+
+# Virtual environments (pip install happens in Dockerfile)
+.venv/
+.venv-linux/
+venv/
+env/
+
+# Cache files (downloaded from S3 at runtime)
+cache/
+
+# Log files (generated fresh during backtest)
+logs/
+
+# Cloud results (uploaded to S3, not input)
+cloud_results/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git/
+
+# AWS credentials
+.aws/
+
+# IDE
+.vscode/
+.idea/

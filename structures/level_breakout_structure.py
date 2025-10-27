@@ -465,12 +465,13 @@ class LevelBreakoutStructure(BaseStructure):
             breakout_level = entry_price
 
         # NSE FIX: Set stop loss relative to ENTRY price, not breakout level
-        # Previous bug: stop at level±0.5×ATR gave only 0.75×ATR risk from entry
-        # New: stop at entry±1.5×ATR gives proper risk management (47.4% hit rate per NSE data)
+        # Use configured sl_atr_multiplier instead of hardcoded value
+        # PHASE 1 FIX: Was hardcoded to 1.5x, now uses config value (2.0x per MFE/MAE analysis)
+        sl_mult = self.config.get("sl_atr_multiplier", 2.0)
         if side == "long":
-            hard_sl = entry_price - (atr * 1.5)  # Stop 1.5×ATR below entry
+            hard_sl = entry_price - (atr * sl_mult)  # Stop sl_mult×ATR below entry
         else:
-            hard_sl = entry_price + (atr * 1.5)  # Stop 1.5×ATR above entry
+            hard_sl = entry_price + (atr * sl_mult)  # Stop sl_mult×ATR above entry
 
         risk_per_share = abs(entry_price - hard_sl)
 

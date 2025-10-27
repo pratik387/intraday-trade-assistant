@@ -1,6 +1,7 @@
 # Environment
 .env.development
 .env
+.venv-linux/
 
 # Python
 *.pyc
@@ -51,3 +52,6 @@ oracle_cloud/
 .claude/
 *.md
 analysis/
+aws/lambda/pure-python-layer/
+cloud_results/
+ta-lib/
