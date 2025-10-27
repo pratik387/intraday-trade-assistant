@@ -87,10 +87,9 @@ class CapitalManager:
             'capital_checks': 0
         }
 
-        # Load MIS config if needed
+        # MIS data now comes from nse_all.json (mis_leverage field)
+        # No separate config file needed
         self.mis_config = None
-        if enabled and mis_enabled:
-            self.mis_config = self._load_mis_config(mis_config_path)
 
         # Log mode
         if not enabled:

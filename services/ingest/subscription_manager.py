@@ -152,16 +152,18 @@ class SubscriptionManager:
         if self._pending_add:
             adds = list(self._pending_add)
             self._pending_add.clear()
+            total_added = 0
             for i in range(0, len(adds), self.batch_size):
                 batch = adds[i : i + self.batch_size]
                 try:
                     self.ws.subscribe_batch(batch)
                     for t in batch:
                         self._current.add(t)
+                    total_added += len(batch)
                 except Exception as e:
                     logger.warning(f"WS subscribe failed for {len(batch)} tokens: {e}")
 
-        logger.debug(
-            "subscription-manager applied diffs: now=%d (core=%d, hot=%d)",
-            len(self._current), len(self._core), len(self._hot)
-        )     
+            if total_added > 0:
+                logger.info(f"Subscribed to {total_added} tokens (total: {len(self._current)})")
+            elif adds:  # Only warn if there were tokens to subscribe
+                logger.warning("No tokens were successfully subscribed")     

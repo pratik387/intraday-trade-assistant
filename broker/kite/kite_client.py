@@ -46,8 +46,10 @@ class KiteClient:
         
     def make_ticker(self):
         try:
-            return KiteTicker(api_key=self.api_key, access_token=self.access_token)
+            ticker = KiteTicker(api_key=self.api_key, access_token=self.access_token)
+            return ticker
         except Exception as e:
+            logger.exception(f"Failed to create KiteTicker: {e}", exc_info=True)
             raise RuntimeError(f"KiteClient: failed to create KiteTicker: {e}")
 
     def _load_instruments(self) -> None:
@@ -55,6 +57,7 @@ class KiteClient:
         try:
             raw = self._kc.instruments()
         except Exception as e:
+            logger.exception(f"Failed to load instruments: {e}", exc_info=True)
             raise RuntimeError(f"KiteClient: failed to load instruments: {e}")
 
         self._sym2inst.clear()

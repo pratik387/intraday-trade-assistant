@@ -1602,8 +1602,7 @@
     "max_concurrent_positions": 25,
     "mis_leverage": {
       "enabled": false,
-      "config_file": "config/mis_margins.json",
-      "_comment": "MIS leverage requires capital_management.enabled=true"
+      "_comment": "MIS leverage data is read from nse_all.json (mis_leverage field). This just enables/disables the feature."
     },
     "_modes": {
       "_comment": "Three operational modes",

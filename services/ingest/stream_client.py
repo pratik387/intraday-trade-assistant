@@ -56,6 +56,11 @@ class WSClient:
         self._stop = threading.Event()
         self.on_tick = on_tick
 
+        # Buffer for subscriptions before WebSocket connects
+        self._connected = threading.Event()
+        self._pending_subscriptions: List[List[int]] = []
+        self._pending_lock = threading.Lock()
+
     # --------------------------- Public Wiring API ---------------------------
     def on_message(self, cb: Callable[[Any], None]) -> None:
         """Register a single raw-message (tick) callback.
@@ -92,12 +97,24 @@ class WSClient:
 
     # ------------------------------ Subscriptions ---------------------------
     def subscribe_batch(self, tokens: List[int]) -> None:
-        if not tokens or self._ticker is None:
+        if not tokens:
             return
+
+        # If WebSocket not connected yet, buffer the subscription
+        if not self._connected.is_set():
+            with self._pending_lock:
+                self._pending_subscriptions.append(tokens)
+            return
+
+        # WebSocket is connected, send subscription
+        if self._ticker is None:
+            logger.error(f"WSClient: Ticker is None, dropping {len(tokens)} subscriptions")
+            return
+
         try:
             self._ticker.subscribe(tokens)
         except Exception as e:
-            logger.error(f"WSClient.subscribe_batch failed: {e}")
+            logger.error(f"WSClient: Subscribe failed for {len(tokens)} tokens: {e}")
 
     def unsubscribe_batch(self, tokens: List[int]) -> None:
         if not tokens or self._ticker is None:
@@ -121,7 +138,6 @@ class WSClient:
         try:
             self._ticker = self._sdk.make_ticker()
             self._wire_callbacks(self._ticker)
-            logger.info("WSClient connecting...")
             self._connect(self._ticker)
             # Passive loop to keep the thread alive as long as SDK runs
             while not self._stop.is_set():
@@ -134,42 +150,78 @@ class WSClient:
                     close = getattr(self._ticker, "close", None)
                     if callable(close):
                         close()
-            except Exception:
-                pass
-            logger.info("WSClient thread exit")
+            except Exception as e:
+                logger.warning(f"WSClient: Error closing ticker: {e}")
 
     # -- helpers --
     def _wire_callbacks(self, ticker: Any) -> None:
+        # KiteTicker uses attribute assignment pattern, not method calls
+        # e.g., ticker.on_connect = callback (not ticker.on_connect(callback))
+
         # on_connect: useful to log and possibly resubscribe if SDK needs it
-        on_connect = getattr(ticker, "on_connect", None)
-        if callable(on_connect):
-            def _connected(*_args, **_kw):
-                logger.info("WS connected")
-            on_connect(_connected)
+        if hasattr(ticker, "on_connect"):
+            def _connected(ws, response):
+                logger.info("WebSocket connected")
+
+                # Mark as connected
+                self._connected.set()
+
+                # Flush all buffered subscriptions
+                with self._pending_lock:
+                    if self._pending_subscriptions:
+                        total_tokens = sum(len(batch) for batch in self._pending_subscriptions)
+                        logger.info(f"Flushing {total_tokens} buffered subscription tokens...")
+
+                        for batch in self._pending_subscriptions:
+                            try:
+                                self._ticker.subscribe(batch)
+                            except Exception as e:
+                                logger.error(f"Failed to subscribe buffered tokens: {e}")
+
+                        self._pending_subscriptions.clear()
+                        logger.info("All buffered subscriptions sent")
+
+            ticker.on_connect = _connected
+        else:
+            logger.warning("Ticker has no on_connect attribute")
 
         # on_ticks: Zerodha-style batch callback; pass through to router
-        on_ticks = getattr(ticker, "on_ticks", None)
-        if callable(on_ticks):
+        if hasattr(ticker, "on_ticks"):
             def _ticks(_ws, ticks):
                 if self._on_message:
                     try:
                         for tk in ticks or []:
                             self._on_message(tk)
                     except Exception as e:
-                        logger.error(f"on_message callback failed: {e}")
-            on_ticks(_ticks)
+                        logger.error(f"Tick processing failed: {e}", exc_info=True)
+                else:
+                    logger.warning(f"on_ticks fired but _on_message is None! Dropping {len(ticks) if ticks else 0} ticks")
+            ticker.on_ticks = _ticks
+        else:
+            logger.warning("Ticker has no on_ticks attribute")
 
         # on_close: replay finished or connection lost
-        on_close = getattr(ticker, "on_close", None)
-        if callable(on_close):
+        if hasattr(ticker, "on_close"):
             def _closed(*_args, **_kw):
-                logger.warning("WS closed - replay finished or connection lost")
+                logger.warning("WebSocket disconnected")
+                # Clear connected flag
+                self._connected.clear()
                 if self._on_close_cb:
                     try:
                         self._on_close_cb()
                     except Exception as e:
                         logger.error(f"on_close callback failed: {e}")
-            on_close(_closed)
+            ticker.on_close = _closed
+        else:
+            logger.warning("Ticker has no on_close attribute")
+
+        # on_error: capture WebSocket errors
+        if hasattr(ticker, "on_error"):
+            def _error(*_args, **_kw):
+                logger.error(f"WebSocket error: {_args} {_kw}")
+            ticker.on_error = _error
+        else:
+            logger.warning("Ticker has no on_error attribute")
 
     @staticmethod
     def _connect(ticker: Any) -> None:
@@ -179,6 +231,7 @@ class WSClient:
                 raise RuntimeError("WSClient: ticker has no connect()")
             connect()
         except Exception as e:
+            logger.exception(f"WebSocket connect() failed: {e}", exc_info=True)
             raise RuntimeError(f"WSClient: connect() failed: {e}") from e
         
         # --- Compatibility wrappers for SubscriptionManager ---
@@ -187,7 +240,7 @@ class WSClient:
         try:
             self.subscribe_batch(tokens)
         except Exception as e:
-            logger.error(f"WSClient.subscribe failed: {e}")
+            logger.exception(f"WSClient.subscribe failed: {e}")
 
     def unsubscribe(self, tokens: list[int]) -> None:
         """Compat: SubscriptionManager expects ws.unsubscribe(list[int])."""

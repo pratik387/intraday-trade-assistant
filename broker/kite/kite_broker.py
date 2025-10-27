@@ -8,7 +8,7 @@ Single accepted symbol format throughout the app: **"EXCH:TRADINGSYMBOL"**
 
 API (minimal):
   class KiteBroker:
-    - __init__(api_key: str | None = None, access_token: str | None = None)
+    - __init__(api_key: str | None = None, access_token: str | None = None, dry_run: bool = False)
     - place_order(symbol: str, side: Literal['BUY','SELL'], qty: int,
                   order_type: Literal['MARKET','LIMIT'] = 'MARKET',
                   price: float | None = None,
@@ -59,7 +59,7 @@ def _split_symbol(symbol: str) -> Tuple[str, str]:
 
 
 class KiteBroker:
-    def __init__(self, api_key: Optional[str] = None, access_token: Optional[str] = None) -> None:
+    def __init__(self, api_key: Optional[str] = None, access_token: Optional[str] = None, dry_run: bool = False) -> None:
         self.api_key = env.KITE_API_KEY
         self.access_token = env.KITE_ACCESS_TOKEN
         if not self.api_key or not self.access_token:
@@ -69,6 +69,16 @@ class KiteBroker:
 
         # MIS availability cache (symbol -> is_mis_available)
         self._mis_cache: Dict[str, bool] = {}
+
+        # Paper trading mode
+        self.dry_run = dry_run
+        self._paper_orders: List[Dict] = []  # Log orders in paper trading
+        self._paper_order_counter = 0
+
+        if self.dry_run:
+            logger.warning("🧪 PAPER TRADING MODE - Orders will be simulated, not sent to Zerodha")
+        else:
+            logger.warning("⚠️ LIVE TRADING MODE - Orders will be sent to Zerodha!")
 
     # ------------------------------ MIS Availability Check --------------
     def check_mis_availability(
@@ -196,6 +206,13 @@ class KiteBroker:
                 else:
                     raise RuntimeError(f"MIS not available for {symbol}: {reason}")
 
+        # PAPER TRADING MODE - Simulate order
+        if self.dry_run:
+            return self._simulate_order(
+                symbol=symbol, side=side_u, qty=qty,
+                order_type=order_type, price=price, product=actual_product
+            )
+
         exch, tsym = _split_symbol(symbol)
         txn = self.kc.TRANSACTION_TYPE_BUY if side_u == "BUY" else self.kc.TRANSACTION_TYPE_SELL
         ot = self.kc.ORDER_TYPE_LIMIT if order_type.upper() == "LIMIT" else self.kc.ORDER_TYPE_MARKET
@@ -265,3 +282,87 @@ class KiteBroker:
         for k, v in data.items():
             out[k] = float(v.get("last_price") or 0.0)
         return out
+
+    # ------------------------------ Paper Trading ---------------------------
+    def _simulate_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: int,
+        order_type: str,
+        price: Optional[float],
+        product: str
+    ) -> str:
+        """
+        Simulate order execution in paper trading mode.
+
+        Returns a simulated order ID and logs the order details.
+        Does NOT call Zerodha API.
+        """
+        import pandas as pd
+
+        self._paper_order_counter += 1
+        order_id = f"PAPER_{self._paper_order_counter:08d}"
+
+        # Get current market price
+        try:
+            current_ltp = self.get_ltp(symbol)
+        except Exception:
+            current_ltp = price or 0.0
+
+        # Simulate realistic fill price with slippage
+        fill_price = self._calculate_paper_fill_price(symbol, side, current_ltp)
+
+        # Log the simulated order
+        paper_order = {
+            'order_id': order_id,
+            'timestamp': pd.Timestamp.now(),
+            'symbol': symbol,
+            'side': side,
+            'qty': qty,
+            'order_type': order_type,
+            'order_price': price,
+            'fill_price': fill_price,
+            'product': product,
+            'status': 'FILLED'
+        }
+        self._paper_orders.append(paper_order)
+
+        logger.info(
+            f"[PAPER] Order simulated: {symbol} | {side} {qty} @ Rs.{fill_price:.2f} "
+            f"({product}) | Order ID: {order_id}"
+        )
+
+        return order_id
+
+    def _calculate_paper_fill_price(self, symbol: str, side: str, ltp: float) -> float:
+        """
+        Calculate realistic fill price with slippage based on market conditions.
+
+        Slippage depends on:
+        - Market cap (liquidity)
+        - Order side (buy pays more, sell gets less)
+        """
+        # Default slippage: 5 bps (0.05%)
+        slippage_bps = 5
+
+        # TODO: Get actual market cap from nse_all.json and adjust
+        # large_cap: 2 bps, mid_cap: 5 bps, small_cap: 10 bps, micro_cap: 20 bps
+
+        slippage_amount = ltp * (slippage_bps / 10000)
+
+        if side == "BUY":
+            return ltp + slippage_amount  # Pay more when buying
+        else:
+            return ltp - slippage_amount  # Get less when selling
+
+    def get_paper_trading_report(self) -> dict:
+        """Get summary of paper trading orders"""
+        if not self.dry_run:
+            return {}
+
+        return {
+            'total_orders': len(self._paper_orders),
+            'orders': self._paper_orders,
+            'mode': 'paper_trading'
+        }

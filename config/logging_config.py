@@ -63,13 +63,14 @@ def set_global_run_prefix(run_prefix: str):
     global _global_run_prefix
     _global_run_prefix = run_prefix
 
-def _initialize_loggers(run_prefix: str = ""):
+def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     """Initialize all loggers (internal function)"""
     global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path, _global_run_prefix
     global _scanner_logger, _screener_logger, _ranking_logger, _planning_logger, _events_decision_logger
 
     # Quick check - if ANY logger is initialized, reuse the existing session
-    if _agent_logger is not None:
+    # UNLESS force_reinit is True (allows re-initialization with different run_prefix)
+    if _agent_logger is not None and not force_reinit:
         return
 
     # Use provided run_prefix, or fall back to global run prefix
@@ -110,6 +111,11 @@ def _initialize_loggers(run_prefix: str = ""):
 
     # Agent Logger
     _agent_logger = logging.getLogger("agent")
+
+    # Clear existing handlers if force_reinit (allows switching from console to file logging)
+    if force_reinit and _agent_logger.hasHandlers():
+        _agent_logger.handlers.clear()
+
     if not _agent_logger.hasHandlers():
         _agent_logger.setLevel(logging.INFO)
         agent_file = logging.FileHandler(log_dir / "agent.log",  encoding="utf-8")
@@ -134,11 +140,22 @@ def _initialize_loggers(run_prefix: str = ""):
     _planning_logger = JSONLLogger(log_dir / "planning.jsonl", "planning")
     _events_decision_logger = JSONLLogger(log_dir / "events_decisions.jsonl", "events_decision")
 
-def get_agent_logger(run_prefix: str = ""):
+def get_agent_logger(run_prefix: str = "", force_reinit: bool = False):
     """Get the agent logger for general application logging"""
     global _agent_logger
+    if _agent_logger is None or force_reinit:
+        _initialize_loggers(run_prefix, force_reinit=force_reinit)
+
+    # If _initialize_loggers didn't set a logger (no run_prefix, main process),
+    # create a fallback console-only logger (for Lambda, imports, etc.)
     if _agent_logger is None:
-        _initialize_loggers(run_prefix)
+        _agent_logger = logging.getLogger("agent")
+        if not _agent_logger.hasHandlers():
+            _agent_logger.setLevel(logging.INFO)
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+            _agent_logger.addHandler(console_handler)
+
     return _agent_logger
 
 def get_execution_loggers():

@@ -3,6 +3,9 @@
 .env
 .venv-linux/
 
+# Kite Token (contains sensitive access token - DO NOT COMMIT)
+token.txt
+
 # Python
 *.pyc
 __pycache__/
