@@ -10,6 +10,8 @@ Single entrypoint that wires:
 
 Dry-run:
   Uses MockBroker + Feather replay for ticks; orders are logged (not sent).
+Paper Trading:
+  Uses KiteClient + KiteBroker with dry_run=True; live data, simulated orders.
 Live:
   Uses KiteClient/KiteBroker.
 """
@@ -144,7 +146,35 @@ class _DryRunBroker:
 # ------------------------ Main orchestration ------------------------
 
 def main() -> int:
-    global args  # Access the module-level args variable
+    global args, logger, trading_logger  # Access the module-level variables
+
+    # Re-initialize loggers with run_prefix to create log files
+    import config.logging_config as logging_config
+    from config.logging_config import set_global_run_prefix, get_agent_logger, get_trading_logger
+
+    # Auto-generate run_prefix if not provided
+    run_prefix = args.run_prefix
+    if not run_prefix:
+        if args.paper_trading:
+            run_prefix = "paper_"
+        elif not args.dry_run:
+            run_prefix = "live_"
+        # For dry-run (backtests), empty prefix is fine (logs optional)
+
+    print(f"[DEBUG] Initializing logger with run_prefix: '{run_prefix}'")
+    print(f"[DEBUG] Args: paper_trading={args.paper_trading}, dry_run={args.dry_run}")
+
+    set_global_run_prefix(run_prefix)
+    logger = get_agent_logger(run_prefix, force_reinit=True)  # Force re-init with file handlers
+    trading_logger = get_trading_logger()
+
+    print(f"[DEBUG] Logger initialized: {logger}")
+    print(f"[DEBUG] Logger handlers ({len(logger.handlers)}): {[type(h).__name__ for h in logger.handlers]}")
+    if logging_config.dir_path:
+        print(f"[DEBUG] Log directory: {logging_config.dir_path}")
+        print(f"[DEBUG] Session ID: {logging_config._session_id}")
+
+    logger.info(f"Session started | Mode: {'Paper' if args.paper_trading else 'Dry-run' if args.dry_run else 'Live'}")
 
     cfg = load_filters()  # validate early; raises if required keys are missing
 
@@ -155,12 +185,32 @@ def main() -> int:
         logger.info("[CACHE] Structure detection caching enabled")
         cfg["_enable_structure_cache"] = True  # Pass flag to worker processes
 
-    # Initialize CapitalManager based on config
+    # Initialize CapitalManager based on config and mode
     cap_mgmt_cfg = cfg.get('capital_management', {})
+
+    # Auto-enable capital management for paper trading and live trading
+    # For backtests, only enable if --with-capital-limits flag is set
+    capital_enabled = cap_mgmt_cfg.get('enabled', False)
+    if args.paper_trading or (not args.dry_run and not args.paper_trading):
+        # Paper trading or live trading: always enable
+        capital_enabled = True
+        mis_enabled = True
+        logger.info("[CAPITAL] Auto-enabled capital management (paper/live mode)")
+    elif args.dry_run and args.with_capital_limits:
+        # Backtest with capital limits: enable if flag set
+        capital_enabled = True
+        mis_enabled = True
+        logger.info("[CAPITAL] Enabled capital management for realistic backtest (--with-capital-limits)")
+    else:
+        # Backtest without flag: keep disabled for fast testing
+        capital_enabled = False
+        mis_enabled = False
+        logger.info("[CAPITAL] Disabled capital management for fast backtest")
+
     capital_manager = CapitalManager(
-        enabled=cap_mgmt_cfg.get('enabled', False),
+        enabled=capital_enabled,
         initial_capital=cap_mgmt_cfg.get('initial_capital', 100000),
-        mis_enabled=cap_mgmt_cfg.get('mis_leverage', {}).get('enabled', False),
+        mis_enabled=mis_enabled,
         mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file'),
         max_positions=cap_mgmt_cfg.get('max_concurrent_positions', 25)
     )
@@ -169,7 +219,16 @@ def main() -> int:
     oq = OrderQueue()
 
     # Pick mode
-    if args.dry_run:
+    if args.paper_trading:
+        # Paper trading: live data + simulated orders
+        from config.env_setup import env
+        env.validate_for_paper_trading()  # Validate credentials before starting
+
+        sdk = KiteClient()
+        broker = KiteBroker(dry_run=True)
+        logger.warning("🧪 PAPER TRADING MODE: Live data, simulated orders (no real trades)")
+    elif args.dry_run:
+        # Backtesting: historical data + mock broker
         if not args.session_date:
             print("error: --dry-run requires --session-date YYYY-MM-DD", file=sys.stderr)
             sys.exit(2)
@@ -181,10 +240,12 @@ def main() -> int:
         sdk = MockBroker(path_json="nse_all.json", from_date=from_date, to_date=to_date)
         sdk.set_session_date(args.session_date)  # prev-day refs (PDH/PDL/PDC) resolve correctly
         broker = _DryRunBroker(sdk)
-        logger.warning("DRY RUN: %s %s-%s", args.session_date, args.from_hhmm, args.to_hhmm)
+        logger.warning("📊 BACKTEST MODE: %s %s-%s (historical data replay)", args.session_date, args.from_hhmm, args.to_hhmm)
     else:
+        # Live trading: real money
         sdk = KiteClient()
-        broker = KiteBroker()
+        broker = KiteBroker(dry_run=False)
+        logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
 
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq)
@@ -314,6 +375,8 @@ def _hhmm_on(day_str: str, hhmm: str) -> str:
 def _parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="Use mock broker + archived ticks")
+    ap.add_argument("--paper-trading", action="store_true", help="Paper trading mode: live data, simulated orders")
+    ap.add_argument("--with-capital-limits", action="store_true", help="Enable capital management for backtests (default: disabled for fast testing)")
     ap.add_argument("--session-date", help="YYYY-MM-DD (required with --dry-run)")
     ap.add_argument("--from-hhmm", default="09:10")
     ap.add_argument("--to-hhmm",   default="15:30")
