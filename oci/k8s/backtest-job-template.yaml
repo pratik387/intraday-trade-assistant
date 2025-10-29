@@ -30,9 +30,52 @@ spec:
         image: python:3.11-slim
         imagePullPolicy: IfNotPresent
 
-        # Use runtime installation entrypoint
-        command: ["python"]
-        args: ["/app/oci/docker/entrypoint_runtime.py"]
+        # Use inline script to bootstrap
+        command: ["/bin/bash"]
+        args:
+        - "-c"
+        - |
+          set -e
+          echo "Installing OCI SDK..."
+          pip install --quiet oci
+
+          echo "Downloading code from OCI..."
+          python3 << 'PYEOF'
+          import os
+          import tarfile
+          from pathlib import Path
+          import oci
+
+          config = oci.config.from_file()
+          os_client = oci.object_storage.ObjectStorageClient(config)
+          namespace = os_client.get_namespace().data
+          bucket = os.environ.get('OCI_BUCKET_CODE', 'backtest-code')
+          run_id = os.environ.get('RUN_ID')
+
+          print(f"Downloading: {run_id}/code.tar.gz")
+          get_obj = os_client.get_object(
+              namespace_name=namespace,
+              bucket_name=bucket,
+              object_name=f"{run_id}/code.tar.gz"
+          )
+
+          tarball_path = Path('/tmp/code.tar.gz')
+          with open(tarball_path, 'wb') as f:
+              for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                  f.write(chunk)
+
+          app_dir = Path('/app')
+          app_dir.mkdir(parents=True, exist_ok=True)
+
+          with tarfile.open(tarball_path, 'r:gz') as tar:
+              tar.extractall(path=app_dir)
+
+          print(f"Code extracted to /app")
+          PYEOF
+
+          echo "Running entrypoint..."
+          cd /app
+          python3 oci/docker/entrypoint_runtime.py
 
         # Resource limits (2 CPU, 8 GB RAM per pod)
         resources:
