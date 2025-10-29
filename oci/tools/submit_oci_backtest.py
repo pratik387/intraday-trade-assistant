@@ -41,8 +41,8 @@ class OCIBacktestSubmitter:
         self.cache_bucket = 'backtest-cache'
         self.results_bucket = 'backtest-results'
 
-        # Project root
-        self.root = Path(__file__).parent.parent
+        # Project root (oci/tools/submit.py -> parent.parent.parent = project root)
+        self.root = Path(__file__).parent.parent.parent
 
     def _get_namespace(self):
         """Get OCI Object Storage namespace"""
