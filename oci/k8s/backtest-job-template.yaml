@@ -6,9 +6,10 @@ metadata:
     app: backtest
     run-id: "{{RUN_ID}}"
 spec:
-  # Run 120 pods in parallel (one per trading day)
-  parallelism: 120
-  completions: 120
+  # Run pods in parallel (one per trading day)
+  # Set to {{PARALLELISM}} - will be replaced by submit script
+  parallelism: {{PARALLELISM}}
+  completions: {{COMPLETIONS}}
   completionMode: Indexed
   backoffLimit: 3  # Retry failed pods up to 3 times
 
@@ -22,7 +23,7 @@ spec:
 
       # Create image pull secret for OCIR (Oracle Container Registry)
       imagePullSecrets:
-      - name: ocirsecret
+      - name: ocir-secret
 
       containers:
       - name: backtest

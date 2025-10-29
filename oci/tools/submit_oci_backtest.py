@@ -172,11 +172,14 @@ class OCIBacktestSubmitter:
         # Replace placeholders
         dates_csv = ','.join(dates)
         config_hash = self.get_config_hash()
+        num_dates = len(dates)
 
         job_yaml = template.replace('{{RUN_ID}}', run_id)
         job_yaml = job_yaml.replace('{{DATES_LIST}}', dates_csv)
         job_yaml = job_yaml.replace('{{TENANCY_NAMESPACE}}', self.namespace)
         job_yaml = job_yaml.replace('{{CONFIG_HASH}}', config_hash)
+        job_yaml = job_yaml.replace('{{PARALLELISM}}', str(num_dates))
+        job_yaml = job_yaml.replace('{{COMPLETIONS}}', str(num_dates))
 
         # Write temporary job file
         temp_job_path = self.root / 'temp' / f'job-{run_id}.yaml'
