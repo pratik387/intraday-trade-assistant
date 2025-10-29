@@ -1,0 +1,22 @@
+version: 0.1
+component: build
+timeoutInSeconds: 3600
+shell: bash
+
+steps:
+  - type: Command
+    name: "Build Container Image"
+    command: |
+      export DOCKER_BUILDKIT=1
+      docker build -f oci/docker/Dockerfile -t backtest-worker:${OCI_BUILD_RUN_ID} .
+
+  - type: Command
+    name: "Tag Image"
+    command: |
+      docker tag backtest-worker:${OCI_BUILD_RUN_ID} ${OCIR_REGION}.ocir.io/${OCIR_NAMESPACE}/backtest-worker:latest
+      docker tag backtest-worker:${OCI_BUILD_RUN_ID} ${OCIR_REGION}.ocir.io/${OCIR_NAMESPACE}/backtest-worker:${OCI_BUILD_RUN_ID}
+
+outputArtifacts:
+  - name: backtest-worker-image
+    type: DOCKER_IMAGE
+    location: backtest-worker:${OCI_BUILD_RUN_ID}
