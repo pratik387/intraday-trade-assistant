@@ -21,14 +21,18 @@ spec:
     spec:
       restartPolicy: Never
 
-      # Create image pull secret for OCIR (Oracle Container Registry)
-      imagePullSecrets:
-      - name: ocir-secret
+      # No image pull secret needed for public Docker Hub image
+      # imagePullSecrets:
+      # - name: ocir-secret
 
       containers:
       - name: backtest
-        image: bom.ocir.io/{{TENANCY_NAMESPACE}}/backtest-worker:latest
-        imagePullPolicy: Always
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+
+        # Use runtime installation entrypoint
+        command: ["python"]
+        args: ["/app/entrypoint_runtime.py"]
 
         # Resource limits (2 CPU, 8 GB RAM per pod)
         resources:

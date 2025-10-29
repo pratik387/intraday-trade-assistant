@@ -105,7 +105,9 @@ class OCIBacktestSubmitter:
             'utils/**/*.py',
             'broker/**/*.py',
             'diagnostics/**/*.py',
-            'nse_all.json'
+            'nse_all.json',
+            'oci/docker/entrypoint_runtime.py',
+            'requirements.txt'
         ]
 
         tarball_path = temp_dir / 'code.tar.gz'
