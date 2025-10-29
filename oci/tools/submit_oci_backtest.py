@@ -149,10 +149,10 @@ class OCIBacktestSubmitter:
             sys.exit(1)
 
     def get_config_hash(self):
-        """Get configuration hash"""
+        """Get configuration hash (using SHA256 for FIPS compliance)"""
         config_file = self.root / 'config' / 'configuration.json'
         with open(config_file, 'rb') as f:
-            return hashlib.md5(f.read()).hexdigest()[:8]
+            return hashlib.sha256(f.read()).hexdigest()[:8]
 
     def submit_kubernetes_job(self, run_id, dates, description):
         """Submit Kubernetes Job"""
