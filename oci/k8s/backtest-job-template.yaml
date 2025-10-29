@@ -1,0 +1,88 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backtest-{{RUN_ID}}
+  labels:
+    app: backtest
+    run-id: "{{RUN_ID}}"
+spec:
+  # Run 120 pods in parallel (one per trading day)
+  parallelism: 120
+  completions: 120
+  completionMode: Indexed
+  backoffLimit: 3  # Retry failed pods up to 3 times
+
+  template:
+    metadata:
+      labels:
+        app: backtest-worker
+        run-id: "{{RUN_ID}}"
+    spec:
+      restartPolicy: Never
+
+      # Create image pull secret for OCIR (Oracle Container Registry)
+      imagePullSecrets:
+      - name: ocirsecret
+
+      containers:
+      - name: backtest
+        image: bom.ocir.io/{{TENANCY_NAMESPACE}}/backtest-worker:latest
+        imagePullPolicy: Always
+
+        # Resource limits (2 CPU, 8 GB RAM per pod)
+        resources:
+          requests:
+            cpu: "2"
+            memory: "8Gi"
+          limits:
+            cpu: "2"
+            memory: "8Gi"
+
+        # Environment variables
+        env:
+        # Pod index (0-119) - each pod processes one date
+        - name: JOB_COMPLETION_INDEX
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+
+        # Run ID for organizing results
+        - name: RUN_ID
+          value: "{{RUN_ID}}"
+
+        # OCI Object Storage buckets
+        - name: OCI_BUCKET_CACHE
+          value: "backtest-cache"
+
+        - name: OCI_BUCKET_CODE
+          value: "backtest-code"
+
+        - name: OCI_BUCKET_RESULTS
+          value: "backtest-results"
+
+        # Comma-separated list of dates (pod uses index to pick its date)
+        - name: DATES_LIST
+          value: "{{DATES_LIST}}"
+
+        # OCI region
+        - name: OCI_REGION
+          value: "ap-mumbai-1"
+
+        # Configuration hash (for cache versioning)
+        - name: CONFIG_HASH
+          value: "{{CONFIG_HASH}}"
+
+        # Working directory
+        workingDir: /app
+
+        # Health checks (optional, helps Kubernetes detect stuck pods)
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "pgrep -f python || exit 1"
+          initialDelaySeconds: 60
+          periodSeconds: 300
+          timeoutSeconds: 30
+          failureThreshold: 3
