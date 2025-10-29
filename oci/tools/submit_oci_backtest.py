@@ -370,8 +370,8 @@ class OCIBacktestSubmitter:
 
     def run(self, start_date, end_date, description=None, no_wait=False):
         """Main workflow"""
-        # Generate run ID
-        run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # Generate run ID (use hyphens for Kubernetes DNS compliance)
+        run_id = datetime.now().strftime('%Y%m%d-%H%M%S')
 
         # Generate trading dates
         dates = self.generate_trading_dates(start_date, end_date)
