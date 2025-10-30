@@ -76,6 +76,12 @@ spec:
         # Working directory
         workingDir: /app
 
+        # Mount OCI config
+        volumeMounts:
+        - name: oci-config
+          mountPath: /root/.oci
+          readOnly: true
+
         # Health checks (optional, helps Kubernetes detect stuck pods)
         livenessProbe:
           exec:
@@ -87,3 +93,14 @@ spec:
           periodSeconds: 300
           timeoutSeconds: 30
           failureThreshold: 3
+
+      # Define volumes
+      volumes:
+      - name: oci-config
+        secret:
+          secretName: oci-config
+          items:
+          - key: config
+            path: config
+          - key: key
+            path: oci_api_key.pem
