@@ -82,17 +82,17 @@ spec:
           mountPath: /root/.oci
           readOnly: true
 
-        # Health checks (optional, helps Kubernetes detect stuck pods)
-        livenessProbe:
-          exec:
-            command:
-            - sh
-            - -c
-            - "pgrep -f python || exit 1"
-          initialDelaySeconds: 60
-          periodSeconds: 300
-          timeoutSeconds: 30
-          failureThreshold: 3
+        # Health checks disabled for debugging
+        # livenessProbe:
+        #   exec:
+        #     command:
+        #     - sh
+        #     - -c
+        #     - "pgrep -f python || exit 1"
+        #   initialDelaySeconds: 60
+        #   periodSeconds: 300
+        #   timeoutSeconds: 30
+        #   failureThreshold: 3
 
       # Define volumes
       volumes:
