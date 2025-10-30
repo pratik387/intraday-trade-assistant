@@ -117,13 +117,21 @@ class OCIBacktestSubmitter:
         file_count = 0
         with tarfile.open(tarball_path, 'w:gz') as tar:
             for pattern in include_patterns:
-                for file_path in self.root.glob(pattern):
+                # Handle dotfiles separately (glob doesn't match them by default)
+                if pattern.startswith('.'):
+                    file_path = self.root / pattern
                     if file_path.is_file():
                         arcname = file_path.relative_to(self.root)
                         tar.add(file_path, arcname=arcname)
                         file_count += 1
-                        if file_count % 10 == 0:
-                            print(f"  Adding files... {file_count}", end='\r')
+                else:
+                    for file_path in self.root.glob(pattern):
+                        if file_path.is_file():
+                            arcname = file_path.relative_to(self.root)
+                            tar.add(file_path, arcname=arcname)
+                            file_count += 1
+                            if file_count % 10 == 0:
+                                print(f"  Adding files... {file_count}", end='\r')
 
         size_mb = tarball_path.stat().st_size / (1024 * 1024)
         print(f"  ✓ Packaged {file_count} files ({size_mb:.1f} MB)")
