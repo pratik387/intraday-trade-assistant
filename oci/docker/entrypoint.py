@@ -318,6 +318,12 @@ def main():
     log("OCI Kubernetes Backtest Worker")
     log("=" * 60)
 
+    # Create .env.development if it doesn't exist (for backtesting)
+    env_file = Path('/app/.env.development')
+    if not env_file.exists():
+        log("Creating .env.development file...")
+        env_file.write_text("ENVIRONMENT=development\nLOG_LEVEL=INFO\n")
+
     # Get assigned date
     date_str = get_assigned_date()
     index = os.environ.get('JOB_COMPLETION_INDEX', '0')
