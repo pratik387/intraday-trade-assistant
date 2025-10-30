@@ -212,10 +212,9 @@ def run_backtest(date_str):
     start_time = datetime.now()
 
     try:
+        # Run WITHOUT capture_output so logs appear in real-time
         result = subprocess.run(
             cmd,
-            capture_output=True,
-            text=True,
             timeout=3600  # 1 hour timeout per day
         )
 
@@ -225,18 +224,16 @@ def run_backtest(date_str):
 
         if result.returncode != 0:
             log(f"WARNING: Backtest exited with code {result.returncode}")
-            log(f"STDERR: {result.stderr[-500:]}")  # Last 500 chars
 
         return {
             'date': date_str,
             'runtime_sec': runtime_sec,
-            'exit_code': result.returncode,
-            'stdout': result.stdout,
-            'stderr': result.stderr
+            'exit_code': result.returncode
         }
 
     except subprocess.TimeoutExpired:
-        log(f"ERROR: Backtest timeout after 3600s")
+        runtime_sec = (datetime.now() - start_time).total_seconds()
+        log(f"ERROR: Backtest timeout after {runtime_sec:.1f}s")
         return {
             'date': date_str,
             'runtime_sec': 3600,
