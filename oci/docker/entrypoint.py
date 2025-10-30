@@ -215,7 +215,7 @@ def run_backtest(date_str):
         # Run WITHOUT capture_output so logs appear in real-time
         result = subprocess.run(
             cmd,
-            timeout=3600  # 1 hour timeout per day
+            timeout=5400  # 90 minutes timeout per day (increased from 60min due to cloud overhead)
         )
 
         runtime_sec = (datetime.now() - start_time).total_seconds()
