@@ -189,7 +189,8 @@ def run_backtest(date_str):
     start_time = datetime.now()
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        # Run backtest WITHOUT capturing output so we can see it in logs
+        result = subprocess.run(cmd, timeout=3600)
         runtime_sec = (datetime.now() - start_time).total_seconds()
         log(f"Backtest complete: {runtime_sec:.1f}s")
 
@@ -202,9 +203,14 @@ def run_backtest(date_str):
             'exit_code': result.returncode
         }
 
+    except subprocess.TimeoutExpired:
+        runtime_sec = (datetime.now() - start_time).total_seconds()
+        log(f"ERROR: Backtest timed out after {runtime_sec:.1f}s")
+        return {'date': date_str, 'runtime_sec': runtime_sec, 'exit_code': -1, 'error': 'timeout'}
     except Exception as e:
+        runtime_sec = (datetime.now() - start_time).total_seconds()
         log(f"ERROR running backtest: {e}")
-        return {'date': date_str, 'runtime_sec': 0, 'exit_code': -1, 'error': str(e)}
+        return {'date': date_str, 'runtime_sec': runtime_sec, 'exit_code': -1, 'error': str(e)}
 
 
 def upload_results(date_str):
