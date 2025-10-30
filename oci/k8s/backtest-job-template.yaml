@@ -30,14 +30,15 @@ spec:
         image: bom.ocir.io/{{TENANCY_NAMESPACE}}/backtest-worker:latest
         imagePullPolicy: Always
 
-        # Resource limits (2 CPU, 8 GB RAM per pod)
+        # Resource limits (2 CPU, 16 GB RAM per pod)
+        # Increased from 8GB to 16GB due to OOMKilled errors with 1992 symbols
         resources:
           requests:
             cpu: "2"
-            memory: "8Gi"
+            memory: "16Gi"
           limits:
             cpu: "2"
-            memory: "8Gi"
+            memory: "16Gi"
 
         # Environment variables
         env:
