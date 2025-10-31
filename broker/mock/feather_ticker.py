@@ -156,9 +156,24 @@ class FeatherTicker:
                         }
                     })
 
-                if batch and callable(self._on_ticks_cb):
-                    try: self._on_ticks_cb(self, batch)
-                    except Exception: logger.exception("FeatherTicker.on_ticks failed")
+                if batch:
+                    if tick_count % 50 == 1:
+                        import sys
+                        logger.info(f"[DEBUG] Batch size: {len(batch)}, _on_ticks_cb: {self._on_ticks_cb is not None}")
+                        sys.stdout.flush()
+
+                    if callable(self._on_ticks_cb):
+                        try:
+                            self._on_ticks_cb(self, batch)
+                        except Exception:
+                            logger.exception("FeatherTicker.on_ticks failed")
+                            import sys
+                            sys.stdout.flush()
+                    else:
+                        if tick_count == 1:
+                            logger.warning(f"[DEBUG] No on_ticks callback set! _on_ticks_cb={self._on_ticks_cb}")
+                            import sys
+                            sys.stdout.flush()
 
                 time.sleep(self._sleep)
 
