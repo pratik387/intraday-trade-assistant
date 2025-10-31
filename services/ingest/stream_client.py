@@ -161,13 +161,18 @@ class WSClient:
         # on_connect: useful to log and possibly resubscribe if SDK needs it
         if hasattr(ticker, "on_connect"):
             def _connected(ws, response):
+                logger.info("[DEBUG] on_connect callback started")
                 logger.info("WebSocket connected")
 
                 # Mark as connected
+                logger.info("[DEBUG] Setting connected event...")
                 self._connected.set()
+                logger.info("[DEBUG] Connected event set")
 
                 # Flush all buffered subscriptions
+                logger.info("[DEBUG] Acquiring pending lock...")
                 with self._pending_lock:
+                    logger.info("[DEBUG] Lock acquired, checking pending subscriptions...")
                     if self._pending_subscriptions:
                         total_tokens = sum(len(batch) for batch in self._pending_subscriptions)
                         logger.info(f"Flushing {total_tokens} buffered subscription tokens...")
@@ -180,6 +185,10 @@ class WSClient:
 
                         self._pending_subscriptions.clear()
                         logger.info("All buffered subscriptions sent")
+                    else:
+                        logger.info("[DEBUG] No pending subscriptions to flush")
+
+                logger.info("[DEBUG] on_connect callback completed")
 
             ticker.on_connect = _connected
         else:
