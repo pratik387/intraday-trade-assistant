@@ -34,6 +34,10 @@ from datetime import datetime
 from pathlib import Path
 import oci
 
+# Force unbuffered output for all Python print/logging
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 
 def log(message):
     """Print with timestamp"""
