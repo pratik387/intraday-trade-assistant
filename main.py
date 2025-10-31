@@ -165,7 +165,15 @@ def main() -> int:
     print(f"[DEBUG] Args: paper_trading={args.paper_trading}, dry_run={args.dry_run}")
 
     set_global_run_prefix(run_prefix)
-    logger = get_agent_logger(run_prefix, force_reinit=True)  # Force re-init with file handlers
+
+    # For dry-run in OCI/cloud environments, skip file handlers to keep logs in stdout
+    # File handlers redirect logs away from container stdout, making them invisible
+    if args.dry_run and not run_prefix:
+        logger = get_agent_logger(run_prefix, force_reinit=False)  # Keep existing stdout handlers
+        print("[DEBUG] Dry-run mode: Using stdout-only logging (no file handlers)")
+    else:
+        logger = get_agent_logger(run_prefix, force_reinit=True)  # Force re-init with file handlers
+
     trading_logger = get_trading_logger()
 
     print(f"[DEBUG] Logger initialized: {logger}")
