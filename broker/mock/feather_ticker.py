@@ -100,8 +100,16 @@ class FeatherTicker:
                 logger.info("FeatherTicker: Timeline built, calling on_connect callback...")
 
             if callable(self._on_connect_cb):
-                try: self._on_connect_cb(self)
-                except Exception: logger.exception("FeatherTicker.on_connect failed")
+                try:
+                    import sys
+                    logger.info("FeatherTicker: About to call on_connect callback...")
+                    sys.stdout.flush()  # Force flush logs
+                    self._on_connect_cb(self)
+                    logger.info("FeatherTicker: on_connect callback returned successfully")
+                    sys.stdout.flush()
+                except Exception:
+                    logger.exception("FeatherTicker.on_connect failed")
+                    sys.stdout.flush()
 
             for ts in self._timeline or []:
                 if not self._running: break
