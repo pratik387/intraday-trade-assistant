@@ -201,14 +201,17 @@ def run_backtest(date_str):
     # Change to /app directory
     os.chdir('/app')
 
-    # Run main.py
+    # Run main.py with run-prefix (like engine.py does)
+    # This ensures proper logger initialization with file handlers
+    run_prefix = f"bt_{date_str}_"
     cmd = [
         sys.executable,
         'main.py',
         '--dry-run',
         '--session-date', date_str,
         '--from-hhmm', '09:25',
-        '--to-hhmm', '15:15'
+        '--to-hhmm', '15:15',
+        '--run-prefix', run_prefix
     ]
 
     log(f"Command: {' '.join(cmd)}")
