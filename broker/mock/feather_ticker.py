@@ -111,8 +111,18 @@ class FeatherTicker:
                     logger.exception("FeatherTicker.on_connect failed")
                     sys.stdout.flush()
 
+            import sys
+            logger.info(f"FeatherTicker: Starting tick replay loop with {len(self._timeline or [])} timestamps...")
+            sys.stdout.flush()
+
+            tick_count = 0
             for ts in self._timeline or []:
                 if not self._running: break
+
+                tick_count += 1
+                if tick_count % 10 == 1:  # Log every 10th tick
+                    logger.info(f"FeatherTicker: Processing tick {tick_count}/{len(self._timeline)} at {ts}")
+                    sys.stdout.flush()
 
                 batch: List[dict] = []
                 tokens: Iterable[int] = (self._subs or self._sym2tok.values())
