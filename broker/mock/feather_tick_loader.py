@@ -40,6 +40,9 @@ class FeatherTickLoader:
         # Pre-aggregated cache directory
         self.preagg_dir = Path(base_path).parent / "preaggregate"
 
+        # Cache loaded data to avoid reloading (fixes OCI hang when ticker thread calls load_all())
+        self._cached_data: Optional[Dict[str, pd.DataFrame]] = None
+
     # ---------- FS ----------
     def _sym_dirs(self, symbol: str) -> List[str]:
         tsym = symbol.split(":", 1)[-1].strip().upper()
@@ -212,9 +215,15 @@ class FeatherTickLoader:
             return None
 
     def load_all(self) -> Dict[str, pd.DataFrame]:
+        # Return cached data if already loaded (prevents re-reading 669MB file in ticker thread)
+        if self._cached_data is not None:
+            logger.info(f"[CACHE HIT] Returning cached data for {len(self._cached_data)} symbols")
+            return self._cached_data
+
         # Try pre-aggregated cache first (FAST PATH - 50x speedup!)
         preagg_result = self._try_load_preaggregate()
         if preagg_result is not None:
+            self._cached_data = preagg_result  # Cache the result
             return preagg_result
 
         # Fallback to individual files (SLOW PATH - original behavior)
@@ -241,4 +250,5 @@ class FeatherTickLoader:
         except Exception:
             pass
 
+        self._cached_data = out  # Cache the result
         return out
