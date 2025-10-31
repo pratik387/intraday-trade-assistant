@@ -91,38 +91,17 @@ class FeatherTicker:
     def _run(self):
         try:
             if self._data is None:
-                logger.info("FeatherTicker: Calling loader.load_all() from ticker thread...")
                 self._data = self.loader.load_all()  # { "NSE:XYZ": df([...,'date',...]) }
                 if not self._data:
                     logger.warning("FeatherTicker: no data loaded"); return
-                logger.info(f"FeatherTicker: Loaded {len(self._data)} symbols, building timeline...")
                 self._build_timeline()
-                logger.info("FeatherTicker: Timeline built, calling on_connect callback...")
 
             if callable(self._on_connect_cb):
-                try:
-                    import sys
-                    logger.info("FeatherTicker: About to call on_connect callback...")
-                    sys.stdout.flush()  # Force flush logs
-                    self._on_connect_cb(self)
-                    logger.info("FeatherTicker: on_connect callback returned successfully")
-                    sys.stdout.flush()
-                except Exception:
-                    logger.exception("FeatherTicker.on_connect failed")
-                    sys.stdout.flush()
+                try: self._on_connect_cb(self)
+                except Exception: logger.exception("FeatherTicker.on_connect failed")
 
-            import sys
-            logger.info(f"FeatherTicker: Starting tick replay loop with {len(self._timeline or [])} timestamps...")
-            sys.stdout.flush()
-
-            tick_count = 0
             for ts in self._timeline or []:
                 if not self._running: break
-
-                tick_count += 1
-                if tick_count % 10 == 1:  # Log every 10th tick
-                    logger.info(f"FeatherTicker: Processing tick {tick_count}/{len(self._timeline)} at {ts}")
-                    sys.stdout.flush()
 
                 batch: List[dict] = []
                 tokens: Iterable[int] = (self._subs or self._sym2tok.values())
@@ -156,24 +135,9 @@ class FeatherTicker:
                         }
                     })
 
-                if batch:
-                    if tick_count % 50 == 1:
-                        import sys
-                        logger.info(f"[DEBUG] Batch size: {len(batch)}, _on_ticks_cb: {self._on_ticks_cb is not None}")
-                        sys.stdout.flush()
-
-                    if callable(self._on_ticks_cb):
-                        try:
-                            self._on_ticks_cb(self, batch)
-                        except Exception:
-                            logger.exception("FeatherTicker.on_ticks failed")
-                            import sys
-                            sys.stdout.flush()
-                    else:
-                        if tick_count == 1:
-                            logger.warning(f"[DEBUG] No on_ticks callback set! _on_ticks_cb={self._on_ticks_cb}")
-                            import sys
-                            sys.stdout.flush()
+                if batch and callable(self._on_ticks_cb):
+                    try: self._on_ticks_cb(self, batch)
+                    except Exception: logger.exception("FeatherTicker.on_ticks failed")
 
                 time.sleep(self._sleep)
 

@@ -161,26 +161,10 @@ def main() -> int:
             run_prefix = "live_"
         # For dry-run (backtests), empty prefix is fine (logs optional)
 
-    print(f"[DEBUG] Initializing logger with run_prefix: '{run_prefix}'")
-    print(f"[DEBUG] Args: paper_trading={args.paper_trading}, dry_run={args.dry_run}")
 
     set_global_run_prefix(run_prefix)
-
-    # For dry-run in OCI/cloud environments, skip file handlers to keep logs in stdout
-    # File handlers redirect logs away from container stdout, making them invisible
-    if args.dry_run and not run_prefix:
-        logger = get_agent_logger(run_prefix, force_reinit=False)  # Keep existing stdout handlers
-        print("[DEBUG] Dry-run mode: Using stdout-only logging (no file handlers)")
-    else:
-        logger = get_agent_logger(run_prefix, force_reinit=True)  # Force re-init with file handlers
-
+    logger = get_agent_logger(run_prefix, force_reinit=True)
     trading_logger = get_trading_logger()
-
-    print(f"[DEBUG] Logger initialized: {logger}")
-    print(f"[DEBUG] Logger handlers ({len(logger.handlers)}): {[type(h).__name__ for h in logger.handlers]}")
-    if logging_config.dir_path:
-        print(f"[DEBUG] Log directory: {logging_config.dir_path}")
-        print(f"[DEBUG] Session ID: {logging_config._session_id}")
 
     logger.info(f"Session started | Mode: {'Paper' if args.paper_trading else 'Dry-run' if args.dry_run else 'Live'}")
 
