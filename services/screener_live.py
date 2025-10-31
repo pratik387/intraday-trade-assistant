@@ -210,8 +210,8 @@ class ScreenerLive:
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
         self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
         self.ws.on_message(self.router.handle_raw)
-        # Register close callback to handle replay end gracefully
-        self.ws.on_close(lambda: self._handle_eod(datetime.now()))
+        # Note: EOD is handled by _is_after_cutoff() checks in _on_5m_close and _on_1m_close
+        # No need for on_close callback that uses datetime.now() (breaks backtests)
         self.subs = SubscriptionManager(self.ws)
 
         # Gates - Use MainDetector directly for structure detection
