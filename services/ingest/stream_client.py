@@ -196,7 +196,14 @@ class WSClient:
 
         # on_ticks: Zerodha-style batch callback; pass through to router
         if hasattr(ticker, "on_ticks"):
+            tick_counter = [0]  # Use list to allow modification in nested function
             def _ticks(_ws, ticks):
+                tick_counter[0] += len(ticks) if ticks else 0
+                if tick_counter[0] % 1000 == 0 or tick_counter[0] < 100:
+                    logger.info(f"[TICKS] Received batch of {len(ticks) if ticks else 0} ticks (total: {tick_counter[0]})")
+                    import sys
+                    sys.stdout.flush()
+
                 if self._on_message:
                     try:
                         for tk in ticks or []:
