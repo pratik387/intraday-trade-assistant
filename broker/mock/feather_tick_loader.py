@@ -217,13 +217,16 @@ class FeatherTickLoader:
     def load_all(self) -> Dict[str, pd.DataFrame]:
         # Return cached data if already loaded (prevents re-reading 669MB file in ticker thread)
         if self._cached_data is not None:
-            logger.info(f"[CACHE HIT] Returning cached data for {len(self._cached_data)} symbols")
+            logger.info(f"[CACHE HIT] Returning cached data for {len(self._cached_data)} symbols (avoiding reload)")
             return self._cached_data
+
+        logger.info("[CACHE MISS] Loading data for the first time...")
 
         # Try pre-aggregated cache first (FAST PATH - 50x speedup!)
         preagg_result = self._try_load_preaggregate()
         if preagg_result is not None:
             self._cached_data = preagg_result  # Cache the result
+            logger.info(f"[CACHE STORED] Cached {len(preagg_result)} symbols from pre-aggregated file")
             return preagg_result
 
         # Fallback to individual files (SLOW PATH - original behavior)

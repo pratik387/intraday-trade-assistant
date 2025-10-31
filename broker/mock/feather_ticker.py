@@ -91,10 +91,13 @@ class FeatherTicker:
     def _run(self):
         try:
             if self._data is None:
+                logger.info("FeatherTicker: Calling loader.load_all() from ticker thread...")
                 self._data = self.loader.load_all()  # { "NSE:XYZ": df([...,'date',...]) }
                 if not self._data:
                     logger.warning("FeatherTicker: no data loaded"); return
+                logger.info(f"FeatherTicker: Loaded {len(self._data)} symbols, building timeline...")
                 self._build_timeline()
+                logger.info("FeatherTicker: Timeline built, calling on_connect callback...")
 
             if callable(self._on_connect_cb):
                 try: self._on_connect_cb(self)
