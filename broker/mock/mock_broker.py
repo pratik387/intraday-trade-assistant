@@ -149,32 +149,30 @@ class MockBroker:
         class _ProxyTicker:
             def __init__(self, inner_ticker: FeatherTicker):
                 self._inner = inner_ticker
-                self._client_on_ticks: Optional[Callable] = None
-                self._client_on_connect: Optional[Callable] = None
-                self._client_on_close: Optional[Callable] = None
+
+                # KiteTicker-style: Attributes for callback assignment
+                # Usage: ticker.on_ticks = my_callback (attribute assignment, not method call)
+                self.on_ticks: Optional[Callable] = None
+                self.on_connect: Optional[Callable] = None
+                self.on_close: Optional[Callable] = None
 
                 # Bind our wrappers to inner so we always see ticks/connect/close
                 self._inner.on_ticks(self._mux_on_ticks)
                 self._inner.on_connect(self._mux_on_connect)
                 self._inner.on_close(self._mux_on_close)
 
-            # --- client registration (we forward to these after caching LTP) ---
-            def on_ticks(self, fn: Callable):   self._client_on_ticks = fn
-            def on_connect(self, fn: Callable): self._client_on_connect = fn
-            def on_close(self, fn: Callable):   self._client_on_close = fn
-
             # --- mux wrappers ---
             def _mux_on_connect(self, ws):
                 try:
-                    if callable(self._client_on_connect):
-                        self._client_on_connect(ws)
+                    if callable(self.on_connect):
+                        self.on_connect(ws, None)  # response=None for MockBroker
                 except Exception:
                     logger.exception("ProxyTicker.on_connect (client) failed")
 
             def _mux_on_close(self, ws, code, reason):
                 try:
-                    if callable(self._client_on_close):
-                        self._client_on_close(ws, code, reason)
+                    if callable(self.on_close):
+                        self.on_close(ws, code, reason)
                 except Exception:
                     logger.exception("ProxyTicker.on_close (client) failed")
 
@@ -206,8 +204,8 @@ class MockBroker:
 
                 # Forward to the client's callback unchanged
                 try:
-                    if callable(self._client_on_ticks):
-                        self._client_on_ticks(ws, ticks)
+                    if callable(self.on_ticks):
+                        self.on_ticks(ws, ticks)
                 except Exception:
                     logger.exception("ProxyTicker.on_ticks (client) failed")
 
