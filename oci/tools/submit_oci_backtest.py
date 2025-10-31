@@ -165,7 +165,7 @@ class OCIBacktestSubmitter:
         with open(config_file, 'rb') as f:
             return hashlib.sha256(f.read()).hexdigest()[:8]
 
-    def submit_kubernetes_job(self, run_id, dates, description):
+    def submit_kubernetes_job(self, run_id, dates, description, max_parallel=None):
         """Submit Kubernetes Job"""
         print("\n[3/5] 🚀 Submitting Kubernetes Job...")
 
@@ -185,11 +185,14 @@ class OCIBacktestSubmitter:
         config_hash = self.get_config_hash()
         num_dates = len(dates)
 
+        # Limit parallelism based on max_parallel (default: all dates)
+        parallelism = min(max_parallel, num_dates) if max_parallel else num_dates
+
         job_yaml = template.replace('{{RUN_ID}}', run_id)
         job_yaml = job_yaml.replace('{{DATES_LIST}}', dates_csv)
         job_yaml = job_yaml.replace('{{TENANCY_NAMESPACE}}', self.namespace)
         job_yaml = job_yaml.replace('{{CONFIG_HASH}}', config_hash)
-        job_yaml = job_yaml.replace('{{PARALLELISM}}', str(num_dates))
+        job_yaml = job_yaml.replace('{{PARALLELISM}}', str(parallelism))
         job_yaml = job_yaml.replace('{{COMPLETIONS}}', str(num_dates))
 
         # Write temporary job file
@@ -209,7 +212,8 @@ class OCIBacktestSubmitter:
             )
 
             print(f"  ✓ Job created: backtest-{run_id}")
-            print(f"  ✓ Pods: {len(dates)} (parallel execution)")
+            print(f"  ✓ Total days: {len(dates)}")
+            print(f"  ✓ Parallel pods: {parallelism} (runs {parallelism} at a time)")
 
             # Save metadata
             metadata = {
@@ -217,6 +221,7 @@ class OCIBacktestSubmitter:
                 'start_date': dates[0],
                 'end_date': dates[-1],
                 'total_days': len(dates),
+                'parallelism': parallelism,
                 'description': description,
                 'config_hash': config_hash,
                 'submitted_at': datetime.now().isoformat(),
@@ -230,16 +235,16 @@ class OCIBacktestSubmitter:
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f, indent=2)
 
-            return True
+            return parallelism
 
         except subprocess.CalledProcessError as e:
             print(f"  ❌ Job submission failed: {e.stderr}")
-            return False
+            return None
         except FileNotFoundError:
             print(f"  ❌ kubectl not found. Please install kubectl and configure access to OKE cluster")
-            return False
+            return None
 
-    def monitor_job(self, run_id, total_days):
+    def monitor_job(self, run_id, total_days, parallelism):
         """Monitor Kubernetes Job progress"""
         print(f"\n[4/5] 📊 Monitoring progress...")
         print()
@@ -301,12 +306,13 @@ class OCIBacktestSubmitter:
             minutes = elapsed_total // 60
             seconds = elapsed_total % 60
 
-            # Calculate cost
-            ocpu_hours = (240 * elapsed_total) / 3600
+            # Calculate cost (2 OCPU per pod)
+            total_ocpu = parallelism * 2
+            ocpu_hours = (total_ocpu * elapsed_total) / 3600
             cost = ocpu_hours * 0.0015  # $0.0015 per OCPU-hour (Spot)
 
             print(f"  ⏱️  Duration: {minutes}m {seconds}s")
-            print(f"  💰 Cost: ${cost:.2f}")
+            print(f"  💰 Cost: ${cost:.2f} ({total_ocpu} OCPU × {minutes}m)")
 
         return succeeded == total_days
 
@@ -379,7 +385,7 @@ class OCIBacktestSubmitter:
         print()
         print("━" * 60)
 
-    def run(self, start_date, end_date, description=None, no_wait=False):
+    def run(self, start_date, end_date, description=None, no_wait=False, max_parallel=None):
         """Main workflow"""
         # Generate run ID (use hyphens for Kubernetes DNS compliance)
         run_id = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -397,9 +403,9 @@ class OCIBacktestSubmitter:
         self.upload_code(tarball_path, run_id)
 
         # Submit Kubernetes job
-        success = self.submit_kubernetes_job(run_id, dates, description)
+        parallelism = self.submit_kubernetes_job(run_id, dates, description, max_parallel)
 
-        if not success:
+        if parallelism is None:
             print("\n❌ Job submission failed")
             return
 
@@ -410,7 +416,7 @@ class OCIBacktestSubmitter:
             return
 
         # Monitor progress
-        success = self.monitor_job(run_id, len(dates))
+        success = self.monitor_job(run_id, len(dates), parallelism)
 
         if not success:
             return
@@ -440,6 +446,8 @@ def main():
     parser.add_argument('--end', required=True, help='End date (YYYY-MM-DD)')
     parser.add_argument('--description', help='Description of this backtest run')
     parser.add_argument('--no-wait', action='store_true', help='Submit and exit without waiting')
+    parser.add_argument('--max-parallel', type=int, default=None,
+                        help='Max parallel pods (default: unlimited). Use 50 for 100 OCPU limit.')
 
     args = parser.parse_args()
 
@@ -448,7 +456,8 @@ def main():
         start_date=args.start,
         end_date=args.end,
         description=args.description,
-        no_wait=args.no_wait
+        no_wait=args.no_wait,
+        max_parallel=args.max_parallel
     )
 
 
