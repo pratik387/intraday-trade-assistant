@@ -210,8 +210,8 @@ class ScreenerLive:
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
         self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
         self.ws.on_message(self.router.handle_raw)
-        # Note: EOD is handled by _is_after_cutoff() checks in _on_5m_close and _on_1m_close
-        # No need for on_close callback that uses datetime.now() (breaks backtests)
+        # Register on_close to trigger clean exit when replay ends (don't use datetime.now())
+        self.ws.on_close(lambda: self._handle_eod())  # No timestamp - just trigger shutdown
         self.subs = SubscriptionManager(self.ws)
 
         # Gates - Use MainDetector directly for structure detection
@@ -876,9 +876,12 @@ class ScreenerLive:
                    _t_bar_end - _t_structure_end)
 
     # ---------- EOD handler ----------
-    def _handle_eod(self, now: datetime) -> None:
+    def _handle_eod(self, now: datetime = None) -> None:
         try:
-            logger.warning("EOD: cutoff reached at %s — stopping for the day", now)
+            if now:
+                logger.warning("EOD: cutoff reached at %s — stopping for the day", now)
+            else:
+                logger.warning("EOD: replay ended — stopping for the day")
         except Exception:
             pass
         self._eod_done = True
