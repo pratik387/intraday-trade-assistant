@@ -1001,12 +1001,13 @@ class ScreenerLive:
             if df5 is None or df5.empty or len(df5) < 10:
                 continue
             try:
-                score = mi.compute_intraday_breakout_score(df5)
+                enriched_df = mi.compute_intraday_breakout_score(df5)
             except Exception as e:
                 # CRITICAL FIX: Log breakout score computation failures
                 logger.error(f"SCREENER: Failed to compute breakout score for {sym}: {e}")
                 continue
-            if score >= 0.0:
+            # If enrichment succeeded and DataFrame is not empty, include in fallback
+            if not enriched_df.empty:
                 out.append(sym)
         return out[:60]
 
