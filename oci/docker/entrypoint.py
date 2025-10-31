@@ -281,8 +281,8 @@ def upload_results(date_str):
         return
 
     # Find latest session for this date
-    date_prefix = date_str.replace('-', '')
-    session_dirs = sorted(logs_dir.glob(f'{date_prefix}_*'))
+    # Match the new run_prefix pattern: bt_{date}_*
+    session_dirs = sorted(logs_dir.glob(f'bt_{date_str}_*'))
 
     if not session_dirs:
         log(f"WARNING: No session logs found for {date_str}")
