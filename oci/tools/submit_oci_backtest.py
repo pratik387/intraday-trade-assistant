@@ -106,7 +106,6 @@ class OCIBacktestSubmitter:
             'broker/**/*.py',
             'diagnostics/**/*.py',
             'nse_all.json',
-            'oci/docker/entrypoint_runtime.py',
             'requirements.txt',
             '.env.development',
             '.env.production'
