@@ -109,6 +109,55 @@ def download_code():
         sys.exit(1)
 
 
+def download_consolidated_daily_cache():
+    """
+    Download consolidated daily cache (contains all symbols' daily data).
+    This is required for PDH/PDL/PDC calculations and daily indicators.
+    """
+    log("Downloading consolidated daily cache...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
+
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    object_name = "consolidated_daily.feather"
+
+    try:
+        # Download consolidated daily cache
+        get_obj = os_client.get_object(
+            namespace_name=namespace,
+            bucket_name=bucket,
+            object_name=object_name
+        )
+
+        # Save to /app/cache/preaggregate/
+        cache_dir = Path('/app/cache/preaggregate')
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        cache_file = cache_dir / 'consolidated_daily.feather'
+
+        with open(cache_file, 'wb') as f:
+            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                f.write(chunk)
+
+        size_mb = cache_file.stat().st_size / (1024 * 1024)
+        log(f"Downloaded consolidated daily cache: {size_mb:.1f} MB")
+
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            log(f"WARNING: Consolidated daily cache not found in OCI")
+            log("Daily indicators (PDH/PDL/PDC, EMA200, ADX) will not work!")
+        else:
+            log(f"ERROR downloading consolidated daily cache: {e}")
+            raise
+
+    except Exception as e:
+        log(f"ERROR downloading consolidated daily cache: {e}")
+        raise
+
+
 def download_monthly_cache(date_str):
     """
     Download monthly cache file for the given date.
@@ -333,7 +382,10 @@ def main():
     # Download code
     download_code()
 
-    # Download monthly cache
+    # Download consolidated daily cache (shared across all dates)
+    download_consolidated_daily_cache()
+
+    # Download monthly cache for this specific date
     download_monthly_cache(date_str)
 
     # Run backtest
