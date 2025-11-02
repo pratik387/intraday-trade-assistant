@@ -233,6 +233,48 @@ class MockBroker:
             return sym
         return s
 
+    def _load_from_consolidated_daily(self, symbol: str, consolidated_path: Path) -> pd.DataFrame:
+        """
+        Load daily data for a symbol from consolidated daily cache.
+
+        This is used in OCI mode where individual symbol files don't exist.
+        The consolidated cache contains all symbols' daily data in one file.
+        """
+        # Load consolidated cache (cached at class level to avoid repeated reads)
+        if not hasattr(self, '_consolidated_daily_cache'):
+            logger.info(f"Loading consolidated daily cache from {consolidated_path}")
+            try:
+                self._consolidated_daily_cache = pd.read_feather(consolidated_path)
+                logger.info(f"Loaded consolidated daily cache: {len(self._consolidated_daily_cache):,} rows, {self._consolidated_daily_cache['symbol'].nunique()} symbols")
+            except Exception as e:
+                logger.error(f"Failed to load consolidated daily cache: {e}")
+                self._consolidated_daily_cache = pd.DataFrame()
+                return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        # Extract symbol data
+        df_all = self._consolidated_daily_cache
+        symbol_data = df_all[df_all['symbol'] == symbol].copy()
+
+        if symbol_data.empty:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        # Normalize timestamp and filter before session date
+        ts = pd.to_datetime(symbol_data['ts'])
+        if ts.dt.tz is not None:
+            ts = ts.dt.tz_localize(None)
+
+        symbol_data['date'] = ts
+
+        # Filter to before session date (if set)
+        if self._dry_session_date:
+            symbol_data = symbol_data[ts < pd.Timestamp(self._dry_session_date)]
+
+        # Sort and prepare final columns
+        symbol_data = symbol_data.sort_values('date')
+        symbol_data = symbol_data[['date', 'open', 'high', 'low', 'close', 'volume']].copy()
+
+        return symbol_data
+
     def _reset_daily_cache_if_new_day(self) -> None:
         # Cache namespace tied to the session date (or today if unset)
         key = (self._dry_session_date).isoformat()
@@ -262,8 +304,11 @@ class MockBroker:
     def get_daily(self, symbol: str, days: int) -> pd.DataFrame:
         """
         Return last `days` completed daily bars (tz-naive) for `symbol`.
-        Reads the latest <KEY>_days_*.feather under OUTPUT_BASE/<KEY>/,
-        normalizes columns, de-dupes dates, and slices strictly before session date.
+
+        Strategy:
+        1. Check cache first
+        2. Try consolidated daily cache (OCI mode)
+        3. Fall back to individual files (local mode)
         """
         self._reset_daily_cache_if_new_day()
         with self._daily_lock:
@@ -271,6 +316,20 @@ class MockBroker:
             if cached is not None and len(cached) >= min(days, len(cached)):
                 return cached.tail(int(days)).copy()
 
+        # Try consolidated daily cache first (for OCI)
+        consolidated_path = OUTPUT_BASE.parent / "preaggregate" / "consolidated_daily.feather"
+        if consolidated_path.exists():
+            try:
+                df = self._load_from_consolidated_daily(symbol, consolidated_path)
+                if not df.empty:
+                    # Cache and return
+                    with self._daily_lock:
+                        self._daily_cache[symbol] = df
+                    return df.tail(int(days)).copy()
+            except Exception as e:
+                logger.warning(f"get_daily: consolidated cache failed for {symbol}, falling back to individual: {e}")
+
+        # Fall back to individual files (local mode)
         key = self._archive_key(symbol)
         dirp = OUTPUT_BASE / key
         if not dirp.exists():
