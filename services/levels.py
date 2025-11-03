@@ -41,7 +41,7 @@ def _parse_hhmm(hhmm: str) -> dtime:
         raise ValueError(f"Invalid HHMM string: {hhmm!r}")
     return dtime(int(hhmm[:2]), int(hhmm[2:]))
 
-def opening_range(df_5m: pd.DataFrame) -> Tuple[float, float]:
+def opening_range(df_5m: pd.DataFrame, symbol: str = "UNKNOWN") -> Tuple[float, float]:
     """
     Compute the Opening Range (ORB) high/low for the **current session**.
 
@@ -84,7 +84,7 @@ def opening_range(df_5m: pd.DataFrame) -> Tuple[float, float]:
             last_ts = d.index[-1] if not d.empty else None
             total_rows = len(d)
             logger.warning(
-                f"levels.opening_range: empty window last_date={last_date} "
+                f"levels.opening_range [{symbol}]: empty window last_date={last_date} "
                 f"start={session_start} end={session_end} | "
                 f"data_range=[{first_ts} to {last_ts}] total_rows={total_rows}"
             )
@@ -93,7 +93,7 @@ def opening_range(df_5m: pd.DataFrame) -> Tuple[float, float]:
         # CRITICAL FIX: Ensure we have full opening range period (3 x 5m bars minimum)
         if len(win) < 3:
             logger.warning(
-                f"levels.opening_range: insufficient bars ({len(win)} < 3) for full OR period "
+                f"levels.opening_range [{symbol}]: insufficient bars ({len(win)} < 3) for full OR period "
                 f"last_date={last_date} start={session_start} end={session_end}"
             )
             return float("nan"), float("nan")

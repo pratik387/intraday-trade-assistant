@@ -87,14 +87,25 @@ class ExitExecutor:
         broker,
         positions: PositionStore,
         get_ltp_ts: Callable[[str], Tuple[Optional[float], Optional[pd.Timestamp]]],
+        bar_builder=None,  # For tick-level exit validation
         trading_logger=None,  # Enhanced logging service
         capital_manager=None,  # Capital release on exits
     ) -> None:
         self.broker = broker
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts
+        self.bar_builder = bar_builder
         self.trading_logger = trading_logger
         self.capital_manager = capital_manager
+
+        # Hook into tick stream for live/paper mode instant exits
+        if bar_builder is not None:
+            self.original_on_tick = bar_builder.on_tick
+            bar_builder.on_tick = self._enhanced_on_tick
+            logger.info("ExitExecutor initialized with tick-level validation")
+        else:
+            self.original_on_tick = None
+            logger.info("ExitExecutor initialized (no tick hook - backtest polling only)")
 
         cfg = load_filters()
         # Config knobs
@@ -159,7 +170,74 @@ class ExitExecutor:
         self.or_kill_early_buffer_mult = float(cfg.get("or_kill_early_buffer_mult", 1.0))
         self.or_kill_mid_buffer_mult = float(cfg.get("or_kill_mid_buffer_mult", 0.75))
         self.or_kill_late_buffer_mult = float(cfg.get("or_kill_late_buffer_mult", 0.25))
-        self.or_kill_major_break_mult = float(cfg.get("or_kill_major_break_mult", 2.0)) 
+        self.or_kill_major_break_mult = float(cfg.get("or_kill_major_break_mult", 2.0))
+
+    def _enhanced_on_tick(self, symbol: str, price: float, volume: float, ts) -> None:
+        """
+        Enhanced tick handler that checks exits for open positions.
+
+        Note: 'price' parameter is required by bar_builder.on_tick signature but not used here.
+        We call broker.get_ltp_with_level() instead for polymorphic behavior.
+        """
+        # Call original on_tick first
+        if callable(self.original_on_tick):
+            try:
+                self.original_on_tick(symbol, price, volume, ts)
+            except Exception as e:
+                logger.exception(f"Original on_tick failed for {symbol}: {e}")
+
+        # Check exits on tick - broker.get_ltp_with_level() handles live vs backtest polymorphically
+        self._check_tick_exits(symbol, ts)
+
+    def _check_tick_exits(self, symbol: str, ts) -> None:
+        """
+        Check if tick hits SL/targets for open positions.
+
+        Uses broker.get_ltp_with_level() for polymorphic behavior:
+        - Live/paper: Returns current LTP (real-time tick)
+        - Backtest: Checks if bar OHLC touched level, returns level or close
+        """
+        try:
+            open_pos = self.positions.list_open()
+            pos = open_pos.get(symbol)
+            if not pos:
+                return  # No open position for this symbol
+
+            # Convert timestamp
+            ts_pd = pd.Timestamp(ts) if not isinstance(ts, pd.Timestamp) else ts
+
+            # Check SL - broker handles intrabar accuracy polymorphically
+            plan_sl = self._get_plan_sl(pos.plan)
+            if not math.isnan(plan_sl):
+                sl_px = self.broker.get_ltp_with_level(symbol, check_level=plan_sl)
+                if sl_px is not None and self._breach_sl(pos.side, sl_px, plan_sl):
+                    logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={sl_px:.2f} sl={plan_sl:.2f}")
+                    self._exit(symbol, pos, sl_px, ts_pd, "tick_sl")
+                    return
+
+            # Check targets - broker handles intrabar accuracy polymorphically
+            t1, t2 = self._get_targets(pos.plan)
+            st = pos.plan.get("_state") or {}
+            t1_done = bool(st.get("t1_done", False))
+
+            # T2 (full exit)
+            if not math.isnan(t2):
+                t2_px = self.broker.get_ltp_with_level(symbol, check_level=t2)
+                if t2_px is not None and self._target_hit(pos.side, t2_px, t2):
+                    logger.info(f"TICK_T2_HIT: {symbol} {pos.side} price={t2_px:.2f} t2={t2:.2f}")
+                    self._exit(symbol, pos, t2_px, ts_pd, "tick_target_t2")
+                    return
+
+            # T1 (partial exit)
+            if (not t1_done) and not math.isnan(t1):
+                t1_px = self.broker.get_ltp_with_level(symbol, check_level=t1)
+                if t1_px is not None and self._target_hit(pos.side, t1_px, t1):
+                    logger.info(f"TICK_T1_HIT: {symbol} {pos.side} price={t1_px:.2f} t1={t1:.2f}")
+                    self._partial_exit_t1(symbol, pos, t1_px, ts_pd)
+                    return
+
+        except Exception as e:
+            logger.exception(f"Tick exit check failed for {symbol}: {e}")
 
     def run_once(self) -> None:
         open_pos = self.positions.list_open()
@@ -236,21 +314,23 @@ class ExitExecutor:
                 st = pos.plan.get("_state") or {}
                 t1_done = bool(st.get("t1_done", False))
 
-                # Check SL with intrabar accuracy (use WebSocket LTP from px)
-                if not math.isnan(plan_sl) and self._breach_sl(pos.side, px, plan_sl):
-                    sl_ltp = px
-                    # Enhanced SL exit logging with T1 awareness
-                    slippage = abs(sl_ltp - plan_sl)
-                    # Differentiate SL hit after T1 partial vs initial SL
-                    exit_reason = "sl_post_t1" if t1_done else "hard_sl"
-                    logger.info(
-                        f"SL_BREACH | {sym} | {pos.side} | "
-                        f"Exit_Price: {sl_ltp:.2f} | Final_SL: {plan_sl:.2f} | "
-                        f"Original_SL: {original_sl:.2f} | Slippage: {slippage:.2f} | "
-                        f"Entry: {pos.avg_price:.2f} | T1_Done: {t1_done}"
-                    )
-                    self._exit(sym, pos, sl_ltp, ts, exit_reason)
-                    continue
+                # Check SL with intrabar accuracy - broker handles live vs backtest polymorphically
+                if not math.isnan(plan_sl):
+                    sl_px = self.broker.get_ltp_with_level(sym, check_level=plan_sl)
+                    if sl_px is not None and self._breach_sl(pos.side, sl_px, plan_sl):
+                        sl_ltp = sl_px
+                        # Enhanced SL exit logging with T1 awareness
+                        slippage = abs(sl_ltp - plan_sl)
+                        # Differentiate SL hit after T1 partial vs initial SL
+                        exit_reason = "sl_post_t1" if t1_done else "hard_sl"
+                        logger.info(
+                            f"SL_BREACH | {sym} | {pos.side} | "
+                            f"Exit_Price: {sl_ltp:.2f} | Final_SL: {plan_sl:.2f} | "
+                            f"Original_SL: {original_sl:.2f} | Slippage: {slippage:.2f} | "
+                            f"Entry: {pos.avg_price:.2f} | T1_Done: {t1_done}"
+                        )
+                        self._exit(sym, pos, sl_ltp, ts, exit_reason)
+                        continue
 
                 # Phase 2.5: Fast Scalp Lane time-based stops
                 if self._check_fast_scalp_time_stop(sym, pos, float(px), ts):
@@ -263,25 +343,31 @@ class ExitExecutor:
                 # 2) Targets & state (already retrieved above for SL check)
                 t1, t2 = self._get_targets(pos.plan)
 
-                # 2a) T2 (full exit first) - check with intrabar accuracy (use WebSocket LTP from px)
-                if not math.isnan(t2) and self._target_hit(pos.side, px, t2):
-                    t2_ltp = px
-                    self._exit(sym, pos, t2_ltp, ts, "target_t2")
-                    continue
+                # 2a) T2 (full exit first) - broker handles intrabar accuracy polymorphically
+                if not math.isnan(t2):
+                    t2_px = self.broker.get_ltp_with_level(sym, check_level=t2)
+                    if t2_px is not None and self._target_hit(pos.side, t2_px, t2):
+                        t2_ltp = t2_px
+                        self._exit(sym, pos, t2_ltp, ts, "target_t2")
+                        continue
 
-                # 2b) T1 (one-time partial) - check with intrabar accuracy (use WebSocket LTP from px)
-                if (not t1_done) and not math.isnan(t1) and self._target_hit(pos.side, px, t1):
-                    t1_ltp = px
-                    self._partial_exit_t1(sym, pos, t1_ltp, ts)
-                    continue
+                # 2b) T1 (one-time partial) - broker handles intrabar accuracy polymorphically
+                if (not t1_done) and not math.isnan(t1):
+                    t1_px = self.broker.get_ltp_with_level(sym, check_level=t1)
+                    if t1_px is not None and self._target_hit(pos.side, t1_px, t1):
+                        t1_ltp = t1_px
+                        self._partial_exit_t1(sym, pos, t1_ltp, ts)
+                        continue
 
-                # 3) Dynamic trail (tighten-only) - check with intrabar accuracy (use WebSocket LTP from px)
+                # 3) Dynamic trail (tighten-only) - broker handles intrabar accuracy polymorphically
                 if self._has_trail(pos.plan) and self._trail_allowed(pos, ts):
                     level, why = self._trail_from_plan(sym, pos, float(px))
-                    if not math.isnan(level) and self._breach_sl(pos.side, px, level):
-                        trail_ltp = px
-                        self._exit(sym, pos, trail_ltp, ts, f"trail_stop({why})")
-                        continue
+                    if not math.isnan(level):
+                        trail_px = self.broker.get_ltp_with_level(sym, check_level=level)
+                        if trail_px is not None and self._breach_sl(pos.side, trail_px, level):
+                            trail_ltp = trail_px
+                            self._exit(sym, pos, trail_ltp, ts, f"trail_stop({why})")
+                            continue
 
                 # 4) Indicator kill-switches (precomputed levels)
                 if self._or_kill(sym, pos.side, float(px), pos.plan):

@@ -951,7 +951,7 @@ class ScreenerLive:
 
         try:
             logger.debug(f"LEVELS: Computing opening range for {symbol}, df5 shape: {df5.shape if df5 is not None else None}")
-            orh, orl = levels.opening_range(df5)
+            orh, orl = levels.opening_range(df5, symbol=symbol)
             orh = float(orh); orl = float(orl)
             logger.debug(f"LEVELS: Computed ORH={orh}, ORL={orl}")
         except Exception as e:

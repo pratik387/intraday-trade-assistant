@@ -87,13 +87,19 @@ class TriggerAwareExecutor:
                 price = trade.trigger_price or plan.get("price", 0)
                 cap_segment = plan.get("cap_segment", "unknown")
 
-                can_enter, reason = self.capital_manager.can_enter_position(
+                can_enter, adjusted_qty, reason = self.capital_manager.can_enter_position(
                     trade.symbol, qty, price, cap_segment
                 )
 
                 if not can_enter:
                     logger.warning(f"Capital check failed: {trade.symbol} - {reason}")
                     return False
+
+                # Update plan with adjusted quantity if scaled down
+                if adjusted_qty != qty:
+                    logger.info(f"Capital scaling: {trade.symbol} qty {qty} → {adjusted_qty}")
+                    trade.plan["qty"] = adjusted_qty
+                    trade.plan["_original_qty"] = qty  # Keep original for reference
 
             return True
             
@@ -334,8 +340,29 @@ class TriggerAwareExecutor:
         # Hook into BarBuilder's 1m callback
         self.original_1m_handler = bar_builder._on_1m_close
         bar_builder._on_1m_close = self._enhanced_1m_handler
-        
-        logger.info("TriggerAwareExecutor initialized with unified validation")
+
+        # Hook into BarBuilder's on_tick for tick-level logging
+        self.original_on_tick = bar_builder.on_tick
+        bar_builder.on_tick = self._enhanced_on_tick
+
+        logger.info("TriggerAwareExecutor initialized with unified validation and tick logging")
+
+    def _enhanced_on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
+        """
+        Enhanced tick handler that logs ticks for pending trades.
+
+        Note: 'price' parameter is required by bar_builder.on_tick signature but not used here.
+        We call broker.get_ltp() with entry_zone instead for polymorphic behavior.
+        """
+        # Call original on_tick first
+        if callable(self.original_on_tick):
+            try:
+                self.original_on_tick(symbol, price, volume, ts)
+            except Exception as e:
+                logger.exception(f"Original on_tick failed for {symbol}: {e}")
+
+        # Log tick data for symbols with pending trades
+        self._log_tick_for_pending_trades(symbol, ts)
     
     def _enhanced_1m_handler(self, symbol: str, bar_1m: pd.Series) -> None:
         """Enhanced 1m handler that validates triggers AND calls original handler"""
@@ -365,7 +392,129 @@ class TriggerAwareExecutor:
             
         except Exception as e:
             logger.exception(f"TriggerAwareExecutor.run_once error: {e}")
-    
+
+    def _log_tick_for_pending_trades(self, symbol: str, ts: datetime) -> None:
+        """
+        Check triggers on tick for pending trades.
+
+        Uses broker.get_ltp() with entry_zone for polymorphic behavior:
+        - Live/paper: Returns current LTP (real tick price)
+        - Backtest: Checks if bar OHLC touched zone, returns zone price or close
+        """
+        with self._lock:
+            # Check if this symbol has any pending trades
+            pending_for_symbol = [
+                t for t in self.pending_trades.values()
+                if t.symbol == symbol and t.state == TradeState.WAITING_TRIGGER
+            ]
+
+        if not pending_for_symbol:
+            return
+
+        # Log tick arrival for enqueued symbols
+        logger.debug(
+            f"TICK_RECEIVED [{symbol}]: {len(pending_for_symbol)} pending trade(s) "
+            f"ts={ts.strftime('%H:%M:%S')}"
+        )
+
+        # Process each pending trade for this symbol
+        for trade in pending_for_symbol:
+            entry_zone = trade.plan.get("entry_zone")
+            if not entry_zone or len(entry_zone) != 2:
+                continue
+
+            # Get price using broker's polymorphic implementation
+            side = "BUY" if trade.plan.get("bias", "long") == "long" else "SELL"
+
+            try:
+                # Broker handles live vs backtest:
+                # - Live: Returns current LTP
+                # - Backtest: Checks if bar OHLC touched entry_zone
+                price = self.broker.get_ltp(
+                    symbol,
+                    entry_zone=entry_zone,
+                    side=side
+                )
+            except Exception:
+                # Fallback if broker doesn't support entry_zone
+                price, _ = self.get_ltp_ts(symbol)
+                if price is None:
+                    continue
+
+            entry_min, entry_max = sorted(entry_zone)
+            bias = trade.plan.get("bias", "long")
+            strategy = trade.plan.get("strategy", "unknown")
+
+            # Check if returned price is in entry zone
+            in_strict_zone = entry_min <= price <= entry_max
+
+            # Add near-zone tolerance (0.05%)
+            tolerance = 0.0005 * price
+            in_near_zone = (entry_min - tolerance <= price <= entry_max + tolerance)
+
+            # Trigger if price is in or near entry zone
+            if in_strict_zone or in_near_zone:
+                zone_status = "IN_ZONE" if in_strict_zone else "NEAR_ZONE"
+                logger.info(
+                    f"TICK_{zone_status}: {symbol} {strategy} {bias} "
+                    f"price={price:.2f} zone=[{entry_min:.2f}, {entry_max:.2f}] "
+                    f"ts={ts.strftime('%H:%M:%S')} trade_id={trade.trade_id}"
+                )
+
+                # Also log to trade logger for detailed analysis
+                if self.trading_logger:
+                    try:
+                        self.trading_logger.log_tick_in_zone(
+                            symbol=symbol,
+                            price=price,
+                            entry_zone=entry_zone,
+                            zone_status=zone_status,
+                            timestamp=ts,
+                            trade_id=trade.trade_id,
+                            strategy=strategy,
+                            bias=bias
+                        )
+                    except Exception as e:
+                        logger.debug(f"Trading logger tick log failed: {e}")
+
+                # Trigger on tick - broker handles live vs backtest polymorphically
+                self._try_trigger_on_tick(trade, price, ts)
+            else:
+                # Log when price is outside entry zone (for debugging enqueued symbols)
+                distance_pct = abs(price - entry_min) / entry_min * 100 if price < entry_min else abs(price - entry_max) / entry_max * 100
+                logger.debug(
+                    f"TICK_WAITING [{symbol}]: {strategy} {bias} "
+                    f"price={price:.2f} zone=[{entry_min:.2f}, {entry_max:.2f}] "
+                    f"distance={distance_pct:.2f}% trade_id={trade.trade_id}"
+                )
+
+    def _try_trigger_on_tick(self, trade: PendingTrade, price: float, ts: datetime) -> None:
+        """
+        Attempt to trigger a trade based on tick-level price action.
+
+        This bypasses the 1-minute bar validation for faster execution when
+        price touches the entry zone.
+        """
+        try:
+            with self._lock:
+                # Double-check state (might have been triggered already)
+                if trade.state != TradeState.WAITING_TRIGGER:
+                    return
+
+                # Mark as triggered
+                trade.trigger_price = price
+                trade.trigger_timestamp = pd.Timestamp(ts)
+                trade.state = TradeState.TRIGGERED
+
+                logger.info(
+                    f"TICK_TRIGGERED: {trade.symbol} {trade.plan.get('strategy', '')} "
+                    f"price={price:.2f} zone={trade.plan.get('entry_zone')} "
+                    f"ts={ts.strftime('%H:%M:%S')} trade_id={trade.trade_id}"
+                )
+
+        except Exception as e:
+            logger.exception(f"Tick trigger failed for {trade.symbol}: {e}")
+
     def _add_pending_trade(self, item: Dict[str, Any]) -> None:
         """Convert incoming trade plan to pending trade with triggers"""
         try:

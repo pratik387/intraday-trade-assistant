@@ -139,6 +139,9 @@ class _DryRunBroker:
     def get_ltp(self, symbol: str, **kwargs) -> float:
         return self._real.get_ltp(symbol, **kwargs)
 
+    def get_ltp_with_level(self, symbol: str, check_level: Optional[float] = None, **kwargs) -> float:
+        return self._real.get_ltp_with_level(symbol, check_level=check_level, **kwargs)
+
     def get_ltp_batch(self, symbols):
         return self._real.get_ltp_batch(symbols)
 
@@ -264,11 +267,12 @@ def main() -> int:
         capital_manager=capital_manager  # Capital & MIS management
     )
 
-    # ExitExecutor is LTP-only; wire it directly to broker.get_ltp and shared store
+    # ExitExecutor with tick-level validation (like TriggerAwareExecutor)
     exit_exec = ExitExecutor(
         broker=broker,
         positions=positions,
         get_ltp_ts=ltp_cache.get_ltp_ts,   # <- EOD uses tick timestamps, not wall clock
+        bar_builder=screener.agg,  # For tick-level exit validation
         trading_logger=trading_logger,  # Enhanced logging
         capital_manager=capital_manager  # Capital release on exits
     )

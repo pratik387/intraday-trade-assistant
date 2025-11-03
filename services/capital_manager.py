@@ -54,7 +54,8 @@ class CapitalManager:
         initial_capital: float = 100000.0,
         mis_enabled: bool = False,
         mis_config_path: Optional[str] = None,
-        max_positions: int = 25
+        max_positions: int = 25,
+        capital_utilization: float = 0.85
     ):
         """
         Initialize CapitalManager.
@@ -65,12 +66,14 @@ class CapitalManager:
             mis_enabled: If True, use MIS leverage from config
             mis_config_path: Path to MIS margins config (default: config/mis_margins.json)
             max_positions: Maximum concurrent positions
+            capital_utilization: Max % of capital to use per trade (0.8-0.9 recommended for safety buffer)
         """
         self.enabled = enabled
         self.total_capital = initial_capital
         self.available_capital = initial_capital
         self.mis_enabled = mis_enabled
         self.max_positions = max_positions
+        self.capital_utilization = max(0.5, min(1.0, capital_utilization))  # Clamp to [0.5, 1.0]
 
         # Position tracking
         self.positions: Dict[str, Dict] = {}  # symbol -> position info
@@ -160,19 +163,22 @@ class CapitalManager:
         price: float,
         cap_segment: str = "unknown",
         mis_leverage: Optional[float] = None
-    ) -> Tuple[bool, str]:
+    ) -> Tuple[bool, int, str]:
         """
-        Check if we can enter a new position.
+        Check if we can enter a new position and return adjusted quantity if needed.
 
         Args:
             symbol: Stock symbol
-            qty: Quantity
+            qty: Requested quantity
             price: Entry price
             cap_segment: Market cap segment (for MIS leverage lookup)
             mis_leverage: Direct MIS leverage from stock data (from nse_all.json)
 
         Returns:
-            (can_enter: bool, reason: str)
+            (can_enter: bool, adjusted_qty: int, reason: str)
+            - If capital is sufficient: (True, original_qty, reason)
+            - If capital is insufficient: (True, scaled_down_qty, reason)
+            - If position limit reached: (False, 0, reason)
         """
         self.stats['trades_attempted'] += 1
 
@@ -182,30 +188,49 @@ class CapitalManager:
             leverage = self._get_leverage(symbol, cap_segment, mis_leverage) if self.mis_enabled else 1.0
             margin = (qty * price) / leverage
             logger.debug(f"CAP_DISABLED | {symbol} | Would need Rs.{margin:,.0f} @ {leverage}x | ALLOWED (unlimited)")
-            return True, "unlimited_capital"
+            return True, qty, "unlimited_capital"
 
-        # MODE 2 & 3: ENABLED - Check capital constraints
-        leverage = self._get_leverage(symbol, cap_segment, mis_leverage)
-        notional = qty * price
-        margin_required = notional / leverage
-
-        # Check 1: Sufficient capital?
-        if self.available_capital < margin_required:
-            self.stats['trades_rejected_capital'] += 1
-            reason = f"insufficient_capital_need_{margin_required:.0f}_have_{self.available_capital:.0f}"
-            logger.warning(f"CAP_REJECT | {symbol} | {reason} | Rejected: {self.stats['trades_rejected_capital']}")
-            return False, reason
-
-        # Check 2: Position limit?
+        # Check 1: Position limit? (check BEFORE capital scaling)
         if len(self.positions) >= self.max_positions:
             self.stats['trades_rejected_positions'] += 1
             reason = f"max_positions_{len(self.positions)}/{self.max_positions}"
             logger.warning(f"CAP_REJECT | {symbol} | {reason}")
-            return False, reason
+            return False, 0, reason
 
-        # All checks passed
+        # MODE 2 & 3: ENABLED - Check capital constraints and scale if needed
+        leverage = self._get_leverage(symbol, cap_segment, mis_leverage)
+        notional = qty * price
+        margin_required = notional / leverage
+
+        # Check 2: Sufficient capital?
+        if self.available_capital < margin_required:
+            # Scale down quantity to fit available capital with safety buffer
+            # Use only capital_utilization% of available capital (default 85%)
+            usable_capital = self.available_capital * self.capital_utilization
+            max_notional = usable_capital * leverage
+            adjusted_qty = int(max_notional / price)
+
+            # Reject if scaled quantity is too small (< 1)
+            if adjusted_qty < 1:
+                self.stats['trades_rejected_capital'] += 1
+                reason = f"insufficient_capital_need_{margin_required:.0f}_have_{self.available_capital:.0f}_min_qty_not_met"
+                logger.warning(f"CAP_REJECT | {symbol} | {reason} | Rejected: {self.stats['trades_rejected_capital']}")
+                return False, 0, reason
+
+            # Accept with scaled quantity
+            self.stats['trades_accepted'] += 1
+            adjusted_margin = (adjusted_qty * price) / leverage
+            reason = f"scaled_qty_{qty}→{adjusted_qty}_margin_{adjusted_margin:.0f}@{leverage}x_buffer_{int(self.capital_utilization*100)}%"
+            logger.info(
+                f"CAP_SCALE | {symbol} | Requested qty={qty} margin={margin_required:.0f} | "
+                f"Available={self.available_capital:.0f} ({int(self.capital_utilization*100)}% buffer) | "
+                f"SCALED to qty={adjusted_qty} margin={adjusted_margin:.0f}"
+            )
+            return True, adjusted_qty, reason
+
+        # All checks passed - use original quantity
         self.stats['trades_accepted'] += 1
-        return True, f"margin_{margin_required:.0f}@{leverage}x"
+        return True, qty, f"margin_{margin_required:.0f}@{leverage}x"
 
     def enter_position(
         self,

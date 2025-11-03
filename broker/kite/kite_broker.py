@@ -270,6 +270,23 @@ class KiteBroker:
         node = data.get(key) or {}
         return float(node.get("last_price") or 0.0)
 
+    def get_ltp_with_level(self, symbol: str, check_level: Optional[float] = None, **kwargs) -> float:
+        """
+        Get LTP with optional level checking (for exit executor).
+
+        In live/paper mode, check_level is ignored since tick hook handles instant exits.
+        Just returns current LTP from Zerodha API.
+
+        Args:
+            symbol: Trading symbol (EXCH:TSYM format)
+            check_level: Ignored in live mode (tick hook handles exits)
+
+        Returns:
+            Current LTP from Zerodha
+        """
+        # In live mode, just return current LTP (tick hook handles instant exits)
+        return self.get_ltp(symbol, **kwargs)
+
     def get_ltp_batch(self, symbols: List[str]) -> Dict[str, float]:
         if not symbols:
             return {}

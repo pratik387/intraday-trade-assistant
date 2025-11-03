@@ -21,8 +21,8 @@ from diagnostics.diagnostics_report_builder import build_csv_from_events  # noqa
 from config.filters_setup import load_filters  # noqa: E402
 
 # ====== SETTINGS ======
-START_DATE = "2024-10-01"   # YYYY-MM-DD (Changed to match offline_driver test date)
-END_DATE   = "2024-10-31"   # YYYY-MM-DD (inclusive)
+START_DATE = "2024-06-07"   # YYYY-MM-DD (Changed to match offline_driver test date)
+END_DATE   = "2024-06-07"   # YYYY-MM-DD (inclusive)
 MAIN_PATH  = ROOT / "main.py"
 
 # Hardcoded time windows for engine runs
@@ -50,8 +50,6 @@ def _build_cmd(py_exe: str, day: date, run_prefix: str = "") -> List[str]:
     cmd = [
         py_exe, "-c",
         f"import sys; sys.path.insert(0, r'{root_path}'); "
-        f"from config.logging_config import set_global_run_prefix; "
-        f"set_global_run_prefix('{run_prefix}'); "
         f"exec(open(r'{main_path}').read())",
         "--dry-run",
         "--session-date", day.isoformat(),

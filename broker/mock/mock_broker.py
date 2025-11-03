@@ -487,6 +487,22 @@ class MockBroker:
 
         raise TypeError("MockBroker.get_ltp: no cached LTP and no bar/zone kwargs provided")
 
+    def get_ltp_with_level(self, symbol: str, check_level: Optional[float] = None, **kwargs) -> float:
+        """
+        Get LTP with intrabar level checking (for exit executor).
+
+        In backtest mode, if check_level is provided, checks if current bar's OHLC touched the level.
+        If touched, returns the level; otherwise returns bar close.
+
+        Args:
+            symbol: Trading symbol
+            check_level: SL/target level to check against bar OHLC
+
+        Returns:
+            Level if bar touched it, otherwise bar close
+        """
+        # Just call get_ltp with check_level parameter - existing logic handles it
+        return self.get_ltp(symbol, check_level=check_level, **kwargs)
 
     def get_ltp_batch(self, symbols: Iterable[str]) -> Dict[str, Optional[float]]:
         out: Dict[str, Optional[float]] = {}
