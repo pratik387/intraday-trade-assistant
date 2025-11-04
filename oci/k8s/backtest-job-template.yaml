@@ -30,14 +30,14 @@ spec:
         image: bom.ocir.io/{{TENANCY_NAMESPACE}}/backtest-worker:latest
         imagePullPolicy: Always
 
-        # Resource limits (2 CPU, 8 GB RAM per pod)
-        # 8GB fits within 16GB node capacity after system overhead
+        # Resource limits (1.5 CPU, 8 GB RAM per pod)
+        # Reduced CPU to fit more pods per 5-OCPU node
         resources:
           requests:
-            cpu: "2"
+            cpu: "1.5"
             memory: "8Gi"
           limits:
-            cpu: "2"
+            cpu: "1.5"
             memory: "8Gi"
 
         # Environment variables
