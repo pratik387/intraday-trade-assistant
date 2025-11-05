@@ -424,7 +424,11 @@ class MarketRegimeGate:
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
             if setup_type == "vwap_lose_short":
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
-            if setup_type == "failure_fade_long":
+            # INSTITUTIONAL FIX: failure_fade_long DISABLED in trend_down
+            # Analysis showed 5/5 trades (100%) hit hard_sl in trend_down (-Rs.2,606)
+            # Mean reversion doesn't work when catching falling knives
+            # Only allow failure_fade_short (fade resistance) in downtrends
+            if setup_type == "failure_fade_short":
                 return v >= self.FF_MIN_VOL_MULT
             # Trend continuation setups in downtrend
             if setup_type == "flag_continuation_short":
