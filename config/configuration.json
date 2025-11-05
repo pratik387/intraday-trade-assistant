@@ -608,13 +608,12 @@
       "fade_confirmation_bars": 1,
       "require_volume_confirmation": false,
       "min_volume_mult": 1.2,
-      "min_fade_strength": 0.6,
+      "min_fade_strength": 0.3,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
       "stop_mult": 1.5,
       "confidence_strong_fade": 0.8,
-      "confidence_weak_fade": 0.6,
-      "_comment": "INSTITUTIONAL FIX: Increased from 0.3 to 0.6 (60% reversion required). Analysis showed weak bounces (14/19 SL hits in chop). Only take strongest institutional rejection at support."
+      "confidence_weak_fade": 0.6
     },
     "failure_fade_short": {
       "enabled": true,
@@ -623,13 +622,12 @@
       "fade_confirmation_bars": 1,
       "require_volume_confirmation": false,
       "min_volume_mult": 1.2,
-      "min_fade_strength": 0.6,
+      "min_fade_strength": 0.3,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
       "stop_mult": 1.5,
       "confidence_strong_fade": 0.8,
-      "confidence_weak_fade": 0.6,
-      "_comment": "INSTITUTIONAL FIX: Increased from 0.3 to 0.6 for consistency with failure_fade_long"
+      "confidence_weak_fade": 0.6
     },
     "squeeze_release_long": {
       "enabled": true,
