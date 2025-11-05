@@ -16,12 +16,6 @@ import sys
 from pathlib import Path
 
 
-def get_config_hash():
-    """Get configuration hash"""
-    # Read from metadata or hardcode
-    return "d0635bb8"  # Current config hash
-
-
 def upload_file(bucket, local_file, object_name):
     """Upload file to OCI Object Storage"""
     print(f"Uploading {local_file.name} ({local_file.stat().st_size / (1024**2):.1f} MB)...", end=' ', flush=True)
@@ -50,11 +44,10 @@ def main():
     print("=" * 60)
     print()
 
-    config_hash = get_config_hash()
     bucket = 'backtest-cache'
 
-    print(f"Config hash: {config_hash}")
     print(f"Bucket: {bucket}")
+    print(f"Target: monthly/ (config-independent)")
     print()
 
     # Files in current directory
@@ -75,7 +68,7 @@ def main():
             print(f"⚠️  File not found: {filename} (skipping)")
             continue
 
-        object_name = f"monthly/{config_hash}/{filename}"
+        object_name = f"monthly/{filename}"  # Config-independent - just raw 1m bars
 
         if upload_file(bucket, file_path, object_name):
             uploaded += 1
@@ -96,7 +89,7 @@ def main():
         result = subprocess.run(
             ['oci', 'os', 'object', 'list',
              '--bucket-name', bucket,
-             '--prefix', f'monthly/{config_hash}/',
+             '--prefix', 'monthly/',
              '--query', 'data[].name',
              '--output', 'table'],
             capture_output=True,

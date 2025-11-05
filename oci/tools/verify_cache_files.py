@@ -12,15 +12,6 @@ Checks all regime month cache files and reports:
 import subprocess
 import sys
 from pathlib import Path
-import hashlib
-import json
-
-
-def get_config_hash():
-    """Get configuration hash"""
-    config_file = Path('config/configuration.json')
-    with open(config_file, 'rb') as f:
-        return hashlib.sha256(f.read()).hexdigest()[:8]
 
 
 def get_namespace():
@@ -84,8 +75,7 @@ def main():
     print("=" * 80)
     print()
 
-    config_hash = get_config_hash()
-    print(f"Config hash: {config_hash}")
+    print("Monthly cache is config-independent (raw 1m OHLC bars)")
     print()
 
     # Check if OCI CLI is available
@@ -135,7 +125,7 @@ def main():
 
         # OCI file info
         if oci_available:
-            object_name = f"monthly/{config_hash}/{filename}"
+            object_name = f"monthly/{filename}"  # Config-independent
             oci_size = get_oci_object_size(namespace, bucket, object_name)
             oci_size_str = format_size(oci_size)
 
@@ -189,7 +179,7 @@ def main():
             print("  2. Use oci/tools/upload_regime_caches.py to upload missing files")
             print("  3. Or manually upload via OCI Console:")
             print(f"     Bucket: {bucket}")
-            print(f"     Prefix: monthly/{config_hash}/")
+            print(f"     Prefix: monthly/")
             print()
     else:
         local_count = sum(1 for r in results if r['local_size'] is not None)

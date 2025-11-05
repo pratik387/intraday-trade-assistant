@@ -8,16 +8,7 @@ Uploads the 6 regime month cache files to OCI for parallel backtesting.
 
 import subprocess
 import sys
-import hashlib
-import json
 from pathlib import Path
-
-
-def get_config_hash():
-    """Get configuration hash"""
-    config_file = Path('config/configuration.json')
-    with open(config_file, 'rb') as f:
-        return hashlib.sha256(f.read()).hexdigest()[:8]
 
 
 def get_namespace():
@@ -78,14 +69,13 @@ def main():
     print("=" * 60)
     print()
 
-    # Get config hash and namespace
-    config_hash = get_config_hash()
+    # Get namespace
     namespace = get_namespace()
     bucket = 'backtest-cache'
 
-    print(f"Config hash: {config_hash}")
     print(f"Namespace: {namespace}")
     print(f"Bucket: {bucket}")
+    print(f"Target: monthly/ (config-independent)")
     print()
 
     # Files to upload (all 6 regime months)
@@ -111,7 +101,7 @@ def main():
             failed += 1
             continue
 
-        object_name = f"monthly/{config_hash}/{filename}"
+        object_name = f"monthly/{filename}"  # Config-independent - just raw 1m bars
         size_mb = file_path.stat().st_size / (1024 ** 2)
 
         # Check if already exists

@@ -177,9 +177,8 @@ def download_monthly_cache(date_str):
     date_obj = datetime.strptime(date_str, '%Y-%m-%d')
     monthly_filename = f"{date_obj.year}_{date_obj.month:02d}_1m.feather"
 
-    # Download path in OCI
-    config_hash = os.environ.get('CONFIG_HASH', 'default')
-    object_name = f"monthly/{config_hash}/{monthly_filename}"
+    # Download path in OCI (monthly cache is config-independent - just raw 1m bars)
+    object_name = f"monthly/{monthly_filename}"
 
     try:
         # Download monthly cache
