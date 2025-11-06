@@ -359,8 +359,18 @@ class ExitExecutor:
                 # 2) Targets & state (already retrieved above for SL check)
                 t1, t2 = self._get_targets(pos.plan)
 
+                # Debug: Log target levels for validation (Option B fix verification)
+                if not math.isnan(t1) and not math.isnan(t2):
+                    entry = pos.plan.get("entry", 0)
+                    sl = pos.plan.get("sl", 0)
+                    risk = abs(entry - sl) if entry and sl else 0
+                    t1_r = abs(t1 - entry) / risk if risk > 0 else 0
+                    t2_r = abs(t2 - entry) / risk if risk > 0 else 0
+                    logger.debug(f"TARGET_CHECK: {sym} entry={entry:.2f} sl={sl:.2f} risk={risk:.2f} | T1={t1:.2f} ({t1_r:.2f}R) T2={t2:.2f} ({t2_r:.2f}R)")
+
                 # 2a) T2 (PHASE 2: partial exit - 40% of remaining, leave 20% for trail)
                 st = pos.plan.get("_state") or {}
+                t1_done = st.get("t1_done", False)
                 t2_done = st.get("t2_done", False)
 
                 if (not t2_done) and not math.isnan(t2):

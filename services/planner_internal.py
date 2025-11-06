@@ -1039,6 +1039,9 @@ def generate_trade_plan(
             exits["targets"][1]["level"] = round(float(t2_feasible), 2)
             exits["targets"][1]["rr"] = round(float(t2_rr_eff), 2)
 
+        # Log target levels for verification (Option B fix)
+        logger.info(f"PLANNER_TARGETS: {symbol} entry={entry_ref_price:.2f} risk={rps:.2f} | T1={t1_feasible:.2f} ({t1_rr_eff:.2f}R) T2={t2_feasible:.2f} ({t2_rr_eff:.2f}R) | mm={measured_move:.2f} cap1={cap1:.2f} cap2={cap2:.2f}")
+
         # Calculate structural risk-reward based on expected measured move
         if strat["bias"] == "long":
             # For longs, next objective is ORH + 50% of measured move

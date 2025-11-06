@@ -1141,11 +1141,11 @@
   "_comment_t2": "PHASE 2: NEW - Book another 40% at T2, leave 20% for trail",
   "exit_t1_move_sl_to_be": true,
   "exit_trail_atr_mult": 2.0,
-  "_comment_trail_mult": "PHASE 2: Trail at 2.0× ATR distance",
+  "_comment_trail_mult": "PHASE 2: Trail at 2.0\u00c3\u2014 ATR distance",
   "exit_trail_time_tighten": "14:30",
   "_comment_trail_time": "PHASE 3: Tighten trail after 2:30 PM when NSE liquidity drops",
   "exit_trail_atr_mult_late": 1.5,
-  "_comment_trail_late": "PHASE 3: Tighter 1.5× ATR trail after 14:30",
+  "_comment_trail_late": "PHASE 3: Tighter 1.5\u00c3\u2014 ATR trail after 14:30",
   "exit_time_stop_min": 30.0,
   "exit_time_stop_req_rr": 0.4,
   "exit_score_drop_enabled": true,
@@ -1623,6 +1623,17 @@
       "mode_1": "capital_management.enabled=false \u00e2\u2020\u2019 Unlimited capital (current, for strategy dev)",
       "mode_2": "capital_management.enabled=true + mis_leverage.enabled=false \u00e2\u2020\u2019 Rs.1L, 1x leverage (delivery)",
       "mode_3": "capital_management.enabled=true + mis_leverage.enabled=true \u00e2\u2020\u2019 Rs.1L + MIS 5-20x leverage (intraday)"
+    }
+  },
+  "extras": {
+    "planner_precision": {
+      "t1_max_mm_frac": 2.0,
+      "t2_max_mm_frac": 3.0,
+      "t1_max_pct": 100.0,
+      "t2_max_pct": 100.0,
+      "rr_clip_max": 6.0,
+      "t1_min_rr": 1.0,
+      "_comment": "Option B: Increase measured move caps to 2x and 3x to allow configured 1.5R and 3.0R targets while maintaining structure-based safety"
     }
   }
 }
