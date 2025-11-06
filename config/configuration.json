@@ -1625,15 +1625,13 @@
       "mode_3": "capital_management.enabled=true + mis_leverage.enabled=true \u00e2\u2020\u2019 Rs.1L + MIS 5-20x leverage (intraday)"
     }
   },
-  "extras": {
-    "planner_precision": {
-      "t1_max_mm_frac": 2.0,
-      "t2_max_mm_frac": 3.0,
-      "t1_max_pct": 100.0,
-      "t2_max_pct": 100.0,
-      "rr_clip_max": 6.0,
-      "t1_min_rr": 1.0,
-      "_comment": "Option B: Increase measured move caps to 2x and 3x to allow configured 1.5R and 3.0R targets while maintaining structure-based safety"
-    }
+  "planner_precision": {
+    "t1_max_mm_frac": 2.0,
+    "t2_max_mm_frac": 3.0,
+    "t1_max_pct": 100.0,
+    "t2_max_pct": 100.0,
+    "rr_clip_max": 6.0,
+    "t1_min_rr": 1.0,
+    "_comment": "Option B: Increase measured move caps to 2x and 3x to allow configured 1.5R and 3.0R targets while maintaining structure-based safety"
   }
 }

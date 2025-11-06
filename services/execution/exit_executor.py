@@ -320,9 +320,10 @@ class ExitExecutor:
 
                         plan_sl = new_plan_sl
 
-                # Get state early to check if T1 was already hit (for better exit reason labeling)
+                # Get state early to check if T1/T2 were already hit (for better exit reason labeling)
                 st = pos.plan.get("_state") or {}
                 t1_done = bool(st.get("t1_done", False))
+                t2_done = bool(st.get("t2_done", False))
 
                 # Check SL with intrabar accuracy - broker handles live vs backtest polymorphically
                 if not math.isnan(plan_sl):
@@ -369,10 +370,7 @@ class ExitExecutor:
                     logger.debug(f"TARGET_CHECK: {sym} entry={entry:.2f} sl={sl:.2f} risk={risk:.2f} | T1={t1:.2f} ({t1_r:.2f}R) T2={t2:.2f} ({t2_r:.2f}R)")
 
                 # 2a) T2 (PHASE 2: partial exit - 40% of remaining, leave 20% for trail)
-                st = pos.plan.get("_state") or {}
-                t1_done = st.get("t1_done", False)
-                t2_done = st.get("t2_done", False)
-
+                # Note: t1_done and t2_done already retrieved at top of loop (line 325-326)
                 if (not t2_done) and not math.isnan(t2):
                     t2_px = self.broker.get_ltp_with_level(sym, check_level=t2)
                     if t2_px is not None and self._target_hit(pos.side, t2_px, t2):

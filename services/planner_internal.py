@@ -992,6 +992,7 @@ def generate_trade_plan(
 
         # Feasibility tightening (from planner_precision extras)
         pp = cfg._extras.get("planner_precision", {})
+        logger.info(f"PLANNER_CONFIG: {symbol} planner_precision={pp}")
         measured_move = max(orh - orl, atr) if strat["bias"] in ("long","short") else atr
         # CRITICAL SAFETY FIX: Use conservative fallback instead of dangerous 1e-6
         # The 1e-6 fallback could create massive position sizes (risk_rupees / 1e-6)
