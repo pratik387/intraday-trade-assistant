@@ -356,30 +356,31 @@ def _calculate_structure_stop(
     atr: float = None
 ) -> float:
     """
-    NSE FIX: Uses entry-relative stops at 1.5× ATR distance from entry price.
+    PHASE 1 STOP LOSS FIX (Nov 2025): Uses entry-relative stops at 2.25× ATR distance.
 
-    Previous bug: Level-relative stops (e.g., orl * 0.995) gave inconsistent risk distances
-    because the distance from entry to stop varied widely depending on where price was
-    relative to the structure level.
+    Analysis of 36 hard_sl exits (42.4% of all trades, -Rs.17,743) using 1m spike data showed:
+    - 91.7% of SL hits AVOIDABLE with 1.5R stops (33/36 trades saved!)
+    - 36.1% were FALSE STOP-OUTS - price reversed after SL hit
+    - 22.2% hit T1 before SL - these could have been WINNING trades
 
-    NSE baseline data (3-month analysis) shows:
-    - 73.8% stop hit rate at 0.5× ATR (too tight)
-    - 47.4% stop hit rate at 1.5× ATR (optimal)
+    Previous stop: 1.5× ATR (1.0R)
+    New stop: 2.25× ATR (1.5R) - 50% wider to avoid NSE intraday noise
 
-    This implementation ensures consistent risk management by placing stops at exactly
-    1.5× ATR from the actual entry price, regardless of structure levels.
+    Expected impact: Save 33/36 SL trades, convert ~8 to T1 winners, gain Rs.15,000-18,000
+
+    See: tools/analyze_stop_loss_problem.py for full analysis
     """
-    # NSE FIX: Use entry-relative stops at 1.5× ATR for consistent risk management
+    # PHASE 1 FIX: Widen stops from 1.5× ATR to 2.25× ATR (1.5R vs 1.0R)
     if atr is None or np.isnan(atr):
-        # Fallback: 0.5% of entry price if ATR unavailable
-        atr = entry_price * 0.005
+        # Fallback: 0.75% of entry price if ATR unavailable (also widened from 0.5%)
+        atr = entry_price * 0.0075
 
     if bias == "long":
-        # For longs: stop 1.5× ATR below entry price
-        return entry_price - (atr * 1.5)
+        # For longs: stop 2.25× ATR below entry price (was 1.5× ATR)
+        return entry_price - (atr * 2.25)
     elif bias == "short":
-        # For shorts: stop 1.5× ATR above entry price
-        return entry_price + (atr * 1.5)
+        # For shorts: stop 2.25× ATR above entry price (was 1.5× ATR)
+        return entry_price + (atr * 2.25)
 
     return np.nan
 
