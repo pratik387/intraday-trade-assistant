@@ -374,8 +374,10 @@ class MarketRegimeGate:
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
 
             # Failure fades - primary chop strategy
+            # INSTITUTIONAL FIX: Require ADX >= 15 to avoid weak/choppy trades
+            # Analysis: ADX > 15 filter saves Rs.2,718 (18 hard_sl avoided, 15 winners lost)
             if setup_type in {"failure_fade_long", "failure_fade_short"}:
-                return v >= self.FF_MIN_VOL_MULT
+                return (v >= self.FF_MIN_VOL_MULT) and (a >= 15.0)
 
             # Mean reversion and range setups - work well in chop
             if setup_type in {"vwap_mean_reversion_long", "vwap_mean_reversion_short"}:
@@ -404,8 +406,9 @@ class MarketRegimeGate:
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
             if setup_type == "vwap_reclaim_long":
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
+            # INSTITUTIONAL FIX: Require ADX >= 15 for fade strategies
             if setup_type == "failure_fade_short":
-                return v >= self.FF_MIN_VOL_MULT
+                return (v >= self.FF_MIN_VOL_MULT) and (a >= 15.0)
             # Trend continuation setups in uptrend
             if setup_type == "flag_continuation_long":
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
@@ -428,8 +431,9 @@ class MarketRegimeGate:
             # Analysis showed 5/5 trades (100%) hit hard_sl in trend_down (-Rs.2,606)
             # Mean reversion doesn't work when catching falling knives
             # Only allow failure_fade_short (fade resistance) in downtrends
+            # INSTITUTIONAL FIX: Require ADX >= 15 to avoid weak/choppy trades
             if setup_type == "failure_fade_short":
-                return v >= self.FF_MIN_VOL_MULT
+                return (v >= self.FF_MIN_VOL_MULT) and (a >= 15.0)
             # Trend continuation setups in downtrend
             if setup_type == "flag_continuation_short":
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)

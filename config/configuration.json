@@ -610,6 +610,7 @@
       "min_volume_mult": 1.2,
       "min_fade_strength": 0.6,
       "_comment_fade_strength": "INSTITUTIONAL FIX: Increased from 0.3 to 0.6 to filter weak bounces (14/19 SL hits in chop regime at 0.3)",
+      "_comment_adx_filter": "INSTITUTIONAL FIX (exit-opt-004): ADX >= 15 required in regime_gate.py to avoid weak/choppy trades. Analysis: saves Rs.2,718 (18 hard_sl avoided vs 15 winners lost). Checked at DECISION time on 5m bar.",
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
       "stop_mult": 1.5,
@@ -625,6 +626,7 @@
       "min_volume_mult": 1.2,
       "min_fade_strength": 0.6,
       "_comment_fade_strength": "INSTITUTIONAL FIX: Increased from 0.3 to 0.6 for consistency with failure_fade_long",
+      "_comment_adx_filter": "INSTITUTIONAL FIX (exit-opt-004): ADX >= 15 required in regime_gate.py to avoid weak/choppy trades. Analysis: saves Rs.2,718 (18 hard_sl avoided vs 15 winners lost). Checked at DECISION time on 5m bar.",
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
       "stop_mult": 1.5,
@@ -1224,6 +1226,15 @@
   "quality_filters": {
     "enabled": true,
     "min_structural_rr": 1.2,
+    "_comment_structural_rr_override": "INSTITUTIONAL FIX (exit-opt-004-phase2b): Strategy-specific R:R thresholds. Missed opportunities analysis showed 1,075 breakout trades rejected with 92% win rate (Rs.19,048 potential profit). Breakouts have momentum that blows through resistance.",
+    "strategy_structural_rr_overrides": {
+      "breakout_long": 0.5,
+      "breakout_short": 0.5,
+      "orb_breakout_long": 0.5,
+      "orb_breakout_short": 0.5,
+      "flag_continuation_long": 0.6,
+      "flag_continuation_short": 0.6
+    },
     "min_t1_rr": 1.2,
     "breakout_min_adx": 20.0,
     "min_t2_rr": 1.5,

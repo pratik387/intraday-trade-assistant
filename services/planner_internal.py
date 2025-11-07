@@ -1163,7 +1163,12 @@ def generate_trade_plan(
             quality_filters = cfg._extras.get("quality_filters", {})
             if quality_filters.get("enabled", False):
                 structural_rr_val = plan["quality"].get("structural_rr", 0)
-                min_structural_rr = quality_filters.get("min_structural_rr", 2.0)
+
+                # INSTITUTIONAL FIX (exit-opt-004-phase2b): Strategy-specific R:R thresholds
+                # Breakouts have momentum that blows through resistance, so use relaxed thresholds
+                strategy_rr_overrides = quality_filters.get("strategy_structural_rr_overrides", {})
+                strategy_type = plan.get("strategy", "")
+                min_structural_rr = strategy_rr_overrides.get(strategy_type, quality_filters.get("min_structural_rr", 2.0))
 
                 # Professional quality filters - reject poor setups at planning stage
                 if plan["eligible"]:
@@ -1180,6 +1185,18 @@ def generate_trade_plan(
                                                  strategy_type=str(plan["strategy"]) if plan["strategy"] is not None else None,
                                                  t1_orig=float(t1_level) if t1_level is not None else None,
                                                  entry_ref_price=float(entry_price) if entry_price is not None else None)
+
+                    # Filter: structural R:R check (strategy-specific thresholds)
+                    # INSTITUTIONAL FIX (exit-opt-004-phase2b): This filter was previously not enforced!
+                    if plan["eligible"] and structural_rr_val < min_structural_rr:
+                        plan["eligible"] = False
+                        plan["quality"]["rejection_reason"] = f"structural_rr {structural_rr_val:.2f} < {min_structural_rr:.2f}"
+                        logger.debug(f"planner: {symbol} rejected due to poor structural R:R {structural_rr_val:.2f} (strategy={strategy_type})")
+                        planning_logger.log_reject(symbol, "structural_rr_too_low",
+                                                 timestamp=last_ts.isoformat() if last_ts is not None else None,
+                                                 strategy_type=str(plan["strategy"]) if plan["strategy"] is not None else None,
+                                                 structural_rr=float(structural_rr_val),
+                                                 min_required=float(min_structural_rr))
 
                     # Filter: T2 feasibility check (tiered approach)
                     # If T2 is infeasible, reduce position size to 50% (T1-only scalp mode)
