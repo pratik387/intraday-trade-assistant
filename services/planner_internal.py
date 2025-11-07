@@ -1043,23 +1043,63 @@ def generate_trade_plan(
         # Log target levels for verification (Option B fix)
         logger.info(f"PLANNER_TARGETS: {symbol} entry={entry_ref_price:.2f} risk={rps:.2f} | T1={t1_feasible:.2f} ({t1_rr_eff:.2f}R) T2={t2_feasible:.2f} ({t2_rr_eff:.2f}R) | mm={measured_move:.2f} cap1={cap1:.2f} cap2={cap2:.2f}")
 
-        # Calculate structural risk-reward based on expected measured move
-        if strat["bias"] == "long":
-            # For longs, next objective is ORH + 50% of measured move
-            next_objective = orh + 0.5 * measured_move
-            structural_rr = (next_objective - entry_ref_price) / max(rps, 1e-6)
-        elif strat["bias"] == "short":
-            # For shorts, next objective is ORL - 50% of measured move
-            next_objective = orl - 0.5 * measured_move
-            structural_rr = (entry_ref_price - next_objective) / max(rps, 1e-6)
-        else:
-            next_objective = float("nan")
-            structural_rr = float("nan")
+        # Calculate quality metric - DIFFERENT for breakouts vs fades
+        # INSTITUTIONAL FIX (exit-opt-004-phase2c): Momentum-based metric for breakouts
+        is_breakout_strategy = strat["name"] in {
+            "breakout_long", "breakout_short",
+            "orb_breakout_long", "orb_breakout_short",
+            "flag_continuation_long", "flag_continuation_short"
+        }
 
-        # Handle negative structural RR (indicates setup-strategy directional mismatch)
+        if is_breakout_strategy:
+            # MOMENTUM QUALITY for breakouts: volume * breakout_strength / risk
+            # This measures STRENGTH of the break, not distance to arbitrary levels
+
+            # Get volume confirmation
+            vol_ratio = float(sess["vol_ratio"].iloc[-1]) if "vol_ratio" in sess.columns and not np.isnan(sess["vol_ratio"].iloc[-1]) else 1.0
+            vol_ratio = max(vol_ratio, 0.5)  # Floor at 0.5 to avoid division issues
+
+            # Calculate breakout strength (how far beyond the level)
+            if strat["bias"] == "long":
+                breakout_distance = max(entry_ref_price - orh, 0)  # Distance above ORH
+                # Normalize by ATR (large ATR stocks naturally have larger breakout distances)
+                breakout_strength = breakout_distance / max(atr, 1e-6)
+            elif strat["bias"] == "short":
+                breakout_distance = max(orl - entry_ref_price, 0)  # Distance below ORL
+                breakout_strength = breakout_distance / max(atr, 1e-6)
+            else:
+                breakout_strength = 0.0
+
+            # Momentum quality = volume * breakout_strength / risk
+            # Higher volume + stronger break + tighter stop = higher quality
+            # This is what professional traders look for in breakouts
+            structural_rr = (vol_ratio * breakout_strength) / max(rps / atr, 1e-6)
+
+            # Log the momentum quality for analysis
+            logger.info(f"MOMENTUM_QUALITY: {symbol} vol_ratio={vol_ratio:.2f} breakout_dist={breakout_distance:.2f} "
+                       f"breakout_strength={breakout_strength:.3f} risk_norm={rps/atr:.2f} momentum_quality={structural_rr:.3f}")
+
+        else:
+            # DISTANCE-BASED R:R for fades/mean-reversion (works correctly for these)
+            if strat["bias"] == "long":
+                # For longs, next objective is ORH + 50% of measured move
+                next_objective = orh + 0.5 * measured_move
+                structural_rr = (next_objective - entry_ref_price) / max(rps, 1e-6)
+            elif strat["bias"] == "short":
+                # For shorts, next objective is ORL - 50% of measured move
+                next_objective = orl - 0.5 * measured_move
+                structural_rr = (entry_ref_price - next_objective) / max(rps, 1e-6)
+            else:
+                next_objective = float("nan")
+                structural_rr = float("nan")
+
+        # Handle negative/invalid values
         if not np.isnan(structural_rr):
             if structural_rr < 0:
-                logger.warning(f"Negative structural RR {structural_rr:.2f} for {symbol} - potential setup-strategy mismatch")
+                if is_breakout_strategy:
+                    logger.warning(f"Negative momentum quality {structural_rr:.2f} for {symbol} - entry below breakout level")
+                else:
+                    logger.warning(f"Negative structural RR {structural_rr:.2f} for {symbol} - potential setup-strategy mismatch")
                 structural_rr = 0.0
             else:
                 structural_rr = float(np.clip(structural_rr, 0.0, rr_clip_max))

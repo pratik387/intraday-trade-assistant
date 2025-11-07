@@ -1226,14 +1226,14 @@
   "quality_filters": {
     "enabled": true,
     "min_structural_rr": 1.2,
-    "_comment_structural_rr_override": "INSTITUTIONAL FIX (exit-opt-004-phase2b): Strategy-specific R:R thresholds. Missed opportunities analysis showed 1,075 breakout trades rejected with 92% win rate (Rs.19,048 potential profit). Breakouts have momentum that blows through resistance.",
+    "_comment_momentum_quality": "INSTITUTIONAL FIX (exit-opt-004-phase2c): Momentum-based quality metric for breakouts. Replaces distance-based structural R:R with volume*breakout_strength/risk. Root cause analysis revealed distance-based R:R is inversely correlated with breakout quality - strong breakouts enter above ORH and had LOW structural R:R. Momentum quality measures what actually matters: volume confirmation + breakout strength + risk efficiency.",
     "strategy_structural_rr_overrides": {
-      "breakout_long": 0.5,
-      "breakout_short": 0.5,
-      "orb_breakout_long": 0.5,
-      "orb_breakout_short": 0.5,
-      "flag_continuation_long": 0.6,
-      "flag_continuation_short": 0.6
+      "breakout_long": 0.3,
+      "breakout_short": 0.3,
+      "orb_breakout_long": 0.25,
+      "orb_breakout_short": 0.25,
+      "flag_continuation_long": 0.4,
+      "flag_continuation_short": 0.4
     },
     "min_t1_rr": 1.2,
     "breakout_min_adx": 20.0,
