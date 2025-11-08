@@ -1061,11 +1061,11 @@ def generate_trade_plan(
 
             # Calculate breakout strength (how far beyond the level)
             if strat["bias"] == "long":
-                breakout_distance = max(entry_ref_price - orh, 0)  # Distance above ORH
+                breakout_distance = max(current_close - orh, 0)  # Distance above ORH
                 # Normalize by ATR (large ATR stocks naturally have larger breakout distances)
                 breakout_strength = breakout_distance / max(atr, 1e-6)
             elif strat["bias"] == "short":
-                breakout_distance = max(orl - entry_ref_price, 0)  # Distance below ORL
+                breakout_distance = max(orl - current_close, 0)  # Distance below ORL
                 breakout_strength = breakout_distance / max(atr, 1e-6)
             else:
                 breakout_strength = 0.0
