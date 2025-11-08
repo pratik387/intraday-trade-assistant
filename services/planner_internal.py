@@ -1070,14 +1070,14 @@ def generate_trade_plan(
             else:
                 breakout_strength = 0.0
 
-            # Momentum quality = volume * breakout_strength / risk
+            # Structural R:R = volume * breakout_strength / risk
             # Higher volume + stronger break + tighter stop = higher quality
             # This is what professional traders look for in breakouts
             structural_rr = (vol_ratio * breakout_strength) / max(rps / atr, 1e-6)
 
-            # Log the momentum quality for analysis
-            logger.info(f"MOMENTUM_QUALITY: {symbol} vol_ratio={vol_ratio:.2f} breakout_dist={breakout_distance:.2f} "
-                       f"breakout_strength={breakout_strength:.3f} risk_norm={rps/atr:.2f} momentum_quality={structural_rr:.3f}")
+            # Log the breakout quality for analysis
+            logger.info(f"BREAKOUT_QUALITY: {symbol} vol_ratio={vol_ratio:.2f} breakout_dist={breakout_distance:.2f} "
+                       f"breakout_strength={breakout_strength:.3f} risk_norm={rps/atr:.2f} structural_rr={structural_rr:.3f}")
 
         else:
             # DISTANCE-BASED R:R for fades/mean-reversion (works correctly for these)
