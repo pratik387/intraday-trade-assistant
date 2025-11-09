@@ -173,32 +173,33 @@ class LevelBreakoutStructure(BaseStructure):
             logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Rejected potential liquidity grab at {level_name}")
             return None
 
-        # INSTITUTIONAL FILTERS - CRITICAL FOR INDIAN MARKETS
-        # These filters reduce hard SL rate from 42% to <25%
+        # INSTITUTIONAL FILTERS - Based on spike test analysis
+        # Analysis showed conviction filter successfully blocks losers (44.6% win rate)
+        # while level_cleanness incorrectly blocked winners (55.1% win rate)
 
-        # 7. Timing filter - REJECT pre-institutional hours (9:15-9:45am retail noise)
-        timing_valid, timing_rejection = self._check_institutional_timing(context.timestamp)
-        if not timing_valid:
-            logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {timing_rejection}")
-            return None
+        # 7. Timing filter - DISABLED (spike tests showed zero impact)
+        # timing_valid, timing_rejection = self._check_institutional_timing(context.timestamp)
+        # if not timing_valid:
+        #     logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {timing_rejection}")
+        #     return None
 
-        # 8. Candle conviction filter - Close must be in top 70% of bar (not doji)
+        # 8. Candle conviction filter - KEEP (successfully blocks 2563 losing trades, saves Rs.2359)
         conviction_valid, conviction_rejection = self._check_candle_conviction(df, is_long=True)
         if not conviction_valid:
             logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {conviction_rejection}")
             return None
 
-        # 9. Volume accumulation filter - Need 3+ bars with vol_z > 1.0 before breakout
-        accumulation_valid, accumulation_rejection = self._check_volume_accumulation(df)
-        if not accumulation_valid:
-            logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {accumulation_rejection}")
-            return None
+        # 9. Volume accumulation filter - DISABLED (spike tests showed zero impact)
+        # accumulation_valid, accumulation_rejection = self._check_volume_accumulation(df)
+        # if not accumulation_valid:
+        #     logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {accumulation_rejection}")
+        #     return None
 
-        # 10. Level cleanness filter - Max 3 touches in last 20 bars
-        cleanness_valid, cleanness_rejection = self._check_level_cleanness(df, level_value, is_long=True)
-        if not cleanness_valid:
-            logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {cleanness_rejection}")
-            return None
+        # 10. Level cleanness filter - DISABLED (blocked 527 winners worth Rs.1965, 55.1% win rate)
+        # cleanness_valid, cleanness_rejection = self._check_level_cleanness(df, level_value, is_long=True)
+        # if not cleanness_valid:
+        #     logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {cleanness_rejection}")
+        #     return None
 
         # Calculate strength with SMC enhancement
         base_strength = vol_z_current
@@ -274,32 +275,33 @@ class LevelBreakoutStructure(BaseStructure):
             logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Rejected potential liquidity grab at {level_name}")
             return None
 
-        # INSTITUTIONAL FILTERS - CRITICAL FOR INDIAN MARKETS
-        # These filters reduce hard SL rate from 42% to <25%
+        # INSTITUTIONAL FILTERS - Based on spike test analysis
+        # Analysis showed conviction filter successfully blocks losers (44.6% win rate)
+        # while level_cleanness incorrectly blocked winners (55.1% win rate)
 
-        # 7. Timing filter - REJECT pre-institutional hours (9:15-9:45am retail noise)
-        timing_valid, timing_rejection = self._check_institutional_timing(context.timestamp)
-        if not timing_valid:
-            logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {timing_rejection}")
-            return None
+        # 7. Timing filter - DISABLED (spike tests showed zero impact)
+        # timing_valid, timing_rejection = self._check_institutional_timing(context.timestamp)
+        # if not timing_valid:
+        #     logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {timing_rejection}")
+        #     return None
 
-        # 8. Candle conviction filter - Close must be in bottom 30% of bar (not doji)
+        # 8. Candle conviction filter - KEEP (successfully blocks 2563 losing trades, saves Rs.2359)
         conviction_valid, conviction_rejection = self._check_candle_conviction(df, is_long=False)
         if not conviction_valid:
             logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {conviction_rejection}")
             return None
 
-        # 9. Volume accumulation filter - Need 3+ bars with vol_z > 1.0 before breakout
-        accumulation_valid, accumulation_rejection = self._check_volume_accumulation(df)
-        if not accumulation_valid:
-            logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {accumulation_rejection}")
-            return None
+        # 9. Volume accumulation filter - DISABLED (spike tests showed zero impact)
+        # accumulation_valid, accumulation_rejection = self._check_volume_accumulation(df)
+        # if not accumulation_valid:
+        #     logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {accumulation_rejection}")
+        #     return None
 
-        # 10. Level cleanness filter - Max 3 touches in last 20 bars
-        cleanness_valid, cleanness_rejection = self._check_level_cleanness(df, level_value, is_long=False)
-        if not cleanness_valid:
-            logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {cleanness_rejection}")
-            return None
+        # 10. Level cleanness filter - DISABLED (blocked 527 winners worth Rs.1965, 55.1% win rate)
+        # cleanness_valid, cleanness_rejection = self._check_level_cleanness(df, level_value, is_long=False)
+        # if not cleanness_valid:
+        #     logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {cleanness_rejection}")
+        #     return None
 
         # Calculate strength with SMC enhancement
         base_strength = vol_z_current

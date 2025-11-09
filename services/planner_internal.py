@@ -1228,7 +1228,7 @@ def generate_trade_plan(
 
                     # Filter: structural R:R check (strategy-specific thresholds)
                     # INSTITUTIONAL FIX (exit-opt-004-phase2b): This filter was previously not enforced!
-                    if plan["eligible"] and structural_rr_val < min_structural_rr:
+                    if plan["eligible"] and structural_rr_val is not None and structural_rr_val < min_structural_rr:
                         plan["eligible"] = False
                         plan["quality"]["rejection_reason"] = f"structural_rr {structural_rr_val:.2f} < {min_structural_rr:.2f}"
                         logger.debug(f"planner: {symbol} rejected due to poor structural R:R {structural_rr_val:.2f} (strategy={strategy_type})")
