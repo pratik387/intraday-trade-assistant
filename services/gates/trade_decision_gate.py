@@ -481,8 +481,39 @@ class TradeDecisionGate:
         if not setups:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
             return GateDecision(accept=False, reasons=["no_structure_event"])
-        setups.sort(key=lambda s: s.strength, reverse=True)
-        best = setups[0]
+
+        # Priority-based structure selection (Professional approach)
+        # During ORB window (9:30-10:30 AM), prioritize ORB structures over others
+        # This matches institutional behavior: ORB is THE primary setup during opening session
+        orb_priority_enabled = True  # Can be made configurable if needed
+        best = None
+
+        if orb_priority_enabled and minute_of_day is not None:
+            # ORB priority window: 9:30 AM (570) to 10:30 AM (630)
+            orb_window_start = 570  # 9:30 AM
+            orb_window_end = 630    # 10:30 AM
+            in_orb_window = orb_window_start <= minute_of_day <= orb_window_end
+
+            if in_orb_window:
+                # Check if any ORB structures detected
+                orb_setups = [s for s in setups if "orb" in s.setup_type.lower()]
+                if orb_setups:
+                    # During ORB window, pick strongest ORB structure
+                    orb_setups.sort(key=lambda s: s.strength, reverse=True)
+                    best = orb_setups[0]
+                    logger.info(f"TRADE_GATE: ORB window active ({minute_of_day//60}:{minute_of_day%60:02d}), "
+                              f"prioritizing ORB setup: {best.setup_type} (strength={best.strength:.2f})")
+                    reasons.append("orb_priority:active_window")
+
+        # Fallback to standard strength-based selection
+        if best is None:
+            setups.sort(key=lambda s: s.strength, reverse=True)
+            best = setups[0]
+            if minute_of_day is not None and 570 <= minute_of_day <= 630:
+                # Log when non-ORB structure wins during ORB window
+                logger.debug(f"TRADE_GATE: ORB window but no ORB structures detected, "
+                           f"using strongest available: {best.setup_type} (strength={best.strength:.2f})")
+
         reasons.extend([f"structure:{r}" for r in best.reasons])
 
         # Setup blacklist
