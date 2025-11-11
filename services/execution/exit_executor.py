@@ -136,13 +136,13 @@ class ExitExecutor:
         self.eod_scale_out_rr2 = float(exits_config["eod_scale_out_rr2"])
         self.eod_scale_out_pct1 = float(exits_config["eod_scale_out_pct1"])
 
-        # T1 behavior
-        self.t1_book_pct = float(cfg.get("exit_t1_book_pct", 50.0))
+        # T1 behavior - PHASE 2.5: No defaults, must be in config
+        self.t1_book_pct = float(cfg["exit_t1_book_pct"])
         self.t1_move_sl_to_be = bool(cfg.get("exit_t1_move_sl_to_be", True))
 
-        # PHASE 2: T2 and trailing stop behavior
-        self.t2_book_pct = float(cfg.get("exit_t2_book_pct", 40.0))
-        self.trail_atr_mult = float(cfg.get("exit_trail_atr_mult", 2.0))
+        # PHASE 2.5: T2 and trailing stop behavior - No defaults, must be in config
+        self.t2_book_pct = float(cfg["exit_t2_book_pct"])
+        self.trail_atr_mult = float(cfg["exit_trail_atr_mult"])
 
         # PHASE 3: Time-based trail tightening
         self.trail_time_tighten = str(cfg.get("exit_trail_time_tighten", "14:30"))
@@ -1117,11 +1117,8 @@ class ExitExecutor:
             self._exit(sym, pos, float(px), ts, f"target_t1_full_{reason_suffix}")
             return
 
-        pct = max(1.0, float(getattr(self, "t1_book_pct", 40)))
-
-        # PHASE 2: Reduced minimum from 70% to 40% per institutional practice (40-40-20 split)
-        min_book_pct = 40.0  # Minimum partial booking percentage
-        actual_pct = max(min_book_pct, pct)
+        # PHASE 2.5: Use config-driven percentage (33-33-33 split) - no defaults
+        actual_pct = max(1.0, self.t1_book_pct)
 
         qty_exit = int(max(1, round(qty * (actual_pct / 100.0))))
         qty_exit = min(qty_exit, qty)
@@ -1136,7 +1133,7 @@ class ExitExecutor:
 
         # Log enhanced partial exit info
         profit_booked = qty_exit * (px - pos.avg_price)
-        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [PHASE2: 40-40-20 split]")
+        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [PHASE2.5: {actual_pct:.0f}-{actual_pct:.0f}-{100-2*actual_pct:.0f} split]")
         
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
         self.positions.reduce(sym, int(qty_exit))
@@ -1179,20 +1176,20 @@ class ExitExecutor:
 
     def _partial_exit_t2(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
         """
-        PHASE 2: T2 partial exit - book another 40% of remaining position, leave 20% for trail.
+        PHASE 2.5: T2 partial exit - book config-driven percentage of remaining position.
 
-        Strategy: 40% @ T1 + 40% @ T2 + 20% trail = institutional 40-40-20 split
-        Analysis showed avg 1.74R continuation after T2, so trail remaining 20% captures runners.
+        Strategy: 33% @ T1 + 33% @ T2 + 34% trail = optimized 33-33-33 split
+        Analysis showed +484% improvement with equal splits allowing more T3 trail capture.
         """
         qty = int(pos.qty)
         if qty <= 0:
             return
 
-        # Get T2 booking percentage from config (default 40%)
-        t2_pct = float(getattr(self, "t2_book_pct", 40.0))
+        # Get T2 booking percentage from config (no defaults)
+        t2_pct = self.t2_book_pct
 
-        # For remaining position after T1, book t2_pct (typically 40% of remaining = 66.7% of original)
-        # This leaves 20% for trailing
+        # For remaining position after T1, book t2_pct% (config-driven, typically 33%)
+        # This leaves remaining shares for trailing
         qty_exit = int(max(1, round(qty * (t2_pct / 100.0))))
         qty_exit = min(qty_exit, qty)
 
@@ -1207,7 +1204,7 @@ class ExitExecutor:
 
         # Log T2 partial exit
         profit_booked = qty_exit * (px - pos.avg_price)
-        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{qty} ({t2_pct:.1f}%) → profit Rs.{profit_booked:.2f} [PHASE2: leaving {qty-qty_exit} for trail]")
+        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{qty} ({t2_pct:.1f}%) → profit Rs.{profit_booked:.2f} [PHASE2.5: leaving {qty-qty_exit} for trail]")
 
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
         self.positions.reduce(sym, int(qty_exit))
