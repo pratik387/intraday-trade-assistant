@@ -1178,8 +1178,8 @@
   "metrics_enable_vwap": false,
   "_comment_energy_scanner": "=== ENERGY SCANNER (STAGE-0) ===",
   "energy_scanner": {
-    "top_k_long": 80,
-    "top_k_short": 80,
+    "top_k_long": 200,
+    "top_k_short": 200,
     "top_k_mr": 20
   },
   "_comment_scanner_filters": "=== SCANNER FILTERS ===",
