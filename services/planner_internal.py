@@ -1279,11 +1279,12 @@ def generate_trade_plan(
                         breakout_min_adx = quality_filters.get("breakout_min_adx", 20.0)
                         current_adx = plan["indicators"].get("adx14")
 
-                        # Skip filter if ADX is not available
-                        if current_adx is None:
-                            current_adx = 0.0
-
-                        if current_adx < breakout_min_adx:
+                        # Skip ADX filter if not available (insufficient bars in early session)
+                        # ADX requires 15 bars minimum (14 period + 1), which means 75 minutes after market open
+                        # Rejecting early-session setups due to missing ADX creates false negatives
+                        if current_adx is None or current_adx == 0.0:
+                            logger.debug(f"planner: {symbol} skipping ADX filter - insufficient bars for calculation")
+                        elif current_adx < breakout_min_adx:
                             plan["eligible"] = False
                             plan["quality"]["rejection_reason"] = f"ADX {current_adx:.1f} < {breakout_min_adx} (breakout filter)"
                             logger.debug(f"planner: {symbol} rejected breakout setup due to low ADX {current_adx:.1f}")

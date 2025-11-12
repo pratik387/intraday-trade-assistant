@@ -1254,6 +1254,8 @@
       "fade": 1.8,
       "default": 1.0
     },
+    "momentum_vwap_deviation_threshold": 0.02,
+    "momentum_volume_ratio_threshold": 1.5,
     "blacklist_setups": [
       "range_rejection_long",
       "support_bounce_long",

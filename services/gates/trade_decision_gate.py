@@ -427,18 +427,57 @@ class TradeDecisionGate:
             pattern_reasons = []
             pattern_passed = True
 
-            # Momentum consolidation
+            # Momentum quality filter - Multi-factor validation for big movers
+            # Professional approach: Allow strong momentum if confirmed by volume + VWAP proximity
+            # Rejects overextended moves (buying tops) while allowing early-stage momentum
             if self.quality_filters.get('momentum_consolidation_enabled', True) and len(df5m_tail) >= 3:
                 try:
                     close_3_bars_ago = df5m_tail["close"].iloc[-4] if len(df5m_tail) >= 4 else df5m_tail["close"].iloc[0]
                     current_close = df5m_tail["close"].iloc[-1]
                     momentum_15min = ((current_close - close_3_bars_ago) / close_3_bars_ago) * 100
                     momentum_threshold = self._get_strategy_momentum_threshold(None)
+
+                    # Calculate quality indicators (reuse cached data where possible)
+                    vwap = df5m_tail["vwap"].iloc[-1] if "vwap" in df5m_tail.columns else current_close
+                    vwap_deviation = abs((current_close - vwap) / vwap) if vwap > 0 else 0.0
+
+                    # Volume confirmation
+                    current_volume = df5m_tail["volume"].iloc[-1]
+                    avg_volume = df5m_tail["volume"].tail(20).mean() if len(df5m_tail) >= 20 else df5m_tail["volume"].mean()
+                    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+
                     if abs(momentum_15min) > momentum_threshold:
-                        pattern_reasons.append(f"momentum_consolidation_fail:{momentum_15min:.2f}%>{momentum_threshold}%")
-                        pattern_passed = False
+                        # Stock is moving fast - check if this is QUALITY momentum or OVEREXTENDED
+
+                        # Quality momentum thresholds (from professional trader research)
+                        vwap_threshold = self.quality_filters.get('momentum_vwap_deviation_threshold')  # 2% default
+                        volume_threshold = self.quality_filters.get('momentum_volume_ratio_threshold')  # 1.5x default
+
+                        # Multi-factor validation
+                        near_vwap = vwap_deviation < vwap_threshold  # Within 2% of VWAP = sustainable
+                        volume_confirmed = volume_ratio > volume_threshold  # 1.5x+ volume = institutional participation
+
+                        if near_vwap and volume_confirmed:
+                            # QUALITY MOMENTUM: Early-stage move with volume confirmation
+                            pattern_reasons.append(
+                                f"momentum_quality_pass:{momentum_15min:.2f}%,vwap_dev:{vwap_deviation*100:.2f}%,vol_ratio:{volume_ratio:.2f}x"
+                            )
+                        elif near_vwap and not volume_confirmed:
+                            # Near VWAP but weak volume - potential false breakout
+                            pattern_reasons.append(
+                                f"momentum_consolidation_fail:no_volume_confirmation,vol_ratio:{volume_ratio:.2f}x<{volume_threshold}x"
+                            )
+                            pattern_passed = False
+                        else:
+                            # Far from VWAP - overextended (buying tops)
+                            pattern_reasons.append(
+                                f"momentum_consolidation_fail:overextended_from_vwap:{vwap_deviation*100:.2f}%>{vwap_threshold*100:.0f}%"
+                            )
+                            pattern_passed = False
                     else:
+                        # Low momentum - normal consolidation logic
                         pattern_reasons.append(f"momentum_consolidation_pass:{momentum_15min:.2f}%<={momentum_threshold}%")
+
                 except Exception as e:
                     pattern_reasons.append(f"momentum_consolidation_error:{e.__class__.__name__}")
 

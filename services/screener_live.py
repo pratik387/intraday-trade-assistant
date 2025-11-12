@@ -457,7 +457,7 @@ class ScreenerLive:
             df5_by_symbol: Dict[str, pd.DataFrame] = {}
             for s in self.core_symbols:
                 df5 = self.agg.get_df_5m_tail(s, self.cfg.screener_store_5m_max)
-                if validate_df(df5, min_rows=5):
+                if validate_df(df5, min_rows=3):
                     df5_by_symbol[s] = df5
             if df5_by_symbol:
                 feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20)
