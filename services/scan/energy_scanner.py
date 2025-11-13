@@ -22,11 +22,14 @@ Notes:
 """
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+import logging
 
 import numpy as np
 import pandas as pd
 
 from config.logging_config import get_scanner_logger
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -339,6 +342,47 @@ class EnergyScanner:
         momentum_short_count = int(self.top_k_short * 0.7) if self.top_k_short > 0 else 0
         mr_short_count = self.top_k_short - momentum_short_count if self.top_k_short > 0 else 0
 
+        # ========== ORB PRIORITY SCANNER (9:30-10:30 AM) ==========
+        # During ORB window, ALWAYS include stocks near ORH/ORL levels
+        # regardless of momentum ranking to catch early breakouts
+        orb_candidates_long = []
+        orb_candidates_short = []
+
+        # Check if we're in ORB time window (9:30-10:30 AM = 570-630 minutes)
+        if "ts" in df.columns and not df.empty:
+            try:
+                current_ts = df["ts"].iloc[0]  # All rows have same timestamp
+                current_minute = current_ts.hour * 60 + current_ts.minute
+                in_orb_window = 570 <= current_minute < 630  # 9:30-10:30 AM
+
+                if in_orb_window:
+                    # ORB proximity threshold: within 0.3% of ORH/ORL
+                    orb_proximity_threshold = 0.003  # 0.3%
+
+                    # Find stocks near ORH (potential long breakouts)
+                    if "dist_to_ORH" in df.columns:
+                        near_orh = df[
+                            (df["dist_to_ORH"].abs() <= orb_proximity_threshold) &  # Near ORH
+                            (df["dist_to_ORH"] >= -orb_proximity_threshold * 0.5)  # At or slightly above ORH
+                        ]
+                        orb_candidates_long = near_orh["symbol"].tolist()
+
+                    # Find stocks near ORL (potential short breakouts)
+                    if "dist_to_ORL" in df.columns:
+                        near_orl = df[
+                            (df["dist_to_ORL"].abs() <= orb_proximity_threshold) &  # Near ORL
+                            (df["dist_to_ORL"] <= orb_proximity_threshold * 0.5)   # At or slightly below ORL
+                        ]
+                        orb_candidates_short = near_orl["symbol"].tolist()
+
+                    if orb_candidates_long or orb_candidates_short:
+                        logger.info(
+                            f"ORB_PRIORITY | ORB window active (time={current_minute//60:02d}:{current_minute%60:02d}) | "
+                            f"Adding {len(orb_candidates_long)} ORH candidates, {len(orb_candidates_short)} ORL candidates"
+                        )
+            except Exception as e:
+                logger.warning(f"ORB_PRIORITY | Failed to detect ORB candidates: {e}")
+
         # Get momentum candidates (original logic)
         momentum_long = (
             df.sort_values("rank_long")["symbol"].head(momentum_long_count).tolist()
@@ -365,9 +409,17 @@ class EnergyScanner:
         mr_long = [s for s in mr_long if s not in momentum_long][:mr_long_count]
         mr_short = [s for s in mr_short if s not in momentum_short][:mr_short_count]
 
-        # Combine final lists
-        long_syms = momentum_long + mr_long
-        short_syms = momentum_short + mr_short
+        # Combine final lists with ORB priority candidates
+        # ORB candidates are PREPENDED to ensure they're always scanned during ORB window
+        long_syms = orb_candidates_long + momentum_long + mr_long
+        short_syms = orb_candidates_short + momentum_short + mr_short
+
+        # Remove duplicates while preserving order (ORB candidates first)
+        seen_long = set()
+        long_syms = [s for s in long_syms if not (s in seen_long or seen_long.add(s))]
+
+        seen_short = set()
+        short_syms = [s for s in short_syms if not (s in seen_short or seen_short.add(s))]
 
         # Log scanner decisions (accepts and rejects)
         all_accepted = set(long_syms + short_syms)
@@ -376,32 +428,41 @@ class EnergyScanner:
             if symbol in all_accepted:
                 # Determine if long or short
                 bias = "long" if symbol in long_syms else "short"
-                category = "momentum" if symbol in (momentum_long + momentum_short) else "mean_reversion"
 
-                scanner_logger.log_accept(
-                    symbol,
-                    bias=bias,
-                    category=category,
-                    timestamp=row.get('ts').isoformat() if row.get('ts') is not None else None,
-                    score_long=row.get('score_long', 0),
-                    score_short=row.get('score_short', 0),
-                    rank_long=row.get('rank_long', 0),
-                    rank_short=row.get('rank_short', 0),
-                    volume_z=row.get('vol_z20', 0),
-                    close=row.get('close', 0),
-                    ret_1=row.get('ret_1', 0)
-                )
+                # Determine category: ORB priority > momentum > mean_reversion
+                if symbol in orb_candidates_long or symbol in orb_candidates_short:
+                    category = "orb_priority"
+                elif symbol in (momentum_long + momentum_short):
+                    category = "momentum"
+                else:
+                    category = "mean_reversion"
+
+                if scanner_logger:
+                    scanner_logger.log_accept(
+                        symbol,
+                        bias=bias,
+                        category=category,
+                        timestamp=row.get('ts').isoformat() if row.get('ts') is not None else None,
+                        score_long=row.get('score_long', 0),
+                        score_short=row.get('score_short', 0),
+                        rank_long=row.get('rank_long', 0),
+                        rank_short=row.get('rank_short', 0),
+                        volume_z=row.get('vol_z20', 0),
+                        close=row.get('close', 0),
+                        ret_1=row.get('ret_1', 0)
+                    )
             else:
-                scanner_logger.log_reject(
-                    symbol,
-                    "not_shortlisted",
-                    score_long=row.get('score_long', 0),
-                    timestamp=row.get('ts').isoformat() if row.get('ts') is not None else None,
-                    score_short=row.get('score_short', 0),
-                    rank_long=row.get('rank_long', 0),
-                    rank_short=row.get('rank_short', 0),
-                    top_k_long=self.top_k_long,
-                    top_k_short=self.top_k_short
-                )
+                if scanner_logger:
+                    scanner_logger.log_reject(
+                        symbol,
+                        "not_shortlisted",
+                        score_long=row.get('score_long', 0),
+                        timestamp=row.get('ts').isoformat() if row.get('ts') is not None else None,
+                        score_short=row.get('score_short', 0),
+                        rank_long=row.get('rank_long', 0),
+                        rank_short=row.get('rank_short', 0),
+                        top_k_long=self.top_k_long,
+                        top_k_short=self.top_k_short
+                    )
 
         return {"long": long_syms, "short": short_syms}

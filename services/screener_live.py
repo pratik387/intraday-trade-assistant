@@ -460,7 +460,18 @@ class ScreenerLive:
                 if validate_df(df5, min_rows=3):
                     df5_by_symbol[s] = df5
             if df5_by_symbol:
-                feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20)
+                # ORB FIX: Build levels_by_symbol dict to pass to compute_features
+                # This enables dist_to_ORH/dist_to_ORL columns needed for ORB priority scanner
+                levels_by_symbol: Dict[str, Dict[str, float]] = {}
+                for sym, df5 in df5_by_symbol.items():
+                    try:
+                        lvl = self._levels_for(sym, df5, now)
+                        levels_by_symbol[sym] = lvl
+                    except Exception as e:
+                        logger.debug(f"Failed to compute levels for {sym}: {e}")
+                        levels_by_symbol[sym] = {}
+
+                feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20, levels_by_symbol=levels_by_symbol)
                 feats_df = self._filter_stage0(feats_df, now)  # liquidity + vwap proximity + momentum + (opt) vol persistence
                 # Use scanner's select_shortlist for proper structured logging
                 shortlist_dict = self.scanner.select_shortlist(feats_df)

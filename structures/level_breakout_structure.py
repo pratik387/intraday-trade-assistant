@@ -177,11 +177,11 @@ class LevelBreakoutStructure(BaseStructure):
         # Analysis showed conviction filter successfully blocks losers (44.6% win rate)
         # while level_cleanness incorrectly blocked winners (55.1% win rate)
 
-        # 7. Timing filter - DISABLED (spike tests showed zero impact)
-        # timing_valid, timing_rejection = self._check_institutional_timing(context.timestamp)
-        # if not timing_valid:
-        #     logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {timing_rejection}")
-        #     return None
+        # 7. Timing filter - RE-ENABLED but EXEMPT ORB trades (9:15-9:45 AM filter, but allow ORH/ORL)
+        timing_valid, timing_rejection = self._check_institutional_timing(context.timestamp, level_name)
+        if not timing_valid:
+            logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {timing_rejection}")
+            return None
 
         # 8. Candle conviction filter - KEEP (successfully blocks 2563 losing trades, saves Rs.2359)
         conviction_valid, conviction_rejection = self._check_candle_conviction(df, is_long=True)
@@ -279,11 +279,11 @@ class LevelBreakoutStructure(BaseStructure):
         # Analysis showed conviction filter successfully blocks losers (44.6% win rate)
         # while level_cleanness incorrectly blocked winners (55.1% win rate)
 
-        # 7. Timing filter - DISABLED (spike tests showed zero impact)
-        # timing_valid, timing_rejection = self._check_institutional_timing(context.timestamp)
-        # if not timing_valid:
-        #     logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {timing_rejection}")
-        #     return None
+        # 7. Timing filter - RE-ENABLED but EXEMPT ORB trades (9:15-9:45 AM filter, but allow ORH/ORL)
+        timing_valid, timing_rejection = self._check_institutional_timing(context.timestamp, level_name)
+        if not timing_valid:
+            logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - {timing_rejection}")
+            return None
 
         # 8. Candle conviction filter - KEEP (successfully blocks 2563 losing trades, saves Rs.2359)
         conviction_valid, conviction_rejection = self._check_candle_conviction(df, is_long=False)
@@ -670,22 +670,31 @@ class LevelBreakoutStructure(BaseStructure):
 
         return institutional_strength
 
-    def _check_institutional_timing(self, timestamp: pd.Timestamp) -> Tuple[bool, str]:
+    def _check_institutional_timing(self, timestamp: pd.Timestamp, level_name: str = None) -> Tuple[bool, str]:
         """
         INSTITUTIONAL TIMING FILTER for Indian markets.
 
         REJECT breakouts during retail noise periods (9:15-9:45am).
-        Institutional traders wait for retail frenzy to subside before committing capital.
+        EXCEPT for ORB (Opening Range Breakout) trades - ORH/ORL are valid 9:30-10:30.
+
+        Institutional traders wait for retail frenzy to subside before committing capital,
+        BUT ORB is a legitimate strategy where the opening range (9:15-9:30) defines levels
+        and breakouts from 9:35-10:30 are high-probability institutional moves.
 
         Returns (is_valid, rejection_reason)
         """
         try:
             time_minutes = timestamp.hour * 60 + timestamp.minute
 
-            # CRITICAL: Reject pre-institutional hours (9:15-9:45am)
+            # EXEMPT ORB trades (ORH/ORL) from timing filter
+            # ORB is a valid institutional strategy with 9:30 opening range
+            if level_name in ("ORH", "ORL"):
+                return True, ""  # Allow ORB trades at any time
+
+            # CRITICAL: Reject pre-institutional hours (9:15-9:45am) for PDH/PDL
             # This is when retail traders chase gaps and create false breakouts
             if 555 <= time_minutes < 585:  # 9:15am - 9:45am
-                return False, "Rejected: Pre-institutional hours (9:15-9:45am retail noise)"
+                return False, "Rejected: Pre-institutional hours (9:15-9:45am retail noise, non-ORB)"
 
             # Accept institutional trading hours (9:45am onwards)
             return True, ""
