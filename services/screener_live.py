@@ -252,6 +252,10 @@ class ScreenerLive:
         self._last_produced_at: Optional[datetime] = None
         self._levels_cache: Dict[tuple, Dict[str, float]] = {}
 
+        # ORB levels cache: computed once per day at 09:35 and reused for entire day
+        # Key: date, Value: Dict[symbol, Dict[str, float]] containing PDH/PDL/PDC/ORH/ORL
+        self._orb_levels_cache: Dict = {}
+
         # NEW: de-dupe memory (per symbol last accepted)
         # stores: {symbol: {"ts": pd.Timestamp, "setup": str|None, "score": float}}
         self._last_entry: Dict[str, Dict[str, object]] = {}
@@ -453,6 +457,7 @@ class ScreenerLive:
         # ---------- Stage-0: EnergyScanner (single unified path) ----------
         shortlist: List[str] = []
         feats_df = None
+        levels_by_symbol = None  # Initialize so it's available to structure detection phase
         try:
             df5_by_symbol: Dict[str, pd.DataFrame] = {}
             for s in self.core_symbols:
@@ -460,16 +465,13 @@ class ScreenerLive:
                 if validate_df(df5, min_rows=3):
                     df5_by_symbol[s] = df5
             if df5_by_symbol:
-                # ORB FIX: Build levels_by_symbol dict to pass to compute_features
-                # This enables dist_to_ORH/dist_to_ORL columns needed for ORB priority scanner
-                levels_by_symbol: Dict[str, Dict[str, float]] = {}
-                for sym, df5 in df5_by_symbol.items():
-                    try:
-                        lvl = self._levels_for(sym, df5, now)
-                        levels_by_symbol[sym] = lvl
-                    except Exception as e:
-                        logger.debug(f"Failed to compute levels for {sym}: {e}")
-                        levels_by_symbol[sym] = {}
+                # PERFORMANCE FIX: Compute ORB levels once at 09:40 and cache for entire day
+                # - ORH/ORL values finalized at 09:30 (end of opening range)
+                # - Computing for all 1992 symbols takes ~54s in OCI (one-time cost)
+                # - Returns cached values on all subsequent bars (fast)
+                # - Before 09:40: returns None (ORB priority scanner won't have dist_to_ORH/ORL columns)
+                # Impact: ONE-TIME 54s cost at 09:40 instead of 30min spread across multiple bars
+                levels_by_symbol = self._compute_orb_levels_once(now, df5_by_symbol)
 
                 feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20, levels_by_symbol=levels_by_symbol)
                 feats_df = self._filter_stage0(feats_df, now)  # liquidity + vwap proximity + momentum + (opt) vol persistence
@@ -509,7 +511,20 @@ class ScreenerLive:
             if not validate_df(df5, min_rows=5):
                 continue
             df1m = self.agg.get_df_1m_tail(sym, 60)
-            lvl = self._levels_for(sym, df5, now)
+
+            # PERFORMANCE FIX: Use cached ORB levels if available
+            if levels_by_symbol and sym in levels_by_symbol:
+                # Symbol was in cache - use cached levels
+                lvl = levels_by_symbol[sym]
+            elif levels_by_symbol is not None:
+                # Cache was computed but symbol not in it (started trading late)
+                # Use empty levels - don't try to compute ORB from incomplete data
+                lvl = {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
+                       "ORH": float("nan"), "ORL": float("nan")}
+            else:
+                # Before 09:40 - cache not ready yet, compute normally
+                lvl = self._levels_for(sym, df5, now)
+
             # Phase 2: Fetch daily data (210 days for EMA200, uses cache)
             daily_df = self.sdk.get_daily(sym, days=210)
             symbol_data_map[sym] = (df5, df1m, lvl, daily_df)
@@ -925,6 +940,72 @@ class ScreenerLive:
             return pd.DataFrame()
         return idx if isinstance(idx, pd.DataFrame) else pd.DataFrame()
 
+    def _compute_orb_levels_once(self, now, df5_by_symbol: Dict[str, pd.DataFrame]) -> Optional[Dict[str, Dict[str, float]]]:
+        """
+        Compute ORH/ORL/PDH/PDL/PDC for all symbols once at 09:35 and cache for the day.
+
+        This is a critical performance optimization:
+        - ORB (Opening Range Breakout) window is 09:15-09:30
+        - ORH/ORL values are finalized at 09:30 and don't change for rest of day
+        - Computing levels for all 1992 symbols takes ~54s in OCI (2 CPUs)
+        - By computing once at 09:35 instead of on every bar, we save ~30 minutes per day
+
+        Returns:
+            Dict[symbol, Dict[str, float]] if computed/cached, None if before 09:35
+        """
+        if not now:
+            return None
+
+        session_date = now.date()
+        current_time = now.time()
+
+        # Check if already computed for today
+        if session_date in self._orb_levels_cache:
+            return self._orb_levels_cache[session_date]
+
+        # Only compute at or after 09:40 (ensures ORB data 09:15-09:30 is complete)
+        # By 09:40, more symbols have sufficient data for reliable ORH/ORL calculation
+        if current_time < dtime(9, 40):
+            return None
+
+        import time as time_module
+        start_time = time_module.perf_counter()
+        logger.info(f"ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for all symbols once at {current_time} (session_date={session_date})")
+
+        levels_by_symbol = {}
+        success_count = 0
+        fail_count = 0
+
+        for sym, df5 in df5_by_symbol.items():
+            try:
+                lvl = self._levels_for(sym, df5, now)
+                # Only count as success if we got valid ORH/ORL (not NaN)
+                orh = lvl.get("ORH", float("nan"))
+                orl = lvl.get("ORL", float("nan"))
+                if not (pd.isna(orh) or pd.isna(orl)):
+                    levels_by_symbol[sym] = lvl
+                    success_count += 1
+                else:
+                    # ORH/ORL are NaN - not enough data yet
+                    levels_by_symbol[sym] = {}
+                    fail_count += 1
+            except Exception as e:
+                logger.warning(f"ORB_CACHE | Failed to compute levels for {sym}: {e}")
+                levels_by_symbol[sym] = {}
+                fail_count += 1
+
+        # Cache for the entire day
+        self._orb_levels_cache[session_date] = levels_by_symbol
+
+        elapsed = time_module.perf_counter() - start_time
+        logger.info(
+            f"ORB_CACHE | Cached levels for {success_count} symbols (failed: {fail_count}) | "
+            f"Session: {session_date} | Time: {elapsed:.2f}s | "
+            f"This is a ONE-TIME cost - all subsequent bars will use cached values"
+        )
+
+        return levels_by_symbol
+
     def _levels_for(self, symbol: str, df5: pd.DataFrame, now) -> Dict[str, float]:
         """Prev-day PDH/PDL/PDC and today ORH/ORL (cached per (symbol, session_date))."""
         try:
@@ -985,7 +1066,7 @@ class ScreenerLive:
         valid_levels = {k: v for k, v in out.items() if not pd.isna(v)}
         screener_logger = get_screener_logger()
 
-        if valid_levels:
+        if valid_levels and screener_logger:
             screener_logger.log_accept(
                 symbol,
                 timestamp=now.isoformat(),
@@ -994,7 +1075,7 @@ class ScreenerLive:
                 **valid_levels  # PDH, PDL, PDC, ORH, ORL as separate fields
             )
             logger.debug(f"LEVELS: Computed levels for {symbol}: {valid_levels} (total: {len(valid_levels)}/5)")
-        else:
+        elif not valid_levels and screener_logger:
             screener_logger.log_reject(
                 symbol,
                 "no_valid_levels_computed",
