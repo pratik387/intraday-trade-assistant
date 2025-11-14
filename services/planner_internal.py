@@ -155,9 +155,9 @@ class PlannerConfig:
 
     # entries
     entry_zone_atr_frac: float  # Base multiplier (legacy, kept for fallback)
-    entry_zone_breakout_mult: float  # PRIORITY 1 FIX: Breakout entry zone multiplier
-    entry_zone_fade_mult: float  # PRIORITY 1 FIX: Failure fade entry zone multiplier
-    entry_zone_default_mult: float  # PRIORITY 1 FIX: Default entry zone multiplier for other strategies
+    entry_zone_breakout_mult: float  # Strategy-specific: Breakout entry zone multiplier
+    entry_zone_fade_mult: float  # Strategy-specific: Failure fade entry zone multiplier
+    entry_zone_default_mult: float  # Strategy-specific: Default entry zone multiplier for other strategies
     vwap_reclaim_min_bars_above: int
 
     # stops/targets (from exit_config.json)
@@ -194,7 +194,7 @@ def _load_planner_config(user_overrides: Optional[Dict[str, Any]] = None) -> Pla
         "planner_choppiness_high", "planner_choppiness_low",
         "planner_max_gap_pct_for_trend",
         "planner_entry_zone_atr_frac",
-        "planner_entry_zone_breakout_mult", "planner_entry_zone_fade_mult", "planner_entry_zone_default_mult",  # PRIORITY 1 FIX
+        "planner_entry_zone_breakout_mult", "planner_entry_zone_fade_mult", "planner_entry_zone_default_mult",
         "planner_vwap_reclaim_min_bars_above",
         "risk_per_trade_rupees", "fees_slippage_bps",
         "enable_lunch_pause", "lunch_start", "lunch_end"
@@ -234,9 +234,9 @@ def _load_planner_config(user_overrides: Optional[Dict[str, Any]] = None) -> Pla
         max_gap_pct_for_trend=float(config["planner_max_gap_pct_for_trend"]),
 
         entry_zone_atr_frac=float(config["planner_entry_zone_atr_frac"]),
-        entry_zone_breakout_mult=float(config["planner_entry_zone_breakout_mult"]),  # PRIORITY 1 FIX
-        entry_zone_fade_mult=float(config["planner_entry_zone_fade_mult"]),  # PRIORITY 1 FIX
-        entry_zone_default_mult=float(config["planner_entry_zone_default_mult"]),  # PRIORITY 1 FIX
+        entry_zone_breakout_mult=float(config["planner_entry_zone_breakout_mult"]),
+        entry_zone_fade_mult=float(config["planner_entry_zone_fade_mult"]),
+        entry_zone_default_mult=float(config["planner_entry_zone_default_mult"]),
         vwap_reclaim_min_bars_above=int(config["planner_vwap_reclaim_min_bars_above"]),
 
         sl_atr_mult=float(config["sl_atr_mult"]),
@@ -473,7 +473,7 @@ def _strategy_selector(
 def _compose_exits_and_size(
     price: float, bias: str, atr: float, structure_stop: float, cfg: PlannerConfig, qty_scale: float,
     cap_segment: str = "unknown",  # Priority 3: Cap-aware sizing
-    setup_type: str = ""  # PRIORITY 1 FIX: Strategy-specific entry zones
+    setup_type: str = ""  # Strategy-specific entry zones
 ) -> Dict[str, Any]:
     """
     Compose hard stop, targets by RR, and position size. Strictly config-driven.
@@ -608,14 +608,14 @@ def _compose_exits_and_size(
         t2 = price + (cfg.t2_rr * rps) if bias == "long" else price - (cfg.t2_rr * rps)
 
         # Entry zone width (ATR-based unless fallback)
-        # PRIORITY 1 FIX: Strategy-specific entry zones based on pro trader best practices
+        # Strategy-specific entry zones based on pro trader best practices
         if fallback_zone:
             entry_zone = [round(price - 0.01, 2), round(price, 2)]
         else:
             # Determine entry zone multiplier based on strategy type
-            # Breakouts: Wider zone (0.25 ATR) for momentum continuation
-            # Fades: Tight zone (0.08 ATR) for mean reversion precision
-            # Others: Middle ground (0.15 ATR)
+            # Breakouts: Wider zone for momentum continuation
+            # Fades: Tight zone for mean reversion precision
+            # Others: Middle ground
             if 'breakout' in setup_type.lower():
                 entry_zone_mult = cfg.entry_zone_breakout_mult
             elif 'fade' in setup_type.lower():
