@@ -1117,7 +1117,13 @@ class ExitExecutor:
             self._exit(sym, pos, float(px), ts, f"target_t1_full_{reason_suffix}")
             return
 
-        # PHASE 2.5: Use config-driven percentage (33-33-33 split) - no defaults
+        # Store original entry quantity for T2 percentage calculation
+        st = pos.plan.get("_state") or {}
+        if "entry_qty" not in st:
+            st["entry_qty"] = qty  # Store original entry qty before any exits
+            pos.plan["_state"] = st
+
+        # Use config-driven percentage (60-40-0 split from config)
         actual_pct = max(1.0, self.t1_book_pct)
 
         qty_exit = int(max(1, round(qty * (actual_pct / 100.0))))
@@ -1133,12 +1139,11 @@ class ExitExecutor:
 
         # Log enhanced partial exit info
         profit_booked = qty_exit * (px - pos.avg_price)
-        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [PHASE2.5: {actual_pct:.0f}-{actual_pct:.0f}-{100-2*actual_pct:.0f} split]")
-        
+        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{self.t2_book_pct:.0f}%-0% split]")
+
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
         self.positions.reduce(sym, int(qty_exit))
 
-        st = pos.plan.get("_state") or {}
         st["t1_done"] = True
         st["t1_booked_qty"] = qty_exit
         st["t1_booked_price"] = px
@@ -1176,41 +1181,51 @@ class ExitExecutor:
 
     def _partial_exit_t2(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
         """
-        PHASE 2.5: T2 partial exit - book config-driven percentage of remaining position.
+        T2 partial exit - book config-driven percentage of ORIGINAL entry position.
 
-        Strategy: 33% @ T1 + 33% @ T2 + 34% trail = optimized 33-33-33 split
-        Analysis showed +484% improvement with equal splits allowing more T3 trail capture.
+        FIX: Changed from percentage of remaining (which gave 40-40-20 behavior)
+        to percentage of original entry qty (which gives configured 60-40-0 behavior).
+
+        Example with 60-40-0 config:
+        - Entry: 100 qty
+        - T1: 60% of 100 = 60 qty (leaves 40)
+        - T2: 40% of 100 = 40 qty (leaves 0 for trail) ✓ CORRECT
+
+        Old buggy behavior:
+        - T2: 40% of 40 remaining = 16 qty (leaves 24) ✗ WRONG (gave 60-16-24 = 40-40-20)
         """
         qty = int(pos.qty)
         if qty <= 0:
             return
 
-        # Get T2 booking percentage from config (no defaults)
+        # Get T2 booking percentage from config
         t2_pct = self.t2_book_pct
 
-        # For remaining position after T1, book t2_pct% (config-driven, typically 33%)
-        # This leaves remaining shares for trailing
-        qty_exit = int(max(1, round(qty * (t2_pct / 100.0))))
-        qty_exit = min(qty_exit, qty)
+        # Get original entry quantity from state (stored at T1)
+        st = pos.plan.get("_state") or {}
+        original_entry_qty = st.get("entry_qty", qty)  # Fallback to current if not stored
+
+        # CRITICAL FIX: Calculate T2 qty as percentage of ORIGINAL entry, not remaining
+        qty_exit = int(max(1, round(original_entry_qty * (t2_pct / 100.0))))
+        qty_exit = min(qty_exit, qty)  # Cap at current position size
 
         # Enhanced logic for small quantities
         if qty_exit >= qty:
-            if qty > 2:
-                qty_exit = max(1, qty - 1)  # Leave at least 1 for trail
-            else:
-                # If only 1-2 shares left, exit fully
-                self._exit(sym, pos, float(px), ts, "target_t2_full")
-                return
+            # Exit fully if T2 qty would be entire remaining position
+            self._exit(sym, pos, float(px), ts, "target_t2_full")
+            return
 
-        # Log T2 partial exit
+        # Log T2 partial exit with original qty context
         profit_booked = qty_exit * (px - pos.avg_price)
-        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{qty} ({t2_pct:.1f}%) → profit Rs.{profit_booked:.2f} [PHASE2.5: leaving {qty-qty_exit} for trail]")
+        t2_pct_of_original = (qty_exit / original_entry_qty * 100) if original_entry_qty > 0 else 0
+        remaining_qty = qty - qty_exit
+        remaining_pct_of_original = (remaining_qty / original_entry_qty * 100) if original_entry_qty > 0 else 0
+        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-0%, leaving {remaining_qty} ({remaining_pct_of_original:.0f}%) for trail]")
 
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
         self.positions.reduce(sym, int(qty_exit))
 
         # Mark T2 as done
-        st = pos.plan.get("_state") or {}
         st["t2_done"] = True
         st["t2_booked_qty"] = qty_exit
         st["t2_booked_price"] = px
