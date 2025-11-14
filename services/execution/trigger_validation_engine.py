@@ -51,7 +51,7 @@ class FastTriggerConditionFactory:
         """Create fast trigger conditions based on strategy"""
         strategy = plan.get("strategy", "")
         bias = plan.get("bias", "long")
-        
+
         # All strategies use fast, simple conditions
         primary_triggers = [
             TriggerCondition(
@@ -61,23 +61,41 @@ class FastTriggerConditionFactory:
                 required_consecutive=1
             )
         ]
-        
-        must_conditions = [
-            TriggerCondition(
-                ConditionType.TECHNICAL,
-                {"type": "entry_zone_check"},
-                "Price in entry zone"
-            ),
-            TriggerCondition(
-                ConditionType.TIME_BASED,
-                {"type": "market_hours"},
-                "Market hours check"
-            )
-        ]
-        
+
+        # PHASE 1 FIX: Breakout immediate execution
+        # Check if breakout strategy and immediate execution is enabled
+        breakout_immediate = self.cfg.get("breakout_immediate_execution", False)
+        is_breakout = 'breakout' in strategy.lower()
+
+        # BREAKOUT STRATEGIES: Immediate execution, NO entry zone wait
+        # Professional standard: Execute within <2 min, not 8 min delay
+        if is_breakout and breakout_immediate:
+            must_conditions = [
+                TriggerCondition(
+                    ConditionType.TIME_BASED,
+                    {"type": "market_hours"},
+                    "Market hours check"
+                )
+                # NO entry_zone_check for breakouts - execute immediately on decision
+            ]
+        # FADE & OTHER STRATEGIES: Keep existing entry zone logic (35% trigger rate proves it works)
+        else:
+            must_conditions = [
+                TriggerCondition(
+                    ConditionType.TECHNICAL,
+                    {"type": "entry_zone_check"},
+                    "Price in entry zone"
+                ),
+                TriggerCondition(
+                    ConditionType.TIME_BASED,
+                    {"type": "market_hours"},
+                    "Market hours check"
+                )
+            ]
+
         # Strategy-specific should conditions for basic filtering
         should_conditions = self._create_should_conditions(strategy, bias, plan)
-        
+
         return primary_triggers, must_conditions, should_conditions
     
     def _create_should_conditions(self, strategy: str, bias: str, plan: Dict[str, Any]) -> List[TriggerCondition]:

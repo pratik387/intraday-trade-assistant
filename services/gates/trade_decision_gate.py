@@ -837,6 +837,79 @@ class TradeDecisionGate:
             except Exception as e:
                 reasons.append(f"entry_validation_momentum_error:{e.__class__.__name__}")
 
+        # PHASE 2 & 3 FIX: Breakout quality filters (volume surge + momentum candle)
+        # Professional standard: Breakouts need volume confirmation and strong momentum candles
+        if best.setup_type and 'breakout' in best.setup_type.lower():
+            try:
+                # Determine if this is a SHORT breakout (stricter filters needed)
+                is_breakout_short = 'short' in best.setup_type.lower()
+
+                # Get strategy-specific thresholds from configuration
+                if is_breakout_short:
+                    volume_surge_min = self.quality_filters.get('breakout_volume_surge_min_short')
+                    momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio_short')
+                else:
+                    volume_surge_min = self.quality_filters.get('breakout_volume_surge_min')
+                    momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio')
+
+                # FILTER 1: Volume surge validation
+                # Professional standard: 1.5x average volume (50% above baseline), 2.0x for shorts
+                if df1m_tail is not None and len(df1m_tail) >= 5:
+                    # Use available data with minimum 5 bars
+                    # If less than 20 bars available (early in day), use all available bars
+                    lookback = min(20, len(df1m_tail) - 1)
+
+                    if lookback >= 4:  # Minimum 4 bars for meaningful average
+                        # Calculate average volume over available bars (exclude current)
+                        avg_volume = df1m_tail["volume"].iloc[-lookback-1:-1].mean()
+                        current_volume = df1m_tail["volume"].iloc[-1]
+
+                        if avg_volume > 0:
+                            volume_ratio = current_volume / avg_volume
+
+                            if volume_ratio < volume_surge_min:
+                                reasons.append(f"breakout_volume_surge_fail:{volume_ratio:.2f}x<{volume_surge_min}x_required(n={lookback})")
+                                return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                            else:
+                                reasons.append(f"breakout_volume_surge_pass:{volume_ratio:.2f}x>={volume_surge_min}x(n={lookback})")
+                        else:
+                            reasons.append("breakout_volume_surge_skip:avg_volume_zero")
+                    else:
+                        reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
+                else:
+                    reasons.append("breakout_volume_surge_skip:insufficient_data")
+
+                # FILTER 2: Momentum candle validation
+                # Professional standard: Breakout candle should be 2-3x larger than previous candles
+                if df1m_tail is not None and len(df1m_tail) >= 5:
+                    # Get last 5 candles (last 4 for average, current for comparison)
+                    last_5_bars = df1m_tail.tail(5)
+
+                    # Calculate candle sizes (high - low)
+                    candle_sizes = (last_5_bars["high"] - last_5_bars["low"]).values
+
+                    # Current candle size
+                    current_candle_size = candle_sizes[-1]
+
+                    # Average of previous 4 candles
+                    avg_prev_candle_size = candle_sizes[:-1].mean()
+
+                    if avg_prev_candle_size > 0:
+                        candle_ratio = current_candle_size / avg_prev_candle_size
+
+                        if candle_ratio < momentum_candle_min_ratio:
+                            reasons.append(f"breakout_momentum_candle_fail:{candle_ratio:.2f}x<{momentum_candle_min_ratio}x_required")
+                            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                        else:
+                            reasons.append(f"breakout_momentum_candle_pass:{candle_ratio:.2f}x>={momentum_candle_min_ratio}x")
+                    else:
+                        reasons.append("breakout_momentum_candle_skip:avg_candle_size_zero")
+                else:
+                    reasons.append("breakout_momentum_candle_skip:insufficient_data")
+
+            except Exception as e:
+                reasons.append(f"breakout_quality_filter_error:{e.__class__.__name__}")
+
         # Price action directionality
         if entry_validation.get('price_action_validation', False):
             try:
