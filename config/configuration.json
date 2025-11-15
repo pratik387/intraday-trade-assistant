@@ -340,17 +340,17 @@
   "breakout_immediate_execution": true,
   "_comment_immediate": "True = Execute immediately on decision (no entry zone wait). Fixes 8-minute delay issue.",
 
-  "breakout_volume_surge_min": 1.5,
-  "_comment_volume_surge": "PHASE 2 FIX: Minimum volume ratio for breakout confirmation (professional standard: 1.5x = 50% above average)",
+  "breakout_volume_surge_min": 1.2,
+  "_comment_volume_surge": "PHASE 4 FIX: Relaxed from 1.5x to 1.2x (20% above average) - 1.5x was too strict (3.2% trigger rate)",
 
-  "breakout_momentum_candle_min_ratio": 2.0,
-  "_comment_momentum_candle": "PHASE 2 FIX: Breakout candle should be 2x+ larger than previous candles (momentum confirmation)",
+  "breakout_momentum_candle_min_ratio": 1.5,
+  "_comment_momentum_candle": "PHASE 4 FIX: Relaxed from 2.0x to 1.5x - 2.0x blocked 96.8% of breakouts",
 
-  "breakout_volume_surge_min_short": 2.0,
-  "_comment_volume_short": "PHASE 3 FIX: Shorts need stricter filter (2.0x volume) - breakdowns easier to fake",
+  "breakout_volume_surge_min_short": 1.5,
+  "_comment_volume_short": "PHASE 4 FIX: Relaxed from 2.0x to 1.5x for shorts - maintaining higher bar than longs",
 
-  "breakout_momentum_candle_min_ratio_short": 2.5,
-  "_comment_momentum_short": "PHASE 3 FIX: Shorts need 2.5x candle size (stronger momentum required)",
+  "breakout_momentum_candle_min_ratio_short": 2.0,
+  "_comment_momentum_short": "PHASE 4 FIX: Relaxed from 2.5x to 2.0x for shorts - still stricter than longs",
   "risk_per_trade_rupees": 500.0,
   "fees_slippage_bps": 5.0,
   "enable_lunch_pause": true,

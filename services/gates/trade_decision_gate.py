@@ -846,34 +846,41 @@ class TradeDecisionGate:
 
                 # Get strategy-specific thresholds from configuration
                 if is_breakout_short:
-                    volume_surge_min = self.quality_filters.get('breakout_volume_surge_min_short')
-                    momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio_short')
+                    volume_surge_min = self.quality_filters.get('breakout_volume_surge_min_short', 1.5)
+                    momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio_short', 2.0)
                 else:
-                    volume_surge_min = self.quality_filters.get('breakout_volume_surge_min')
-                    momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio')
+                    volume_surge_min = self.quality_filters.get('breakout_volume_surge_min', 1.2)
+                    momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio', 1.5)
 
                 # FILTER 1: Volume surge validation
-                # Professional standard: 1.5x average volume (50% above baseline), 2.0x for shorts
+                # Professional standard: 1.2x average volume (20% above baseline), 1.5x for shorts
                 if df1m_tail is not None and len(df1m_tail) >= 5:
                     # Use available data with minimum 5 bars
-                    # If less than 20 bars available (early in day), use all available bars
-                    lookback = min(20, len(df1m_tail) - 1)
+                    # Lookback window: use last 4-20 bars depending on availability
+                    lookback = min(20, max(4, len(df1m_tail) - 1))
 
                     if lookback >= 4:  # Minimum 4 bars for meaningful average
-                        # Calculate average volume over available bars (exclude current)
-                        avg_volume = df1m_tail["volume"].iloc[-lookback-1:-1].mean()
-                        current_volume = df1m_tail["volume"].iloc[-1]
+                        # Calculate average volume over available bars (exclude current bar)
+                        # Use max(0, ...) to ensure we don't go negative
+                        start_idx = max(0, len(df1m_tail) - lookback - 1)
+                        end_idx = len(df1m_tail) - 1
 
-                        if avg_volume > 0:
-                            volume_ratio = current_volume / avg_volume
+                        if start_idx < end_idx:
+                            avg_volume = df1m_tail["volume"].iloc[start_idx:end_idx].mean()
+                            current_volume = df1m_tail["volume"].iloc[-1]
 
-                            if volume_ratio < volume_surge_min:
-                                reasons.append(f"breakout_volume_surge_fail:{volume_ratio:.2f}x<{volume_surge_min}x_required(n={lookback})")
-                                return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                            if avg_volume > 0:
+                                volume_ratio = current_volume / avg_volume
+
+                                if volume_ratio < volume_surge_min:
+                                    reasons.append(f"breakout_volume_surge_fail:{volume_ratio:.2f}x<{volume_surge_min}x_required(n={lookback})")
+                                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                                else:
+                                    reasons.append(f"breakout_volume_surge_pass:{volume_ratio:.2f}x>={volume_surge_min}x(n={end_idx-start_idx})")
                             else:
-                                reasons.append(f"breakout_volume_surge_pass:{volume_ratio:.2f}x>={volume_surge_min}x(n={lookback})")
+                                reasons.append("breakout_volume_surge_skip:avg_volume_zero")
                         else:
-                            reasons.append("breakout_volume_surge_skip:avg_volume_zero")
+                            reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
                     else:
                         reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
                 else:
@@ -908,7 +915,9 @@ class TradeDecisionGate:
                     reasons.append("breakout_momentum_candle_skip:insufficient_data")
 
             except Exception as e:
-                reasons.append(f"breakout_quality_filter_error:{e.__class__.__name__}")
+                import traceback
+                error_detail = traceback.format_exc().split('\n')[-3] if traceback.format_exc() else str(e)
+                reasons.append(f"breakout_quality_filter_error:{e.__class__.__name__}:{error_detail[:50]}")
 
         # Price action directionality
         if entry_validation.get('price_action_validation', False):
