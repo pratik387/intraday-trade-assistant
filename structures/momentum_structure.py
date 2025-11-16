@@ -62,9 +62,11 @@ class MomentumStructure(BaseStructure):
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect momentum-based structures."""
+        logger.debug(f"MOMENTUM_DETECT: Starting detection for {context.symbol}")
         try:
             df = context.df_5m
             if len(df) < 10:
+                logger.debug(f"MOMENTUM_DETECT: {context.symbol} - REJECTED: Insufficient data ({len(df)} bars, need 10)")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -75,6 +77,7 @@ class MomentumStructure(BaseStructure):
             # Calculate momentum indicators
             df_calc = self._calculate_momentum_indicators(df)
             if df_calc is None:
+                logger.debug(f"MOMENTUM_DETECT: {context.symbol} - REJECTED: Could not calculate momentum indicators")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -96,6 +99,11 @@ class MomentumStructure(BaseStructure):
             events.extend(trend_events)
 
             quality_score = self._calculate_quality_score(events, df_calc) if events else 0.0
+
+            if len(events) > 0:
+                logger.debug(f"MOMENTUM_DETECT: ✅ {context.symbol} - DETECTED: {len(events)} events, quality: {quality_score:.2f}")
+            else:
+                logger.debug(f"MOMENTUM_DETECT: {context.symbol} - REJECTED: No momentum patterns detected")
 
             return StructureAnalysis(
                 structure_detected=len(events) > 0,
@@ -268,24 +276,31 @@ class MomentumStructure(BaseStructure):
         try:
             # 1. Strong 3-bar upward momentum
             if last_bar['returns_3'] <= momentum_3bar_threshold:
+                logger.debug(f"MOMENTUM_DETECT: Breakout long REJECTED: 3-bar momentum {last_bar['returns_3']*100:.2f}% ≤ {momentum_3bar_threshold*100:.2f}%")
                 return False
 
             # 2. Last bar positive
             if last_bar['returns_1'] <= momentum_1bar_threshold:
+                logger.debug(f"MOMENTUM_DETECT: Breakout long REJECTED: 1-bar momentum {last_bar['returns_1']*100:.2f}% ≤ {momentum_1bar_threshold*100:.2f}%")
                 return False
 
             # 3. 2-bar cumulative momentum
-            if df['returns_1'].tail(2).sum() <= momentum_2bar_threshold:
+            two_bar_sum = df['returns_1'].tail(2).sum()
+            if two_bar_sum <= momentum_2bar_threshold:
+                logger.debug(f"MOMENTUM_DETECT: Breakout long REJECTED: 2-bar cumulative {two_bar_sum*100:.2f}% ≤ {momentum_2bar_threshold*100:.2f}%")
                 return False
 
             # 4. Volume confirmation (relaxed for momentum)
             vol_z = last_bar.get('vol_z', 1.0)
-            if vol_z < vol_z_required * self.vol_z_breakout_mult:
+            vol_z_threshold = vol_z_required * self.vol_z_breakout_mult
+            if vol_z < vol_z_threshold:
+                logger.debug(f"MOMENTUM_DETECT: Breakout long REJECTED: vol_z {vol_z:.2f} < {vol_z_threshold:.2f} (required {vol_z_required:.2f} × {self.vol_z_breakout_mult})")
                 return False
 
             # 5. Volume surge
             vol_surge = last_bar.get('vol_surge', 1.0)
             if vol_surge < self.min_volume_surge_ratio:
+                logger.debug(f"MOMENTUM_DETECT: Breakout long REJECTED: vol_surge {vol_surge:.2f} < {self.min_volume_surge_ratio}")
                 return False
 
             return True
@@ -300,24 +315,31 @@ class MomentumStructure(BaseStructure):
         try:
             # 1. Strong 3-bar downward momentum
             if last_bar['returns_3'] >= -momentum_3bar_threshold:
+                logger.debug(f"MOMENTUM_DETECT: Breakout short REJECTED: 3-bar momentum {last_bar['returns_3']*100:.2f}% ≥ {-momentum_3bar_threshold*100:.2f}%")
                 return False
 
             # 2. Last bar negative
             if last_bar['returns_1'] >= -momentum_1bar_threshold:
+                logger.debug(f"MOMENTUM_DETECT: Breakout short REJECTED: 1-bar momentum {last_bar['returns_1']*100:.2f}% ≥ {-momentum_1bar_threshold*100:.2f}%")
                 return False
 
             # 3. 2-bar cumulative momentum (negative)
-            if df['returns_1'].tail(2).sum() >= -momentum_2bar_threshold:
+            two_bar_sum = df['returns_1'].tail(2).sum()
+            if two_bar_sum >= -momentum_2bar_threshold:
+                logger.debug(f"MOMENTUM_DETECT: Breakout short REJECTED: 2-bar cumulative {two_bar_sum*100:.2f}% ≥ {-momentum_2bar_threshold*100:.2f}%")
                 return False
 
             # 4. Volume confirmation (relaxed for momentum)
             vol_z = last_bar.get('vol_z', 1.0)
-            if vol_z < vol_z_required * self.vol_z_breakout_mult:
+            vol_z_threshold = vol_z_required * self.vol_z_breakout_mult
+            if vol_z < vol_z_threshold:
+                logger.debug(f"MOMENTUM_DETECT: Breakout short REJECTED: vol_z {vol_z:.2f} < {vol_z_threshold:.2f} (required {vol_z_required:.2f} × {self.vol_z_breakout_mult})")
                 return False
 
             # 5. Volume surge
             vol_surge = last_bar.get('vol_surge', 1.0)
             if vol_surge < self.min_volume_surge_ratio:
+                logger.debug(f"MOMENTUM_DETECT: Breakout short REJECTED: vol_surge {vol_surge:.2f} < {self.min_volume_surge_ratio}")
                 return False
 
             return True

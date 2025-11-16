@@ -151,12 +151,19 @@ class FlagContinuationStructure(BaseStructure):
     def _analyze_flag_pattern(self, df: pd.DataFrame, consol_period: int) -> Optional[Tuple[str, float, Dict[str, Any], Dict[str, Any]]]:
         """Analyze potential flag pattern with given consolidation period."""
         try:
-            # Split data: trend portion vs consolidation portion
-            trend_data = df.iloc[-(self.trend_lookback_period + consol_period):-consol_period]
-            consol_data = df.iloc[-consol_period:]
+            logger.debug(f"FLAG_ANALYZE: Testing consol_period={consol_period}, df_len={len(df)}")
+
+            # Split data: trend portion vs consolidation portion (EXCLUDE current bar from consolidation)
+            # Consolidation = bars [-consol_period-1 : -1] (not including current bar)
+            # Trend = bars before consolidation
+            trend_data = df.iloc[-(self.trend_lookback_period + consol_period + 1):-(consol_period + 1)]
+            consol_data = df.iloc[-(consol_period + 1):-1]
             current_price = df['close'].iloc[-1]
 
+            logger.debug(f"FLAG_ANALYZE: trend_data len={len(trend_data)}, consol_data len={len(consol_data)}, current_price={current_price:.2f}")
+
             if len(trend_data) < 5 or len(consol_data) < self.min_consolidation_bars:
+                logger.debug(f"FLAG_ANALYZE: REJECTED - Insufficient data (trend={len(trend_data)}, consol={len(consol_data)})")
                 return None
 
             # 1. Analyze trend strength
@@ -164,12 +171,16 @@ class FlagContinuationStructure(BaseStructure):
             trend_end_price = trend_data['close'].iloc[-1]
             trend_strength_pct = ((trend_end_price - trend_start_price) / trend_start_price) * 100
 
+            logger.debug(f"FLAG_ANALYZE: Trend {trend_start_price:.2f} -> {trend_end_price:.2f} = {trend_strength_pct:.2f}% (need {self.min_trend_strength}%)")
+
             # Check if trend meets minimum strength requirement
             if abs(trend_strength_pct) < self.min_trend_strength:
+                logger.debug(f"FLAG_ANALYZE: REJECTED - Weak trend ({abs(trend_strength_pct):.2f}% < {self.min_trend_strength}%)")
                 return None
 
             # Determine trend direction
             trend_direction = "up" if trend_strength_pct > 0 else "down"
+            logger.debug(f"FLAG_ANALYZE: Trend direction={trend_direction}")
 
             # 2. Analyze consolidation pattern
             consol_high = consol_data['high'].max()
@@ -178,8 +189,11 @@ class FlagContinuationStructure(BaseStructure):
             consol_mid = (consol_high + consol_low) / 2
             consol_range_pct = (consol_range / consol_mid) * 100
 
+            logger.debug(f"FLAG_ANALYZE: Consolidation range {consol_low:.2f}-{consol_high:.2f} = {consol_range_pct:.2f}% (max {self.max_consolidation_range_pct}%)")
+
             # Check if consolidation is tight enough
             if consol_range_pct > self.max_consolidation_range_pct:
+                logger.debug(f"FLAG_ANALYZE: REJECTED - Wide consolidation ({consol_range_pct:.2f}% > {self.max_consolidation_range_pct}%)")
                 return None
 
             # Calculate consolidation tightness (higher is better)
@@ -199,17 +213,26 @@ class FlagContinuationStructure(BaseStructure):
 
             if trend_direction == "up":
                 # Look for breakout above consolidation high
+                logger.debug(f"FLAG_ANALYZE: UP trend - checking breakout: current_price={current_price:.2f} vs consol_high={consol_high:.2f}")
                 if current_price > consol_high:
                     breakout_direction = "up"
                     confirmation_pct = ((current_price - consol_high) / consol_high) * 100
+                    logger.debug(f"FLAG_ANALYZE: Breakout UP detected: confirmation={confirmation_pct:.2f}% (need {self.breakout_confirmation_pct}%)")
+                else:
+                    logger.debug(f"FLAG_ANALYZE: REJECTED - No breakout (current {current_price:.2f} <= high {consol_high:.2f})")
             else:
                 # Look for breakout below consolidation low
+                logger.debug(f"FLAG_ANALYZE: DOWN trend - checking breakout: current_price={current_price:.2f} vs consol_low={consol_low:.2f}")
                 if current_price < consol_low:
                     breakout_direction = "down"
                     confirmation_pct = ((consol_low - current_price) / consol_low) * 100
+                    logger.debug(f"FLAG_ANALYZE: Breakout DOWN detected: confirmation={confirmation_pct:.2f}% (need {self.breakout_confirmation_pct}%)")
+                else:
+                    logger.debug(f"FLAG_ANALYZE: REJECTED - No breakout (current {current_price:.2f} >= low {consol_low:.2f})")
 
             # Check if breakout has sufficient confirmation
             if breakout_direction is None or confirmation_pct < self.breakout_confirmation_pct:
+                logger.debug(f"FLAG_ANALYZE: REJECTED - Insufficient breakout (direction={breakout_direction}, conf={confirmation_pct:.2f}% < {self.breakout_confirmation_pct}%)")
                 return None
 
             breakout_info = {
@@ -217,6 +240,7 @@ class FlagContinuationStructure(BaseStructure):
                 "confirmation_pct": confirmation_pct
             }
 
+            logger.debug(f"FLAG_ANALYZE: PATTERN DETECTED - {trend_direction} trend {trend_strength_pct:.2f}%, consol {consol_range_pct:.2f}%, breakout {confirmation_pct:.2f}%")
             return trend_direction, trend_strength_pct, consolidation_info, breakout_info
 
         except Exception as e:

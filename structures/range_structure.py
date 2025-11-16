@@ -51,8 +51,10 @@ class RangeStructure(BaseStructure):
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect range-based structures."""
         try:
+            logger.debug(f"RANGE_DETECT: Starting detection for {context.symbol}")
             df = context.df_5m
             if len(df) < self.min_range_duration + 5:
+                logger.debug(f"RANGE_DETECT: {context.symbol} - REJECTED: Insufficient data (need {self.min_range_duration + 5} bars, have {len(df)})")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -63,9 +65,11 @@ class RangeStructure(BaseStructure):
             events = []
             range_info = self._detect_range(df)
 
+            logger.debug(f"RANGE_DETECT: {context.symbol} - Range detection result: {'Found' if range_info else 'Not found'}")
             if range_info:
-                current_price = context.current_price
+                logger.debug(f"RANGE_DETECT: {context.symbol} - Range: {range_info['support']:.2f}-{range_info['resistance']:.2f}, Height: {range_info['range_height_pct']:.2f}%, Touches: S={range_info['touches_support']}, R={range_info['touches_resistance']}")
 
+            if range_info:
                 # Range bounce strategies
                 bounce_events = self._detect_range_bounce(context, range_info)
                 events.extend(bounce_events)
@@ -75,8 +79,11 @@ class RangeStructure(BaseStructure):
                 events.extend(breakout_events)
 
                 if events:
-                    logger.debug(f"RANGE: {context.symbol} - Range detected: {range_info['support']:.2f}-{range_info['resistance']:.2f}, {len(events)} events")
+                    logger.debug(f"RANGE_DETECT: {context.symbol} - DETECTED: {len(events)} events")
+                else:
+                    logger.debug(f"RANGE_DETECT: {context.symbol} - Range found but NO valid patterns (bounce/breakout conditions not met)")
 
+            logger.debug(f"RANGE_DETECT: {context.symbol} - Final result: {'DETECTED' if events else 'REJECTED'}, events={len(events)}")
             return StructureAnalysis(
                 structure_detected=len(events) > 0,
                 events=events,
@@ -115,6 +122,7 @@ class RangeStructure(BaseStructure):
         range_height_pct = (resistance - support) / support * 100
 
         if not (self.min_range_height_pct <= range_height_pct <= self.max_range_height_pct):
+            logger.debug(f"RANGE_DETECT: Range height {range_height_pct:.2f}% outside bounds ({self.min_range_height_pct}-{self.max_range_height_pct}%)")
             return None
 
         # Check if price has been respecting these levels
@@ -141,6 +149,7 @@ class RangeStructure(BaseStructure):
                 "duration_bars": lookback_bars
             }
 
+        logger.debug(f"RANGE_DETECT: Insufficient touches - Support: {touches_support}, Resistance: {touches_resistance} (need 2+ each)")
         return None
 
     def _detect_range_bounce(self, context: MarketContext, range_info: Dict[str, Any]) -> List[StructureEvent]:

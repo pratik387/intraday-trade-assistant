@@ -538,11 +538,19 @@ class MainDetector(BaseStructure):
             # Calculate overall quality score
             quality_score = self._calculate_overall_quality_score(events, context)
 
-            return StructureAnalysis(events=events, quality_score=quality_score)
+            return StructureAnalysis(
+                structure_detected=len(events) > 0,
+                events=events,
+                quality_score=quality_score
+            )
 
         except Exception as e:
             logger.exception(f"MAIN_DETECTOR: detect method error for {context.symbol}: {e}")
-            return StructureAnalysis(events=[], quality_score=0.0)
+            return StructureAnalysis(
+                structure_detected=False,
+                events=[],
+                quality_score=0.0
+            )
 
     def _calculate_overall_quality_score(self, events: List[StructureEvent],
                                        context: MarketContext) -> float:

@@ -264,12 +264,15 @@ class ICTStructure(BaseStructure):
 
         try:
             current_price = context.current_price
-            lookback_bars = min(20, len(df) - 3)
+            # Need at least 3 bars to form FVG (before, gap, after)
+            if len(df) < 3:
+                return events
 
-            for i in range(2, lookback_bars):
-                if i >= len(df) - 1:
-                    continue
+            # Loop backwards from recent bars, checking last 20 bars or available bars
+            lookback_bars = min(20, len(df) - 2)  # -2 because we need i-1, i, i+1
+            start_idx = max(2, len(df) - lookback_bars)
 
+            for i in range(start_idx, len(df) - 1):  # Loop forward from start_idx to second-to-last bar
                 candle_before = df.iloc[i - 1]
                 candle_middle = df.iloc[i]
                 candle_after = df.iloc[i + 1]
@@ -669,6 +672,23 @@ class ICTStructure(BaseStructure):
 
             # Calculate momentum changes for different periods
             momentum_changes = {}
+
+            # Check for recent direction reversals in the lookback window
+            # Use wider lookback (2x max period) to catch reversals that happened earlier
+            max_lookback = max(self.choch_momentum_periods) * 2
+            recent_returns = df['returns_3'].tail(max_lookback).dropna()
+
+            # Count sign changes in recent returns (bearish to bullish or vice versa)
+            direction_reversals = 0
+            if len(recent_returns) >= 2:
+                for i in range(1, len(recent_returns)):
+                    prev_return = recent_returns.iloc[i-1]
+                    curr_return = recent_returns.iloc[i]
+                    if prev_return != 0 and curr_return != 0:
+                        if (prev_return < 0 and curr_return > 0) or (prev_return > 0 and curr_return < 0):
+                            direction_reversals += 1
+
+            # Also calculate traditional momentum changes
             for period in self.choch_momentum_periods:
                 if len(df) >= period + 1:
                     old_momentum = df['returns_3'].iloc[-(period+1)]
@@ -678,11 +698,11 @@ class ICTStructure(BaseStructure):
                         momentum_change = current_momentum - old_momentum
                         momentum_changes[period] = momentum_change
 
-            # Check for significant momentum shift
+            # Check for significant momentum shift OR recent direction reversal
             significant_changes = [abs(change) >= self.choch_min_momentum_change
                                  for change in momentum_changes.values()]
 
-            if any(significant_changes):
+            if any(significant_changes) or direction_reversals >= 1:
                 # Determine direction of character change
                 avg_momentum_change = np.mean(list(momentum_changes.values()))
                 direction = 'long' if avg_momentum_change > 0 else 'short'
