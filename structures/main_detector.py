@@ -191,9 +191,8 @@ class MainDetector(BaseStructure):
 
             for detector_name, detector in self.detectors.items():
                 try:
-                    logger.debug(f"MAIN_DETECTOR: Running {detector_name} detector for {symbol}")
+                    logger.debug(f"DETECTOR_CALL: {symbol} | {detector_name} | CALLING")
                     analysis = detector.detect(context)
-                    logger.debug(f"MAIN_DETECTOR: {detector_name} returned {len(analysis.events) if analysis.events else 0} events for {symbol}")
 
                     if analysis.events:
                         all_detections[detector_name] = analysis
@@ -202,11 +201,12 @@ class MainDetector(BaseStructure):
                             'quality': analysis.quality_score,
                             'events': analysis.events
                         }
-                        logger.debug(f"MAIN_DETECTOR: {detector_name} found {len(analysis.events)} events "
-                                  f"with quality {analysis.quality_score:.1f} for {symbol}")
+                        logger.debug(f"DETECTOR_RESULT: {symbol} | {detector_name} | ACCEPTED | "
+                                   f"events={len(analysis.events)} quality={analysis.quality_score:.2f}")
                     else:
-                        logger.debug(f"MAIN_DETECTOR: {detector_name} found no events for {symbol}")
+                        logger.debug(f"DETECTOR_RESULT: {symbol} | {detector_name} | REJECTED | no_events")
                 except Exception as e:
+                    logger.error(f"DETECTOR_ERROR: {symbol} | {detector_name} | ERROR | {str(e)}")
                     logger.exception(f"MAIN_DETECTOR: Error in {detector_name} for {symbol}: {e}")
             # Resolve conflicts and prioritize
             final_events = self._resolve_conflicts_and_prioritize(all_detections, symbol)
@@ -214,9 +214,17 @@ class MainDetector(BaseStructure):
             # Convert to SetupCandidate objects
             setup_candidates = self._convert_to_setup_candidates(final_events, symbol)
 
-            # Log summary
-            logger.debug(f"MAIN_DETECTOR: {symbol} final result: {len(setup_candidates)} setups "
-                       f"from {len(all_detections)} active detectors")
+            # Log summary with detector statistics
+            total_detectors = len(self.detectors)
+            active_detectors = len(all_detections)
+            silent_detectors = total_detectors - active_detectors
+
+            logger.debug(f"DETECTOR_SUMMARY: {symbol} | total={total_detectors} active={active_detectors} "
+                        f"silent={silent_detectors} setups={len(setup_candidates)}")
+
+            if active_detectors > 0:
+                detector_names = ','.join(all_detections.keys())
+                logger.debug(f"DETECTOR_ACTIVE_LIST: {symbol} | {detector_names}")
 
             return setup_candidates
 

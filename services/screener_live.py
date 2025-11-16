@@ -133,7 +133,8 @@ def _init_worker(config_dict):
             event_policy_gate=event_gate,
             news_spike_gate=news_gate,
             market_sentiment_gate=sentiment_gate,
-            quality_filters=config_dict.get('quality_filters', {})
+            quality_filters=config_dict.get('quality_filters', {}),
+            regime_allowed_setups=config_dict.get('regime_allowed_setups', {})
         )
     except Exception as e:
         get_agent_logger().exception(f"Worker init failed: {e}")
@@ -234,6 +235,7 @@ class ScreenerLive:
             news_spike_gate=self.news_gate,
             market_sentiment_gate=self.sentiment_gate,
             quality_filters=raw.get("quality_filters", {}),
+            regime_allowed_setups=raw.get("regime_allowed_setups", {}),
         )
 
         # Stage-0 scanner

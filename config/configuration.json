@@ -25,7 +25,14 @@
       "support_bounce_long",
       "gap_fill_long",
       "momentum_breakout_long",
-      "trend_continuation_long"
+      "trend_continuation_long",
+      "order_block_long",
+      "fair_value_gap_long",
+      "liquidity_sweep_long",
+      "liquidity_sweep_short",
+      "discount_zone_long",
+      "break_of_structure_long",
+      "change_of_character_short"
     ],
     "trend_down": [
       "breakout_short",
@@ -37,7 +44,14 @@
       "resistance_bounce_short",
       "gap_fill_short",
       "momentum_breakout_short",
-      "trend_continuation_short"
+      "trend_continuation_short",
+      "order_block_short",
+      "fair_value_gap_short",
+      "liquidity_sweep_long",
+      "liquidity_sweep_short",
+      "premium_zone_short",
+      "break_of_structure_short",
+      "change_of_character_long"
     ],
     "chop": [
       "failure_fade_long",
@@ -52,13 +66,29 @@
       "volume_spike_reversal_long",
       "volume_spike_reversal_short",
       "momentum_breakout_long",
-      "momentum_breakout_short"
+      "momentum_breakout_short",
+      "order_block_long",
+      "order_block_short",
+      "fair_value_gap_long",
+      "fair_value_gap_short",
+      "liquidity_sweep_long",
+      "liquidity_sweep_short",
+      "change_of_character_long",
+      "change_of_character_short"
     ],
     "squeeze": [
       "squeeze_release_long",
       "squeeze_release_short",
       "orb_breakout_long",
-      "orb_breakout_short"
+      "orb_breakout_short",
+      "order_block_long",
+      "order_block_short",
+      "fair_value_gap_long",
+      "fair_value_gap_short",
+      "liquidity_sweep_long",
+      "liquidity_sweep_short",
+      "break_of_structure_long",
+      "break_of_structure_short"
     ]
   },
   "regime_thresholds": {
@@ -1102,6 +1132,62 @@
       "risk_pct": 1.0,
       "reward_risk_ratio": 2.0,
       "max_bars_hold": 12
+    },
+    "order_block_long": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Order Block long pattern - inherits ict_comprehensive params"
+    },
+    "order_block_short": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Order Block short pattern - inherits ict_comprehensive params"
+    },
+    "fair_value_gap_long": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Fair Value Gap long pattern - inherits ict_comprehensive params"
+    },
+    "fair_value_gap_short": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Fair Value Gap short pattern - inherits ict_comprehensive params"
+    },
+    "liquidity_sweep_long": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Liquidity Sweep long pattern - inherits ict_comprehensive params"
+    },
+    "liquidity_sweep_short": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Liquidity Sweep short pattern - inherits ict_comprehensive params"
+    },
+    "premium_zone_short": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Premium Zone short pattern - inherits ict_comprehensive params"
+    },
+    "discount_zone_long": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Discount Zone long pattern - inherits ict_comprehensive params"
+    },
+    "break_of_structure_long": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Break of Structure long pattern - inherits ict_comprehensive params"
+    },
+    "break_of_structure_short": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Break of Structure short pattern - inherits ict_comprehensive params"
+    },
+    "change_of_character_long": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Change of Character long pattern - inherits ict_comprehensive params"
+    },
+    "change_of_character_short": {
+      "enabled": true,
+      "_comment": "ADDED: ICT Change of Character short pattern - inherits ict_comprehensive params"
+    },
+    "trend_reversal_long": {
+      "enabled": true,
+      "_comment": "ADDED: Trend reversal long pattern - mapped from trend structure"
+    },
+    "trend_reversal_short": {
+      "enabled": true,
+      "_comment": "ADDED: Trend reversal short pattern - mapped from trend structure"
     },
     "main_detector": {
       "enabled": true,

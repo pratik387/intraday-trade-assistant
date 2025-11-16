@@ -193,16 +193,7 @@ def _safe_float(x, default: float = 0.0) -> float:
     except Exception:
         return default
 
-# Regime allow-list helper (strict by default; HCET can bypass)
-def _regime_allows(setup: str, regime: str) -> bool:
-    if regime in {"choppy", "range"}:
-        # keep chop tight: only allow orb_pullback_long; failure_fade_long only via HCET
-        return setup in {"orb_pullback_long"}
-    if regime == "trend_down":
-        return setup in {"gap_fill_short", "range_break_retest_short", "breakout_short"}
-    if regime == "trend_up":
-        return setup in {"breakout_long", "orb_pullback_long"}
-    return False
+# REMOVED: Hardcoded regime allowlist - now config-driven via TradeDecisionGate.regime_allowed_setups
 
 
 # ---------------------------- TradeDecisionGate --------------------------------
@@ -222,12 +213,17 @@ class TradeDecisionGate:
         news_spike_gate: NewsSpikeGate,
         market_sentiment_gate=None,
         quality_filters: Optional[dict] = None,
+        regime_allowed_setups: Optional[dict] = None,
     ) -> None:
         self.structure = structure_detector
         self.regime_gate = regime_gate
         self.event_gate = event_policy_gate
         self.news_gate = news_spike_gate
         self.sentiment_gate = market_sentiment_gate
+
+        # Store regime-allowed setups configuration
+        # Default to permissive (allow all) if not provided
+        self.regime_allowed_setups = regime_allowed_setups or {}
 
         # Setup sequencing tracker - Enhancement 3
         self.setup_history = defaultdict(list)  # symbol -> [(timestamp, setup_type, success)]
@@ -250,6 +246,30 @@ class TradeDecisionGate:
         ]
         # Add current setup (success will be determined later)
         self.setup_history[symbol].append((timestamp, setup_type, None))
+
+    def _regime_allows(self, setup: str, regime: str) -> bool:
+        """
+        Config-driven regime allowlist check.
+        Returns True if the setup is allowed in the given regime based on configuration.
+        If no config provided, defaults to allowing all setups (permissive).
+        """
+        if not self.regime_allowed_setups:
+            # No config provided - allow all setups (permissive default)
+            return True
+
+        # Normalize regime names (config uses "chop", code may use "choppy" or "range")
+        regime_key = regime
+        if regime in {"choppy", "range"}:
+            regime_key = "chop"
+
+        # Check if regime exists in config
+        if regime_key not in self.regime_allowed_setups:
+            # Unknown regime - default to allow
+            return True
+
+        # Check if setup is in the allowed list for this regime
+        allowed_setups = self.regime_allowed_setups[regime_key]
+        return setup in allowed_setups
 
     def _get_sequence_multiplier(self, symbol: str, current_setup: str) -> float:
         """
@@ -630,7 +650,7 @@ class TradeDecisionGate:
 
         # Check if HCET might be needed for bypasses
         insufficient_bars = (df5m_tail is None or len(df5m_tail) < 10)
-        regime_blocked = not _regime_allows(best.setup_type, regime)
+        regime_blocked = not self._regime_allows(best.setup_type, regime)
         time_blocked_check = time_blocked  # from earlier time window check
 
         if insufficient_bars or regime_blocked or time_blocked_check:
@@ -657,7 +677,7 @@ class TradeDecisionGate:
                 return GateDecision(accept=False, reasons=reasons)
 
         # Regime allow-list (strict) unless HCET
-        if not _regime_allows(best.setup_type, regime):
+        if not self._regime_allows(best.setup_type, regime):
             # fallback to your injected regime_gate.allow_setup if you want both
             # Priority 2: Get cap_segment for cap-aware strategy filtering
             cap_segment = "unknown"
