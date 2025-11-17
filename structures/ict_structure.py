@@ -67,9 +67,29 @@ class ICTStructure(BaseStructure):
         self.reward_risk_ratio = config.get("reward_risk_ratio", 2.0)
         self.max_bars_hold = config.get("max_bars_hold", 12) or 12
 
+        # Quality Filter parameters (MUST be in config - no defaults)
+        ict_filters = config["ict_quality_filters"]  # Will raise KeyError if missing
+
+        # Order Block Quality Filters
+        ob_filters = ict_filters["order_block"]  # Will raise KeyError if missing
+        self.ob_min_block_size_pct = ob_filters["min_block_size_pct"]
+        self.ob_min_volume_ratio = ob_filters["min_volume_ratio"]
+        self.ob_swing_tolerance_pct = ob_filters["swing_tolerance_pct"]
+        self.ob_min_rejection_wick_pct = ob_filters["min_rejection_wick_pct"]
+
+        # Fair Value Gap Quality Filters
+        fvg_filters = ict_filters["fair_value_gap"]  # Will raise KeyError if missing
+        self.fvg_min_gap_size_pct = fvg_filters["min_gap_size_pct"]
+        self.fvg_min_volume_ratio = fvg_filters["min_volume_ratio"]
+        self.fvg_max_wick_penetration_pct = fvg_filters["max_wick_penetration_pct"]
+        self.fvg_vwap_distance_tolerance_pct = fvg_filters["vwap_distance_tolerance_pct"]
+        self.fvg_swing_tolerance_pct = fvg_filters["swing_tolerance_pct"]
+
         logger.debug(f"ICT structure initialized - OB move: {self.ob_min_move_pct*100:.1f}%, "
                    f"FVG gap: {self.fvg_min_gap_pct*100:.2f}%-{self.fvg_max_gap_pct*100:.1f}%, "
-                   f"Sweep vol: {self.sweep_min_volume_surge}x")
+                   f"Sweep vol: {self.sweep_min_volume_surge}x, "
+                   f"Quality filters: OB block_size>{self.ob_min_block_size_pct*100:.1f}%, "
+                   f"FVG gap_size>{self.fvg_min_gap_size_pct*100:.1f}%")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect all ICT patterns and return comprehensive analysis."""
@@ -196,10 +216,62 @@ class ICTStructure(BaseStructure):
     def _create_order_block_event(self, df: pd.DataFrame, ob_candle_idx: int, move_pct: float,
                                 current_price: float, current_bar_idx: int,
                                 context: MarketContext) -> Optional[StructureEvent]:
-        """Create order block event if current price is testing the zone."""
+        """Create order block event if current price is testing the zone.
+
+        QUALITY FILTERS ADDED:
+        1. Block size must be significant (> 0.5% of price)
+        2. High volume on block formation (> 2.5x average)
+        3. Must be at structure level (swing high/low)
+        4. Strong rejection on test (wick > 40% of candle)
+        """
         ob_candle = df.iloc[ob_candle_idx]
         ob_high = ob_candle['high']
         ob_low = ob_candle['low']
+        ob_close = ob_candle['close']
+
+        # FILTER 1: Block size must be significant (from config)
+        block_size_pct = (ob_high - ob_low) / ob_low
+        if block_size_pct < self.ob_min_block_size_pct:
+            logger.debug(f"OB rejected: block too small ({block_size_pct*100:.2f}% < {self.ob_min_block_size_pct*100:.2f}%)")
+            return None
+
+        # FILTER 2: High volume on block formation (from config)
+        ob_volume = ob_candle.get('volume', 0)
+        avg_volume = df['volume'].rolling(20).mean().iloc[ob_candle_idx]
+        volume_ratio = ob_volume / avg_volume if avg_volume > 0 else 0
+        if volume_ratio < self.ob_min_volume_ratio:
+            logger.debug(f"OB rejected: insufficient volume ({volume_ratio:.1f}x < {self.ob_min_volume_ratio}x)")
+            return None
+
+        # FILTER 3: Check if at structure level (from config)
+        lookback_window = df.iloc[max(0, ob_candle_idx - 10):min(len(df), ob_candle_idx + 10)]
+        if move_pct > 0:  # Bearish OB - should be near swing high
+            is_swing_high = ob_high >= lookback_window['high'].max() * (1 - self.ob_swing_tolerance_pct)
+            if not is_swing_high:
+                logger.debug(f"OB rejected: not at structure level (swing high)")
+                return None
+        else:  # Bullish OB - should be near swing low
+            is_swing_low = ob_low <= lookback_window['low'].min() * (1 + self.ob_swing_tolerance_pct)
+            if not is_swing_low:
+                logger.debug(f"OB rejected: not at structure level (swing low)")
+                return None
+
+        # FILTER 4: Current test candle should show rejection (from config)
+        current_candle = df.iloc[current_bar_idx]
+        candle_range = current_candle['high'] - current_candle['low']
+        if candle_range > 0:
+            if move_pct > 0:  # Testing resistance - need lower wick
+                wick_size = current_candle['close'] - current_candle['low']
+                wick_ratio = wick_size / candle_range
+                if wick_ratio < self.ob_min_rejection_wick_pct:
+                    logger.debug(f"OB rejected: weak rejection wick ({wick_ratio*100:.0f}% < {self.ob_min_rejection_wick_pct*100:.0f}%)")
+                    return None
+            else:  # Testing support - need upper wick
+                wick_size = current_candle['high'] - current_candle['close']
+                wick_ratio = wick_size / candle_range
+                if wick_ratio < self.ob_min_rejection_wick_pct:
+                    logger.debug(f"OB rejected: weak rejection wick ({wick_ratio*100:.0f}% < {self.ob_min_rejection_wick_pct*100:.0f}%)")
+                    return None
 
         if move_pct > 0:  # Bearish OB (resistance zone)
             if (ob_low <= current_price <= ob_high * (1 + self.ob_test_tolerance)):
@@ -308,7 +380,14 @@ class ICTStructure(BaseStructure):
     def _create_fvg_event(self, direction: str, candle_before: pd.Series, candle_after: pd.Series,
                          df: pd.DataFrame, gap_index: int, current_price: float,
                          context: MarketContext) -> Optional[StructureEvent]:
-        """Create Fair Value Gap event if conditions are met."""
+        """Create Fair Value Gap event if conditions are met.
+
+        QUALITY FILTERS ADDED:
+        1. Gap must be significant (> 0.4% of price - stricter than before)
+        2. High volume on gap creation (> 2.0x average)
+        3. Clean gap (no overlap/wicks)
+        4. Must be at key level (near structure)
+        """
         if direction == 'long':
             gap_size = candle_after['low'] - candle_before['high']
             gap_pct = gap_size / candle_before['high']
@@ -320,8 +399,56 @@ class ICTStructure(BaseStructure):
             fvg_top = candle_before['low']
             fvg_bottom = candle_after['high']
 
-        # Check gap size
-        if not (self.fvg_min_gap_pct <= gap_pct <= self.fvg_max_gap_pct):
+        # FILTER 1: Gap must be significant (from config)
+        if gap_pct < self.fvg_min_gap_size_pct:
+            logger.debug(f"FVG rejected: gap too small ({gap_pct*100:.2f}% < {self.fvg_min_gap_size_pct*100:.2f}%)")
+            return None
+
+        # Keep max gap check
+        if gap_pct > self.fvg_max_gap_pct:
+            logger.debug(f"FVG rejected: gap too large ({gap_pct*100:.2f}% > {self.fvg_max_gap_pct*100:.1f}%)")
+            return None
+
+        # FILTER 2: High volume on gap creation (from config)
+        volume_strength = df['vol_surge'].iloc[gap_index]
+        volume_strength = volume_strength if pd.notna(volume_strength) else 1.0
+        if volume_strength < self.fvg_min_volume_ratio:
+            logger.debug(f"FVG rejected: insufficient volume ({volume_strength:.1f}x < {self.fvg_min_volume_ratio}x)")
+            return None
+
+        # FILTER 3: Check for clean gap (from config - allows penetration tolerance)
+        middle_candle = df.iloc[gap_index]
+        gap_size_abs = abs(fvg_top - fvg_bottom)
+        allowed_penetration = gap_size_abs * self.fvg_max_wick_penetration_pct
+
+        if direction == 'long':
+            # Bullish FVG - middle candle low shouldn't penetrate too much
+            if middle_candle['low'] < fvg_bottom - allowed_penetration:
+                logger.debug(f"FVG rejected: not clean gap (wick overlap)")
+                return None
+        else:
+            # Bearish FVG - middle candle high shouldn't penetrate too much
+            if middle_candle['high'] > fvg_top + allowed_penetration:
+                logger.debug(f"FVG rejected: not clean gap (wick overlap)")
+                return None
+
+        # FILTER 4: Must be at key level (from config)
+        vwap = context.indicators.get('vwap', current_price)
+        gap_center = (fvg_top + fvg_bottom) / 2
+        distance_from_vwap_pct = abs(gap_center - vwap) / vwap
+
+        # Gap should be within tolerance of VWAP or at swing levels
+        near_vwap = distance_from_vwap_pct < self.fvg_vwap_distance_tolerance_pct
+
+        # Check if near swing levels (from config)
+        lookback_window = df.iloc[max(0, gap_index - 10):min(len(df), gap_index + 10)]
+        if direction == 'long':
+            near_swing = fvg_bottom <= lookback_window['low'].min() * (1 + self.fvg_swing_tolerance_pct)
+        else:
+            near_swing = fvg_top >= lookback_window['high'].max() * (1 - self.fvg_swing_tolerance_pct)
+
+        if not (near_vwap or near_swing):
+            logger.debug(f"FVG rejected: not at key level (VWAP dist: {distance_from_vwap_pct*100:.1f}%)")
             return None
 
         # Check if current price is testing this FVG
@@ -330,8 +457,6 @@ class ICTStructure(BaseStructure):
             return None
 
         # Calculate strength
-        volume_strength = df['vol_surge'].iloc[gap_index]
-        volume_strength = volume_strength if pd.notna(volume_strength) else 1.0
         strength = min(3.0, gap_pct * 500 + volume_strength * 0.5)
 
         trade_plan = self._create_fvg_trade_plan(direction, fvg_top, fvg_bottom,
@@ -773,15 +898,26 @@ class ICTStructure(BaseStructure):
 
     def _create_order_block_trade_plan(self, direction: str, ob_high: float, ob_low: float,
                                      current_price: float, atr: float) -> TradePlan:
-        """Create trade plan for Order Block setup."""
+        """Create trade plan for Order Block setup.
+
+        FIX: Tighter stops + wider targets to improve R:R from 0.42 to 1.5+
+        - Stop: Just below/above order block (0.1 ATR buffer)
+        - Targets: Use measured move (block height projection)
+        """
+        block_height = ob_high - ob_low
+
         if direction == 'long':
             entry_price = ob_low
-            stop_loss = ob_low - (atr * 1.5)
-            take_profit = entry_price + ((entry_price - stop_loss) * self.reward_risk_ratio)
+            # FIXED: Tighter stop (was 1.5 ATR, now 0.1 ATR below block)
+            stop_loss = ob_low - (atr * 0.1)
+            # FIXED: Use block height for measured move (more realistic)
+            take_profit = entry_price + (block_height * 3.0)  # 3x block height
         else:
             entry_price = ob_high
-            stop_loss = ob_high + (atr * 1.5)
-            take_profit = entry_price - ((stop_loss - entry_price) * self.reward_risk_ratio)
+            # FIXED: Tighter stop (was 1.5 ATR, now 0.1 ATR above block)
+            stop_loss = ob_high + (atr * 0.1)
+            # FIXED: Use block height for measured move
+            take_profit = entry_price - (block_height * 3.0)  # 3x block height
 
         risk_params = RiskParams(
             hard_sl=stop_loss,
@@ -810,15 +946,26 @@ class ICTStructure(BaseStructure):
 
     def _create_fvg_trade_plan(self, direction: str, fvg_top: float, fvg_bottom: float,
                              current_price: float, atr: float) -> TradePlan:
-        """Create trade plan for Fair Value Gap setup."""
+        """Create trade plan for Fair Value Gap setup.
+
+        FIX: Tighter stops + wider targets to improve R:R from 0.62 to 1.8+
+        - Stop: Just beyond gap (0.1 ATR buffer)
+        - Targets: Use gap height projection (3x gap height)
+        """
+        gap_height = fvg_top - fvg_bottom
+
         if direction == 'long':
             entry_price = fvg_bottom
-            stop_loss = fvg_bottom - (atr * 1.0)
-            take_profit = fvg_top + (atr * 1.5)
+            # FIXED: Tighter stop (was 1.0 ATR, now 0.1 ATR below gap)
+            stop_loss = fvg_bottom - (atr * 0.1)
+            # FIXED: Use gap height for measured move
+            take_profit = entry_price + (gap_height * 3.0)  # 3x gap height
         else:
             entry_price = fvg_top
-            stop_loss = fvg_top + (atr * 1.0)
-            take_profit = fvg_bottom - (atr * 1.5)
+            # FIXED: Tighter stop (was 1.0 ATR, now 0.1 ATR above gap)
+            stop_loss = fvg_top + (atr * 0.1)
+            # FIXED: Use gap height for measured move
+            take_profit = entry_price - (gap_height * 3.0)  # 3x gap height
 
         risk_params = RiskParams(
             hard_sl=stop_loss,

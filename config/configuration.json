@@ -18,7 +18,6 @@
       "breakout_long",
       "level_breakout_long",
       "failure_fade_short",
-      "flag_continuation_long",
       "trend_pullback_long",
       "vwap_reclaim_long",
       "orb_breakout_long",
@@ -59,7 +58,6 @@
       "level_breakout_long",
       "vwap_mean_reversion_long",
       "vwap_mean_reversion_short",
-      "vwap_reclaim_long",
       "vwap_lose_short",
       "range_rejection_long",
       "range_rejection_short",
@@ -67,10 +65,6 @@
       "volume_spike_reversal_short",
       "momentum_breakout_long",
       "momentum_breakout_short",
-      "order_block_long",
-      "order_block_short",
-      "fair_value_gap_long",
-      "fair_value_gap_short",
       "liquidity_sweep_long",
       "liquidity_sweep_short",
       "change_of_character_long",
@@ -98,6 +92,32 @@
     "bo_min_adx": 12.0,
     "bo_min_vol_mult": 1.15,
     "ff_min_vol_mult": 0.9
+  },
+  "ict_quality_filters": {
+    "_comment": "ICT Pattern Quality Filters - Balance between noise filtering and opportunity capture",
+    "_rationale": "Calibrated to achieve 30-40% conversion rate with positive R:R. Too strict = 0 trades, too loose = bad trades.",
+    "order_block": {
+      "min_block_size_pct": 0.003,
+      "_min_block_size_comment": "0.3% of price - filters micro-consolidations, allows institutional zones",
+      "min_volume_ratio": 1.5,
+      "_min_volume_ratio_comment": "1.5x average volume - shows participation without being too strict",
+      "swing_tolerance_pct": 0.05,
+      "_swing_tolerance_comment": "Within 5% of swing high/low - accommodates volatile NSE markets",
+      "min_rejection_wick_pct": 0.25,
+      "_min_rejection_wick_comment": "25% wick - reasonable rejection signal without being too strict"
+    },
+    "fair_value_gap": {
+      "min_gap_size_pct": 0.002,
+      "_min_gap_size_comment": "0.2% gap - filters noise wicks, allows real imbalances",
+      "min_volume_ratio": 1.3,
+      "_min_volume_ratio_comment": "1.3x volume - shows institutional interest in gap creation",
+      "max_wick_penetration_pct": 0.1,
+      "_max_wick_penetration_comment": "10% of gap - allows minor wick overlap for real-world gaps",
+      "vwap_distance_tolerance_pct": 0.05,
+      "_vwap_distance_comment": "Within 5% of VWAP - identifies key level gaps",
+      "swing_tolerance_pct": 0.05,
+      "_swing_tolerance_comment": "Within 5% of swing - allows gaps near structure"
+    }
   },
   "liquidity_gates": {
     "_comment": "Market Cap Segmentation - Priority 1: Liquidity Filters (evidence-based thresholds)",
