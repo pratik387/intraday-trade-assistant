@@ -541,6 +541,19 @@ class TradeDecisionGate:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
             return GateDecision(accept=False, reasons=["no_structure_event"])
 
+        # Filter out blacklisted setups FIRST (before selection)
+        blacklisted_setups = self.quality_filters.get('blacklist_setups', [])
+        if blacklisted_setups:
+            original_count = len(setups)
+            setups = [s for s in setups if s.setup_type not in blacklisted_setups]
+            if len(setups) < original_count:
+                filtered = original_count - len(setups)
+                logger.debug(f"TRADE_GATE: {symbol} - Filtered {filtered} blacklisted setup(s)")
+
+            if not setups:
+                logger.debug(f"TRADE_GATE: {symbol} - All setups blacklisted, rejecting")
+                return GateDecision(accept=False, reasons=["all_setups_blacklisted"])
+
         # Priority-based structure selection (Professional approach)
         # During ORB window (9:30-10:30 AM), prioritize ORB structures over others
         # This matches institutional behavior: ORB is THE primary setup during opening session
@@ -574,11 +587,6 @@ class TradeDecisionGate:
                            f"using strongest available: {best.setup_type} (strength={best.strength:.2f})")
 
         reasons.extend([f"structure:{r}" for r in best.reasons])
-
-        # Setup blacklist
-        blacklisted_setups = self.quality_filters.get('blacklist_setups', [])
-        if best.setup_type in blacklisted_setups:
-            return GateDecision(accept=False, reasons=[f"blacklisted_setup:{best.setup_type}"])
 
         # ---------------- REGIME (Phase 2: Multi-timeframe) ----------------
         df_for_regime = index_df5m if index_df5m is not None and not index_df5m.empty else df5m_tail

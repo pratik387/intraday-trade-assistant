@@ -738,6 +738,21 @@ class ScreenerLive:
                 # Use new structure system approach with setup_candidates
                 setup_candidates = getattr(decision, 'setup_candidates', None)
                 if setup_candidates:
+                    # BUGFIX: Filter candidates to only pass the one accepted by the gate
+                    # This prevents planner from independently selecting a different candidate (potentially blacklisted)
+                    # Root cause: Gate filters/selects best candidate, but planner was re-selecting independently
+                    # Fix: Only pass the accepted candidate (matching decision.setup_type) to planner
+                    accepted_setup_type = decision.setup_type
+                    if accepted_setup_type:
+                        # Filter to only the accepted candidate
+                        accepted_candidates = [c for c in setup_candidates if c.setup_type == accepted_setup_type]
+                        if accepted_candidates:
+                            setup_candidates = accepted_candidates
+                            logger.debug(f"PLANNER: {sym} - Using gate-accepted candidate: {accepted_setup_type}")
+                        else:
+                            # Fallback: Gate accepted a setup_type not in candidates (shouldn't happen, but defensive)
+                            logger.warning(f"PLANNER: {sym} - Gate accepted {accepted_setup_type} but not in candidates. Using all candidates.")
+
                     # Phase 1.4: Enhance candidate strength with HTF 15m confirmation
                     setup_candidates = self._enhance_candidates_with_htf(sym, setup_candidates)
                     plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_candidates=setup_candidates)

@@ -95,28 +95,28 @@
   },
   "ict_quality_filters": {
     "_comment": "ICT Pattern Quality Filters - Balance between noise filtering and opportunity capture",
-    "_rationale": "Calibrated to achieve 30-40% conversion rate with positive R:R. Too strict = 0 trades, too loose = bad trades.",
+    "_rationale": "Relaxed significantly - previous values (0.003/1.5) produced ZERO trades. Current values allow patterns while still filtering obvious noise.",
     "order_block": {
-      "min_block_size_pct": 0.003,
-      "_min_block_size_comment": "0.3% of price - filters micro-consolidations, allows institutional zones",
-      "min_volume_ratio": 1.5,
-      "_min_volume_ratio_comment": "1.5x average volume - shows participation without being too strict",
-      "swing_tolerance_pct": 0.05,
-      "_swing_tolerance_comment": "Within 5% of swing high/low - accommodates volatile NSE markets",
-      "min_rejection_wick_pct": 0.25,
-      "_min_rejection_wick_comment": "25% wick - reasonable rejection signal without being too strict"
+      "min_block_size_pct": 0.001,
+      "_min_block_size_comment": "0.1% of price - relaxed from 0.3% (was too strict, no trades)",
+      "min_volume_ratio": 1.1,
+      "_min_volume_ratio_comment": "1.1x average volume - relaxed from 1.5x (was too strict)",
+      "swing_tolerance_pct": 0.10,
+      "_swing_tolerance_comment": "Within 10% of swing high/low - relaxed from 5% (NSE is volatile)",
+      "min_rejection_wick_pct": 0.15,
+      "_min_rejection_wick_comment": "15% wick - relaxed from 25% (was filtering everything)"
     },
     "fair_value_gap": {
-      "min_gap_size_pct": 0.002,
-      "_min_gap_size_comment": "0.2% gap - filters noise wicks, allows real imbalances",
-      "min_volume_ratio": 1.3,
-      "_min_volume_ratio_comment": "1.3x volume - shows institutional interest in gap creation",
-      "max_wick_penetration_pct": 0.1,
-      "_max_wick_penetration_comment": "10% of gap - allows minor wick overlap for real-world gaps",
-      "vwap_distance_tolerance_pct": 0.05,
-      "_vwap_distance_comment": "Within 5% of VWAP - identifies key level gaps",
-      "swing_tolerance_pct": 0.05,
-      "_swing_tolerance_comment": "Within 5% of swing - allows gaps near structure"
+      "min_gap_size_pct": 0.001,
+      "_min_gap_size_comment": "0.1% gap - relaxed from 0.2% (was too strict, no trades)",
+      "min_volume_ratio": 1.1,
+      "_min_volume_ratio_comment": "1.1x volume - relaxed from 1.3x (need to allow more patterns)",
+      "max_wick_penetration_pct": 0.2,
+      "_max_wick_penetration_comment": "20% of gap - relaxed from 10% (real gaps have wicks)",
+      "vwap_distance_tolerance_pct": 0.10,
+      "_vwap_distance_comment": "Within 10% of VWAP - relaxed from 5% (too strict for NSE)",
+      "swing_tolerance_pct": 0.10,
+      "_swing_tolerance_comment": "Within 10% of swing - relaxed from 5% (need more flexibility)"
     }
   },
   "liquidity_gates": {
@@ -874,10 +874,13 @@
       "breakout_buffer_pct": 0.2,
       "min_breakout_volume_mult": 1.8,
       "min_stop_distance_pct": 0.5,
-      "stop_distance_mult": 0.5,
+      "stop_distance_mult": 0.8,
+      "_comment_stop": "FIXED: 0.5 → 0.8 ATR - Spike test (1m bar timing analysis) showed 40% of trades hit SL before T1. Stops too tight for normal price noise. Widening to give breathing room.",
       "level_buffer_mult": 0.1,
       "target_mult_t1": 1.5,
+      "_comment_t1": "REVERTED: 2.0 → 1.5 - Spike test showed issue is tight stops, not tight targets. Keeping original T1.",
       "target_mult_t2": 2.5,
+      "_comment_t2": "REVERTED: 3.5 → 2.5 - Keeping original T2 after confirming stops are the issue.",
       "confidence_strong_level": 0.85,
       "confidence_weak_level": 0.65,
       "confidence_breakout": 0.8,
@@ -1151,7 +1154,23 @@
       "choch_volume_threshold": 1.8,
       "risk_pct": 1.0,
       "reward_risk_ratio": 2.0,
-      "max_bars_hold": 12
+      "max_bars_hold": 12,
+      "ict_quality_filters": {
+        "_comment": "ICT Pattern Quality Filters - Balance between noise filtering and opportunity capture",
+        "order_block": {
+          "min_block_size_pct": 0.001,
+          "min_volume_ratio": 1.1,
+          "swing_tolerance_pct": 0.10,
+          "min_rejection_wick_pct": 0.15
+        },
+        "fair_value_gap": {
+          "min_gap_size_pct": 0.001,
+          "min_volume_ratio": 1.1,
+          "max_wick_penetration_pct": 0.15,
+          "vwap_distance_tolerance_pct": 0.08,
+          "swing_tolerance_pct": 0.10
+        }
+      }
     },
     "order_block_long": {
       "enabled": true,
