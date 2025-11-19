@@ -45,8 +45,7 @@ class MainDetector(BaseStructure):
         # Extract setups config once and validate
         setups_config = config.get("setups", {})
         if not setups_config:
-            logger.error("MAIN_DETECTOR: No setups configuration found! All detectors will be disabled.")
-            logger.error(f"MAIN_DETECTOR: Config keys received: {list(config.keys())}")
+            logger.exception("MAIN_DETECTOR: No setups configuration found! All detectors will be disabled.")
             self.detectors = {}
             return
 
@@ -406,7 +405,7 @@ class MainDetector(BaseStructure):
                     logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
                                f"with confidence {event.confidence:.2f} for {symbol}")
                 else:
-                    logger.warning(f"MAIN_DETECTOR: {symbol} no setup type mapping for '{event.structure_type}'")
+                    logger.debug(f"MAIN_DETECTOR: {symbol} no setup type mapping for '{event.structure_type}'")
 
             except Exception as e:
                 logger.exception(f"MAIN_DETECTOR: Error converting event to setup candidate: {e}")

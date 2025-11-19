@@ -94,29 +94,28 @@
     "ff_min_vol_mult": 0.9
   },
   "ict_quality_filters": {
-    "_comment": "ICT Pattern Quality Filters - Balance between noise filtering and opportunity capture",
-    "_rationale": "Relaxed significantly - previous values (0.003/1.5) produced ZERO trades. Current values allow patterns while still filtering obvious noise.",
+    "_comment": "PROFESSIONAL ICT - Context over metrics (2025-11-18 - Full Professional Implementation)",
+    "_rationale": "Professional ICT requires sweep OR MSS (context), 2.0x volume (institutional), at structure levels. Old 1.1x volume produced 0 trades.",
     "order_block": {
-      "min_block_size_pct": 0.001,
-      "_min_block_size_comment": "0.1% of price - relaxed from 0.3% (was too strict, no trades)",
-      "min_volume_ratio": 1.1,
-      "_min_volume_ratio_comment": "1.1x average volume - relaxed from 1.5x (was too strict)",
-      "swing_tolerance_pct": 0.10,
-      "_swing_tolerance_comment": "Within 10% of swing high/low - relaxed from 5% (NSE is volatile)",
-      "min_rejection_wick_pct": 0.15,
-      "_min_rejection_wick_comment": "15% wick - relaxed from 25% (was filtering everything)"
+      "min_block_size_pct": 0.0005,
+      "_size_comment": "Size less important with sweep/MSS validation",
+      "min_volume_ratio": 2.0,
+      "_volume_comment": "PROFESSIONAL: 2.0x = institutional standard (hardcoded in detection, not configurable anymore)",
+      "swing_tolerance_pct": 0.15,
+      "_swing_comment": "At swing structure (15% tolerance for NSE volatility)",
+      "min_rejection_wick_pct": 0.10,
+      "_wick_comment": "Rejection confirmation (10% minimum)"
     },
     "fair_value_gap": {
-      "min_gap_size_pct": 0.001,
-      "_min_gap_size_comment": "0.1% gap - relaxed from 0.2% (was too strict, no trades)",
-      "min_volume_ratio": 1.1,
-      "_min_volume_ratio_comment": "1.1x volume - relaxed from 1.3x (need to allow more patterns)",
-      "max_wick_penetration_pct": 0.2,
-      "_max_wick_penetration_comment": "20% of gap - relaxed from 10% (real gaps have wicks)",
-      "vwap_distance_tolerance_pct": 0.10,
-      "_vwap_distance_comment": "Within 10% of VWAP - relaxed from 5% (too strict for NSE)",
-      "swing_tolerance_pct": 0.10,
-      "_swing_tolerance_comment": "Within 10% of swing - relaxed from 5% (need more flexibility)"
+      "min_gap_size_pct": 0.0005,
+      "_gap_comment": "Clean gap matters, not size",
+      "min_volume_ratio": 1.5,
+      "_fvg_volume_comment": "FVG institutional standard: 1.5x",
+      "max_wick_penetration_pct": 0.25,
+      "_penetration_comment": "Allow wick penetration (25% max)",
+      "vwap_distance_tolerance_pct": 0.15,
+      "_vwap_comment": "FVG proximity to VWAP/swing (15% tolerance)",
+      "swing_tolerance_pct": 0.15
     }
   },
   "liquidity_gates": {
@@ -1279,7 +1278,8 @@
     }
   },
   "time_policy": {
-    "start_trade": "10:15",
+    "start_trade": "09:15",
+    "_comment_start_trade": "OPENING BELL FIX: Changed from 10:15 to 09:15 - allow entries from market open (premium_zone T1 hits at 09:15-09:30)",
     "lunch_block_start": "12:00",
     "lunch_block_end": "13:00",
     "last_entry_cutoff": "14:45"
@@ -1424,10 +1424,36 @@
     "breakout_min_adx": 20.0,
     "min_t2_rr": 1.5,
     "time_windows": {
-      "morning_start": "09:25",
+      "morning_start": "09:15",
+      "_comment_morning_start": "OPENING BELL FIX: Changed from 09:25 to 09:15 - allow entries from market open to catch fresh moves (premium_zone T1 hits at 09:15-09:30)",
       "morning_end": "12:40",
       "afternoon_start": "13:20",
       "afternoon_end": "14:45"
+    },
+    "opening_bell_override": {
+      "_comment": "OPENING BELL DETECTION - Professional NSE Strategy (Fix for premium_zone_short late entries)",
+      "_rationale": "Evidence: 82% of premium_zone_short trades had T1 hit at 09:15-09:30, but entries at 11:00-14:00 (2-3 hrs late). Scanner now runs early (09:20-09:30) ONLY for ICT setups to catch first 2 candles. Other setups still wait until 09:30+ (normal 3-bar requirement).",
+      "enabled": true,
+      "start_time": "09:20",
+      "end_time": "09:30",
+      "_window_comment": "10-minute opening window (09:20-09:30) for ICT setups ONLY - scanner runs with 1 bar minimum to catch first candle (09:15-09:20) like pro traders. Bypasses momentum/range filters, requires 2.0x volume. Other setups blocked until 09:30.",
+      "bypass_time_window_filter": true,
+      "bypass_momentum_consolidation": true,
+      "_momentum_bypass_rationale": "Opening session has high momentum (gap moves) - this is DESIRED, not noise. Momentum filter blocks best entries.",
+      "bypass_range_compression": true,
+      "_range_compression_bypass_rationale": "Opening session has high ATR (expansion from gap) - this is NORMAL. Range compression filter blocks opening moves.",
+      "require_volume_confirmation": true,
+      "min_volume_ratio": 2.0,
+      "_volume_comment": "2.0x volume = institutional participation (same as ICT standard). Ensures quality opening moves, not retail noise.",
+      "allowed_setups": [
+        "premium_zone_short",
+        "discount_zone_long",
+        "order_block_long",
+        "order_block_short",
+        "orb_breakout_long",
+        "orb_breakout_short"
+      ],
+      "_allowed_setups_comment": "ICT setups + ORB work best at market open (designed for extremes/fresh moves). Other setups still require consolidation."
     },
     "pattern_filters_enabled": true,
     "momentum_consolidation_enabled": true,
@@ -1447,7 +1473,10 @@
       "range_rejection_long",
       "support_bounce_long",
       "vwap_lose_short",
-      "pdl_break_hold_short"
+      "pdl_break_hold_short",
+      "flag_continuation_long",
+      "trend_continuation_long",
+      "trend_continuation_short"
     ],
     "max_structural_rr": 4.0,
     "high_rr_penalty": -0.3,

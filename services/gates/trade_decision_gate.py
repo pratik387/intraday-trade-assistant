@@ -409,6 +409,28 @@ class TradeDecisionGate:
         except Exception:
             minute_of_day = None
 
+        # Check if we're in opening bell window (09:15-09:30)
+        opening_bell_config = self.quality_filters.get('opening_bell_override', {})
+        opening_bell_enabled = opening_bell_config.get('enabled', False)
+        in_opening_bell_window = False
+
+        if opening_bell_enabled and minute_of_day is not None:
+            def to_min(s: str, default_min: int) -> int:
+                try:
+                    if isinstance(s, str) and ':' in s:
+                        hh, mm = map(int, s.split(':'))
+                        return hh * 60 + mm
+                except Exception:
+                    pass
+                return default_min
+
+            opening_start = to_min(opening_bell_config.get('start_time', '09:15'), 555)  # 9:15 = 9*60+15 = 555
+            opening_end = to_min(opening_bell_config.get('end_time', '09:30'), 570)      # 9:30 = 9*60+30 = 570
+            in_opening_bell_window = opening_start <= minute_of_day <= opening_end
+
+            if in_opening_bell_window:
+                logger.debug(f"OPENING_BELL: {symbol} - In opening bell window ({opening_bell_config.get('start_time')}-{opening_bell_config.get('end_time')})")
+
         time_blocked = False
         if minute_of_day is not None:
             # Get time windows from config (defaults kept restrictive)
@@ -432,8 +454,13 @@ class TradeDecisionGate:
             in_afternoon = afternoon_start <= minute_of_day <= afternoon_end
 
             if not (in_morning or in_afternoon):
-                # mark as blocked for now; allow HCET to override later
-                time_blocked = True
+                # Opening bell override: bypass time block if in opening window
+                if in_opening_bell_window and opening_bell_config.get('bypass_time_window_filter', False):
+                    logger.debug(f"OPENING_BELL: {symbol} - Bypassing time window filter (outside normal hours but in opening bell)")
+                    time_blocked = False
+                else:
+                    # mark as blocked for now; allow HCET to override later
+                    time_blocked = True
 
         # Evidence-based pattern filters (momentum consolidation / range compression)
         pattern_filters_enabled = self.quality_filters.get('pattern_filters_enabled', True)
@@ -450,7 +477,13 @@ class TradeDecisionGate:
             # Momentum quality filter - Multi-factor validation for big movers
             # Professional approach: Allow strong momentum if confirmed by volume + VWAP proximity
             # Rejects overextended moves (buying tops) while allowing early-stage momentum
-            if self.quality_filters.get('momentum_consolidation_enabled', True) and len(df5m_tail) >= 3:
+            # OPENING BELL OVERRIDE: Bypass during opening window if configured
+            momentum_enabled = self.quality_filters.get('momentum_consolidation_enabled', True)
+            if in_opening_bell_window and opening_bell_config.get('bypass_momentum_consolidation', False):
+                logger.debug(f"OPENING_BELL: {symbol} - Bypassing momentum consolidation filter")
+                momentum_enabled = False
+
+            if momentum_enabled and len(df5m_tail) >= 3:
                 try:
                     close_3_bars_ago = df5m_tail["close"].iloc[-4] if len(df5m_tail) >= 4 else df5m_tail["close"].iloc[0]
                     current_close = df5m_tail["close"].iloc[-1]
@@ -502,7 +535,13 @@ class TradeDecisionGate:
                     pattern_reasons.append(f"momentum_consolidation_error:{e.__class__.__name__}")
 
             # Range compression
-            if self.quality_filters.get('range_compression_enabled', True) and len(df5m_tail) >= 20:
+            # OPENING BELL OVERRIDE: Bypass during opening window if configured
+            range_compression_enabled = self.quality_filters.get('range_compression_enabled', True)
+            if in_opening_bell_window and opening_bell_config.get('bypass_range_compression', False):
+                logger.debug(f"OPENING_BELL: {symbol} - Bypassing range compression filter")
+                range_compression_enabled = False
+
+            if range_compression_enabled and len(df5m_tail) >= 20:
                 try:
                     high = df5m_tail["high"]
                     low = df5m_tail["low"]
@@ -541,18 +580,39 @@ class TradeDecisionGate:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
             return GateDecision(accept=False, reasons=["no_structure_event"])
 
-        # Filter out blacklisted setups FIRST (before selection)
-        blacklisted_setups = self.quality_filters.get('blacklist_setups', [])
-        if blacklisted_setups:
-            original_count = len(setups)
-            setups = [s for s in setups if s.setup_type not in blacklisted_setups]
-            if len(setups) < original_count:
-                filtered = original_count - len(setups)
-                logger.debug(f"TRADE_GATE: {symbol} - Filtered {filtered} blacklisted setup(s)")
+        # NOTE: Global blacklist filtering is now done in MainDetector (before this gate)
+        # This ensures blacklists work for ALL execution paths (local and cloud)
 
-            if not setups:
-                logger.debug(f"TRADE_GATE: {symbol} - All setups blacklisted, rejecting")
-                return GateDecision(accept=False, reasons=["all_setups_blacklisted"])
+        # OPENING BELL FILTERING: Only allow specific setups during opening bell window
+        if in_opening_bell_window and opening_bell_enabled:
+            allowed_setups = opening_bell_config.get('allowed_setups', [])
+            if allowed_setups:
+                original_count = len(setups)
+                setups = [s for s in setups if s.setup_type in allowed_setups]
+                if len(setups) < original_count:
+                    filtered = original_count - len(setups)
+                    logger.debug(f"OPENING_BELL: {symbol} - Filtered {filtered} setup(s) not allowed during opening bell")
+
+                if not setups:
+                    logger.debug(f"OPENING_BELL: {symbol} - No allowed setups during opening bell window")
+                    return GateDecision(accept=False, reasons=["opening_bell:no_allowed_setups"])
+
+            # OPENING BELL VOLUME CONFIRMATION: Require 2.0x volume
+            if opening_bell_config.get('require_volume_confirmation', False) and df5m_tail is not None and len(df5m_tail) >= 5:
+                try:
+                    current_volume = df5m_tail["volume"].iloc[-1]
+                    avg_volume = df5m_tail["volume"].tail(20).mean() if len(df5m_tail) >= 20 else df5m_tail["volume"].mean()
+                    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+                    min_volume_ratio = opening_bell_config.get('min_volume_ratio', 2.0)
+
+                    if volume_ratio < min_volume_ratio:
+                        logger.debug(f"OPENING_BELL: {symbol} - Volume confirmation failed: {volume_ratio:.2f}x < {min_volume_ratio}x")
+                        return GateDecision(accept=False, reasons=[f"opening_bell:volume_too_low:{volume_ratio:.2f}x<{min_volume_ratio}x"])
+                    else:
+                        logger.debug(f"OPENING_BELL: {symbol} - Volume confirmed: {volume_ratio:.2f}x >= {min_volume_ratio}x (institutional participation)")
+                        reasons.append(f"opening_bell:volume_confirmed:{volume_ratio:.2f}x")
+                except Exception as e:
+                    logger.warning(f"OPENING_BELL: {symbol} - Volume confirmation error: {e}")
 
         # Priority-based structure selection (Professional approach)
         # During ORB window (9:30-10:30 AM), prioritize ORB structures over others
@@ -573,7 +633,7 @@ class TradeDecisionGate:
                     # During ORB window, pick strongest ORB structure
                     orb_setups.sort(key=lambda s: s.strength, reverse=True)
                     best = orb_setups[0]
-                    logger.info(f"TRADE_GATE: ORB window active ({minute_of_day//60}:{minute_of_day%60:02d}), "
+                    logger.debug(f"TRADE_GATE: ORB window active ({minute_of_day//60}:{minute_of_day%60:02d}), "
                               f"prioritizing ORB setup: {best.setup_type} (strength={best.strength:.2f})")
                     reasons.append("orb_priority:active_window")
 

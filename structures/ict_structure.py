@@ -92,14 +92,22 @@ class ICTStructure(BaseStructure):
                    f"FVG gap_size>{self.fvg_min_gap_size_pct*100:.1f}%")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
-        """Detect all ICT patterns and return comprehensive analysis."""
+        """Detect all ICT patterns and return comprehensive analysis with professional criteria."""
         logger.debug(f"ICT_DETECTOR: Starting detection for {context.symbol}")
         events = []
 
         try:
             df = context.df_5m
-            if df is None or len(df) < 20:
-                logger.debug(f"ICT_DETECTOR: {context.symbol} insufficient data (len={len(df) if df is not None else 0})")
+
+            # OPENING BELL FIX: Check if we're in opening bell window (09:20-09:30)
+            # Professional NSE traders analyze first candle for premium/discount zones
+            from datetime import time as dtime
+            current_time = context.timestamp.time() if hasattr(context.timestamp, 'time') else context.timestamp
+            in_opening_bell = dtime(9, 20) <= current_time < dtime(9, 30)
+            min_bars_required = 1 if in_opening_bell else 20
+
+            if df is None or len(df) < min_bars_required:
+                logger.debug(f"ICT_DETECTOR: {context.symbol} insufficient data (len={len(df) if df is not None else 0}, required={min_bars_required}, opening_bell={in_opening_bell})")
                 return StructureAnalysis(structure_detected=False, events=[], quality_score=0.0)
 
             # Prepare data
@@ -114,26 +122,61 @@ class ICTStructure(BaseStructure):
                 "ORL": context.orl
             }
 
-            # Detect all ICT patterns
-            logger.debug(f"ICT_DETECTOR: {context.symbol} running pattern detection")
-            order_block_events = self._detect_order_blocks(d, context)
-            fvg_events = self._detect_fair_value_gaps(d, context)
-            sweep_events = self._detect_liquidity_sweeps(d, context, levels)
-            premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
-            bos_events = self._detect_break_of_structure(d, context)
-            choch_events = self._detect_change_of_character(d, context)
+            # PROFESSIONAL ICT: Detect in specific order to enable professional filters
+            logger.debug(f"ICT_DETECTOR: {context.symbol} running pattern detection (opening_bell={in_opening_bell}, bars={len(df)})")
+
+            # OPENING BELL FIX: With 1-2 bars, only detect premium/discount zones (like pro traders)
+            # Skip complex patterns that need swing structure (OB, FVG, MSS, BOS, CHOCH)
+            if in_opening_bell and len(df) < 3:
+                logger.debug(f"ICT_DETECTOR: {context.symbol} opening bell mode - premium/discount zones only")
+                premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
+
+                # Skip all other patterns during opening bell with <3 bars
+                sweep_events = []
+                mss_events = []
+                order_block_events = []
+                fvg_events = []
+                bos_events = []
+                choch_events = []
+            else:
+                # Normal mode with sufficient bars
+                # Step 1: Detect liquidity sweeps FIRST (required for OB validation)
+                sweep_events = self._detect_liquidity_sweeps(d, context, levels)
+                logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(sweep_events)} sweeps")
+
+                # Step 2: Detect swing points (required for MSS)
+                swing_highs = self._find_swing_points(d, 'high')
+                swing_lows = self._find_swing_points(d, 'low')
+
+                # Step 3: Detect Market Structure Shift
+                mss_events = self._detect_market_structure_shift(d, context, swing_highs, swing_lows)
+                logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(mss_events)} MSS")
+
+                # Step 4: Detect Order Blocks with PROFESSIONAL criteria (sweep + MSS required)
+                order_block_events = self._detect_order_blocks(d, context, sweep_events, mss_events)
+                logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(order_block_events)} OBs")
+
+                # Step 5: Detect FVGs with displacement
+                fvg_events = self._detect_fair_value_gaps(d, context)
+                logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(fvg_events)} FVGs")
+
+                # Step 6: Other ICT patterns (unchanged)
+                premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
+                bos_events = self._detect_break_of_structure(d, context)
+                choch_events = self._detect_change_of_character(d, context)
 
             logger.debug(f"ICT_DETECTOR: {context.symbol} pattern counts - OB:{len(order_block_events)} FVG:{len(fvg_events)} "
-                       f"Sweep:{len(sweep_events)} P/D:{len(premium_discount_events)} BOS:{len(bos_events)} CHOCH:{len(choch_events)}")
+                       f"Sweep:{len(sweep_events)} MSS:{len(mss_events)} P/D:{len(premium_discount_events)} BOS:{len(bos_events)} CHOCH:{len(choch_events)}")
 
             # Combine all events
-            all_events = (order_block_events + fvg_events + sweep_events +
+            all_events = (order_block_events + fvg_events + sweep_events + mss_events +
                          premium_discount_events + bos_events + choch_events)
 
             # Calculate quality score based on multiple confirmations
             quality_score = self._calculate_ict_quality_score(all_events, d, context)
             structure_detected = len(all_events) > 0
 
+            logger.debug(f"ICT_DETECTOR: {context.symbol} COMPLETE - detected={structure_detected}, total_events={len(all_events)}, quality={quality_score:.2f}")
             return StructureAnalysis(structure_detected=structure_detected, events=all_events, quality_score=quality_score)
 
         except Exception as e:
@@ -160,8 +203,22 @@ class ICTStructure(BaseStructure):
 
         return d
 
-    def _detect_order_blocks(self, df: pd.DataFrame, context: MarketContext) -> List[StructureEvent]:
-        """Detect Order Blocks - institutional accumulation/distribution zones."""
+    def _detect_order_blocks(self, df: pd.DataFrame, context: MarketContext,
+                            sweep_events: List[StructureEvent],
+                            mss_events: List[StructureEvent]) -> List[StructureEvent]:
+        """
+        Detect Order Blocks with PROFESSIONAL ICT criteria.
+
+        Professional Requirements (at least ONE required):
+        1. Liquidity sweep occurred 1-10 bars before OB formation
+        2. Market Structure Shift matches OB direction
+
+        Quality Filters (MUST pass):
+        - High volume (> 2.0x institutional standard)
+        - Significant block size
+        - At swing structure level
+        - Current price testing the zone
+        """
         events = []
 
         try:
@@ -172,7 +229,7 @@ class ICTStructure(BaseStructure):
             search_start = max(5, current_bar_idx - self.ob_lookback_bars)
 
             for move_start_idx in range(search_start, current_bar_idx - 2):
-                # Check for significant move
+                # Check for significant move with HIGH VOLUME (professional standard)
                 move_bars = df.iloc[move_start_idx:move_start_idx + 5]
                 if len(move_bars) < 3:
                     continue
@@ -181,23 +238,62 @@ class ICTStructure(BaseStructure):
                 move_end_price = move_bars['close'].iloc[-1]
                 move_pct = (move_end_price - move_start_price) / move_start_price
 
-                # Check volume confirmation (skip NaN values)
+                # PROFESSIONAL: Require 2.0x volume (institutional participation)
                 vol_surge_series = move_bars['vol_surge'].dropna()
-                move_had_volume = (vol_surge_series > self.ob_min_volume_surge).any() if len(vol_surge_series) > 0 else False
+                move_had_institutional_volume = (vol_surge_series > 2.0).any() if len(vol_surge_series) > 0 else False
 
-                if abs(move_pct) >= self.ob_min_move_pct and move_had_volume:
+                if abs(move_pct) >= self.ob_min_move_pct and move_had_institutional_volume:
                     # Find last opposing candle before move
                     ob_candle_idx = self._find_opposing_candle(df, move_start_idx, move_pct)
 
                     if ob_candle_idx is not None:
-                        event = self._create_order_block_event(df, ob_candle_idx, move_pct,
-                                                             current_price, current_bar_idx, context)
-                        if event:
-                            events.append(event)
+                        # Check PROFESSIONAL criteria
+                        has_sweep, has_mss, confluence_factors = self._check_professional_criteria(
+                            ob_candle_idx, move_pct, sweep_events, mss_events
+                        )
+
+                        # REQUIRE at least one professional criterion
+                        if has_sweep or has_mss:
+                            event = self._create_order_block_event(
+                                df, ob_candle_idx, move_pct, current_price, current_bar_idx,
+                                context, has_sweep, has_mss, confluence_factors
+                            )
+                            if event:
+                                events.append(event)
+                                logger.debug(f"OB_PROF: {context.symbol} OB ACCEPTED - "
+                                           f"Sweep:{has_sweep} MSS:{has_mss} Confluence:{len(confluence_factors)}")
+                        else:
+                            logger.debug(f"OB_PROF: {context.symbol} OB REJECTED - No sweep or MSS")
 
         except Exception as e:
             logger.exception(f"Order block detection error: {e}")
         return events
+
+    def _check_professional_criteria(self, ob_candle_idx: int, move_pct: float,
+                                    sweep_events: List[StructureEvent],
+                                    mss_events: List[StructureEvent]) -> tuple:
+        """
+        Check professional ICT criteria for Order Block.
+
+        Returns: (has_sweep, has_mss, confluence_factors)
+        """
+        confluence_factors = []
+
+        # Check 1: Liquidity sweep before OB
+        has_sweep = len(sweep_events) > 0
+        if has_sweep:
+            confluence_factors.append('liquidity_sweep')
+
+        # Check 2: MSS confirmation
+        has_mss = False
+        ob_direction = 'short' if move_pct > 0 else 'long'  # OB forms opposite to move
+        for mss in mss_events:
+            if mss.side == ob_direction:
+                has_mss = True
+                confluence_factors.append('mss_confirmation')
+                break
+
+        return has_sweep, has_mss, confluence_factors
 
     def _find_opposing_candle(self, df: pd.DataFrame, move_start_idx: int, move_pct: float) -> Optional[int]:
         """Find the last opposing candle before a significant move."""
@@ -215,14 +311,17 @@ class ICTStructure(BaseStructure):
 
     def _create_order_block_event(self, df: pd.DataFrame, ob_candle_idx: int, move_pct: float,
                                 current_price: float, current_bar_idx: int,
-                                context: MarketContext) -> Optional[StructureEvent]:
-        """Create order block event if current price is testing the zone.
+                                context: MarketContext, has_sweep: bool, has_mss: bool,
+                                confluence_factors: List[str]) -> Optional[StructureEvent]:
+        """
+        Create order block event if professional criteria met.
 
-        QUALITY FILTERS ADDED:
-        1. Block size must be significant (> 0.5% of price)
-        2. High volume on block formation (> 2.5x average)
-        3. Must be at structure level (swing high/low)
-        4. Strong rejection on test (wick > 40% of candle)
+        PROFESSIONAL FILTERS:
+        1. Liquidity sweep OR MSS (at least one required)
+        2. High volume (> 2.0x institutional standard)
+        3. Significant block size
+        4. At swing structure level
+        5. Current price testing the zone
         """
         ob_candle = df.iloc[ob_candle_idx]
         ob_high = ob_candle['high']
@@ -283,19 +382,29 @@ class ICTStructure(BaseStructure):
                     'short', ob_high, ob_low, context.current_price, context.indicators.get('atr', 1.0)
                 )
 
+                # Boost confidence based on confluence
+                base_confidence = self._calculate_institutional_strength(context, strength, "order_block", "short", move_pct, bars_since_ob)
+                enhanced_confidence = min(1.0, base_confidence * (1.0 + len(confluence_factors) * 0.2))
+
                 return StructureEvent(
                     symbol=context.symbol,
                     timestamp=context.timestamp,
                     structure_type='order_block_short',
                     side='short',
-                    confidence=self._calculate_institutional_strength(context, strength, "order_block", "short", move_pct, bars_since_ob),
+                    confidence=enhanced_confidence,
                     levels={'entry': ob_high, 'stop': ob_high + (context.indicators.get('atr', 1.0) * 1.5), 'target': ob_high - (context.indicators.get('atr', 1.0) * 2.0)},
                     context={
                         'ob_high': ob_high,
                         'ob_low': ob_low,
                         'move_pct': move_pct * 100,
                         'bars_since_formation': bars_since_ob,
-                        'pattern_type': 'bearish_order_block'
+                        'pattern_type': 'bearish_order_block',
+                        'professional_filters': {
+                            'has_liquidity_sweep': has_sweep,
+                            'has_mss_confirmation': has_mss,
+                            'confluence_count': len(confluence_factors),
+                            'confluence_factors': confluence_factors
+                        }
                     },
                     price=context.current_price,
                     volume=None,
@@ -311,19 +420,29 @@ class ICTStructure(BaseStructure):
                     'long', ob_high, ob_low, context.current_price, context.indicators.get('atr', 1.0)
                 )
 
+                # Boost confidence based on confluence
+                base_confidence = self._calculate_institutional_strength(context, strength, "order_block", "long", move_pct, bars_since_ob)
+                enhanced_confidence = min(1.0, base_confidence * (1.0 + len(confluence_factors) * 0.2))
+
                 return StructureEvent(
                     symbol=context.symbol,
                     timestamp=context.timestamp,
                     structure_type='order_block_long',
                     side='long',
-                    confidence=self._calculate_institutional_strength(context, strength, "order_block", "long", move_pct, bars_since_ob),
+                    confidence=enhanced_confidence,
                     levels={'entry': ob_low, 'stop': ob_low - (context.indicators.get('atr', 1.0) * 1.5), 'target': ob_low + (context.indicators.get('atr', 1.0) * 2.0)},
                     context={
                         'ob_high': ob_high,
                         'ob_low': ob_low,
                         'move_pct': move_pct * 100,
                         'bars_since_formation': bars_since_ob,
-                        'pattern_type': 'bullish_order_block'
+                        'pattern_type': 'bullish_order_block',
+                        'professional_filters': {
+                            'has_liquidity_sweep': has_sweep,
+                            'has_mss_confirmation': has_mss,
+                            'confluence_count': len(confluence_factors),
+                            'confluence_factors': confluence_factors
+                        }
                     },
                     price=ob_low
                 )
@@ -784,6 +903,66 @@ class ICTStructure(BaseStructure):
                     swing_points.append(center_value)
 
         return swing_points
+
+    def _detect_market_structure_shift(self, df: pd.DataFrame, context: MarketContext,
+                                       swing_highs: List[float], swing_lows: List[float]) -> List[StructureEvent]:
+        """
+        Detect Market Structure Shift (MSS) - Professional ICT criterion.
+
+        MSS occurs when:
+        - Bullish MSS: Lower Low → Higher Low (trend change from down to up)
+        - Bearish MSS: Higher High → Lower High (trend change from up to down)
+        """
+        events = []
+
+        try:
+            # Need at least 3 swing points to detect pattern change
+            if len(swing_highs) >= 3:
+                # Check for bearish MSS (Higher High → Lower High)
+                if swing_highs[-3] < swing_highs[-2] and swing_highs[-2] > swing_highs[-1]:
+                    # Pattern: HH → LH (bearish structure shift)
+                    events.append(StructureEvent(
+                        symbol=context.symbol,
+                        timestamp=context.timestamp,
+                        structure_type='market_structure_shift_bearish',
+                        side='short',
+                        confidence=0.8,  # MSS is high-confidence signal
+                        levels={'prev_high': swing_highs[-2], 'current_high': swing_highs[-1]},
+                        context={
+                            'pattern_type': 'bearish_mss',
+                            'higher_high': swing_highs[-2],
+                            'lower_high': swing_highs[-1],
+                            'shift_type': 'HH_to_LH'
+                        },
+                        price=swing_highs[-1]
+                    ))
+                    logger.debug(f"MSS_DETECTOR: {context.symbol} Bearish MSS detected (HH→LH)")
+
+            if len(swing_lows) >= 3:
+                # Check for bullish MSS (Lower Low → Higher Low)
+                if swing_lows[-3] > swing_lows[-2] and swing_lows[-2] < swing_lows[-1]:
+                    # Pattern: LL → HL (bullish structure shift)
+                    events.append(StructureEvent(
+                        symbol=context.symbol,
+                        timestamp=context.timestamp,
+                        structure_type='market_structure_shift_bullish',
+                        side='long',
+                        confidence=0.8,  # MSS is high-confidence signal
+                        levels={'prev_low': swing_lows[-2], 'current_low': swing_lows[-1]},
+                        context={
+                            'pattern_type': 'bullish_mss',
+                            'lower_low': swing_lows[-2],
+                            'higher_low': swing_lows[-1],
+                            'shift_type': 'LL_to_HL'
+                        },
+                        price=swing_lows[-1]
+                    ))
+                    logger.debug(f"MSS_DETECTOR: {context.symbol} Bullish MSS detected (LL→HL)")
+
+        except Exception as e:
+            logger.exception(f"MSS detection error: {e}")
+
+        return events
 
     def _detect_change_of_character(self, df: pd.DataFrame, context: MarketContext) -> List[StructureEvent]:
         """Detect Change of Character - momentum shift detection."""
