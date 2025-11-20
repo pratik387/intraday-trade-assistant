@@ -785,7 +785,8 @@ class ScreenerLive:
 
             # 1) Eligibility
             if not plan.get("eligible", False):
-                rejection_reason = (plan.get("quality") or {}).get("rejection_reason", "unknown")
+                # Try quality.rejection_reason first, then fall back to top-level reason
+                rejection_reason = (plan.get("quality") or {}).get("rejection_reason") or plan.get("reason", "unknown")
                 cautions = ";".join((plan.get("notes") or {}).get("cautions", []))
                 logger.info("SKIP %s: ineligible plan rejection_reason=%s cautions=%s",
                             sym, rejection_reason, cautions)

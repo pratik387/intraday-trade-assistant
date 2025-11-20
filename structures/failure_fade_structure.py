@@ -113,7 +113,7 @@ class FailureFadeStructure(BaseStructure):
         # 1. Previous bar(s) pierced above resistance
         # 2. Current bar closed back below resistance
 
-        fade_pattern = self._check_resistance_fade_pattern(df, level_value)
+        fade_pattern = self._check_resistance_fade_pattern(df, level_value, context.timestamp)
         if not fade_pattern:
             logger.debug(f"FAILURE_FADE: {context.symbol} - No resistance fade pattern at {level_name}")
             return None
@@ -123,6 +123,7 @@ class FailureFadeStructure(BaseStructure):
         # FRESHNESS VALIDATION: Pattern must be recent (ICT/Professional rule)
         current_time = pd.to_datetime(context.timestamp)
         pattern_age_mins = (current_time - pattern_timestamp).total_seconds() / 60
+
 
         # Time-based freshness rules by level type
         if level_name in ["ORH", "ORL"]:
@@ -200,7 +201,7 @@ class FailureFadeStructure(BaseStructure):
         # 1. Previous bar(s) pierced below support
         # 2. Current bar closed back above support
 
-        fade_pattern = self._check_support_fade_pattern(df, level_value)
+        fade_pattern = self._check_support_fade_pattern(df, level_value, context.timestamp)
         if not fade_pattern:
             logger.debug(f"FAILURE_FADE: {context.symbol} - No support fade pattern at {level_name}")
             return None
@@ -210,6 +211,7 @@ class FailureFadeStructure(BaseStructure):
         # FRESHNESS VALIDATION: Pattern must be recent (ICT/Professional rule)
         current_time = pd.to_datetime(context.timestamp)
         pattern_age_mins = (current_time - pattern_timestamp).total_seconds() / 60
+
 
         # Time-based freshness rules by level type
         if level_name in ["ORH", "ORL"]:
@@ -278,7 +280,7 @@ class FailureFadeStructure(BaseStructure):
         logger.debug(f"FAILURE_FADE: {context.symbol} - Support failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}, age: {pattern_age_mins:.1f}m")
         return event
 
-    def _check_resistance_fade_pattern(self, df: pd.DataFrame, resistance: float) -> Optional[Tuple[float, float, float, pd.Timestamp]]:
+    def _check_resistance_fade_pattern(self, df: pd.DataFrame, resistance: float, current_timestamp: pd.Timestamp) -> Optional[Tuple[float, float, float, pd.Timestamp]]:
         """
         Check for resistance failure fade pattern.
 
@@ -295,7 +297,9 @@ class FailureFadeStructure(BaseStructure):
             try:
                 pattern_timestamp = pd.to_datetime(previous_bar.name if hasattr(previous_bar, 'name') else current_bar.name)
             except:
-                pattern_timestamp = pd.Timestamp.now()
+                # BUGFIX: Use current_timestamp from context instead of pd.Timestamp.now()
+                # for backtesting compatibility
+                pattern_timestamp = pd.to_datetime(current_timestamp)
 
             # Check if previous bar pierced above resistance
             if previous_bar['high'] <= resistance:
@@ -331,7 +335,7 @@ class FailureFadeStructure(BaseStructure):
             logger.debug(f"FAILURE_FADE: Error checking resistance fade pattern: {e}")
             return None
 
-    def _check_support_fade_pattern(self, df: pd.DataFrame, support: float) -> Optional[Tuple[float, float, float, pd.Timestamp]]:
+    def _check_support_fade_pattern(self, df: pd.DataFrame, support: float, current_timestamp: pd.Timestamp) -> Optional[Tuple[float, float, float, pd.Timestamp]]:
         """
         Check for support failure fade pattern.
 
@@ -348,7 +352,9 @@ class FailureFadeStructure(BaseStructure):
             try:
                 pattern_timestamp = pd.to_datetime(previous_bar.name if hasattr(previous_bar, 'name') else current_bar.name)
             except:
-                pattern_timestamp = pd.Timestamp.now()
+                # BUGFIX: Use current_timestamp from context instead of pd.Timestamp.now()
+                # for backtesting compatibility
+                pattern_timestamp = pd.to_datetime(current_timestamp)
 
             # Check if previous bar pierced below support
             if previous_bar['low'] >= support:

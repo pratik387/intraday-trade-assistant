@@ -256,12 +256,15 @@ class MainDetector(BaseStructure):
                 'atr': float(d['atr'].iloc[-1]) if not pd.isna(d['atr'].iloc[-1]) else 1.0
             }
 
+            # BUGFIX: Use DataFrame timestamp instead of datetime.now() for backtesting compatibility
+            bar_timestamp = pd.to_datetime(d.index[-1])
+
             return MarketContext(
                 symbol=symbol,
                 current_price=float(d['close'].iloc[-1]),
-                timestamp=datetime.now(),
+                timestamp=bar_timestamp,
                 df_5m=d,
-                session_date=datetime.now().date(),
+                session_date=bar_timestamp.date(),
                 orh=levels.get('ORH'),
                 orl=levels.get('ORL'),
                 pdh=levels.get('PDH'),
