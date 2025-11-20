@@ -1476,7 +1476,12 @@
       "pdl_break_hold_short",
       "flag_continuation_long",
       "trend_continuation_long",
-      "trend_continuation_short"
+      "trend_continuation_short",
+      "vwap_mean_reversion_short",
+      "vwap_mean_reversion_long",
+      "momentum_breakout_long",
+      "liquidity_sweep_long",
+      "flag_continuation_short"
     ],
     "max_structural_rr": 4.0,
     "high_rr_penalty": -0.3,
