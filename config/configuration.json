@@ -1417,6 +1417,10 @@
       "breakout_short": 0.3,
       "orb_breakout_long": 0.25,
       "orb_breakout_short": 0.25,
+      "orb_breakdown_short": 0.25,
+      "orb_breakdown_long": 0.25,
+      "orb_pullback_long": 0.25,
+      "orb_pullback_short": 0.25,
       "flag_continuation_long": 0.4,
       "flag_continuation_short": 0.4
     },
@@ -1727,12 +1731,31 @@
       "rank_acceptance_bonus": 0.5,
       "base_threshold": 0.5
     },
+    "orb_early_session": {
+      "strategies": [
+        "orb_breakout_long",
+        "orb_breakout_short",
+        "orb_breakdown_short",
+        "orb_breakdown_long",
+        "orb_breakout",
+        "orb_breakdown",
+        "orb_pullback_long",
+        "orb_pullback_short"
+      ],
+      "rank_vol_ratio_divisor": 1.5,
+      "rank_vol_cap": 4.0,
+      "rank_adx_mid": 20.0,
+      "rank_adx_divisor": 15.0,
+      "rank_vwap_bonus": 0.4,
+      "rank_vwap_penalty": -0.3,
+      "rank_dist_near_score": 0.6,
+      "rank_acceptance_bonus": 0.2,
+      "base_threshold": 0.0
+    },
     "momentum_breakout": {
       "strategies": [
         "breakout_long",
         "breakout_short",
-        "orb_breakout_long",
-        "orb_breakout_short",
         "flag_continuation_long",
         "flag_continuation_short",
         "trend_pullback_long",

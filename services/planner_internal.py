@@ -612,20 +612,29 @@ def _compose_exits_and_size(
         if fallback_zone:
             entry_zone = [round(price - 0.01, 2), round(price, 2)]
         else:
-            # Determine entry zone multiplier based on strategy type
-            # Breakouts: Wider zone for momentum continuation
-            # Fades: Tight zone for mean reversion precision
-            # Others: Middle ground
-            if 'breakout' in setup_type.lower():
-                entry_zone_mult = cfg.entry_zone_breakout_mult
-            elif 'fade' in setup_type.lower():
-                entry_zone_mult = cfg.entry_zone_fade_mult
+            # ORB: Professional traders use TIGHT entry zones at structure levels
+            # Entry = precise level (ORH/ORL) ± small buffer, NOT wide fuzzy zones
+            if 'orb' in setup_type.lower():
+                # Tight entry zone: 0.1% of entry price (typical: 0.10-0.25 points)
+                # Professional ORB traders enter at the exact level, not in a wide range
+                entry_width = max(price * 0.001, 0.10)  # 0.1% or 0.10 minimum
+                entry_zone = [round(price - entry_width, 2), round(price + entry_width, 2)]
             else:
-                entry_zone_mult = cfg.entry_zone_default_mult
+                # Non-ORB setups: Use ATR-based entry zones for flexibility
+                # Determine entry zone multiplier based on strategy type
+                # Breakouts: Wider zone for momentum continuation
+                # Fades: Tight zone for mean reversion precision
+                # Others: Middle ground
+                if 'breakout' in setup_type.lower():
+                    entry_zone_mult = cfg.entry_zone_breakout_mult
+                elif 'fade' in setup_type.lower():
+                    entry_zone_mult = cfg.entry_zone_fade_mult
+                else:
+                    entry_zone_mult = cfg.entry_zone_default_mult
 
-            entry_width = max(atr * entry_zone_mult, 0.01)
-            # For range strategies using current price is appropriate
-            entry_zone = [round(price - entry_width, 2), round(price + entry_width, 2)]
+                entry_width = max(atr * entry_zone_mult, 0.01)
+                # For range strategies using current price is appropriate
+                entry_zone = [round(price - entry_width, 2), round(price + entry_width, 2)]
 
         return {
             "eligible": qty > 0,
@@ -670,13 +679,21 @@ def _calculate_structure_entry(
     - Gap Fill: Enter at structure (ORL for gap down/long, ORH for gap up/short)
     - VWAP: Enter at VWAP level with directional bias
     """
+    # Debug logging for ORB setups
+    if "orb" in setup_type.lower():
+        logger.debug(f"ENTRY_CALC: {setup_type} | bias={bias} | ORH={orh} | ORL={orl} | ATR={atr} | current={current_close}")
+
     setup_lower = setup_type.lower()
 
     if bias == "long":
         # LONG SETUPS - Enter at SUPPORT or after BREAKOUT above RESISTANCE
 
-        # 1. BREAKOUT/BOS - Enter AFTER breakout above ORH
-        if "breakout" in setup_lower or "break_of_structure" in setup_lower:
+        # 1a. ORB BREAKDOWN LONG - Enter AFTER breakdown below ORL (counter-trend bounce)
+        if "orb" in setup_lower and "breakdown" in setup_lower:
+            return orl + (atr * 0.05)  # ORB breakdown long: enter above ORL for bounce
+
+        # 1b. BREAKOUT/BOS - Enter AFTER breakout above ORH
+        elif "breakout" in setup_lower or "break_of_structure" in setup_lower:
             if "orb" in setup_lower:
                 return orh + (atr * 0.05)  # ORB breakout: 5% ATR buffer
             elif "momentum" in setup_lower:
@@ -729,8 +746,12 @@ def _calculate_structure_entry(
     else:  # SHORT setups
         # SHORT SETUPS - Enter at RESISTANCE or after BREAKDOWN below SUPPORT
 
-        # 1. BREAKDOWN/BOS - Enter AFTER breakdown below ORL
-        if "breakout" in setup_lower or "break_of_structure" in setup_lower:
+        # 1a. ORB BREAKOUT SHORT - Enter AFTER breakout above ORH (counter-trend fade)
+        if "orb" in setup_lower and "breakout" in setup_lower:
+            return orh - (atr * 0.05)  # ORB breakout short: enter below ORH for fade
+
+        # 1b. BREAKDOWN/BOS - Enter AFTER breakdown below ORL
+        elif "breakdown" in setup_lower or "break_of_structure" in setup_lower:
             if "orb" in setup_lower:
                 return orl - (atr * 0.05)  # ORB breakdown: 5% ATR buffer
             elif "momentum" in setup_lower:
@@ -867,7 +888,33 @@ def generate_trade_plan(
 
         # Context
         atr = calculate_atr(df.tail(200), period=cfg.atr_period)
-        orh, orl, or_end = _opening_range(sess, cfg.orb_minutes)
+
+        # Use detector-provided ORH/ORL if available (preferred), otherwise recalculate
+        detector_orh = None
+        detector_orl = None
+        if setup_candidates:
+            # Check if any candidate has ORH/ORL from detector
+            for c in setup_candidates:
+                if hasattr(c, 'orh') and c.orh is not None:
+                    detector_orh = c.orh
+                    detector_orl = c.orl
+                    break
+
+        if detector_orh is not None:
+            # Use detector-provided values (single source of truth)
+            orh = detector_orh
+            orl = detector_orl
+            or_end = None  # Not needed from detector
+            logger.debug(f"PLANNER_ORB_FROM_DETECTOR: {symbol} | ORH={orh} | ORL={orl} | source=detector")
+        else:
+            # Fallback: recalculate from session data
+            orh, orl, or_end = _opening_range(sess, cfg.orb_minutes)
+            logger.debug(f"PLANNER_ORB_RECALCULATED: {symbol} | session_len={len(sess)} | ORH={orh} | ORL={orl} | source=recalculated")
+
+        # INFO logging for ORB debug
+        if any("orb" in str(c.setup_type).lower() for c in setup_candidates):
+            logger.debug(f"PLANNER_ORB_CONTEXT: {symbol} | session_len={len(sess)} | session_start={sess.index.min() if not sess.empty else 'N/A'} | orb_minutes={cfg.orb_minutes} | ORH={orh} | ORL={orl}")
+
         session_date = sess.index[-1].date() if (sess is not None and not sess.empty) else None
         pd_levels = _prev_day_levels(daily_df, session_date)
 

@@ -128,6 +128,24 @@ class BaseStructure(ABC):
         """
         pass
 
+    def should_detect_at_time(self, current_time: pd.Timestamp) -> bool:
+        """
+        Check if detector should run at the given time.
+
+        This is called BEFORE detection to avoid wasting resources on
+        time-expired setups (e.g., ORB after 10:30).
+
+        Override this in structure implementations that have time constraints.
+        Default implementation returns True (always detect).
+
+        Args:
+            current_time: Current timestamp
+
+        Returns:
+            True if detection should proceed, False to skip detection
+        """
+        return True
+
     # Helper methods that can be overridden by specific structures
 
     def get_structure_levels(self, market_context: MarketContext) -> Dict[str, float]:

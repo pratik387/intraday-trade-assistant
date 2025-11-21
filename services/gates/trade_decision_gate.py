@@ -63,6 +63,10 @@ SetupType = Literal[
     "resistance_bounce_short",
     "orb_breakout_long",
     "orb_breakout_short",
+    "orb_breakdown_long",
+    "orb_breakdown_short",
+    "orb_pullback_long",
+    "orb_pullback_short",
     "vwap_mean_reversion_long",
     "vwap_mean_reversion_short",
     "volume_spike_reversal_long",
@@ -102,6 +106,8 @@ class SetupCandidate:
     setup_type: SetupType
     strength: float  # arbitrary score from detector (higher = better)
     reasons: List[str]
+    orh: Optional[float] = None  # Opening Range High from detector
+    orl: Optional[float] = None  # Opening Range Low from detector
 
 
 @dataclass(frozen=True)
@@ -247,11 +253,13 @@ class TradeDecisionGate:
         # Add current setup (success will be determined later)
         self.setup_history[symbol].append((timestamp, setup_type, None))
 
-    def _regime_allows(self, setup: str, regime: str) -> bool:
+    def _regime_allows(self, setup: str, regime: str, current_time=None) -> bool:
         """
-        Config-driven regime allowlist check.
+        Config-driven regime allowlist check with time-based exceptions.
         Returns True if the setup is allowed in the given regime based on configuration.
         If no config provided, defaults to allowing all setups (permissive).
+
+        Special case: ORB setups in chop regime before 10:30 are allowed (breakout from consolidation).
         """
         if not self.regime_allowed_setups:
             # No config provided - allow all setups (permissive default)
@@ -261,6 +269,25 @@ class TradeDecisionGate:
         regime_key = regime
         if regime in {"choppy", "range"}:
             regime_key = "chop"
+
+        # TIME-BASED EXCEPTION: ORB in chop regime before 10:30
+        # Professional ORB strategy: catch breakout FROM consolidation INTO trend (early session)
+        # This is the classic ORB setup - not a false breakout
+        if regime_key == "chop" and "orb" in setup.lower() and current_time is not None:
+            try:
+                import pandas as pd
+                from datetime import time as dt_time
+                ts = pd.to_datetime(current_time)
+                current_time_of_day = ts.time()
+                orb_cutoff = dt_time(10, 30)
+
+                if current_time_of_day <= orb_cutoff:
+                    # Allow ORB in chop before 10:30 (consolidation breakout window)
+                    logger.debug(f"ORB_REGIME_EXCEPTION: {setup} in {regime} allowed before 10:30 (time={current_time_of_day})")
+                    return True
+            except Exception as e:
+                logger.debug(f"ORB_REGIME_EXCEPTION: Failed to parse time for ORB exception: {e}")
+                # Continue to normal regime check on error
 
         # Check if regime exists in config
         if regime_key not in self.regime_allowed_setups:
@@ -718,7 +745,7 @@ class TradeDecisionGate:
 
         # Check if HCET might be needed for bypasses
         insufficient_bars = (df5m_tail is None or len(df5m_tail) < 10)
-        regime_blocked = not self._regime_allows(best.setup_type, regime)
+        regime_blocked = not self._regime_allows(best.setup_type, regime, current_time=now)
         time_blocked_check = time_blocked  # from earlier time window check
 
         if insufficient_bars or regime_blocked or time_blocked_check:
@@ -745,7 +772,7 @@ class TradeDecisionGate:
                 return GateDecision(accept=False, reasons=reasons)
 
         # Regime allow-list (strict) unless HCET
-        if not self._regime_allows(best.setup_type, regime):
+        if not self._regime_allows(best.setup_type, regime, current_time=now):
             # fallback to your injected regime_gate.allow_setup if you want both
             # Priority 2: Get cap_segment for cap-aware strategy filtering
             cap_segment = "unknown"

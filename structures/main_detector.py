@@ -190,6 +190,10 @@ class MainDetector(BaseStructure):
 
             for detector_name, detector in self.detectors.items():
                 try:
+                    # Check if detector should run at this time (time-based blacklisting)
+                    if not detector.should_detect_at_time(context.timestamp):
+                        continue
+
                     logger.debug(f"DETECTOR_CALL: {symbol} | {detector_name} | CALLING")
                     analysis = detector.detect(context)
 
@@ -211,7 +215,7 @@ class MainDetector(BaseStructure):
             final_events = self._resolve_conflicts_and_prioritize(all_detections, symbol)
 
             # Convert to SetupCandidate objects
-            setup_candidates = self._convert_to_setup_candidates(final_events, symbol)
+            setup_candidates = self._convert_to_setup_candidates(final_events, symbol, context)
 
             # Log summary with detector statistics
             total_detectors = len(self.detectors)
@@ -375,7 +379,7 @@ class MainDetector(BaseStructure):
         return final_events
 
     def _convert_to_setup_candidates(self, events: List[StructureEvent],
-                                   symbol: str) -> List[SetupCandidate]:
+                                   symbol: str, market_context: MarketContext) -> List[SetupCandidate]:
         """Convert StructureEvent objects to SetupCandidate objects for the trading system."""
         setup_candidates = []
 
@@ -402,7 +406,9 @@ class MainDetector(BaseStructure):
                     setup_candidates.append(SetupCandidate(
                         setup_type=setup_type,
                         strength=float(event.confidence),
-                        reasons=reasons
+                        reasons=reasons,
+                        orh=market_context.orh,
+                        orl=market_context.orl
                     ))
 
                     logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "

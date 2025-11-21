@@ -425,7 +425,9 @@ class ScreenerLive:
                 adjusted_candidate = SetupCandidate(
                     setup_type=candidate.setup_type,
                     strength=adjusted_strength,
-                    reasons=updated_reasons
+                    reasons=updated_reasons,
+                    orh=getattr(candidate, 'orh', None),
+                    orl=getattr(candidate, 'orl', None)
                 )
 
             enhanced.append(adjusted_candidate)
@@ -788,6 +790,13 @@ class ScreenerLive:
                 # Try quality.rejection_reason first, then fall back to top-level reason
                 rejection_reason = (plan.get("quality") or {}).get("rejection_reason") or plan.get("reason", "unknown")
                 cautions = ";".join((plan.get("notes") or {}).get("cautions", []))
+
+                # Enhanced logging for unknown rejections
+                if rejection_reason == "unknown":
+                    logger.debug("PLAN_INELIGIBLE_UNKNOWN: %s | strategy=%s | eligible=%s | reason=%s | quality=%s",
+                                sym, plan.get("strategy", "unknown"), plan.get("eligible"),
+                                plan.get("reason"), plan.get("quality"))
+
                 logger.info("SKIP %s: ineligible plan rejection_reason=%s cautions=%s",
                             sym, rejection_reason, cautions)
                 events_logger.log_reject(

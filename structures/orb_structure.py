@@ -260,24 +260,8 @@ class ORBStructure(BaseStructure):
                 )
                 return None
 
-            # Check timing validity
-            if not self.validate_timing(market_context.timestamp):
-                rejection_reason = f"Invalid timing for ORB at {market_context.timestamp.time()}"
-
-                # Log structured rejection for screening stage
-                screener_logger = get_screener_logger()
-                screener_logger.log_reject(
-                    symbol,
-                    rejection_reason,
-                    timestamp=market_context.timestamp.isoformat(),
-                    structure_type="orb",
-                    side="long",
-                    price=current_price,
-                    orh=orh,
-                    current_time=market_context.timestamp.time().isoformat()
-                )
-                return None
-
+            # Timing validation is now done in should_detect_at_time() before detection
+            # No need to check here as detector is blacklisted after cutoff
             logger.debug(f"ORB: {symbol} - Long strategy approved: Price {current_price:.2f} > ORH {orh:.2f}")
 
             # Calculate risk parameters
@@ -350,24 +334,8 @@ class ORBStructure(BaseStructure):
                 )
                 return None
 
-            # Check timing validity
-            if not self.validate_timing(market_context.timestamp):
-                rejection_reason = f"Invalid timing for ORB at {market_context.timestamp.time()}"
-
-                # Log structured rejection for screening stage
-                screener_logger = get_screener_logger()
-                screener_logger.log_reject(
-                    symbol,
-                    rejection_reason,
-                    timestamp=market_context.timestamp.isoformat(),
-                    structure_type="orb",
-                    side="short",
-                    price=current_price,
-                    orl=orl,
-                    current_time=market_context.timestamp.time().isoformat()
-                )
-                return None
-
+            # Timing validation is now done in should_detect_at_time() before detection
+            # No need to check here as detector is blacklisted after cutoff
             logger.debug(f"ORB: {symbol} - Short strategy approved: Price {current_price:.2f} < ORL {orl:.2f}")
 
             # Calculate risk parameters
@@ -507,6 +475,15 @@ class ORBStructure(BaseStructure):
 
         except Exception:
             return False
+
+    def should_detect_at_time(self, current_time: pd.Timestamp) -> bool:
+        """
+        Override: ORB detection should only happen within the ORB time window.
+
+        This prevents wasteful detection and planning for ORB setups after 10:30.
+        Called by MainDetector BEFORE running detect() to blacklist expired detectors.
+        """
+        return self.validate_timing(current_time)
 
     # Private helper methods
 
