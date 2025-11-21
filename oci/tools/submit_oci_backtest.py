@@ -27,6 +27,10 @@ import sys
 import oci
 from oci.object_storage import ObjectStorageClient
 
+# Add parent directory to path to import utils
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from utils.util import is_trading_day
+
 
 class OCIBacktestSubmitter:
     def __init__(self):
@@ -61,7 +65,7 @@ class OCIBacktestSubmitter:
 
     def generate_trading_dates(self, start_date, end_date):
         """
-        Generate list of trading dates (exclude weekends).
+        Generate list of trading dates (exclude weekends and NSE holidays).
 
         Args:
             start_date: Start date (YYYY-MM-DD)
@@ -75,8 +79,8 @@ class OCIBacktestSubmitter:
 
         dates = []
         while current <= end:
-            # Exclude weekends (Saturday=5, Sunday=6)
-            if current.weekday() < 5:
+            # Use is_trading_day to exclude weekends AND NSE holidays
+            if is_trading_day(current):
                 dates.append(current.strftime('%Y-%m-%d'))
             current += timedelta(days=1)
 
