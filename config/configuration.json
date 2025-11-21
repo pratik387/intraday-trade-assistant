@@ -1752,6 +1752,32 @@
       "rank_acceptance_bonus": 0.2,
       "base_threshold": 0.0
     },
+    "ict_setups": {
+      "strategies": [
+        "change_of_character_long",
+        "change_of_character_short",
+        "premium_zone_short",
+        "premium_zone_long",
+        "discount_zone_long",
+        "fair_value_gap_long",
+        "fair_value_gap_short",
+        "order_block_long",
+        "order_block_short",
+        "liquidity_sweep_long",
+        "liquidity_sweep_short",
+        "equilibrium_breakout_long",
+        "equilibrium_breakout_short"
+      ],
+      "rank_vol_ratio_divisor": 3.0,
+      "rank_vol_cap": 2.5,
+      "rank_adx_mid": 30.0,
+      "rank_adx_divisor": 20.0,
+      "rank_vwap_bonus": 0.3,
+      "rank_vwap_penalty": -0.2,
+      "rank_dist_near_score": 0.3,
+      "rank_acceptance_bonus": 0.5,
+      "base_threshold": 1.0
+    },
     "momentum_breakout": {
       "strategies": [
         "breakout_long",

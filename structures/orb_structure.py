@@ -170,23 +170,31 @@ class ORBStructure(BaseStructure):
 
             # Detect ORL breakdown
             elif current_price < orl:
-                logger.debug(f"ORB: {symbol} - Price below ORL, checking volume confirmation")
-                volume_confirmed = self._check_volume_confirmation(df, "breakdown")
+                # TIMING FILTER: Only detect breakdown short at 15:00+ (spike test validated)
+                # This allows orb_breakout_long in morning, but prevents breakdown short until afternoon
+                current_time_of_day = current_time.time()
+                afternoon_start = time(15, 0)  # 3:00 PM
 
-                confidence = self._calculate_institutional_strength(market_context, orb_range_pct, volume_confirmed, "short", orh, orl)
-                logger.debug(f"ORB: {symbol} - ORL breakdown detected | Price: {current_price:.2f} < ORL: {orl:.2f} | Volume confirmed: {volume_confirmed} | Confidence: {confidence:.2f}")
+                if current_time_of_day < afternoon_start:
+                    logger.debug(f"ORB: {symbol} - ORL breakdown detected but REJECTED (before 15:00) | Time: {current_time_of_day}")
+                else:
+                    logger.debug(f"ORB: {symbol} - Price below ORL, checking volume confirmation")
+                    volume_confirmed = self._check_volume_confirmation(df, "breakdown")
 
-                event = StructureEvent(
-                    symbol=market_context.symbol,
-                    timestamp=current_time,
-                    structure_type="orb_breakdown_short",
-                    side="short",
-                    confidence=confidence,
-                    levels={"orh": orh, "orl": orl, "entry": current_price},
-                    context={"range_pct": orb_range_pct, "volume_confirmed": volume_confirmed},
-                    price=current_price
-                )
-                events.append(event)
+                    confidence = self._calculate_institutional_strength(market_context, orb_range_pct, volume_confirmed, "short", orh, orl)
+                    logger.debug(f"ORB: {symbol} - ORL breakdown detected | Price: {current_price:.2f} < ORL: {orl:.2f} | Volume confirmed: {volume_confirmed} | Confidence: {confidence:.2f}")
+
+                    event = StructureEvent(
+                        symbol=market_context.symbol,
+                        timestamp=current_time,
+                        structure_type="orb_breakdown_short",
+                        side="short",
+                        confidence=confidence,
+                        levels={"orh": orh, "orl": orl, "entry": current_price},
+                        context={"range_pct": orb_range_pct, "volume_confirmed": volume_confirmed},
+                        price=current_price
+                    )
+                    events.append(event)
 
             # Price within OR range
             else:
@@ -334,8 +342,8 @@ class ORBStructure(BaseStructure):
                 )
                 return None
 
-            # Timing validation is now done in should_detect_at_time() before detection
-            # No need to check here as detector is blacklisted after cutoff
+            # Timing validation is now done at detector level in should_detect_at_time()
+            # No need to check here as detector won't even run before 15:00 for breakdown short
             logger.debug(f"ORB: {symbol} - Short strategy approved: Price {current_price:.2f} < ORL {orl:.2f}")
 
             # Calculate risk parameters
@@ -478,11 +486,25 @@ class ORBStructure(BaseStructure):
 
     def should_detect_at_time(self, current_time: pd.Timestamp) -> bool:
         """
-        Override: ORB detection should only happen within the ORB time window.
+        Override: ORB detection timing control.
 
-        This prevents wasteful detection and planning for ORB setups after 10:30.
+        For ORB breakdown short (our primary profitable setup):
+        - Only detect at 15:00 or later (based on spike test showing 89.4% WR @ 15:00+ vs 36.9% before)
+
+        For ORB breakout long:
+        - Detect from 9:15 to 10:30 (traditional morning session)
+
         Called by MainDetector BEFORE running detect() to blacklist expired detectors.
         """
+        current_time_of_day = current_time.time()
+        afternoon_start = time(15, 0)  # 3:00 PM
+
+        # For afternoon session (15:00+), allow ORB breakdown short detection
+        if current_time_of_day >= afternoon_start:
+            return True
+
+        # For morning session (9:15-10:30), allow ORB breakout long only
+        # This is handled by the existing validate_timing() logic
         return self.validate_timing(current_time)
 
     # Private helper methods
