@@ -203,6 +203,161 @@ class ICTStructure(BaseStructure):
 
         return d
 
+    def _validate_htf_trend(self, df: pd.DataFrame, context: MarketContext, direction: str) -> bool:
+        """
+        Validate HTF (Higher Time Frame) trend exists for BOS/CHOCH setups.
+
+        Professional ICT requirement: BOS and CHOCH require established trend context.
+        - BOS (Break of Structure): Continuation in trending market
+        - CHOCH (Change of Character): Reversal of established trend
+
+        Args:
+            df: 5m dataframe
+            context: Market context (contains HTF data if available)
+            direction: 'long' or 'short' - expected trend direction
+
+        Returns:
+            True if HTF trend exists in specified direction, False otherwise
+        """
+        try:
+            # Use 15m HTF data if available, otherwise use 5m data
+            htf_df = getattr(context, 'htf_df', None)
+            if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
+                trend_df = htf_df
+                logger.debug(f"HTF validation using 15m data ({len(htf_df)} bars)")
+            else:
+                trend_df = df
+                logger.debug(f"HTF validation using 5m data ({len(df)} bars)")
+
+            if len(trend_df) < 20:
+                logger.debug(f"HTF validation failed: insufficient data ({len(trend_df)} < 20 bars)")
+                return False
+
+            # Get trend indicators from context or calculate
+            adx = context.indicators.get('adx14', None)
+
+            # Calculate trend strength using last 20 bars
+            recent_data = trend_df.tail(20)
+
+            # Method 1: ADX-based trend validation (if available)
+            if adx is not None and adx > 20:
+                # Strong trend exists (ADX > 20)
+                # Check direction alignment
+                if 'ema20' in recent_data.columns:
+                    current_price = context.current_price
+                    ema20 = recent_data['ema20'].iloc[-1]
+
+                    if direction == 'long':
+                        # Long: Price should be above EMA20
+                        trend_aligned = current_price > ema20
+                    else:
+                        # Short: Price should be below EMA20
+                        trend_aligned = current_price < ema20
+
+                    if trend_aligned:
+                        logger.debug(f"HTF {direction} trend VALID: ADX={adx:.1f}, price vs EMA20 aligned")
+                        return True
+                    else:
+                        logger.debug(f"HTF {direction} trend INVALID: ADX={adx:.1f} but price not aligned with EMA20")
+                        return False
+
+            # Method 2: Price action based trend validation
+            # Check if price has been trending (7+ bars out of last 10 above/below MA)
+            if 'ema20' in recent_data.columns or 'sma20' in recent_data.columns:
+                ma_col = 'ema20' if 'ema20' in recent_data.columns else 'sma20'
+                last_10 = recent_data.tail(10)
+
+                if direction == 'long':
+                    # Long trend: price above MA for most bars
+                    bars_above_ma = sum(last_10['close'] > last_10[ma_col])
+                    trend_exists = bars_above_ma >= 7
+                else:
+                    # Short trend: price below MA for most bars
+                    bars_below_ma = sum(last_10['close'] < last_10[ma_col])
+                    trend_exists = bars_below_ma >= 7
+
+                if trend_exists:
+                    logger.debug(f"HTF {direction} trend VALID: price action confirms trend (7+/10 bars)")
+                    return True
+                else:
+                    logger.debug(f"HTF {direction} trend INVALID: insufficient trend bars")
+                    return False
+
+            # Method 3: Simple price slope (fallback)
+            # Check if recent price movement is trending
+            price_start = recent_data['close'].iloc[0]
+            price_end = recent_data['close'].iloc[-1]
+            price_change_pct = (price_end - price_start) / price_start
+
+            if direction == 'long':
+                # Long trend: at least 1% upward movement
+                trend_exists = price_change_pct > 0.01
+            else:
+                # Short trend: at least 1% downward movement
+                trend_exists = price_change_pct < -0.01
+
+            if trend_exists:
+                logger.debug(f"HTF {direction} trend VALID: price slope {price_change_pct*100:.1f}%")
+            else:
+                logger.debug(f"HTF {direction} trend INVALID: price slope {price_change_pct*100:.1f}% too weak")
+
+            return trend_exists
+
+        except Exception as e:
+            logger.exception(f"HTF trend validation error: {e}")
+            return False  # Reject on error (conservative)
+
+    def _validate_premium_discount_zone(self, direction: str, current_price: float, context: MarketContext) -> bool:
+        """
+        Validate price is in correct premium/discount zone for ICT setups.
+
+        Professional ICT rule:
+        - Longs ONLY in discount zone (below 50% Fibonacci of daily range)
+        - Shorts ONLY in premium zone (above 50% Fibonacci of daily range)
+
+        Args:
+            direction: 'long' or 'short'
+            current_price: Current market price
+            context: Market context (contains PDH/PDL)
+
+        Returns:
+            True if price is in correct zone, False otherwise
+        """
+        try:
+            # Get daily high/low from context
+            pdh = context.pdh
+            pdl = context.pdl
+
+            if pdh is None or pdl is None or pdh <= pdl:
+                logger.debug(f"P/D validation skipped: invalid PDH/PDL (PDH={pdh}, PDL={pdl})")
+                return True  # Skip validation if daily levels unavailable
+
+            # Calculate daily range and current position
+            daily_range = pdh - pdl
+            fib_level = (current_price - pdl) / daily_range  # 0 = PDL, 1 = PDH
+
+            if direction == 'long':
+                # Longs ONLY in discount zone (< 50% Fib = below equilibrium)
+                is_valid = fib_level < 0.5
+                if not is_valid:
+                    logger.debug(f"ICT long REJECTED: in premium zone ({fib_level*100:.0f}% of daily range)")
+                else:
+                    logger.debug(f"ICT long VALID: in discount zone ({fib_level*100:.0f}% of daily range)")
+                return is_valid
+
+            else:  # short
+                # Shorts ONLY in premium zone (> 50% Fib = above equilibrium)
+                is_valid = fib_level > 0.5
+                if not is_valid:
+                    logger.debug(f"ICT short REJECTED: in discount zone ({fib_level*100:.0f}% of daily range)")
+                else:
+                    logger.debug(f"ICT short VALID: in premium zone ({fib_level*100:.0f}% of daily range)")
+                return is_valid
+
+        except Exception as e:
+            logger.exception(f"Premium/discount validation error: {e}")
+            return True  # Allow on error (permissive fallback)
+
     def _detect_order_blocks(self, df: pd.DataFrame, context: MarketContext,
                             sweep_events: List[StructureEvent],
                             mss_events: List[StructureEvent]) -> List[StructureEvent]:
@@ -378,10 +533,6 @@ class ICTStructure(BaseStructure):
                 time_decay = max(0.5, 1.0 - (bars_since_ob / 30.0))
                 strength = min(3.0, abs(move_pct) * 100 * time_decay)
 
-                trade_plan = self._create_order_block_trade_plan(
-                    'short', ob_high, ob_low, context.current_price, context.indicators.get('atr', 1.0)
-                )
-
                 # Boost confidence based on confluence
                 base_confidence = self._calculate_institutional_strength(context, strength, "order_block", "short", move_pct, bars_since_ob)
                 enhanced_confidence = min(1.0, base_confidence * (1.0 + len(confluence_factors) * 0.2))
@@ -415,10 +566,6 @@ class ICTStructure(BaseStructure):
                 bars_since_ob = current_bar_idx - ob_candle_idx
                 time_decay = max(0.5, 1.0 - (bars_since_ob / 30.0))
                 strength = min(3.0, abs(move_pct) * 100 * time_decay)
-
-                trade_plan = self._create_order_block_trade_plan(
-                    'long', ob_high, ob_low, context.current_price, context.indicators.get('atr', 1.0)
-                )
 
                 # Boost confidence based on confluence
                 base_confidence = self._calculate_institutional_strength(context, strength, "order_block", "long", move_pct, bars_since_ob)
@@ -570,16 +717,52 @@ class ICTStructure(BaseStructure):
             logger.debug(f"FVG rejected: not at key level (VWAP dist: {distance_from_vwap_pct*100:.1f}%)")
             return None
 
-        # Check if current price is testing this FVG
-        if not (fvg_bottom * (1 - self.fvg_fill_tolerance) <= current_price <=
-                fvg_top * (1 + self.fvg_fill_tolerance)):
+        # PROFESSIONAL ICT FIX: Check price is RETRACING INTO gap (not just in gap)
+        # FVG long: Price should retrace INTO gap from ABOVE (price was above, now coming back)
+        # FVG short: Price should retrace INTO gap from BELOW (price was below, now coming back)
+
+        # First check if current price is IN the gap zone
+        price_in_gap = (fvg_bottom * (1 - self.fvg_fill_tolerance) <= current_price <=
+                        fvg_top * (1 + self.fvg_fill_tolerance))
+
+        if not price_in_gap:
+            return None  # Price not testing gap yet
+
+        # NEW: Check retracement direction (requires previous candle data)
+        if gap_index < len(df) - 2:  # Ensure we have current and previous candle
+            prev_candle = df.iloc[-2]
+            prev_close = prev_candle['close']
+
+            if direction == 'long':
+                # Bullish FVG: Price should be retracing INTO gap from ABOVE
+                # Previous candle should be above gap top
+                price_coming_from_above = prev_close > fvg_top
+
+                if not price_coming_from_above:
+                    logger.debug(f"FVG long rejected: not retracing from above (prev={prev_close:.2f}, gap_top={fvg_top:.2f})")
+                    return None
+
+                logger.debug(f"FVG long VALID: retracing into gap from above (prev={prev_close:.2f} > gap_top={fvg_top:.2f})")
+
+            else:  # short
+                # Bearish FVG: Price should be retracing INTO gap from BELOW
+                # Previous candle should be below gap bottom
+                price_coming_from_below = prev_close < fvg_bottom
+
+                if not price_coming_from_below:
+                    logger.debug(f"FVG short rejected: not retracing from below (prev={prev_close:.2f}, gap_bottom={fvg_bottom:.2f})")
+                    return None
+
+                logger.debug(f"FVG short VALID: retracing into gap from below (prev={prev_close:.2f} < gap_bottom={fvg_bottom:.2f})")
+
+        # PROFESSIONAL ICT FIX: Validate premium/discount zone
+        # Longs ONLY in discount, shorts ONLY in premium
+        if not self._validate_premium_discount_zone(direction, current_price, context):
+            logger.debug(f"FVG {direction} rejected: wrong premium/discount zone")
             return None
 
         # Calculate strength
         strength = min(3.0, gap_pct * 500 + volume_strength * 0.5)
-
-        trade_plan = self._create_fvg_trade_plan(direction, fvg_top, fvg_bottom,
-                                               current_price, context.indicators.get('atr', 1.0))
 
         return StructureEvent(
             symbol=context.symbol,
@@ -605,7 +788,6 @@ class ICTStructure(BaseStructure):
         events = []
 
         try:
-            current_price = context.current_price
             lookback_bars = min(10, len(df) - self.sweep_reversal_bars)
 
             for level_name, level_price in levels.items():
@@ -632,7 +814,7 @@ class ICTStructure(BaseStructure):
 
                     event = self._check_liquidity_sweep(df, i, level_name, level_price,
                                                       upper_wick_ratio, lower_wick_ratio,
-                                                      current_price, context)
+                                                      context)
                     if event:
                         events.append(event)
 
@@ -642,7 +824,7 @@ class ICTStructure(BaseStructure):
 
     def _check_liquidity_sweep(self, df: pd.DataFrame, sweep_idx: int, level_name: str,
                              level_price: float, upper_wick_ratio: float, lower_wick_ratio: float,
-                             current_price: float, context: MarketContext) -> Optional[StructureEvent]:
+                             context: MarketContext) -> Optional[StructureEvent]:
         """Check for specific liquidity sweep pattern."""
         sweep_bar = df.iloc[sweep_idx]
 
@@ -657,9 +839,6 @@ class ICTStructure(BaseStructure):
 
                 # Check for reversal confirmation
                 if self._check_sweep_reversal(df, sweep_idx, level_price, 'long'):
-                    trade_plan = self._create_sweep_trade_plan('long', level_price, sweep_bar['low'],
-                                                             current_price, context.indicators.get('atr', 1.0))
-
                     return StructureEvent(
                         symbol=context.symbol,
                         timestamp=context.timestamp,
@@ -689,9 +868,6 @@ class ICTStructure(BaseStructure):
 
                 # Check for reversal confirmation
                 if self._check_sweep_reversal(df, sweep_idx, level_price, 'short'):
-                    trade_plan = self._create_sweep_trade_plan('short', level_price, sweep_bar['high'],
-                                                             current_price, context.indicators.get('atr', 1.0))
-
                     return StructureEvent(
                         symbol=context.symbol,
                         timestamp=context.timestamp,
@@ -751,9 +927,6 @@ class ICTStructure(BaseStructure):
 
             # Premium zone (top 30% of range)
             if range_position >= self.premium_threshold:
-                trade_plan = self._create_premium_discount_trade_plan('short', range_high, range_low,
-                                                                    current_price, context.indicators.get('atr', 1.0))
-
                 events.append(StructureEvent(
                     symbol=context.symbol,
                     timestamp=context.timestamp,
@@ -773,9 +946,6 @@ class ICTStructure(BaseStructure):
 
             # Discount zone (bottom 30% of range)
             elif range_position <= self.discount_threshold:
-                trade_plan = self._create_premium_discount_trade_plan('long', range_high, range_low,
-                                                                    current_price, context.indicators.get('atr', 1.0))
-
                 events.append(StructureEvent(
                     symbol=context.symbol,
                     timestamp=context.timestamp,
@@ -798,7 +968,14 @@ class ICTStructure(BaseStructure):
         return events
 
     def _detect_break_of_structure(self, df: pd.DataFrame, context: MarketContext) -> List[StructureEvent]:
-        """Detect Break of Structure - trend change confirmations."""
+        """Detect Break of Structure - trend continuation pattern.
+
+        PROFESSIONAL ICT REQUIREMENT:
+        BOS is a CONTINUATION pattern that requires established HTF trend.
+        - Bullish BOS: Break of swing high in UPTREND (continuation)
+        - Bearish BOS: Break of swing low in DOWNTREND (continuation)
+        - NOT valid in chop/range (no trend to continue)
+        """
         events = []
 
         try:
@@ -818,31 +995,42 @@ class ICTStructure(BaseStructure):
                 break_pct = break_distance / recent_high
 
                 if break_pct >= self.bos_min_break_pct:
-                    # Check volume confirmation if required
-                    volume_confirmed = True
-                    if self.bos_volume_confirmation:
-                        recent_vol_z = df['vol_z'].tail(3).max()
-                        volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
+                    # PROFESSIONAL ICT FIX: Validate HTF uptrend exists
+                    # BOS long requires established uptrend (continuation)
+                    htf_trend_valid = self._validate_htf_trend(df, context, 'long')
 
-                    if volume_confirmed:
-                        trade_plan = self._create_bos_trade_plan('long', recent_high, current_price,
-                                                               context.indicators.get('atr', 1.0))
+                    if not htf_trend_valid:
+                        logger.debug(f"BOS long rejected: no HTF uptrend (BOS requires trend continuation)")
+                        # Don't create BOS event - not valid without trend
+                        pass  # Skip to next check
+                    else:
+                        # Check volume confirmation if required
+                        volume_confirmed = True
+                        if self.bos_volume_confirmation:
+                            recent_vol_z = df['vol_z'].tail(3).max()
+                            volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
-                        events.append(StructureEvent(
-                            symbol=context.symbol,
-                            timestamp=context.timestamp,
-                            structure_type='break_of_structure_long',
-                            side='long',
-                            confidence=self._calculate_institutional_strength(context, break_pct * 200, "break_of_structure", "long", break_pct, 0),
-                            levels={'entry': current_price, 'broken_level': recent_high},
-                            context={
-                                'broken_level': recent_high,
-                                'break_distance_pct': break_pct * 100,
-                                'structure_type': 'swing_high',
-                                'pattern_type': 'bullish_break_of_structure'
-                            },
-                            price=recent_high
-                        ))
+                        if volume_confirmed:
+                            # PROFESSIONAL ICT FIX: Validate premium/discount zone
+                            # Longs ONLY in discount, shorts ONLY in premium
+                            if not self._validate_premium_discount_zone('long', current_price, context):
+                                logger.debug(f"BOS long rejected: not in discount zone")
+                            else:
+                                events.append(StructureEvent(
+                                    symbol=context.symbol,
+                                    timestamp=context.timestamp,
+                                    structure_type='break_of_structure_long',
+                                    side='long',
+                                    confidence=self._calculate_institutional_strength(context, break_pct * 200, "break_of_structure", "long", break_pct, 0),
+                                    levels={'entry': current_price, 'broken_level': recent_high},
+                                    context={
+                                        'broken_level': recent_high,
+                                        'break_distance_pct': break_pct * 100,
+                                        'structure_type': 'swing_high',
+                                        'pattern_type': 'bullish_break_of_structure'
+                                    },
+                                    price=recent_high
+                                ))
 
             # Check for bearish BOS (break below recent swing low)
             if swing_lows:
@@ -851,31 +1039,42 @@ class ICTStructure(BaseStructure):
                 break_pct = break_distance / recent_low
 
                 if break_pct >= self.bos_min_break_pct:
-                    # Check volume confirmation if required
-                    volume_confirmed = True
-                    if self.bos_volume_confirmation:
-                        recent_vol_z = df['vol_z'].tail(3).max()
-                        volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
+                    # PROFESSIONAL ICT FIX: Validate HTF downtrend exists
+                    # BOS short requires established downtrend (continuation)
+                    htf_trend_valid = self._validate_htf_trend(df, context, 'short')
 
-                    if volume_confirmed:
-                        trade_plan = self._create_bos_trade_plan('short', recent_low, current_price,
-                                                               context.indicators.get('atr', 1.0))
+                    if not htf_trend_valid:
+                        logger.debug(f"BOS short rejected: no HTF downtrend (BOS requires trend continuation)")
+                        # Don't create BOS event - not valid without trend
+                        pass  # Skip
+                    else:
+                        # Check volume confirmation if required
+                        volume_confirmed = True
+                        if self.bos_volume_confirmation:
+                            recent_vol_z = df['vol_z'].tail(3).max()
+                            volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
-                        events.append(StructureEvent(
-                            symbol=context.symbol,
-                            timestamp=context.timestamp,
-                            structure_type='break_of_structure_short',
-                            side='short',
-                            confidence=self._calculate_institutional_strength(context, break_pct * 200, "break_of_structure", "short", break_pct, 0),
-                            levels={'entry': current_price, 'broken_level': recent_low},
-                            context={
-                                'broken_level': recent_low,
-                                'break_distance_pct': break_pct * 100,
-                                'structure_type': 'swing_low',
-                                'pattern_type': 'bearish_break_of_structure'
-                            },
-                            price=recent_low
-                        ))
+                        if volume_confirmed:
+                            # PROFESSIONAL ICT FIX: Validate premium/discount zone
+                            # Longs ONLY in discount, shorts ONLY in premium
+                            if not self._validate_premium_discount_zone('short', current_price, context):
+                                logger.debug(f"BOS short rejected: not in premium zone")
+                            else:
+                                events.append(StructureEvent(
+                                    symbol=context.symbol,
+                                    timestamp=context.timestamp,
+                                    structure_type='break_of_structure_short',
+                                    side='short',
+                                    confidence=self._calculate_institutional_strength(context, break_pct * 200, "break_of_structure", "short", break_pct, 0),
+                                    levels={'entry': current_price, 'broken_level': recent_low},
+                                    context={
+                                        'broken_level': recent_low,
+                                        'break_distance_pct': break_pct * 100,
+                                        'structure_type': 'swing_low',
+                                        'pattern_type': 'bearish_break_of_structure'
+                                    },
+                                    price=recent_low
+                                ))
 
         except Exception as e:
             logger.exception(f"Break of Structure detection error: {e}")
@@ -965,7 +1164,14 @@ class ICTStructure(BaseStructure):
         return events
 
     def _detect_change_of_character(self, df: pd.DataFrame, context: MarketContext) -> List[StructureEvent]:
-        """Detect Change of Character - momentum shift detection."""
+        """Detect Change of Character - trend reversal pattern.
+
+        PROFESSIONAL ICT REQUIREMENT:
+        CHOCH is a REVERSAL pattern that requires established trend to reverse.
+        - Bullish CHOCH: Reversal of DOWNTREND (character change from bearish to bullish)
+        - Bearish CHOCH: Reversal of UPTREND (character change from bullish to bearish)
+        - NOT valid in chop/range (no trend to reverse!)
+        """
         events = []
 
         try:
@@ -1011,27 +1217,42 @@ class ICTStructure(BaseStructure):
                 avg_momentum_change = np.mean(list(momentum_changes.values()))
                 direction = 'long' if avg_momentum_change > 0 else 'short'
 
-                # Check volume confirmation
-                recent_vol_z = df['vol_z'].tail(3).max()
-                if pd.notna(recent_vol_z) and recent_vol_z >= self.choch_volume_threshold:
-                    trade_plan = self._create_choch_trade_plan(direction, current_price,
-                                                             context.indicators.get('atr', 1.0))
+                # PROFESSIONAL ICT FIX: Validate trend exists to reverse
+                # CHOCH long: Requires DOWNTREND to reverse (bullish reversal)
+                # CHOCH short: Requires UPTREND to reverse (bearish reversal)
+                # NOTE: Direction is OPPOSITE of the trend being reversed!
 
-                    events.append(StructureEvent(
-                        symbol=context.symbol,
-                        timestamp=context.timestamp,
-                        structure_type=f'change_of_character_{direction}',
-                        side=direction,
-                        confidence=self._calculate_institutional_strength(context, abs(avg_momentum_change) * 100, "change_of_character", direction, abs(avg_momentum_change), 0),
-                        levels={'entry': current_price, 'momentum_shift': current_price},
-                        context={
-                            'momentum_changes': momentum_changes,
-                            'avg_momentum_change_pct': avg_momentum_change * 100,
-                            'volume_confirmation': recent_vol_z,
-                            'pattern_type': f'{direction}_change_of_character'
-                        },
-                        price=current_price
-                    ))
+                opposite_direction = 'short' if direction == 'long' else 'long'
+                htf_trend_valid = self._validate_htf_trend(df, context, opposite_direction)
+
+                if not htf_trend_valid:
+                    logger.debug(f"CHOCH {direction} rejected: no {opposite_direction} trend to reverse (CHOCH requires established trend)")
+                    # Don't create CHOCH event - can't reverse a trend that doesn't exist
+                    pass  # Skip
+                else:
+                    # Check volume confirmation
+                    recent_vol_z = df['vol_z'].tail(3).max()
+                    if pd.notna(recent_vol_z) and recent_vol_z >= self.choch_volume_threshold:
+                        # PROFESSIONAL ICT FIX: Validate premium/discount zone
+                        # Longs ONLY in discount, shorts ONLY in premium
+                        if not self._validate_premium_discount_zone(direction, current_price, context):
+                            logger.debug(f"CHOCH {direction} rejected: wrong premium/discount zone")
+                        else:
+                            events.append(StructureEvent(
+                                symbol=context.symbol,
+                                timestamp=context.timestamp,
+                                structure_type=f'change_of_character_{direction}',
+                                side=direction,
+                                confidence=self._calculate_institutional_strength(context, abs(avg_momentum_change) * 100, "change_of_character", direction, abs(avg_momentum_change), 0),
+                                levels={'entry': current_price, 'momentum_shift': current_price},
+                                context={
+                                    'momentum_changes': momentum_changes,
+                                    'avg_momentum_change_pct': avg_momentum_change * 100,
+                                    'volume_confirmation': recent_vol_z,
+                                    'pattern_type': f'{direction}_change_of_character'
+                                },
+                                price=current_price
+                            ))
 
         except Exception as e:
             logger.exception(f"Change of Character detection error: {e}")

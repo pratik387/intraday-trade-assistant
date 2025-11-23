@@ -683,7 +683,20 @@
       "target_mult_t1": 2.0,
       "target_mult_t2": 3.0,
       "confidence_strong_breakout": 0.85,
-      "confidence_weak_breakout": 0.65
+      "confidence_weak_breakout": 0.65,
+      "_comment_dual_mode": "DUAL-MODE ENTRY FIX (2025-11-23): Fixes 99% expiry rate by implementing immediate + retest entry modes",
+      "entry_mode": "immediate",
+      "_comment_entry_mode": "Entry mode: 'immediate' (aggressive, high-conviction), 'retest' (wait for pullback), or 'pending' (legacy tight zone)",
+      "aggressive_min_volume_z": 1.8,
+      "_comment_aggressive_volume": "Minimum volume z-score for immediate entry (high-conviction breakouts only)",
+      "aggressive_min_conviction": 0.7,
+      "_comment_aggressive_conviction": "Minimum confidence score for immediate entry (institutional-grade breakouts)",
+      "retest_entry_zone_width_atr": 0.5,
+      "_comment_retest_zone": "Entry zone width around level for retest mode (0.5 ATR ≈ 0.5% for NSE stocks)",
+      "retest_timeout_minutes": 30,
+      "_comment_retest_timeout": "How long to wait for retest entry before expiring (30 minutes default)",
+      "allow_both_modes": true,
+      "_comment_allow_both": "If true, aggressive mode failures fall back to retest mode (recommended for maximizing trade count)"
     },
     "level_breakout_short": {
       "enabled": false,
