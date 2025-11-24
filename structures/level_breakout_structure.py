@@ -64,7 +64,7 @@ class LevelBreakoutStructure(BaseStructure):
         # Track traded breakouts to prevent double exposure
         self.traded_breakouts_today = set()
 
-        logger.debug(f"LEVEL_BREAKOUT: Initialized with k_atr: {self.k_atr}, hold_bars: {self.hold_bars}, vol_z_required: {self.vol_z_required}, entry_mode: {self.entry_mode}")
+        logger.debug(f"LEVEL_BREAKOUT: Initialized with DUAL-MODE CONFIG: entry_mode={self.entry_mode}, aggressive_vol_z={self.aggressive_min_volume_z}, aggressive_conviction={self.aggressive_min_conviction}, allow_both_modes={self.allow_both_modes}, retest_zone_width={self.retest_entry_zone_width_atr}ATR")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -383,12 +383,20 @@ class LevelBreakoutStructure(BaseStructure):
         return vol_z.fillna(0)
 
     def _calculate_atr(self, df: pd.DataFrame, window: int = 14) -> float:
-        """Calculate ATR using percentage returns as proxy."""
+        """Calculate ATR using percentage returns, converted to absolute price units."""
         try:
-            atr = df['close'].pct_change().abs().rolling(window, min_periods=5).mean().iloc[-1]
-            return max(1e-9, float(atr))
+            # Calculate percentage-based ATR
+            atr_pct = df['close'].pct_change().abs().rolling(window, min_periods=5).mean().iloc[-1]
+
+            # Convert to absolute price units using current price
+            current_price = df['close'].iloc[-1]
+            atr_absolute = atr_pct * current_price
+
+            return max(0.01, float(atr_absolute))  # Minimum 0.01 points
         except:
-            return 0.01  # 1% fallback
+            # Fallback: 1% of current price
+            current_price = df['close'].iloc[-1] if len(df) > 0 else 100.0
+            return max(0.01, current_price * 0.01)
 
     def _get_time_adjusted_vol_threshold(self, timestamp: pd.Timestamp) -> float:
         """Apply time-based adjustments to volume threshold."""

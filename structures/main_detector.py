@@ -402,17 +402,28 @@ class MainDetector(BaseStructure):
                 # Map structure type to setup type
                 setup_type = self._map_structure_to_setup_type(event.structure_type)
 
+                # Extract entry_mode and retest_zone from event context (dual-mode support)
+                entry_mode = event.context.get('entry_mode') if event.context else None
+                retest_zone = event.context.get('retest_zone') if event.context else None
+
                 if setup_type:
                     setup_candidates.append(SetupCandidate(
                         setup_type=setup_type,
                         strength=float(event.confidence),
                         reasons=reasons,
                         orh=market_context.orh,
-                        orl=market_context.orl
+                        orl=market_context.orl,
+                        entry_mode=entry_mode,
+                        retest_zone=retest_zone
                     ))
 
-                    logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
-                               f"with confidence {event.confidence:.2f} for {symbol}")
+                    if entry_mode:
+                        logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
+                                   f"with confidence {event.confidence:.2f}, ENTRY_MODE={entry_mode}, "
+                                   f"retest_zone={retest_zone} for {symbol}")
+                    else:
+                        logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
+                                   f"with confidence {event.confidence:.2f} for {symbol}")
                 else:
                     logger.debug(f"MAIN_DETECTOR: {symbol} no setup type mapping for '{event.structure_type}'")
 

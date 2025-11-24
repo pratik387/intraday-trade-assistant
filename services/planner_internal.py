@@ -300,6 +300,10 @@ def _plan_strategy_for_candidate(
     strength = candidate.strength
     reasons = candidate.reasons
 
+    # NEW: Extract dual-mode entry information from candidate
+    entry_mode = candidate.entry_mode  # "immediate", "retest", "pending", or None
+    retest_zone = candidate.retest_zone  # [low, high] for retest mode
+
     # Determine bias from setup type
     bias = "long" if "_long" in setup_type else "short" if "_short" in setup_type else "flat"
 
@@ -341,7 +345,9 @@ def _plan_strategy_for_candidate(
         "reason": reasons + [f"setup:{setup_type}", f"strength:{strength:.2f}", f"regime:{regime}"],
         "levels": {"ORH": orh, "ORL": orl, **pd_levels},
         "structure_strength": strength,
-        "structure_reasons": reasons
+        "structure_reasons": reasons,
+        "entry_mode": entry_mode,  # NEW: Pass through for downstream use
+        "retest_zone": retest_zone  # NEW: Pass through for downstream use
     }
 
     return {
@@ -349,7 +355,9 @@ def _plan_strategy_for_candidate(
         "bias": bias,
         "entry_trigger": entry_trigger,
         "structure_stop": float(stop_structure),
-        "context": context
+        "context": context,
+        "entry_mode": entry_mode,  # NEW: Expose at top level
+        "retest_zone": retest_zone  # NEW: Expose at top level
     }
 
 def _calculate_structure_stop(
@@ -473,7 +481,9 @@ def _strategy_selector(
 def _compose_exits_and_size(
     price: float, bias: str, atr: float, structure_stop: float, cfg: PlannerConfig, qty_scale: float,
     cap_segment: str = "unknown",  # Priority 3: Cap-aware sizing
-    setup_type: str = ""  # Strategy-specific entry zones
+    setup_type: str = "",  # Strategy-specific entry zones
+    entry_mode: Optional[str] = None,  # NEW: Dual-mode entry ("immediate", "retest", "pending")
+    retest_zone: Optional[List[float]] = None  # NEW: [low, high] bounds for retest mode
 ) -> Dict[str, Any]:
     """
     Compose hard stop, targets by RR, and position size. Strictly config-driven.
@@ -609,9 +619,28 @@ def _compose_exits_and_size(
 
         # Entry zone width (ATR-based unless fallback)
         # Strategy-specific entry zones based on pro trader best practices
-        if fallback_zone:
+        # NEW: Dual-mode entry zone logic
+        if entry_mode == "immediate":
+            # IMMEDIATE MODE: Enter NOW at breakout - aggressive execution with tight zone
+            # Professional breakout traders enter aggressively with minimal slippage tolerance
+            # Zone represents bid-ask spread + 1-2 ticks, NOT a waiting zone
+            # Similar to ORB entries: tight execution at the level
+            entry_width = max(price * 0.001, 0.02)  # 0.1% or Rs.0.02 minimum (2 paise = 1-2 ticks)
+            entry_zone = [round(price - entry_width, 2), round(price + entry_width, 2)]
+            logger.debug(f"PLANNER_ENTRY_ZONE: IMMEDIATE mode → zone=[{entry_zone[0]}, {entry_zone[1]}] (±{entry_width:.2f} = {entry_width/price*100:.2f}%)")
+
+        elif entry_mode == "retest" and retest_zone:
+            # RETEST MODE: Wait for pullback to level - use detector-provided zone
+            # CRITICAL: Use 4 decimals to preserve zone width (0.5 ATR ≈ 0.005 = 0.5 points for ₹100 stock)
+            entry_zone = [round(retest_zone[0], 4), round(retest_zone[1], 4)]
+            zone_width = retest_zone[1] - retest_zone[0]
+            logger.debug(f"PLANNER_ENTRY_ZONE: RETEST mode → zone=[{entry_zone[0]:.4f}, {entry_zone[1]:.4f}] (width={zone_width:.4f})")
+
+        elif fallback_zone:
+            # Fallback for missing ATR
             entry_zone = [round(price - 0.01, 2), round(price, 2)]
         else:
+            # LEGACY: Original entry zone logic for non-dual-mode setups
             # ORB: Professional traders use TIGHT entry zones at structure levels
             # Entry = precise level (ORH/ORL) ± small buffer, NOT wide fuzzy zones
             if 'orb' in setup_type.lower():
@@ -1056,7 +1085,15 @@ def generate_trade_plan(
             logger.debug(f"CAP_SIZING: Failed to load cap_segment for {symbol}: {e}")
             cap_segment = "unknown"
 
-        exits = _compose_exits_and_size(entry_ref_price, strat["bias"], atr, strat["structure_stop"], cfg, qty_scale=qty_scale, cap_segment=cap_segment, setup_type=strat["name"])
+        # Extract entry_mode from strat (it's passed through from candidate)
+        strat_entry_mode = strat.get("entry_mode")
+        strat_retest_zone = strat.get("retest_zone")
+
+        exits = _compose_exits_and_size(
+            entry_ref_price, strat["bias"], atr, strat["structure_stop"], cfg,
+            qty_scale=qty_scale, cap_segment=cap_segment, setup_type=strat["name"],
+            entry_mode=strat_entry_mode, retest_zone=strat_retest_zone
+        )
 
         # Feasibility tightening (from planner_precision extras)
         pp = cfg._extras.get("planner_precision", {})
@@ -1207,6 +1244,7 @@ def generate_trade_plan(
             "regime": regime,
             "strategy": strat["name"],
             "bias": strat["bias"],
+            "entry_ref_price": round(entry_ref_price, 2),  # Top-level for logging/analytics
             "entry": {
                 "reference": round(entry_ref_price, 2),
                 "trigger": strat["entry_trigger"],
