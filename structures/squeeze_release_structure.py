@@ -62,8 +62,10 @@ class SqueezeReleaseStructure(BaseStructure):
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect squeeze release structures."""
         try:
+            logger.debug(f"SQUEEZE_DETECT: Starting detection for {context.symbol}")
             df = context.df_5m
             min_required_bars = self.width_window + self.recent_width_bars + self.width_calculation_period
+            logger.debug(f"SQUEEZE_DETECT: {context.symbol} - Checking bars: have {len(df)}, need {min_required_bars} (width_window={self.width_window})")
 
             if len(df) < min_required_bars:
                 return StructureAnalysis(
@@ -78,6 +80,7 @@ class SqueezeReleaseStructure(BaseStructure):
             # Calculate volatility width (std/mean)
             width_series = self._calculate_volatility_width(df)
             if width_series is None:
+                logger.debug(f"SQUEEZE_DETECT: {context.symbol} - REJECTED: Could not calculate volatility width")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -86,8 +89,9 @@ class SqueezeReleaseStructure(BaseStructure):
                 )
 
             # Check for squeeze release pattern
-            squeeze_release_info = self._detect_squeeze_release_pattern(df, width_series)
+            squeeze_release_info = self._detect_squeeze_release_pattern(df, width_series, context.symbol)
             if not squeeze_release_info:
+                logger.debug(f"SQUEEZE_DETECT: {context.symbol} - REJECTED: No squeeze release pattern detected")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -96,9 +100,11 @@ class SqueezeReleaseStructure(BaseStructure):
                 )
 
             expansion_ratio_actual, momentum, momentum_direction = squeeze_release_info
+            logger.debug(f"SQUEEZE_DETECT: {context.symbol} - Pattern found: expansion_ratio={expansion_ratio_actual:.2f}, momentum={momentum:.4f}, direction={momentum_direction}")
 
             # Validate momentum threshold
             if abs(momentum) < self.min_momentum_threshold:
+                logger.debug(f"SQUEEZE_DETECT: {context.symbol} - REJECTED: Momentum {abs(momentum):.4f} below threshold {self.min_momentum_threshold}")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -109,6 +115,7 @@ class SqueezeReleaseStructure(BaseStructure):
             # Volume confirmation if required
             if self.require_volume_confirmation:
                 if not self._validate_volume_confirmation(df):
+                    logger.debug(f"SQUEEZE_DETECT: {context.symbol} - REJECTED: Volume confirmation failed (require_volume_confirmation=true, min_volume_mult={self.min_volume_mult})")
                     return StructureAnalysis(
                         structure_detected=False,
                         events=[],
@@ -144,7 +151,7 @@ class SqueezeReleaseStructure(BaseStructure):
 
             events.append(event)
 
-            logger.debug(f"SQUEEZE_RELEASE: {context.symbol} - {structure_type} detected with expansion ratio: {expansion_ratio_actual:.2f}, momentum: {momentum:.4f}")
+            logger.debug(f"SQUEEZE_DETECT: ✅ {context.symbol} - {structure_type} DETECTED with expansion ratio: {expansion_ratio_actual:.2f}, momentum: {momentum:.4f}, confidence: {confidence:.2f}")
 
             quality_score = self._calculate_quality_score(expansion_ratio_actual, abs(momentum), df)
 
@@ -185,7 +192,7 @@ class SqueezeReleaseStructure(BaseStructure):
             logger.debug(f"SQUEEZE_RELEASE: Error calculating volatility width: {e}")
             return None
 
-    def _detect_squeeze_release_pattern(self, df: pd.DataFrame, width_series: pd.Series) -> Optional[Tuple[float, float, str]]:
+    def _detect_squeeze_release_pattern(self, df: pd.DataFrame, width_series: pd.Series, symbol: str = "UNKNOWN") -> Optional[Tuple[float, float, str]]:
         """Detect squeeze release pattern from width series."""
         try:
             # Calculate recent width (average of last N bars)
@@ -205,7 +212,7 @@ class SqueezeReleaseStructure(BaseStructure):
 
             # Check if expansion exceeds threshold
             if expansion_ratio_actual < self.expansion_ratio:
-                logger.debug(f"SQUEEZE_RELEASE: Expansion ratio {expansion_ratio_actual:.2f} below threshold {self.expansion_ratio}")
+                logger.debug(f"SQUEEZE_DETECT: {symbol} - Expansion ratio {expansion_ratio_actual:.2f} below threshold {self.expansion_ratio} (recent_width={recent_width:.6f}, prior_width={prior_width:.6f})")
                 return None
 
             # Calculate momentum for direction

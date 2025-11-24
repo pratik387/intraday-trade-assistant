@@ -113,12 +113,43 @@ class FailureFadeStructure(BaseStructure):
         # 1. Previous bar(s) pierced above resistance
         # 2. Current bar closed back below resistance
 
-        fade_pattern = self._check_resistance_fade_pattern(df, level_value)
+        fade_pattern = self._check_resistance_fade_pattern(df, level_value, context.timestamp)
         if not fade_pattern:
             logger.debug(f"FAILURE_FADE: {context.symbol} - No resistance fade pattern at {level_name}")
             return None
 
-        pierce_size_pct, fade_strength = fade_pattern
+        pierce_size_pct, fade_strength, sweep_high, pattern_timestamp = fade_pattern
+
+        # FRESHNESS VALIDATION: Pattern must be recent (ICT/Professional rule)
+        current_time = pd.to_datetime(context.timestamp)
+        pattern_age_mins = (current_time - pattern_timestamp).total_seconds() / 60
+
+
+        # Time-based freshness rules by level type
+        if level_name in ["ORH", "ORL"]:
+            # Opening Range levels: only valid during Initial Balance (first 75 mins)
+            session_start = current_time.replace(hour=9, minute=15, second=0, microsecond=0)
+            session_age_mins = (current_time - session_start).total_seconds() / 60
+
+            if session_age_mins > 90:  # After 10:45 IST
+                logger.debug(f"FAILURE_FADE: {context.symbol} - OR level {level_name} expired (session age: {session_age_mins:.1f} mins)")
+                return None
+
+            if pattern_age_mins > 30:  # Pattern must be fresh even during IB
+                logger.debug(f"FAILURE_FADE: {context.symbol} - OR pattern too old ({pattern_age_mins:.1f} mins)")
+                return None
+
+        elif level_name in ["SWING_HIGH", "SWING_LOW"]:
+            # Dynamic swing levels: very fresh (10-15 mins)
+            if pattern_age_mins > 15:
+                logger.debug(f"FAILURE_FADE: {context.symbol} - Swing pattern too old ({pattern_age_mins:.1f} mins)")
+                return None
+
+        else:  # PDH, PDL
+            # Previous day levels: more flexible (30-45 mins)
+            if pattern_age_mins > 45:
+                logger.debug(f"FAILURE_FADE: {context.symbol} - PD pattern too old ({pattern_age_mins:.1f} mins)")
+                return None
 
         # Validate pierce size is within acceptable range
         if not (self.min_pierce_size_pct <= pierce_size_pct <= self.max_pierce_size_pct):
@@ -148,14 +179,17 @@ class FailureFadeStructure(BaseStructure):
             levels={level_name: level_value},
             context={
                 "level_name": level_name,
+                "level_value": level_value,
                 "pierce_size_pct": pierce_size_pct,
                 "fade_strength": fade_strength,
-                "failure_type": "resistance_rejection"
+                "failure_type": "resistance_rejection",
+                "sweep_high": sweep_high,  # For ICT-style stop placement
+                "pattern_age_mins": pattern_age_mins
             },
             price=current_price
         )
 
-        logger.debug(f"FAILURE_FADE: {context.symbol} - Resistance failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}")
+        logger.debug(f"FAILURE_FADE: {context.symbol} - Resistance failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}, age: {pattern_age_mins:.1f}m")
         return event
 
     def _detect_support_failure_fade(self, context: MarketContext, df: pd.DataFrame,
@@ -167,12 +201,43 @@ class FailureFadeStructure(BaseStructure):
         # 1. Previous bar(s) pierced below support
         # 2. Current bar closed back above support
 
-        fade_pattern = self._check_support_fade_pattern(df, level_value)
+        fade_pattern = self._check_support_fade_pattern(df, level_value, context.timestamp)
         if not fade_pattern:
             logger.debug(f"FAILURE_FADE: {context.symbol} - No support fade pattern at {level_name}")
             return None
 
-        pierce_size_pct, fade_strength = fade_pattern
+        pierce_size_pct, fade_strength, sweep_low, pattern_timestamp = fade_pattern
+
+        # FRESHNESS VALIDATION: Pattern must be recent (ICT/Professional rule)
+        current_time = pd.to_datetime(context.timestamp)
+        pattern_age_mins = (current_time - pattern_timestamp).total_seconds() / 60
+
+
+        # Time-based freshness rules by level type
+        if level_name in ["ORH", "ORL"]:
+            # Opening Range levels: only valid during Initial Balance (first 75 mins)
+            session_start = current_time.replace(hour=9, minute=15, second=0, microsecond=0)
+            session_age_mins = (current_time - session_start).total_seconds() / 60
+
+            if session_age_mins > 90:  # After 10:45 IST
+                logger.debug(f"FAILURE_FADE: {context.symbol} - OR level {level_name} expired (session age: {session_age_mins:.1f} mins)")
+                return None
+
+            if pattern_age_mins > 30:  # Pattern must be fresh even during IB
+                logger.debug(f"FAILURE_FADE: {context.symbol} - OR pattern too old ({pattern_age_mins:.1f} mins)")
+                return None
+
+        elif level_name in ["SWING_HIGH", "SWING_LOW"]:
+            # Dynamic swing levels: very fresh (10-15 mins)
+            if pattern_age_mins > 15:
+                logger.debug(f"FAILURE_FADE: {context.symbol} - Swing pattern too old ({pattern_age_mins:.1f} mins)")
+                return None
+
+        else:  # PDH, PDL
+            # Previous day levels: more flexible (30-45 mins)
+            if pattern_age_mins > 45:
+                logger.debug(f"FAILURE_FADE: {context.symbol} - PD pattern too old ({pattern_age_mins:.1f} mins)")
+                return None
 
         # Validate pierce size is within acceptable range
         if not (self.min_pierce_size_pct <= pierce_size_pct <= self.max_pierce_size_pct):
@@ -202,24 +267,39 @@ class FailureFadeStructure(BaseStructure):
             levels={level_name: level_value},
             context={
                 "level_name": level_name,
+                "level_value": level_value,
                 "pierce_size_pct": pierce_size_pct,
                 "fade_strength": fade_strength,
-                "failure_type": "support_bounce"
+                "failure_type": "support_bounce",
+                "sweep_low": sweep_low,  # For ICT-style stop placement
+                "pattern_age_mins": pattern_age_mins
             },
             price=current_price
         )
 
-        logger.debug(f"FAILURE_FADE: {context.symbol} - Support failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}")
+        logger.debug(f"FAILURE_FADE: {context.symbol} - Support failure fade {level_name} at {current_price:.2f}, pierce: {pierce_size_pct:.2f}%, fade: {fade_strength:.2f}, age: {pattern_age_mins:.1f}m")
         return event
 
-    def _check_resistance_fade_pattern(self, df: pd.DataFrame, resistance: float) -> Optional[Tuple[float, float]]:
-        """Check for resistance failure fade pattern."""
+    def _check_resistance_fade_pattern(self, df: pd.DataFrame, resistance: float, current_timestamp: pd.Timestamp) -> Optional[Tuple[float, float, float, pd.Timestamp]]:
+        """
+        Check for resistance failure fade pattern.
+
+        Returns: (pierce_size_pct, fade_strength, sweep_high, pattern_timestamp) or None
+        """
         try:
             if len(df) < 2:
                 return None
 
             current_bar = df.iloc[-1]
             previous_bar = df.iloc[-2]
+
+            # Get pattern timestamp (when the pierce happened)
+            try:
+                pattern_timestamp = pd.to_datetime(previous_bar.name if hasattr(previous_bar, 'name') else current_bar.name)
+            except:
+                # BUGFIX: Use current_timestamp from context instead of pd.Timestamp.now()
+                # for backtesting compatibility
+                pattern_timestamp = pd.to_datetime(current_timestamp)
 
             # Check if previous bar pierced above resistance
             if previous_bar['high'] <= resistance:
@@ -238,6 +318,9 @@ class FailureFadeStructure(BaseStructure):
             max_possible_fade = previous_bar['high'] - resistance
             fade_strength = fade_size / max_possible_fade if max_possible_fade > 0 else 0
 
+            # Store actual sweep high (for ICT-style stop placement)
+            sweep_high = previous_bar['high']
+
             # Additional validation for confirmation bars
             if self.fade_confirmation_bars > 1 and len(df) >= self.fade_confirmation_bars + 1:
                 # Check that recent bars confirm the fade
@@ -246,20 +329,32 @@ class FailureFadeStructure(BaseStructure):
                 if not confirmation:
                     return None
 
-            return pierce_size_pct, fade_strength
+            return pierce_size_pct, fade_strength, sweep_high, pattern_timestamp
 
         except Exception as e:
             logger.debug(f"FAILURE_FADE: Error checking resistance fade pattern: {e}")
             return None
 
-    def _check_support_fade_pattern(self, df: pd.DataFrame, support: float) -> Optional[Tuple[float, float]]:
-        """Check for support failure fade pattern."""
+    def _check_support_fade_pattern(self, df: pd.DataFrame, support: float, current_timestamp: pd.Timestamp) -> Optional[Tuple[float, float, float, pd.Timestamp]]:
+        """
+        Check for support failure fade pattern.
+
+        Returns: (pierce_size_pct, fade_strength, sweep_low, pattern_timestamp) or None
+        """
         try:
             if len(df) < 2:
                 return None
 
             current_bar = df.iloc[-1]
             previous_bar = df.iloc[-2]
+
+            # Get pattern timestamp (when the pierce happened)
+            try:
+                pattern_timestamp = pd.to_datetime(previous_bar.name if hasattr(previous_bar, 'name') else current_bar.name)
+            except:
+                # BUGFIX: Use current_timestamp from context instead of pd.Timestamp.now()
+                # for backtesting compatibility
+                pattern_timestamp = pd.to_datetime(current_timestamp)
 
             # Check if previous bar pierced below support
             if previous_bar['low'] >= support:
@@ -278,6 +373,9 @@ class FailureFadeStructure(BaseStructure):
             max_possible_fade = support - previous_bar['low']
             fade_strength = fade_size / max_possible_fade if max_possible_fade > 0 else 0
 
+            # Store actual sweep low (for ICT-style stop placement)
+            sweep_low = previous_bar['low']
+
             # Additional validation for confirmation bars
             if self.fade_confirmation_bars > 1 and len(df) >= self.fade_confirmation_bars + 1:
                 # Check that recent bars confirm the fade
@@ -286,24 +384,90 @@ class FailureFadeStructure(BaseStructure):
                 if not confirmation:
                     return None
 
-            return pierce_size_pct, fade_strength
+            return pierce_size_pct, fade_strength, sweep_low, pattern_timestamp
 
         except Exception as e:
             logger.debug(f"FAILURE_FADE: Error checking support fade pattern: {e}")
             return None
 
-    def _get_available_levels(self, context: MarketContext) -> Dict[str, float]:
-        """Get available key levels for failure fade analysis."""
-        levels = {}
+    def _get_recent_swing_levels(self, df: pd.DataFrame, lookback_mins: int = 90) -> Dict[str, float]:
+        """
+        Get recent swing highs/lows from last N minutes.
+        These are FRESH dynamic structures for failure fade detection.
 
+        Args:
+            df: 5-minute OHLCV data
+            lookback_mins: How far back to look (default 90 mins)
+
+        Returns:
+            Dict with SWING_HIGH and SWING_LOW keys
+        """
+        try:
+            # Calculate lookback bars (e.g., 18 bars for 90 mins on 5m chart)
+            lookback_bars = lookback_mins // 5
+            if len(df) < lookback_bars:
+                return {}
+
+            recent_df = df.tail(lookback_bars)
+            current_price = df.iloc[-1]['close']
+
+            levels = {}
+
+            # Find swing high (highest high in recent period)
+            swing_high = recent_df['high'].max()
+            swing_high_dist_pct = abs(swing_high - current_price) / current_price * 100
+
+            # Only use if significant distance from current price (at least 0.5%)
+            if swing_high_dist_pct > 0.5:
+                levels["SWING_HIGH"] = swing_high
+
+            # Find swing low (lowest low in recent period)
+            swing_low = recent_df['low'].min()
+            swing_low_dist_pct = abs(swing_low - current_price) / current_price * 100
+
+            # Only use if significant distance from current price (at least 0.5%)
+            if swing_low_dist_pct > 0.5:
+                levels["SWING_LOW"] = swing_low
+
+            if levels:
+                logger.debug(f"FAILURE_FADE: Found swing levels - High: {swing_high if 'SWING_HIGH' in levels else 'N/A'}, Low: {swing_low if 'SWING_LOW' in levels else 'N/A'}")
+
+            return levels
+
+        except Exception as e:
+            logger.debug(f"FAILURE_FADE: Error getting swing levels: {e}")
+            return {}
+
+    def _get_available_levels(self, context: MarketContext) -> Dict[str, float]:
+        """
+        Get available key levels for failure fade analysis.
+        Includes both static (OR/PD) and dynamic (swing) levels with time-based validity.
+        """
+        levels = {}
+        current_hour = pd.to_datetime(context.timestamp).hour
+
+        # Opening Range levels - ONLY valid during Initial Balance period (9:15-10:45)
+        if 9 <= current_hour < 11:
+            if context.orh is not None:
+                levels["ORH"] = context.orh
+            if context.orl is not None:
+                levels["ORL"] = context.orl
+            logger.debug(f"FAILURE_FADE: OR levels active (IB period) - ORH: {context.orh}, ORL: {context.orl}")
+        else:
+            logger.debug(f"FAILURE_FADE: OR levels expired (hour: {current_hour})")
+
+        # Previous Day levels - valid all day (high significance)
         if context.pdh is not None:
             levels["PDH"] = context.pdh
         if context.pdl is not None:
             levels["PDL"] = context.pdl
-        if context.orh is not None:
-            levels["ORH"] = context.orh
-        if context.orl is not None:
-            levels["ORL"] = context.orl
+
+        # Dynamic swing levels - ALWAYS valid (fresh intraday structures)
+        # These capture failures at recent swing points throughout the session
+        swing_levels = self._get_recent_swing_levels(context.df_5m, lookback_mins=90)
+        levels.update(swing_levels)
+
+        logger.debug(f"FAILURE_FADE: Total levels available: {len(levels)} - {list(levels.keys())}")
 
         return levels
 
@@ -383,28 +547,44 @@ class FailureFadeStructure(BaseStructure):
         )
 
     def calculate_risk_params(self, context: MarketContext, event: StructureEvent, side: str) -> RiskParams:
-        """Calculate risk parameters for failure fade trades."""
+        """
+        Calculate risk parameters for failure fade trades.
+        Uses ICT-style stop placement BEYOND the sweep extreme, not at the level.
+        """
         entry_price = context.current_price
         atr = self._get_atr(context)
 
-        # Get the level that failed
-        level_name = event.context.get("level_name", "")
-        failed_level = None
-        for level_key, level_value in event.levels.items():
-            if level_key in ["PDH", "PDL", "ORH", "ORL"]:
-                failed_level = level_value
-                break
+        # Get actual sweep extreme (ICT professional approach)
+        sweep_low = event.context.get("sweep_low")
+        sweep_high = event.context.get("sweep_high")
+        failed_level = event.context.get("level_value")
 
-        if failed_level is None:
-            failed_level = entry_price
-
-        # For failure fades, stop loss is beyond the failed level
         if side == "long":
-            # For long fades at support, stop below the low that failed
-            hard_sl = failed_level - (atr * self.stop_mult)
+            # For long fades at support: stop BEYOND the sweep low
+            # This gives winners room to breathe (solves the 2.03% MAE issue)
+            if sweep_low is not None:
+                # ICT rule: Stop 30% ATR beyond the actual sweep low
+                buffer = atr * 0.3
+                hard_sl = sweep_low - buffer
+                logger.debug(f"FAILURE_FADE: {context.symbol} - ICT stop: sweep_low={sweep_low:.2f}, buffer={buffer:.2f}, stop={hard_sl:.2f}")
+            elif failed_level is not None:
+                # Fallback: traditional stop below level
+                hard_sl = failed_level - (atr * self.stop_mult)
+                logger.debug(f"FAILURE_FADE: {context.symbol} - Fallback stop at level: {failed_level:.2f}")
+            else:
+                # Last resort fallback
+                hard_sl = entry_price - (atr * self.stop_mult)
         else:
-            # For short fades at resistance, stop above the high that failed
-            hard_sl = failed_level + (atr * self.stop_mult)
+            # For short fades at resistance: stop BEYOND the sweep high
+            if sweep_high is not None:
+                buffer = atr * 0.3
+                hard_sl = sweep_high + buffer
+                logger.debug(f"FAILURE_FADE: {context.symbol} - ICT stop: sweep_high={sweep_high:.2f}, buffer={buffer:.2f}, stop={hard_sl:.2f}")
+            elif failed_level is not None:
+                hard_sl = failed_level + (atr * self.stop_mult)
+                logger.debug(f"FAILURE_FADE: {context.symbol} - Fallback stop at level: {failed_level:.2f}")
+            else:
+                hard_sl = entry_price + (atr * self.stop_mult)
 
         risk_per_share = abs(entry_price - hard_sl)
 

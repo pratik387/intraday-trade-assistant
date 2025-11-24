@@ -90,7 +90,7 @@ class VWAPStructure(BaseStructure):
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect VWAP-based structures in the market context."""
 
-        logger.debug(f"VWAP: Starting detection for {context.symbol}")
+        logger.debug(f"VWAP_DETECT: Starting detection for {context.symbol}")
 
         try:
             # Extract VWAP levels and context
@@ -126,7 +126,7 @@ class VWAPStructure(BaseStructure):
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No VWAP setups detected"
 
-            logger.debug(f"VWAP: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}")
+            logger.debug(f"VWAP_DETECT: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}, rejected: {rejection_reason}")
 
             return StructureAnalysis(
                 structure_detected=structure_detected,
@@ -149,8 +149,9 @@ class VWAPStructure(BaseStructure):
 
         try:
             df = context.df_5m
+            logger.debug(f"VWAP_DETECT: {context.symbol} - DataFrame columns: {list(df.columns)}, has_vwap: {'vwap' in df.columns}")
             if len(df) < 10 or 'vwap' not in df.columns:
-                logger.debug(f"VWAP: {context.symbol} - Insufficient data or missing VWAP column")
+                logger.debug(f"VWAP_DETECT: {context.symbol} - REJECTED: len={len(df)}, has_vwap={'vwap' in df.columns}")
                 return None
 
             current_vwap = float(df['vwap'].iloc[-1])
@@ -173,8 +174,8 @@ class VWAPStructure(BaseStructure):
             # Check volume confirmation
             volume_confirmation = self._check_volume_confirmation(df)
 
-            logger.debug(f"VWAP: {context.symbol} - Price: {current_price:.2f}, VWAP: {current_vwap:.2f}, Distance: {price_distance_bps:.1f} bps")
-            logger.debug(f"VWAP: {context.symbol} - Above bars: {above_vwap_bars}, Below bars: {below_vwap_bars}, Vol conf: {volume_confirmation}")
+            logger.debug(f"VWAP_DETECT: {context.symbol} - Price: {current_price:.2f}, VWAP: {current_vwap:.2f}, Distance: {price_distance_bps:.1f} bps")
+            logger.debug(f"VWAP_DETECT: {context.symbol} - Above bars: {above_vwap_bars}, Below bars: {below_vwap_bars}, Vol conf: {volume_confirmation}")
 
             return VWAPLevels(
                 current_vwap=current_vwap,
@@ -239,7 +240,7 @@ class VWAPStructure(BaseStructure):
 
         # Check if price is stretched enough from VWAP
         if not (self.min_distance_bps <= vwap_info.price_distance_bps <= self.max_distance_bps):
-            logger.debug(f"VWAP: {context.symbol} - Price distance {vwap_info.price_distance_bps:.1f} bps outside range {self.min_distance_bps}-{self.max_distance_bps}")
+            logger.debug(f"VWAP_DETECT: {context.symbol} - Mean reversion REJECTED: distance {vwap_info.price_distance_bps:.1f} bps outside range {self.min_distance_bps}-{self.max_distance_bps}")
             return events, quality_score
 
         current_price = context.current_price
@@ -280,7 +281,7 @@ class VWAPStructure(BaseStructure):
                 )
                 events.append(event)
 
-                logger.debug(f"VWAP: {context.symbol} - Mean reversion LONG detected: distance {vwap_info.price_distance_bps:.1f} bps, confidence {strength:.2f}")
+                logger.debug(f"VWAP_DETECT: {context.symbol} - Mean reversion LONG DETECTED: distance {vwap_info.price_distance_bps:.1f} bps, confidence {strength:.2f}")
 
         # Mean reversion short (price above VWAP)
         elif current_price > vwap_info.current_vwap:

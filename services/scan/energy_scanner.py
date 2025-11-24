@@ -44,6 +44,7 @@ class EnergyScanner:
         *,
         lookback_bars: int,
         levels_by_symbol: Optional[Dict[str, Dict[str, float]]] = None,
+        allow_early_scan: bool = False,
     ) -> pd.DataFrame:
         """Build one feature row per symbol using ONLY the last closed 5m bar.
 
@@ -64,9 +65,12 @@ class EnergyScanner:
           (optional) dist_to_PDH, dist_to_PDL, dist_to_ORH, dist_to_ORL,
           score_long, score_short
         """
+        # OPENING BELL FIX: Allow scanning with 1 bar during opening bell (09:20) for ICT setups
+        min_bars_required = 1 if allow_early_scan else 3
+
         rows: List[dict] = []
         for sym, df in df5_by_symbol.items():
-            if df is None or df.empty or len(df) < 3:
+            if df is None or df.empty or len(df) < min_bars_required:
                 continue
             dft = df.tail(max(lookback_bars, 20)).copy()
             dft = dft.dropna(subset=["close"])  # be strict
@@ -376,7 +380,7 @@ class EnergyScanner:
                         orb_candidates_short = near_orl["symbol"].tolist()
 
                     if orb_candidates_long or orb_candidates_short:
-                        logger.info(
+                        logger.debug(
                             f"ORB_PRIORITY | ORB window active (time={current_minute//60:02d}:{current_minute%60:02d}) | "
                             f"Adding {len(orb_candidates_long)} ORH candidates, {len(orb_candidates_short)} ORL candidates"
                         )

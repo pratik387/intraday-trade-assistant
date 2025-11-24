@@ -16,9 +16,11 @@ from pathlib import Path
 
 # Add parent directory to path to import submit_oci_backtest
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from submit_oci_backtest import OCIBacktestSubmitter
 from datetime import datetime, timedelta
+from utils.util import is_trading_day
 
 
 # Regime configurations (from regime_orchestrator.py)
@@ -34,7 +36,7 @@ REGIME_CONFIGS = [
 
 def generate_regime_dates(regime_configs):
     """
-    Generate list of trading dates for specified regimes.
+    Generate list of trading dates for specified regimes (exclude weekends and NSE holidays).
 
     Args:
         regime_configs: List of regime dicts with 'name', 'start', 'end'
@@ -49,8 +51,8 @@ def generate_regime_dates(regime_configs):
         end = datetime.strptime(regime['end'], '%Y-%m-%d')
 
         while current <= end:
-            # Exclude weekends
-            if current.weekday() < 5:
+            # Use is_trading_day to exclude weekends AND NSE holidays
+            if is_trading_day(current):
                 dates.append((current.strftime('%Y-%m-%d'), regime['name']))
             current += timedelta(days=1)
 

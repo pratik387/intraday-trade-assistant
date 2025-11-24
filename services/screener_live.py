@@ -133,7 +133,8 @@ def _init_worker(config_dict):
             event_policy_gate=event_gate,
             news_spike_gate=news_gate,
             market_sentiment_gate=sentiment_gate,
-            quality_filters=config_dict.get('quality_filters', {})
+            quality_filters=config_dict.get('quality_filters', {}),
+            regime_allowed_setups=config_dict.get('regime_allowed_setups', {})
         )
     except Exception as e:
         get_agent_logger().exception(f"Worker init failed: {e}")
@@ -234,6 +235,7 @@ class ScreenerLive:
             news_spike_gate=self.news_gate,
             market_sentiment_gate=self.sentiment_gate,
             quality_filters=raw.get("quality_filters", {}),
+            regime_allowed_setups=raw.get("regime_allowed_setups", {}),
         )
 
         # Stage-0 scanner
@@ -423,7 +425,9 @@ class ScreenerLive:
                 adjusted_candidate = SetupCandidate(
                     setup_type=candidate.setup_type,
                     strength=adjusted_strength,
-                    reasons=updated_reasons
+                    reasons=updated_reasons,
+                    orh=getattr(candidate, 'orh', None),
+                    orl=getattr(candidate, 'orl', None)
                 )
 
             enhanced.append(adjusted_candidate)
@@ -458,11 +462,18 @@ class ScreenerLive:
         shortlist: List[str] = []
         feats_df = None
         levels_by_symbol = None  # Initialize so it's available to structure detection phase
+
+        # OPENING BELL FIX: Determine minimum bars needed - 1 during opening bell (09:20-09:30), 3 normally
+        current_time = now.time() if hasattr(now, 'time') else now
+        from datetime import time as dtime
+        in_opening_bell = dtime(9, 20) <= current_time < dtime(9, 30)
+        min_bars_for_processing = 1 if in_opening_bell else 3
+
         try:
             df5_by_symbol: Dict[str, pd.DataFrame] = {}
             for s in self.core_symbols:
                 df5 = self.agg.get_df_5m_tail(s, self.cfg.screener_store_5m_max)
-                if validate_df(df5, min_rows=3):
+                if validate_df(df5, min_rows=min_bars_for_processing):
                     df5_by_symbol[s] = df5
             if df5_by_symbol:
                 # PERFORMANCE FIX: Compute ORB levels once at 09:40 and cache for entire day
@@ -473,8 +484,8 @@ class ScreenerLive:
                 # Impact: ONE-TIME 54s cost at 09:40 instead of 30min spread across multiple bars
                 levels_by_symbol = self._compute_orb_levels_once(now, df5_by_symbol)
 
-                feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20, levels_by_symbol=levels_by_symbol)
-                feats_df = self._filter_stage0(feats_df, now)  # liquidity + vwap proximity + momentum + (opt) vol persistence
+                feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20, levels_by_symbol=levels_by_symbol, allow_early_scan=in_opening_bell)
+                feats_df = self._filter_stage0(feats_df, now, skip_vol_persist=in_opening_bell)  # liquidity + vwap proximity + momentum + (opt) vol persistence
                 # Use scanner's select_shortlist for proper structured logging
                 shortlist_dict = self.scanner.select_shortlist(feats_df)
                 shortlist = shortlist_dict.get("long", []) + shortlist_dict.get("short", [])
@@ -508,7 +519,8 @@ class ScreenerLive:
         symbol_data_map = {}
         for sym in shortlist:
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
-            if not validate_df(df5, min_rows=5):
+            # OPENING BELL FIX: Use same min_bars as scanner (1 during opening bell, 5 normally)
+            if not validate_df(df5, min_rows=min_bars_for_processing):
                 continue
             df1m = self.agg.get_df_1m_tail(sym, 60)
 
@@ -522,8 +534,14 @@ class ScreenerLive:
                 lvl = {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
                        "ORH": float("nan"), "ORL": float("nan")}
             else:
-                # Before 09:40 - cache not ready yet, compute normally
-                lvl = self._levels_for(sym, df5, now)
+                # OPENING BELL FIX: Before 09:40 - cache not ready yet
+                # During opening bell (09:20-09:30) with <3 bars, use empty levels to avoid warnings
+                if in_opening_bell and len(df5) < 3:
+                    lvl = {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
+                           "ORH": float("nan"), "ORL": float("nan")}
+                else:
+                    # Enough bars to compute levels normally
+                    lvl = self._levels_for(sym, df5, now)
 
             # Phase 2: Fetch daily data (210 days for EMA200, uses cache)
             daily_df = self.sdk.get_daily(sym, days=210)
@@ -695,8 +713,10 @@ class ScreenerLive:
                     regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
                 )
                 continue
-            # percentile gate
-            if score < pctl_score:
+            # percentile gate: Skip for small batches (< 5 symbols) where percentile is statistically meaningless
+            # With 2-3 symbols, percentile creates arbitrary rejections (e.g., 2 symbols [1.09, 1.19] → 60th pctl=1.15 rejects 1.09)
+            # Strategy-specific thresholds (0.5 for fades, 1.8 for breakouts) handle filtering for small batches
+            if score < pctl_score and len(ranked) >= 5:
                 # Log percentile rejection
                 # Phase 2: Include multi-TF regime diagnostics
                 ranking_logger.log_reject(
@@ -736,6 +756,21 @@ class ScreenerLive:
                 # Use new structure system approach with setup_candidates
                 setup_candidates = getattr(decision, 'setup_candidates', None)
                 if setup_candidates:
+                    # BUGFIX: Filter candidates to only pass the one accepted by the gate
+                    # This prevents planner from independently selecting a different candidate (potentially blacklisted)
+                    # Root cause: Gate filters/selects best candidate, but planner was re-selecting independently
+                    # Fix: Only pass the accepted candidate (matching decision.setup_type) to planner
+                    accepted_setup_type = decision.setup_type
+                    if accepted_setup_type:
+                        # Filter to only the accepted candidate
+                        accepted_candidates = [c for c in setup_candidates if c.setup_type == accepted_setup_type]
+                        if accepted_candidates:
+                            setup_candidates = accepted_candidates
+                            logger.debug(f"PLANNER: {sym} - Using gate-accepted candidate: {accepted_setup_type}")
+                        else:
+                            # Fallback: Gate accepted a setup_type not in candidates (shouldn't happen, but defensive)
+                            logger.warning(f"PLANNER: {sym} - Gate accepted {accepted_setup_type} but not in candidates. Using all candidates.")
+
                     # Phase 1.4: Enhance candidate strength with HTF 15m confirmation
                     setup_candidates = self._enhance_candidates_with_htf(sym, setup_candidates)
                     plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_candidates=setup_candidates)
@@ -752,8 +787,16 @@ class ScreenerLive:
 
             # 1) Eligibility
             if not plan.get("eligible", False):
-                rejection_reason = (plan.get("quality") or {}).get("rejection_reason", "unknown")
+                # Try quality.rejection_reason first, then fall back to top-level reason
+                rejection_reason = (plan.get("quality") or {}).get("rejection_reason") or plan.get("reason", "unknown")
                 cautions = ";".join((plan.get("notes") or {}).get("cautions", []))
+
+                # Enhanced logging for unknown rejections
+                if rejection_reason == "unknown":
+                    logger.debug("PLAN_INELIGIBLE_UNKNOWN: %s | strategy=%s | eligible=%s | reason=%s | quality=%s",
+                                sym, plan.get("strategy", "unknown"), plan.get("eligible"),
+                                plan.get("reason"), plan.get("quality"))
+
                 logger.info("SKIP %s: ineligible plan rejection_reason=%s cautions=%s",
                             sym, rejection_reason, cautions)
                 events_logger.log_reject(
@@ -1360,10 +1403,13 @@ class ScreenerLive:
             logger.warning(f"CAP_MAPPING | Failed to load market cap data: {e}")
             return {}
 
-    def _filter_stage0(self, feats: pd.DataFrame, now_ts) -> pd.DataFrame:
+    def _filter_stage0(self, feats: pd.DataFrame, now_ts, skip_vol_persist: bool = False) -> pd.DataFrame:
         """
         Stage-0 shortlist filter: liquidity + VWAP proximity (time-aware) + momentum clamp.
         Optional: volume persistency & vol ratio if columns are present.
+
+        Args:
+            skip_vol_persist: If True, skip volume persistence filter (used during opening bell with <3 bars)
         """
         cfg = load_filters()
         if feats is None or feats.empty:
@@ -1387,10 +1433,13 @@ class ScreenerLive:
         if "ret_1" in df.columns:
             df = df[df["ret_1"].abs() <= ret1_max]
 
-        if "vol_persist_ok" in df.columns:
-            df = df[df["vol_persist_ok"] >= (1 if vp_bars >= 2 else 0)]
-        if "vol_ratio" in df.columns:
-            df = df[df["vol_ratio"] >= vr_min]
+        # OPENING BELL FIX: Skip volume persistence filter during opening bell (09:20-09:30)
+        # With only 1-2 bars, vol_persist_ok would reject all symbols
+        if not skip_vol_persist:
+            if "vol_persist_ok" in df.columns:
+                df = df[df["vol_persist_ok"] >= (1 if vp_bars >= 2 else 0)]
+            if "vol_ratio" in df.columns:
+                df = df[df["vol_ratio"] >= vr_min]
 
         # ========== CAP-AWARE LIQUIDITY GATES (Priority 1) ==========
         liq_cfg = cfg.get("liquidity_gates", {})

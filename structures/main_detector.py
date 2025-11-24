@@ -45,8 +45,7 @@ class MainDetector(BaseStructure):
         # Extract setups config once and validate
         setups_config = config.get("setups", {})
         if not setups_config:
-            logger.error("MAIN_DETECTOR: No setups configuration found! All detectors will be disabled.")
-            logger.error(f"MAIN_DETECTOR: Config keys received: {list(config.keys())}")
+            logger.exception("MAIN_DETECTOR: No setups configuration found! All detectors will be disabled.")
             self.detectors = {}
             return
 
@@ -191,9 +190,12 @@ class MainDetector(BaseStructure):
 
             for detector_name, detector in self.detectors.items():
                 try:
-                    logger.debug(f"MAIN_DETECTOR: Running {detector_name} detector for {symbol}")
+                    # Check if detector should run at this time (time-based blacklisting)
+                    if not detector.should_detect_at_time(context.timestamp):
+                        continue
+
+                    logger.debug(f"DETECTOR_CALL: {symbol} | {detector_name} | CALLING")
                     analysis = detector.detect(context)
-                    logger.debug(f"MAIN_DETECTOR: {detector_name} returned {len(analysis.events) if analysis.events else 0} events for {symbol}")
 
                     if analysis.events:
                         all_detections[detector_name] = analysis
@@ -202,21 +204,30 @@ class MainDetector(BaseStructure):
                             'quality': analysis.quality_score,
                             'events': analysis.events
                         }
-                        logger.debug(f"MAIN_DETECTOR: {detector_name} found {len(analysis.events)} events "
-                                  f"with quality {analysis.quality_score:.1f} for {symbol}")
+                        logger.debug(f"DETECTOR_RESULT: {symbol} | {detector_name} | ACCEPTED | "
+                                   f"events={len(analysis.events)} quality={analysis.quality_score:.2f}")
                     else:
-                        logger.debug(f"MAIN_DETECTOR: {detector_name} found no events for {symbol}")
+                        logger.debug(f"DETECTOR_RESULT: {symbol} | {detector_name} | REJECTED | no_events")
                 except Exception as e:
+                    logger.error(f"DETECTOR_ERROR: {symbol} | {detector_name} | ERROR | {str(e)}")
                     logger.exception(f"MAIN_DETECTOR: Error in {detector_name} for {symbol}: {e}")
             # Resolve conflicts and prioritize
             final_events = self._resolve_conflicts_and_prioritize(all_detections, symbol)
 
             # Convert to SetupCandidate objects
-            setup_candidates = self._convert_to_setup_candidates(final_events, symbol)
+            setup_candidates = self._convert_to_setup_candidates(final_events, symbol, context)
 
-            # Log summary
-            logger.debug(f"MAIN_DETECTOR: {symbol} final result: {len(setup_candidates)} setups "
-                       f"from {len(all_detections)} active detectors")
+            # Log summary with detector statistics
+            total_detectors = len(self.detectors)
+            active_detectors = len(all_detections)
+            silent_detectors = total_detectors - active_detectors
+
+            logger.debug(f"DETECTOR_SUMMARY: {symbol} | total={total_detectors} active={active_detectors} "
+                        f"silent={silent_detectors} setups={len(setup_candidates)}")
+
+            if active_detectors > 0:
+                detector_names = ','.join(all_detections.keys())
+                logger.debug(f"DETECTOR_ACTIVE_LIST: {symbol} | {detector_names}")
 
             return setup_candidates
 
@@ -249,12 +260,15 @@ class MainDetector(BaseStructure):
                 'atr': float(d['atr'].iloc[-1]) if not pd.isna(d['atr'].iloc[-1]) else 1.0
             }
 
+            # BUGFIX: Use DataFrame timestamp instead of datetime.now() for backtesting compatibility
+            bar_timestamp = pd.to_datetime(d.index[-1])
+
             return MarketContext(
                 symbol=symbol,
                 current_price=float(d['close'].iloc[-1]),
-                timestamp=datetime.now(),
+                timestamp=bar_timestamp,
                 df_5m=d,
-                session_date=datetime.now().date(),
+                session_date=bar_timestamp.date(),
                 orh=levels.get('ORH'),
                 orl=levels.get('ORL'),
                 pdh=levels.get('PDH'),
@@ -365,7 +379,7 @@ class MainDetector(BaseStructure):
         return final_events
 
     def _convert_to_setup_candidates(self, events: List[StructureEvent],
-                                   symbol: str) -> List[SetupCandidate]:
+                                   symbol: str, market_context: MarketContext) -> List[SetupCandidate]:
         """Convert StructureEvent objects to SetupCandidate objects for the trading system."""
         setup_candidates = []
 
@@ -388,17 +402,30 @@ class MainDetector(BaseStructure):
                 # Map structure type to setup type
                 setup_type = self._map_structure_to_setup_type(event.structure_type)
 
+                # Extract entry_mode and retest_zone from event context (dual-mode support)
+                entry_mode = event.context.get('entry_mode') if event.context else None
+                retest_zone = event.context.get('retest_zone') if event.context else None
+
                 if setup_type:
                     setup_candidates.append(SetupCandidate(
                         setup_type=setup_type,
                         strength=float(event.confidence),
-                        reasons=reasons
+                        reasons=reasons,
+                        orh=market_context.orh,
+                        orl=market_context.orl,
+                        entry_mode=entry_mode,
+                        retest_zone=retest_zone
                     ))
 
-                    logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
-                               f"with confidence {event.confidence:.2f} for {symbol}")
+                    if entry_mode:
+                        logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
+                                   f"with confidence {event.confidence:.2f}, ENTRY_MODE={entry_mode}, "
+                                   f"retest_zone={retest_zone} for {symbol}")
+                    else:
+                        logger.debug(f"MAIN_DETECTOR: Converted {event.structure_type} -> {setup_type} "
+                                   f"with confidence {event.confidence:.2f} for {symbol}")
                 else:
-                    logger.warning(f"MAIN_DETECTOR: {symbol} no setup type mapping for '{event.structure_type}'")
+                    logger.debug(f"MAIN_DETECTOR: {symbol} no setup type mapping for '{event.structure_type}'")
 
             except Exception as e:
                 logger.exception(f"MAIN_DETECTOR: Error converting event to setup candidate: {e}")
@@ -538,11 +565,19 @@ class MainDetector(BaseStructure):
             # Calculate overall quality score
             quality_score = self._calculate_overall_quality_score(events, context)
 
-            return StructureAnalysis(events=events, quality_score=quality_score)
+            return StructureAnalysis(
+                structure_detected=len(events) > 0,
+                events=events,
+                quality_score=quality_score
+            )
 
         except Exception as e:
             logger.exception(f"MAIN_DETECTOR: detect method error for {context.symbol}: {e}")
-            return StructureAnalysis(events=[], quality_score=0.0)
+            return StructureAnalysis(
+                structure_detected=False,
+                events=[],
+                quality_score=0.0
+            )
 
     def _calculate_overall_quality_score(self, events: List[StructureEvent],
                                        context: MarketContext) -> float:

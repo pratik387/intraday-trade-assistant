@@ -1,5 +1,181 @@
 [
   {
+    "tradingDate": "15-Aug-2023",
+    "weekDay": "Tuesday",
+    "description": "Independence Day",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 1
+  },
+  {
+    "tradingDate": "19-Sep-2023",
+    "weekDay": "Tuesday",
+    "description": "Ganesh Chaturthi",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 2
+  },
+  {
+    "tradingDate": "02-Oct-2023",
+    "weekDay": "Monday",
+    "description": "Mahatma Gandhi Jayanti",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 3
+  },
+  {
+    "tradingDate": "24-Oct-2023",
+    "weekDay": "Tuesday",
+    "description": "Diwali Laxmi Pujan",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 4
+  },
+  {
+    "tradingDate": "14-Nov-2023",
+    "weekDay": "Tuesday",
+    "description": "Diwali Balipratipada / Gujarati New Year",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 5
+  },
+  {
+    "tradingDate": "27-Nov-2023",
+    "weekDay": "Monday",
+    "description": "Gurunanak Jayanti",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 6
+  },
+  {
+    "tradingDate": "25-Dec-2023",
+    "weekDay": "Monday",
+    "description": "Christmas",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 7
+  },
+  {
+    "tradingDate": "26-Jan-2024",
+    "weekDay": "Friday",
+    "description": "Republic Day",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 8
+  },
+  {
+    "tradingDate": "08-Mar-2024",
+    "weekDay": "Friday",
+    "description": "Mahashivratri",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 9
+  },
+  {
+    "tradingDate": "25-Mar-2024",
+    "weekDay": "Monday",
+    "description": "Holi",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 10
+  },
+  {
+    "tradingDate": "29-Mar-2024",
+    "weekDay": "Friday",
+    "description": "Good Friday",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 11
+  },
+  {
+    "tradingDate": "11-Apr-2024",
+    "weekDay": "Thursday",
+    "description": "Id-Ul-Fitr",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 12
+  },
+  {
+    "tradingDate": "17-Apr-2024",
+    "weekDay": "Wednesday",
+    "description": "Shri Ram Navami",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 13
+  },
+  {
+    "tradingDate": "21-Apr-2024",
+    "weekDay": "Sunday",
+    "description": "Shri Mahavir Jayanti",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 14
+  },
+  {
+    "tradingDate": "01-May-2024",
+    "weekDay": "Wednesday",
+    "description": "Maharashtra Day",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 15
+  },
+  {
+    "tradingDate": "17-Jun-2024",
+    "weekDay": "Monday",
+    "description": "Bakri Id",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 16
+  },
+  {
+    "tradingDate": "17-Jul-2024",
+    "weekDay": "Wednesday",
+    "description": "Muharram",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 17
+  },
+  {
+    "tradingDate": "15-Aug-2024",
+    "weekDay": "Thursday",
+    "description": "Independence Day",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 18
+  },
+  {
+    "tradingDate": "02-Oct-2024",
+    "weekDay": "Wednesday",
+    "description": "Mahatma Gandhi Jayanti",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 19
+  },
+  {
+    "tradingDate": "01-Nov-2024",
+    "weekDay": "Friday",
+    "description": "Diwali Laxmi Pujan",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 20
+  },
+  {
+    "tradingDate": "15-Nov-2024",
+    "weekDay": "Friday",
+    "description": "Gurunanak Jayanti",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 21
+  },
+  {
+    "tradingDate": "25-Dec-2024",
+    "weekDay": "Wednesday",
+    "description": "Christmas",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 22
+  },
+  {
     "tradingDate": "26-Jan-2025",
     "weekDay": "Sunday",
     "description": "Republic Day",

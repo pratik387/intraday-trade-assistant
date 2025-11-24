@@ -101,13 +101,13 @@ class SupportResistanceStructure(BaseStructure):
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect Support/Resistance-based structures in the market context."""
 
-        logger.debug(f"S/R: Starting detection for {context.symbol}")
+        logger.debug(f"SR_DETECT: Starting detection for {context.symbol}")
 
         try:
             # Extract S/R levels and context
             sr_info = self._extract_support_resistance_levels(context)
             if not sr_info:
-                logger.debug(f"S/R: {context.symbol} - Cannot extract S/R levels")
+                logger.debug(f"SR_DETECT: {context.symbol} - REJECTED: Cannot extract S/R levels")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
@@ -142,7 +142,10 @@ class SupportResistanceStructure(BaseStructure):
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No S/R setups detected"
 
-            logger.debug(f"S/R: {context.symbol} - Detection complete: {len(events)} events, quality: {max_quality:.2f}")
+            if structure_detected:
+                logger.debug(f"SR_DETECT: ✅ {context.symbol} - DETECTED: {len(events)} events, quality: {max_quality:.2f}")
+            else:
+                logger.debug(f"SR_DETECT: {context.symbol} - REJECTED: No S/R setups detected")
 
             return StructureAnalysis(
                 structure_detected=structure_detected,
@@ -165,8 +168,9 @@ class SupportResistanceStructure(BaseStructure):
 
         try:
             df = context.df_5m
+            logger.debug(f"SR_DETECT: {context.symbol} - Extracting S/R levels from {len(df)} bars")
             if len(df) < 20:  # Need sufficient data for S/R analysis
-                logger.debug(f"S/R: {context.symbol} - Insufficient data: {len(df)} bars")
+                logger.debug(f"SR_DETECT: {context.symbol} - REJECTED: Insufficient data ({len(df)} bars, need 20)")
                 return None
 
             current_price = float(context.current_price)
@@ -214,8 +218,8 @@ class SupportResistanceStructure(BaseStructure):
             support_strength = self._calculate_level_strength(df, nearest_support, support_touches)
             resistance_strength = self._calculate_level_strength(df, nearest_resistance, resistance_touches)
 
-            logger.debug(f"S/R: {context.symbol} - Support: {nearest_support}, Resistance: {nearest_resistance}")
-            logger.debug(f"S/R: {context.symbol} - Support touches: {support_touches}, Resistance touches: {resistance_touches}")
+            logger.debug(f"SR_DETECT: {context.symbol} - Support: {nearest_support}, Resistance: {nearest_resistance}")
+            logger.debug(f"SR_DETECT: {context.symbol} - Support distance: {support_distance_pct:.2f}% (touches={support_touches}), Resistance distance: {resistance_distance_pct:.2f}% (touches={resistance_touches})" if support_distance_pct and resistance_distance_pct else f"SR_DETECT: {context.symbol} - Support touches: {support_touches}, Resistance touches: {resistance_touches}")
 
             return SupportResistanceLevels(
                 support_levels=support_levels,
@@ -396,7 +400,7 @@ class SupportResistanceStructure(BaseStructure):
         quality_score = 0.0
 
         if not sr_info.nearest_support or sr_info.support_touches < self.min_touches:
-            logger.debug(f"S/R: {context.symbol} - No valid support for bounce: touches {sr_info.support_touches}")
+            logger.debug(f"SR_DETECT: {context.symbol} - Support bounce REJECTED: No valid support (touches={sr_info.support_touches}, need {self.min_touches})")
             return events, quality_score
 
         current_price = context.current_price
@@ -405,12 +409,12 @@ class SupportResistanceStructure(BaseStructure):
         # Check if price is near support (within tolerance)
         distance_pct = abs(current_price - support_level) / support_level * 100
         if distance_pct > self.bounce_tolerance_pct:
-            logger.debug(f"S/R: {context.symbol} - Price too far from support: {distance_pct:.2f}% > {self.bounce_tolerance_pct}%")
+            logger.debug(f"SR_DETECT: {context.symbol} - Support bounce REJECTED: Price too far from support ({distance_pct:.2f}% > {self.bounce_tolerance_pct}%)")
             return events, quality_score
 
         # Check if price is above support (bounce scenario)
         if current_price <= support_level:
-            logger.debug(f"S/R: {context.symbol} - Price below support, not bounce scenario")
+            logger.debug(f"SR_DETECT: {context.symbol} - Support bounce REJECTED: Price below support (not bounce scenario)")
             return events, quality_score
 
         # Check volume confirmation if required

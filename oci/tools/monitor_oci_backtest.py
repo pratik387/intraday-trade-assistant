@@ -13,6 +13,7 @@ import subprocess
 import json
 import time
 import sys
+from datetime import datetime
 
 
 def monitor_job(run_id):
@@ -25,7 +26,7 @@ def monitor_job(run_id):
     print(" Time    Running  Complete  Failed  Progress")
     print("━" * 60)
 
-    start_time = time.time()
+    start_time = None  # Will get from job metadata
     total_days = None
 
     while True:
@@ -39,6 +40,25 @@ def monitor_job(run_id):
             )
 
             job_status = json.loads(result.stdout)
+
+            # Get actual job start time from status or metadata (only once)
+            if start_time is None:
+                # Try status.startTime first (when job controller started processing)
+                start_timestamp = job_status.get('status', {}).get('startTime')
+
+                # Fallback to metadata.creationTimestamp (when job object was created)
+                if not start_timestamp:
+                    start_timestamp = job_status.get('metadata', {}).get('creationTimestamp')
+
+                if start_timestamp:
+                    # Parse ISO 8601 timestamp (e.g., "2024-10-27T15:42:30Z")
+                    job_start = datetime.strptime(start_timestamp.replace('Z', '+00:00').split('+')[0], '%Y-%m-%dT%H:%M:%S')
+                    start_time = job_start.timestamp()
+                    print(f"Job started at: {start_timestamp}")
+                else:
+                    # Fallback to now if no timestamp available
+                    start_time = time.time()
+                    print(f"Warning: Could not get job start time, using current time")
 
             # Get totals
             if total_days is None:

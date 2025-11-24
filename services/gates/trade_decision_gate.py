@@ -63,6 +63,10 @@ SetupType = Literal[
     "resistance_bounce_short",
     "orb_breakout_long",
     "orb_breakout_short",
+    "orb_breakdown_long",
+    "orb_breakdown_short",
+    "orb_pullback_long",
+    "orb_pullback_short",
     "vwap_mean_reversion_long",
     "vwap_mean_reversion_short",
     "volume_spike_reversal_long",
@@ -102,6 +106,10 @@ class SetupCandidate:
     setup_type: SetupType
     strength: float  # arbitrary score from detector (higher = better)
     reasons: List[str]
+    orh: Optional[float] = None  # Opening Range High from detector
+    orl: Optional[float] = None  # Opening Range Low from detector
+    entry_mode: Optional[str] = None  # NEW: "immediate", "retest", or "pending" for dual-mode entry
+    retest_zone: Optional[List[float]] = None  # NEW: [low, high] bounds for retest entry
 
 
 @dataclass(frozen=True)
@@ -193,16 +201,7 @@ def _safe_float(x, default: float = 0.0) -> float:
     except Exception:
         return default
 
-# Regime allow-list helper (strict by default; HCET can bypass)
-def _regime_allows(setup: str, regime: str) -> bool:
-    if regime in {"choppy", "range"}:
-        # keep chop tight: only allow orb_pullback_long; failure_fade_long only via HCET
-        return setup in {"orb_pullback_long"}
-    if regime == "trend_down":
-        return setup in {"gap_fill_short", "range_break_retest_short", "breakout_short"}
-    if regime == "trend_up":
-        return setup in {"breakout_long", "orb_pullback_long"}
-    return False
+# REMOVED: Hardcoded regime allowlist - now config-driven via TradeDecisionGate.regime_allowed_setups
 
 
 # ---------------------------- TradeDecisionGate --------------------------------
@@ -222,12 +221,17 @@ class TradeDecisionGate:
         news_spike_gate: NewsSpikeGate,
         market_sentiment_gate=None,
         quality_filters: Optional[dict] = None,
+        regime_allowed_setups: Optional[dict] = None,
     ) -> None:
         self.structure = structure_detector
         self.regime_gate = regime_gate
         self.event_gate = event_policy_gate
         self.news_gate = news_spike_gate
         self.sentiment_gate = market_sentiment_gate
+
+        # Store regime-allowed setups configuration
+        # Default to permissive (allow all) if not provided
+        self.regime_allowed_setups = regime_allowed_setups or {}
 
         # Setup sequencing tracker - Enhancement 3
         self.setup_history = defaultdict(list)  # symbol -> [(timestamp, setup_type, success)]
@@ -250,6 +254,51 @@ class TradeDecisionGate:
         ]
         # Add current setup (success will be determined later)
         self.setup_history[symbol].append((timestamp, setup_type, None))
+
+    def _regime_allows(self, setup: str, regime: str, current_time=None) -> bool:
+        """
+        Config-driven regime allowlist check with time-based exceptions.
+        Returns True if the setup is allowed in the given regime based on configuration.
+        If no config provided, defaults to allowing all setups (permissive).
+
+        Special case: ORB setups in chop regime before 10:30 are allowed (breakout from consolidation).
+        """
+        if not self.regime_allowed_setups:
+            # No config provided - allow all setups (permissive default)
+            return True
+
+        # Normalize regime names (config uses "chop", code may use "choppy" or "range")
+        regime_key = regime
+        if regime in {"choppy", "range"}:
+            regime_key = "chop"
+
+        # TIME-BASED EXCEPTION: ORB in chop regime before 10:30
+        # Professional ORB strategy: catch breakout FROM consolidation INTO trend (early session)
+        # This is the classic ORB setup - not a false breakout
+        if regime_key == "chop" and "orb" in setup.lower() and current_time is not None:
+            try:
+                import pandas as pd
+                from datetime import time as dt_time
+                ts = pd.to_datetime(current_time)
+                current_time_of_day = ts.time()
+                orb_cutoff = dt_time(10, 30)
+
+                if current_time_of_day <= orb_cutoff:
+                    # Allow ORB in chop before 10:30 (consolidation breakout window)
+                    logger.debug(f"ORB_REGIME_EXCEPTION: {setup} in {regime} allowed before 10:30 (time={current_time_of_day})")
+                    return True
+            except Exception as e:
+                logger.debug(f"ORB_REGIME_EXCEPTION: Failed to parse time for ORB exception: {e}")
+                # Continue to normal regime check on error
+
+        # Check if regime exists in config
+        if regime_key not in self.regime_allowed_setups:
+            # Unknown regime - default to allow
+            return True
+
+        # Check if setup is in the allowed list for this regime
+        allowed_setups = self.regime_allowed_setups[regime_key]
+        return setup in allowed_setups
 
     def _get_sequence_multiplier(self, symbol: str, current_setup: str) -> float:
         """
@@ -389,6 +438,28 @@ class TradeDecisionGate:
         except Exception:
             minute_of_day = None
 
+        # Check if we're in opening bell window (09:15-09:30)
+        opening_bell_config = self.quality_filters.get('opening_bell_override', {})
+        opening_bell_enabled = opening_bell_config.get('enabled', False)
+        in_opening_bell_window = False
+
+        if opening_bell_enabled and minute_of_day is not None:
+            def to_min(s: str, default_min: int) -> int:
+                try:
+                    if isinstance(s, str) and ':' in s:
+                        hh, mm = map(int, s.split(':'))
+                        return hh * 60 + mm
+                except Exception:
+                    pass
+                return default_min
+
+            opening_start = to_min(opening_bell_config.get('start_time', '09:15'), 555)  # 9:15 = 9*60+15 = 555
+            opening_end = to_min(opening_bell_config.get('end_time', '09:30'), 570)      # 9:30 = 9*60+30 = 570
+            in_opening_bell_window = opening_start <= minute_of_day <= opening_end
+
+            if in_opening_bell_window:
+                logger.debug(f"OPENING_BELL: {symbol} - In opening bell window ({opening_bell_config.get('start_time')}-{opening_bell_config.get('end_time')})")
+
         time_blocked = False
         if minute_of_day is not None:
             # Get time windows from config (defaults kept restrictive)
@@ -412,8 +483,13 @@ class TradeDecisionGate:
             in_afternoon = afternoon_start <= minute_of_day <= afternoon_end
 
             if not (in_morning or in_afternoon):
-                # mark as blocked for now; allow HCET to override later
-                time_blocked = True
+                # Opening bell override: bypass time block if in opening window
+                if in_opening_bell_window and opening_bell_config.get('bypass_time_window_filter', False):
+                    logger.debug(f"OPENING_BELL: {symbol} - Bypassing time window filter (outside normal hours but in opening bell)")
+                    time_blocked = False
+                else:
+                    # mark as blocked for now; allow HCET to override later
+                    time_blocked = True
 
         # Evidence-based pattern filters (momentum consolidation / range compression)
         pattern_filters_enabled = self.quality_filters.get('pattern_filters_enabled', True)
@@ -430,7 +506,13 @@ class TradeDecisionGate:
             # Momentum quality filter - Multi-factor validation for big movers
             # Professional approach: Allow strong momentum if confirmed by volume + VWAP proximity
             # Rejects overextended moves (buying tops) while allowing early-stage momentum
-            if self.quality_filters.get('momentum_consolidation_enabled', True) and len(df5m_tail) >= 3:
+            # OPENING BELL OVERRIDE: Bypass during opening window if configured
+            momentum_enabled = self.quality_filters.get('momentum_consolidation_enabled', True)
+            if in_opening_bell_window and opening_bell_config.get('bypass_momentum_consolidation', False):
+                logger.debug(f"OPENING_BELL: {symbol} - Bypassing momentum consolidation filter")
+                momentum_enabled = False
+
+            if momentum_enabled and len(df5m_tail) >= 3:
                 try:
                     close_3_bars_ago = df5m_tail["close"].iloc[-4] if len(df5m_tail) >= 4 else df5m_tail["close"].iloc[0]
                     current_close = df5m_tail["close"].iloc[-1]
@@ -482,7 +564,13 @@ class TradeDecisionGate:
                     pattern_reasons.append(f"momentum_consolidation_error:{e.__class__.__name__}")
 
             # Range compression
-            if self.quality_filters.get('range_compression_enabled', True) and len(df5m_tail) >= 20:
+            # OPENING BELL OVERRIDE: Bypass during opening window if configured
+            range_compression_enabled = self.quality_filters.get('range_compression_enabled', True)
+            if in_opening_bell_window and opening_bell_config.get('bypass_range_compression', False):
+                logger.debug(f"OPENING_BELL: {symbol} - Bypassing range compression filter")
+                range_compression_enabled = False
+
+            if range_compression_enabled and len(df5m_tail) >= 20:
                 try:
                     high = df5m_tail["high"]
                     low = df5m_tail["low"]
@@ -521,6 +609,40 @@ class TradeDecisionGate:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
             return GateDecision(accept=False, reasons=["no_structure_event"])
 
+        # NOTE: Global blacklist filtering is now done in MainDetector (before this gate)
+        # This ensures blacklists work for ALL execution paths (local and cloud)
+
+        # OPENING BELL FILTERING: Only allow specific setups during opening bell window
+        if in_opening_bell_window and opening_bell_enabled:
+            allowed_setups = opening_bell_config.get('allowed_setups', [])
+            if allowed_setups:
+                original_count = len(setups)
+                setups = [s for s in setups if s.setup_type in allowed_setups]
+                if len(setups) < original_count:
+                    filtered = original_count - len(setups)
+                    logger.debug(f"OPENING_BELL: {symbol} - Filtered {filtered} setup(s) not allowed during opening bell")
+
+                if not setups:
+                    logger.debug(f"OPENING_BELL: {symbol} - No allowed setups during opening bell window")
+                    return GateDecision(accept=False, reasons=["opening_bell:no_allowed_setups"])
+
+            # OPENING BELL VOLUME CONFIRMATION: Require 2.0x volume
+            if opening_bell_config.get('require_volume_confirmation', False) and df5m_tail is not None and len(df5m_tail) >= 5:
+                try:
+                    current_volume = df5m_tail["volume"].iloc[-1]
+                    avg_volume = df5m_tail["volume"].tail(20).mean() if len(df5m_tail) >= 20 else df5m_tail["volume"].mean()
+                    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+                    min_volume_ratio = opening_bell_config.get('min_volume_ratio', 2.0)
+
+                    if volume_ratio < min_volume_ratio:
+                        logger.debug(f"OPENING_BELL: {symbol} - Volume confirmation failed: {volume_ratio:.2f}x < {min_volume_ratio}x")
+                        return GateDecision(accept=False, reasons=[f"opening_bell:volume_too_low:{volume_ratio:.2f}x<{min_volume_ratio}x"])
+                    else:
+                        logger.debug(f"OPENING_BELL: {symbol} - Volume confirmed: {volume_ratio:.2f}x >= {min_volume_ratio}x (institutional participation)")
+                        reasons.append(f"opening_bell:volume_confirmed:{volume_ratio:.2f}x")
+                except Exception as e:
+                    logger.warning(f"OPENING_BELL: {symbol} - Volume confirmation error: {e}")
+
         # Priority-based structure selection (Professional approach)
         # During ORB window (9:30-10:30 AM), prioritize ORB structures over others
         # This matches institutional behavior: ORB is THE primary setup during opening session
@@ -540,7 +662,7 @@ class TradeDecisionGate:
                     # During ORB window, pick strongest ORB structure
                     orb_setups.sort(key=lambda s: s.strength, reverse=True)
                     best = orb_setups[0]
-                    logger.info(f"TRADE_GATE: ORB window active ({minute_of_day//60}:{minute_of_day%60:02d}), "
+                    logger.debug(f"TRADE_GATE: ORB window active ({minute_of_day//60}:{minute_of_day%60:02d}), "
                               f"prioritizing ORB setup: {best.setup_type} (strength={best.strength:.2f})")
                     reasons.append("orb_priority:active_window")
 
@@ -554,11 +676,6 @@ class TradeDecisionGate:
                            f"using strongest available: {best.setup_type} (strength={best.strength:.2f})")
 
         reasons.extend([f"structure:{r}" for r in best.reasons])
-
-        # Setup blacklist
-        blacklisted_setups = self.quality_filters.get('blacklist_setups', [])
-        if best.setup_type in blacklisted_setups:
-            return GateDecision(accept=False, reasons=[f"blacklisted_setup:{best.setup_type}"])
 
         # ---------------- REGIME (Phase 2: Multi-timeframe) ----------------
         df_for_regime = index_df5m if index_df5m is not None and not index_df5m.empty else df5m_tail
@@ -630,7 +747,7 @@ class TradeDecisionGate:
 
         # Check if HCET might be needed for bypasses
         insufficient_bars = (df5m_tail is None or len(df5m_tail) < 10)
-        regime_blocked = not _regime_allows(best.setup_type, regime)
+        regime_blocked = not self._regime_allows(best.setup_type, regime, current_time=now)
         time_blocked_check = time_blocked  # from earlier time window check
 
         if insufficient_bars or regime_blocked or time_blocked_check:
@@ -657,7 +774,7 @@ class TradeDecisionGate:
                 return GateDecision(accept=False, reasons=reasons)
 
         # Regime allow-list (strict) unless HCET
-        if not _regime_allows(best.setup_type, regime):
+        if not self._regime_allows(best.setup_type, regime, current_time=now):
             # fallback to your injected regime_gate.allow_setup if you want both
             # Priority 2: Get cap_segment for cap-aware strategy filtering
             cap_segment = "unknown"
@@ -836,6 +953,88 @@ class TradeDecisionGate:
                         reasons.append(f"entry_validation_momentum_pass:{momentum:.4f}>={momentum_threshold}")
             except Exception as e:
                 reasons.append(f"entry_validation_momentum_error:{e.__class__.__name__}")
+
+        # PHASE 2 & 3 FIX: Breakout quality filters (volume surge + momentum candle)
+        # Professional standard: Breakouts need volume confirmation and strong momentum candles
+        if best.setup_type and 'breakout' in best.setup_type.lower():
+            try:
+                # Determine if this is a SHORT breakout (stricter filters needed)
+                is_breakout_short = 'short' in best.setup_type.lower()
+
+                # Get strategy-specific thresholds from configuration
+                if is_breakout_short:
+                    volume_surge_min = self.quality_filters.get('breakout_volume_surge_min_short', 1.5)
+                    momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio_short', 2.0)
+                else:
+                    volume_surge_min = self.quality_filters.get('breakout_volume_surge_min', 1.2)
+                    momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio', 1.5)
+
+                # FILTER 1: Volume surge validation
+                # Professional standard: 1.2x average volume (20% above baseline), 1.5x for shorts
+                if df1m_tail is not None and len(df1m_tail) >= 5:
+                    # Use available data with minimum 5 bars
+                    # Lookback window: use last 4-20 bars depending on availability
+                    lookback = min(20, max(4, len(df1m_tail) - 1))
+
+                    if lookback >= 4:  # Minimum 4 bars for meaningful average
+                        # Calculate average volume over available bars (exclude current bar)
+                        # Use max(0, ...) to ensure we don't go negative
+                        start_idx = max(0, len(df1m_tail) - lookback - 1)
+                        end_idx = len(df1m_tail) - 1
+
+                        if start_idx < end_idx:
+                            avg_volume = df1m_tail["volume"].iloc[start_idx:end_idx].mean()
+                            current_volume = df1m_tail["volume"].iloc[-1]
+
+                            if avg_volume > 0:
+                                volume_ratio = current_volume / avg_volume
+
+                                if volume_ratio < volume_surge_min:
+                                    reasons.append(f"breakout_volume_surge_fail:{volume_ratio:.2f}x<{volume_surge_min}x_required(n={lookback})")
+                                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                                else:
+                                    reasons.append(f"breakout_volume_surge_pass:{volume_ratio:.2f}x>={volume_surge_min}x(n={end_idx-start_idx})")
+                            else:
+                                reasons.append("breakout_volume_surge_skip:avg_volume_zero")
+                        else:
+                            reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
+                    else:
+                        reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
+                else:
+                    reasons.append("breakout_volume_surge_skip:insufficient_data")
+
+                # FILTER 2: Momentum candle validation
+                # Professional standard: Breakout candle should be 2-3x larger than previous candles
+                if df1m_tail is not None and len(df1m_tail) >= 5:
+                    # Get last 5 candles (last 4 for average, current for comparison)
+                    last_5_bars = df1m_tail.tail(5)
+
+                    # Calculate candle sizes (high - low)
+                    candle_sizes = (last_5_bars["high"] - last_5_bars["low"]).values
+
+                    # Current candle size
+                    current_candle_size = candle_sizes[-1]
+
+                    # Average of previous 4 candles
+                    avg_prev_candle_size = candle_sizes[:-1].mean()
+
+                    if avg_prev_candle_size > 0:
+                        candle_ratio = current_candle_size / avg_prev_candle_size
+
+                        if candle_ratio < momentum_candle_min_ratio:
+                            reasons.append(f"breakout_momentum_candle_fail:{candle_ratio:.2f}x<{momentum_candle_min_ratio}x_required")
+                            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+                        else:
+                            reasons.append(f"breakout_momentum_candle_pass:{candle_ratio:.2f}x>={momentum_candle_min_ratio}x")
+                    else:
+                        reasons.append("breakout_momentum_candle_skip:avg_candle_size_zero")
+                else:
+                    reasons.append("breakout_momentum_candle_skip:insufficient_data")
+
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc().split('\n')[-3] if traceback.format_exc() else str(e)
+                reasons.append(f"breakout_quality_filter_error:{e.__class__.__name__}:{error_detail[:50]}")
 
         # Price action directionality
         if entry_validation.get('price_action_validation', False):

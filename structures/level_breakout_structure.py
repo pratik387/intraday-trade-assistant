@@ -52,7 +52,19 @@ class LevelBreakoutStructure(BaseStructure):
         self.confidence_strong_breakout = config["confidence_strong_breakout"]
         self.confidence_weak_breakout = config["confidence_weak_breakout"]
 
-        logger.debug(f"LEVEL_BREAKOUT: Initialized with k_atr: {self.k_atr}, hold_bars: {self.hold_bars}, vol_z_required: {self.vol_z_required}")
+        # NEW: Dual-mode configuration (aggressive + retest)
+        # All configuration must come from config file - no defaults
+        self.entry_mode = config["entry_mode"]  # "immediate", "retest", or "pending" (legacy)
+        self.aggressive_min_volume_z = config["aggressive_min_volume_z"]
+        self.aggressive_min_conviction = config["aggressive_min_conviction"]
+        self.retest_entry_zone_width_atr = config["retest_entry_zone_width_atr"]
+        self.retest_timeout_minutes = config["retest_timeout_minutes"]
+        self.allow_both_modes = config["allow_both_modes"]
+
+        # Track traded breakouts to prevent double exposure
+        self.traded_breakouts_today = set()
+
+        logger.debug(f"LEVEL_BREAKOUT: Initialized with DUAL-MODE CONFIG: entry_mode={self.entry_mode}, aggressive_vol_z={self.aggressive_min_volume_z}, aggressive_conviction={self.aggressive_min_conviction}, allow_both_modes={self.allow_both_modes}, retest_zone_width={self.retest_entry_zone_width_atr}ATR")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -217,6 +229,13 @@ class LevelBreakoutStructure(BaseStructure):
             level_name=level_name
         )
 
+        # NEW: Determine entry mode based on configuration and breakout quality
+        entry_mode = self._determine_entry_mode(vol_z_current, confidence, context.symbol, level_name, context.timestamp)
+
+        # Skip if already traded or doesn't meet criteria
+        if entry_mode is None:
+            return None
+
         event = StructureEvent(
             symbol=context.symbol,
             timestamp=context.timestamp,
@@ -228,12 +247,15 @@ class LevelBreakoutStructure(BaseStructure):
                 "level_name": level_name,
                 "breakout_size_atr": breakout_size / atr,
                 "volume_z": vol_z_current,
-                "smc_strength": final_strength
+                "smc_strength": final_strength,
+                "entry_mode": entry_mode,  # NEW: Mark entry mode
+                "retest_zone": [level_value - (self.retest_entry_zone_width_atr * atr),
+                               level_value + (self.retest_entry_zone_width_atr * atr)] if entry_mode == "retest" else None
             },
             price=current_price
         )
 
-        logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Long breakout {level_name} at {current_price:.2f}, strength: {final_strength:.2f}")
+        logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Long breakout {level_name} at {current_price:.2f}, strength: {final_strength:.2f}, entry_mode: {entry_mode}")
         return event
 
     def _detect_short_breakdown(self, context: MarketContext, df: pd.DataFrame,
@@ -361,12 +383,20 @@ class LevelBreakoutStructure(BaseStructure):
         return vol_z.fillna(0)
 
     def _calculate_atr(self, df: pd.DataFrame, window: int = 14) -> float:
-        """Calculate ATR using percentage returns as proxy."""
+        """Calculate ATR using percentage returns, converted to absolute price units."""
         try:
-            atr = df['close'].pct_change().abs().rolling(window, min_periods=5).mean().iloc[-1]
-            return max(1e-9, float(atr))
+            # Calculate percentage-based ATR
+            atr_pct = df['close'].pct_change().abs().rolling(window, min_periods=5).mean().iloc[-1]
+
+            # Convert to absolute price units using current price
+            current_price = df['close'].iloc[-1]
+            atr_absolute = atr_pct * current_price
+
+            return max(0.01, float(atr_absolute))  # Minimum 0.01 points
         except:
-            return 0.01  # 1% fallback
+            # Fallback: 1% of current price
+            current_price = df['close'].iloc[-1] if len(df) > 0 else 100.0
+            return max(0.01, current_price * 0.01)
 
     def _get_time_adjusted_vol_threshold(self, timestamp: pd.Timestamp) -> float:
         """Apply time-based adjustments to volume threshold."""
@@ -814,3 +844,44 @@ class LevelBreakoutStructure(BaseStructure):
 
         except:
             return True, ""
+
+    def _determine_entry_mode(self, vol_z: float, confidence: float, symbol: str, level_name: str, timestamp: datetime) -> str:
+        """
+        Determine entry mode (immediate vs retest) based on configuration and breakout quality.
+
+        Returns:
+            "immediate" - Enter immediately on detection (aggressive mode)
+            "retest" - Wait for pullback to level (retest mode)
+            "pending" - Legacy mode (tight entry zone around current price)
+        """
+        # Check if this breakout was already traded today
+        breakout_key = f"{symbol}_{level_name}_{timestamp.date()}"
+
+        if breakout_key in self.traded_breakouts_today:
+            logger.debug(f"LEVEL_BREAKOUT: {symbol} - {level_name} already traded today, skipping")
+            return None  # Signal to skip this detection
+
+        # If specific mode is configured, use it
+        if self.entry_mode == "immediate":
+            # Aggressive mode: Check if meets high-conviction criteria
+            if vol_z >= self.aggressive_min_volume_z and confidence >= self.aggressive_min_conviction:
+                logger.debug(f"LEVEL_BREAKOUT: {symbol} - AGGRESSIVE mode (vol_z={vol_z:.2f}, conf={confidence:.2f})")
+                self.traded_breakouts_today.add(breakout_key)
+                return "immediate"
+            elif self.allow_both_modes:
+                # Doesn't meet aggressive criteria, try retest mode
+                logger.debug(f"LEVEL_BREAKOUT: {symbol} - Failed aggressive criteria, falling back to RETEST mode")
+                return "retest"
+            else:
+                # Doesn't meet criteria and no fallback allowed
+                logger.debug(f"LEVEL_BREAKOUT: {symbol} - Failed aggressive criteria (vol_z={vol_z:.2f}<{self.aggressive_min_volume_z}, conf={confidence:.2f}<{self.aggressive_min_conviction})")
+                return None
+
+        elif self.entry_mode == "retest":
+            # Retest mode: Always wait for pullback
+            logger.debug(f"LEVEL_BREAKOUT: {symbol} - RETEST mode (will wait for pullback)")
+            return "retest"
+
+        else:
+            # Legacy pending mode (current behavior)
+            return "pending"

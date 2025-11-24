@@ -260,24 +260,8 @@ class ORBStructure(BaseStructure):
                 )
                 return None
 
-            # Check timing validity
-            if not self.validate_timing(market_context.timestamp):
-                rejection_reason = f"Invalid timing for ORB at {market_context.timestamp.time()}"
-
-                # Log structured rejection for screening stage
-                screener_logger = get_screener_logger()
-                screener_logger.log_reject(
-                    symbol,
-                    rejection_reason,
-                    timestamp=market_context.timestamp.isoformat(),
-                    structure_type="orb",
-                    side="long",
-                    price=current_price,
-                    orh=orh,
-                    current_time=market_context.timestamp.time().isoformat()
-                )
-                return None
-
+            # Timing validation is now done in should_detect_at_time() before detection
+            # No need to check here as detector is blacklisted after cutoff
             logger.debug(f"ORB: {symbol} - Long strategy approved: Price {current_price:.2f} > ORH {orh:.2f}")
 
             # Calculate risk parameters
@@ -350,24 +334,8 @@ class ORBStructure(BaseStructure):
                 )
                 return None
 
-            # Check timing validity
-            if not self.validate_timing(market_context.timestamp):
-                rejection_reason = f"Invalid timing for ORB at {market_context.timestamp.time()}"
-
-                # Log structured rejection for screening stage
-                screener_logger = get_screener_logger()
-                screener_logger.log_reject(
-                    symbol,
-                    rejection_reason,
-                    timestamp=market_context.timestamp.isoformat(),
-                    structure_type="orb",
-                    side="short",
-                    price=current_price,
-                    orl=orl,
-                    current_time=market_context.timestamp.time().isoformat()
-                )
-                return None
-
+            # Timing validation is now done in should_detect_at_time() before detection
+            # No need to check here as detector is blacklisted after cutoff
             logger.debug(f"ORB: {symbol} - Short strategy approved: Price {current_price:.2f} < ORL {orl:.2f}")
 
             # Calculate risk parameters
@@ -508,6 +476,15 @@ class ORBStructure(BaseStructure):
         except Exception:
             return False
 
+    def should_detect_at_time(self, current_time: pd.Timestamp) -> bool:
+        """
+        Override: ORB detection should only happen within the ORB time window.
+
+        This prevents wasteful detection and planning for ORB setups after 10:30.
+        Called by MainDetector BEFORE running detect() to blacklist expired detectors.
+        """
+        return self.validate_timing(current_time)
+
     # Private helper methods
 
     def _check_volume_confirmation(self, df: pd.DataFrame, event_type: str) -> bool:
@@ -539,45 +516,67 @@ class ORBStructure(BaseStructure):
             return False
 
     def _detect_pullback_opportunities(self, market_context: MarketContext) -> List[StructureEvent]:
-        """Detect ORB pullback opportunities."""
+        """Detect ORB pullback opportunities after breakout."""
         events = []
 
         try:
             orh = market_context.orh
             orl = market_context.orl
             current_price = market_context.current_price
+            df = market_context.df_5m
 
-            if orh is None or orl is None:
+            if orh is None or orl is None or df is None or len(df) < 5:
                 return events
 
-            # Check for pullback to ORH after breakout
-            if current_price > orh:
-                pullback_level = orh + (current_price - orh) * self.pullback_zones["shallow"]
-                if orh <= current_price <= pullback_level:
+            # Get recent price action to detect breakout → pullback pattern
+            recent_bars = df.tail(10)
+
+            # BULLISH PULLBACK: Detect if price broke ABOVE ORH, then pulled back
+            # Look for: previous high > ORH (breakout occurred) AND current price pulled back to retracement zone
+            recent_high = recent_bars['high'].max()
+
+            if recent_high > orh:  # Breakout occurred in recent bars
+                # Calculate pullback zone: from ORH to the high that broke out
+                breakout_move = recent_high - orh
+                shallow_pullback = orh + (breakout_move * (1 - self.pullback_zones["shallow"]))
+                deep_pullback = orh + (breakout_move * (1 - self.pullback_zones["deep"]))
+
+                # Check if current price is IN the pullback zone (between shallow and deep retracement)
+                # AND price has actually pulled back (current < recent_high)
+                if current_price < recent_high and deep_pullback <= current_price <= shallow_pullback:
                     event = StructureEvent(
                         symbol=market_context.symbol,
                         timestamp=market_context.timestamp,
                         structure_type="orb_pullback_long",
                         side="long",
                         confidence=self._calculate_institutional_strength(market_context, 0.0, True, "long", market_context.orh or 0, market_context.orl or 0),
-                        levels={"orh": orh, "pullback_level": pullback_level},
-                        context={"pullback_type": "shallow"},
+                        levels={"orh": orh, "recent_high": recent_high, "pullback_zone_top": shallow_pullback, "pullback_zone_bottom": deep_pullback},
+                        context={"pullback_type": "shallow_to_deep", "breakout_move_pct": (breakout_move / orh) * 100},
                         price=current_price
                     )
                     events.append(event)
 
-            # Check for pullback to ORL after breakdown
-            elif current_price < orl:
-                pullback_level = orl - (orl - current_price) * self.pullback_zones["shallow"]
-                if pullback_level <= current_price <= orl:
+            # BEARISH PULLBACK: Detect if price broke BELOW ORL, then pulled back
+            # Look for: previous low < ORL (breakdown occurred) AND current price pulled back to retracement zone
+            recent_low = recent_bars['low'].min()
+
+            if recent_low < orl:  # Breakdown occurred in recent bars
+                # Calculate pullback zone: from ORL to the low that broke down
+                breakdown_move = orl - recent_low
+                shallow_pullback = orl - (breakdown_move * (1 - self.pullback_zones["shallow"]))
+                deep_pullback = orl - (breakdown_move * (1 - self.pullback_zones["deep"]))
+
+                # Check if current price is IN the pullback zone (between shallow and deep retracement)
+                # AND price has actually pulled back (current > recent_low)
+                if current_price > recent_low and shallow_pullback <= current_price <= deep_pullback:
                     event = StructureEvent(
                         symbol=market_context.symbol,
                         timestamp=market_context.timestamp,
                         structure_type="orb_pullback_short",
                         side="short",
                         confidence=self._calculate_institutional_strength(market_context, 0.0, True, "short", market_context.orh or 0, market_context.orl or 0),
-                        levels={"orl": orl, "pullback_level": pullback_level},
-                        context={"pullback_type": "shallow"},
+                        levels={"orl": orl, "recent_low": recent_low, "pullback_zone_top": deep_pullback, "pullback_zone_bottom": shallow_pullback},
+                        context={"pullback_type": "shallow_to_deep", "breakdown_move_pct": (breakdown_move / orl) * 100},
                         price=current_price
                     )
                     events.append(event)
