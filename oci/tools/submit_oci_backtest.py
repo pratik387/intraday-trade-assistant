@@ -38,12 +38,16 @@ class OCIBacktestSubmitter:
         self.config = oci.config.from_file()
         self.namespace = self._get_namespace()
         self.os_client = ObjectStorageClient(self.config)
+        self.container_engine_client = oci.container_engine.ContainerEngineClient(self.config)
         self.region = self.config['region']
 
         # Bucket names
         self.code_bucket = 'backtest-code'
         self.cache_bucket = 'backtest-cache'
         self.results_bucket = 'backtest-results'
+
+        # Node pool configuration
+        self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaa4nfxmwrow3ap5dbrn6uypwvn6gzvpponpolaj3mg5nf6y3fdcwpq"
 
         # Project root (oci/tools/submit.py -> parent.parent.parent = project root)
         self.root = Path(__file__).parent.parent.parent
@@ -389,7 +393,57 @@ class OCIBacktestSubmitter:
         print()
         print("━" * 60)
 
-    def run(self, start_date, end_date, description=None, no_wait=False, max_parallel=None):
+    def scale_up_nodepool(self, num_nodes):
+        """
+        Scale up the node pool to the specified number of nodes.
+
+        Args:
+            num_nodes: Number of nodes to scale to
+
+        Returns:
+            True if successful, False otherwise
+        """
+        print()
+        print("━" * 60)
+        print(f"Scaling Up Node Pool to {num_nodes} nodes")
+        print("━" * 60)
+        print()
+
+        try:
+            print(f"Node Pool ID: {self.node_pool_id}")
+            print(f"Setting size to {num_nodes}...")
+            print()
+
+            update_details = oci.container_engine.models.UpdateNodePoolDetails(
+                node_config_details=oci.container_engine.models.UpdateNodePoolNodeConfigDetails(
+                    size=num_nodes
+                )
+            )
+
+            self.container_engine_client.update_node_pool(
+                node_pool_id=self.node_pool_id,
+                update_node_pool_details=update_details
+            )
+
+            print(f"✅ Node pool scaling initiated to {num_nodes} nodes")
+            print()
+            print("⏳ Nodes will take ~2-3 minutes to become ready")
+            print("   Job will start once nodes are available")
+            print()
+            print("━" * 60)
+
+            return True
+
+        except Exception as e:
+            print(f"❌ Failed to scale up node pool: {e}")
+            print()
+            print("You can scale up manually with:")
+            print(f"  oci ce node-pool update --node-pool-id {self.node_pool_id} --size {num_nodes} --force")
+            print()
+            print("━" * 60)
+            return False
+
+    def run(self, start_date, end_date, description=None, no_wait=False, max_parallel=None, num_nodes=None):
         """Main workflow"""
         # Generate run ID (use hyphens for Kubernetes DNS compliance)
         run_id = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -399,6 +453,12 @@ class OCIBacktestSubmitter:
 
         # Print summary
         self.print_summary(run_id, start_date, end_date, len(dates), description)
+
+        # Scale up node pool if requested
+        if num_nodes is not None:
+            if not self.scale_up_nodepool(num_nodes):
+                print("⚠️  Node pool scaling failed, but continuing anyway...")
+                print()
 
         # Package code
         tarball_path = self.package_code(run_id)
@@ -443,7 +503,18 @@ class OCIBacktestSubmitter:
 def main():
     parser = argparse.ArgumentParser(
         description='Submit parallel backtest to Oracle Cloud Kubernetes',
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic submission with auto node scaling
+  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4
+
+  # Without node scaling (assumes nodes already running)
+  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30
+
+  # With custom parallelism limit
+  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --max-parallel 50
+        """
     )
 
     parser.add_argument('--start', required=True, help='Start date (YYYY-MM-DD)')
@@ -452,6 +523,9 @@ def main():
     parser.add_argument('--no-wait', action='store_true', help='Submit and exit without waiting')
     parser.add_argument('--max-parallel', type=int, default=None,
                         help='Max parallel pods (default: unlimited). Use 50 for 100 OCPU limit.')
+    parser.add_argument('--nodes', type=int, default=None,
+                        help='Number of nodes to scale node pool to before starting (e.g., 4). '
+                             'If not specified, assumes nodes are already running.')
 
     args = parser.parse_args()
 
@@ -461,7 +535,8 @@ def main():
         end_date=args.end,
         description=args.description,
         no_wait=args.no_wait,
-        max_parallel=args.max_parallel
+        max_parallel=args.max_parallel,
+        num_nodes=args.nodes
     )
 
 

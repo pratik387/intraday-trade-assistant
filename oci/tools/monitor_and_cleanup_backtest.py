@@ -58,6 +58,9 @@ def monitor_job(run_id):
     print(f"Run ID: {run_id}")
     print("=" * 80)
     print()
+    print("Note: kubectl connection may timeout after ~1 hour")
+    print(f"   For long jobs, use: python oci/tools/check_job_status.py {run_id} --watch")
+    print()
     print(" Time    Running  Complete  Failed  Progress")
     print("━" * 60)
 
@@ -130,8 +133,11 @@ def monitor_job(run_id):
 
         except KeyboardInterrupt:
             print("\n\n⚠️  Monitoring interrupted (job still running)")
-            print(f"Resume: python oci/tools/monitor_and_cleanup_backtest.py {run_id}")
-            return False
+            print(f"\nResume monitoring:")
+            print(f"  python oci/tools/monitor_and_cleanup_backtest.py {run_id}")
+            print(f"\nOr download manually when job completes:")
+            print(f"  python oci/tools/cleanup_and_download_backtest.py {run_id}")
+            sys.exit(0)
 
         except json.JSONDecodeError:
             print(f"\n⚠️  Invalid JSON response, retrying...")
@@ -248,7 +254,8 @@ Examples:
     success = monitor_job(args.run_id)
 
     if not success:
-        print("❌ Job did not complete successfully")
+        # monitor_job already printed appropriate message (interrupted or failed)
+        # Just exit without additional error message
         sys.exit(1)
 
     # Step 2: Run cleanup (unless --monitor-only)

@@ -95,7 +95,9 @@ class BacktestCleanupAutomation:
             print("Setting size to 0...")
 
             update_details = oci.container_engine.models.UpdateNodePoolDetails(
-                size=0
+                node_config_details=oci.container_engine.models.UpdateNodePoolNodeConfigDetails(
+                    size=0
+                )
             )
 
             self.container_engine_client.update_node_pool(

@@ -298,7 +298,9 @@ class TradeDecisionGate:
 
         # Check if setup is in the allowed list for this regime
         allowed_setups = self.regime_allowed_setups[regime_key]
-        return setup in allowed_setups
+        is_allowed = setup in allowed_setups
+
+        return is_allowed
 
     def _get_sequence_multiplier(self, symbol: str, current_setup: str) -> float:
         """

@@ -148,6 +148,14 @@ class ExitExecutor:
         self.trail_time_tighten = str(cfg.get("exit_trail_time_tighten", "14:30"))
         self.trail_atr_mult_late = float(cfg.get("exit_trail_atr_mult_late", 1.5))
 
+        # Time-based SL widening (Pro Trader Standard - reduces morning whipsaw)
+        self.sl_time_widening_enabled = bool(cfg["sl_time_widening_enabled"])
+        self.sl_time_widening_after_minutes = float(cfg["sl_time_widening_after_minutes"])
+        self.sl_time_widening_atr_add = float(cfg["sl_time_widening_atr_add"])
+        self.sl_time_widening_max_r_from_entry = float(cfg["sl_time_widening_max_r_from_entry"])
+        self.sl_time_widening_second_after_minutes = float(cfg["sl_time_widening_second_after_minutes"])
+        self.sl_time_widening_second_atr_add = float(cfg["sl_time_widening_second_atr_add"])
+
         # execution params
         self.exec_product = str(cfg.get("exec_product", "MIS")).upper()
         self.exec_variety = str(cfg.get("exec_variety", "regular")).lower()
@@ -320,6 +328,9 @@ class ExitExecutor:
 
                         plan_sl = new_plan_sl
 
+                # Apply time-based SL widening (Pro Trader Standard - reduces morning whipsaw)
+                plan_sl = self._apply_time_based_sl_widening(sym, pos, plan_sl, float(px), ts)
+
                 # Get state early to check if T1/T2 were already hit (for better exit reason labeling)
                 st = pos.plan.get("_state") or {}
                 t1_done = bool(st.get("t1_done", False))
@@ -464,6 +475,120 @@ class ExitExecutor:
             return float(sl) if sl is not None else float("nan")
         except Exception:
             return float("nan")
+
+    def _apply_time_based_sl_widening(self, sym: str, pos: Position, plan_sl: float, current_price: float, ts: pd.Timestamp) -> float:
+        """
+        Apply time-based SL widening to avoid morning volatility whipsaw.
+
+        Pro trader standard: After 30-60 minutes in trade, if price is within 0.5R of entry,
+        widen SL by 0.3-0.5 ATR to give trade room to work.
+
+        Returns: Widened SL price (or original if widening not applicable)
+        """
+        if not self.sl_time_widening_enabled:
+            return plan_sl
+
+        if math.isnan(plan_sl):
+            return plan_sl
+
+        # Get entry timestamp
+        entry_ts_raw = pos.plan.get("entry_ts") or pos.plan.get("entry_epoch_ms")
+        if not entry_ts_raw:
+            return plan_sl
+
+        try:
+            if isinstance(entry_ts_raw, (int, float)) and entry_ts_raw > 1e10:
+                entry_ts = pd.Timestamp(entry_ts_raw, unit='ms')
+            else:
+                entry_ts = pd.Timestamp(entry_ts_raw)
+        except Exception:
+            return plan_sl
+
+        # Calculate time in trade
+        try:
+            time_in_trade_minutes = (ts - entry_ts).total_seconds() / 60.0
+        except Exception:
+            return plan_sl
+
+        # Get ATR for widening calculation
+        atr_cached = float(pos.plan.get("indicators", {}).get("atr", float("nan")))
+        if math.isnan(atr_cached) or atr_cached <= 0:
+            return plan_sl
+
+        # Calculate current R from entry
+        entry_price = pos.avg_price
+        side = pos.side.upper()
+        risk = abs(entry_price - plan_sl)
+        if risk <= 0:
+            return plan_sl
+
+        if side == "BUY":
+            current_r = (current_price - entry_price) / risk
+        else:
+            current_r = (entry_price - current_price) / risk
+
+        # Check state to avoid re-widening
+        st = pos.plan.get("_state") or {}
+        first_widening_done = st.get("sl_time_widening_1_done", False)
+        second_widening_done = st.get("sl_time_widening_2_done", False)
+
+        widened_sl = plan_sl
+
+        # First widening: after 30 minutes (configurable)
+        if not first_widening_done and time_in_trade_minutes >= self.sl_time_widening_after_minutes:
+            # Only widen if trade is within max_r from entry
+            if abs(current_r) <= self.sl_time_widening_max_r_from_entry:
+                if side == "BUY":
+                    widened_sl = plan_sl - (self.sl_time_widening_atr_add * atr_cached)
+                else:
+                    widened_sl = plan_sl + (self.sl_time_widening_atr_add * atr_cached)
+
+                # Update plan with widened SL
+                if isinstance(pos.plan.get("stop"), dict):
+                    pos.plan["stop"]["hard"] = widened_sl
+                pos.plan["hard_sl"] = widened_sl
+
+                # Mark first widening done
+                st["sl_time_widening_1_done"] = True
+                st["sl_time_widening_1_at"] = str(ts)
+                pos.plan["_state"] = st
+
+                logger.info(
+                    f"SL_TIME_WIDENING_1 | {sym} | {side} | "
+                    f"Time_In_Trade: {time_in_trade_minutes:.1f}min | Current_R: {current_r:.2f} | "
+                    f"Original_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
+                    f"ATR_Add: {self.sl_time_widening_atr_add * atr_cached:.2f}"
+                )
+                return widened_sl
+
+        # Second widening: after 60 minutes (configurable)
+        if first_widening_done and not second_widening_done and time_in_trade_minutes >= self.sl_time_widening_second_after_minutes:
+            # Only widen if trade is within max_r from entry
+            if abs(current_r) <= self.sl_time_widening_max_r_from_entry:
+                if side == "BUY":
+                    widened_sl = plan_sl - (self.sl_time_widening_second_atr_add * atr_cached)
+                else:
+                    widened_sl = plan_sl + (self.sl_time_widening_second_atr_add * atr_cached)
+
+                # Update plan with widened SL
+                if isinstance(pos.plan.get("stop"), dict):
+                    pos.plan["stop"]["hard"] = widened_sl
+                pos.plan["hard_sl"] = widened_sl
+
+                # Mark second widening done
+                st["sl_time_widening_2_done"] = True
+                st["sl_time_widening_2_at"] = str(ts)
+                pos.plan["_state"] = st
+
+                logger.info(
+                    f"SL_TIME_WIDENING_2 | {sym} | {side} | "
+                    f"Time_In_Trade: {time_in_trade_minutes:.1f}min | Current_R: {current_r:.2f} | "
+                    f"Previous_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
+                    f"ATR_Add: {self.sl_time_widening_second_atr_add * atr_cached:.2f}"
+                )
+                return widened_sl
+
+        return plan_sl
 
     def _breach_sl(self, side: str, price: float, sl: float) -> bool:
         if math.isnan(sl) or math.isnan(price):
