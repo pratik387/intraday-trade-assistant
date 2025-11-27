@@ -39,7 +39,7 @@ from .event_policy_gate import EventPolicyGate
 from .news_spike_gate import NewsSpikeGate
 from .market_sentiment_gate import MarketSentimentGate
 from services.features import compute_hcet_features
-from services.indicators.adx import calculate_rsi
+from services.indicators.indicators import calculate_rsi
 from collections import defaultdict
 from datetime import datetime, timedelta
 from config.logging_config import get_agent_logger

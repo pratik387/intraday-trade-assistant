@@ -135,7 +135,7 @@ class MarketRegimeGate:
         # Use centralized ADX calculation to avoid duplication across codebase
         adx_period = 14
         if len(df5) >= adx_period + 1:
-            from services.indicators.adx import calculate_adx_with_di
+            from services.indicators.indicators import calculate_adx_with_di
 
             # Calculate ADX with directional indicators (Wilder's smoothing)
             adx, plus_di, minus_di = calculate_adx_with_di(df5, adx_period)

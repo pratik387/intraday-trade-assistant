@@ -95,7 +95,7 @@ class DailyRegimeDetector:
 
             # Calculate weekly ADX from daily bars (5-day window = 1 trading week)
             # Use centralized ADX calculation
-            from services.indicators.adx import calculate_adx
+            from services.indicators.indicators import calculate_adx
             adx = calculate_adx(df, period=14)
             current_adx = float(adx.iloc[-1]) if len(adx) > 0 and pd.notna(adx.iloc[-1]) else 15.0
 

@@ -386,8 +386,8 @@
   "_comment_breakout_mult": "Breakout strategies: 0.25 ATR (3x wider for momentum). NOTE: Immediate execution enabled, zone used for fallback only.",
   "planner_entry_zone_fade_mult": 0.08,
   "_comment_fade_mult": "Failure fade strategies: 0.08 ATR (proven optimal with 35% trigger rate)",
-  "planner_entry_zone_default_mult": 0.25,
-  "_comment_default_mult": "Other strategies: 0.25 ATR (widened from 0.15 - analysis showed 0.15 caused 2.7% trigger rate for resistance_bounce vs 27% for ORB with 0.25)",
+  "planner_entry_zone_default_mult": 0.15,
+  "_comment_default_mult": "Other strategies: 0.15 ATR (reverted from 0.25 - wider zones caused T1+ rate drop from 26% to 21% and avg T1+ PnL crash from Rs.684 to Rs.136)",
   "planner_vwap_reclaim_min_bars_above": 3,
 
   "_comment_breakout_execution": "PHASE 1 FIX: Breakout immediate execution (professional standard)",

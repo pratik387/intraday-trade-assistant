@@ -29,10 +29,11 @@ from typing import Dict, Any, Optional, List, Tuple, Union
 
 from config.logging_config import get_agent_logger, get_planning_logger
 from config.filters_setup import load_filters
+from config.setup_categories import get_category, SetupCategory
 from utils.time_util import ensure_naive_ist_index
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 from services.gates.trade_decision_gate import SetupCandidate
-from services.indicators.adx import calculate_ema, calculate_rsi, calculate_macd, calculate_adx, calculate_atr
+from services.indicators.indicators import calculate_ema, calculate_rsi, calculate_macd, calculate_adx, calculate_atr
 from utils.level_utils import get_previous_day_levels
 import datetime
 
@@ -1148,63 +1149,113 @@ def generate_trade_plan(
         # Log target levels for verification (Option B fix)
         logger.info(f"PLANNER_TARGETS: {symbol} entry={entry_ref_price:.2f} risk={rps:.2f} | T1={t1_feasible:.2f} ({t1_rr_eff:.2f}R) T2={t2_feasible:.2f} ({t2_rr_eff:.2f}R) | mm={measured_move:.2f} cap1={cap1:.2f} cap2={cap2:.2f}")
 
-        # Calculate quality metric - DIFFERENT for breakouts vs fades
-        # INSTITUTIONAL FIX (exit-opt-004-phase2c): Momentum-based metric for breakouts
-        is_breakout_strategy = strat["name"] in {
-            "breakout_long", "breakout_short",
-            "orb_breakout_long", "orb_breakout_short",
-            "flag_continuation_long", "flag_continuation_short"
-        }
+        # Calculate quality metric - CATEGORY-BASED approach
+        # Uses setup_categories.py registry for consistent category mapping
+        setup_category = get_category(strat["name"])
 
-        if is_breakout_strategy:
-            # MOMENTUM QUALITY for breakouts: volume * breakout_strength / risk
-            # This measures STRENGTH of the break, not distance to arbitrary levels
+        # Get common indicators used across categories
+        vol_ratio = float(sess["vol_ratio"].iloc[-1]) if "vol_ratio" in sess.columns and not np.isnan(sess["vol_ratio"].iloc[-1]) else 1.0
+        vol_ratio = max(vol_ratio, 0.5)  # Floor at 0.5 to avoid division issues
+        current_adx = float(sess["adx"].iloc[-1]) if "adx" in sess.columns and not pd.isna(sess["adx"].iloc[-1]) else 20.0
+        vwap_val = float(sess["vwap"].iloc[-1]) if "vwap" in sess.columns and not pd.isna(sess["vwap"].iloc[-1]) else current_close
 
-            # Get volume confirmation
-            vol_ratio = float(sess["vol_ratio"].iloc[-1]) if "vol_ratio" in sess.columns and not np.isnan(sess["vol_ratio"].iloc[-1]) else 1.0
-            vol_ratio = max(vol_ratio, 0.5)  # Floor at 0.5 to avoid division issues
-
-            # Calculate breakout strength (how far beyond the level)
+        if setup_category == SetupCategory.BREAKOUT:
+            # BREAKOUT: Momentum-based quality = volume * breakout_strength / risk
+            # Measures STRENGTH of the break, not distance to arbitrary levels
             if strat["bias"] == "long":
                 breakout_distance = max(current_close - orh, 0)  # Distance above ORH
-                # Normalize by ATR (large ATR stocks naturally have larger breakout distances)
                 breakout_strength = breakout_distance / max(atr, 1e-6)
             elif strat["bias"] == "short":
                 breakout_distance = max(orl - current_close, 0)  # Distance below ORL
                 breakout_strength = breakout_distance / max(atr, 1e-6)
             else:
+                breakout_distance = 0.0
                 breakout_strength = 0.0
 
-            # Structural R:R = volume * breakout_strength / risk
-            # Higher volume + stronger break + tighter stop = higher quality
-            # This is what professional traders look for in breakouts
             structural_rr = (vol_ratio * breakout_strength) / max(rps / atr, 1e-6)
+            logger.info(f"QUALITY_BREAKOUT: {symbol} vol={vol_ratio:.2f} break_dist={breakout_distance:.2f} "
+                       f"break_str={breakout_strength:.3f} adx={current_adx:.1f} structural_rr={structural_rr:.3f}")
 
-            # Log the breakout quality for analysis
-            logger.info(f"BREAKOUT_QUALITY: {symbol} vol_ratio={vol_ratio:.2f} breakout_dist={breakout_distance:.2f} "
-                       f"breakout_strength={breakout_strength:.3f} risk_norm={rps/atr:.2f} structural_rr={structural_rr:.3f}")
+        elif setup_category == SetupCategory.LEVEL:
+            # LEVEL: Level acceptance quality = retest_ok + hold_ok weighted by distance to level
+            # For bounce/rejection plays, quality depends on how well price respects the level
+            _lvl = orh if strat["bias"] == "long" else orl
+            distance_to_level = abs(current_close - _lvl) / max(atr, 1e-6)  # ATR-normalized
+
+            # Level acceptance scoring (0-1 scale each)
+            acc_cfg = cfg._extras.get("acceptance", {})
+            acc_bars = int(acc_cfg.get("bars", 2))
+            acc_bpct = float(acc_cfg.get("retest_bpct", 0.5))
+            win = sess.tail(max(acc_bars, 2))
+
+            if strat["bias"] == "long":
+                retest_score = 1.0 if (win["low"].min() >= _lvl * (1 - acc_bpct/100.0)) else 0.5
+                hold_score = 1.0 if (win["close"].iloc[-1] >= _lvl) else 0.3
+            else:
+                retest_score = 1.0 if (win["high"].max() <= _lvl * (1 + acc_bpct/100.0)) else 0.5
+                hold_score = 1.0 if (win["close"].iloc[-1] <= _lvl) else 0.3
+
+            # Quality = (retest + hold) * proximity_bonus / risk
+            proximity_bonus = max(0.5, 1.0 - distance_to_level * 0.2)  # Closer = better
+            structural_rr = (retest_score + hold_score) * proximity_bonus * 2.0  # Scale to ~2-4 range
+            logger.info(f"QUALITY_LEVEL: {symbol} retest={retest_score:.1f} hold={hold_score:.1f} "
+                       f"dist_lvl={distance_to_level:.2f} prox={proximity_bonus:.2f} structural_rr={structural_rr:.2f}")
+
+        elif setup_category == SetupCategory.REVERSION:
+            # REVERSION: Mean reversion quality = extension from VWAP + exhaustion signals
+            # For fade plays, quality depends on how extended price is from mean
+            vwap_distance = abs(current_close - vwap_val) / max(atr, 1e-6)  # ATR-normalized
+            extension_pct = abs(current_close - vwap_val) / max(vwap_val, 1e-6) * 100  # % from VWAP
+
+            # Exhaustion indicators
+            rsi_val = float(sess["rsi"].iloc[-1]) if "rsi" in sess.columns and not pd.isna(sess["rsi"].iloc[-1]) else 50.0
+            if strat["bias"] == "long":
+                exhaustion_score = max(0, (30 - rsi_val) / 30)  # RSI < 30 = exhaustion
+            else:
+                exhaustion_score = max(0, (rsi_val - 70) / 30)  # RSI > 70 = exhaustion
+
+            # Volume spike on exhaustion is bullish for reversal
+            volume_exhaustion = 1.0 + (vol_ratio - 1.0) * 0.5 if vol_ratio > 1.5 else 1.0
+
+            structural_rr = (vwap_distance * 0.5 + exhaustion_score * 2.0) * volume_exhaustion
+            logger.info(f"QUALITY_REVERSION: {symbol} vwap_dist={vwap_distance:.2f} ext_pct={extension_pct:.2f}% "
+                       f"rsi={rsi_val:.1f} exhaust={exhaustion_score:.2f} vol={vol_ratio:.2f} structural_rr={structural_rr:.2f}")
+
+        elif setup_category == SetupCategory.MOMENTUM:
+            # MOMENTUM: Trend strength quality = ADX + EMA alignment + trend consistency
+            # For trend continuation, quality depends on trend strength
+            ema20 = float(sess["ema20"].iloc[-1]) if "ema20" in sess.columns and not pd.isna(sess["ema20"].iloc[-1]) else current_close
+            ema50 = float(sess["ema50"].iloc[-1]) if "ema50" in sess.columns and not pd.isna(sess["ema50"].iloc[-1]) else current_close
+
+            # EMA stack alignment (price > ema20 > ema50 for longs)
+            if strat["bias"] == "long":
+                ema_aligned = 1.0 if (current_close > ema20 > ema50) else 0.5 if (current_close > ema20) else 0.3
+            else:
+                ema_aligned = 1.0 if (current_close < ema20 < ema50) else 0.5 if (current_close < ema20) else 0.3
+
+            # ADX-based trend strength (ADX > 25 = strong trend)
+            adx_score = min(current_adx / 25.0, 2.0)  # Cap at 2x for ADX=50+
+
+            structural_rr = (adx_score * ema_aligned) * 2.0  # Scale to ~1-4 range
+            logger.info(f"QUALITY_MOMENTUM: {symbol} adx={current_adx:.1f} adx_score={adx_score:.2f} "
+                       f"ema_aligned={ema_aligned:.2f} structural_rr={structural_rr:.2f}")
 
         else:
-            # DISTANCE-BASED R:R for fades/mean-reversion (works correctly for these)
+            # FALLBACK: Distance-based R:R for unknown categories
             if strat["bias"] == "long":
-                # For longs, next objective is ORH + 50% of measured move
                 next_objective = orh + 0.5 * measured_move
                 structural_rr = (next_objective - entry_ref_price) / max(rps, 1e-6)
             elif strat["bias"] == "short":
-                # For shorts, next objective is ORL - 50% of measured move
                 next_objective = orl - 0.5 * measured_move
                 structural_rr = (entry_ref_price - next_objective) / max(rps, 1e-6)
             else:
-                next_objective = float("nan")
                 structural_rr = float("nan")
+            logger.info(f"QUALITY_FALLBACK: {symbol} category=UNKNOWN structural_rr={structural_rr:.2f}")
 
         # Handle negative/invalid values
         if not np.isnan(structural_rr):
             if structural_rr < 0:
-                if is_breakout_strategy:
-                    logger.warning(f"Negative momentum quality {structural_rr:.2f} for {symbol} - entry below breakout level")
-                else:
-                    logger.warning(f"Negative structural RR {structural_rr:.2f} for {symbol} - potential setup-strategy mismatch")
+                logger.warning(f"Negative quality {structural_rr:.2f} for {symbol} ({setup_category}) - clamping to 0")
                 structural_rr = 0.0
             else:
                 structural_rr = float(np.clip(structural_rr, 0.0, rr_clip_max))

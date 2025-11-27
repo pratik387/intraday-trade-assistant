@@ -1,0 +1,1330 @@
+# pipelines/base_pipeline.py
+"""
+Base Pipeline - Abstract interface for category-specific pipelines.
+
+Each category (BREAKOUT, LEVEL, REVERSION, MOMENTUM) implements this interface
+with specialized logic for screening, quality, ranking, gates, entries, and targets.
+
+IMPORTANT: All configuration is loaded from JSON files in config/pipelines/.
+NO DEFAULTS - all values must be explicitly defined in config files.
+"""
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple, Any
+from pathlib import Path
+import json
+import numpy as np
+import pandas as pd
+
+from config.logging_config import get_agent_logger
+from services.indicators.indicators import (
+    calculate_atr as _calculate_atr_util,
+    calculate_atr_series as _calculate_atr_series_util,
+    volume_ratio as _volume_ratio_util
+)
+
+logger = get_agent_logger()
+
+
+def calculate_structure_stop(
+    entry_price: float,
+    bias: str,
+    atr: float
+) -> float:
+    """
+    PHASE 1 STOP LOSS FIX (Nov 2025): Uses entry-relative stops at 2.25× ATR distance.
+
+    Analysis of 36 hard_sl exits (42.4% of all trades, -Rs.17,743) using 1m spike data showed:
+    - 91.7% of SL hits AVOIDABLE with 1.5R stops (33/36 trades saved!)
+    - 36.1% were FALSE STOP-OUTS - price reversed after SL hit
+    - 22.2% hit T1 before SL - these could have been WINNING trades
+
+    Previous stop: 1.5× ATR (1.0R)
+    New stop: 2.25× ATR (1.5R) - 50% wider to avoid NSE intraday noise
+
+    Transferred from planner_internal.py lines 364-402.
+    """
+    if atr is None or np.isnan(atr):
+        # Fallback: 0.75% of entry price if ATR unavailable
+        atr = entry_price * 0.0075
+
+    if bias == "long":
+        # For longs: stop 2.25× ATR below entry price
+        return entry_price - (atr * 2.25)
+    else:
+        # For shorts: stop 2.25× ATR above entry price
+        return entry_price + (atr * 2.25)
+
+
+class ConfigurationError(Exception):
+    """Raised when required configuration is missing."""
+    pass
+
+
+def get_cap_segment(symbol: str) -> str:
+    """
+    Get market cap segment for a symbol from nse_all.json.
+
+    Used for cap-aware sizing (Van Tharp evidence):
+    - large_cap: 1.2x size (lower volatility)
+    - mid_cap: 1.0x size (baseline)
+    - small_cap: 0.6x size + wider stops (higher volatility)
+
+    Transferred from planner_internal.py lines 1074-1087.
+    """
+    try:
+        nse_file = Path(__file__).parent.parent / "nse_all.json"
+        if nse_file.exists():
+            with nse_file.open() as f:
+                data = json.load(f)
+            cap_map = {item["symbol"]: item.get("cap_segment", "unknown") for item in data}
+            return cap_map.get(symbol, "unknown")
+    except Exception as e:
+        logger.debug(f"CAP_SIZING: Failed to load cap_segment for {symbol}: {e}")
+    return "unknown"
+
+
+@dataclass
+class ScreeningResult:
+    """Result of screening phase."""
+    passed: bool
+    reasons: List[str] = field(default_factory=list)
+    features: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class QualityResult:
+    """Result of quality calculation phase."""
+    structural_rr: float
+    quality_status: str  # "excellent", "good", "fair", "poor"
+    metrics: Dict[str, Any] = field(default_factory=dict)
+    reasons: List[str] = field(default_factory=list)
+
+
+@dataclass
+class GateResult:
+    """Result of gate validation phase."""
+    passed: bool
+    reasons: List[str] = field(default_factory=list)
+    size_mult: float = 1.0
+    min_hold_bars: int = 0
+
+
+@dataclass
+class RankingResult:
+    """Result of ranking phase."""
+    score: float
+    components: Dict[str, float] = field(default_factory=dict)
+    multipliers: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class EntryResult:
+    """Result of entry calculation phase."""
+    entry_zone: Tuple[float, float]
+    entry_ref_price: float
+    entry_trigger: str
+    entry_mode: str  # "immediate", "retest", "pending"
+
+
+@dataclass
+class TargetResult:
+    """Result of target calculation phase."""
+    targets: List[Dict[str, Any]]  # [{"name": "T1", "level": x, "rr": y}, ...]
+    hard_sl: float
+    risk_per_share: float
+    trail_config: Optional[Dict] = None
+
+
+_BASE_CONFIG_CACHE: Optional[Dict[str, Any]] = None
+
+
+def load_base_config() -> Dict[str, Any]:
+    """
+    Load base configuration (universal settings for all pipelines).
+
+    Returns:
+        Base configuration dict
+
+    Raises:
+        ConfigurationError: If config file is missing or invalid
+    """
+    global _BASE_CONFIG_CACHE
+    if _BASE_CONFIG_CACHE is not None:
+        return _BASE_CONFIG_CACHE
+
+    config_dir = Path(__file__).parent.parent / "config" / "pipelines"
+    config_file = config_dir / "base_config.json"
+
+    if not config_file.exists():
+        logger.warning(f"Base config not found: {config_file}, using empty base config")
+        _BASE_CONFIG_CACHE = {}
+        return _BASE_CONFIG_CACHE
+
+    try:
+        with open(config_file, 'r') as f:
+            _BASE_CONFIG_CACHE = json.load(f)
+        logger.debug(f"Loaded base pipeline config: {len(_BASE_CONFIG_CACHE)} keys")
+        return _BASE_CONFIG_CACHE
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in {config_file}: {e}")
+        raise ConfigurationError(f"Invalid JSON in {config_file}: {e}")
+
+
+def load_pipeline_config(category: str) -> Dict[str, Any]:
+    """
+    Load configuration for a pipeline category, merged with base config.
+
+    Base config provides universal settings (volatility_sizing, cap_risk_adjustments, etc.)
+    Category config provides category-specific settings (screening, gates, targets, etc.)
+    Category config overrides base config for any overlapping keys.
+
+    Args:
+        category: One of BREAKOUT, LEVEL, REVERSION, MOMENTUM
+
+    Returns:
+        Merged configuration dict (base + category)
+
+    Raises:
+        ConfigurationError: If config file is missing or invalid
+    """
+    config_dir = Path(__file__).parent.parent / "config" / "pipelines"
+    config_file = config_dir / f"{category.lower()}_config.json"
+
+    if not config_file.exists():
+        logger.error(f"Configuration file not found: {config_file}")
+        raise ConfigurationError(f"Configuration file not found: {config_file}")
+
+    try:
+        with open(config_file, 'r') as f:
+            category_config = json.load(f)
+        logger.debug(f"Loaded {category} pipeline config: {len(category_config)} keys")
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in {config_file}: {e}")
+        raise ConfigurationError(f"Invalid JSON in {config_file}: {e}")
+
+    # Merge base config with category config (category overrides base)
+    base_config = load_base_config()
+    merged_config = {**base_config, **category_config}
+
+    logger.debug(f"Merged config for {category}: base={len(base_config)} + category={len(category_config)} = {len(merged_config)} keys")
+    return merged_config
+
+
+def require_config(config: Dict[str, Any], *keys: str) -> Any:
+    """
+    Navigate nested config and raise error if key is missing.
+
+    Args:
+        config: Configuration dict
+        keys: Path to required key (e.g., "screening", "time_windows", "morning_start")
+
+    Returns:
+        The value at the specified path
+
+    Raises:
+        ConfigurationError: If any key in the path is missing
+    """
+    current = config
+    path = []
+    for key in keys:
+        path.append(key)
+        if not isinstance(current, dict) or key not in current:
+            raise ConfigurationError(f"Required configuration missing: {'.'.join(path)}")
+        current = current[key]
+    return current
+
+
+class BasePipeline(ABC):
+    """
+    Abstract base class for category-specific pipelines.
+
+    Subclasses must implement all abstract methods with category-specific logic.
+    All configuration is loaded from JSON files - NO DEFAULTS.
+    """
+
+    def __init__(self):
+        """
+        Initialize pipeline by loading configuration.
+
+        Raises:
+            ConfigurationError: If config file is missing or invalid
+        """
+        category = self.get_category_name()
+        self.cfg = load_pipeline_config(category)
+        self._validate_config()
+
+    def _validate_config(self):
+        """Validate that required config sections exist."""
+        required_sections = ["screening", "quality", "gates", "ranking", "entry", "targets"]
+        for section in required_sections:
+            if section not in self.cfg:
+                raise ConfigurationError(f"Required config section missing: {section}")
+
+    def _get(self, *keys: str) -> Any:
+        """
+        Get config value. Raises error if missing (no defaults).
+
+        Args:
+            keys: Path to config value
+
+        Returns:
+            The config value
+
+        Raises:
+            ConfigurationError: If value is missing
+        """
+        return require_config(self.cfg, *keys)
+
+    # ======================== ABSTRACT METHODS ========================
+
+    @abstractmethod
+    def get_category_name(self) -> str:
+        """Return category name (BREAKOUT, LEVEL, REVERSION, MOMENTUM)."""
+        pass
+
+    @abstractmethod
+    def get_setup_types(self) -> List[str]:
+        """Return list of setup types that belong to this category."""
+        pass
+
+    @abstractmethod
+    def screen(
+        self,
+        symbol: str,
+        df5m: pd.DataFrame,
+        features: Dict[str, Any],
+        levels: Dict[str, float],
+        now: pd.Timestamp
+    ) -> ScreeningResult:
+        """Apply category-specific screening filters."""
+        pass
+
+    @abstractmethod
+    def calculate_quality(
+        self,
+        symbol: str,
+        df5m: pd.DataFrame,
+        bias: str,
+        levels: Dict[str, float],
+        atr: float
+    ) -> QualityResult:
+        """Calculate category-specific quality metrics."""
+        pass
+
+    @abstractmethod
+    def validate_gates(
+        self,
+        symbol: str,
+        setup_type: str,
+        regime: str,
+        df5m: pd.DataFrame,
+        df1m: Optional[pd.DataFrame],
+        strength: float,
+        adx: float,
+        vol_mult: float
+    ) -> GateResult:
+        """Apply category-specific gate validations."""
+        pass
+
+    @abstractmethod
+    def calculate_rank_score(
+        self,
+        symbol: str,
+        intraday_features: Dict[str, Any],
+        regime: str,
+        daily_trend: Optional[str] = None,
+        htf_context: Optional[Dict] = None
+    ) -> RankingResult:
+        """Calculate category-specific ranking score."""
+        pass
+
+    @abstractmethod
+    def calculate_entry(
+        self,
+        symbol: str,
+        df5m: pd.DataFrame,
+        bias: str,
+        levels: Dict[str, float],
+        atr: float,
+        setup_type: str
+    ) -> EntryResult:
+        """Calculate category-specific entry zone and trigger."""
+        pass
+
+    @abstractmethod
+    def calculate_targets(
+        self,
+        symbol: str,
+        entry_ref_price: float,
+        hard_sl: float,
+        bias: str,
+        atr: float,
+        levels: Dict[str, float],
+        measured_move: float
+    ) -> TargetResult:
+        """Calculate category-specific targets and stop loss."""
+        pass
+
+    # ======================== COMMON UTILITY METHODS ========================
+
+    def parse_time(self, time_str: str) -> int:
+        """Convert HH:MM string to minutes from midnight."""
+        parts = time_str.split(':')
+        return int(parts[0]) * 60 + int(parts[1])
+
+    def get_time_bucket(self, now: pd.Timestamp) -> str:
+        """Get time bucket for time-based filters."""
+        md = now.hour * 60 + now.minute
+        if md <= 10 * 60 + 30:
+            return "early"
+        elif md <= 13 * 60 + 30:
+            return "mid"
+        return "late"
+
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> Optional[float]:
+        """
+        Calculate ATR from DataFrame using centralized indicator utility.
+
+        Returns:
+            ATR value or None if insufficient data
+        """
+        if df is None or len(df) < period:
+            logger.debug(f"ATR: Insufficient data ({len(df) if df is not None else 0} bars < {period} required)")
+            return None
+
+        try:
+            result = _calculate_atr_util(df, period=period)
+            if pd.isna(result):
+                logger.debug("ATR: Calculation resulted in NaN")
+                return None
+            return float(result)
+        except Exception as e:
+            logger.debug(f"ATR: Calculation failed: {e}")
+            return None
+
+    def get_volume_ratio(self, df: pd.DataFrame, lookback: int = 20) -> float:
+        """
+        Calculate volume ratio vs recent average using centralized utility.
+
+        Returns:
+            Volume ratio (defaults to 1.0 if insufficient data)
+        """
+        # Use centralized utility from services/indicators/indicators.py
+        # It already handles None/empty df and returns 1.0 as default
+        return _volume_ratio_util(df, lookback=lookback)
+
+    # ======================== UNIVERSAL RANKING ADJUSTMENTS ========================
+    # These adjustments apply to ALL categories (from ranker.py analysis)
+
+    def apply_universal_ranking_adjustments(
+        self,
+        base_score: float,
+        symbol: str,
+        strategy_type: str,
+        structural_rr: float,
+        bias: str,
+        current_time: pd.Timestamp,
+        regime_diagnostics: Optional[Dict[str, Any]] = None,
+        daily_score: float = 0.0
+    ) -> Tuple[float, Dict[str, float]]:
+        """
+        Apply universal ranking adjustments that affect ALL categories.
+
+        From ranker.py analysis - these are missing in new pipelines:
+        1. Time of day multiplier (1.5x/2.5x late-day threshold)
+        2. Blacklist penalty (-999 for poor-performing setups)
+        3. Unrealistic RR penalty (-0.3 when RR > max)
+        4. Multi-TF daily multiplier (±15% at confidence ≥ 0.70)
+        5. Multi-TF hourly multiplier (±10% at confidence ≥ 0.60)
+        6. Daily score weighting (w_daily * daily_score + w_intr * intraday_score)
+
+        Args:
+            base_score: Score calculated by category-specific ranking
+            symbol: Stock symbol
+            strategy_type: Setup type (e.g., "orb_breakout_long")
+            structural_rr: Calculated structural R:R
+            bias: "long" or "short"
+            current_time: Current timestamp
+            regime_diagnostics: Multi-TF regime info {daily: {regime, confidence}, hourly: {session_bias, confidence}}
+            daily_score: Daily timeframe score (optional)
+
+        Returns:
+            Tuple of (adjusted_score, adjustment_details)
+        """
+        score = base_score
+        adjustments = {}
+
+        # Get universal ranking config
+        ranking_cfg = self.cfg.get("universal_ranking", {})
+        if not ranking_cfg:
+            # Fallback to loading from base config directly
+            try:
+                base_cfg = load_base_config()
+                ranking_cfg = base_cfg.get("universal_ranking", {})
+            except Exception:
+                ranking_cfg = {}
+
+        # 1. TIME OF DAY MULTIPLIER
+        # Late-day signals have poor quality (39 signals in 14:00-15:00, only 3 trades = 7.7% conversion)
+        time_mult = self._get_time_of_day_multiplier(current_time, ranking_cfg)
+        adjustments["time_of_day_mult"] = time_mult
+        # Note: We apply this as a threshold multiplier, not a score multiplier
+        # The actual filtering happens in the orchestrator when comparing to threshold
+
+        # 2. BLACKLIST PENALTY
+        blacklist_penalty = self._get_blacklist_penalty(strategy_type, ranking_cfg)
+        score += blacklist_penalty
+        adjustments["blacklist_penalty"] = blacklist_penalty
+
+        # 3. UNREALISTIC RR PENALTY
+        rr_penalty = self._get_unrealistic_rr_penalty(structural_rr, ranking_cfg)
+        score += rr_penalty
+        adjustments["rr_penalty"] = rr_penalty
+
+        # 4. MULTI-TF DAILY MULTIPLIER (±15% at confidence ≥ 0.70)
+        daily_mult = self._get_multi_tf_daily_multiplier(regime_diagnostics, bias, ranking_cfg)
+        score *= daily_mult
+        adjustments["multi_tf_daily_mult"] = daily_mult
+
+        # 5. MULTI-TF HOURLY MULTIPLIER (±10% at confidence ≥ 0.60)
+        hourly_mult = self._get_multi_tf_hourly_multiplier(regime_diagnostics, bias, ranking_cfg)
+        score *= hourly_mult
+        adjustments["multi_tf_hourly_mult"] = hourly_mult
+
+        # 6. DAILY SCORE WEIGHTING
+        if daily_score != 0.0:
+            score = self._apply_daily_score_weighting(score, daily_score, ranking_cfg)
+            adjustments["daily_score_applied"] = True
+        else:
+            adjustments["daily_score_applied"] = False
+
+        return score, adjustments
+
+    def _get_time_of_day_multiplier(
+        self,
+        current_time: pd.Timestamp,
+        ranking_cfg: Dict[str, Any]
+    ) -> float:
+        """
+        Dynamic rank threshold multiplier based on time of day.
+
+        From ranker.py lines 569-622:
+        - Morning (10:15-12:00): Normal threshold (1.0x)
+        - Midday (12:00-14:00): Normal threshold (1.0x)
+        - Late afternoon (14:00-14:30): Moderate filter (1.5x)
+        - Final hour (14:30-15:15): Aggressive filter (2.5x)
+
+        This multiplier is applied to the threshold, not the score.
+        Higher multiplier = harder to qualify.
+        """
+        time_cfg = ranking_cfg.get("time_of_day", {})
+        if not time_cfg.get("enabled", True):
+            return 1.0
+
+        hour = current_time.hour
+        minute = current_time.minute
+
+        # Get thresholds from config or use defaults
+        late_afternoon_start = time_cfg.get("late_afternoon_start_hour", 14)
+        late_afternoon_end_min = time_cfg.get("late_afternoon_end_minute", 30)
+        late_afternoon_mult = time_cfg.get("late_afternoon_mult", 1.5)
+        final_hour_mult = time_cfg.get("final_hour_mult", 2.5)
+
+        # Morning and midday: normal threshold
+        if hour < late_afternoon_start:
+            return 1.0
+
+        # Late afternoon (14:00-14:30): moderate filter
+        if hour == late_afternoon_start and minute < late_afternoon_end_min:
+            return late_afternoon_mult
+
+        # Final hour (14:30+): aggressive filter
+        return final_hour_mult
+
+    def _get_blacklist_penalty(
+        self,
+        strategy_type: str,
+        ranking_cfg: Dict[str, Any]
+    ) -> float:
+        """
+        Apply penalty for historically poor-performing setups.
+
+        From ranker.py lines 513-517:
+        - Blacklisted strategies get a severe penalty (-999 by default)
+        - This effectively prevents them from being selected
+        """
+        blacklist_cfg = ranking_cfg.get("blacklist", {})
+        if not blacklist_cfg.get("enabled", True):
+            return 0.0
+
+        blacklisted_setups = blacklist_cfg.get("strategies", [])
+        penalty = blacklist_cfg.get("penalty", -999.0)
+
+        if strategy_type in blacklisted_setups:
+            logger.debug(f"BLACKLIST_PENALTY: {strategy_type} penalty={penalty}")
+            return penalty
+
+        return 0.0
+
+    def _get_unrealistic_rr_penalty(
+        self,
+        structural_rr: float,
+        ranking_cfg: Dict[str, Any]
+    ) -> float:
+        """
+        Apply penalty for unrealistically high R:R ratios.
+
+        From ranker.py lines 519-525:
+        - If structural_rr > max_rr, apply penalty (-0.3 by default)
+        - Unrealistic R:R often indicates bad level placement or data issues
+        """
+        rr_cfg = ranking_cfg.get("unrealistic_rr", {})
+        if not rr_cfg.get("enabled", True):
+            return 0.0
+
+        max_rr = rr_cfg.get("max_structural_rr", 4.0)
+        penalty = rr_cfg.get("penalty", -0.3)
+
+        if structural_rr > max_rr:
+            logger.debug(f"HIGH_RR_PENALTY: structural_rr={structural_rr:.1f}>{max_rr} penalty={penalty}")
+            return penalty
+
+        return 0.0
+
+    def _get_multi_tf_daily_multiplier(
+        self,
+        regime_diagnostics: Optional[Dict[str, Any]],
+        bias: str,
+        ranking_cfg: Dict[str, Any]
+    ) -> float:
+        """
+        Apply daily regime multiplier based on multi-timeframe analysis.
+
+        From ranker.py lines 350-399 (Linda Raschke MTF filtering):
+        - ±15% adjustment based on daily regime alignment
+        - Only apply if confidence ≥ 0.70
+        - Long boost in daily uptrend, short boost in daily downtrend
+        """
+        mtf_cfg = ranking_cfg.get("multi_tf_daily", {})
+        if not mtf_cfg.get("enabled", True):
+            return 1.0
+
+        if not regime_diagnostics or "daily" not in regime_diagnostics:
+            return 1.0
+
+        daily = regime_diagnostics.get("daily", {})
+        daily_regime = daily.get("regime", "chop")
+        daily_confidence = daily.get("confidence", 0.0)
+
+        # Confidence threshold from config
+        min_confidence = mtf_cfg.get("min_confidence", 0.70)
+        if daily_confidence < min_confidence:
+            return 1.0
+
+        aligned_mult = mtf_cfg.get("aligned_mult", 1.15)
+        counter_mult = mtf_cfg.get("counter_mult", 0.85)
+        squeeze_mult = mtf_cfg.get("squeeze_mult", 0.90)
+
+        is_long = bias == "long"
+        is_short = bias == "short"
+
+        # Daily trend_up: Boost longs, penalize shorts
+        if daily_regime == "trend_up":
+            if is_long:
+                return aligned_mult  # +15% boost
+            elif is_short:
+                return counter_mult  # -15% penalty
+
+        # Daily trend_down: Boost shorts, penalize longs
+        elif daily_regime == "trend_down":
+            if is_short:
+                return aligned_mult  # +15% boost
+            elif is_long:
+                return counter_mult  # -15% penalty
+
+        # Daily squeeze: Mild penalty for all
+        elif daily_regime == "squeeze":
+            return squeeze_mult  # -10% penalty
+
+        return 1.0
+
+    def _get_multi_tf_hourly_multiplier(
+        self,
+        regime_diagnostics: Optional[Dict[str, Any]],
+        bias: str,
+        ranking_cfg: Dict[str, Any]
+    ) -> float:
+        """
+        Apply hourly session bias multiplier based on multi-timeframe analysis.
+
+        From ranker.py lines 402-447 (Linda Raschke lower TF execution):
+        - ±10% adjustment based on hourly session bias
+        - Only apply if confidence ≥ 0.60
+        - Smaller than daily (it's a lower TF, noisier)
+        """
+        mtf_cfg = ranking_cfg.get("multi_tf_hourly", {})
+        if not mtf_cfg.get("enabled", True):
+            return 1.0
+
+        if not regime_diagnostics or "hourly" not in regime_diagnostics:
+            return 1.0
+
+        hourly = regime_diagnostics.get("hourly", {})
+        session_bias = hourly.get("session_bias", "neutral")
+        hourly_confidence = hourly.get("confidence", 0.0)
+
+        # Confidence threshold from config (lower than daily)
+        min_confidence = mtf_cfg.get("min_confidence", 0.60)
+        if hourly_confidence < min_confidence:
+            return 1.0
+
+        aligned_mult = mtf_cfg.get("aligned_mult", 1.10)
+        counter_mult = mtf_cfg.get("counter_mult", 0.90)
+
+        is_long = bias == "long"
+        is_short = bias == "short"
+
+        # Hourly bullish: Boost longs, penalize shorts
+        if session_bias == "bullish":
+            if is_long:
+                return aligned_mult  # +10% boost
+            elif is_short:
+                return counter_mult  # -10% penalty
+
+        # Hourly bearish: Boost shorts, penalize longs
+        elif session_bias == "bearish":
+            if is_short:
+                return aligned_mult  # +10% boost
+            elif is_long:
+                return counter_mult  # -10% penalty
+
+        return 1.0
+
+    def _apply_daily_score_weighting(
+        self,
+        intraday_score: float,
+        daily_score: float,
+        ranking_cfg: Dict[str, Any]
+    ) -> float:
+        """
+        Combine daily and intraday scores with configurable weights.
+
+        From ranker.py line 505:
+        final_score = w_daily * daily_score + w_intr * intraday_score
+
+        Default: 30% daily, 70% intraday
+        """
+        weight_cfg = ranking_cfg.get("daily_score_weighting", {})
+        if not weight_cfg.get("enabled", True):
+            return intraday_score
+
+        w_daily = weight_cfg.get("weight_daily", 0.3)
+        w_intraday = weight_cfg.get("weight_intraday", 0.7)
+
+        return w_daily * daily_score + w_intraday * intraday_score
+
+    # ======================== UNIVERSAL GATES ========================
+    # These gates apply BEFORE category-specific gates
+
+    def _check_range_compression(
+        self,
+        df5m: pd.DataFrame,
+        atr: float
+    ) -> Tuple[bool, str]:
+        """
+        Range compression filter - reject during volatility expansion.
+
+        From trade_decision_gate.py analysis:
+        - Computes current_atr / avg_atr_20
+        - Ratio > 0.8 means volatility is expanding → bad for level-based setups
+        - Volatility expansion invalidates support/resistance levels
+
+        Returns:
+            Tuple of (passed: bool, reason: str)
+        """
+        compression_cfg = self.cfg.get("range_compression", {})
+        if not compression_cfg.get("enabled", False):
+            return True, ""
+
+        try:
+            # Use centralized ATR series calculation
+            lookback = compression_cfg.get("lookback_bars", 20)
+            atr_series = _calculate_atr_series_util(df5m, period=14)
+
+            if len(atr_series) < lookback:
+                return True, ""  # Not enough data, allow through
+
+            avg_atr = atr_series.tail(lookback).mean()
+
+            if pd.isna(avg_atr) or avg_atr <= 0:
+                return True, ""  # Can't calculate, allow through
+
+            # Current ATR vs average
+            compression_ratio = atr / avg_atr
+
+            max_ratio = compression_cfg.get("max_expansion_ratio", 0.8)
+            if compression_ratio > max_ratio:
+                reason = f"range_compression_fail: ratio={compression_ratio:.2f}>{max_ratio}"
+                logger.debug(f"RANGE_COMPRESSION: {reason}")
+                return False, reason
+
+            return True, ""
+
+        except Exception as e:
+            logger.debug(f"RANGE_COMPRESSION: Error calculating: {e}")
+            return True, ""  # Allow through on error
+
+    def _check_cap_strategy_blocking(
+        self,
+        symbol: str,
+        setup_type: str,
+        cap_segment: str
+    ) -> Tuple[bool, str]:
+        """
+        Cap-strategy blocking - block certain setups for certain market cap segments.
+
+        From trade_decision_gate.py analysis:
+        - Micro-cap stocks shouldn't use momentum_breakout (too volatile)
+        - Large-cap stocks prefer level-based setups over reversions
+
+        Returns:
+            Tuple of (passed: bool, reason: str)
+        """
+        blocking_cfg = self.cfg.get("cap_strategy_blocking", {})
+        if not blocking_cfg.get("enabled", False):
+            return True, ""
+
+        if cap_segment == "unknown":
+            return True, ""  # Can't determine cap, allow through
+
+        # Check if this setup type is blocked for this cap segment
+        blocked_setups = blocking_cfg.get("blocked_setups", {})
+        blocked_for_cap = blocked_setups.get(cap_segment, [])
+
+        # Check for exact match
+        if setup_type in blocked_for_cap:
+            reason = f"cap_strategy_blocked: {setup_type} blocked for {cap_segment}"
+            logger.debug(f"CAP_STRATEGY_BLOCKING: {symbol} {reason}")
+            return False, reason
+
+        # Check for base setup name match (e.g., "momentum_breakout" blocks both _long and _short)
+        base_setup = setup_type.rsplit("_", 1)[0] if "_long" in setup_type or "_short" in setup_type else setup_type
+        if base_setup in blocked_for_cap:
+            reason = f"cap_strategy_blocked: {base_setup} blocked for {cap_segment}"
+            logger.debug(f"CAP_STRATEGY_BLOCKING: {symbol} {reason}")
+            return False, reason
+
+        return True, ""
+
+    def _is_opening_bell_window(self, now: pd.Timestamp) -> bool:
+        """
+        Check if we're in the opening bell window (9:15-9:30 AM).
+
+        From trade_decision_gate.py lines 443-463:
+        - Opening bell has different volatility/participation patterns
+        - Some gates can be bypassed during this window
+        """
+        ob_cfg = self.cfg.get("opening_bell_override", {})
+        if not ob_cfg.get("enabled", False):
+            return False
+
+        try:
+            start_hour = ob_cfg.get("start_hour", 9)
+            start_minute = ob_cfg.get("start_minute", 15)
+            end_hour = ob_cfg.get("end_hour", 9)
+            end_minute = ob_cfg.get("end_minute", 30)
+
+            current_minutes = now.hour * 60 + now.minute
+            start_minutes = start_hour * 60 + start_minute
+            end_minutes = end_hour * 60 + end_minute
+
+            return start_minutes <= current_minutes <= end_minutes
+        except Exception:
+            return False
+
+    def _opening_bell_bypasses(self, gate_name: str) -> bool:
+        """
+        Check if a specific gate can be bypassed during opening bell.
+
+        From trade_decision_gate.py lines 488-573:
+        - Range compression can be bypassed (high volatility expected at open)
+        - Momentum consolidation can be bypassed (different patterns at open)
+        """
+        ob_cfg = self.cfg.get("opening_bell_override", {})
+        if not ob_cfg.get("enabled", False):
+            return False
+
+        bypasses = ob_cfg.get("bypass_gates", [])
+        return gate_name in bypasses
+
+    def _check_price_action_directionality(
+        self,
+        df5m: pd.DataFrame,
+        bias: str
+    ) -> Tuple[bool, str]:
+        """
+        Price action directionality - validates last 3 bars follow expected direction.
+
+        From trade_decision_gate.py lines 1041-1056:
+        - Long: Last 3 bars should NOT be declining (close[-1] >= close[-3])
+        - Short: Last 3 bars should NOT be rising (close[-1] <= close[-3])
+        - Prevents counter-trend entry fills
+
+        Returns:
+            Tuple of (passed: bool, reason: str)
+        """
+        pa_cfg = self.cfg.get("price_action_directionality", {})
+        if not pa_cfg.get("enabled", False):
+            return True, ""
+
+        try:
+            if len(df5m) < 4:
+                return True, ""  # Not enough data, allow through
+
+            close_now = float(df5m["close"].iloc[-1])
+            close_3_ago = float(df5m["close"].iloc[-3])
+
+            if bias == "long":
+                # For long: last 3 bars should NOT be declining
+                if close_now < close_3_ago:
+                    reason = f"price_action_fail: long but declining {close_now:.2f}<{close_3_ago:.2f}"
+                    logger.debug(f"PRICE_ACTION_DIRECTIONALITY: {reason}")
+                    return False, reason
+            else:
+                # For short: last 3 bars should NOT be rising
+                if close_now > close_3_ago:
+                    reason = f"price_action_fail: short but rising {close_now:.2f}>{close_3_ago:.2f}"
+                    logger.debug(f"PRICE_ACTION_DIRECTIONALITY: {reason}")
+                    return False, reason
+
+            return True, ""
+
+        except Exception as e:
+            logger.debug(f"PRICE_ACTION_DIRECTIONALITY: Error calculating: {e}")
+            return True, ""  # Allow through on error
+
+    # ======================== PIPELINE EXECUTION ========================
+
+    def run_pipeline(
+        self,
+        symbol: str,
+        setup_type: str,
+        df5m: pd.DataFrame,
+        df1m: Optional[pd.DataFrame],
+        levels: Dict[str, float],
+        regime: str,
+        now: pd.Timestamp,
+        daily_df: Optional[pd.DataFrame] = None,
+        htf_context: Optional[Dict[str, Any]] = None,
+        regime_diagnostics: Optional[Dict[str, Any]] = None,
+        daily_score: float = 0.0
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Run complete pipeline for a setup.
+
+        Args:
+            htf_context: HTF (15m) context for category-specific ranking adjustments.
+                         Contains: htf_trend, htf_volume_surge, htf_momentum, htf_exhaustion
+            regime_diagnostics: Multi-TF regime info for universal ranking adjustments.
+                         Contains: {daily: {regime, confidence}, hourly: {session_bias, confidence}}
+            daily_score: Daily timeframe score for score weighting (optional)
+
+        Returns:
+            Complete plan dict or None if rejected
+        """
+        category = self.get_category_name()
+        logger.debug(f"[{category}] Running pipeline for {symbol} {setup_type} in {regime}")
+
+        bias = "long" if "_long" in setup_type else "short"
+        atr = self.calculate_atr(df5m)
+
+        # Gracefully reject if insufficient data for ATR calculation
+        if atr is None:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected: insufficient data for ATR")
+            return {"eligible": False, "reason": "insufficient_data", "details": ["insufficient_data_for_atr"]}
+
+        current_close = float(df5m["close"].iloc[-1])
+
+        # Get indicator values
+        adx_val = float(df5m["adx"].iloc[-1]) if "adx" in df5m.columns and not pd.isna(df5m["adx"].iloc[-1]) else None
+        vwap_val = float(df5m["vwap"].iloc[-1]) if "vwap" in df5m.columns and not pd.isna(df5m["vwap"].iloc[-1]) else None
+        rsi_val = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns and not pd.isna(df5m["rsi"].iloc[-1]) else None
+
+        # Volume ratio - utility already defaults to 1.0 if insufficient data
+        volume_ratio = self.get_volume_ratio(df5m)
+
+        features = {
+            "volume_ratio": volume_ratio,
+            "adx": adx_val,
+            "above_vwap": current_close >= vwap_val if vwap_val else None,
+            "current_close": current_close,
+            "bias": bias,
+            "rsi": rsi_val,
+        }
+
+        # daily_df reserved for future HTF analysis
+        _ = daily_df
+
+        # 0. UNIVERSAL GATES (apply BEFORE category-specific gates)
+        # Check if we're in opening bell window (9:15-9:30) - may bypass some gates
+        opening_bell_active = self._is_opening_bell_window(now)
+
+        # Range compression filter - reject during volatility expansion
+        # Can be bypassed during opening bell if configured
+        if not (opening_bell_active and self._opening_bell_bypasses("range_compression")):
+            range_passed, range_reason = self._check_range_compression(df5m, atr)
+            if not range_passed:
+                logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {range_reason}")
+                return {"eligible": False, "reason": "universal_gate_fail", "details": [range_reason]}
+
+        # Cap-strategy blocking - block certain setups for certain market cap segments
+        cap_segment = get_cap_segment(symbol)
+        cap_passed, cap_reason = self._check_cap_strategy_blocking(symbol, setup_type, cap_segment)
+        if not cap_passed:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {cap_reason}")
+            return {"eligible": False, "reason": "universal_gate_fail", "details": [cap_reason]}
+
+        # Price action directionality - validates last 3 bars follow expected direction
+        pa_passed, pa_reason = self._check_price_action_directionality(df5m, bias)
+        if not pa_passed:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {pa_reason}")
+            return {"eligible": False, "reason": "universal_gate_fail", "details": [pa_reason]}
+
+        # 1. SCREENING
+        screen_result = self.screen(symbol, df5m, features, levels, now)
+        if not screen_result.passed:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected at SCREENING: {screen_result.reasons}")
+            return {"eligible": False, "reason": "screening_fail", "details": screen_result.reasons}
+
+        # 2. QUALITY
+        quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr)
+
+        # Log quality metrics (like QUALITY_BREAKOUT, QUALITY_LEVEL in planner_internal.py)
+        logger.info(f"QUALITY_{category}: {symbol} structural_rr={quality_result.structural_rr:.2f} "
+                   f"status={quality_result.quality_status} metrics={quality_result.metrics}")
+
+        # NOTE: Structural R:R min check with strategy-specific overrides is done in _apply_quality_filters()
+        # This allows breakouts to use relaxed thresholds while other categories use stricter defaults
+
+        # 3. GATES
+        gate_result = self.validate_gates(
+            symbol, setup_type, regime, df5m, df1m,
+            strength=quality_result.structural_rr,
+            adx=features.get("adx") or 0.0,
+            vol_mult=features["volume_ratio"]
+        )
+        if not gate_result.passed:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected at GATES: {gate_result.reasons}")
+            return {"eligible": False, "reason": "gate_fail", "details": gate_result.reasons}
+
+        # 4. RANKING (with HTF context for category-specific adjustments)
+        rank_result = self.calculate_rank_score(symbol, features, regime, htf_context=htf_context)
+
+        # 4b. UNIVERSAL RANKING ADJUSTMENTS (from ranker.py)
+        # Apply time-of-day, blacklist, unrealistic RR, multi-TF daily/hourly multipliers
+        adjusted_score, universal_adjustments = self.apply_universal_ranking_adjustments(
+            base_score=rank_result.score,
+            symbol=symbol,
+            strategy_type=setup_type,
+            structural_rr=quality_result.structural_rr,
+            bias=bias,
+            current_time=now,
+            regime_diagnostics=regime_diagnostics,
+            daily_score=daily_score
+        )
+
+        # 5. ENTRY - Category pipeline handles setup-type-specific entry logic
+        orh = levels.get("ORH", current_close)
+        orl = levels.get("ORL", current_close)
+
+        # Get entry from category pipeline (includes setup-type-specific logic)
+        entry_result = self.calculate_entry(symbol, df5m, bias, levels, atr, setup_type)
+        entry_ref_price = entry_result.entry_ref_price
+
+        # CRITICAL: For immediate mode, use current_close for stop/target calculations
+        # Reason: entry_ref_price is the level (ORH/ORL) but for immediate mode breakouts,
+        # the actual entry will be at current_close (price has already broken through).
+        # Targets and stops must be relative to where we actually enter, not the level.
+        if entry_result.entry_mode == "immediate":
+            effective_entry_price = current_close
+            logger.debug(f"[{category}] {symbol} {setup_type} IMMEDIATE mode: effective_entry={effective_entry_price:.2f} (ref={entry_ref_price:.2f})")
+        else:
+            effective_entry_price = entry_ref_price
+            logger.debug(f"[{category}] {symbol} {setup_type} CONDITIONAL mode: entry_ref={entry_ref_price:.2f}")
+
+        # 5b. VOLATILITY-ADJUSTED SIZING (from planner_internal.py lines 547-581)
+        volatility_mult = 1.0
+        volatility_cfg = self.cfg.get("volatility_sizing", {})
+        if volatility_cfg.get("enabled", False):
+            try:
+                price_atr_ratio = (atr / entry_ref_price) * 100 if entry_ref_price > 0 else 1.0
+                low_vol_threshold = volatility_cfg["low_volatility_threshold"]
+                high_vol_threshold = volatility_cfg["high_volatility_threshold"]
+
+                if price_atr_ratio < low_vol_threshold:
+                    volatility_mult = volatility_cfg["low_volatility_multiplier"]
+                elif price_atr_ratio > high_vol_threshold:
+                    volatility_mult = volatility_cfg["high_volatility_multiplier"]
+                else:
+                    volatility_mult = volatility_cfg["normal_volatility_multiplier"]
+
+                # Clamp to limits
+                max_adj = volatility_cfg.get("max_size_adjustment", 2.0)
+                min_adj = volatility_cfg.get("min_size_adjustment", 0.5)
+                volatility_mult = max(min_adj, min(max_adj, volatility_mult))
+                logger.debug(f"VOLATILITY_SIZING: {symbol} ATR%={price_atr_ratio:.2f} → mult={volatility_mult:.2f}")
+            except (KeyError, TypeError):
+                volatility_mult = 1.0
+
+        # 5c. CAP-AWARE SIZING (from planner_internal.py lines 583-615, Van Tharp evidence)
+        cap_segment = get_cap_segment(symbol)
+        cap_size_mult = 1.0
+        cap_sl_mult = 1.0
+
+        cap_risk_cfg = self.cfg.get("cap_risk_adjustments", {})
+        if cap_risk_cfg.get("enabled", False) and cap_segment != "unknown":
+            seg_cfg = cap_risk_cfg.get(cap_segment, {})
+            cap_size_mult = seg_cfg.get("size_multiplier", 1.0)
+            cap_sl_mult = seg_cfg.get("sl_atr_multiplier", 1.0)
+            logger.debug(f"CAP_SIZING: {symbol} {cap_segment} size_mult={cap_size_mult:.2f} sl_mult={cap_sl_mult:.2f}")
+
+        # 6. STOP LOSS - Use Phase 1 fix: 2.25× ATR with cap-specific adjustment
+        # Small-caps get wider stops (cap_sl_mult > 1.0)
+        # CRITICAL: Use effective_entry_price (current_close for immediate mode)
+        adjusted_atr = atr * cap_sl_mult
+        hard_sl = calculate_structure_stop(effective_entry_price, bias, adjusted_atr)
+
+        # 7. TARGETS
+        # CRITICAL: Use effective_entry_price for target calculations
+        # For immediate mode, targets should be relative to where we actually enter
+        measured_move = max(orh - orl, atr)
+
+        target_result = self.calculate_targets(
+            symbol, effective_entry_price, hard_sl,
+            bias, atr, levels, measured_move
+        )
+
+        # 8. LATE ENTRY PENALTIES (transferred from planner_internal.py lines 1021-1029)
+        size_mult = gate_result.size_mult
+        cautions = []
+
+        # RSI late entry penalty
+        if rsi_val is not None:
+            if bias == "long" and rsi_val > 70:
+                size_mult *= 0.6
+                cautions.append(f"late_entry_rsi>{rsi_val:.0f}")
+            elif bias == "short" and rsi_val < 30:
+                size_mult *= 0.6
+                cautions.append(f"late_entry_rsi<{rsi_val:.0f}")
+
+        # 8b. APPLY VOLATILITY AND CAP SIZING MULTIPLIERS
+        # These adjust position size based on volatility regime and market cap
+        size_mult *= volatility_mult * cap_size_mult
+        logger.debug(f"SIZE_MULT: {symbol} base={gate_result.size_mult:.2f} × vol={volatility_mult:.2f} × cap={cap_size_mult:.2f} = {size_mult:.2f}")
+
+        # 8c. CALCULATE POSITION SIZE (qty)
+        # Uses risk-based position sizing: qty = risk_per_trade / risk_per_share * multipliers
+        risk_per_trade_rupees = self.cfg.get("risk_per_trade_rupees", 500.0)
+        risk_per_share = target_result.risk_per_share
+        if risk_per_share > 0:
+            base_qty = int(risk_per_trade_rupees / risk_per_share)
+            qty = max(int(base_qty * size_mult), 0)
+        else:
+            qty = 0
+        # Use effective_entry_price for notional (actual entry price for immediate mode)
+        notional = qty * effective_entry_price
+        logger.debug(f"POSITION_SIZE: {symbol} risk_rupees={risk_per_trade_rupees} / rps={risk_per_share:.2f} × size_mult={size_mult:.2f} = qty={qty}")
+
+        # 9. BUILD PLAN
+        plan = {
+            "symbol": symbol,
+            "eligible": True,
+            "strategy": setup_type,
+            "bias": bias,
+            "regime": regime,
+            "category": self.get_category_name(),
+
+            "entry_ref_price": round(entry_ref_price, 2),
+            "entry": {
+                "reference": round(entry_ref_price, 2),
+                "zone": [round(entry_result.entry_zone[0], 2), round(entry_result.entry_zone[1], 2)],
+                "trigger": entry_result.entry_trigger,
+                "mode": entry_result.entry_mode,
+            },
+
+            "stop": {
+                "hard": round(hard_sl, 2),
+                "risk_per_share": round(target_result.risk_per_share, 2),
+            },
+
+            "targets": target_result.targets,
+            "trail": target_result.trail_config,
+
+            "quality": {
+                "structural_rr": round(quality_result.structural_rr, 2),
+                "status": quality_result.quality_status,
+                "metrics": quality_result.metrics,
+                "t1_feasible": True,  # Will be validated below
+                "t2_feasible": True,
+            },
+
+            "ranking": {
+                "score": round(adjusted_score, 3),
+                "base_score": round(rank_result.score, 3),
+                "components": rank_result.components,
+                "multipliers": rank_result.multipliers,
+                "universal_adjustments": universal_adjustments,
+            },
+
+            "sizing": {
+                "qty": qty,
+                "notional": round(notional, 2),
+                "risk_rupees": risk_per_trade_rupees,
+                "risk_per_share": round(risk_per_share, 2),
+                "size_mult": round(size_mult, 2),
+                "base_mult": round(gate_result.size_mult, 2),
+                "volatility_mult": round(volatility_mult, 2),
+                "cap_size_mult": round(cap_size_mult, 2),
+                "cap_segment": cap_segment,
+                "cap_sl_mult": round(cap_sl_mult, 2),
+                "min_hold_bars": gate_result.min_hold_bars,
+            },
+
+            "indicators": {
+                "atr": round(atr, 2),
+                "adx": round(adx_val, 1) if adx_val else None,
+                "rsi": round(rsi_val, 1) if rsi_val else None,
+                "vwap": round(vwap_val, 2) if vwap_val else None,
+            },
+
+            "levels": levels,
+            "pipeline_reasons": screen_result.reasons + gate_result.reasons,
+            "cautions": cautions,
+        }
+
+        # 10. QUALITY FILTER ENFORCEMENT (transferred from planner_internal.py lines 1358-1451)
+        # CRITICAL FIX: Use effective_entry_price for quality filters
+        # For immediate mode breakouts, targets are relative to current_close (effective_entry_price)
+        # not the level (entry_ref_price). Quality filters must use the same reference.
+        plan = self._apply_quality_filters(plan, effective_entry_price, atr, measured_move)
+
+        if plan["eligible"]:
+            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (base={rank_result.score:.2f}), quality={quality_result.quality_status}, entry={entry_ref_price:.2f}")
+        else:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected by quality filters: {plan.get('quality', {}).get('rejection_reason', 'unknown')}")
+
+        return plan
+
+    def _apply_quality_filters(
+        self,
+        plan: Dict[str, Any],
+        entry_ref_price: float,
+        atr: float,
+        measured_move: float
+    ) -> Dict[str, Any]:
+        """
+        Apply universal quality filter enforcement (from planner_internal.py lines 1358-1451).
+
+        Universal Filters (apply to ALL categories):
+        1. T1 feasibility check (cap to reasonable target)
+        2. T2 feasibility → T1-only scalp mode (reduce qty instead of reject)
+        3. Min T1 R:R filter
+
+        Category-specific filters (handled in category pipelines):
+        - ADX for breakouts → BreakoutPipeline.validate_gates()
+        """
+        if not plan["eligible"]:
+            return plan
+
+        # Get quality filter config if available
+        try:
+            quality_filters = self.cfg.get("quality_filters", {})
+            if not quality_filters.get("enabled", True):
+                return plan
+        except Exception:
+            quality_filters = {}
+
+        risk_per_share = plan["stop"]["risk_per_share"]
+
+        # Feasibility caps (from planner_precision config)
+        t1_max_pct = quality_filters.get("t1_max_pct", 2.0)  # 2% of price
+        t1_max_mm_frac = quality_filters.get("t1_max_mm_frac", 0.75)  # 75% of measured move
+        t2_max_pct = quality_filters.get("t2_max_pct", 4.0)  # 4% of price
+        t2_max_mm_frac = quality_filters.get("t2_max_mm_frac", 1.5)  # 150% of measured move
+
+        cap1 = min(entry_ref_price * (t1_max_pct / 100.0), measured_move * t1_max_mm_frac)
+        cap2 = min(entry_ref_price * (t2_max_pct / 100.0), measured_move * t2_max_mm_frac)
+
+        # Check T1 feasibility
+        if plan["targets"]:
+            t1_level = plan["targets"][0]["level"]
+            if plan["bias"] == "long":
+                t1_move = t1_level - entry_ref_price
+            else:
+                t1_move = entry_ref_price - t1_level
+
+            plan["quality"]["t1_feasible"] = t1_move <= cap1 + 0.01  # Small tolerance
+
+            if not plan["quality"]["t1_feasible"]:
+                # Cap T1 to feasible level
+                if plan["bias"] == "long":
+                    plan["targets"][0]["level"] = round(entry_ref_price + cap1, 2)
+                else:
+                    plan["targets"][0]["level"] = round(entry_ref_price - cap1, 2)
+
+                # Recalculate R:R
+                plan["targets"][0]["rr"] = round(cap1 / max(risk_per_share, 0.01), 2)
+                logger.debug(f"T1 capped to feasible level: {plan['targets'][0]['level']}")
+
+        # Check T2 feasibility → T1-only scalp mode
+        if len(plan["targets"]) > 1:
+            t2_level = plan["targets"][1]["level"]
+            if plan["bias"] == "long":
+                t2_move = t2_level - entry_ref_price
+            else:
+                t2_move = entry_ref_price - t2_level
+
+            plan["quality"]["t2_feasible"] = t2_move <= cap2 + 0.01
+
+            if not plan["quality"]["t2_feasible"]:
+                # Cap T2 and reduce size for T1-only scalp mode
+                if plan["bias"] == "long":
+                    plan["targets"][1]["level"] = round(entry_ref_price + cap2, 2)
+                else:
+                    plan["targets"][1]["level"] = round(entry_ref_price - cap2, 2)
+
+                plan["targets"][1]["rr"] = round(cap2 / max(risk_per_share, 0.01), 2)
+
+                # Reduce size for T1-only mode (from planner_internal.py lines 1398-1418)
+                plan["sizing"]["size_mult"] *= 0.5
+                plan["quality"]["t2_exit_mode"] = "T1_only_scalp"
+                plan["cautions"].append("T2_infeasible_scalp_mode")
+                logger.debug(f"T2 infeasible → T1-only scalp mode, size_mult reduced to {plan['sizing']['size_mult']:.2f}")
+
+        # NOTE: ADX filter for breakouts is handled in BreakoutPipeline.validate_gates()
+        # (category-specific gate, not a universal quality filter)
+
+        # Structural R:R filter with strategy-specific overrides (from planner_internal.py lines 1365-1396)
+        # Breakouts have momentum that blows through resistance, so they can use relaxed thresholds
+        strategy_type = plan.get("strategy", "")
+        strategy_rr_overrides = quality_filters.get("strategy_structural_rr_overrides", {})
+        min_structural_rr = strategy_rr_overrides.get(strategy_type, quality_filters.get("min_structural_rr", 2.0))
+
+        structural_rr_val = plan["quality"].get("structural_rr")
+        if plan["eligible"] and structural_rr_val is not None and structural_rr_val < min_structural_rr:
+            plan["eligible"] = False
+            plan["quality"]["rejection_reason"] = f"structural_rr {structural_rr_val:.2f} < {min_structural_rr:.2f}"
+            logger.debug(f"Rejected: structural_rr {structural_rr_val:.2f} < {min_structural_rr:.2f} (strategy={strategy_type})")
+
+        # Min T1 R:R filter
+        min_t1_rr = quality_filters.get("min_t1_rr", 1.0)
+        if plan["eligible"] and plan["targets"]:
+            t1_rr = plan["targets"][0].get("rr", 0)
+            if t1_rr < min_t1_rr:
+                plan["eligible"] = False
+                plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr:.2f} < {min_t1_rr}"
+                logger.debug(f"Rejected: T1_rr {t1_rr:.2f} < {min_t1_rr}")
+
+        return plan

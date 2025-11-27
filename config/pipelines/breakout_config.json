@@ -1,0 +1,207 @@
+{
+    "_comment": "BREAKOUT Pipeline Configuration - All values from configuration.json and pro Indian trading standards",
+    "_category": "BREAKOUT",
+    "_description": "Momentum breaks of key levels (ORB, flag continuation, squeeze release, etc.)",
+
+    "setup_types": [
+        "breakout_long", "breakout_short",
+        "orb_breakout_long", "orb_breakout_short",
+        "orb_breakdown_long", "orb_breakdown_short",
+        "flag_continuation_long", "flag_continuation_short",
+        "squeeze_release_long", "squeeze_release_short",
+        "momentum_breakout_long", "momentum_breakout_short",
+        "range_breakout_long", "range_breakout_short",
+        "range_breakdown_long", "range_breakdown_short",
+        "gap_breakout_long", "gap_breakout_short",
+        "resistance_breakout_long", "resistance_breakout_short",
+        "support_breakdown_long", "support_breakdown_short",
+        "break_of_structure_long", "break_of_structure_short",
+        "change_of_character_long", "change_of_character_short",
+        "equilibrium_breakout_long", "equilibrium_breakout_short",
+        "level_breakout_long", "level_breakout_short"
+    ],
+
+    "screening": {
+        "time_windows": {
+            "_comment": "From configuration.json time_policy - NSE trading hours",
+            "morning_start": "09:15",
+            "morning_end": "12:00",
+            "lunch_block_start": "12:00",
+            "lunch_block_end": "13:00",
+            "afternoon_start": "13:00",
+            "afternoon_end": "14:45",
+            "last_entry_cutoff": "14:45",
+            "opening_bell_start": "09:15",
+            "opening_bell_end": "09:30"
+        },
+        "momentum_consolidation": {
+            "enabled": true,
+            "threshold_pct": 1.0,
+            "vwap_deviation_threshold": 0.02,
+            "volume_ratio_threshold": 1.5
+        },
+        "min_bars_required": 4
+    },
+
+    "quality": {
+        "_comment": "From configuration.json - min_t1_rr: 1.2, t1_rr: 1.5",
+        "min_structural_rr": 1.2,
+        "volume_ratio_floor": 0.5,
+        "quality_thresholds": {
+            "excellent": {
+                "min_structural_rr": 2.0,
+                "min_volume_ratio": 1.5
+            },
+            "good": {
+                "min_structural_rr": 1.5,
+                "min_volume_ratio": 1.3
+            },
+            "fair": {
+                "min_structural_rr": 1.2,
+                "min_volume_ratio": 1.0
+            }
+        }
+    },
+
+    "gates": {
+        "_comment": "From configuration.json - breakout_volume_surge_min: 1.5 (long), 2.0 (short), breakout_momentum_candle_min_ratio: 2.0 (long), 2.5 (short)",
+        "volume_surge": {
+            "long": {
+                "min_ratio": 1.5,
+                "lookback_bars": 20
+            },
+            "short": {
+                "min_ratio": 2.0,
+                "lookback_bars": 20
+            }
+        },
+        "momentum_candle": {
+            "long": {
+                "min_ratio": 2.0
+            },
+            "short": {
+                "min_ratio": 2.5
+            }
+        },
+        "adx": {
+            "_comment": "From configuration.json - breakout_min_adx: 20.0, adx_min_strength: 15, adx_min_trend: 20",
+            "min_value": 20,
+            "low_adx_threshold": 15,
+            "low_adx_size_mult": 0.8
+        },
+        "regime_rules": {
+            "chop": {
+                "allowed": true,
+                "size_mult": 0.7,
+                "exception": "orb_before_10:30"
+            },
+            "trend_up": {
+                "allowed": true,
+                "size_mult": 1.0
+            },
+            "trend_down": {
+                "allowed": true,
+                "size_mult": 1.0
+            },
+            "squeeze": {
+                "allowed": true,
+                "size_mult": 0.9
+            }
+        }
+    },
+
+    "ranking": {
+        "weights": {
+            "volume": {
+                "divisor": 2.0,
+                "cap": 2.0
+            },
+            "adx": {
+                "mid": 20,
+                "divisor": 10,
+                "floor": -0.3
+            },
+            "adx_slope": {
+                "_comment": "From ranker.py lines 99-100 - Trend strengthening",
+                "multiplier": 0.1,
+                "cap": 0.5
+            },
+            "squeeze": {
+                "_comment": "From ranker.py lines 115-122 - Volatility compression",
+                "low_bonus": 0.4,
+                "mid_bonus": 0.2,
+                "high_penalty": -0.2
+            },
+            "vwap": {
+                "aligned_bonus": 0.3,
+                "misaligned_penalty": -0.2
+            }
+        },
+        "regime_multipliers": {
+            "trend_up": 1.1,
+            "trend_down": 1.1,
+            "chop": 0.7,
+            "squeeze": 1.0
+        },
+        "daily_trend_multipliers": {
+            "aligned": 1.25,
+            "counter": 0.75,
+            "neutral": 1.0
+        }
+    },
+
+    "entry": {
+        "_comment": "From configuration.json level_breakout_long - k_atr: 0.15, min_breakout_atr_mult: 0.20",
+        "zone_mult_atr": 0.15,
+        "min_breakout_atr_mult": 0.20,
+        "mode": "immediate",
+        "triggers": {
+            "long": "breakout_above_level",
+            "short": "breakdown_below_level"
+        }
+    },
+
+    "targets": {
+        "_comment": "From configuration.json - t1_rr: 1.5, t2_rr: 3.0, level_breakout target_mult_t1: 2.0, target_mult_t2: 3.0",
+        "rr_ratios": {
+            "t1": 1.5,
+            "t2": 3.0,
+            "t3": 4.0
+        },
+        "qty_splits": {
+            "t1": 0.40,
+            "t2": 0.35,
+            "t3": 0.25
+        },
+        "caps": {
+            "_comment": "FIX: Increased caps to match baseline - was capping targets to <1R causing poor PnL",
+            "t1": {
+                "measured_move_frac": 2.0,
+                "max_pct": 1.0
+            },
+            "t2": {
+                "measured_move_frac": 3.0,
+                "max_pct": 1.0
+            },
+            "t3": {
+                "measured_move_frac": 4.0,
+                "max_pct": 1.0
+            }
+        },
+        "trail": {
+            "after_t1": {
+                "move_sl_to": "entry",
+                "offset_atr": 0.1
+            },
+            "after_t2": {
+                "move_sl_to": "t1",
+                "offset_atr": 0.0
+            }
+        }
+    },
+
+    "stop_loss": {
+        "_comment": "From configuration.json - sl_atr_multiplier: 2.0 across all setups",
+        "atr_multiplier": 2.0
+    }
+}

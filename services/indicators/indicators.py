@@ -11,13 +11,19 @@ All indicators use industry-standard methods:
 - RSI: Wilder's smoothing (alpha=1/period)
 - MACD: EMA-based (span smoothing)
 - EMA: Standard exponential moving average
+- Volume Ratio: Current volume vs median volume
 
 Usage:
-    from services.indicators.adx import (
-        calculate_atr,
+    from services.indicators.indicators import (
+        calculate_atr, calculate_atr_series,
         calculate_adx, calculate_adx_with_di,
-        calculate_rsi, calculate_macd, calculate_ema
+        calculate_rsi, calculate_macd, calculate_ema,
+        volume_ratio
     )
+
+    # ATR
+    atr = calculate_atr(df, period=14)
+    atr_series = calculate_atr_series(df, period=14)
 
     # ADX
     adx = calculate_adx(df, period=14)
@@ -31,6 +37,9 @@ Usage:
 
     # EMA
     ema = calculate_ema(series, span=20)
+
+    # Volume Ratio
+    vol_ratio = volume_ratio(df, lookback=20)
 """
 
 import pandas as pd
@@ -263,3 +272,29 @@ def calculate_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: in
         'signal': signal_line,
         'histogram': histogram
     }
+
+
+def volume_ratio(df: pd.DataFrame, lookback: int = 20) -> float:
+    """
+    Calculate volume ratio vs recent median volume.
+
+    Useful for detecting unusual volume activity.
+
+    Args:
+        df: DataFrame with 'volume' column
+        lookback: Number of bars to compute median over (default 20)
+
+    Returns:
+        float: Ratio of current volume to median volume (1.0 = normal)
+
+    Example:
+        >>> ratio = volume_ratio(df, lookback=20)
+        >>> if ratio > 2.0:
+        ...     print("Volume spike detected")
+    """
+    if df is None or len(df) == 0:
+        return 1.0
+
+    v = df["volume"].astype(float)
+    med = float(v.tail(lookback).median() or 1.0)
+    return float(v.iloc[-1] / med) if med > 0 else 1.0

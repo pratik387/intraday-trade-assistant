@@ -539,10 +539,23 @@ class TradingLogger:
                             self.session_stats['rank_scores_skipped'].remove(rank_score)
                             self.session_stats['rank_scores_triggered'].append(rank_score)
 
-                    # Log enhanced analytics for last exit (full trade summary)
-                    last_exit = exit_events[-1]
-                    analytics_data = self._create_enhanced_analytics(decision_event, last_exit, trigger_event, pnl)
-                    self.analytics_logger.info(json.dumps(analytics_data))
+                    # FIX: Log analytics for EACH exit event (captures partial exits)
+                    # Each exit gets its own analytics record with its specific qty/price/pnl
+                    for i, exit_ev in enumerate(exit_events):
+                        # Calculate PnL for this specific exit
+                        exit_pnl = self._calculate_single_exit_pnl(decision_event, exit_ev, trigger_event)
+                        # Mark if this is the final exit
+                        is_final = (i == len(exit_events) - 1)
+                        analytics_data = self._create_enhanced_analytics(
+                            decision_event, exit_ev, trigger_event, exit_pnl
+                        )
+                        # Add exit sequence info
+                        analytics_data['exit_sequence'] = i + 1
+                        analytics_data['total_exits'] = len(exit_events)
+                        analytics_data['is_final_exit'] = is_final
+                        if is_final:
+                            analytics_data['total_trade_pnl'] = pnl  # Include total PnL on final exit
+                        self.analytics_logger.info(json.dumps(analytics_data))
 
             # Count triggered trades
             self.session_stats['triggered_trades'] = len(triggers)
@@ -605,6 +618,11 @@ class TradingLogger:
         except Exception as e:
             print(f"[analytics] ERROR: Failed to calculate PnL for {decision_event.get('symbol')}: {e}")
             return 0.0
+
+    def _calculate_single_exit_pnl(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
+                                   trigger_event: Optional[Dict[str, Any]] = None) -> float:
+        """Calculate PnL for a single exit event (used for partial exit analytics)"""
+        return self._calculate_trade_pnl(decision_event, exit_event, trigger_event)
 
     def _calculate_trade_pnl(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
                            trigger_event: Optional[Dict[str, Any]] = None) -> float:

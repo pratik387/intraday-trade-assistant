@@ -1,0 +1,207 @@
+{
+    "_comment": "REVERSION Pipeline Configuration - Values from configuration.json verified against pro Indian trading research",
+    "_category": "REVERSION",
+    "_description": "Mean reversion plays (failure fade, volume spike reversal, gap fill, liquidity sweep)",
+
+    "setup_types": [
+        "failure_fade_long", "failure_fade_short",
+        "volume_spike_reversal_long", "volume_spike_reversal_short",
+        "gap_fill_long", "gap_fill_short",
+        "vwap_mean_reversion_long", "vwap_mean_reversion_short",
+        "liquidity_sweep_long", "liquidity_sweep_short",
+        "fair_value_gap_long", "fair_value_gap_short",
+        "range_deviation_long", "range_deviation_short",
+        "range_mean_reversion_long", "range_mean_reversion_short"
+    ],
+
+    "screening": {
+        "time_windows": {
+            "_comment": "From configuration.json time_policy + research: 09:15 start, avoid 11-12 (36.6% WR worst), golden hour 14:30-15:30",
+            "morning_start": "09:15",
+            "morning_end": "11:00",
+            "avoid_window_start": "11:00",
+            "avoid_window_end": "12:00",
+            "afternoon_start": "13:00",
+            "afternoon_end": "14:45",
+            "golden_hour_start": "14:30",
+            "golden_hour_end": "15:30",
+            "last_entry_cutoff": "14:45"
+        },
+        "extension": {
+            "_comment": "From configuration.json vwap_mean_reversion - min_distance_bps: 50, max_distance_bps: 150",
+            "min_vwap_extension_pct": 0.5,
+            "max_vwap_extension_pct": 1.5
+        },
+        "rsi_extremes": {
+            "_comment": "From configuration.json - oversold_rsi_threshold: 30, overbought_rsi_threshold: 70",
+            "oversold_threshold": 30,
+            "overbought_threshold": 70
+        },
+        "volume_spike_threshold": 1.5
+    },
+
+    "quality": {
+        "_comment": "From configuration.json - min_t1_rr: 1.2",
+        "min_structural_rr": 0.8,
+        "vwap_distance_weight": 0.5,
+        "exhaustion_weight": 2.0,
+        "volume_exhaustion": {
+            "_comment": "From configuration.json - min_volume_mult: 1.5 for vwap_mean_reversion",
+            "threshold": 1.5,
+            "multiplier": 0.5
+        },
+        "quality_thresholds": {
+            "excellent": {
+                "min_exhaustion_score": 0.5,
+                "min_vwap_distance_atr": 1.5
+            },
+            "good": {
+                "min_exhaustion_score": 0.3,
+                "min_vwap_distance_atr": 1.0
+            },
+            "fair": {
+                "min_exhaustion_score": 0.0,
+                "min_vwap_distance_atr": 0.5
+            }
+        },
+        "rsi_exhaustion": {
+            "long": {
+                "threshold": 30,
+                "divisor": 30
+            },
+            "short": {
+                "threshold": 70,
+                "divisor": 30
+            }
+        }
+    },
+
+    "gates": {
+        "_comment": "From configuration.json failure_fade - min_volume_mult: 1.2, min_fade_strength: 0.6",
+        "regime_rules": {
+            "chop": {
+                "_comment": "Research: Mean reversion excels in chop. 43.8% WR, 1.63 PF per baseline",
+                "allowed": true,
+                "size_mult": 1.3
+            },
+            "trend_up": {
+                "_comment": "Counter-trend needs stronger confirmation",
+                "allowed": true,
+                "size_mult": 1.0,
+                "min_strength_counter_trend": 1.5,
+                "counter_trend_size_mult": 0.7
+            },
+            "trend_down": {
+                "allowed": true,
+                "size_mult": 1.0,
+                "min_strength_counter_trend": 1.5,
+                "counter_trend_size_mult": 0.7
+            },
+            "squeeze": {
+                "allowed": true,
+                "size_mult": 1.1
+            }
+        },
+        "min_hold_bars": 2,
+        "failure_fade": {
+            "_comment": "From configuration.json failure_fade - min_fade_strength: 0.6",
+            "min_fade_strength": 0.6,
+            "rejection_candle_body_ratio_max": 0.4,
+            "rejection_candle_bonus_mult": 1.1,
+            "min_pierce_size_pct": 0.1,
+            "max_pierce_size_pct": 1.0,
+            "fade_confirmation_bars": 1
+        },
+        "volume_capitulation": {
+            "_comment": "From configuration.json - sweep_min_volume_surge: 2.0 for ICT sweeps",
+            "threshold": 2.0,
+            "bonus_mult": 1.15
+        },
+        "adx": {
+            "_comment": "From configuration.json - adx_min_strength: 15",
+            "min_adx_for_trend_fade": 15
+        }
+    },
+
+    "ranking": {
+        "weights": {
+            "extension": {
+                "multiplier": 0.3,
+                "cap": 1.0
+            },
+            "exhaustion": {
+                "oversold_multiplier": 0.5,
+                "overbought_multiplier": 0.5
+            },
+            "rsi": {
+                "_comment": "For reversion: EXTREME RSI is GOOD (opposite of trend-following)",
+                "extreme_bonus": 0.5,
+                "neutral_penalty": -0.2
+            },
+            "rsi_slope": {
+                "_comment": "From ranker.py line 98 - Reversal signal when RSI turning",
+                "multiplier": 0.1,
+                "cap": 0.3
+            },
+            "volume": {
+                "above_threshold_mult": 0.3,
+                "cap": 0.5
+            }
+        },
+        "regime_multipliers": {
+            "_comment": "Chop best for mean reversion per baseline analysis",
+            "chop": 1.4,
+            "squeeze": 1.2,
+            "trend_up": 0.9,
+            "trend_down": 0.9
+        }
+    },
+
+    "entry": {
+        "_comment": "From configuration.json vwap_mean_reversion - vwap_buffer_mult: 0.2, stop_distance_mult: 0.75",
+        "zone_mult_atr": 0.20,
+        "mode": "retest",
+        "triggers": {
+            "long": "reversal_from_low",
+            "short": "reversal_from_high"
+        },
+        "vwap_buffer_mult": 0.2
+    },
+
+    "targets": {
+        "_comment": "From configuration.json - failure_fade target_mult_t1: 1.0, t2: 2.0, vwap_mean_reversion t1: 1.0, t2: 1.5",
+        "vwap_based": {
+            "_comment": "VWAP reversion targets based on distance to VWAP",
+            "t1_frac": 0.5,
+            "t2_frac": 1.0,
+            "t3_frac": 1.3
+        },
+        "fallback_rr_ratios": {
+            "_comment": "From configuration.json failure_fade - target_mult_t1: 1.0, target_mult_t2: 2.0",
+            "t1": 1.0,
+            "t2": 2.0,
+            "t3": 2.5
+        },
+        "qty_splits": {
+            "t1": 0.50,
+            "t2": 0.35,
+            "t3": 0.15
+        },
+        "trail": {
+            "after_t1": {
+                "move_sl_to": "breakeven",
+                "offset_atr": 0.0
+            },
+            "after_t2": {
+                "move_sl_to": "t1",
+                "offset_atr": 0.05
+            }
+        }
+    },
+
+    "stop_loss": {
+        "_comment": "From configuration.json - failure_fade stop_mult: 1.5, vwap_mean_reversion stop_distance_mult: 0.75",
+        "atr_multiplier": 1.5,
+        "min_stop_distance_pct": 0.5
+    }
+}

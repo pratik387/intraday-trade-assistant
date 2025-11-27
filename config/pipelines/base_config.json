@@ -1,0 +1,178 @@
+{
+    "_comment": "BASE Pipeline Configuration - Universal settings applied to ALL categories",
+    "_description": "Risk management, sizing, and quality filter settings shared across all pipelines",
+
+    "range_compression": {
+        "_comment": "From trade_decision_gate.py - Reject during volatility expansion",
+        "_evidence": "Volatility expansion invalidates support/resistance levels",
+        "enabled": true,
+        "lookback_bars": 20,
+        "max_expansion_ratio": 0.8,
+        "_note": "Ratio > 0.8 means current ATR is expanding vs avg - bad for level setups. Disabled by default - enable if level setups underperform."
+    },
+
+    "cap_strategy_blocking": {
+        "_comment": "From trade_decision_gate.py - Block certain setups for certain market cap segments",
+        "_evidence": "Micro-cap too volatile for momentum breakouts, large-cap prefers levels over reversions",
+        "enabled": true,
+        "blocked_setups": {
+            "micro_cap": ["momentum_breakout", "squeeze_release"],
+            "small_cap": [],
+            "mid_cap": [],
+            "large_cap": ["mean_reversion", "rsi_divergence"]
+        },
+        "_note": "Disabled by default - enable if specific cap-strategy combinations underperform."
+    },
+
+    "opening_bell_override": {
+        "_comment": "From trade_decision_gate.py lines 443-573 - Opening bell has different volatility patterns",
+        "_evidence": "First 15 min has high participation, some gates should be bypassed",
+        "enabled": true,
+        "start_hour": 9,
+        "start_minute": 15,
+        "end_hour": 9,
+        "end_minute": 30,
+        "bypass_gates": ["range_compression", "momentum_consolidation"],
+        "_note": "During 9:15-9:30 AM window, bypass specified gates due to opening volatility"
+    },
+
+    "price_action_directionality": {
+        "_comment": "From trade_decision_gate.py lines 1041-1056 - Validates recent price action aligns with trade direction",
+        "_evidence": "Prevents counter-trend entry fills by checking last 3 bars",
+        "enabled": true,
+        "_note": "Long: close[-1] >= close[-3], Short: close[-1] <= close[-3] - rejects if price moving against intended direction"
+    },
+
+    "volatility_sizing": {
+        "_comment": "From planner_internal.py lines 547-581 - Van Tharp position sizing",
+        "enabled": true,
+        "low_volatility_threshold": 0.8,
+        "high_volatility_threshold": 2.5,
+        "low_volatility_multiplier": 1.5,
+        "normal_volatility_multiplier": 1.0,
+        "high_volatility_multiplier": 0.5,
+        "max_size_adjustment": 2.0,
+        "min_size_adjustment": 0.5
+    },
+
+    "cap_risk_adjustments": {
+        "_comment": "From planner_internal.py lines 583-615 - Van Tharp evidence-based cap sizing",
+        "enabled": true,
+        "large_cap": {
+            "_comment": "Lower volatility, can size up",
+            "size_multiplier": 1.2,
+            "sl_atr_multiplier": 1.0
+        },
+        "mid_cap": {
+            "_comment": "Baseline",
+            "size_multiplier": 1.0,
+            "sl_atr_multiplier": 1.0
+        },
+        "small_cap": {
+            "_comment": "Higher volatility, size down and widen stops",
+            "size_multiplier": 0.6,
+            "sl_atr_multiplier": 1.25
+        }
+    },
+
+    "quality_filters": {
+        "_comment": "From planner_internal.py lines 1358-1451 - Professional quality enforcement",
+        "enabled": true,
+
+        "min_structural_rr": 2.0,
+        "strategy_structural_rr_overrides": {
+            "_comment": "Breakouts use relaxed R:R - momentum blows through resistance",
+            "orb_breakout_long": 1.5,
+            "orb_breakout_short": 1.5,
+            "momentum_breakout_long": 1.5,
+            "momentum_breakout_short": 1.5,
+            "flag_continuation_long": 1.5,
+            "flag_continuation_short": 1.5,
+            "squeeze_release_long": 1.5,
+            "squeeze_release_short": 1.5,
+            "range_breakout_long": 1.5,
+            "range_breakout_short": 1.5,
+            "gap_breakout_long": 1.5,
+            "gap_breakout_short": 1.5,
+            "break_of_structure_long": 1.5,
+            "break_of_structure_short": 1.5,
+            "change_of_character_long": 1.5,
+            "change_of_character_short": 1.5
+        },
+
+        "min_t1_rr": 1.0,
+
+        "t1_max_pct": 2.0,
+        "t1_max_mm_frac": 0.75,
+        "t2_max_pct": 4.0,
+        "t2_max_mm_frac": 1.5
+    },
+
+    "late_entry_penalties": {
+        "_comment": "From planner_internal.py lines 1021-1029 - RSI extreme penalties",
+        "rsi_long_threshold": 70,
+        "rsi_short_threshold": 30,
+        "size_mult_penalty": 0.6
+    },
+
+    "universal_ranking": {
+        "_comment": "Universal ranking adjustments from ranker.py - apply to ALL categories",
+        "_description": "Time-of-day filtering, blacklist penalties, RR caps, multi-TF adjustments",
+
+        "time_of_day": {
+            "_comment": "From ranker.py lines 569-622 - Late-day noise filtering",
+            "_audit_finding": "39 signals in 14:00-15:00 window, only 3 trades (7.7% conversion = noise)",
+            "enabled": true,
+            "late_afternoon_start_hour": 14,
+            "late_afternoon_end_minute": 30,
+            "late_afternoon_mult": 1.5,
+            "final_hour_mult": 2.5,
+            "_note": "Multiplier applied to threshold, not score. Higher = harder to qualify."
+        },
+
+        "blacklist": {
+            "_comment": "From ranker.py lines 513-517 - Penalty for poor-performing setups",
+            "enabled": true,
+            "strategies": [],
+            "penalty": -999.0,
+            "_note": "Add strategy names to blacklist based on backtest performance analysis"
+        },
+
+        "unrealistic_rr": {
+            "_comment": "From ranker.py lines 519-525 - Penalty for unrealistic R:R",
+            "enabled": true,
+            "max_structural_rr": 4.0,
+            "penalty": -0.3,
+            "_note": "Unrealistic R:R often indicates bad level placement or data issues"
+        },
+
+        "multi_tf_daily": {
+            "_comment": "From ranker.py lines 350-399 - Linda Raschke MTF filtering",
+            "_evidence": "Professional traders require HTF alignment for optimal setups",
+            "enabled": true,
+            "min_confidence": 0.70,
+            "aligned_mult": 1.15,
+            "counter_mult": 0.85,
+            "squeeze_mult": 0.90,
+            "_note": "±15% adjustment based on daily regime alignment at confidence ≥ 0.70"
+        },
+
+        "multi_tf_hourly": {
+            "_comment": "From ranker.py lines 402-447 - Linda Raschke lower TF execution",
+            "_evidence": "Enter on aligned lower TF for better timing",
+            "enabled": true,
+            "min_confidence": 0.60,
+            "aligned_mult": 1.10,
+            "counter_mult": 0.90,
+            "_note": "±10% adjustment based on hourly session bias at confidence ≥ 0.60"
+        },
+
+        "daily_score_weighting": {
+            "_comment": "From ranker.py line 505 - Combine daily and intraday scores",
+            "enabled": true,
+            "weight_daily": 0.3,
+            "weight_intraday": 0.7,
+            "_note": "final_score = w_daily * daily_score + w_intraday * intraday_score"
+        }
+    }
+}
