@@ -113,6 +113,8 @@ class OCIBacktestSubmitter:
             'utils/**/*.py',
             'broker/**/*.py',
             'diagnostics/**/*.py',
+            'pipelines/**/*.py',
+            'pipelines/**/*.json',
             'nse_all.json',
             'requirements.txt',
             '.env.development',
