@@ -102,10 +102,11 @@
 
         "min_t1_rr": 1.0,
 
-        "t1_max_pct": 2.0,
-        "t1_max_mm_frac": 0.75,
-        "t2_max_pct": 4.0,
-        "t2_max_mm_frac": 1.5
+        "_comment_caps": "Matched to configuration.json values - original 2%/0.75x was too restrictive",
+        "t1_max_pct": 100.0,
+        "t1_max_mm_frac": 2.0,
+        "t2_max_pct": 100.0,
+        "t2_max_mm_frac": 3.0
     },
 
     "late_entry_penalties": {

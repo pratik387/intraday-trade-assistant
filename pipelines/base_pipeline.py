@@ -940,6 +940,17 @@ class BasePipeline(ABC):
         bias = "long" if "_long" in setup_type else "short"
         atr = self.calculate_atr(df5m)
 
+        # For ORB setups in morning session, use daily ATR if intraday ATR unavailable
+        # Professional traders use daily ATR for morning setups since intraday data is insufficient
+        is_orb_setup = setup_type.startswith("orb_")
+        is_morning_session = now.hour < 11 if now else False  # Before 11:00 AM
+
+        if atr is None and is_orb_setup and is_morning_session and daily_df is not None:
+            daily_atr = self.calculate_atr(daily_df, period=14)
+            if daily_atr is not None:
+                atr = daily_atr
+                logger.info(f"[{category}] {symbol} {setup_type}: Using daily ATR {atr:.2f} for morning ORB (intraday ATR unavailable)")
+
         # Gracefully reject if insufficient data for ATR calculation
         if atr is None:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected: insufficient data for ATR")
@@ -964,8 +975,7 @@ class BasePipeline(ABC):
             "rsi": rsi_val,
         }
 
-        # daily_df reserved for future HTF analysis
-        _ = daily_df
+        # daily_df now used for daily ATR fallback in morning ORB setups
 
         # 0. UNIVERSAL GATES (apply BEFORE category-specific gates)
         # Check if we're in opening bell window (9:15-9:30) - may bypass some gates

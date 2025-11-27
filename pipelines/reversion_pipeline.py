@@ -318,10 +318,10 @@ class ReversionPipeline(BasePipeline):
 
         logger.debug(f"[REVERSION] Calculating rank score for {symbol} in {regime}")
 
-        vol_ratio = float(intraday_features.get("volume_ratio", 1.0))
-        vwap_distance = float(intraday_features.get("vwap_distance", 0.0))
-        rsi = float(intraday_features.get("rsi", 50.0))
-        rsi_slope = float(intraday_features.get("rsi_slope", 0.0))
+        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
+        vwap_distance = float(intraday_features.get("vwap_distance") or 0.0)
+        rsi = float(intraday_features.get("rsi") or 50.0)
+        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
 
         # Weights from config
         weights = self._get("ranking", "weights")

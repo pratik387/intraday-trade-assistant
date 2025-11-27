@@ -312,10 +312,10 @@ class MomentumPipeline(BasePipeline):
         """
         logger.debug(f"[MOMENTUM] Calculating rank score for {symbol} in {regime}")
 
-        adx = float(intraday_features.get("adx", 0.0))
-        adx_slope = float(intraday_features.get("adx_slope", 0.0))
-        rsi_slope = float(intraday_features.get("rsi_slope", 0.0))
-        vol_ratio = float(intraday_features.get("volume_ratio", 1.0))
+        adx = float(intraday_features.get("adx") or 0.0)
+        adx_slope = float(intraday_features.get("adx_slope") or 0.0)
+        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
+        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
         above_vwap = bool(intraday_features.get("above_vwap", True))
         bias = intraday_features.get("bias", "long")
 

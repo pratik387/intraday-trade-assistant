@@ -299,8 +299,8 @@ class LevelPipeline(BasePipeline):
         _ = daily_trend
 
         logger.debug(f"[LEVEL] Calculating rank score for {symbol} in {regime}")
-        vol_ratio = float(intraday_features.get("volume_ratio", 1.0))
-        dist_bpct = float(intraday_features.get("dist_from_level_bpct", 5.0))
+        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
+        dist_bpct = float(intraday_features.get("dist_from_level_bpct") or 5.0)
         acceptance_status = intraday_features.get("acceptance_status", "fair")
 
         # Weights from config

@@ -175,18 +175,18 @@
             "t3": 0.20
         },
         "caps": {
-            "_comment": "FIX: Increased caps to match baseline - was capping targets to <1R causing poor PnL",
+            "_comment": "FIXED: max_pct was 1.0 (1%) - way too restrictive! Old config uses 100%. Targets need to reach 2-3R for positive expectancy.",
             "t1": {
                 "measured_move_frac": 2.0,
-                "max_pct": 1.0
+                "max_pct": 100.0
             },
             "t2": {
                 "measured_move_frac": 3.0,
-                "max_pct": 1.0
+                "max_pct": 100.0
             },
             "t3": {
                 "measured_move_frac": 4.0,
-                "max_pct": 1.0
+                "max_pct": 100.0
             }
         },
         "trail": {

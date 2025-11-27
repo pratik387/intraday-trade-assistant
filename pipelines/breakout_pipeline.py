@@ -155,6 +155,9 @@ class BreakoutPipeline(BasePipeline):
         - Breakout distance (ATR-normalized) measures momentum
         - Volume ratio confirms institutional participation
         - Quality = strength of the break, not distance to arbitrary levels
+
+        NOTE: ORB setups naturally have LOW structural_rr (near 0) since we enter AT the level.
+        The old config handles this with strategy_structural_rr_overrides: 0.25 for orb_* setups.
         """
         logger.debug(f"[BREAKOUT] Calculating quality for {symbol} bias={bias}")
         current_close = float(df5m["close"].iloc[-1])
@@ -335,9 +338,9 @@ class BreakoutPipeline(BasePipeline):
         - +10% bonus if HTF volume surge (confirms institutional participation)
         """
         logger.debug(f"[BREAKOUT] Calculating rank score for {symbol} in {regime}")
-        vol_ratio = float(intraday_features.get("volume_ratio", 1.0))
-        adx = float(intraday_features.get("adx", 0.0))
-        adx_slope = float(intraday_features.get("adx_slope", 0.0))
+        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
+        adx = float(intraday_features.get("adx") or 0.0)
+        adx_slope = float(intraday_features.get("adx_slope") or 0.0)
         squeeze_pctile = intraday_features.get("squeeze_pctile", None)
         above_vwap = bool(intraday_features.get("above_vwap", True))
 
