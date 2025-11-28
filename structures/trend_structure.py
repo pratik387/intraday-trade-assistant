@@ -70,11 +70,16 @@ class TrendStructure(BaseStructure):
         self.target_mult_t1 = config["target_mult_t1"]
         self.target_mult_t2 = config["target_mult_t2"]
 
+        # Stop loss parameters - Pro trader: SL at swing low/high + ATR buffer
+        self.swing_sl_buffer_atr = config["swing_sl_buffer_atr"]  # ATR buffer beyond swing level
+        self.swing_lookback_bars = config["swing_lookback_bars"]  # Bars to look back for swing
+
         # Confidence levels
         self.confidence_strong_trend = config["confidence_strong_trend"]
         self.confidence_weak_trend = config["confidence_weak_trend"]
 
         logger.debug(f"TREND: Initialized with min strength: {self.min_trend_strength}, pullback range: {self.min_pullback_pct}-{self.max_pullback_pct}%")
+        logger.debug(f"TREND: SL params - swing_buffer: {self.swing_sl_buffer_atr}ATR, lookback: {self.swing_lookback_bars} bars")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -367,20 +372,43 @@ class TrendStructure(BaseStructure):
         )
 
     def calculate_risk_params(self, context: MarketContext, event: StructureEvent, side: str) -> RiskParams:
-        """Calculate risk parameters for trend strategies."""
+        """Calculate risk parameters for trend strategies using pro trader swing-based SL.
+
+        Pro trader approach: SL at recent swing low/high + ATR buffer.
+        For trend trades, the swing point is the logical invalidation point.
+        """
         entry_price = context.current_price
         atr = self._get_atr(context)
+        df = context.df_5m
 
-        if side == "long":
-            atr_stop = entry_price - (atr * self.stop_distance_mult)
-            min_stop = entry_price * (1 - self.min_stop_distance_pct / 100)
-            hard_sl = min(atr_stop, min_stop)
+        # Find recent swing low/high for SL placement
+        if len(df) >= self.swing_lookback_bars:
+            lookback_df = df.tail(self.swing_lookback_bars)
+
+            if side == "long":
+                # Long: SL below recent swing low + ATR buffer
+                swing_low = float(lookback_df['low'].min())
+                hard_sl = swing_low - (atr * self.swing_sl_buffer_atr)
+            else:
+                # Short: SL above recent swing high + ATR buffer
+                swing_high = float(lookback_df['high'].max())
+                hard_sl = swing_high + (atr * self.swing_sl_buffer_atr)
         else:
-            atr_stop = entry_price + (atr * self.stop_distance_mult)
-            min_stop = entry_price * (1 + self.min_stop_distance_pct / 100)
-            hard_sl = max(atr_stop, min_stop)
+            # Fallback to ATR-based stops if not enough data
+            if side == "long":
+                hard_sl = entry_price - (atr * self.stop_distance_mult)
+            else:
+                hard_sl = entry_price + (atr * self.stop_distance_mult)
 
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,

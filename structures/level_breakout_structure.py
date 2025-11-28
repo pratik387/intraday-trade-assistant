@@ -61,6 +61,10 @@ class LevelBreakoutStructure(BaseStructure):
         self.retest_timeout_minutes = config["retest_timeout_minutes"]
         self.allow_both_modes = config["allow_both_modes"]
 
+        # Stop loss parameters - Pro trader: SL at breakout level + ATR buffer
+        self.sl_atr_multiplier = config["sl_atr_multiplier"]  # ATR multiplier for stop loss
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
+
         # Track traded breakouts to prevent double exposure
         self.traded_breakouts_today = set()
 
@@ -566,15 +570,21 @@ class LevelBreakoutStructure(BaseStructure):
             breakout_level = entry_price
 
         # NSE FIX: Set stop loss relative to ENTRY price, not breakout level
-        # Use configured sl_atr_multiplier instead of hardcoded value
-        # PHASE 1 FIX: Was hardcoded to 1.5x, now uses config value (2.0x per MFE/MAE analysis)
-        sl_mult = self.config.get("sl_atr_multiplier", 2.0)
+        # Use configured sl_atr_multiplier - no default, must be in config
         if side == "long":
-            hard_sl = entry_price - (atr * sl_mult)  # Stop sl_mult×ATR below entry
+            hard_sl = entry_price - (atr * self.sl_atr_multiplier)  # Stop sl_atr_multiplier×ATR below entry
         else:
-            hard_sl = entry_price + (atr * sl_mult)  # Stop sl_mult×ATR above entry
+            hard_sl = entry_price + (atr * self.sl_atr_multiplier)  # Stop sl_atr_multiplier×ATR above entry
 
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,

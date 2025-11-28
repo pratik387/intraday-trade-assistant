@@ -265,26 +265,26 @@
     "large_cap": {
       "size_multiplier": 1.2,
       "max_position_pct": 5.0,
-      "sl_atr_multiplier": 2.0,
-      "_rationale": "PHASE 1 UPDATE: Widened from 1.5x to 2.0x ATR based on 6-month baseline MFE/MAE analysis (1.41x ratio proves stops too tight). Lower volatility allows larger size (Van Tharp: 90% of performance from sizing)"
+      "sl_atr_multiplier": 1.5,
+      "_rationale": "REVERTED from 2.0x to 1.5x - wider stops were causing 800+ Rs losses"
     },
     "mid_cap": {
       "size_multiplier": 1.0,
       "max_position_pct": 3.0,
-      "sl_atr_multiplier": 2.0,
-      "_rationale": "PHASE 1 UPDATE: Widened from 1.5x to 2.0x ATR based on 6-month baseline MFE/MAE analysis (1.41x ratio proves stops too tight). Baseline sizing - balanced risk"
+      "sl_atr_multiplier": 1.5,
+      "_rationale": "REVERTED from 2.0x to 1.5x - wider stops were causing 800+ Rs losses"
     },
     "small_cap": {
       "size_multiplier": 0.6,
       "max_position_pct": 2.0,
-      "sl_atr_multiplier": 2.0,
-      "_rationale": "PHASE 1 UPDATE: Maintained at 2.0x ATR (already optimal per 6-month baseline analysis). Higher volatility requires smaller size + wider stops to avoid intraday noise"
+      "sl_atr_multiplier": 1.7,
+      "_rationale": "REVERTED from 2.0x to 1.7x - wider stops were causing 800+ Rs losses"
     },
     "micro_cap": {
       "size_multiplier": 0.5,
       "max_position_pct": 1.5,
-      "sl_atr_multiplier": 2.0,
-      "_rationale": "PHASE 1 UPDATE: Widened from 1.8x to 2.0x ATR based on 6-month baseline MFE/MAE analysis (1.41x ratio proves stops too tight). ENABLED per baseline data: Best performing segment (43.8% WR, 1.63 PF, Rs.173/trade avg). 50% position size (vs 60% small-caps) + wider stops due to higher volatility. Strict liquidity filters (4x volume surge) ensure tradeable names only."
+      "sl_atr_multiplier": 1.8,
+      "_rationale": "REVERTED from 2.0x to 1.8x - wider stops were causing 800+ Rs losses"
     }
   },
   "regime_cap_allocation": {
@@ -498,7 +498,11 @@
       "target_mult_t1": 1.5,
       "target_mult_t2": 2.5,
       "confidence_strong_trend": 0.8,
-      "confidence_weak_trend": 0.65
+      "confidence_weak_trend": 0.65,
+      "swing_sl_buffer_atr": 0.3,
+      "_comment_swing_sl": "ATR buffer beyond swing low/high for stop loss placement",
+      "swing_lookback_bars": 10,
+      "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "trend_pullback_short": {
       "enabled": true,
@@ -518,7 +522,11 @@
       "target_mult_t1": 1.5,
       "target_mult_t2": 2.5,
       "confidence_strong_trend": 0.8,
-      "confidence_weak_trend": 0.65
+      "confidence_weak_trend": 0.65,
+      "swing_sl_buffer_atr": 0.3,
+      "_comment_swing_sl": "ATR buffer beyond swing low/high for stop loss placement",
+      "swing_lookback_bars": 10,
+      "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "trend_continuation_long": {
       "enabled": true,
@@ -536,7 +544,11 @@
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
       "confidence_strong_trend": 0.85,
-      "confidence_weak_trend": 0.7
+      "confidence_weak_trend": 0.7,
+      "swing_sl_buffer_atr": 0.3,
+      "_comment_swing_sl": "ATR buffer beyond swing low for stop loss placement",
+      "swing_lookback_bars": 8,
+      "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "trend_continuation_short": {
       "enabled": true,
@@ -554,7 +566,11 @@
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
       "confidence_strong_trend": 0.85,
-      "confidence_weak_trend": 0.7
+      "confidence_weak_trend": 0.7,
+      "swing_sl_buffer_atr": 0.3,
+      "_comment_swing_sl": "ATR buffer beyond swing high for stop loss placement",
+      "swing_lookback_bars": 8,
+      "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "volume_spike_reversal_long": {
       "enabled": true,
@@ -565,7 +581,11 @@
       "reversal_threshold_pct": 2.0,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
-      "confidence_level": 0.7
+      "confidence_level": 0.7,
+      "spike_sl_buffer_atr": 0.3,
+      "_comment_spike_sl": "ATR buffer beyond spike candle low for stop loss placement",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "volume_spike_reversal_short": {
       "enabled": true,
@@ -576,7 +596,11 @@
       "reversal_threshold_pct": 2.0,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
-      "confidence_level": 0.7
+      "confidence_level": 0.7,
+      "spike_sl_buffer_atr": 0.3,
+      "_comment_spike_sl": "ATR buffer beyond spike candle high for stop loss placement",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "volume_breakout_long": {
       "enabled": false,
@@ -623,7 +647,13 @@
       "min_volume_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
-      "confidence_level": 0.7
+      "confidence_level": 0.7,
+      "bounce_sl_buffer_atr": 0.3,
+      "_comment_bounce_sl": "ATR buffer beyond range support for bounce SL",
+      "breakout_sl_buffer_atr": 0.5,
+      "_comment_breakout_sl": "ATR buffer inside range for breakout SL",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "range_bounce_short": {
       "enabled": true,
@@ -636,7 +666,13 @@
       "min_volume_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
-      "confidence_level": 0.7
+      "confidence_level": 0.7,
+      "bounce_sl_buffer_atr": 0.3,
+      "_comment_bounce_sl": "ATR buffer beyond range resistance for bounce SL",
+      "breakout_sl_buffer_atr": 0.5,
+      "_comment_breakout_sl": "ATR buffer inside range for breakout SL",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "range_breakout_long": {
       "enabled": false,
@@ -679,6 +715,8 @@
       "_comment_liquidity": "FIXED: 0.2 → 0.3% - Normal NSE 5-min volatility. 0.2% was rejecting normal wick patterns (0.3-0.5% wicks are standard)",
       "sl_atr_multiplier": 2.0,
       "_sl_rationale": "PHASE 1 UPDATE: Set to 2.0x ATR based on 6-month MFE/MAE analysis (1.41x ratio proves stops too tight)",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price",
       "target_mult_t1": 2.0,
       "target_mult_t2": 3.0,
       "confidence_strong_breakout": 0.85,
@@ -833,7 +871,13 @@
       "target_mult_t2": 2.5,
       "stop_mult": 1.5,
       "confidence_strong_momentum": 0.8,
-      "confidence_weak_momentum": 0.6
+      "confidence_weak_momentum": 0.6,
+      "swing_sl_buffer_atr": 0.3,
+      "_comment_swing_sl": "ATR buffer beyond swing low for stop loss placement",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price",
+      "swing_lookback_bars": 8,
+      "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "momentum_breakout_short": {
       "enabled": true,
@@ -854,7 +898,13 @@
       "target_mult_t2": 2.5,
       "stop_mult": 1.5,
       "confidence_strong_momentum": 0.8,
-      "confidence_weak_momentum": 0.6
+      "confidence_weak_momentum": 0.6,
+      "swing_sl_buffer_atr": 0.3,
+      "_comment_swing_sl": "ATR buffer beyond swing high for stop loss placement",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price",
+      "swing_lookback_bars": 8,
+      "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "support_bounce_long": {
       "enabled": true,
@@ -1167,7 +1217,13 @@
       "min_volume_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
-      "confidence_level": 0.7
+      "confidence_level": 0.7,
+      "bounce_sl_buffer_atr": 0.3,
+      "_comment_bounce_sl": "ATR buffer beyond range support for rejection SL",
+      "breakout_sl_buffer_atr": 0.5,
+      "_comment_breakout_sl": "ATR buffer inside range for breakout SL",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "range_rejection_short": {
       "enabled": true,
@@ -1180,7 +1236,13 @@
       "min_volume_mult": 1.5,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
-      "confidence_level": 0.7
+      "confidence_level": 0.7,
+      "bounce_sl_buffer_atr": 0.3,
+      "_comment_bounce_sl": "ATR buffer beyond range resistance for rejection SL",
+      "breakout_sl_buffer_atr": 0.5,
+      "_comment_breakout_sl": "ATR buffer inside range for breakout SL",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "ict_comprehensive": {
       "enabled": true,
@@ -1214,6 +1276,10 @@
       "risk_pct": 1.0,
       "reward_risk_ratio": 2.0,
       "max_bars_hold": 12,
+      "sl_buffer_atr": 0.3,
+      "_comment_sl_buffer": "ATR buffer beyond structure level for stop loss placement",
+      "min_stop_distance_pct": 0.3,
+      "_comment_min_stop": "Minimum stop loss distance as percentage of price",
       "ict_quality_filters": {
         "_comment": "ICT Pattern Quality Filters - Balance between noise filtering and opportunity capture",
         "order_block": {
@@ -1378,7 +1444,8 @@
   },
   "t1_rr": 1.5,
   "t2_rr": 3.0,
-  "sl_atr_mult": 2.0,
+  "sl_atr_mult": 1.6,
+  "_comment_sl_atr_mult": "REVERTED from 2.0 to 1.6 - wider stops were causing 800+ Rs losses instead of 600-700 Rs max",
   "sl_below_swing_ticks": 0.0,
 
   "_comment_time_based_sl": "=== TIME-BASED SL WIDENING (Pro Trader Standard) ===",

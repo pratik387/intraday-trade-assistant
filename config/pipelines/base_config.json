@@ -179,5 +179,8 @@
             "weight_intraday": 0.7,
             "_note": "final_score = w_daily * daily_score + w_intraday * intraday_score"
         }
-    }
+    },
+
+    "sl_atr_mult": 1.6,
+    "_comment_sl_atr_mult": "Base SL ATR multiplier - NO DEFAULTS allowed in code. Must be set here. Categories can override in their own configs."
 }

@@ -30,31 +30,32 @@ logger = get_agent_logger()
 def calculate_structure_stop(
     entry_price: float,
     bias: str,
-    atr: float
+    atr: float,
+    sl_atr_mult: float = 2.25
 ) -> float:
     """
-    PHASE 1 STOP LOSS FIX (Nov 2025): Uses entry-relative stops at 2.25× ATR distance.
+    DEPRECATED: This function will be removed. SL should come from structure's calculate_risk_params().
 
-    Analysis of 36 hard_sl exits (42.4% of all trades, -Rs.17,743) using 1m spike data showed:
-    - 91.7% of SL hits AVOIDABLE with 1.5R stops (33/36 trades saved!)
-    - 36.1% were FALSE STOP-OUTS - price reversed after SL hit
-    - 22.2% hit T1 before SL - these could have been WINNING trades
+    Calculate stop loss based on ATR multiplier. The multiplier should come from
+    the structure-specific configuration, not be hardcoded here.
 
-    Previous stop: 1.5× ATR (1.0R)
-    New stop: 2.25× ATR (1.5R) - 50% wider to avoid NSE intraday noise
+    Args:
+        entry_price: Entry price for the trade
+        bias: "long" or "short"
+        atr: ATR value (already adjusted for cap segment if needed)
+        sl_atr_mult: ATR multiplier for stop distance (structure-specific)
 
-    Transferred from planner_internal.py lines 364-402.
+    NOTE: For immediate entry mode, if the structure's hard_sl is available,
+    USE THAT INSTEAD of calling this function.
     """
     if atr is None or np.isnan(atr):
         # Fallback: 0.75% of entry price if ATR unavailable
         atr = entry_price * 0.0075
 
     if bias == "long":
-        # For longs: stop 2.25× ATR below entry price
-        return entry_price - (atr * 2.25)
+        return entry_price - (atr * sl_atr_mult)
     else:
-        # For shorts: stop 2.25× ATR above entry price
-        return entry_price + (atr * 2.25)
+        return entry_price + (atr * sl_atr_mult)
 
 
 class ConfigurationError(Exception):
@@ -1100,11 +1101,13 @@ class BasePipeline(ABC):
             cap_sl_mult = seg_cfg.get("sl_atr_multiplier", 1.0)
             logger.debug(f"CAP_SIZING: {symbol} {cap_segment} size_mult={cap_size_mult:.2f} sl_mult={cap_sl_mult:.2f}")
 
-        # 6. STOP LOSS - Use Phase 1 fix: 2.25× ATR with cap-specific adjustment
-        # Small-caps get wider stops (cap_sl_mult > 1.0)
+        # 6. STOP LOSS - Use configurable SL ATR multiplier from pipeline config
+        # Each category/structure has its own sl_atr_mult - NO DEFAULTS allowed
         # CRITICAL: Use effective_entry_price (current_close for immediate mode)
+        # TODO: In future, get hard_sl directly from structure's calculate_risk_params() instead
+        sl_atr_mult = self.cfg["sl_atr_mult"]  # REQUIRED - will raise KeyError if missing
         adjusted_atr = atr * cap_sl_mult
-        hard_sl = calculate_structure_stop(effective_entry_price, bias, adjusted_atr)
+        hard_sl = calculate_structure_stop(effective_entry_price, bias, adjusted_atr, sl_atr_mult)
 
         # 7. TARGETS
         # CRITICAL: Use effective_entry_price for target calculations

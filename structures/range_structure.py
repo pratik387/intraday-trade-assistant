@@ -46,7 +46,15 @@ class RangeStructure(BaseStructure):
         self.target_mult_t2 = config["target_mult_t2"]
         self.confidence_level = config["confidence_level"]
 
+        # Stop loss parameters - Pro trader: SL at structure level + ATR buffer
+        # Bounce: SL beyond support/resistance level
+        # Breakout: SL back inside the broken level
+        self.bounce_sl_buffer_atr = config["bounce_sl_buffer_atr"]  # ATR buffer beyond level for bounce SL
+        self.breakout_sl_buffer_atr = config["breakout_sl_buffer_atr"]  # ATR buffer inside level for breakout SL
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
+
         logger.debug(f"RANGE: Initialized with range duration: {self.min_range_duration} bars, height: {self.min_range_height_pct}-{self.max_range_height_pct}%")
+        logger.debug(f"RANGE: SL params - bounce_buffer: {self.bounce_sl_buffer_atr}ATR, breakout_buffer: {self.breakout_sl_buffer_atr}ATR")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect range-based structures."""
@@ -322,31 +330,56 @@ class RangeStructure(BaseStructure):
         )
 
     def calculate_risk_params(self, context: MarketContext, event: StructureEvent, side: str) -> RiskParams:
-        """Calculate risk parameters."""
+        """Calculate risk parameters using pro trader structure-based SL."""
         entry_price = context.current_price
 
-        if "bounce" in event.structure_type:
-            # For bounce trades, risk to opposite boundary
-            if side == "long":
-                hard_sl = event.levels.get("support", entry_price) * 0.995  # Slightly below support
-            else:
-                hard_sl = event.levels.get("resistance", entry_price) * 1.005  # Slightly above resistance
-        else:
-            # For breakout trades, risk back into range
-            if side == "long":
-                hard_sl = event.levels.get("breakout_level", entry_price) * 0.99  # Back below breakout
-            else:
-                hard_sl = event.levels.get("breakdown_level", entry_price) * 1.01  # Back above breakdown
+        # Get ATR for buffer calculation
+        atr = self._get_atr(context)
 
+        if "bounce" in event.structure_type:
+            # Pro trader: SL just beyond the structure level (support/resistance) + ATR buffer
+            if side == "long":
+                support_level = event.levels.get("support", entry_price)
+                hard_sl = support_level - (atr * self.bounce_sl_buffer_atr)  # Below support + buffer
+            else:
+                resistance_level = event.levels.get("resistance", entry_price)
+                hard_sl = resistance_level + (atr * self.bounce_sl_buffer_atr)  # Above resistance + buffer
+        else:
+            # Pro trader: SL back inside the broken level + ATR buffer
+            if side == "long":
+                breakout_level = event.levels.get("breakout_level", entry_price)
+                hard_sl = breakout_level - (atr * self.breakout_sl_buffer_atr)  # Below breakout level
+            else:
+                breakdown_level = event.levels.get("breakdown_level", entry_price)
+                hard_sl = breakdown_level + (atr * self.breakout_sl_buffer_atr)  # Above breakdown level
+
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
-        range_height = abs(event.levels.get("resistance", entry_price) - event.levels.get("support", entry_price))
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,
             risk_per_share=risk_per_share,
-            atr=range_height,
+            atr=atr,
             risk_percentage=0.02
         )
+
+    def _get_atr(self, context: MarketContext) -> float:
+        """Get ATR from context with fallback calculation."""
+        if context.indicators and 'atr' in context.indicators:
+            return context.indicators['atr']
+        # Fallback: estimate from recent range
+        if hasattr(context, 'df_5m') and len(context.df_5m) >= 14:
+            df = context.df_5m
+            high_low = df['high'] - df['low']
+            return float(high_low.tail(14).mean())
+        return context.current_price * 0.01  # 1% fallback
 
     def get_exit_levels(self, context: MarketContext, event: StructureEvent, side: str) -> ExitLevels:
         """Calculate exit levels."""

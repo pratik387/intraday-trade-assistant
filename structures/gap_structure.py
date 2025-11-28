@@ -42,7 +42,12 @@ class GapStructure(BaseStructure):
         self.target_mult_t2 = config["target_mult_t2"]
         self.confidence_level = config["confidence_level"]
 
+        # Stop loss parameters - Pro trader: SL at gap edge + ATR buffer
+        self.gap_sl_buffer_atr = config["gap_sl_buffer_atr"]  # ATR buffer beyond gap edge
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
+
         logger.debug(f"GAP: Initialized with gap range: {self.min_gap_pct}-{self.max_gap_pct}%")
+        logger.debug(f"GAP: SL params - gap_buffer: {self.gap_sl_buffer_atr}ATR, min_distance: {self.min_stop_distance_pct}%")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect gap-based structures."""
@@ -144,21 +149,58 @@ class GapStructure(BaseStructure):
         )
 
     def calculate_risk_params(self, context: MarketContext, event: StructureEvent, side: str) -> RiskParams:
-        """Calculate risk parameters."""
+        """Calculate risk parameters using pro trader gap edge-based SL.
+
+        Pro trader approach: SL at the gap edge (PDC for gap up, gap open for gap down) + ATR buffer.
+        The gap edge is the invalidation point - if price crosses it, the gap structure is invalid.
+        """
         entry_price = context.current_price
-        gap_size = abs(event.levels.get("gap_open", entry_price) - event.levels.get("gap_level", entry_price))
+        atr = self._get_atr(context)
 
-        if side == "long":
-            hard_sl = entry_price - gap_size * 0.5
+        gap_level = event.levels.get("gap_level")  # PDC
+        gap_open = event.levels.get("gap_open")  # Today's open
+
+        # Validate required levels exist
+        if gap_level is None or gap_open is None:
+            raise ValueError("Gap structure requires gap_level (PDC) and gap_open levels")
+
+        structure_type = event.structure_type
+
+        if "gap_fill" in structure_type:
+            # Gap fill trades: playing for price to fill the gap
+            if side == "long":
+                # Long gap fill: gap down scenario, playing for price to rise toward PDC
+                # SL below the gap open (the low of the gap) + ATR buffer
+                hard_sl = gap_open - (atr * self.gap_sl_buffer_atr)
+            else:
+                # Short gap fill: gap up scenario, playing for price to fall toward PDC
+                # SL above the gap open (the high of the gap) + ATR buffer
+                hard_sl = gap_open + (atr * self.gap_sl_buffer_atr)
         else:
-            hard_sl = entry_price + gap_size * 0.5
+            # Gap breakout trades: playing for gap continuation
+            if side == "long":
+                # Long gap breakout: gap up continuing higher
+                # SL below the gap_level (PDC) + ATR buffer - if it fills gap, thesis is wrong
+                hard_sl = gap_level - (atr * self.gap_sl_buffer_atr)
+            else:
+                # Short gap breakout: gap down continuing lower
+                # SL above the gap_level (PDC) + ATR buffer - if it fills gap, thesis is wrong
+                hard_sl = gap_level + (atr * self.gap_sl_buffer_atr)
 
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,
             risk_per_share=risk_per_share,
-            atr=gap_size,
+            atr=atr,
             risk_percentage=0.02
         )
 
@@ -192,6 +234,13 @@ class GapStructure(BaseStructure):
     def validate_timing(self, context: MarketContext, event: StructureEvent) -> Tuple[bool, str]:
         """Validate timing."""
         return True, "Gap timing validated"
+
+    def _get_atr(self, context: MarketContext) -> float:
+        """Get ATR from context with fallback."""
+        if context.indicators and 'atr' in context.indicators:
+            return context.indicators['atr']
+        # Fallback: estimate ATR as 1% of price
+        return context.current_price * 0.01
 
     def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
         """Calculate position size."""
