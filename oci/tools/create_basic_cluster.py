@@ -30,29 +30,27 @@ from pathlib import Path
 
 
 # =============================================================================
-# CONFIGURATION - Update these values from your existing cluster
+# CONFIGURATION - Values from existing Enhanced cluster
 # =============================================================================
 
 # Compartment (your tenancy root)
 COMPARTMENT_ID = "ocid1.tenancy.oc1..aaaaaaaasysw4isgo5u2wxxskjvkue4ofgo6ysqmc4bdc5zjexgw6icw57ma"
 
-# Get these from your existing cluster (OCI Console > Kubernetes > backtest-cluster > Cluster Details)
-# Or run: oci ce cluster get --cluster-id <your-cluster-ocid>
-VCN_ID = None  # Will be fetched from existing cluster
-KUBERNETES_VERSION = "v1.30.1"  # Use same as existing or latest
+# VCN and Subnets (from existing cluster)
+VCN_ID = "ocid1.vcn.oc1.ap-mumbai-1.amaaaaaau7zfh5aawnrlatubyp332lhshonmtvdzu5iabkc2w2gwnr2xnsua"
+KUBERNETES_VERSION = "v1.34.1"  # Latest version - supported for both Basic and Enhanced clusters
 
-# Subnet OCIDs - Get from OCI Console > Networking > VCN > Subnets
-# These should be the same subnets your existing cluster uses
-ENDPOINT_SUBNET_ID = None  # Kubernetes API endpoint subnet (public or private)
-NODE_SUBNET_ID = None  # Worker node subnet
-POD_SUBNET_ID = None  # Pod networking subnet (can be same as node subnet)
-SERVICE_LB_SUBNET_ID = None  # Load balancer subnet (if using services)
+# Subnet OCIDs
+ENDPOINT_SUBNET_ID = "ocid1.subnet.oc1.ap-mumbai-1.aaaaaaaa5d3pgxzlxwtawankranjif455t2tujfxs3ngfydteteyq254xlga"
+NODE_SUBNET_ID = "ocid1.subnet.oc1.ap-mumbai-1.aaaaaaaasomh2f46qqofsh3z6ikrl4xwk52ekzmj3d6hx736sy6nscwgncbq"
+POD_SUBNET_ID = None  # Uses node subnet for pod networking
+SERVICE_LB_SUBNET_ID = "ocid1.subnet.oc1.ap-mumbai-1.aaaaaaaauh6cvenwifq3zsz5fixc2qe7tgwmo76wgijg4cm5xoms4ckejoka"
 
-# Node pool configuration (match your existing)
-NODE_SHAPE = "VM.Standard.E4.Flex"  # Or VM.Standard.A1.Flex for ARM
-NODE_OCPUS = 2
-NODE_MEMORY_GB = 32
-NODE_IMAGE_ID = None  # Will use latest OKE image
+# Node pool configuration (match your existing VM.Standard.E5.Flex)
+NODE_SHAPE = "VM.Standard.E5.Flex"
+NODE_OCPUS = 5
+NODE_MEMORY_GB = 64
+NODE_IMAGE_ID = "ocid1.image.oc1.ap-mumbai-1.aaaaaaaaaeyijjqf4ua6dd74tuhidm54yon2becth2tmubgtvgw4r67m45eq"
 INITIAL_NODE_COUNT = 0  # Start with 0, scale up when needed
 
 # New cluster name
