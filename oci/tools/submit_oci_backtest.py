@@ -46,8 +46,8 @@ class OCIBacktestSubmitter:
         self.cache_bucket = 'backtest-cache'
         self.results_bucket = 'backtest-results'
 
-        # Node pool configuration
-        self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaa4nfxmwrow3ap5dbrn6uypwvn6gzvpponpolaj3mg5nf6y3fdcwpq"
+        # Node pool configuration (Basic cluster - free control plane)
+        self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaaqs7a4f5jyyhcy3dsmedknnzbmhpdmdj6dqkastv5cnaehilq5g3q"
 
         # Project root (oci/tools/submit.py -> parent.parent.parent = project root)
         self.root = Path(__file__).parent.parent.parent

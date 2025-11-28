@@ -60,8 +60,8 @@ class BacktestCleanupAutomation:
         self.keep_oci_files = keep_oci_files
         self.keep_extracted = keep_extracted
 
-        # OCI configuration
-        self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaa4nfxmwrow3ap5dbrn6uypwvn6gzvpponpolaj3mg5nf6y3fdcwpq"
+        # OCI configuration (Basic cluster - free control plane)
+        self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaaqs7a4f5jyyhcy3dsmedknnzbmhpdmdj6dqkastv5cnaehilq5g3q"
         self.bucket_name = "backtest-results"
 
         # Local paths
