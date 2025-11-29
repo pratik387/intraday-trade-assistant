@@ -76,16 +76,18 @@
                 "size_mult": 1.2
             },
             "trend_up": {
+                "_comment": "UPDATED: counter_trend_size_mult 0.7→0.5 - trend_up regime had -4,342 Rs loss with 41.9% WR",
                 "allowed": true,
                 "size_mult": 1.0,
                 "min_strength_counter_trend": 2.0,
-                "counter_trend_size_mult": 0.7
+                "counter_trend_size_mult": 0.5
             },
             "trend_down": {
+                "_comment": "UPDATED: counter_trend_size_mult 0.7→0.5 - penalize counter-trend plays more heavily",
                 "allowed": true,
                 "size_mult": 1.0,
                 "min_strength_counter_trend": 2.0,
-                "counter_trend_size_mult": 0.7
+                "counter_trend_size_mult": 0.5
             },
             "squeeze": {
                 "allowed": true,

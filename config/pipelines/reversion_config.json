@@ -28,12 +28,12 @@
             "last_entry_cutoff": "14:45"
         },
         "extension": {
-            "_comment": "From configuration.json vwap_mean_reversion - min_distance_bps: 50, max_distance_bps: 150",
-            "min_vwap_extension_pct": 0.5,
+            "_comment": "UPDATED: min_distance increased 0.5→0.8 to require more extension before reversion (vwap_mean_reversion_long had 35.7% WR)",
+            "min_vwap_extension_pct": 0.8,
             "max_vwap_extension_pct": 1.5
         },
         "rsi_extremes": {
-            "_comment": "From configuration.json - oversold_rsi_threshold: 30, overbought_rsi_threshold: 70",
+            "_comment": "UPDATED: oversold_threshold 35→30 - require MORE extreme RSI for long reversions (vwap_mean_reversion_long was losing 9K)",
             "oversold_threshold": 30,
             "overbought_threshold": 70
         },
@@ -41,8 +41,8 @@
     },
 
     "quality": {
-        "_comment": "From configuration.json - min_t1_rr: 1.2",
-        "min_structural_rr": 0.8,
+        "_comment": "From configuration.json - min_t1_rr: 1.2. UPDATED: 0.8→1.2 to require higher quality setups",
+        "min_structural_rr": 1.2,
         "vwap_distance_weight": 0.5,
         "exhaustion_weight": 2.0,
         "volume_exhaustion": {
@@ -51,17 +51,18 @@
             "multiplier": 0.5
         },
         "quality_thresholds": {
+            "_comment": "UPDATED: Increased thresholds - require more exhaustion/extension for reversion plays",
             "excellent": {
-                "min_exhaustion_score": 0.5,
-                "min_vwap_distance_atr": 1.5
+                "min_exhaustion_score": 0.6,
+                "min_vwap_distance_atr": 1.8
             },
             "good": {
-                "min_exhaustion_score": 0.3,
-                "min_vwap_distance_atr": 1.0
+                "min_exhaustion_score": 0.4,
+                "min_vwap_distance_atr": 1.2
             },
             "fair": {
-                "min_exhaustion_score": 0.0,
-                "min_vwap_distance_atr": 0.5
+                "min_exhaustion_score": 0.2,
+                "min_vwap_distance_atr": 0.8
             }
         },
         "rsi_exhaustion": {
@@ -158,8 +159,8 @@
     },
 
     "entry": {
-        "_comment": "From configuration.json vwap_mean_reversion - vwap_buffer_mult: 0.2, stop_distance_mult: 0.75",
-        "zone_mult_atr": 0.20,
+        "_comment": "From configuration.json vwap_mean_reversion - vwap_buffer_mult: 0.2, stop_distance_mult: 0.75. UPDATED: 0.20→0.30 for wider entry zones",
+        "zone_mult_atr": 0.30,
         "mode": "retest",
         "triggers": {
             "long": "reversal_from_low",

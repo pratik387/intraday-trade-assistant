@@ -181,6 +181,6 @@
         }
     },
 
-    "sl_atr_mult": 1.6,
-    "_comment_sl_atr_mult": "Base SL ATR multiplier - NO DEFAULTS allowed in code. Must be set here. Categories can override in their own configs."
+    "sl_atr_mult": 2.0,
+    "_comment_sl_atr_mult": "Base SL ATR multiplier - Increased from 1.6 to 2.0 based on backtest analysis showing losers have 2x slippage (10.4 bps vs 5.4 bps). Wider SL needed to absorb slippage."
 }

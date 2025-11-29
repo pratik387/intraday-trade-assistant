@@ -106,8 +106,10 @@ class ReversionPipeline(BasePipeline):
 
         if bias_hint == "long" and rsi > rsi_cfg["oversold_threshold"]:
             reasons.append(f"rsi_not_oversold:{rsi:.1f}>{rsi_cfg['oversold_threshold']}")
+            passed = False
         elif bias_hint == "short" and rsi < rsi_cfg["overbought_threshold"]:
             reasons.append(f"rsi_not_overbought:{rsi:.1f}<{rsi_cfg['overbought_threshold']}")
+            passed = False
         else:
             reasons.append(f"rsi_extreme_ok:{rsi:.1f}")
 

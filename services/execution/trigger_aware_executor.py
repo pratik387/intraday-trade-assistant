@@ -419,7 +419,8 @@ class TriggerAwareExecutor:
 
         # Process each pending trade for this symbol
         for trade in pending_for_symbol:
-            entry_zone = trade.plan.get("entry_zone")
+            # Try both key paths for entry_zone (flat and nested)
+            entry_zone = trade.plan.get("entry_zone") or (trade.plan.get("entry") or {}).get("zone")
             if not entry_zone or len(entry_zone) != 2:
                 continue
 
