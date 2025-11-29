@@ -38,8 +38,8 @@
     },
 
     "quality": {
-        "_comment": "From configuration.json - min_t1_rr: 1.2",
-        "min_structural_rr": 1.0,
+        "_comment": "ALIGNED TO BASELINE: min_t1_rr: 1.2 from configuration.json",
+        "min_structural_rr": 1.2,
         "acceptance": {
             "_comment": "From configuration.json support_bounce_long - bounce_tolerance_pct: 0.8",
             "bars": 2,
@@ -76,18 +76,18 @@
                 "size_mult": 1.2
             },
             "trend_up": {
-                "_comment": "UPDATED: counter_trend_size_mult 0.7→0.5 - trend_up regime had -4,342 Rs loss with 41.9% WR",
+                "_comment": "REVERTED: counter_trend_size_mult 0.5→0.7 as 0.5 killed resistance_bounce_short (+2,569 Rs)",
                 "allowed": true,
                 "size_mult": 1.0,
                 "min_strength_counter_trend": 2.0,
-                "counter_trend_size_mult": 0.5
+                "counter_trend_size_mult": 0.7
             },
             "trend_down": {
-                "_comment": "UPDATED: counter_trend_size_mult 0.7→0.5 - penalize counter-trend plays more heavily",
+                "_comment": "REVERTED: counter_trend_size_mult 0.5→0.7 to restore profitable level setups",
                 "allowed": true,
                 "size_mult": 1.0,
                 "min_strength_counter_trend": 2.0,
-                "counter_trend_size_mult": 0.5
+                "counter_trend_size_mult": 0.7
             },
             "squeeze": {
                 "allowed": true,
@@ -204,7 +204,7 @@
     },
 
     "stop_loss": {
-        "_comment": "From configuration.json - sl_atr_multiplier: 2.0, stop_distance_mult varies by setup",
+        "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
         "atr_multiplier": 2.0,
         "min_stop_distance_pct": 0.5
     }

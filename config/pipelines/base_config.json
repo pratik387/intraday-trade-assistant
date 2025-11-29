@@ -56,22 +56,35 @@
     },
 
     "cap_risk_adjustments": {
-        "_comment": "From planner_internal.py lines 583-615 - Van Tharp evidence-based cap sizing",
+        "_comment": "From baseline configuration.json (commit 3ded63d) - Van Tharp evidence-based cap sizing with 2.0x ATR for all caps",
         "enabled": true,
         "large_cap": {
             "_comment": "Lower volatility, can size up",
             "size_multiplier": 1.2,
-            "sl_atr_multiplier": 1.0
+            "max_position_pct": 5.0,
+            "sl_atr_multiplier": 2.0,
+            "_rationale": "ALIGNED TO BASELINE: 2.0x ATR based on 6-month MFE/MAE analysis"
         },
         "mid_cap": {
             "_comment": "Baseline",
             "size_multiplier": 1.0,
-            "sl_atr_multiplier": 1.0
+            "max_position_pct": 3.0,
+            "sl_atr_multiplier": 2.0,
+            "_rationale": "ALIGNED TO BASELINE: 2.0x ATR based on 6-month MFE/MAE analysis"
         },
         "small_cap": {
-            "_comment": "Higher volatility, size down and widen stops",
+            "_comment": "Higher volatility, size down",
             "size_multiplier": 0.6,
-            "sl_atr_multiplier": 1.25
+            "max_position_pct": 2.0,
+            "sl_atr_multiplier": 2.0,
+            "_rationale": "ALIGNED TO BASELINE: 2.0x ATR based on 6-month MFE/MAE analysis"
+        },
+        "micro_cap": {
+            "_comment": "Highest volatility, smallest size",
+            "size_multiplier": 0.5,
+            "max_position_pct": 1.5,
+            "sl_atr_multiplier": 2.0,
+            "_rationale": "ALIGNED TO BASELINE: 2.0x ATR based on 6-month MFE/MAE analysis (baseline: 43.8% WR, 1.63 PF)"
         }
     },
 
@@ -79,7 +92,7 @@
         "_comment": "From planner_internal.py lines 1358-1451 - Professional quality enforcement",
         "enabled": true,
 
-        "min_structural_rr": 1.0,
+        "min_structural_rr": 1.2,
         "strategy_structural_rr_overrides": {
             "_comment": "INSTITUTIONAL FIX: Root cause analysis revealed distance-based R:R is inversely correlated with breakout quality. Breakouts enter AT the level (distance~0), so structural_rr~0 is expected. Use very low thresholds.",
             "orb_breakout_long": 0.25,
@@ -104,7 +117,7 @@
             "change_of_character_short": 0.3
         },
 
-        "min_t1_rr": 1.0,
+        "min_t1_rr": 1.2,
 
         "_comment_caps": "Matched to configuration.json values - original 2%/0.75x was too restrictive",
         "t1_max_pct": 100.0,
@@ -182,5 +195,5 @@
     },
 
     "sl_atr_mult": 2.0,
-    "_comment_sl_atr_mult": "Base SL ATR multiplier - Increased from 1.6 to 2.0 based on backtest analysis showing losers have 2x slippage (10.4 bps vs 5.4 bps). Wider SL needed to absorb slippage."
+    "_comment_sl_atr_mult": "Base SL ATR multiplier - Aligned to baseline configuration.json (commit 3ded63d) which had 2.0x ATR"
 }

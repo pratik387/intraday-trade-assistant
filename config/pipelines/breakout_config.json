@@ -91,9 +91,9 @@
         },
         "regime_rules": {
             "chop": {
-                "_comment": "UPDATED: size_mult 0.7→0.5 - 84% of trades in CHOP, breakouts failing in choppy markets",
+                "_comment": "REVERTED: size_mult 0.5→0.7 as 0.5 reduced position sizes too aggressively",
                 "allowed": true,
-                "size_mult": 0.5,
+                "size_mult": 0.7,
                 "exception": "orb_before_10:30"
             },
             "trend_up": {
@@ -152,9 +152,9 @@
     },
 
     "entry": {
-        "_comment": "From configuration.json level_breakout_long - k_atr: 0.15, min_breakout_atr_mult: 0.20",
-        "zone_mult_atr": 0.15,
-        "min_breakout_atr_mult": 0.20,
+        "_comment": "From configuration.json planner_entry_zone_breakout_mult: 0.25, min_breakout_atr_mult: 0.3 - Aligned with baseline",
+        "zone_mult_atr": 0.25,
+        "min_breakout_atr_mult": 0.3,
         "mode": "immediate",
         "triggers": {
             "long": "breakout_above_level",
@@ -202,7 +202,7 @@
     },
 
     "stop_loss": {
-        "_comment": "From configuration.json - sl_atr_multiplier: 2.0 across all setups",
+        "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
         "atr_multiplier": 2.0
     }
 }

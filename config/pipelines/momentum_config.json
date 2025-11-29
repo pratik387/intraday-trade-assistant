@@ -43,8 +43,8 @@
     },
 
     "quality": {
-        "_comment": "From configuration.json - min_t1_rr: 1.2",
-        "min_structural_rr": 1.5,
+        "_comment": "ALIGNED TO BASELINE: min_t1_rr: 1.2 from configuration.json",
+        "min_structural_rr": 1.2,
         "adx_score": {
             "_comment": "Research: ADX 25+ for strong trend",
             "base": 25,
@@ -265,8 +265,8 @@
     },
 
     "stop_loss": {
-        "_comment": "From configuration.json - trend_continuation stop_distance_mult: 0.75, momentum_breakout stop_mult: 1.5, squeeze_release stop_mult: 1.5",
-        "atr_multiplier": 1.5,
+        "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
+        "atr_multiplier": 2.0,
         "trend_continuation_mult": 0.75,
         "min_stop_distance_pct": 0.5
     }
