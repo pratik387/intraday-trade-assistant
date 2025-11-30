@@ -410,10 +410,26 @@ class PipelineOrchestrator:
         regime: str,
         now: pd.Timestamp,
         daily_df: Optional[pd.DataFrame] = None,
-        htf_context: Optional[Dict[str, Any]] = None
+        htf_context: Optional[Dict[str, Any]] = None,
+        regime_diagnostics: Optional[Dict[str, Any]] = None,
+        daily_score: float = 0.0
     ) -> Optional[Dict[str, Any]]:
         """
         Process a single setup candidate through its category pipeline.
+
+        Args:
+            symbol: Trading symbol
+            setup_type: Setup type (e.g., "orb_breakout_long")
+            df5m: 5-minute OHLCV DataFrame
+            df1m: 1-minute OHLCV DataFrame (optional)
+            levels: Key price levels
+            regime: Current market regime
+            now: Current timestamp
+            daily_df: Daily OHLCV DataFrame (optional)
+            htf_context: HTF (15m) context for category-specific ranking
+            regime_diagnostics: Multi-TF regime info for universal ranking adjustments
+                               {daily: {regime, confidence}, hourly: {session_bias, confidence}}
+            daily_score: Daily timeframe score for score weighting
 
         Returns plan dict with category info, or None if rejected.
         """
@@ -443,7 +459,9 @@ class PipelineOrchestrator:
                 regime=regime,
                 now=now,
                 daily_df=daily_df,
-                htf_context=htf_context
+                htf_context=htf_context,
+                regime_diagnostics=regime_diagnostics,
+                daily_score=daily_score
             )
 
             timestamp = now.isoformat() if hasattr(now, 'isoformat') else str(now)
@@ -490,7 +508,9 @@ class PipelineOrchestrator:
         now: pd.Timestamp,
         candidates: List[Any],
         daily_df: Optional[pd.DataFrame] = None,
-        htf_context: Optional[Dict[str, Any]] = None
+        htf_context: Optional[Dict[str, Any]] = None,
+        regime_diagnostics: Optional[Dict[str, Any]] = None,
+        daily_score: float = 0.0
     ) -> Optional[Dict[str, Any]]:
         """
         Process candidates for a SINGLE symbol - returns best plan.
@@ -507,7 +527,10 @@ class PipelineOrchestrator:
             now: Current timestamp
             candidates: List of SetupCandidate objects
             daily_df: Daily OHLCV DataFrame (optional)
-            htf_context: HTF context (optional)
+            htf_context: HTF (15m) context for category-specific ranking
+            regime_diagnostics: Multi-TF regime info for universal ranking adjustments
+                               {daily: {regime, confidence}, hourly: {session_bias, confidence}}
+            daily_score: Daily timeframe score for score weighting
 
         Returns:
             Best eligible plan or None
@@ -532,7 +555,9 @@ class PipelineOrchestrator:
                 regime=regime,
                 now=now,
                 daily_df=daily_df,
-                htf_context=htf_context
+                htf_context=htf_context,
+                regime_diagnostics=regime_diagnostics,
+                daily_score=daily_score
             )
 
             if plan and plan.get("eligible", False):
@@ -630,7 +655,9 @@ class PipelineOrchestrator:
         symbols_data: List[Dict[str, Any]],
         regime: str,
         now: pd.Timestamp,
-        max_positions: Optional[int] = None
+        max_positions: Optional[int] = None,
+        regime_diagnostics: Optional[Dict[str, Any]] = None,
+        daily_score: float = 0.0
     ) -> List[Dict[str, Any]]:
         """
         Process candidates for MULTIPLE symbols with regime-based allocation.
@@ -650,9 +677,14 @@ class PipelineOrchestrator:
                 - candidates: List
                 - daily_df: DataFrame (optional)
                 - htf_context: Dict (optional)
+                - regime_diagnostics: Dict (optional, per-symbol override)
+                - daily_score: float (optional, per-symbol override)
             regime: Current market regime
             now: Current timestamp
             max_positions: Maximum positions to return (uses config if None)
+            regime_diagnostics: Default multi-TF regime info for universal ranking adjustments
+                               {daily: {regime, confidence}, hourly: {session_bias, confidence}}
+            daily_score: Default daily timeframe score for score weighting
 
         Returns:
             List of selected plans (up to max_positions)
@@ -671,6 +703,9 @@ class PipelineOrchestrator:
             candidates = data.get("candidates", [])
             daily_df = data.get("daily_df")
             htf_context = data.get("htf_context")
+            # Allow per-symbol override, fall back to method-level defaults
+            symbol_regime_diag = data.get("regime_diagnostics", regime_diagnostics)
+            symbol_daily_score = data.get("daily_score", daily_score)
 
             for candidate in candidates:
                 setup_type = str(candidate.setup_type) if hasattr(candidate, 'setup_type') else str(candidate)
@@ -684,7 +719,9 @@ class PipelineOrchestrator:
                     regime=regime,
                     now=now,
                     daily_df=daily_df,
-                    htf_context=htf_context
+                    htf_context=htf_context,
+                    regime_diagnostics=symbol_regime_diag,
+                    daily_score=symbol_daily_score
                 )
 
                 if plan and plan.get("eligible", False):
@@ -828,12 +865,28 @@ def process_setup_candidates(
     now: pd.Timestamp,
     candidates: List[Any],
     daily_df: Optional[pd.DataFrame] = None,
-    htf_context: Optional[Dict[str, Any]] = None
+    htf_context: Optional[Dict[str, Any]] = None,
+    regime_diagnostics: Optional[Dict[str, Any]] = None,
+    daily_score: float = 0.0
 ) -> Optional[Dict[str, Any]]:
     """
     Convenience function for single-symbol processing.
 
     This is the main entry point for integrating with the existing system.
+
+    Args:
+        symbol: Trading symbol
+        df5m: 5-minute OHLCV DataFrame
+        df1m: 1-minute OHLCV DataFrame (optional)
+        levels: Key price levels
+        regime: Current market regime
+        now: Current timestamp
+        candidates: List of setup candidates
+        daily_df: Daily OHLCV DataFrame (optional)
+        htf_context: HTF (15m) context for category-specific ranking
+        regime_diagnostics: Multi-TF regime info for universal ranking adjustments
+                           {daily: {regime, confidence}, hourly: {session_bias, confidence}}
+        daily_score: Daily timeframe score for score weighting
     """
     orchestrator = get_orchestrator()
     return orchestrator.process_candidates(
@@ -845,7 +898,9 @@ def process_setup_candidates(
         now=now,
         candidates=candidates,
         daily_df=daily_df,
-        htf_context=htf_context
+        htf_context=htf_context,
+        regime_diagnostics=regime_diagnostics,
+        daily_score=daily_score
     )
 
 
@@ -853,7 +908,9 @@ def process_multi_symbol_candidates(
     symbols_data: List[Dict[str, Any]],
     regime: str,
     now: pd.Timestamp,
-    max_positions: Optional[int] = None
+    max_positions: Optional[int] = None,
+    regime_diagnostics: Optional[Dict[str, Any]] = None,
+    daily_score: float = 0.0
 ) -> List[Dict[str, Any]]:
     """
     Convenience function for multi-symbol professional allocation.
@@ -862,10 +919,14 @@ def process_multi_symbol_candidates(
     regime-based allocation across categories.
 
     Args:
-        symbols_data: List of dicts with symbol data
+        symbols_data: List of dicts with symbol data (may include per-symbol
+                     regime_diagnostics and daily_score overrides)
         regime: Current market regime
         now: Current timestamp
         max_positions: Maximum positions to select (uses config if None)
+        regime_diagnostics: Default multi-TF regime info for universal ranking adjustments
+                           {daily: {regime, confidence}, hourly: {session_bias, confidence}}
+        daily_score: Default daily timeframe score for score weighting
 
     Returns:
         List of selected plans
@@ -875,5 +936,7 @@ def process_multi_symbol_candidates(
         symbols_data=symbols_data,
         regime=regime,
         now=now,
-        max_positions=max_positions
+        max_positions=max_positions,
+        regime_diagnostics=regime_diagnostics,
+        daily_score=daily_score
     )

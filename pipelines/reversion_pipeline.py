@@ -384,8 +384,9 @@ class ReversionPipeline(BasePipeline):
         base_score = s_ext + s_exhaust + s_vol + s_rsi + s_rsi_slope
 
         # Regime multiplier from config - reversion thrives in chop
-        regime_mults = self._get("ranking", "regime_multipliers")
-        regime_mult = regime_mults.get(regime, 1.0)
+        # Use strategy-specific multipliers from baseline ranker.py if available
+        setup_type = intraday_features.get("setup_type", "")
+        regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
         # HTF (15m) multiplier - REVERSION requires exhaustion confirmation
         htf_mult = 1.0

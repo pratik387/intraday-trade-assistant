@@ -416,6 +416,40 @@ class BasePipeline(ABC):
         # It already handles None/empty df and returns 1.0 as default
         return _volume_ratio_util(df, lookback=lookback)
 
+    def _get_strategy_regime_mult(self, setup_type: str, regime: str) -> float:
+        """
+        Get regime multiplier - strategy-specific if available, else fallback.
+
+        Ported from baseline ranker.py _get_regime_multiplier() function.
+        This allows each strategy type to have tuned regime multipliers that
+        were calibrated in the baseline configuration.
+
+        Args:
+            setup_type: Setup type (e.g., "breakout_long", "vwap_mean_reversion_short")
+            regime: Current regime ("trend_up", "trend_down", "chop", "squeeze")
+
+        Returns:
+            Regime multiplier for ranking score adjustment
+        """
+        try:
+            strategy_mults = self._get("ranking", "strategy_regime_multipliers")
+        except ConfigurationError:
+            strategy_mults = {}
+
+        # Extract base strategy name (e.g., "breakout" from "breakout_long")
+        base_strategy = setup_type.replace("_long", "").replace("_short", "") if setup_type else ""
+
+        if base_strategy in strategy_mults:
+            strat_cfg = strategy_mults[base_strategy]
+            return strat_cfg.get(regime, strat_cfg.get("default", 1.0))
+
+        # Fallback to generic regime multipliers
+        try:
+            regime_mults = self._get("ranking", "regime_multipliers")
+            return regime_mults.get(regime, 1.0)
+        except ConfigurationError:
+            return 1.0
+
     # ======================== UNIVERSAL RANKING ADJUSTMENTS ========================
     # These adjustments apply to ALL categories (from ranker.py analysis)
 
@@ -428,18 +462,22 @@ class BasePipeline(ABC):
         bias: str,
         current_time: pd.Timestamp,
         regime_diagnostics: Optional[Dict[str, Any]] = None,
-        daily_score: float = 0.0
+        daily_score: float = 0.0,
+        htf_context: Optional[Dict[str, Any]] = None,
+        daily_trend: Optional[str] = None
     ) -> Tuple[float, Dict[str, float]]:
         """
         Apply universal ranking adjustments that affect ALL categories.
 
-        From ranker.py analysis - these are missing in new pipelines:
+        From ranker.py analysis - these are ported from OLD baseline:
         1. Time of day multiplier (1.5x/2.5x late-day threshold)
         2. Blacklist penalty (-999 for poor-performing setups)
         3. Unrealistic RR penalty (-0.3 when RR > max)
         4. Multi-TF daily multiplier (±15% at confidence ≥ 0.70)
         5. Multi-TF hourly multiplier (±10% at confidence ≥ 0.60)
-        6. Daily score weighting (w_daily * daily_score + w_intr * intraday_score)
+        6. HTF 15m multiplier (±12% trend align, +8% volume)
+        7. Daily trend multiplier (±25% for trend alignment)
+        8. Daily score weighting (w_daily * daily_score + w_intr * intraday_score)
 
         Args:
             base_score: Score calculated by category-specific ranking
@@ -450,6 +488,8 @@ class BasePipeline(ABC):
             current_time: Current timestamp
             regime_diagnostics: Multi-TF regime info {daily: {regime, confidence}, hourly: {session_bias, confidence}}
             daily_score: Daily timeframe score (optional)
+            htf_context: HTF 15m context {trend_aligned: bool, volume_mult_15m: float}
+            daily_trend: Daily trend direction ("up", "down", "neutral")
 
         Returns:
             Tuple of (adjusted_score, adjustment_details)
@@ -494,7 +534,19 @@ class BasePipeline(ABC):
         score *= hourly_mult
         adjustments["multi_tf_hourly_mult"] = hourly_mult
 
-        # 6. DAILY SCORE WEIGHTING
+        # 6. HTF 15m MULTIPLIER (±12% trend align, +8% volume)
+        # From ranker.py _get_htf_15m_multiplier() lines 305-347
+        htf_15m_mult = self._get_htf_15m_multiplier(htf_context, bias, ranking_cfg)
+        score *= htf_15m_mult
+        adjustments["htf_15m_mult"] = htf_15m_mult
+
+        # 7. DAILY TREND MULTIPLIER (±25% for trend alignment)
+        # From ranker.py _get_daily_trend_multiplier() lines 269-302
+        daily_trend_mult = self._get_daily_trend_multiplier(daily_trend, bias, ranking_cfg)
+        score *= daily_trend_mult
+        adjustments["daily_trend_mult"] = daily_trend_mult
+
+        # 8. DAILY SCORE WEIGHTING
         if daily_score != 0.0:
             score = self._apply_daily_score_weighting(score, daily_score, ranking_cfg)
             adjustments["daily_score_applied"] = True
@@ -702,6 +754,117 @@ class BasePipeline(ABC):
                 return counter_mult  # -10% penalty
 
         return 1.0
+
+    def _get_htf_15m_multiplier(
+        self,
+        htf_context: Optional[Dict[str, Any]],
+        bias: str,
+        ranking_cfg: Dict[str, Any]
+    ) -> float:
+        """
+        Apply 15m HTF (Higher TimeFrame) confirmation multiplier.
+
+        From ranker.py lines 305-347 (Intraday Scanner Playbook):
+        - Trend align bonus: +12% (5m + 15m same direction)
+        - Volume multiplier bonus: +8% (15m volume > 1.3x median)
+        - Opposing trend penalty: -10% (5m vs 15m divergence)
+
+        Never blocks entries - only affects ranking scores.
+
+        Args:
+            htf_context: Dict with htf_trend, volume_mult_15m, trend_aligned etc.
+            bias: "long" or "short"
+            ranking_cfg: Universal ranking config section
+
+        Returns:
+            Multiplier: 1.0 (neutral) to ~1.21 (aligned + volume) or 0.90 (opposing)
+        """
+        htf_cfg = ranking_cfg.get("htf_15m", {})
+        if not htf_cfg.get("enabled", True):
+            return 1.0
+
+        if not htf_context:
+            return 1.0  # No HTF data available, neutral
+
+        is_long = bias == "long"
+        is_short = bias == "short"
+        multiplier = 1.0
+
+        # Get alignment/penalty values from config
+        aligned_bonus = htf_cfg.get("aligned_bonus", 1.12)
+        opposing_penalty = htf_cfg.get("opposing_penalty", 0.90)
+        volume_bonus = htf_cfg.get("volume_bonus", 1.08)
+        volume_threshold = htf_cfg.get("volume_threshold", 1.3)
+
+        # Check 15m trend alignment (screener populates "trend_aligned" as boolean)
+        htf_trend_aligned = htf_context.get("trend_aligned", False)
+
+        # Apply alignment bonus or penalty
+        if is_long:
+            if htf_trend_aligned:  # 15m uptrend aligns with long setup
+                multiplier *= aligned_bonus  # +12% bonus
+            else:  # 15m downtrend opposes long setup
+                multiplier *= opposing_penalty  # -10% penalty
+        elif is_short:
+            if not htf_trend_aligned:  # 15m downtrend aligns with short setup
+                multiplier *= aligned_bonus  # +12% bonus
+            else:  # 15m uptrend opposes short setup
+                multiplier *= opposing_penalty  # -10% penalty
+
+        # Check 15m volume context
+        htf_vol_mult = htf_context.get("volume_mult_15m", 1.0)
+        if htf_vol_mult >= volume_threshold:  # 15m volume surge
+            multiplier *= volume_bonus  # +8% bonus
+
+        return multiplier
+
+    def _get_daily_trend_multiplier(
+        self,
+        daily_trend: Optional[str],
+        bias: str,
+        ranking_cfg: Dict[str, Any]
+    ) -> float:
+        """
+        Apply daily trend alignment multiplier for multi-timeframe confluence.
+
+        From ranker.py lines 269-302:
+        - Long setups in daily uptrend: 25% win rate boost
+        - Short setups in daily downtrend: 25% win rate boost
+        - Counter-trend trades: 25% penalty
+
+        Args:
+            daily_trend: "up", "down", or "neutral"
+            bias: "long" or "short"
+            ranking_cfg: Universal ranking config section
+
+        Returns:
+            Multiplier: 1.25 (aligned), 0.75 (counter), 1.0 (neutral)
+        """
+        daily_cfg = ranking_cfg.get("daily_trend", {})
+        if not daily_cfg.get("enabled", True):
+            return 1.0
+
+        if not daily_trend or daily_trend == "neutral":
+            return 1.0
+
+        # Get multiplier values from config
+        aligned_mult = daily_cfg.get("aligned_mult", 1.25)
+        counter_mult = daily_cfg.get("counter_mult", 0.75)
+
+        is_long = bias == "long"
+        is_short = bias == "short"
+
+        # Apply trend alignment bonus/penalty
+        if daily_trend == "up" and is_long:
+            return aligned_mult  # 25% boost for trend-aligned longs
+        elif daily_trend == "down" and is_short:
+            return aligned_mult  # 25% boost for trend-aligned shorts
+        elif daily_trend == "up" and is_short:
+            return counter_mult  # 25% penalty for counter-trend shorts
+        elif daily_trend == "down" and is_long:
+            return counter_mult  # 25% penalty for counter-trend longs
+
+        return 1.0  # Neutral
 
     def _apply_daily_score_weighting(
         self,
@@ -974,6 +1137,7 @@ class BasePipeline(ABC):
             "current_close": current_close,
             "bias": bias,
             "rsi": rsi_val,
+            "setup_type": setup_type,  # For strategy-specific regime multipliers
         }
 
         # daily_df now used for daily ATR fallback in morning ORB setups
@@ -1033,8 +1197,13 @@ class BasePipeline(ABC):
         # 4. RANKING (with HTF context for category-specific adjustments)
         rank_result = self.calculate_rank_score(symbol, features, regime, htf_context=htf_context)
 
+        # Extract daily_trend from htf_context if available (from screener/planner)
+        daily_trend = None
+        if htf_context:
+            daily_trend = htf_context.get("daily_trend", None)
+
         # 4b. UNIVERSAL RANKING ADJUSTMENTS (from ranker.py)
-        # Apply time-of-day, blacklist, unrealistic RR, multi-TF daily/hourly multipliers
+        # Apply time-of-day, blacklist, unrealistic RR, multi-TF daily/hourly, HTF 15m, daily trend multipliers
         adjusted_score, universal_adjustments = self.apply_universal_ranking_adjustments(
             base_score=rank_result.score,
             symbol=symbol,
@@ -1043,7 +1212,9 @@ class BasePipeline(ABC):
             bias=bias,
             current_time=now,
             regime_diagnostics=regime_diagnostics,
-            daily_score=daily_score
+            daily_score=daily_score,
+            htf_context=htf_context,
+            daily_trend=daily_trend
         )
 
         # 5. ENTRY - Category pipeline handles setup-type-specific entry logic

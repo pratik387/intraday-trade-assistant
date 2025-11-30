@@ -371,8 +371,9 @@ class MomentumPipeline(BasePipeline):
         base_score = s_adx + s_adx_slope + s_rsi_slope + s_vol + s_vwap
 
         # Regime multiplier from config - momentum needs trend
-        regime_mults = self._get("ranking", "regime_multipliers")
-        regime_mult = regime_mults.get(regime, 1.0)
+        # Use strategy-specific multipliers from baseline ranker.py if available
+        setup_type = intraday_features.get("setup_type", "")
+        regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
         # Daily trend alignment from config (strongest multiplier for momentum)
         daily_mults = self._get("ranking", "daily_trend_multipliers")

@@ -175,11 +175,68 @@
             }
         },
         "regime_multipliers": {
-            "_comment": "Trend regimes best for momentum",
+            "_comment": "Default fallback - Trend regimes best for momentum",
             "trend_up": 1.5,
             "trend_down": 1.5,
             "squeeze": 0.8,
             "chop": 0.5
+        },
+        "strategy_regime_multipliers": {
+            "_comment": "From baseline ranker.py _get_regime_multiplier() - Strategy-specific overrides",
+            "trend_continuation": {
+                "_comment": "From baseline: trend=1.5, other=1.1 - Excellent for following established trends",
+                "trend_up": 1.5,
+                "trend_down": 1.5,
+                "squeeze": 1.1,
+                "chop": 1.1,
+                "default": 1.1
+            },
+            "trend_pullback": {
+                "trend_up": 1.4,
+                "trend_down": 1.4,
+                "squeeze": 1.1,
+                "chop": 1.0,
+                "default": 1.1
+            },
+            "trend_reversal": {
+                "_comment": "Reversal plays - need strong trend to reverse from",
+                "trend_up": 1.3,
+                "trend_down": 1.3,
+                "squeeze": 1.0,
+                "chop": 0.9,
+                "default": 1.0
+            },
+            "momentum_trend": {
+                "trend_up": 1.4,
+                "trend_down": 1.4,
+                "squeeze": 1.0,
+                "chop": 0.8,
+                "default": 1.1
+            },
+            "momentum_breakout": {
+                "_comment": "From baseline: trend=1.4, chop=1.3, other=1.2",
+                "trend_up": 1.4,
+                "trend_down": 1.4,
+                "chop": 1.3,
+                "squeeze": 1.2,
+                "default": 1.2
+            },
+            "flag_continuation": {
+                "_comment": "Flag patterns work best in trending markets",
+                "trend_up": 1.4,
+                "trend_down": 1.4,
+                "squeeze": 1.2,
+                "chop": 1.1,
+                "default": 1.1
+            },
+            "squeeze_release": {
+                "_comment": "Squeeze release best in squeeze regime (by definition)",
+                "squeeze": 1.5,
+                "chop": 1.3,
+                "trend_up": 1.2,
+                "trend_down": 1.2,
+                "default": 1.1
+            }
         },
         "daily_trend_multipliers": {
             "aligned": 1.4,

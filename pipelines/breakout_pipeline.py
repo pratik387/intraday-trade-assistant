@@ -392,9 +392,11 @@ class BreakoutPipeline(BasePipeline):
 
         base_score = s_vol + s_adx + s_adx_slope + s_squeeze + s_vwap
 
-        # Regime multiplier from config
-        regime_mults = self._get("ranking", "regime_multipliers")
-        regime_mult = regime_mults.get(regime, 1.0)
+        # Extract setup_type from intraday_features (passed from run_pipeline)
+        setup_type = intraday_features.get("setup_type", "breakout")
+
+        # Regime multiplier from config - check strategy-specific first, then fallback
+        regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
         # Daily trend alignment from config
         daily_mults = self._get("ranking", "daily_trend_multipliers")
