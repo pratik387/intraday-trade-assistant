@@ -82,7 +82,6 @@ class ReversionPipeline(BasePipeline):
 
         current_close = float(df5m["close"].iloc[-1])
         vwap = float(df5m["vwap"].iloc[-1]) if "vwap" in df5m.columns else current_close
-        atr = self.calculate_atr(df5m)
 
         # Extension from VWAP check from config
         vwap_distance_pct = abs(current_close - vwap) / max(vwap, 1e-6) * 100
@@ -249,16 +248,16 @@ class ReversionPipeline(BasePipeline):
 
         if regime in regime_cfg:
             rule = regime_cfg[regime]
-            if rule.get("allowed", True):
-                size_mult *= rule.get("size_mult", 1.0)
+            if rule["allowed"]:
+                size_mult *= rule["size_mult"]
                 reasons.append(f"regime_ok:{regime}")
 
                 # Counter-trend check for trending regimes
                 if regime in ("trend_up", "trend_down"):
-                    min_strength = rule.get("min_strength_counter_trend", 0)
+                    min_strength = rule["min_strength_counter_trend"]
                     if strength < min_strength:
                         reasons.append(f"trend_counter_weak:strength={strength:.2f}")
-                        size_mult *= rule.get("counter_trend_size_mult", 0.7)
+                        size_mult *= rule["counter_trend_size_mult"]
             else:
                 reasons.append(f"regime_blocked:{regime}")
                 passed = False
@@ -300,97 +299,121 @@ class ReversionPipeline(BasePipeline):
         htf_context: Optional[Dict] = None
     ) -> RankingResult:
         """
-        Reversion-specific ranking.
+        Reversion-specific ranking - ALL 9 COMPONENTS FROM OLD ranker.py _intraday_strength().
 
-        From ranker.py:
-        - Extension from VWAP is primary
-        - Exhaustion signals boost score (RSI extremes)
-        - RSI score: penalize neutral RSI, reward extremes (opposite of trend-following)
-        - RSI slope: momentum deceleration signals reversal
-        - Volume spike confirms capitulation
+        From ranker.py lines 95-131:
+        1. s_vol  - Volume ratio: min(vol_ratio / divisor, cap)
+        2. s_rsi  - RSI score: max((rsi - mid) / divisor, floor)
+        3. s_rsis - RSI slope: max(min(rsi_slope, cap), 0)
+        4. s_adx  - ADX score: max((adx - mid) / divisor, floor)
+        5. s_adxs - ADX slope: max(min(adx_slope, cap), 0)
+        6. s_vwap - VWAP alignment: bonus if aligned, penalty if not
+        7. s_dist - Distance from level: near/ok/far scoring
+        8. s_sq   - Squeeze percentile: <=50/<=70/>=90 scoring
+        9. s_acc  - Acceptance status: excellent/good bonus
 
         HTF Logic for REVERSION:
         - Reversion REQUIRES exhaustion on HTF timeframe
         - +25% bonus if HTF shows exhaustion (wick rejection)
         - +15% bonus if HTF trend opposing (trading against exhausted move)
-        - No penalty for aligned HTF (just don't boost)
         """
-        # daily_trend reserved for future HTF alignment
-        _ = daily_trend
-
         logger.debug(f"[REVERSION] Calculating rank score for {symbol} in {regime}")
 
+        # Extract all features from intraday_features
         vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
-        vwap_distance = float(intraday_features.get("vwap_distance") or 0.0)
         rsi = float(intraday_features.get("rsi") or 50.0)
         rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
+        adx = float(intraday_features.get("adx") or 0.0)
+        adx_slope = float(intraday_features.get("adx_slope") or 0.0)
+        above_vwap = bool(intraday_features.get("above_vwap", True))
+        dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
+        squeeze_pctile = intraday_features.get("squeeze_pctile", None)
+        acceptance_status = intraday_features.get("acceptance_status", "poor")
+        bias = intraday_features.get("bias", "long")
 
-        # Weights from config
+        # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
 
-        # Extension score from config (higher = more extended = better for reversion)
-        ext_cfg = weights["extension"]
-        s_ext = min(vwap_distance * ext_cfg["multiplier"], ext_cfg["cap"])
-
-        # RSI score for REVERSION (from ranker.py lines 97-98)
-        # For reversion: EXTREME RSI is GOOD (opposite of trend-following)
-        # RSI < 30 or RSI > 70 is what we want
-        rsi_cfg = weights.get("rsi", {})
-        if rsi_cfg:
-            rsi_extreme_bonus = rsi_cfg.get("extreme_bonus", 0.5)
-            rsi_neutral_penalty = rsi_cfg.get("neutral_penalty", -0.2)
-            if rsi < 30 or rsi > 70:
-                s_rsi = rsi_extreme_bonus  # Extreme RSI is good for reversion
-            elif 40 < rsi < 60:
-                s_rsi = rsi_neutral_penalty  # Neutral RSI is bad for reversion
-            else:
-                s_rsi = 0.0  # Mild zone
-        else:
-            s_rsi = 0.0
-
-        # RSI slope score for REVERSION (from ranker.py lines 98)
-        # For reversion: we want RSI to be DECELERATING (slope opposing the extreme)
-        # If RSI is oversold (<30), positive slope means reversal starting
-        # If RSI is overbought (>70), negative slope means reversal starting
-        rsi_slope_cfg = weights.get("rsi_slope", {})
-        if rsi_slope_cfg:
-            slope_cap = rsi_slope_cfg.get("cap", 0.3)
-            slope_mult = rsi_slope_cfg.get("multiplier", 0.1)
-            bias = intraday_features.get("bias", "long")
-            if bias == "long" and rsi_slope > 0:
-                # Long reversion with RSI turning up = good
-                s_rsi_slope = min(rsi_slope * slope_mult, slope_cap)
-            elif bias == "short" and rsi_slope < 0:
-                # Short reversion with RSI turning down = good
-                s_rsi_slope = min(abs(rsi_slope) * slope_mult, slope_cap)
-            else:
-                s_rsi_slope = 0.0
-        else:
-            s_rsi_slope = 0.0
-
-        # Exhaustion score from config (extreme RSI)
-        exhaust_cfg = weights["exhaustion"]
-        if rsi < 30:
-            s_exhaust = (30 - rsi) / 30 * exhaust_cfg["oversold_multiplier"]
-        elif rsi > 70:
-            s_exhaust = (rsi - 70) / 30 * exhaust_cfg["overbought_multiplier"]
-        else:
-            s_exhaust = 0.0
-
-        # Volume spike from config (capitulation)
+        # 1. VOLUME SCORE (s_vol)
         vol_cfg = weights["volume"]
-        s_vol = min((vol_ratio - 1.0) * vol_cfg["above_threshold_mult"], vol_cfg["cap"]) if vol_ratio > 1.0 else 0.0
+        s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
 
-        base_score = s_ext + s_exhaust + s_vol + s_rsi + s_rsi_slope
+        # 2. RSI SCORE (s_rsi) - PORTED FROM OLD ranker.py line 97
+        rsi_cfg = weights["rsi"]
+        s_rsi = max((rsi - rsi_cfg["mid"]) / rsi_cfg["divisor"], rsi_cfg["floor"])
+
+        # 3. RSI SLOPE SCORE (s_rsis) - PORTED FROM OLD ranker.py line 98
+        rsi_slope_cfg = weights["rsi_slope"]
+        s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
+
+        # 4. ADX SCORE (s_adx)
+        adx_cfg = weights["adx"]
+        s_adx = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
+
+        # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
+        adx_slope_cfg = weights["adx_slope"]
+        s_adxs = max(min(adx_slope, adx_slope_cfg["cap"]), 0.0)
+
+        # 6. VWAP ALIGNMENT SCORE (s_vwap)
+        vwap_cfg = weights["vwap"]
+        if bias == "long":
+            s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
+        else:
+            s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
+
+        # 7. DISTANCE FROM LEVEL SCORE (s_dist) - PORTED FROM OLD ranker.py lines 107-113
+        dist_cfg = weights["distance"]
+        adist = abs(dist_from_level_bpct)
+        if adist <= dist_cfg["near_bpct"]:
+            s_dist = dist_cfg["near_score"]
+        elif adist <= dist_cfg["ok_bpct"]:
+            s_dist = dist_cfg["ok_score"]
+        else:
+            s_dist = dist_cfg["far_score"]
+
+        # 8. SQUEEZE PERCENTILE SCORE (s_sq) - FROM OLD ranker.py lines 115-122
+        squeeze_cfg = weights["squeeze"]
+        if squeeze_pctile is not None:
+            if squeeze_pctile <= 50:
+                s_sq = squeeze_cfg["low_bonus"]
+            elif squeeze_pctile <= 70:
+                s_sq = squeeze_cfg["mid_bonus"]
+            elif squeeze_pctile >= 90:
+                s_sq = squeeze_cfg["high_penalty"]
+            else:
+                s_sq = 0.0
+        else:
+            s_sq = 0.0
+
+        # 9. ACCEPTANCE STATUS SCORE (s_acc) - PORTED FROM OLD ranker.py lines 124-130
+        acc_cfg = weights["acceptance"]
+        if acceptance_status == "excellent":
+            s_acc = acc_cfg["excellent_bonus"]
+        elif acceptance_status == "good":
+            s_acc = acc_cfg["good_bonus"]
+        else:
+            s_acc = 0.0
+
+        # BASE SCORE = SUM OF ALL 9 COMPONENTS (exactly like OLD ranker.py line 132)
+        base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
 
         # Regime multiplier from config - reversion thrives in chop
-        # Use strategy-specific multipliers from baseline ranker.py if available
         setup_type = intraday_features.get("setup_type", "")
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
+        # Daily trend alignment from config
+        daily_mults = self._get("ranking", "daily_trend_multipliers")
+        daily_mult = 1.0
+        if daily_trend:
+            if (daily_trend == "up" and bias == "long") or (daily_trend == "down" and bias == "short"):
+                daily_mult = daily_mults.get("aligned", 1.25)
+            elif (daily_trend == "up" and bias == "short") or (daily_trend == "down" and bias == "long"):
+                daily_mult = daily_mults.get("counter", 0.75)
+            else:
+                daily_mult = daily_mults.get("neutral", 1.0)
+
         # HTF (15m) multiplier - REVERSION requires exhaustion confirmation
         htf_mult = 1.0
-        bias = intraday_features.get("bias", "long")
         if htf_context:
             htf_trend = htf_context.get("htf_trend", "neutral")
             htf_exhaustion = htf_context.get("htf_exhaustion", False)
@@ -404,20 +427,24 @@ class ReversionPipeline(BasePipeline):
             if htf_opposing:
                 htf_mult *= 1.15  # +15% for fading into exhausted move
 
-            # No penalty for aligned HTF - just don't boost
+        final_score = base_score * regime_mult * daily_mult * htf_mult
 
-        final_score = base_score * regime_mult * htf_mult
+        logger.debug(f"[REVERSION] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f} * daily={daily_mult:.2f} * htf={htf_mult:.2f}")
 
         return RankingResult(
             score=final_score,
             components={
-                "extension": s_ext,
-                "exhaustion": s_exhaust,
                 "volume": s_vol,
                 "rsi": s_rsi,
-                "rsi_slope": s_rsi_slope
+                "rsi_slope": s_rsis,
+                "adx": s_adx,
+                "adx_slope": s_adxs,
+                "vwap": s_vwap,
+                "distance": s_dist,
+                "squeeze": s_sq,
+                "acceptance": s_acc
             },
-            multipliers={"regime": regime_mult, "htf": htf_mult}
+            multipliers={"regime": regime_mult, "daily": daily_mult, "htf": htf_mult}
         )
 
     # ======================== ENTRY ========================

@@ -114,25 +114,62 @@
     },
 
     "ranking": {
+        "_comment": "ALL values from OLD filters.json rank_* settings to match baseline ranker.py _intraday_strength()",
         "weights": {
-            "acceptance": {
-                "bonus": 0.5,
-                "excellent_mult": 1.0,
-                "good_mult": 0.5,
-                "fair_mult": 0.0
+            "volume": {
+                "_comment": "rank_vol_ratio_divisor=2.0, rank_vol_cap=3.0",
+                "divisor": 2.0,
+                "cap": 3.0
+            },
+            "rsi": {
+                "_comment": "rank_rsi_mid=50, rank_rsi_divisor=30, rank_rsi_floor=-0.5",
+                "mid": 50.0,
+                "divisor": 30.0,
+                "floor": -0.5
+            },
+            "rsi_slope": {
+                "_comment": "rank_rsi_slope_cap=0.3",
+                "cap": 0.3
+            },
+            "adx": {
+                "_comment": "rank_adx_mid=25, rank_adx_divisor=20, rank_adx_floor=-0.3",
+                "mid": 25.0,
+                "divisor": 20.0,
+                "floor": -0.3
+            },
+            "adx_slope": {
+                "_comment": "rank_adx_slope_cap=0.2",
+                "cap": 0.2
+            },
+            "vwap": {
+                "_comment": "rank_vwap_bonus=0.3, rank_vwap_penalty=-0.2",
+                "aligned_bonus": 0.3,
+                "misaligned_penalty": -0.2
             },
             "distance": {
-                "_comment": "From configuration.json - immediate_entry_distance_pct: 0.3",
-                "near_bpct": 0.3,
-                "ok_bpct": 1.0,
+                "_comment": "rank_dist_near_bpct=0.5, rank_dist_near_score=0.4, rank_dist_ok_bpct=1.5, rank_dist_ok_score=0.2, rank_dist_far_score=-0.1",
+                "near_bpct": 0.5,
                 "near_score": 0.4,
+                "ok_bpct": 1.5,
                 "ok_score": 0.2,
                 "far_score": -0.1
             },
-            "volume": {
-                "divisor": 2.0,
-                "cap": 1.0
+            "squeeze": {
+                "_comment": "rank_sq_score_le_50=0.3, rank_sq_score_le_70=0.2, rank_sq_score_ge_90=-0.2",
+                "low_bonus": 0.3,
+                "mid_bonus": 0.2,
+                "high_penalty": -0.2
+            },
+            "acceptance": {
+                "_comment": "rank_acceptance_bonus=0.5",
+                "excellent_bonus": 0.5,
+                "good_bonus": 0.25
             }
+        },
+        "daily_trend_multipliers": {
+            "aligned": 1.25,
+            "counter": 0.75,
+            "neutral": 1.0
         },
         "regime_multipliers": {
             "_comment": "Default fallback multipliers",

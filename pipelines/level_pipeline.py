@@ -96,7 +96,8 @@ class LevelPipeline(BasePipeline):
 
         # Level proximity check
         current_close = float(df5m["close"].iloc[-1])
-        atr = self.calculate_atr(df5m)
+        # Use ATR from features (already calculated with fallback in run_pipeline)
+        atr = features.get("atr") or self.calculate_atr(df5m) or (current_close * 0.0075)
 
         # Determine relevant level based on VWAP position
         vwap = float(df5m["vwap"].iloc[-1]) if "vwap" in df5m.columns else current_close
@@ -243,16 +244,16 @@ class LevelPipeline(BasePipeline):
 
         if regime in regime_cfg:
             rule = regime_cfg[regime]
-            if rule.get("allowed", True):
-                size_mult *= rule.get("size_mult", 1.0)
+            if rule["allowed"]:
+                size_mult *= rule["size_mult"]
                 reasons.append(f"regime_ok:{regime}")
 
                 # Counter-trend check for trending regimes
                 if regime in ("trend_up", "trend_down"):
-                    min_strength = rule.get("min_strength_counter_trend", 0)
+                    min_strength = rule["min_strength_counter_trend"]
                     if strength < min_strength:
                         reasons.append(f"trend_counter_weak:strength={strength:.2f}<{min_strength}")
-                        size_mult *= rule.get("counter_trend_size_mult", 0.7)
+                        size_mult *= rule["counter_trend_size_mult"]
             else:
                 reasons.append(f"regime_blocked:{regime}")
                 passed = False
@@ -282,42 +283,71 @@ class LevelPipeline(BasePipeline):
         htf_context: Optional[Dict] = None
     ) -> RankingResult:
         """
-        Level-specific ranking.
+        Level-specific ranking - ALL 9 COMPONENTS FROM OLD ranker.py _intraday_strength().
 
-        From ranker.py:
-        - Acceptance status is PRIMARY factor
-        - Distance to level matters
-        - VWAP proximity bonus
+        From ranker.py lines 95-131:
+        1. s_vol  - Volume ratio: min(vol_ratio / divisor, cap)
+        2. s_rsi  - RSI score: max((rsi - mid) / divisor, floor)
+        3. s_rsis - RSI slope: max(min(rsi_slope, cap), 0)
+        4. s_adx  - ADX score: max((adx - mid) / divisor, floor)
+        5. s_adxs - ADX slope: max(min(adx_slope, cap), 0)
+        6. s_vwap - VWAP alignment: bonus if aligned, penalty if not
+        7. s_dist - Distance from level: near/ok/far scoring
+        8. s_sq   - Squeeze percentile: <=50/<=70/>=90 scoring
+        9. s_acc  - Acceptance status: excellent/good bonus
 
         HTF Logic for LEVEL:
         - Level plays (bounces) often work AGAINST the HTF trend
         - +15% bonus if HTF trend OPPOSING (bounce into trend)
         - -5% penalty if HTF trend aligned (less important, not blocking)
-        - HTF volume surge is neutral (doesn't help level plays much)
         """
-        # daily_trend reserved for future use
-        _ = daily_trend
-
         logger.debug(f"[LEVEL] Calculating rank score for {symbol} in {regime}")
-        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
-        dist_bpct = float(intraday_features.get("dist_from_level_bpct") or 5.0)
-        acceptance_status = intraday_features.get("acceptance_status", "fair")
 
-        # Weights from config
+        # Extract all features from intraday_features
+        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
+        rsi = float(intraday_features.get("rsi") or 50.0)
+        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
+        adx = float(intraday_features.get("adx") or 0.0)
+        adx_slope = float(intraday_features.get("adx_slope") or 0.0)
+        above_vwap = bool(intraday_features.get("above_vwap", True))
+        dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
+        squeeze_pctile = intraday_features.get("squeeze_pctile", None)
+        acceptance_status = intraday_features.get("acceptance_status", "poor")
+        bias = intraday_features.get("bias", "long")
+
+        # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
 
-        # Acceptance is key for level plays
-        acc_cfg = weights["acceptance"]
-        if acceptance_status == "excellent":
-            s_acc = acc_cfg["bonus"] * acc_cfg["excellent_mult"]
-        elif acceptance_status == "good":
-            s_acc = acc_cfg["bonus"] * acc_cfg["good_mult"]
-        else:
-            s_acc = acc_cfg["bonus"] * acc_cfg["fair_mult"]
+        # 1. VOLUME SCORE (s_vol)
+        vol_cfg = weights["volume"]
+        s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
 
-        # Distance scoring from config (closer to level = better)
+        # 2. RSI SCORE (s_rsi) - PORTED FROM OLD ranker.py line 97
+        rsi_cfg = weights["rsi"]
+        s_rsi = max((rsi - rsi_cfg["mid"]) / rsi_cfg["divisor"], rsi_cfg["floor"])
+
+        # 3. RSI SLOPE SCORE (s_rsis) - PORTED FROM OLD ranker.py line 98
+        rsi_slope_cfg = weights["rsi_slope"]
+        s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
+
+        # 4. ADX SCORE (s_adx)
+        adx_cfg = weights["adx"]
+        s_adx = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
+
+        # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
+        adx_slope_cfg = weights["adx_slope"]
+        s_adxs = max(min(adx_slope, adx_slope_cfg["cap"]), 0.0)
+
+        # 6. VWAP ALIGNMENT SCORE (s_vwap)
+        vwap_cfg = weights["vwap"]
+        if bias == "long":
+            s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
+        else:
+            s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
+
+        # 7. DISTANCE FROM LEVEL SCORE (s_dist) - PORTED FROM OLD ranker.py lines 107-113
         dist_cfg = weights["distance"]
-        adist = abs(dist_bpct)
+        adist = abs(dist_from_level_bpct)
         if adist <= dist_cfg["near_bpct"]:
             s_dist = dist_cfg["near_score"]
         elif adist <= dist_cfg["ok_bpct"]:
@@ -325,21 +355,49 @@ class LevelPipeline(BasePipeline):
         else:
             s_dist = dist_cfg["far_score"]
 
-        # Volume (secondary) from config
-        vol_cfg = weights["volume"]
-        s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
+        # 8. SQUEEZE PERCENTILE SCORE (s_sq) - FROM OLD ranker.py lines 115-122
+        squeeze_cfg = weights["squeeze"]
+        if squeeze_pctile is not None:
+            if squeeze_pctile <= 50:
+                s_sq = squeeze_cfg["low_bonus"]
+            elif squeeze_pctile <= 70:
+                s_sq = squeeze_cfg["mid_bonus"]
+            elif squeeze_pctile >= 90:
+                s_sq = squeeze_cfg["high_penalty"]
+            else:
+                s_sq = 0.0
+        else:
+            s_sq = 0.0
 
-        base_score = s_acc + s_dist + s_vol
+        # 9. ACCEPTANCE STATUS SCORE (s_acc) - PORTED FROM OLD ranker.py lines 124-130
+        acc_cfg = weights["acceptance"]
+        if acceptance_status == "excellent":
+            s_acc = acc_cfg["excellent_bonus"]
+        elif acceptance_status == "good":
+            s_acc = acc_cfg["good_bonus"]
+        else:
+            s_acc = 0.0
+
+        # BASE SCORE = SUM OF ALL 9 COMPONENTS (exactly like OLD ranker.py line 132)
+        base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
 
         # Regime multiplier from config - level plays excel in chop
-        # Use strategy-specific multipliers from baseline ranker.py if available
         setup_type = intraday_features.get("setup_type", "")
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
+        # Daily trend alignment from config
+        daily_mults = self._get("ranking", "daily_trend_multipliers")
+        daily_mult = 1.0
+        if daily_trend:
+            if (daily_trend == "up" and bias == "long") or (daily_trend == "down" and bias == "short"):
+                daily_mult = daily_mults.get("aligned", 1.25)
+            elif (daily_trend == "up" and bias == "short") or (daily_trend == "down" and bias == "long"):
+                daily_mult = daily_mults.get("counter", 0.75)
+            else:
+                daily_mult = daily_mults.get("neutral", 1.0)
+
         # HTF (15m) multiplier - LEVEL plays often work AGAINST HTF trend
-        # A long bounce at support is better if HTF is trending down (mean reversion)
         htf_mult = 1.0
-        bias = intraday_features.get("bias", "long")
         if htf_context:
             htf_trend = htf_context.get("htf_trend", "neutral")
 
@@ -351,14 +409,25 @@ class LevelPipeline(BasePipeline):
                 htf_mult = 1.15  # +15% for counter-trend bounce (bounce into larger trend)
             elif htf_aligned:
                 htf_mult = 0.95  # -5% for aligned (less impactful, not blocking)
-            # Neutral HTF = no adjustment
 
-        final_score = base_score * regime_mult * htf_mult
+        final_score = base_score * regime_mult * daily_mult * htf_mult
+
+        logger.debug(f"[LEVEL] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f} * daily={daily_mult:.2f} * htf={htf_mult:.2f}")
 
         return RankingResult(
             score=final_score,
-            components={"acceptance": s_acc, "distance": s_dist, "volume": s_vol},
-            multipliers={"regime": regime_mult, "htf": htf_mult}
+            components={
+                "volume": s_vol,
+                "rsi": s_rsi,
+                "rsi_slope": s_rsis,
+                "adx": s_adx,
+                "adx_slope": s_adxs,
+                "vwap": s_vwap,
+                "distance": s_dist,
+                "squeeze": s_sq,
+                "acceptance": s_acc
+            },
+            multipliers={"regime": regime_mult, "daily": daily_mult, "htf": htf_mult}
         )
 
     # ======================== ENTRY ========================

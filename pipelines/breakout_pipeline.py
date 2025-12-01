@@ -253,7 +253,7 @@ class BreakoutPipeline(BasePipeline):
                 reasons.append("regime_penalty:chop")
                 size_mult *= rule["size_mult"]
             else:
-                size_mult *= rule.get("size_mult", 1.0)
+                size_mult *= rule["size_mult"]
 
         # Determine if short (stricter filters)
         is_short = "_short" in setup_type
@@ -322,14 +322,18 @@ class BreakoutPipeline(BasePipeline):
         htf_context: Optional[Dict] = None
     ) -> RankingResult:
         """
-        Breakout-specific ranking.
+        Breakout-specific ranking - ALL 9 COMPONENTS FROM OLD ranker.py _intraday_strength().
 
-        From ranker.py:
-        - Volume ratio primary factor
-        - ADX secondary factor
-        - ADX slope: trend strengthening (from ranker.py lines 99-100)
-        - Squeeze percentile: volatility compression (from ranker.py lines 115-122)
-        - Regime multiplier (trend > chop)
+        From ranker.py lines 95-131:
+        1. s_vol  - Volume ratio: min(vol_ratio / divisor, cap)
+        2. s_rsi  - RSI score: max((rsi - mid) / divisor, floor)
+        3. s_rsis - RSI slope: max(min(rsi_slope, cap), 0)
+        4. s_adx  - ADX score: max((adx - mid) / divisor, floor)
+        5. s_adxs - ADX slope: max(min(adx_slope, cap), 0)
+        6. s_vwap - VWAP alignment: bonus if aligned, penalty if not
+        7. s_dist - Distance from level: near/ok/far scoring
+        8. s_sq   - Squeeze percentile: <=50/<=70/>=90 scoring
+        9. s_acc  - Acceptance status: excellent/good bonus
 
         HTF Logic for BREAKOUT:
         - Breakouts want HTF (15m) trend ALIGNED with setup direction
@@ -338,59 +342,84 @@ class BreakoutPipeline(BasePipeline):
         - +10% bonus if HTF volume surge (confirms institutional participation)
         """
         logger.debug(f"[BREAKOUT] Calculating rank score for {symbol} in {regime}")
+
+        # Extract all features from intraday_features
         vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
+        rsi = float(intraday_features.get("rsi") or 50.0)
+        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
         adx = float(intraday_features.get("adx") or 0.0)
         adx_slope = float(intraday_features.get("adx_slope") or 0.0)
-        squeeze_pctile = intraday_features.get("squeeze_pctile", None)
         above_vwap = bool(intraday_features.get("above_vwap", True))
+        dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
+        squeeze_pctile = intraday_features.get("squeeze_pctile", None)
+        acceptance_status = intraday_features.get("acceptance_status", "poor")
+        bias = intraday_features.get("bias", "long")
 
-        # Component scores from config
+        # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
 
+        # 1. VOLUME SCORE (s_vol)
         vol_cfg = weights["volume"]
         s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
 
+        # 2. RSI SCORE (s_rsi) - PORTED FROM OLD ranker.py line 97
+        rsi_cfg = weights["rsi"]
+        s_rsi = max((rsi - rsi_cfg["mid"]) / rsi_cfg["divisor"], rsi_cfg["floor"])
+
+        # 3. RSI SLOPE SCORE (s_rsis) - PORTED FROM OLD ranker.py line 98
+        rsi_slope_cfg = weights["rsi_slope"]
+        s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
+
+        # 4. ADX SCORE (s_adx)
         adx_cfg = weights["adx"]
         s_adx = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
 
-        # ADX slope score (from ranker.py lines 99-100)
-        # Positive ADX slope = trend strengthening = good for breakouts
-        adx_slope_cfg = weights.get("adx_slope", {})
-        if adx_slope_cfg:
-            slope_cap = adx_slope_cfg.get("cap", 0.5)
-            slope_mult = adx_slope_cfg.get("multiplier", 0.1)
-            if adx_slope > 0:
-                s_adx_slope = min(adx_slope * slope_mult, slope_cap)
-            else:
-                s_adx_slope = 0.0  # Weakening trend not penalized, just not rewarded
-        else:
-            s_adx_slope = 0.0
+        # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
+        adx_slope_cfg = weights["adx_slope"]
+        s_adxs = max(min(adx_slope, adx_slope_cfg["cap"]), 0.0)
 
-        # Squeeze percentile score (from ranker.py lines 115-122)
-        # Lower squeeze percentile = tighter compression = better for breakout
-        # High squeeze percentile (>90) = already expanded, less upside
-        squeeze_cfg = weights.get("squeeze", {})
-        if squeeze_cfg and squeeze_pctile is not None:
-            if squeeze_pctile <= 50:
-                s_squeeze = squeeze_cfg.get("low_bonus", 0.4)  # Tight squeeze = good
-            elif squeeze_pctile <= 70:
-                s_squeeze = squeeze_cfg.get("mid_bonus", 0.2)  # Moderate squeeze
-            elif squeeze_pctile >= 90:
-                s_squeeze = squeeze_cfg.get("high_penalty", -0.2)  # Already expanded
-            else:
-                s_squeeze = 0.0  # Neutral zone
-        else:
-            s_squeeze = 0.0
-
-        # VWAP alignment (breakouts should be with VWAP)
+        # 6. VWAP ALIGNMENT SCORE (s_vwap)
         vwap_cfg = weights["vwap"]
-        bias = intraday_features.get("bias", "long")
         if bias == "long":
             s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
         else:
             s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
 
-        base_score = s_vol + s_adx + s_adx_slope + s_squeeze + s_vwap
+        # 7. DISTANCE FROM LEVEL SCORE (s_dist) - PORTED FROM OLD ranker.py lines 107-113
+        dist_cfg = weights["distance"]
+        adist = abs(dist_from_level_bpct)
+        if adist <= dist_cfg["near_bpct"]:
+            s_dist = dist_cfg["near_score"]
+        elif adist <= dist_cfg["ok_bpct"]:
+            s_dist = dist_cfg["ok_score"]
+        else:
+            s_dist = dist_cfg["far_score"]
+
+        # 8. SQUEEZE PERCENTILE SCORE (s_sq) - FROM OLD ranker.py lines 115-122
+        squeeze_cfg = weights["squeeze"]
+        if squeeze_pctile is not None:
+            if squeeze_pctile <= 50:
+                s_sq = squeeze_cfg["low_bonus"]
+            elif squeeze_pctile <= 70:
+                s_sq = squeeze_cfg["mid_bonus"]
+            elif squeeze_pctile >= 90:
+                s_sq = squeeze_cfg["high_penalty"]
+            else:
+                s_sq = 0.0
+        else:
+            s_sq = 0.0
+
+        # 9. ACCEPTANCE STATUS SCORE (s_acc) - PORTED FROM OLD ranker.py lines 124-130
+        acc_cfg = weights["acceptance"]
+        if acceptance_status == "excellent":
+            s_acc = acc_cfg["excellent_bonus"]
+        elif acceptance_status == "good":
+            s_acc = acc_cfg["good_bonus"]
+        else:
+            s_acc = 0.0
+
+        # BASE SCORE = SUM OF ALL 9 COMPONENTS (exactly like OLD ranker.py line 132)
+        base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
 
         # Extract setup_type from intraday_features (passed from run_pipeline)
         setup_type = intraday_features.get("setup_type", "breakout")
@@ -430,14 +459,20 @@ class BreakoutPipeline(BasePipeline):
 
         final_score = base_score * regime_mult * daily_mult * htf_mult
 
+        logger.debug(f"[BREAKOUT] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f} * daily={daily_mult:.2f} * htf={htf_mult:.2f}")
+
         return RankingResult(
             score=final_score,
             components={
                 "volume": s_vol,
+                "rsi": s_rsi,
+                "rsi_slope": s_rsis,
                 "adx": s_adx,
-                "adx_slope": s_adx_slope,
-                "squeeze": s_squeeze,
-                "vwap": s_vwap
+                "adx_slope": s_adxs,
+                "vwap": s_vwap,
+                "distance": s_dist,
+                "squeeze": s_sq,
+                "acceptance": s_acc
             },
             multipliers={"regime": regime_mult, "daily": daily_mult, "htf": htf_mult}
         )

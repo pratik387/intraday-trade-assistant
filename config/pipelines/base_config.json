@@ -5,7 +5,7 @@
     "range_compression": {
         "_comment": "From trade_decision_gate.py - Reject during volatility expansion",
         "_evidence": "Volatility expansion invalidates support/resistance levels",
-        "enabled": true,
+        "enabled": false,
         "lookback_bars": 20,
         "max_expansion_ratio": 0.8,
         "_note": "Ratio > 0.8 means current ATR is expanding vs avg - bad for level setups. Disabled by default - enable if level setups underperform."
@@ -14,7 +14,7 @@
     "cap_strategy_blocking": {
         "_comment": "From trade_decision_gate.py - Block certain setups for certain market cap segments",
         "_evidence": "Micro-cap too volatile for momentum breakouts, large-cap prefers levels over reversions",
-        "enabled": true,
+        "enabled": false,
         "blocked_setups": {
             "micro_cap": ["momentum_breakout", "squeeze_release"],
             "small_cap": [],
@@ -39,7 +39,7 @@
     "price_action_directionality": {
         "_comment": "From trade_decision_gate.py lines 1041-1056 - Validates recent price action aligns with trade direction",
         "_evidence": "Prevents counter-trend entry fills by checking last 3 bars",
-        "enabled": true,
+        "enabled": false,
         "_note": "Long: close[-1] >= close[-3], Short: close[-1] <= close[-3] - rejects if price moving against intended direction"
     },
 
@@ -126,11 +126,30 @@
         "t2_max_mm_frac": 3.0
     },
 
-    "late_entry_penalties": {
-        "_comment": "From planner_internal.py lines 1021-1029 - RSI extreme penalties",
-        "rsi_long_threshold": 70,
-        "rsi_short_threshold": 30,
-        "size_mult_penalty": 0.6
+    "late_entry_penalty": {
+        "_comment": "From planner_internal.py lines 1021-1029 - Late entry penalties reduce size but don't block",
+        "rsi_above": 70,
+        "rsi_below": 30,
+        "macd_above": 0.5,
+        "_note": "MACD histogram > 0.5 indicates late entry, apply 0.8x penalty"
+    },
+
+    "intraday_gate": {
+        "_comment": "From planner_internal.py lines 1031-1056 - Soft intraday gates (size penalties not blocks)",
+        "min_volume_ratio": 0.8,
+        "min_rsi": 30,
+        "max_rsi": 70,
+        "min_adx": 15,
+        "max_adx": 60,
+        "_note": "Out-of-band values apply size penalties: volume 0.8x, RSI 0.85x, ADX 0.9x"
+    },
+
+    "planner_precision": {
+        "_comment": "From planner_internal.py lines 527-537 - RPS floor protection",
+        "min_rps_bpct": 0.45,
+        "atr_rps_mult": 0.35,
+        "min_tick": 0.05,
+        "_note": "Floor RPS = max(price * 0.45%, ATR * 0.35) - prevents too-tight stops"
     },
 
     "universal_ranking": {
@@ -194,6 +213,12 @@
         }
     },
 
-    "sl_atr_mult": 2.0,
-    "_comment_sl_atr_mult": "Base SL ATR multiplier - Aligned to baseline configuration.json (commit 3ded63d) which had 2.0x ATR"
+    "sl_atr_mult": 1.6,
+    "_comment_sl_atr_mult": "Base SL ATR multiplier - Aligned to OLD configuration.json which uses 1.6x ATR",
+
+    "sl_below_swing_ticks": 0.0,
+    "_comment_sl_ticks": "Buffer below structure stop (swing low/high) - from OLD config",
+
+    "risk_per_trade_rupees": 500.0,
+    "_comment_risk": "Risk per trade in Rupees - from OLD configuration.json"
 }

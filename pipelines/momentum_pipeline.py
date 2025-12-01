@@ -253,11 +253,11 @@ class MomentumPipeline(BasePipeline):
 
         if regime in regime_cfg:
             rule = regime_cfg[regime]
-            if not rule.get("allowed", True):
-                reasons.append(f"regime_block:{regime}_{rule.get('reason', 'not_allowed')}")
+            if not rule["allowed"]:
+                reasons.append(f"regime_block:{regime}_{rule['reason']}")
                 passed = False
             else:
-                size_mult *= rule.get("size_mult", 1.0)
+                size_mult *= rule["size_mult"]
                 reasons.append(f"regime_ok:{regime}")
 
                 # Check trend alignment for trending regimes
@@ -265,7 +265,7 @@ class MomentumPipeline(BasePipeline):
                     is_long = "_long" in setup_type
                     if (regime == "trend_up" and is_long) or (regime == "trend_down" and not is_long):
                         reasons.append("trend_aligned")
-                        size_mult *= rule.get("aligned_bonus", 1.0)
+                        size_mult *= rule["aligned_bonus"]
                     else:
                         reasons.append("counter_trend_caution")
                         # Use trend_alignment config for counter-trend penalty
@@ -275,7 +275,7 @@ class MomentumPipeline(BasePipeline):
         # ADX gate from config - strict for momentum
         adx_cfg = self._get("gates", "adx")
         if adx < adx_cfg["min_value"]:
-            if adx_cfg.get("block_below", False):
+            if adx_cfg["block_below"]:
                 reasons.append(f"adx_weak:{adx:.1f}<{adx_cfg['min_value']}")
                 passed = False
         elif adx >= adx_cfg["strong_threshold"]:
@@ -295,14 +295,18 @@ class MomentumPipeline(BasePipeline):
         htf_context: Optional[Dict] = None
     ) -> RankingResult:
         """
-        Momentum-specific ranking.
+        Momentum-specific ranking - ALL 9 COMPONENTS FROM OLD ranker.py _intraday_strength().
 
-        From ranker.py:
-        - ADX is PRIMARY factor
-        - ADX slope: trend strengthening (from ranker.py lines 99-100)
-        - RSI slope: momentum acceleration (from ranker.py lines 98)
-        - Trend alignment bonus
-        - Volume confirmation
+        From ranker.py lines 95-131:
+        1. s_vol  - Volume ratio: min(vol_ratio / divisor, cap)
+        2. s_rsi  - RSI score: max((rsi - mid) / divisor, floor)
+        3. s_rsis - RSI slope: max(min(rsi_slope, cap), 0)
+        4. s_adx  - ADX score: max((adx - mid) / divisor, floor)
+        5. s_adxs - ADX slope: max(min(adx_slope, cap), 0)
+        6. s_vwap - VWAP alignment: bonus if aligned, penalty if not
+        7. s_dist - Distance from level: near/ok/far scoring
+        8. s_sq   - Squeeze percentile: <=50/<=70/>=90 scoring
+        9. s_acc  - Acceptance status: excellent/good bonus
 
         HTF Logic for MOMENTUM:
         - Momentum REQUIRES HTF (15m) alignment
@@ -312,77 +316,96 @@ class MomentumPipeline(BasePipeline):
         """
         logger.debug(f"[MOMENTUM] Calculating rank score for {symbol} in {regime}")
 
+        # Extract all features from intraday_features
+        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
+        rsi = float(intraday_features.get("rsi") or 50.0)
+        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
         adx = float(intraday_features.get("adx") or 0.0)
         adx_slope = float(intraday_features.get("adx_slope") or 0.0)
-        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
-        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
         above_vwap = bool(intraday_features.get("above_vwap", True))
+        dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
+        squeeze_pctile = intraday_features.get("squeeze_pctile", None)
+        acceptance_status = intraday_features.get("acceptance_status", "poor")
         bias = intraday_features.get("bias", "long")
 
-        # Weights from config
+        # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
 
-        # ADX is king for momentum from config
+        # 1. VOLUME SCORE (s_vol)
+        vol_cfg = weights["volume"]
+        s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
+
+        # 2. RSI SCORE (s_rsi) - PORTED FROM OLD ranker.py line 97
+        rsi_cfg = weights["rsi"]
+        s_rsi = max((rsi - rsi_cfg["mid"]) / rsi_cfg["divisor"], rsi_cfg["floor"])
+
+        # 3. RSI SLOPE SCORE (s_rsis) - PORTED FROM OLD ranker.py line 98
+        rsi_slope_cfg = weights["rsi_slope"]
+        s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
+
+        # 4. ADX SCORE (s_adx)
         adx_cfg = weights["adx"]
         s_adx = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
-        s_adx = min(s_adx, adx_cfg["cap"])
 
-        # ADX slope score (from ranker.py lines 99-100)
-        # Positive ADX slope = trend strengthening = good for momentum
-        adx_slope_cfg = weights.get("adx_slope", {})
-        if adx_slope_cfg:
-            slope_cap = adx_slope_cfg.get("cap", 0.5)
-            slope_mult = adx_slope_cfg.get("multiplier", 0.1)
-            if adx_slope > 0:
-                s_adx_slope = min(adx_slope * slope_mult, slope_cap)
-            else:
-                s_adx_slope = 0.0  # Weakening trend not penalized, just not rewarded
-        else:
-            s_adx_slope = 0.0
+        # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
+        adx_slope_cfg = weights["adx_slope"]
+        s_adxs = max(min(adx_slope, adx_slope_cfg["cap"]), 0.0)
 
-        # RSI slope score (from ranker.py lines 98)
-        # For momentum: RSI slope aligned with bias = good (accelerating)
-        rsi_slope_cfg = weights.get("rsi_slope", {})
-        if rsi_slope_cfg:
-            slope_cap = rsi_slope_cfg.get("cap", 0.3)
-            slope_mult = rsi_slope_cfg.get("multiplier", 0.1)
-            if bias == "long" and rsi_slope > 0:
-                # Long momentum with RSI accelerating up = good
-                s_rsi_slope = min(rsi_slope * slope_mult, slope_cap)
-            elif bias == "short" and rsi_slope < 0:
-                # Short momentum with RSI accelerating down = good
-                s_rsi_slope = min(abs(rsi_slope) * slope_mult, slope_cap)
-            else:
-                s_rsi_slope = 0.0
-        else:
-            s_rsi_slope = 0.0
-
-        # Volume (secondary) from config
-        vol_cfg = weights["volume"]
-        s_vol = min((vol_ratio - 1.0) * vol_cfg["above_threshold_mult"], vol_cfg["cap"]) if vol_ratio > 1.0 else 0.0
-
-        # VWAP alignment with trend from config
+        # 6. VWAP ALIGNMENT SCORE (s_vwap)
         vwap_cfg = weights["vwap"]
         if bias == "long":
             s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
         else:
             s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
 
-        base_score = s_adx + s_adx_slope + s_rsi_slope + s_vol + s_vwap
+        # 7. DISTANCE FROM LEVEL SCORE (s_dist) - PORTED FROM OLD ranker.py lines 107-113
+        dist_cfg = weights["distance"]
+        adist = abs(dist_from_level_bpct)
+        if adist <= dist_cfg["near_bpct"]:
+            s_dist = dist_cfg["near_score"]
+        elif adist <= dist_cfg["ok_bpct"]:
+            s_dist = dist_cfg["ok_score"]
+        else:
+            s_dist = dist_cfg["far_score"]
+
+        # 8. SQUEEZE PERCENTILE SCORE (s_sq) - FROM OLD ranker.py lines 115-122
+        squeeze_cfg = weights["squeeze"]
+        if squeeze_pctile is not None:
+            if squeeze_pctile <= 50:
+                s_sq = squeeze_cfg["low_bonus"]
+            elif squeeze_pctile <= 70:
+                s_sq = squeeze_cfg["mid_bonus"]
+            elif squeeze_pctile >= 90:
+                s_sq = squeeze_cfg["high_penalty"]
+            else:
+                s_sq = 0.0
+        else:
+            s_sq = 0.0
+
+        # 9. ACCEPTANCE STATUS SCORE (s_acc) - PORTED FROM OLD ranker.py lines 124-130
+        acc_cfg = weights["acceptance"]
+        if acceptance_status == "excellent":
+            s_acc = acc_cfg["excellent_bonus"]
+        elif acceptance_status == "good":
+            s_acc = acc_cfg["good_bonus"]
+        else:
+            s_acc = 0.0
+
+        # BASE SCORE = SUM OF ALL 9 COMPONENTS (exactly like OLD ranker.py line 132)
+        base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
 
         # Regime multiplier from config - momentum needs trend
-        # Use strategy-specific multipliers from baseline ranker.py if available
         setup_type = intraday_features.get("setup_type", "")
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
         # Daily trend alignment from config (strongest multiplier for momentum)
         daily_mults = self._get("ranking", "daily_trend_multipliers")
-        daily_mult = daily_mults["neutral"]
+        daily_mult = daily_mults.get("neutral", 1.0)
         if daily_trend:
             if (daily_trend == "up" and bias == "long") or (daily_trend == "down" and bias == "short"):
-                daily_mult = daily_mults["aligned"]
+                daily_mult = daily_mults.get("aligned", 1.4)
             elif (daily_trend == "up" and bias == "short") or (daily_trend == "down" and bias == "long"):
-                daily_mult = daily_mults["counter"]
+                daily_mult = daily_mults.get("counter", 0.6)
 
         # HTF (15m) multiplier - MOMENTUM requires HTF alignment
         htf_mult = 1.0
@@ -405,14 +428,20 @@ class MomentumPipeline(BasePipeline):
 
         final_score = base_score * regime_mult * daily_mult * htf_mult
 
+        logger.debug(f"[MOMENTUM] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f} * daily={daily_mult:.2f} * htf={htf_mult:.2f}")
+
         return RankingResult(
             score=final_score,
             components={
-                "adx": s_adx,
-                "adx_slope": s_adx_slope,
-                "rsi_slope": s_rsi_slope,
                 "volume": s_vol,
-                "vwap": s_vwap
+                "rsi": s_rsi,
+                "rsi_slope": s_rsis,
+                "adx": s_adx,
+                "adx_slope": s_adxs,
+                "vwap": s_vwap,
+                "distance": s_dist,
+                "squeeze": s_sq,
+                "acceptance": s_acc
             },
             multipliers={"regime": regime_mult, "daily": daily_mult, "htf": htf_mult}
         )

@@ -431,24 +431,19 @@ class BasePipeline(ABC):
         Returns:
             Regime multiplier for ranking score adjustment
         """
-        try:
-            strategy_mults = self._get("ranking", "strategy_regime_multipliers")
-        except ConfigurationError:
-            strategy_mults = {}
+        # Get strategy-specific regime multipliers from config
+        strategy_mults = self._get("ranking", "strategy_regime_multipliers")
 
         # Extract base strategy name (e.g., "breakout" from "breakout_long")
         base_strategy = setup_type.replace("_long", "").replace("_short", "") if setup_type else ""
 
         if base_strategy in strategy_mults:
             strat_cfg = strategy_mults[base_strategy]
-            return strat_cfg.get(regime, strat_cfg.get("default", 1.0))
+            return strat_cfg.get(regime, strat_cfg["default"])
 
         # Fallback to generic regime multipliers
-        try:
-            regime_mults = self._get("ranking", "regime_multipliers")
-            return regime_mults.get(regime, 1.0)
-        except ConfigurationError:
-            return 1.0
+        regime_mults = self._get("ranking", "regime_multipliers")
+        return regime_mults[regime]
 
     # ======================== UNIVERSAL RANKING ADJUSTMENTS ========================
     # These adjustments apply to ALL categories (from ranker.py analysis)
@@ -497,15 +492,9 @@ class BasePipeline(ABC):
         score = base_score
         adjustments = {}
 
-        # Get universal ranking config
-        ranking_cfg = self.cfg.get("universal_ranking", {})
-        if not ranking_cfg:
-            # Fallback to loading from base config directly
-            try:
-                base_cfg = load_base_config()
-                ranking_cfg = base_cfg.get("universal_ranking", {})
-            except Exception:
-                ranking_cfg = {}
+        # Get universal ranking config from base config
+        base_cfg = load_base_config()
+        ranking_cfg = base_cfg["universal_ranking"]
 
         # 1. TIME OF DAY MULTIPLIER
         # Late-day signals have poor quality (39 signals in 14:00-15:00, only 3 trades = 7.7% conversion)
@@ -572,18 +561,18 @@ class BasePipeline(ABC):
         This multiplier is applied to the threshold, not the score.
         Higher multiplier = harder to qualify.
         """
-        time_cfg = ranking_cfg.get("time_of_day", {})
-        if not time_cfg.get("enabled", True):
+        time_cfg = ranking_cfg["time_of_day"]
+        if not time_cfg["enabled"]:
             return 1.0
 
         hour = current_time.hour
         minute = current_time.minute
 
-        # Get thresholds from config or use defaults
-        late_afternoon_start = time_cfg.get("late_afternoon_start_hour", 14)
-        late_afternoon_end_min = time_cfg.get("late_afternoon_end_minute", 30)
-        late_afternoon_mult = time_cfg.get("late_afternoon_mult", 1.5)
-        final_hour_mult = time_cfg.get("final_hour_mult", 2.5)
+        # Get thresholds from config
+        late_afternoon_start = time_cfg["late_afternoon_start_hour"]
+        late_afternoon_end_min = time_cfg["late_afternoon_end_minute"]
+        late_afternoon_mult = time_cfg["late_afternoon_mult"]
+        final_hour_mult = time_cfg["final_hour_mult"]
 
         # Morning and midday: normal threshold
         if hour < late_afternoon_start:
@@ -608,12 +597,12 @@ class BasePipeline(ABC):
         - Blacklisted strategies get a severe penalty (-999 by default)
         - This effectively prevents them from being selected
         """
-        blacklist_cfg = ranking_cfg.get("blacklist", {})
-        if not blacklist_cfg.get("enabled", True):
+        blacklist_cfg = ranking_cfg["blacklist"]
+        if not blacklist_cfg["enabled"]:
             return 0.0
 
-        blacklisted_setups = blacklist_cfg.get("strategies", [])
-        penalty = blacklist_cfg.get("penalty", -999.0)
+        blacklisted_setups = blacklist_cfg["strategies"]
+        penalty = blacklist_cfg["penalty"]
 
         if strategy_type in blacklisted_setups:
             logger.debug(f"BLACKLIST_PENALTY: {strategy_type} penalty={penalty}")
@@ -633,12 +622,12 @@ class BasePipeline(ABC):
         - If structural_rr > max_rr, apply penalty (-0.3 by default)
         - Unrealistic R:R often indicates bad level placement or data issues
         """
-        rr_cfg = ranking_cfg.get("unrealistic_rr", {})
-        if not rr_cfg.get("enabled", True):
+        rr_cfg = ranking_cfg["unrealistic_rr"]
+        if not rr_cfg["enabled"]:
             return 0.0
 
-        max_rr = rr_cfg.get("max_structural_rr", 4.0)
-        penalty = rr_cfg.get("penalty", -0.3)
+        max_rr = rr_cfg["max_structural_rr"]
+        penalty = rr_cfg["penalty"]
 
         if structural_rr > max_rr:
             logger.debug(f"HIGH_RR_PENALTY: structural_rr={structural_rr:.1f}>{max_rr} penalty={penalty}")
@@ -660,25 +649,25 @@ class BasePipeline(ABC):
         - Only apply if confidence ≥ 0.70
         - Long boost in daily uptrend, short boost in daily downtrend
         """
-        mtf_cfg = ranking_cfg.get("multi_tf_daily", {})
-        if not mtf_cfg.get("enabled", True):
+        mtf_cfg = ranking_cfg["multi_tf_daily"]
+        if not mtf_cfg["enabled"]:
             return 1.0
 
         if not regime_diagnostics or "daily" not in regime_diagnostics:
             return 1.0
 
-        daily = regime_diagnostics.get("daily", {})
+        daily = regime_diagnostics["daily"]
         daily_regime = daily.get("regime", "chop")
         daily_confidence = daily.get("confidence", 0.0)
 
         # Confidence threshold from config
-        min_confidence = mtf_cfg.get("min_confidence", 0.70)
+        min_confidence = mtf_cfg["min_confidence"]
         if daily_confidence < min_confidence:
             return 1.0
 
-        aligned_mult = mtf_cfg.get("aligned_mult", 1.15)
-        counter_mult = mtf_cfg.get("counter_mult", 0.85)
-        squeeze_mult = mtf_cfg.get("squeeze_mult", 0.90)
+        aligned_mult = mtf_cfg["aligned_mult"]
+        counter_mult = mtf_cfg["counter_mult"]
+        squeeze_mult = mtf_cfg["squeeze_mult"]
 
         is_long = bias == "long"
         is_short = bias == "short"
@@ -717,24 +706,24 @@ class BasePipeline(ABC):
         - Only apply if confidence ≥ 0.60
         - Smaller than daily (it's a lower TF, noisier)
         """
-        mtf_cfg = ranking_cfg.get("multi_tf_hourly", {})
-        if not mtf_cfg.get("enabled", True):
+        mtf_cfg = ranking_cfg["multi_tf_hourly"]
+        if not mtf_cfg["enabled"]:
             return 1.0
 
         if not regime_diagnostics or "hourly" not in regime_diagnostics:
             return 1.0
 
-        hourly = regime_diagnostics.get("hourly", {})
+        hourly = regime_diagnostics["hourly"]
         session_bias = hourly.get("session_bias", "neutral")
         hourly_confidence = hourly.get("confidence", 0.0)
 
         # Confidence threshold from config (lower than daily)
-        min_confidence = mtf_cfg.get("min_confidence", 0.60)
+        min_confidence = mtf_cfg["min_confidence"]
         if hourly_confidence < min_confidence:
             return 1.0
 
-        aligned_mult = mtf_cfg.get("aligned_mult", 1.10)
-        counter_mult = mtf_cfg.get("counter_mult", 0.90)
+        aligned_mult = mtf_cfg["aligned_mult"]
+        counter_mult = mtf_cfg["counter_mult"]
 
         is_long = bias == "long"
         is_short = bias == "short"
@@ -779,8 +768,8 @@ class BasePipeline(ABC):
         Returns:
             Multiplier: 1.0 (neutral) to ~1.21 (aligned + volume) or 0.90 (opposing)
         """
-        htf_cfg = ranking_cfg.get("htf_15m", {})
-        if not htf_cfg.get("enabled", True):
+        htf_cfg = ranking_cfg.get("htf_15m")
+        if htf_cfg is None or not htf_cfg.get("enabled", True):
             return 1.0
 
         if not htf_context:
@@ -791,10 +780,10 @@ class BasePipeline(ABC):
         multiplier = 1.0
 
         # Get alignment/penalty values from config
-        aligned_bonus = htf_cfg.get("aligned_bonus", 1.12)
-        opposing_penalty = htf_cfg.get("opposing_penalty", 0.90)
-        volume_bonus = htf_cfg.get("volume_bonus", 1.08)
-        volume_threshold = htf_cfg.get("volume_threshold", 1.3)
+        aligned_bonus = htf_cfg["aligned_bonus"]
+        opposing_penalty = htf_cfg["opposing_penalty"]
+        volume_bonus = htf_cfg["volume_bonus"]
+        volume_threshold = htf_cfg["volume_threshold"]
 
         # Check 15m trend alignment (screener populates "trend_aligned" as boolean)
         htf_trend_aligned = htf_context.get("trend_aligned", False)
@@ -840,16 +829,16 @@ class BasePipeline(ABC):
         Returns:
             Multiplier: 1.25 (aligned), 0.75 (counter), 1.0 (neutral)
         """
-        daily_cfg = ranking_cfg.get("daily_trend", {})
-        if not daily_cfg.get("enabled", True):
+        daily_cfg = ranking_cfg.get("daily_trend")
+        if daily_cfg is None or not daily_cfg.get("enabled", True):
             return 1.0
 
         if not daily_trend or daily_trend == "neutral":
             return 1.0
 
         # Get multiplier values from config
-        aligned_mult = daily_cfg.get("aligned_mult", 1.25)
-        counter_mult = daily_cfg.get("counter_mult", 0.75)
+        aligned_mult = daily_cfg["aligned_mult"]
+        counter_mult = daily_cfg["counter_mult"]
 
         is_long = bias == "long"
         is_short = bias == "short"
@@ -880,12 +869,12 @@ class BasePipeline(ABC):
 
         Default: 30% daily, 70% intraday
         """
-        weight_cfg = ranking_cfg.get("daily_score_weighting", {})
-        if not weight_cfg.get("enabled", True):
+        weight_cfg = ranking_cfg["daily_score_weighting"]
+        if not weight_cfg["enabled"]:
             return intraday_score
 
-        w_daily = weight_cfg.get("weight_daily", 0.3)
-        w_intraday = weight_cfg.get("weight_intraday", 0.7)
+        w_daily = weight_cfg["weight_daily"]
+        w_intraday = weight_cfg["weight_intraday"]
 
         return w_daily * daily_score + w_intraday * intraday_score
 
@@ -908,13 +897,13 @@ class BasePipeline(ABC):
         Returns:
             Tuple of (passed: bool, reason: str)
         """
-        compression_cfg = self.cfg.get("range_compression", {})
-        if not compression_cfg.get("enabled", False):
+        compression_cfg = self.cfg["range_compression"]
+        if not compression_cfg["enabled"]:
             return True, ""
 
         try:
             # Use centralized ATR series calculation
-            lookback = compression_cfg.get("lookback_bars", 20)
+            lookback = compression_cfg["lookback_bars"]
             atr_series = _calculate_atr_series_util(df5m, period=14)
 
             if len(atr_series) < lookback:
@@ -928,7 +917,7 @@ class BasePipeline(ABC):
             # Current ATR vs average
             compression_ratio = atr / avg_atr
 
-            max_ratio = compression_cfg.get("max_expansion_ratio", 0.8)
+            max_ratio = compression_cfg["max_expansion_ratio"]
             if compression_ratio > max_ratio:
                 reason = f"range_compression_fail: ratio={compression_ratio:.2f}>{max_ratio}"
                 logger.debug(f"RANGE_COMPRESSION: {reason}")
@@ -956,15 +945,15 @@ class BasePipeline(ABC):
         Returns:
             Tuple of (passed: bool, reason: str)
         """
-        blocking_cfg = self.cfg.get("cap_strategy_blocking", {})
-        if not blocking_cfg.get("enabled", False):
+        blocking_cfg = self.cfg["cap_strategy_blocking"]
+        if not blocking_cfg["enabled"]:
             return True, ""
 
         if cap_segment == "unknown":
             return True, ""  # Can't determine cap, allow through
 
         # Check if this setup type is blocked for this cap segment
-        blocked_setups = blocking_cfg.get("blocked_setups", {})
+        blocked_setups = blocking_cfg["blocked_setups"]
         blocked_for_cap = blocked_setups.get(cap_segment, [])
 
         # Check for exact match
@@ -990,15 +979,15 @@ class BasePipeline(ABC):
         - Opening bell has different volatility/participation patterns
         - Some gates can be bypassed during this window
         """
-        ob_cfg = self.cfg.get("opening_bell_override", {})
-        if not ob_cfg.get("enabled", False):
+        ob_cfg = self.cfg["opening_bell_override"]
+        if not ob_cfg["enabled"]:
             return False
 
         try:
-            start_hour = ob_cfg.get("start_hour", 9)
-            start_minute = ob_cfg.get("start_minute", 15)
-            end_hour = ob_cfg.get("end_hour", 9)
-            end_minute = ob_cfg.get("end_minute", 30)
+            start_hour = ob_cfg["start_hour"]
+            start_minute = ob_cfg["start_minute"]
+            end_hour = ob_cfg["end_hour"]
+            end_minute = ob_cfg["end_minute"]
 
             current_minutes = now.hour * 60 + now.minute
             start_minutes = start_hour * 60 + start_minute
@@ -1016,11 +1005,11 @@ class BasePipeline(ABC):
         - Range compression can be bypassed (high volatility expected at open)
         - Momentum consolidation can be bypassed (different patterns at open)
         """
-        ob_cfg = self.cfg.get("opening_bell_override", {})
-        if not ob_cfg.get("enabled", False):
+        ob_cfg = self.cfg["opening_bell_override"]
+        if not ob_cfg["enabled"]:
             return False
 
-        bypasses = ob_cfg.get("bypass_gates", [])
+        bypasses = ob_cfg["bypass_gates"]
         return gate_name in bypasses
 
     def _check_price_action_directionality(
@@ -1039,8 +1028,8 @@ class BasePipeline(ABC):
         Returns:
             Tuple of (passed: bool, reason: str)
         """
-        pa_cfg = self.cfg.get("price_action_directionality", {})
-        if not pa_cfg.get("enabled", False):
+        pa_cfg = self.cfg["price_action_directionality"]
+        if not pa_cfg["enabled"]:
             return True, ""
 
         try:
@@ -1115,12 +1104,13 @@ class BasePipeline(ABC):
                 atr = daily_atr
                 logger.info(f"[{category}] {symbol} {setup_type}: Using daily ATR {atr:.2f} for morning ORB (intraday ATR unavailable)")
 
-        # Gracefully reject if insufficient data for ATR calculation
-        if atr is None:
-            logger.debug(f"[{category}] {symbol} {setup_type} rejected: insufficient data for ATR")
-            return {"eligible": False, "reason": "insufficient_data", "details": ["insufficient_data_for_atr"]}
-
         current_close = float(df5m["close"].iloc[-1])
+
+        # ATR FALLBACK: Match OLD planner_internal.py behavior (lines 391-393)
+        # Instead of rejecting, use 0.75% of current price as fallback ATR
+        if atr is None:
+            atr = current_close * 0.0075
+            logger.debug(f"[{category}] {symbol} {setup_type}: Using fallback ATR {atr:.2f} (0.75% of price)")
 
         # Get indicator values
         adx_val = float(df5m["adx"].iloc[-1]) if "adx" in df5m.columns and not pd.isna(df5m["adx"].iloc[-1]) else None
@@ -1138,6 +1128,7 @@ class BasePipeline(ABC):
             "bias": bias,
             "rsi": rsi_val,
             "setup_type": setup_type,  # For strategy-specific regime multipliers
+            "atr": atr,  # ATR with fallback already applied - use this instead of recalculating
         }
 
         # daily_df now used for daily ATR fallback in morning ORB setups
@@ -1238,47 +1229,84 @@ class BasePipeline(ABC):
 
         # 5b. VOLATILITY-ADJUSTED SIZING (from planner_internal.py lines 547-581)
         volatility_mult = 1.0
-        volatility_cfg = self.cfg.get("volatility_sizing", {})
-        if volatility_cfg.get("enabled", False):
-            try:
-                price_atr_ratio = (atr / entry_ref_price) * 100 if entry_ref_price > 0 else 1.0
-                low_vol_threshold = volatility_cfg["low_volatility_threshold"]
-                high_vol_threshold = volatility_cfg["high_volatility_threshold"]
+        volatility_cfg = self.cfg["volatility_sizing"]
+        if volatility_cfg["enabled"]:
+            price_atr_ratio = (atr / entry_ref_price) * 100 if entry_ref_price > 0 else 1.0
+            low_vol_threshold = volatility_cfg["low_volatility_threshold"]
+            high_vol_threshold = volatility_cfg["high_volatility_threshold"]
 
-                if price_atr_ratio < low_vol_threshold:
-                    volatility_mult = volatility_cfg["low_volatility_multiplier"]
-                elif price_atr_ratio > high_vol_threshold:
-                    volatility_mult = volatility_cfg["high_volatility_multiplier"]
-                else:
-                    volatility_mult = volatility_cfg["normal_volatility_multiplier"]
+            if price_atr_ratio < low_vol_threshold:
+                volatility_mult = volatility_cfg["low_volatility_multiplier"]
+            elif price_atr_ratio > high_vol_threshold:
+                volatility_mult = volatility_cfg["high_volatility_multiplier"]
+            else:
+                volatility_mult = volatility_cfg["normal_volatility_multiplier"]
 
-                # Clamp to limits
-                max_adj = volatility_cfg.get("max_size_adjustment", 2.0)
-                min_adj = volatility_cfg.get("min_size_adjustment", 0.5)
-                volatility_mult = max(min_adj, min(max_adj, volatility_mult))
-                logger.debug(f"VOLATILITY_SIZING: {symbol} ATR%={price_atr_ratio:.2f} → mult={volatility_mult:.2f}")
-            except (KeyError, TypeError):
-                volatility_mult = 1.0
+            # Clamp to limits
+            max_adj = volatility_cfg["max_size_adjustment"]
+            min_adj = volatility_cfg["min_size_adjustment"]
+            volatility_mult = max(min_adj, min(max_adj, volatility_mult))
+            logger.debug(f"VOLATILITY_SIZING: {symbol} ATR%={price_atr_ratio:.2f} → mult={volatility_mult:.2f}")
 
         # 5c. CAP-AWARE SIZING (from planner_internal.py lines 583-615, Van Tharp evidence)
         cap_segment = get_cap_segment(symbol)
         cap_size_mult = 1.0
         cap_sl_mult = 1.0
 
-        cap_risk_cfg = self.cfg.get("cap_risk_adjustments", {})
-        if cap_risk_cfg.get("enabled", False) and cap_segment != "unknown":
-            seg_cfg = cap_risk_cfg.get(cap_segment, {})
-            cap_size_mult = seg_cfg.get("size_multiplier", 1.0)
-            cap_sl_mult = seg_cfg.get("sl_atr_multiplier", 1.0)
+        cap_risk_cfg = self.cfg["cap_risk_adjustments"]
+        if cap_risk_cfg["enabled"] and cap_segment != "unknown":
+            seg_cfg = cap_risk_cfg[cap_segment]
+            cap_size_mult = seg_cfg["size_multiplier"]
+            cap_sl_mult = seg_cfg["sl_atr_multiplier"]
             logger.debug(f"CAP_SIZING: {symbol} {cap_segment} size_mult={cap_size_mult:.2f} sl_mult={cap_sl_mult:.2f}")
 
-        # 6. STOP LOSS - Use configurable SL ATR multiplier from pipeline config
-        # Each category/structure has its own sl_atr_mult - NO DEFAULTS allowed
-        # CRITICAL: Use effective_entry_price (current_close for immediate mode)
-        # TODO: In future, get hard_sl directly from structure's calculate_risk_params() instead
-        sl_atr_mult = self.cfg["sl_atr_mult"]  # REQUIRED - will raise KeyError if missing
+        # 6. STOP LOSS - Structure-based SL with RPS floor protection
+        # Ported from OLD planner_internal.py lines 512-537
+        # Uses: structure_stop from levels, ATR-based volatility stop, RPS floor
+        sl_atr_mult = self.cfg["sl_atr_mult"]
         adjusted_atr = atr * cap_sl_mult
-        hard_sl = calculate_structure_stop(effective_entry_price, bias, adjusted_atr, sl_atr_mult)
+        sl_below_swing_ticks = self.cfg["sl_below_swing_ticks"]
+
+        # Get structure stop from levels if available (swing low for long, swing high for short)
+        structure_stop = levels.get("structure_stop")
+        if structure_stop is None:
+            # Fallback: use ORH/ORL as structure reference
+            if bias == "long":
+                structure_stop = levels.get("ORL", effective_entry_price - adjusted_atr)
+            else:
+                structure_stop = levels.get("ORH", effective_entry_price + adjusted_atr)
+
+        # Calculate both structure-based and volatility-based stops
+        vol_stop = effective_entry_price - (sl_atr_mult * adjusted_atr) if bias == "long" else effective_entry_price + (sl_atr_mult * adjusted_atr)
+
+        if bias == "long":
+            # For LONG: SL below entry - use HIGHER value (closer to entry) = TIGHTER stop
+            structure_sl = structure_stop - sl_below_swing_ticks
+            hard_sl = max(structure_sl, vol_stop)  # Takes closer SL to entry
+            rps = max(effective_entry_price - hard_sl, 0.0)
+        else:
+            # For SHORT: SL above entry - use LOWER value (closer to entry) = TIGHTER stop
+            structure_sl = structure_stop + sl_below_swing_ticks
+            hard_sl = min(structure_sl, vol_stop)  # Takes closer SL to entry
+            rps = max(hard_sl - effective_entry_price, 0.0)
+
+        # RPS FLOOR PROTECTION (from planner_internal.py lines 527-537)
+        # Prevents too-tight stops that get hit easily
+        planner_precision = self.cfg["planner_precision"]
+        min_rps_bpct = planner_precision["min_rps_bpct"]
+        atr_rps_mult = planner_precision["atr_rps_mult"]
+        floor_by_px = effective_entry_price * (min_rps_bpct / 100.0)
+        floor_by_atr = adjusted_atr * atr_rps_mult
+        rps_floor = max(floor_by_px, floor_by_atr, 0.0)
+
+        if rps < rps_floor:
+            # Widen SL to meet floor
+            if bias == "long":
+                hard_sl = effective_entry_price - rps_floor
+            else:
+                hard_sl = effective_entry_price + rps_floor
+            rps = rps_floor
+            logger.debug(f"RPS_FLOOR: {symbol} rps widened to floor={rps_floor:.4f}")
 
         # 7. TARGETS
         # CRITICAL: Use effective_entry_price for target calculations
@@ -1290,28 +1318,66 @@ class BasePipeline(ABC):
             bias, atr, levels, measured_move
         )
 
-        # 8. LATE ENTRY PENALTIES (transferred from planner_internal.py lines 1021-1029)
+        # 8. LATE ENTRY & SOFT GATE PENALTIES (from planner_internal.py lines 1021-1056)
+        # These are size multipliers that reduce position size but don't block entries
         size_mult = gate_result.size_mult
         cautions = []
 
-        # RSI late entry penalty
+        # Get penalty config from entry config
+        late_penalty_cfg = self.cfg["late_entry_penalty"]
+        intraday_gate_cfg = self.cfg["intraday_gate"]
+
+        # 8a. RSI late entry penalty (0.6x if extended)
+        rsi_late_above = late_penalty_cfg["rsi_above"]
+        rsi_late_below = late_penalty_cfg["rsi_below"]
         if rsi_val is not None:
-            if bias == "long" and rsi_val > 70:
+            if bias == "long" and rsi_val > rsi_late_above:
                 size_mult *= 0.6
                 cautions.append(f"late_entry_rsi>{rsi_val:.0f}")
-            elif bias == "short" and rsi_val < 30:
+            elif bias == "short" and rsi_val < rsi_late_below:
                 size_mult *= 0.6
                 cautions.append(f"late_entry_rsi<{rsi_val:.0f}")
 
-        # 8b. APPLY VOLATILITY AND CAP SIZING MULTIPLIERS
+        # 8b. MACD histogram late entry penalty (0.8x if extended)
+        macd_above = late_penalty_cfg["macd_above"]
+        if "macd_hist" in df5m.columns:
+            macd_hist = float(df5m["macd_hist"].iloc[-1]) if not pd.isna(df5m["macd_hist"].iloc[-1]) else 0.0
+            if macd_hist > float(macd_above):
+                size_mult *= 0.8
+                cautions.append(f"late_entry_macd_hist>{macd_above}")
+
+        # 8c. Weak volume ratio penalty (0.8x if below minimum)
+        min_volume_ratio = intraday_gate_cfg["min_volume_ratio"]
+        if volume_ratio < min_volume_ratio:
+            size_mult *= 0.8
+            cautions.append("weak_volume_ratio")
+
+        # 8d. RSI out-of-band penalty (0.85x if outside optimal range)
+        rsi_min = intraday_gate_cfg["min_rsi"]
+        rsi_max = intraday_gate_cfg["max_rsi"]
+        if rsi_val is not None:
+            if not (rsi_min <= rsi_val <= rsi_max):
+                size_mult *= 0.85
+                cautions.append("rsi_out_of_band")
+
+        # 8e. ADX out-of-band penalty (0.9x if outside optimal range)
+        adx_min = intraday_gate_cfg["min_adx"]
+        adx_max = intraday_gate_cfg["max_adx"]
+        if adx_val is not None:
+            if not (adx_min <= adx_val <= adx_max):
+                size_mult *= 0.9
+                cautions.append("adx_out_of_band")
+
+        # 8f. APPLY VOLATILITY AND CAP SIZING MULTIPLIERS
         # These adjust position size based on volatility regime and market cap
         size_mult *= volatility_mult * cap_size_mult
         logger.debug(f"SIZE_MULT: {symbol} base={gate_result.size_mult:.2f} × vol={volatility_mult:.2f} × cap={cap_size_mult:.2f} = {size_mult:.2f}")
 
-        # 8c. CALCULATE POSITION SIZE (qty)
+        # 8g. CALCULATE POSITION SIZE (qty)
         # Uses risk-based position sizing: qty = risk_per_trade / risk_per_share * multipliers
-        risk_per_trade_rupees = self.cfg.get("risk_per_trade_rupees", 500.0)
-        risk_per_share = target_result.risk_per_share
+        # NOTE: Use locally calculated 'rps' (with floor protection) NOT target_result.risk_per_share
+        risk_per_trade_rupees = self.cfg["risk_per_trade_rupees"]
+        risk_per_share = rps  # Use our calculated rps with floor protection
         if risk_per_share > 0:
             base_qty = int(risk_per_trade_rupees / risk_per_share)
             qty = max(int(base_qty * size_mult), 0)
@@ -1340,7 +1406,7 @@ class BasePipeline(ABC):
 
             "stop": {
                 "hard": round(hard_sl, 2),
-                "risk_per_share": round(target_result.risk_per_share, 2),
+                "risk_per_share": round(rps, 2),  # Use locally calculated rps with floor protection
             },
 
             "targets": target_result.targets,
@@ -1422,21 +1488,18 @@ class BasePipeline(ABC):
         if not plan["eligible"]:
             return plan
 
-        # Get quality filter config if available
-        try:
-            quality_filters = self.cfg.get("quality_filters", {})
-            if not quality_filters.get("enabled", True):
-                return plan
-        except Exception:
-            quality_filters = {}
+        # Get quality filter config
+        quality_filters = self.cfg["quality_filters"]
+        if not quality_filters["enabled"]:
+            return plan
 
         risk_per_share = plan["stop"]["risk_per_share"]
 
         # Feasibility caps (from planner_precision config)
-        t1_max_pct = quality_filters.get("t1_max_pct", 2.0)  # 2% of price
-        t1_max_mm_frac = quality_filters.get("t1_max_mm_frac", 0.75)  # 75% of measured move
-        t2_max_pct = quality_filters.get("t2_max_pct", 4.0)  # 4% of price
-        t2_max_mm_frac = quality_filters.get("t2_max_mm_frac", 1.5)  # 150% of measured move
+        t1_max_pct = quality_filters["t1_max_pct"]
+        t1_max_mm_frac = quality_filters["t1_max_mm_frac"]
+        t2_max_pct = quality_filters["t2_max_pct"]
+        t2_max_mm_frac = quality_filters["t2_max_mm_frac"]
 
         cap1 = min(entry_ref_price * (t1_max_pct / 100.0), measured_move * t1_max_mm_frac)
         cap2 = min(entry_ref_price * (t2_max_pct / 100.0), measured_move * t2_max_mm_frac)
@@ -1493,8 +1556,8 @@ class BasePipeline(ABC):
         # Structural R:R filter with strategy-specific overrides (from planner_internal.py lines 1365-1396)
         # Breakouts have momentum that blows through resistance, so they can use relaxed thresholds
         strategy_type = plan.get("strategy", "")
-        strategy_rr_overrides = quality_filters.get("strategy_structural_rr_overrides", {})
-        min_structural_rr = strategy_rr_overrides.get(strategy_type, quality_filters.get("min_structural_rr", 2.0))
+        strategy_rr_overrides = quality_filters["strategy_structural_rr_overrides"]
+        min_structural_rr = strategy_rr_overrides.get(strategy_type, quality_filters["min_structural_rr"])
 
         structural_rr_val = plan["quality"].get("structural_rr")
         if plan["eligible"] and structural_rr_val is not None and structural_rr_val < min_structural_rr:
@@ -1503,7 +1566,7 @@ class BasePipeline(ABC):
             logger.debug(f"Rejected: structural_rr {structural_rr_val:.2f} < {min_structural_rr:.2f} (strategy={strategy_type})")
 
         # Min T1 R:R filter
-        min_t1_rr = quality_filters.get("min_t1_rr", 1.0)
+        min_t1_rr = quality_filters["min_t1_rr"]
         if plan["eligible"] and plan["targets"]:
             t1_rr = plan["targets"][0].get("rr", 0)
             if t1_rr < min_t1_rr:
