@@ -531,7 +531,7 @@ class FailureFadeStructure(BaseStructure):
         entry_price = context.current_price
         risk_params = self.calculate_risk_params(context, event, side)
         exit_levels = self.get_exit_levels(context, event, side)
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         return TradePlan(
             symbol=context.symbol,
@@ -715,9 +715,3 @@ class FailureFadeStructure(BaseStructure):
             logger.error(f"FAILURE_FADE: Error calculating institutional strength: {e}")
             return 1.8  # Safe fallback below regime threshold
 
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0  # Maximum risk per trade
-        qty = max(1, min(int(max_risk_amount / risk_per_share), 100)) if risk_per_share > 0 else 1
-        return qty, qty * entry_price

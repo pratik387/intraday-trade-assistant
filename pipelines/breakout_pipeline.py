@@ -427,39 +427,16 @@ class BreakoutPipeline(BasePipeline):
         # Regime multiplier from config - check strategy-specific first, then fallback
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
-        # Daily trend alignment from config
-        daily_mults = self._get("ranking", "daily_trend_multipliers")
-        daily_mult = 1.0
-        if daily_trend:
-            if (daily_trend == "up" and bias == "long") or (daily_trend == "down" and bias == "short"):
-                daily_mult = daily_mults["aligned"]
-            elif (daily_trend == "up" and bias == "short") or (daily_trend == "down" and bias == "long"):
-                daily_mult = daily_mults["counter"]
-            else:
-                daily_mult = daily_mults["neutral"]
+        # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
+        # to match OLD ranker.py which applies them once in rank_candidates().
+        # DO NOT apply them here - that would cause double-application!
+        # (daily_trend and htf_context are passed to category ranking for logging only)
+        _ = daily_trend  # Unused here - applied in universal adjustments
+        _ = htf_context  # Unused here - applied in universal adjustments
 
-        # HTF (15m) multiplier - BREAKOUT wants HTF aligned
-        htf_mult = 1.0
-        if htf_context:
-            htf_trend = htf_context.get("htf_trend", "neutral")
-            htf_volume_surge = htf_context.get("htf_volume_surge", False)
+        final_score = base_score * regime_mult
 
-            # Check alignment: long wants up, short wants down
-            htf_aligned = (htf_trend == "up" and bias == "long") or (htf_trend == "down" and bias == "short")
-            htf_opposing = (htf_trend == "down" and bias == "long") or (htf_trend == "up" and bias == "short")
-
-            if htf_aligned:
-                htf_mult = 1.20  # +20% for aligned HTF trend
-            elif htf_opposing:
-                htf_mult = 0.90  # -10% for opposing HTF trend
-
-            # Volume surge bonus (additive on top of alignment)
-            if htf_volume_surge:
-                htf_mult *= 1.10  # +10% for HTF volume confirmation
-
-        final_score = base_score * regime_mult * daily_mult * htf_mult
-
-        logger.debug(f"[BREAKOUT] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f} * daily={daily_mult:.2f} * htf={htf_mult:.2f}")
+        logger.debug(f"[BREAKOUT] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f}")
 
         return RankingResult(
             score=final_score,
@@ -474,7 +451,7 @@ class BreakoutPipeline(BasePipeline):
                 "squeeze": s_sq,
                 "acceptance": s_acc
             },
-            multipliers={"regime": regime_mult, "daily": daily_mult, "htf": htf_mult}
+            multipliers={"regime": regime_mult}  # daily/htf applied in universal adjustments
         )
 
     # ======================== ENTRY ========================

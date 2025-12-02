@@ -352,7 +352,7 @@ class TrendStructure(BaseStructure):
         entry_price = context.current_price
         risk_params = self.calculate_risk_params(context, event, side)
         exit_levels = self.get_exit_levels(context, event, side)
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         return TradePlan(
             symbol=context.symbol,
@@ -491,20 +491,6 @@ class TrendStructure(BaseStructure):
             pass
 
         return context.current_price * 0.01  # 1% fallback
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0
-
-        if risk_per_share > 0:
-            max_qty = int(max_risk_amount / risk_per_share)
-            qty = max(1, min(max_qty, 100))
-        else:
-            qty = 1
-
-        notional = qty * entry_price
-        return qty, notional
 
     def _calculate_institutional_strength(self, context: MarketContext, trend_info: TrendInfo,
                                         setup_type: str, side: str, volume_confirmed: bool) -> float:

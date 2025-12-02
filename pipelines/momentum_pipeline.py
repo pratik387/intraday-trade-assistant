@@ -398,37 +398,15 @@ class MomentumPipeline(BasePipeline):
         setup_type = intraday_features.get("setup_type", "")
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
-        # Daily trend alignment from config (strongest multiplier for momentum)
-        daily_mults = self._get("ranking", "daily_trend_multipliers")
-        daily_mult = daily_mults.get("neutral", 1.0)
-        if daily_trend:
-            if (daily_trend == "up" and bias == "long") or (daily_trend == "down" and bias == "short"):
-                daily_mult = daily_mults.get("aligned", 1.4)
-            elif (daily_trend == "up" and bias == "short") or (daily_trend == "down" and bias == "long"):
-                daily_mult = daily_mults.get("counter", 0.6)
+        # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
+        # to match OLD ranker.py which applies them once in rank_candidates().
+        # DO NOT apply them here - that would cause double-application!
+        _ = daily_trend  # Unused here - applied in universal adjustments
+        _ = htf_context  # Unused here - applied in universal adjustments
 
-        # HTF (15m) multiplier - MOMENTUM requires HTF alignment
-        htf_mult = 1.0
-        if htf_context:
-            htf_trend = htf_context.get("htf_trend", "neutral")
-            htf_momentum = htf_context.get("htf_momentum", 0.0)
+        final_score = base_score * regime_mult
 
-            # Check alignment: long wants up, short wants down
-            htf_aligned = (htf_trend == "up" and bias == "long") or (htf_trend == "down" and bias == "short")
-            htf_opposing = (htf_trend == "down" and bias == "long") or (htf_trend == "up" and bias == "short")
-
-            if htf_aligned:
-                htf_mult = 1.25  # +25% for aligned HTF trend (riding the wave)
-
-                # Extra bonus for strong HTF momentum
-                if abs(htf_momentum) > 0.5:
-                    htf_mult *= 1.15  # +15% for strong momentum
-            elif htf_opposing:
-                htf_mult = 0.70  # -30% penalty for fighting HTF momentum
-
-        final_score = base_score * regime_mult * daily_mult * htf_mult
-
-        logger.debug(f"[MOMENTUM] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f} * daily={daily_mult:.2f} * htf={htf_mult:.2f}")
+        logger.debug(f"[MOMENTUM] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f}")
 
         return RankingResult(
             score=final_score,
@@ -443,7 +421,7 @@ class MomentumPipeline(BasePipeline):
                 "squeeze": s_sq,
                 "acceptance": s_acc
             },
-            multipliers={"regime": regime_mult, "daily": daily_mult, "htf": htf_mult}
+            multipliers={"regime": regime_mult}  # daily/htf applied in universal adjustments
         )
 
     # ======================== ENTRY ========================

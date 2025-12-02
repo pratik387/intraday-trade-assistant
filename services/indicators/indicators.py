@@ -298,3 +298,43 @@ def volume_ratio(df: pd.DataFrame, lookback: int = 20) -> float:
     v = df["volume"].astype(float)
     med = float(v.tail(lookback).median() or 1.0)
     return float(v.iloc[-1] / med) if med > 0 else 1.0
+
+
+def calculate_vol_z(df: pd.DataFrame, window: int = 30) -> float:
+    """
+    Calculate volume z-score (standard deviations from mean).
+
+    This centralizes the vol_z calculation that was previously duplicated
+    across 10+ structure files with varying window sizes.
+
+    Args:
+        df: DataFrame with 'volume' column
+        window: Lookback period for mean/std calculation (default 30)
+
+    Returns:
+        float: Z-score of current volume (0.0 if insufficient data)
+               - vol_z > 2.0: Strong volume surge (institutional activity)
+               - vol_z > 1.5: Moderate volume increase
+               - vol_z < -1.0: Below-average volume
+
+    Example:
+        >>> vol_z = calculate_vol_z(df, window=30)
+        >>> if vol_z >= 2.0:
+        ...     print("Institutional volume detected")
+    """
+    if df is None or len(df) < window:
+        return 0.0
+
+    try:
+        volume = df['volume'].astype(float)
+        vol_mean = volume.rolling(window, min_periods=5).mean().iloc[-1]
+        vol_std = volume.rolling(window, min_periods=5).std().iloc[-1]
+
+        if vol_std is None or vol_std == 0 or pd.isna(vol_std):
+            return 0.0
+
+        current_vol = float(volume.iloc[-1])
+        vol_z = (current_vol - vol_mean) / vol_std
+        return float(vol_z)
+    except Exception:
+        return 0.0

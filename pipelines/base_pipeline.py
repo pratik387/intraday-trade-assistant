@@ -48,10 +48,6 @@ def calculate_structure_stop(
     NOTE: For immediate entry mode, if the structure's hard_sl is available,
     USE THAT INSTEAD of calling this function.
     """
-    if atr is None or np.isnan(atr):
-        # Fallback: 0.75% of entry price if ATR unavailable
-        atr = entry_price * 0.0075
-
     if bias == "long":
         return entry_price - (atr * sl_atr_mult)
     else:
@@ -1106,11 +1102,11 @@ class BasePipeline(ABC):
 
         current_close = float(df5m["close"].iloc[-1])
 
-        # ATR FALLBACK: Match OLD planner_internal.py behavior (lines 391-393)
-        # Instead of rejecting, use 0.75% of current price as fallback ATR
+        # ATR FALLBACK: Use config value when ATR unavailable
         if atr is None:
-            atr = current_close * 0.0075
-            logger.debug(f"[{category}] {symbol} {setup_type}: Using fallback ATR {atr:.2f} (0.75% of price)")
+            atr_fallback_pct = self.cfg.get("atr_fallback_pct")
+            atr = current_close * atr_fallback_pct
+            logger.debug(f"[{category}] {symbol} {setup_type}: Using fallback ATR {atr:.2f} ({atr_fallback_pct*100}% of price)")
 
         # Get indicator values
         adx_val = float(df5m["adx"].iloc[-1]) if "adx" in df5m.columns and not pd.isna(df5m["adx"].iloc[-1]) else None

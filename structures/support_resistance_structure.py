@@ -752,7 +752,7 @@ class SupportResistanceStructure(BaseStructure):
 
         # Determine position size based on risk
         entry_price = context.current_price
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         plan = TradePlan(
             symbol=context.symbol,
@@ -788,7 +788,7 @@ class SupportResistanceStructure(BaseStructure):
 
         # Determine position size based on risk
         entry_price = context.current_price
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         plan = TradePlan(
             symbol=context.symbol,
@@ -1003,27 +1003,6 @@ class SupportResistanceStructure(BaseStructure):
         fallback_atr = context.current_price * 0.01  # 1% of price
         logger.warning(f"S/R: {context.symbol} - Using emergency ATR fallback: {fallback_atr:.3f}")
         return fallback_atr
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-
-        # This should be enhanced with actual portfolio size and risk management
-        # For now, use basic calculation
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0  # Should be configurable
-
-        if risk_per_share > 0:
-            max_qty = int(max_risk_amount / risk_per_share)
-            # Ensure minimum viable position
-            qty = max(1, min(max_qty, 100))  # Min 1, max 100 shares
-        else:
-            qty = 1
-
-        notional = qty * entry_price
-
-        logger.debug(f"S/R: {context.symbol} - Position calc: risk/share {risk_per_share:.3f}, qty {qty}, notional {notional:.2f}")
-
-        return qty, notional
 
     def _calculate_institutional_strength(self, context: MarketContext, sr_info: 'SupportResistanceLevels',
                                         setup_type: str, side: str, volume_confirmed: bool) -> float:

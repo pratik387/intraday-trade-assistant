@@ -401,35 +401,15 @@ class ReversionPipeline(BasePipeline):
         setup_type = intraday_features.get("setup_type", "")
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
-        # Daily trend alignment from config
-        daily_mults = self._get("ranking", "daily_trend_multipliers")
-        daily_mult = 1.0
-        if daily_trend:
-            if (daily_trend == "up" and bias == "long") or (daily_trend == "down" and bias == "short"):
-                daily_mult = daily_mults.get("aligned", 1.25)
-            elif (daily_trend == "up" and bias == "short") or (daily_trend == "down" and bias == "long"):
-                daily_mult = daily_mults.get("counter", 0.75)
-            else:
-                daily_mult = daily_mults.get("neutral", 1.0)
+        # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
+        # to match OLD ranker.py which applies them once in rank_candidates().
+        # DO NOT apply them here - that would cause double-application!
+        _ = daily_trend  # Unused here - applied in universal adjustments
+        _ = htf_context  # Unused here - applied in universal adjustments
 
-        # HTF (15m) multiplier - REVERSION requires exhaustion confirmation
-        htf_mult = 1.0
-        if htf_context:
-            htf_trend = htf_context.get("htf_trend", "neutral")
-            htf_exhaustion = htf_context.get("htf_exhaustion", False)
+        final_score = base_score * regime_mult
 
-            # HTF exhaustion is the KEY signal for reversion
-            if htf_exhaustion:
-                htf_mult = 1.25  # +25% for HTF exhaustion (wick rejection)
-
-            # Also bonus for opposing HTF trend (we're fading the move)
-            htf_opposing = (htf_trend == "down" and bias == "long") or (htf_trend == "up" and bias == "short")
-            if htf_opposing:
-                htf_mult *= 1.15  # +15% for fading into exhausted move
-
-        final_score = base_score * regime_mult * daily_mult * htf_mult
-
-        logger.debug(f"[REVERSION] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f} * daily={daily_mult:.2f} * htf={htf_mult:.2f}")
+        logger.debug(f"[REVERSION] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f}")
 
         return RankingResult(
             score=final_score,
@@ -444,7 +424,7 @@ class ReversionPipeline(BasePipeline):
                 "squeeze": s_sq,
                 "acceptance": s_acc
             },
-            multipliers={"regime": regime_mult, "daily": daily_mult, "htf": htf_mult}
+            multipliers={"regime": regime_mult}  # daily/htf applied in universal adjustments
         )
 
     # ======================== ENTRY ========================

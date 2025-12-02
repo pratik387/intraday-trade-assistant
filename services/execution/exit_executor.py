@@ -468,12 +468,14 @@ class ExitExecutor:
             return False
 
     def _get_plan_sl(self, plan: Dict[str, Any]) -> float:
-        sl = plan.get("hard_sl", plan.get("stop"))
+        """
+        Extract SL from plan using standard format.
+
+        Pipeline contract: plan["stop"]["hard"]
+        """
         try:
-            if isinstance(sl, dict) and "hard" in sl:
-                return float(sl["hard"])
-            return float(sl) if sl is not None else float("nan")
-        except Exception:
+            return float(plan["stop"]["hard"])
+        except (KeyError, TypeError, ValueError):
             return float("nan")
 
     def _apply_time_based_sl_widening(self, sym: str, pos: Position, plan_sl: float, current_price: float, ts: pd.Timestamp) -> float:
@@ -597,15 +599,25 @@ class ExitExecutor:
         return (price <= sl) if side == "BUY" else (price >= sl)
 
     def _get_targets(self, plan: Dict[str, Any]) -> Tuple[float, float]:
+        """
+        Extract T1 and T2 from plan using standard format.
+
+        Pipeline contract: plan["targets"][n]["level"]
+        """
         t1 = t2 = float("nan")
-        try:
-            ts = plan.get("targets") or []
-            if len(ts) > 0 and ts[0] and "level" in ts[0]:
-                t1 = float(ts[0]["level"])
-            if len(ts) > 1 and ts[1] and "level" in ts[1]:
-                t2 = float(ts[1]["level"])
-        except Exception:
-            pass
+        targets = plan.get("targets") or []
+
+        if len(targets) > 0:
+            try:
+                t1 = float(targets[0]["level"])
+            except (KeyError, TypeError, ValueError):
+                pass
+        if len(targets) > 1:
+            try:
+                t2 = float(targets[1]["level"])
+            except (KeyError, TypeError, ValueError):
+                pass
+
         return t1, t2
 
     def _target_hit(self, side: str, px: float, tgt: float) -> bool:
@@ -1231,7 +1243,9 @@ class ExitExecutor:
 
     def _partial_exit_t1(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
         # Enhanced partial exit logic - always use partial exits for better R:R
-        qty = int(pos.qty)
+        current_qty = int(pos.qty)
+        if current_qty <= 0:
+            return
 
         # Check if T2 is infeasible (T1-only scalp mode) or Fast Scalp Lane
         t2_exit_mode = pos.plan.get("quality", {}).get("t2_exit_mode", None)
@@ -1242,29 +1256,32 @@ class ExitExecutor:
             self._exit(sym, pos, float(px), ts, f"target_t1_full_{reason_suffix}")
             return
 
-        # Store original entry quantity for T2 percentage calculation
+        # Get or store original entry quantity (for consistent 60-40 split)
+        # This ensures T1 uses correct qty even if T2 fired first
         st = pos.plan.get("_state") or {}
         if "entry_qty" not in st:
-            st["entry_qty"] = qty  # Store original entry qty before any exits
+            st["entry_qty"] = current_qty  # Store original entry qty on first access
             pos.plan["_state"] = st
+        original_qty = st["entry_qty"]
 
         # Use config-driven percentage (60-40-0 split from config)
+        # FIX: Calculate based on ORIGINAL entry qty, not current remaining
         actual_pct = max(1.0, self.t1_book_pct)
 
-        qty_exit = int(max(1, round(qty * (actual_pct / 100.0))))
-        qty_exit = min(qty_exit, qty)
+        qty_exit = int(max(1, round(original_qty * (actual_pct / 100.0))))
+        qty_exit = min(qty_exit, current_qty)  # Can't exit more than we have
 
         # Enhanced logic for small quantities
-        if qty_exit >= qty:
-            if qty > 2:  # Changed from 1 to 2 - allow partial even for small positions
-                qty_exit = max(1, qty // 2)  # Take 50% minimum
+        if qty_exit >= current_qty:
+            if current_qty > 2:  # Changed from 1 to 2 - allow partial even for small positions
+                qty_exit = max(1, current_qty // 2)  # Take 50% minimum
             else:
                 self._exit(sym, pos, float(px), ts, "target_t1_full")
                 return
 
         # Log enhanced partial exit info
         profit_booked = qty_exit * (px - pos.avg_price)
-        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{self.t2_book_pct:.0f}%-0% split]")
+        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{original_qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{self.t2_book_pct:.0f}%-0% split]")
 
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
         self.positions.reduce(sym, int(qty_exit))
@@ -1323,20 +1340,30 @@ class ExitExecutor:
         if qty <= 0:
             return
 
-        # Get T2 booking percentage from config
+        # If no trail configured (T1+T2 >= 100%), exit ALL remaining at T2
+        # This avoids rounding issues and matches 60-40-0 intent
+        no_trail = (self.t1_book_pct + self.t2_book_pct) >= 100.0
+        if no_trail:
+            logger.info(f"exit_executor: {sym} T2_FULL exit (no trail configured: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-0%)")
+            self._exit(sym, pos, float(px), ts, "target_t2_full")
+            return
+
+        # Trail is configured - do partial T2 exit
         t2_pct = self.t2_book_pct
 
-        # Get original entry quantity from state (stored at T1)
+        # Get or store original entry quantity (for consistent split)
         st = pos.plan.get("_state") or {}
-        original_entry_qty = st.get("entry_qty", qty)  # Fallback to current if not stored
+        if "entry_qty" not in st:
+            st["entry_qty"] = qty  # Store original entry qty if T2 fires first
+            pos.plan["_state"] = st
+        original_entry_qty = st["entry_qty"]
 
-        # CRITICAL FIX: Calculate T2 qty as percentage of ORIGINAL entry, not remaining
+        # Calculate T2 qty as percentage of ORIGINAL entry
         qty_exit = int(max(1, round(original_entry_qty * (t2_pct / 100.0))))
         qty_exit = min(qty_exit, qty)  # Cap at current position size
 
-        # Enhanced logic for small quantities
+        # Exit fully if calculated qty covers remaining position
         if qty_exit >= qty:
-            # Exit fully if T2 qty would be entire remaining position
             self._exit(sym, pos, float(px), ts, "target_t2_full")
             return
 
@@ -1344,8 +1371,8 @@ class ExitExecutor:
         profit_booked = qty_exit * (px - pos.avg_price)
         t2_pct_of_original = (qty_exit / original_entry_qty * 100) if original_entry_qty > 0 else 0
         remaining_qty = qty - qty_exit
-        remaining_pct_of_original = (remaining_qty / original_entry_qty * 100) if original_entry_qty > 0 else 0
-        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-0%, leaving {remaining_qty} ({remaining_pct_of_original:.0f}%) for trail]")
+        trail_pct = 100.0 - self.t1_book_pct - self.t2_book_pct
+        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-{trail_pct:.0f}%, leaving {remaining_qty} for trail]")
 
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
         self.positions.reduce(sym, int(qty_exit))
