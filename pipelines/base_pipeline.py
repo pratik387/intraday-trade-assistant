@@ -59,6 +59,17 @@ class ConfigurationError(Exception):
     pass
 
 
+def _normalize_symbol(symbol: str) -> str:
+    """Normalize symbol to base name (e.g., 'NSE:RELIANCE' -> 'RELIANCE', 'RELIANCE.NS' -> 'RELIANCE')."""
+    # Remove exchange prefix (NSE:, BSE:)
+    if ":" in symbol:
+        symbol = symbol.split(":")[-1]
+    # Remove suffix (.NS, .BO)
+    if "." in symbol:
+        symbol = symbol.split(".")[0]
+    return symbol
+
+
 def get_cap_segment(symbol: str) -> str:
     """
     Get market cap segment for a symbol from nse_all.json.
@@ -75,8 +86,11 @@ def get_cap_segment(symbol: str) -> str:
         if nse_file.exists():
             with nse_file.open() as f:
                 data = json.load(f)
-            cap_map = {item["symbol"]: item.get("cap_segment", "unknown") for item in data}
-            return cap_map.get(symbol, "unknown")
+            # Build map with normalized symbol names (strip .NS suffix)
+            cap_map = {_normalize_symbol(item["symbol"]): item.get("cap_segment", "unknown") for item in data}
+            # Normalize input symbol too (strip NSE: prefix)
+            normalized = _normalize_symbol(symbol)
+            return cap_map.get(normalized, "unknown")
     except Exception as e:
         logger.debug(f"CAP_SIZING: Failed to load cap_segment for {symbol}: {e}")
     return "unknown"
@@ -363,6 +377,28 @@ class BasePipeline(ABC):
     ) -> TargetResult:
         """Calculate category-specific targets and stop loss."""
         pass
+
+    # ======================== HOOK METHODS (override in subclasses) ========================
+
+    def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:
+        """
+        Apply category-specific RSI penalty to position sizing.
+
+        Override in subclass to implement category-specific logic.
+        Pro Trader RSI Framework (Minervini, Connors, Raschke):
+        - BREAKOUT/MOMENTUM: High RSI = momentum confirmation (GOOD)
+        - REVERSION: Extreme RSI = setup condition (GOOD)
+        - LEVEL: Neutral RSI = ideal, extreme = caution
+
+        Args:
+            rsi_val: Current RSI value (0-100)
+            bias: Trade direction ("long" or "short")
+
+        Returns:
+            Tuple of (multiplier, caution_string or None)
+            multiplier: 1.0 = no penalty, 0.9 = 10% reduction, etc.
+        """
+        return (1.0, None)
 
     # ======================== COMMON UTILITY METHODS ========================
 
@@ -1116,6 +1152,21 @@ class BasePipeline(ABC):
         # Volume ratio - utility already defaults to 1.0 if insufficient data
         volume_ratio = self.get_volume_ratio(df5m)
 
+        # Calculate slopes from last few bars if available
+        rsi_slope = 0.0
+        adx_slope = 0.0
+        if len(df5m) >= 5:
+            # RSI slope: difference over last 5 bars
+            if "rsi" in df5m.columns:
+                rsi_series = df5m["rsi"].dropna().tail(5)
+                if len(rsi_series) >= 2:
+                    rsi_slope = float(rsi_series.iloc[-1] - rsi_series.iloc[0]) / len(rsi_series)
+            # ADX slope: difference over last 5 bars
+            if "adx" in df5m.columns:
+                adx_series = df5m["adx"].dropna().tail(5)
+                if len(adx_series) >= 2:
+                    adx_slope = float(adx_series.iloc[-1] - adx_series.iloc[0]) / len(adx_series)
+
         features = {
             "volume_ratio": volume_ratio,
             "adx": adx_val,
@@ -1123,6 +1174,8 @@ class BasePipeline(ABC):
             "current_close": current_close,
             "bias": bias,
             "rsi": rsi_val,
+            "rsi_slope": rsi_slope,
+            "adx_slope": adx_slope,
             "setup_type": setup_type,  # For strategy-specific regime multipliers
             "atr": atr,  # ATR with fallback already applied - use this instead of recalculating
         }
@@ -1212,10 +1265,10 @@ class BasePipeline(ABC):
         entry_result = self.calculate_entry(symbol, df5m, bias, levels, atr, setup_type)
         entry_ref_price = entry_result.entry_ref_price
 
-        # CRITICAL: For immediate mode, use current_close for stop/target calculations
-        # Reason: entry_ref_price is the level (ORH/ORL) but for immediate mode breakouts,
-        # the actual entry will be at current_close (price has already broken through).
-        # Targets and stops must be relative to where we actually enter, not the level.
+        # CRITICAL: For immediate mode, entry_ref_price is the level (ORH/ORL) but
+        # actual fill will be at current_close (price has already broken through).
+        # TARGETS: Use effective_entry_price (where we actually enter) for realistic R:R
+        # SL: Use entry_ref_price (the level) - if price breaks back below, thesis is invalid
         if entry_result.entry_mode == "immediate":
             effective_entry_price = current_close
             logger.debug(f"[{category}] {symbol} {setup_type} IMMEDIATE mode: effective_entry={effective_entry_price:.2f} (ref={entry_ref_price:.2f})")
@@ -1223,38 +1276,46 @@ class BasePipeline(ABC):
             effective_entry_price = entry_ref_price
             logger.debug(f"[{category}] {symbol} {setup_type} CONDITIONAL mode: entry_ref={entry_ref_price:.2f}")
 
-        # 5b. VOLATILITY-ADJUSTED SIZING (from planner_internal.py lines 547-581)
-        volatility_mult = 1.0
-        volatility_cfg = self.cfg["volatility_sizing"]
-        if volatility_cfg["enabled"]:
-            price_atr_ratio = (atr / entry_ref_price) * 100 if entry_ref_price > 0 else 1.0
-            low_vol_threshold = volatility_cfg["low_volatility_threshold"]
-            high_vol_threshold = volatility_cfg["high_volatility_threshold"]
+        # 5b. VOLATILITY-ADJUSTED SIZING - DISABLED for Pro Trader approach
+        # Van Tharp CPR: qty = risk_per_trade / rps
+        # The ATR-based stop loss (rps) ALREADY incorporates volatility risk.
+        # Adding volatility_mult on TOP of this is double-penalizing!
+        # High volatility → larger ATR → larger rps → smaller qty (built-in)
+        volatility_mult = 1.0  # DISABLED - ATR-based sizing handles volatility
+        # volatility_cfg = self.cfg["volatility_sizing"]
+        # if volatility_cfg["enabled"]:
+        #     price_atr_ratio = (atr / entry_ref_price) * 100 if entry_ref_price > 0 else 1.0
+        #     low_vol_threshold = volatility_cfg["low_volatility_threshold"]
+        #     high_vol_threshold = volatility_cfg["high_volatility_threshold"]
+        #
+        #     if price_atr_ratio < low_vol_threshold:
+        #         volatility_mult = volatility_cfg["low_volatility_multiplier"]
+        #     elif price_atr_ratio > high_vol_threshold:
+        #         volatility_mult = volatility_cfg["high_volatility_multiplier"]
+        #     else:
+        #         volatility_mult = volatility_cfg["normal_volatility_multiplier"]
+        #
+        #     # Clamp to limits
+        #     max_adj = volatility_cfg["max_size_adjustment"]
+        #     min_adj = volatility_cfg["min_size_adjustment"]
+        #     volatility_mult = max(min_adj, min(max_adj, volatility_mult))
+        logger.debug(f"VOLATILITY_SIZING: {symbol} DISABLED - using vol_mult=1.0 (ATR-based sizing handles volatility)")
 
-            if price_atr_ratio < low_vol_threshold:
-                volatility_mult = volatility_cfg["low_volatility_multiplier"]
-            elif price_atr_ratio > high_vol_threshold:
-                volatility_mult = volatility_cfg["high_volatility_multiplier"]
-            else:
-                volatility_mult = volatility_cfg["normal_volatility_multiplier"]
-
-            # Clamp to limits
-            max_adj = volatility_cfg["max_size_adjustment"]
-            min_adj = volatility_cfg["min_size_adjustment"]
-            volatility_mult = max(min_adj, min(max_adj, volatility_mult))
-            logger.debug(f"VOLATILITY_SIZING: {symbol} ATR%={price_atr_ratio:.2f} → mult={volatility_mult:.2f}")
-
-        # 5c. CAP-AWARE SIZING (from planner_internal.py lines 583-615, Van Tharp evidence)
+        # 5c. CAP-AWARE SIZING - DISABLED for Pro Trader approach
+        # Van Tharp CPR: qty = risk_per_trade / rps
+        # The rps is ATR-based, and ATR naturally varies by cap segment.
+        # Small/micro caps have higher ATR% → larger rps → smaller qty (built-in)
+        # Adding cap_size_mult on TOP of this is double-penalizing!
         cap_segment = get_cap_segment(symbol)
-        cap_size_mult = 1.0
-        cap_sl_mult = 1.0
+        cap_size_mult = 1.0  # DISABLED - ATR-based sizing handles cap segment risk
+        cap_sl_mult = 1.0  # Keep uniform SL multiplier
 
-        cap_risk_cfg = self.cfg["cap_risk_adjustments"]
-        if cap_risk_cfg["enabled"] and cap_segment != "unknown":
-            seg_cfg = cap_risk_cfg[cap_segment]
-            cap_size_mult = seg_cfg["size_multiplier"]
-            cap_sl_mult = seg_cfg["sl_atr_multiplier"]
-            logger.debug(f"CAP_SIZING: {symbol} {cap_segment} size_mult={cap_size_mult:.2f} sl_mult={cap_sl_mult:.2f}")
+        # cap_risk_cfg = self.cfg["cap_risk_adjustments"]
+        # if cap_risk_cfg["enabled"] and cap_segment != "unknown":
+        #     seg_cfg = cap_risk_cfg[cap_segment]
+        #     cap_size_mult = seg_cfg["size_multiplier"]
+        #     cap_sl_mult = seg_cfg["sl_atr_multiplier"]
+        logger.debug(f"CAP_SIZING: {symbol} {cap_segment} DISABLED - using size_mult=1.0 (ATR-based sizing handles cap risk)")
 
         # 6. STOP LOSS - Structure-based SL with RPS floor protection
         # Ported from OLD planner_internal.py lines 512-537
@@ -1268,12 +1329,16 @@ class BasePipeline(ABC):
         if structure_stop is None:
             # Fallback: use ORH/ORL as structure reference
             if bias == "long":
-                structure_stop = levels.get("ORL", effective_entry_price - adjusted_atr)
+                structure_stop = levels.get("ORL", entry_ref_price - adjusted_atr)
             else:
-                structure_stop = levels.get("ORH", effective_entry_price + adjusted_atr)
+                structure_stop = levels.get("ORH", entry_ref_price + adjusted_atr)
 
         # Calculate both structure-based and volatility-based stops
-        vol_stop = effective_entry_price - (sl_atr_mult * adjusted_atr) if bias == "long" else effective_entry_price + (sl_atr_mult * adjusted_atr)
+        # CRITICAL: Use entry_ref_price (the level), NOT effective_entry_price (fill price)
+        # Reason: SL should protect the breakout thesis - if price breaks back below the level,
+        # the breakout has failed regardless of where we filled. This matches OLD planner_internal.py.
+        # Pro trader approach: For long breakouts, SL at ORL (or below level), not relative to fill.
+        vol_stop = entry_ref_price - (sl_atr_mult * adjusted_atr) if bias == "long" else entry_ref_price + (sl_atr_mult * adjusted_atr)
 
         if bias == "long":
             # For LONG: SL below entry - use HIGHER value (closer to entry) = TIGHTER stop
@@ -1314,62 +1379,28 @@ class BasePipeline(ABC):
             bias, atr, levels, measured_move
         )
 
-        # 8. LATE ENTRY & SOFT GATE PENALTIES (from planner_internal.py lines 1021-1056)
-        # These are size multipliers that reduce position size but don't block entries
-        size_mult = gate_result.size_mult
+        # 8. POSITION SIZING - NO SOFT PENALTIES (Pro Trader Approach)
+        #
+        # REMOVED ALL STACKING PENALTIES (Option A - Hard Gates Only):
+        # - RSI penalty: Now hard gate in pipeline.validate_gates()
+        # - MACD late penalty: If late, don't trade (handled by timing gates)
+        # - Volume penalty: Hard gate in pipeline.screen() or validate_gates()
+        # - ADX penalty: Hard gate in pipeline.validate_gates()
+        #
+        # Pro Trader Formula (Van Tharp CPR):
+        #   Position Size = Capital at Risk / Risk per Unit
+        # Then apply STRUCTURAL adjustments only:
+        #   - volatility_mult: Built into ATR-based sizing
+        #   - cap_size_mult: Market cap tier adjustment
+        #
+        # NO STACKING of soft penalties that crushed position sizes to 22% of intended!
+        size_mult = gate_result.size_mult  # 1.0 from gates (no penalties there either)
         cautions = []
-
-        # Get penalty config from entry config
-        late_penalty_cfg = self.cfg["late_entry_penalty"]
-        intraday_gate_cfg = self.cfg["intraday_gate"]
-
-        # 8a. RSI late entry penalty (0.6x if extended)
-        rsi_late_above = late_penalty_cfg["rsi_above"]
-        rsi_late_below = late_penalty_cfg["rsi_below"]
-        if rsi_val is not None:
-            if bias == "long" and rsi_val > rsi_late_above:
-                size_mult *= 0.6
-                cautions.append(f"late_entry_rsi>{rsi_val:.0f}")
-            elif bias == "short" and rsi_val < rsi_late_below:
-                size_mult *= 0.6
-                cautions.append(f"late_entry_rsi<{rsi_val:.0f}")
-
-        # 8b. MACD histogram late entry penalty (0.8x if extended)
-        macd_above = late_penalty_cfg["macd_above"]
-        if "macd_hist" in df5m.columns:
-            macd_hist = float(df5m["macd_hist"].iloc[-1]) if not pd.isna(df5m["macd_hist"].iloc[-1]) else 0.0
-            if macd_hist > float(macd_above):
-                size_mult *= 0.8
-                cautions.append(f"late_entry_macd_hist>{macd_above}")
-
-        # 8c. Weak volume ratio penalty (0.8x if below minimum)
-        min_volume_ratio = intraday_gate_cfg["min_volume_ratio"]
-        if volume_ratio < min_volume_ratio:
-            size_mult *= 0.8
-            cautions.append("weak_volume_ratio")
-
-        # 8d. RSI out-of-band penalty (0.85x if outside optimal range)
-        rsi_min = intraday_gate_cfg["min_rsi"]
-        rsi_max = intraday_gate_cfg["max_rsi"]
-        if rsi_val is not None:
-            if not (rsi_min <= rsi_val <= rsi_max):
-                size_mult *= 0.85
-                cautions.append("rsi_out_of_band")
-
-        # 8e. ADX out-of-band penalty (0.9x if outside optimal range)
-        adx_min = intraday_gate_cfg["min_adx"]
-        adx_max = intraday_gate_cfg["max_adx"]
-        if adx_val is not None:
-            if not (adx_min <= adx_val <= adx_max):
-                size_mult *= 0.9
-                cautions.append("adx_out_of_band")
-
-        # 8f. APPLY VOLATILITY AND CAP SIZING MULTIPLIERS
+        # 8a. APPLY VOLATILITY AND CAP SIZING MULTIPLIERS (structural, not penalties)
         # These adjust position size based on volatility regime and market cap
         size_mult *= volatility_mult * cap_size_mult
-        logger.debug(f"SIZE_MULT: {symbol} base={gate_result.size_mult:.2f} × vol={volatility_mult:.2f} × cap={cap_size_mult:.2f} = {size_mult:.2f}")
 
-        # 8g. CALCULATE POSITION SIZE (qty)
+        # 8b. CALCULATE POSITION SIZE (qty)
         # Uses risk-based position sizing: qty = risk_per_trade / risk_per_share * multipliers
         # NOTE: Use locally calculated 'rps' (with floor protection) NOT target_result.risk_per_share
         risk_per_trade_rupees = self.cfg["risk_per_trade_rupees"]
@@ -1381,7 +1412,6 @@ class BasePipeline(ABC):
             qty = 0
         # Use effective_entry_price for notional (actual entry price for immediate mode)
         notional = qty * effective_entry_price
-        logger.debug(f"POSITION_SIZE: {symbol} risk_rupees={risk_per_trade_rupees} / rps={risk_per_share:.2f} × size_mult={size_mult:.2f} = qty={qty}")
 
         # 9. BUILD PLAN
         plan = {

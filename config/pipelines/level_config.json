@@ -309,5 +309,12 @@
         "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
         "atr_multiplier": 2.0,
         "min_stop_distance_pct": 0.5
+    },
+
+    "rsi_penalty": {
+        "_comment": "LEVEL: Penalize extreme RSI (price may overshoot level)",
+        "extreme_high": 75,
+        "extreme_low": 25,
+        "penalty_mult": 0.9
     }
 }

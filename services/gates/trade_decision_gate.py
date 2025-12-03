@@ -805,12 +805,10 @@ class TradeDecisionGate:
             elif not base_allow and hc_ok:
                 reasons.append(f"hcet_bypass_regime:{','.join(hc_reasons)}")
 
+        # NO SIZE_MULT PENALTIES - Pro Trader Approach (Van Tharp CPR)
+        # If setup doesn't qualify, BLOCK it (hard gate). No soft penalties.
         size_mult = 1.0
-        if hasattr(self.regime_gate, "size_multiplier"):
-            try:
-                size_mult *= float(self.regime_gate.size_multiplier(regime))
-            except Exception:
-                pass
+        # REMOVED: regime_gate.size_multiplier penalty
         reasons.append(f"regime:{regime}")
 
         # If time window blocked, allow only HCET to proceed
@@ -869,8 +867,8 @@ class TradeDecisionGate:
             reasons.append(f"{session_or_event}:fast_scalp_rejected")
             return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
-        # Apply policy adjustments
-        size_mult *= float(policy.size_mult)
+        # Apply policy adjustments - HOLD BARS ONLY, no size penalty
+        # REMOVED: size_mult *= float(policy.size_mult) - use hard gates instead
         min_hold = int(policy.min_hold_bars)
         if ctx:
             reasons.append("event_ctx:" + ",".join(sorted(ctx.keys())))
@@ -879,8 +877,8 @@ class TradeDecisionGate:
         spike, sig = self.news_gate.has_symbol_spike(df1m_tail)
         if spike:
             adj = self.news_gate.adjustment_for(sig)
-            min_hold += int(adj.require_hold_bars)
-            size_mult *= float(adj.size_mult)
+            min_hold += int(adj.require_hold_bars)  # Keep hold bars for caution
+            # REMOVED: size_mult *= float(adj.size_mult) - no penalty, use hold bars instead
             reasons.append("news_spike:" + ";".join(sig.reasons))
 
         # ---------------- SENTIMENT --------------------
@@ -897,9 +895,9 @@ class TradeDecisionGate:
                     reasons.append(f"sentiment_block:{sentiment.sentiment_level.value}")
                     return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
                 sentiment_bias = self.sentiment_gate.get_setup_bias(best.setup_type, sentiment)
-                size_mult *= sentiment_bias
+                # REMOVED: size_mult *= sentiment_bias - no penalty, sentiment gate already blocks if needed
                 reasons.append(f"sentiment:{sentiment.sentiment_level.value}_{sentiment.market_trend.value}")
-                reasons.append(f"sentiment_bias:{sentiment_bias:.2f}")
+                reasons.append(f"sentiment_bias_info:{sentiment_bias:.2f}")
             except Exception as e:
                 reasons.append(f"sentiment_error:{getattr(e, '__class__', type('E', (), {})).__name__}")
 
@@ -1058,25 +1056,20 @@ class TradeDecisionGate:
         # ---------------- HCET sizing/hold tweaks ----------------
         if hc_ok:
             reasons.append("hcet:enabled")
+            # Keep HCET bonus - this is a REWARD for confluence, not a penalty
             size_mult *= 1.15               # reward confluence, modestly
             min_hold = max(min_hold, 2)     # small confirmation hold
-        else:
-            # keep chop smaller by default
-            if regime in {"choppy", "range"}:
-                size_mult *= 0.8
+        # REMOVED: chop regime penalty (0.8x) - use hard gates instead of soft penalties
 
         # ---------------- SETUP SEQUENCING (Enhancement 3) ----------------
-        # Track this setup for future sequence analysis
+        # Track this setup for future sequence analysis (info only, no penalty)
         try:
             import pandas as pd
             current_time = pd.to_datetime(now) if hasattr(pd, 'to_datetime') else datetime.now()
             self._track_setup(symbol, current_time, best.setup_type)
 
-            # Apply sequence-based confidence multiplier
-            sequence_multiplier = self._get_sequence_multiplier(symbol, best.setup_type)
-            if sequence_multiplier != 1.0:
-                size_mult *= sequence_multiplier
-                reasons.append(f"sequence_multiplier:{sequence_multiplier:.2f}")
+            # REMOVED: sequence_multiplier penalty - use hard gates instead
+            # sequence_multiplier = self._get_sequence_multiplier(symbol, best.setup_type)
         except Exception as e:
             reasons.append(f"sequence_error:{e.__class__.__name__}")
 

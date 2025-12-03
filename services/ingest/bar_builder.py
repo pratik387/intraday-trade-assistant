@@ -33,6 +33,7 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 import pandas as pd
 from config.logging_config import get_agent_logger
+from services.indicators.indicators import RSIState, update_rsi_incremental
 
 logger = get_agent_logger()
 
@@ -126,6 +127,9 @@ class BarBuilder:
         # ADX state (minimal, incremental)
         self._adx_state: Dict[str, _ADXState] = {}
         self._adx_alpha: float = 1.0 / 14.0  # Wilder α for ADX(14)
+
+        # RSI state (using indicators.RSIState for incremental calculation)
+        self._rsi_state: Dict[str, RSIState] = {}
 
         # Additional handlers for trigger system
         self._additional_1m_handlers: List[Callable[[str, Bar], None]] = []
@@ -286,6 +290,13 @@ class BarBuilder:
             adx_val = 0.0
         bar5["adx"] = float(adx_val)
 
+        # --- Incremental RSI(14) update (O(1)) ---
+        try:
+            rsi_val = self._update_rsi_5m(symbol, float(bar5["close"]))
+        except Exception:
+            rsi_val = 50.0  # Neutral RSI on error
+        bar5["rsi"] = float(rsi_val)
+
         df5 = self._bars_5m[symbol]
         row5 = bar5.to_frame().T
         row5.index = [start_ts]  # ← START-LABELED timestamp
@@ -413,7 +424,19 @@ class BarBuilder:
         st.prev_low = low
         st.prev_close = close
         return float(cur_adx)
-    
+
+    def _update_rsi_5m(self, symbol: str, close: float) -> float:
+        """
+        O(1) Wilder-style RSI update for the new 5m bar. Returns the latest RSI.
+        Uses indicators.update_rsi_incremental for the calculation.
+        """
+        st = self._rsi_state.get(symbol)
+        if st is None:
+            st = RSIState()
+            self._rsi_state[symbol] = st
+
+        return update_rsi_incremental(st, close, period=14, warmup=14)
+
     def get_df_1m_tail(self, symbol: str, n: int) -> pd.DataFrame:
         """Get last n 1-minute bars for a symbol"""
         with self._lock:

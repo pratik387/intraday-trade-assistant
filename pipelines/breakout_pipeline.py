@@ -245,15 +245,16 @@ class BreakoutPipeline(BasePipeline):
         size_mult = 1.0
         min_hold = 0
 
-        # Regime rules from config
+        # Regime rules from config - HARD GATE for chop (except ORB)
         regime_cfg = self._get("gates", "regime_rules")
         if regime in regime_cfg:
             rule = regime_cfg[regime]
             if regime == "chop" and "orb" not in setup_type.lower():
-                reasons.append("regime_penalty:chop")
-                size_mult *= rule["size_mult"]
+                # Chop regime blocks non-ORB breakouts (false breakouts common)
+                reasons.append("regime_blocked:chop_non_orb")
+                passed = False
             else:
-                size_mult *= rule["size_mult"]
+                reasons.append(f"regime_ok:{regime}")
 
         # Determine if short (stricter filters)
         is_short = "_short" in setup_type
@@ -302,12 +303,28 @@ class BreakoutPipeline(BasePipeline):
                 else:
                     reasons.append(f"momentum_candle_pass:{candle_ratio:.2f}x")
 
-        # ADX gate from config
+        # ADX gate from config - HARD GATE (no more size_mult penalty)
         adx_cfg = self._get("gates", "adx")
         min_adx = adx_cfg["min_value"]
         if adx < min_adx:
             reasons.append(f"adx_low:{adx:.1f}<{min_adx}")
-            size_mult *= adx_cfg["low_adx_size_mult"]
+            passed = False
+
+        # RSI weak momentum gate - HARD GATE
+        # Pro trader research: weak RSI on breakouts = weak momentum = likely to fail
+        # But high RSI is fine (Minervini: "strength begets strength")
+        rsi_cfg = self.cfg["rsi_penalty"]
+        rsi = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns else 50.0
+        if is_short:
+            # Short breakouts need RSI weakness (high RSI = no selling pressure)
+            if rsi < rsi_cfg["short_weak_threshold"]:
+                reasons.append(f"rsi_no_selling_pressure:{rsi:.0f}<{rsi_cfg['short_weak_threshold']}")
+                passed = False
+        else:
+            # Long breakouts need RSI strength (low RSI = no buying pressure)
+            if rsi < rsi_cfg["long_weak_threshold"]:
+                reasons.append(f"rsi_weak_momentum:{rsi:.0f}<{rsi_cfg['long_weak_threshold']}")
+                passed = False
 
         return GateResult(passed=passed, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
@@ -627,3 +644,24 @@ class BreakoutPipeline(BasePipeline):
             risk_per_share=risk_per_share,
             trail_config=trail_config
         )
+
+    # ======================== RSI PENALTY ========================
+
+    def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:
+        """
+        BREAKOUT RSI penalty: Penalize weak momentum, reward strong momentum.
+
+        Pro Trader Framework (Minervini, O'Neil):
+        - High RSI = momentum confirmation = NO PENALTY (breakouts need momentum)
+        - Low RSI = weak momentum = penalty (breakout may fail)
+        """
+        rsi_cfg = self.cfg["rsi_penalty"]
+        long_weak = rsi_cfg["long_weak_threshold"]
+        short_weak = rsi_cfg["short_weak_threshold"]
+        penalty = rsi_cfg["penalty_mult"]
+
+        if bias == "long" and rsi_val < long_weak:
+            return (penalty, f"weak_momentum_rsi<{rsi_val:.0f}")
+        elif bias == "short" and rsi_val > short_weak:
+            return (penalty, f"weak_momentum_rsi>{rsi_val:.0f}")
+        return (1.0, None)

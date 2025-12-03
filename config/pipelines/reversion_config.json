@@ -289,5 +289,12 @@
         "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0 (failure_fade setup-specific stop_mult: 1.5 is handled at setup level)",
         "atr_multiplier": 2.0,
         "min_stop_distance_pct": 0.5
+    },
+
+    "rsi_penalty": {
+        "_comment": "REVERSION: Penalize neutral RSI (35-65) - need extreme exhaustion",
+        "neutral_low": 35,
+        "neutral_high": 65,
+        "penalty_mult": 0.85
     }
 }

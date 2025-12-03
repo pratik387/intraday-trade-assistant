@@ -224,50 +224,60 @@ class ReversionPipeline(BasePipeline):
         vol_mult: float
     ) -> GateResult:
         """
-        Reversion-specific gate validations.
+        Reversion-specific gate validations - HARD GATES ONLY, NO PENALTIES.
 
         Reversion plays work best after extremes:
-        - Need exhaustion signals
-        - Volume spike confirms capitulation
-        - Work in all regimes but timing matters
+        - RSI extremes already checked in screen() - HARD GATE there
+        - Volume spike is nice-to-have, not required
+        - Counter-trend trades need sufficient strength - HARD BLOCK if weak
+
+        Pro Trader Approach (Larry Connors):
+        - Reversion is about exhaustion, not momentum
+        - Extremes are the SIGNAL, not a penalty condition
+        - Rejection candle is confirmation, not requirement
         """
         # df1m reserved for future 1-minute analysis
         _ = df1m
-
-        logger.debug(f"[REVERSION] Validating gates for {symbol} {setup_type}: regime={regime}, adx={adx:.1f}, strength={strength:.2f}, vol={vol_mult:.2f}")
+        # adx not used for reversion gates
+        _ = adx
 
         reasons = []
         passed = True
-        size_mult = 1.0
+        size_mult = 1.0  # NO PENALTIES - hard gates only
 
         # Min hold bars from config - reversion plays need patience
         min_hold = self._get("gates", "min_hold_bars")
 
-        # Regime multipliers from config - reversion works best in chop
+        # Regime rules from config - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
 
         if regime in regime_cfg:
             rule = regime_cfg[regime]
-            if rule["allowed"]:
-                size_mult *= rule["size_mult"]
-                reasons.append(f"regime_ok:{regime}")
-
-                # Counter-trend check for trending regimes
-                if regime in ("trend_up", "trend_down"):
-                    min_strength = rule["min_strength_counter_trend"]
-                    if strength < min_strength:
-                        reasons.append(f"trend_counter_weak:strength={strength:.2f}")
-                        size_mult *= rule["counter_trend_size_mult"]
-            else:
+            if not rule["allowed"]:
                 reasons.append(f"regime_blocked:{regime}")
                 passed = False
+            else:
+                reasons.append(f"regime_ok:{regime}")
 
-        # Failure fade specific check from config
+                # Counter-trend check for trending regimes - HARD BLOCK if too weak
+                if regime in ("trend_up", "trend_down"):
+                    min_strength = rule["min_strength_counter_trend"]
+                    is_long = "_long" in setup_type
+                    is_counter = (regime == "trend_up" and not is_long) or (regime == "trend_down" and is_long)
+
+                    if is_counter and strength < min_strength:
+                        reasons.append(f"counter_trend_blocked:strength={strength:.2f}<{min_strength}")
+                        passed = False
+                    elif is_counter:
+                        reasons.append(f"counter_trend_ok:strength={strength:.2f}")
+                    else:
+                        reasons.append("trend_aligned")
+
+        # Failure fade specific check - info only, no penalty
         if "failure_fade" in setup_type:
             ff_cfg = self._get("gates", "failure_fade")
-            # Need to see a recent failed breakout
+            # Check for rejection (wick) - nice to have, not required
             if df5m is not None and len(df5m) >= 5:
-                # Check for rejection (wick)
                 last_bar = df5m.iloc[-1]
                 body = abs(last_bar["close"] - last_bar["open"])
                 total_range = last_bar["high"] - last_bar["low"]
@@ -276,15 +286,15 @@ class ReversionPipeline(BasePipeline):
                     body_ratio = body / total_range
                     if body_ratio < ff_cfg["rejection_candle_body_ratio_max"]:
                         reasons.append("rejection_candle_ok")
-                        size_mult *= ff_cfg["rejection_candle_bonus_mult"]
                     else:
                         reasons.append("no_rejection_candle")
 
-        # Volume spike is good for reversion from config
+        # Volume spike - info only, no penalty (capitulation is nice, not required)
         vol_cfg = self._get("gates", "volume_capitulation")
         if vol_mult >= vol_cfg["threshold"]:
             reasons.append(f"capitulation_volume:{vol_mult:.2f}x")
-            size_mult *= vol_cfg["bonus_mult"]
+        else:
+            reasons.append(f"volume_normal:{vol_mult:.2f}x")
 
         return GateResult(passed=passed, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
@@ -602,3 +612,23 @@ class ReversionPipeline(BasePipeline):
             risk_per_share=risk_per_share,
             trail_config=trail_config
         )
+
+    # ======================== RSI PENALTY ========================
+
+    def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:
+        """
+        REVERSION RSI penalty: DISABLED - screening already checks RSI extremes.
+
+        Pro Trader Framework (Larry Connors RSI(2)):
+        - Extreme RSI is the SETUP CONDITION - already enforced in screen()
+        - screen() blocks neutral RSI (hard gate), so no penalty needed here
+        - Double-checking would be redundant
+
+        The screen() method at lines 106-113 already blocks:
+        - Long reversion when RSI > oversold_threshold
+        - Short reversion when RSI < overbought_threshold
+        """
+        # RSI already checked as hard gate in screen() - no penalty needed
+        _ = rsi_val
+        _ = bias
+        return (1.0, None)

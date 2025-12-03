@@ -212,12 +212,20 @@ class TriggerAwareExecutor:
             # Update shared position store for exit executor
             if self.positions:
                 from services.execution.trade_executor import Position
+
+                # CRITICAL FIX: Recalculate targets based on ACTUAL entry price
+                # Original targets were calculated from entry_ref_price, but actual
+                # trigger price may differ. Targets must be R-based from actual entry.
+                adjusted_plan = self._recalculate_targets_for_actual_entry(
+                    trade.plan, price, side
+                )
+
                 pos = Position(
                     symbol=symbol,
                     side=side,
                     qty=qty,
                     avg_price=price,
-                    plan=trade.plan
+                    plan=adjusted_plan
                 )
                 self.positions.upsert(pos)
 
@@ -226,7 +234,111 @@ class TriggerAwareExecutor:
         except Exception as e:
             logger.exception(f"Order placement failed for {trade.symbol}: {e}")
             return False
-    
+
+    def _recalculate_targets_for_actual_entry(
+        self, plan: Dict[str, Any], actual_entry: float, side: str
+    ) -> Dict[str, Any]:
+        """
+        Recalculate targets based on ACTUAL entry price, not planned entry.
+
+        Problem:
+        - Pipeline calculates targets from entry_ref_price (e.g., 256.43)
+        - Actual trigger may occur at different price (e.g., 261.40)
+        - If targets aren't recalculated, T2 gives wrong R-multiple
+
+        Solution:
+        - Get risk_per_share (rps) from plan
+        - Calculate targets as R-multiples from actual_entry
+        - T1 = actual_entry ± 1.5R (configurable)
+        - T2 = actual_entry ± 2.0R (configurable)
+
+        Van Tharp: Targets must be based on YOUR entry, not some theoretical entry.
+        """
+        import copy
+        adjusted_plan = copy.deepcopy(plan)
+
+        try:
+            # Get stop data from plan - exec_item now includes full "stop" dict
+            stop_data = plan.get("stop", {})
+            hard_sl = stop_data.get("hard")
+            original_rps = stop_data.get("risk_per_share")
+
+            # Get original entry price
+            original_entry = plan.get("entry_ref_price") or plan.get("price")
+
+            # Can't recalculate without stop loss info
+            if hard_sl is None or original_rps is None or original_rps <= 0:
+                logger.info(f"TARGET_RECALC_SKIP: missing data hard_sl={hard_sl} orig_entry={original_entry} rps={original_rps}")
+                return adjusted_plan
+
+            # Calculate ACTUAL risk per share based on actual entry
+            if side.upper() == "BUY":
+                actual_rps = actual_entry - hard_sl
+            else:
+                actual_rps = hard_sl - actual_entry
+
+            # Skip if rps is invalid
+            if actual_rps <= 0:
+                logger.warning(f"Invalid actual_rps={actual_rps:.2f}, using original targets")
+                return adjusted_plan
+
+            # Get original targets
+            original_targets = plan.get("targets", [])
+            if len(original_targets) < 2:
+                logger.info(f"TARGET_RECALC_SKIP: less than 2 targets, got {len(original_targets)}")
+                return adjusted_plan
+
+            # original_entry was already calculated above when computing original_rps
+
+            # Use explicit R-multiples from plan (rr field) - NOT derived from levels
+            # The planner may cap/adjust levels for structure, but rr represents intended R
+            t1_orig = original_targets[0].get("level", 0)
+            t2_orig = original_targets[1].get("level", 0)
+
+            # Get planned R-multiples directly from targets (preferred)
+            # Fall back to deriving from levels only if rr not present
+            t1_r = original_targets[0].get("rr") or original_targets[0].get("r_multiple")
+            t2_r = original_targets[1].get("rr") or original_targets[1].get("r_multiple")
+
+            # If rr not in plan, derive from levels (legacy fallback)
+            if t1_r is None:
+                if side.upper() == "BUY":
+                    t1_r = (t1_orig - original_entry) / original_rps if original_rps > 0 else 1.5
+                else:
+                    t1_r = (original_entry - t1_orig) / original_rps if original_rps > 0 else 1.5
+
+            if t2_r is None:
+                if side.upper() == "BUY":
+                    t2_r = (t2_orig - original_entry) / original_rps if original_rps > 0 else 2.0
+                else:
+                    t2_r = (original_entry - t2_orig) / original_rps if original_rps > 0 else 2.0
+
+            # Recalculate targets from actual entry using same R-multiples
+            if side.upper() == "BUY":
+                new_t1 = actual_entry + (t1_r * actual_rps)
+                new_t2 = actual_entry + (t2_r * actual_rps)
+            else:
+                new_t1 = actual_entry - (t1_r * actual_rps)
+                new_t2 = actual_entry - (t2_r * actual_rps)
+
+            # Update targets in plan
+            adjusted_plan["targets"] = [
+                {"level": round(new_t1, 2), "r_multiple": round(t1_r, 2)},
+                {"level": round(new_t2, 2), "r_multiple": round(t2_r, 2)}
+            ]
+
+            # Update stop info with actual rps - handle both exec_item and full plan structures
+            if "stop" in adjusted_plan and isinstance(adjusted_plan["stop"], dict):
+                adjusted_plan["stop"]["risk_per_share"] = round(actual_rps, 2)
+            # Also store at top level for exec_item structure
+            adjusted_plan["risk_per_share"] = round(actual_rps, 2)
+            adjusted_plan["actual_entry"] = round(actual_entry, 2)
+
+        except Exception as e:
+            logger.warning(f"Target recalculation failed: {e}, using original targets")
+
+        return adjusted_plan
+
     def _cleanup_expired_trades(self) -> None:
         """Clean up expired and completed trades"""
         now = self._get_current_time()

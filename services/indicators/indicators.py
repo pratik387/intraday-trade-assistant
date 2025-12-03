@@ -227,6 +227,78 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return rsi
 
 
+# ------------------------------- Incremental RSI (O(1) per bar) -------------------------------
+
+from dataclasses import dataclass
+import math
+
+@dataclass
+class RSIState:
+    """State for incremental RSI calculation."""
+    prev_close: float = math.nan
+    avg_gain: float = 0.0     # Wilder-smoothed average gain
+    avg_loss: float = 0.0     # Wilder-smoothed average loss
+    rsi: float = 50.0         # RSI value (default to neutral 50)
+    bar_count: int = 0        # Number of bars processed (for warmup)
+
+
+def update_rsi_incremental(
+    state: RSIState,
+    close: float,
+    period: int = 14,
+    warmup: int = 14
+) -> float:
+    """
+    O(1) Wilder-style RSI update for streaming data.
+
+    Args:
+        state: RSIState object (modified in place)
+        close: Current bar's close price
+        period: RSI period (default 14)
+        warmup: Bars before RSI is valid (default 14)
+
+    Returns:
+        float: Current RSI value (50.0 during warmup)
+
+    Example:
+        >>> state = RSIState()
+        >>> for bar in bars:
+        ...     rsi = update_rsi_incremental(state, bar.close)
+    """
+    # First bar warmup: just record close
+    if not math.isfinite(state.prev_close):
+        state.prev_close = close
+        state.bar_count = 1
+        return 50.0  # Neutral RSI during warmup
+
+    # Calculate change
+    change = close - state.prev_close
+    gain = max(change, 0.0)
+    loss = max(-change, 0.0)
+
+    state.bar_count += 1
+    alpha = 1.0 / period
+
+    # Wilder EMA (RMA) updates
+    state.avg_gain = state.avg_gain + alpha * (gain - state.avg_gain)
+    state.avg_loss = state.avg_loss + alpha * (loss - state.avg_loss)
+
+    # Calculate RSI
+    if state.avg_loss <= 1e-12:
+        state.rsi = 100.0 if state.avg_gain > 1e-12 else 50.0
+    else:
+        rs = state.avg_gain / state.avg_loss
+        state.rsi = 100.0 - (100.0 / (1.0 + rs))
+
+    state.prev_close = close
+
+    # Return neutral during warmup period
+    if state.bar_count < warmup:
+        return 50.0
+
+    return float(state.rsi)
+
+
 def calculate_ema(series: pd.Series, span: int) -> pd.Series:
     """
     Calculate EMA (Exponential Moving Average).

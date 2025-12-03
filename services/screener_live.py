@@ -928,6 +928,8 @@ class ScreenerLive:
                     "qty": int(plan["sizing"]["qty"]),
                     "entry_zone": (plan["entry"] or {}).get("zone"),
                     "price": (plan["entry"] or {}).get("reference"),
+                    "entry_ref_price": (plan["entry"] or {}).get("reference"),
+                    "stop": plan.get("stop"),  # Full stop dict: {"hard": x, "risk_per_share": y}
                     "hard_sl": (plan.get("stop") or {}).get("hard"),
                     "targets": plan.get("targets"),
                     "trail": plan.get("trail"),
@@ -935,7 +937,7 @@ class ScreenerLive:
                     "orh": (plan.get("levels") or {}).get("ORH"),
                     "orl": (plan.get("levels") or {}).get("ORL"),
                     "decision_ts": plan["decision_ts"],
-                    "strategy": plan.get("strategy", ""),  # Add missing strategy field
+                    "strategy": plan.get("strategy", ""),
                 },
                 "meta": plan,
             }

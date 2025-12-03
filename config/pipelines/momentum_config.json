@@ -353,5 +353,12 @@
         "atr_multiplier": 2.0,
         "trend_continuation_mult": 0.75,
         "min_stop_distance_pct": 0.5
+    },
+
+    "rsi_penalty": {
+        "_comment": "MOMENTUM: Penalize weak momentum (low RSI for longs, high RSI for shorts)",
+        "long_weak_threshold": 40,
+        "short_weak_threshold": 60,
+        "penalty_mult": 0.9
     }
 }

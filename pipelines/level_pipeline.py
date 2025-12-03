@@ -223,11 +223,18 @@ class LevelPipeline(BasePipeline):
         vol_mult: float
     ) -> GateResult:
         """
-        Level-specific gate validations.
+        Level-specific gate validations - HARD GATES ONLY, NO PENALTIES.
 
         Level plays work in all regimes but have different requirements:
-        - In trend: need stronger confirmation
+        - In trend: counter-trend requires stronger confirmation (HARD BLOCK if weak)
         - In chop: level respect is sufficient
+        - ADX: high ADX is warning but level plays CAN work (no penalty)
+        - Volume: nice-to-have, not required (no penalty)
+
+        Pro Trader Approach (Linda Raschke):
+        - Level plays are about price structure, not momentum
+        - High ADX = trending = level might break through, but still tradeable
+        - Volume surge = confirmation, but absence isn't disqualifying
         """
         # df5m, df1m reserved for future bar-level analysis
         _ = df5m
@@ -237,39 +244,47 @@ class LevelPipeline(BasePipeline):
 
         reasons = []
         passed = True
-        size_mult = 1.0
+        size_mult = 1.0  # NO PENALTIES - hard gates only
         min_hold = 0
 
-        # Regime rules from config
+        # Regime rules from config - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
 
         if regime in regime_cfg:
             rule = regime_cfg[regime]
-            if rule["allowed"]:
-                size_mult *= rule["size_mult"]
-                reasons.append(f"regime_ok:{regime}")
-
-                # Counter-trend check for trending regimes
-                if regime in ("trend_up", "trend_down"):
-                    min_strength = rule["min_strength_counter_trend"]
-                    if strength < min_strength:
-                        reasons.append(f"trend_counter_weak:strength={strength:.2f}<{min_strength}")
-                        size_mult *= rule["counter_trend_size_mult"]
-            else:
+            if not rule["allowed"]:
                 reasons.append(f"regime_blocked:{regime}")
                 passed = False
+            else:
+                reasons.append(f"regime_ok:{regime}")
 
-        # Volume confirmation from config
+                # Counter-trend check for trending regimes - HARD BLOCK if too weak
+                if regime in ("trend_up", "trend_down"):
+                    min_strength = rule["min_strength_counter_trend"]
+                    is_long = "_long" in setup_type
+                    is_counter = (regime == "trend_up" and not is_long) or (regime == "trend_down" and is_long)
+
+                    if is_counter and strength < min_strength:
+                        reasons.append(f"counter_trend_blocked:strength={strength:.2f}<{min_strength}")
+                        passed = False
+                    elif is_counter:
+                        reasons.append(f"counter_trend_ok:strength={strength:.2f}")
+                    else:
+                        reasons.append("trend_aligned")
+
+        # Volume confirmation - info only, no penalty
         vol_cfg = self._get("gates", "volume_confirmation")
         if vol_mult >= vol_cfg["threshold"]:
-            reasons.append(f"volume_confirmation:{vol_mult:.2f}x")
-            size_mult *= vol_cfg["bonus_mult"]
+            reasons.append(f"volume_confirmed:{vol_mult:.2f}x")
+        else:
+            reasons.append(f"volume_low:{vol_mult:.2f}x")
 
-        # ADX check from config (high ADX is caution for level plays)
+        # ADX check - info only, no penalty (level plays work even in high ADX)
         adx_cfg = self._get("gates", "adx")
         if adx > adx_cfg["high_adx_threshold"]:
-            reasons.append("high_adx_caution")
-            size_mult *= adx_cfg["high_adx_size_mult"]
+            reasons.append(f"high_adx_warning:{adx:.1f}")
+        else:
+            reasons.append(f"adx_ok:{adx:.1f}")
 
         return GateResult(passed=passed, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
@@ -567,3 +582,23 @@ class LevelPipeline(BasePipeline):
             risk_per_share=risk_per_share,
             trail_config=trail_config
         )
+
+    # ======================== RSI PENALTY ========================
+
+    def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:
+        """
+        LEVEL RSI penalty: DISABLED - extreme RSI at levels is CONFIRMATION.
+
+        Pro Trader Research (Linda Raschke, Al Brooks):
+        - Extreme RSI + level = "probability increases dramatically"
+        - Oversold at support = STRONG long signal
+        - Overbought at resistance = STRONG short signal
+        - Neutral RSI at level = weaker signal (no momentum confirmation)
+
+        This is the OPPOSITE of what we previously thought!
+        Extreme RSI is GOOD for level plays, not bad.
+        """
+        # RSI not used for level plays - extreme RSI is confirmation, not penalty
+        _ = rsi_val
+        _ = bias
+        return (1.0, None)

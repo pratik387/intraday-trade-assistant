@@ -127,21 +127,21 @@
     },
 
     "late_entry_penalty": {
-        "_comment": "From planner_internal.py lines 1021-1029 - Late entry penalties reduce size but don't block",
+        "_comment": "RSI penalties DISABLED - need context-aware implementation (see todo.md)",
         "rsi_above": 70,
         "rsi_below": 30,
         "macd_above": 0.5,
-        "_note": "MACD histogram > 0.5 indicates late entry, apply 0.8x penalty"
+        "_note": "RSI penalties disabled in base_pipeline.py. MACD histogram penalty (0.8x) still active."
     },
 
     "intraday_gate": {
-        "_comment": "From planner_internal.py lines 1031-1056 - Soft intraday gates (size penalties not blocks)",
+        "_comment": "From planner_internal.py lines 1031-1056 - Soft intraday gates",
         "min_volume_ratio": 0.8,
         "min_rsi": 30,
         "max_rsi": 70,
         "min_adx": 15,
         "max_adx": 60,
-        "_note": "Out-of-band values apply size penalties: volume 0.8x, RSI 0.85x, ADX 0.9x"
+        "_note": "RSI penalty disabled. Active penalties: weak_volume (0.8x), adx_out_of_band (0.9x)"
     },
 
     "planner_precision": {

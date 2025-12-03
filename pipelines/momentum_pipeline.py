@@ -248,39 +248,35 @@ class MomentumPipeline(BasePipeline):
         size_mult = 1.0
         min_hold = 0
 
-        # Regime check from config - momentum NEEDS trend
+        # Regime check from config - momentum NEEDS trend - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
 
         if regime in regime_cfg:
             rule = regime_cfg[regime]
             if not rule["allowed"]:
-                reasons.append(f"regime_block:{regime}_{rule['reason']}")
+                reasons.append(f"regime_blocked:{regime}")
                 passed = False
             else:
-                size_mult *= rule["size_mult"]
                 reasons.append(f"regime_ok:{regime}")
 
-                # Check trend alignment for trending regimes
+                # Check trend alignment for trending regimes - HARD GATE for counter-trend
                 if regime in ("trend_up", "trend_down"):
                     is_long = "_long" in setup_type
                     if (regime == "trend_up" and is_long) or (regime == "trend_down" and not is_long):
                         reasons.append("trend_aligned")
-                        size_mult *= rule["aligned_bonus"]
                     else:
-                        reasons.append("counter_trend_caution")
-                        # Use trend_alignment config for counter-trend penalty
-                        align_cfg = self._get("gates", "trend_alignment")
-                        size_mult *= align_cfg["counter_trend_size_mult"]
+                        # Counter-trend momentum is blocked (don't fight the trend)
+                        reasons.append("counter_trend_blocked")
+                        passed = False
 
-        # ADX gate from config - strict for momentum
+        # ADX gate from config - strict for momentum - HARD GATE
+        # Note: ADX is also checked in screening, this is additional validation
         adx_cfg = self._get("gates", "adx")
         if adx < adx_cfg["min_value"]:
-            if adx_cfg["block_below"]:
-                reasons.append(f"adx_weak:{adx:.1f}<{adx_cfg['min_value']}")
-                passed = False
-        elif adx >= adx_cfg["strong_threshold"]:
-            reasons.append(f"adx_strong:{adx:.1f}")
-            size_mult *= adx_cfg["strong_bonus_mult"]
+            reasons.append(f"adx_weak:{adx:.1f}<{adx_cfg['min_value']}")
+            passed = False
+        else:
+            reasons.append(f"adx_ok:{adx:.1f}")
 
         return GateResult(passed=passed, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
@@ -572,3 +568,24 @@ class MomentumPipeline(BasePipeline):
             risk_per_share=risk_per_share,
             trail_config=trail_config
         )
+
+    # ======================== RSI PENALTY ========================
+
+    def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:
+        """
+        MOMENTUM RSI penalty: Penalize weak momentum, reward strong momentum.
+
+        Pro Trader Framework (Minervini, Weinstein):
+        - High RSI = momentum confirmation = NO PENALTY (trend continuation needs momentum)
+        - Low RSI = weak momentum = penalty (trend may be exhausting)
+        """
+        rsi_cfg = self.cfg["rsi_penalty"]
+        long_weak = rsi_cfg["long_weak_threshold"]
+        short_weak = rsi_cfg["short_weak_threshold"]
+        penalty = rsi_cfg["penalty_mult"]
+
+        if bias == "long" and rsi_val < long_weak:
+            return (penalty, f"weak_momentum_rsi<{rsi_val:.0f}")
+        elif bias == "short" and rsi_val > short_weak:
+            return (penalty, f"weak_momentum_rsi>{rsi_val:.0f}")
+        return (1.0, None)
