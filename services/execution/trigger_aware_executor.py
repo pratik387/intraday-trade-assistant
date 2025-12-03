@@ -340,18 +340,25 @@ class TriggerAwareExecutor:
         return adjusted_plan
 
     def _cleanup_expired_trades(self) -> None:
-        """Clean up expired and completed trades"""
-        now = self._get_current_time()
-        
+        """Clean up expired and completed trades
+
+        Uses _last_tick_ts (bar timestamp from tick processing) for expiry checks.
+        This ensures in backtest mode we check expiry based on the bar being processed,
+        not the simulation clock which may have advanced past multiple bars.
+        """
+        # Use last tick timestamp for accurate expiry checks (critical for backtest)
+        # Fall back to _get_current_time() for live mode or initial startup
+        now = self._last_tick_ts if self._last_tick_ts else self._get_current_time()
+
         with self._lock:
             expired_ids = []
-            
+
             for trade_id, trade in self.pending_trades.items():
                 # Remove expired trades
                 if trade.expiry_time and now > trade.expiry_time:
                     if trade.state == TradeState.WAITING_TRIGGER:
                         trade.state = TradeState.EXPIRED
-                        logger.debug(f"EXPIRED: {trade.symbol} {trade.plan.get('strategy', '')}")
+                        logger.info(f"EXPIRED: {trade.symbol} {trade.plan.get('strategy', '')} at {now}")
                 
                 # Remove completed/expired trades
                 if trade.state in [TradeState.EXECUTED, TradeState.EXPIRED, TradeState.CANCELLED]:
@@ -439,6 +446,9 @@ class TriggerAwareExecutor:
         # Threading
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+
+        # Track latest tick timestamp for accurate expiry checks in backtest
+        self._last_tick_ts: Optional[pd.Timestamp] = None
         
         # Config
         self.cfg = load_filters()
@@ -513,6 +523,9 @@ class TriggerAwareExecutor:
         - Live/paper: Returns current LTP (real tick price)
         - Backtest: Checks if bar OHLC touched zone, returns zone price or close
         """
+        # Update last tick timestamp for expiry checks (critical for backtest accuracy)
+        self._last_tick_ts = pd.Timestamp(ts) if ts else None
+
         with self._lock:
             # Check if this symbol has any pending trades
             pending_for_symbol = [
