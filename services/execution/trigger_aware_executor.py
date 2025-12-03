@@ -505,15 +505,85 @@ class TriggerAwareExecutor:
             new_item = self.oq.get_next(timeout=0.1)
             if new_item:
                 self._add_pending_trade(new_item)
-            
-            # 2. Execute trades that have been triggered
+
+            # 2. Poll ALL pending trades for trigger conditions (critical for backtest)
+            # In backtest mode, ticks only flow for scanned symbols, so pending symbols
+            # that drop out of the scan never get checked. This ensures all pending
+            # trades are actively polled on each cycle.
+            self._poll_all_pending_trades()
+
+            # 3. Execute trades that have been triggered
             self._execute_triggered_trades()
-            
-            # 3. Clean up expired trades
+
+            # 4. Clean up expired trades
             self._cleanup_expired_trades()
-            
+
         except Exception as e:
             logger.exception(f"TriggerAwareExecutor.run_once error: {e}")
+
+    def _poll_all_pending_trades(self) -> None:
+        """
+        Actively poll ALL pending trades to check if entry zone was touched.
+
+        This is critical for backtest mode where ticks only flow for symbols
+        currently being scanned. Without this, pending trades for symbols that
+        drop out of the scan shortlist would never be checked for triggers.
+
+        Uses broker.get_ltp() with entry_zone for polymorphic behavior:
+        - Live: Returns current LTP (real-time price)
+        - Backtest: Checks if bar OHLC touched zone, returns zone price or None
+        """
+        with self._lock:
+            pending = [t for t in self.pending_trades.values()
+                      if t.state == TradeState.WAITING_TRIGGER]
+
+        if not pending:
+            return
+
+        current_ts = self._last_tick_ts if self._last_tick_ts else self._get_current_time()
+
+        for trade in pending:
+            try:
+                entry_zone = trade.plan.get("entry_zone") or (trade.plan.get("entry") or {}).get("zone")
+                if not entry_zone or len(entry_zone) != 2:
+                    continue
+
+                side = "BUY" if trade.plan.get("bias", "long") == "long" else "SELL"
+
+                # Broker handles live vs backtest polymorphically
+                # Backtest: get_ltp checks if current bar OHLC touched entry_zone
+                try:
+                    price = self.broker.get_ltp(
+                        trade.symbol,
+                        entry_zone=entry_zone,
+                        side=side
+                    )
+                except Exception:
+                    # Skip if broker can't get price for this symbol
+                    continue
+
+                if price is None:
+                    continue
+
+                entry_min, entry_max = sorted(entry_zone)
+
+                # Check if price is in or near entry zone
+                in_strict_zone = entry_min <= price <= entry_max
+                tolerance = 0.0005 * price  # 0.05% tolerance
+                in_near_zone = (entry_min - tolerance <= price <= entry_max + tolerance)
+
+                if in_strict_zone or in_near_zone:
+                    zone_status = "IN_ZONE" if in_strict_zone else "NEAR_ZONE"
+                    logger.info(
+                        f"NEAR_ZONE_TRIGGER: {price:.2f} vs [{entry_min:.2f}, {entry_max:.2f}] "
+                        f"tolerance={tolerance:.4f} ({0.05}%)"
+                    )
+
+                    # Trigger the trade
+                    self._try_trigger_on_tick(trade, price, current_ts)
+
+            except Exception as e:
+                logger.debug(f"Poll check failed for {trade.symbol}: {e}")
 
     def _log_tick_for_pending_trades(self, symbol: str, ts: datetime) -> None:
         """
