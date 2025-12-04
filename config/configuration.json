@@ -20,7 +20,6 @@
       "failure_fade_short",
       "trend_pullback_long",
       "vwap_reclaim_long",
-      "orb_breakout_long",
       "support_bounce_long",
       "gap_fill_long",
       "momentum_breakout_long",
@@ -37,7 +36,6 @@
       "breakout_short",
       "flag_continuation_short",
       "trend_pullback_short",
-      "vwap_lose_short",
       "orb_breakout_short",
       "resistance_bounce_short",
       "gap_fill_short",
@@ -90,7 +88,8 @@
     "vwap_min_vol_mult": 1.05,
     "bo_min_adx": 12.0,
     "bo_min_vol_mult": 1.15,
-    "ff_min_vol_mult": 0.9
+    "ff_min_vol_mult": 0.9,
+    "long_max_ema_distance_pct": 0.12
   },
   "ict_quality_filters": {
     "_comment": "PROFESSIONAL ICT - Context over metrics (2025-11-18 - Full Professional Implementation)",

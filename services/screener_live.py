@@ -912,7 +912,7 @@ class ScreenerLive:
                 if isinstance(r, (list, tuple)): reasons_str = ";".join(str(x) for x in r)
                 elif r is not None: reasons_str = str(r)
             decision_dict = {
-                "setup_type": getattr(decision_obj, "setup_type", None) if decision_obj is not None else None,
+                "setup_type": plan.get("strategy"),  # Use plan's strategy (from pipeline), not deprecated decision_obj.setup_type
                 "regime": getattr(decision_obj, "regime", None) if decision_obj is not None else None,
                 "reasons": reasons_str,
                 "size_mult": getattr(decision_obj, "size_mult", None) if decision_obj is not None else None,

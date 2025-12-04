@@ -95,6 +95,7 @@ class MarketRegimeGate:
             self.multi_tf_regime = MultiTimeframeRegime(
                 daily_detector=self.daily_detector,
                 hourly_detector=self.hourly_detector,
+                cfg=cfg,
                 log=log
             )
             if log:

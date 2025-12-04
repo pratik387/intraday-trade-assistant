@@ -339,10 +339,16 @@ class MultiTimeframeRegime:
       - 5m: chop (0.60 conf) → Apply chop filters from regime_gate
     """
 
-    def __init__(self, daily_detector: DailyRegimeDetector, hourly_detector: HourlyRegimeDetector, log=None):
+    def __init__(self, daily_detector: DailyRegimeDetector, hourly_detector: HourlyRegimeDetector, cfg: dict, log=None):
         self.daily_detector = daily_detector
         self.hourly_detector = hourly_detector
         self.log = log
+
+        # Load thresholds from config (no defaults - config is required)
+        rt = cfg.get("regime_thresholds", {})
+        if "long_max_ema_distance_pct" not in rt:
+            raise ValueError("[MultiTimeframeRegime] Missing regime_thresholds.long_max_ema_distance_pct in config")
+        self.long_max_ema_distance_pct = float(rt["long_max_ema_distance_pct"])
 
     def get_unified_regime(
         self,
@@ -462,5 +468,13 @@ class MultiTimeframeRegime:
         # 4. No specific blocks for daily chop - handled by ranking penalty instead
         #    Rationale: Chop is noisy, blocking would eliminate too many trades
         #    Instead: Apply ranking penalty (0.90x) to deprioritize in favor of cleaner setups
+
+        # ============ EMA DISTANCE FILTER (config-driven) ============
+        # Block LONG when price is too extended above EMA200
+        # Strategy+regime combos are handled by regime_allowed_setups in config
+        price_distance_pct = daily_result.metrics.get("price_distance_pct", 0.0)
+
+        if is_long and price_distance_pct > self.long_max_ema_distance_pct:
+            return True, f"extended_long:price_{price_distance_pct:.1%}_above_ema"
 
         return False, None
