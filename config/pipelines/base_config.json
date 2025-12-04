@@ -213,6 +213,14 @@
         }
     },
 
+    "rsi_dead_zone": {
+        "_comment": "Data-driven filter: RSI 35-50 causes 43% of ALL hard_sl losses for LONG trades",
+        "enabled": true,
+        "long_min": 35,
+        "long_max": 50,
+        "_evidence": "101 hard_sl trades in RSI 40-50 = -54,687 loss (43% of ALL hard_sl loss)"
+    },
+
     "sl_atr_mult": 1.6,
     "_comment_sl_atr_mult": "Base SL ATR multiplier - Aligned to OLD configuration.json which uses 1.6x ATR",
 

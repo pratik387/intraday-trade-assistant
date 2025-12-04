@@ -1234,6 +1234,25 @@ class BasePipeline(ABC):
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at GATES: {gate_result.reasons}")
             return {"eligible": False, "reason": "gate_fail", "details": gate_result.reasons}
 
+        # 3b. UNIVERSAL RSI DEAD ZONE FILTER (for LONGS only) - CONFIG DRIVEN
+        # Data-driven: RSI 35-50 has 43% of ALL hard_sl losses for LONG trades
+        # ORB setups bypass this filter - RSI erratic at market open, structure detector enforces time cutoff
+        base_cfg = load_base_config()
+        rsi_dead_zone_cfg = base_cfg["rsi_dead_zone"]
+        if rsi_dead_zone_cfg["enabled"]:
+            is_orb = "orb" in setup_type.lower()
+            if is_orb:
+                logger.debug(f"[{category}] {symbol} {setup_type} RSI dead zone BYPASSED: ORB setup")
+            else:
+                rsi_val = features.get("rsi") or features.get("rsi14")
+                if rsi_val is None:
+                    raise KeyError(f"RSI indicator missing from features for {symbol}")
+                rsi_min = rsi_dead_zone_cfg["long_min"]
+                rsi_max = rsi_dead_zone_cfg["long_max"]
+                if bias == "long" and rsi_min <= rsi_val <= rsi_max:
+                    logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: RSI dead zone ({rsi_val:.1f} in {rsi_min}-{rsi_max} range)")
+                    return {"eligible": False, "reason": "rsi_dead_zone", "details": [f"rsi_{rsi_val:.1f}_in_{rsi_min}_{rsi_max}_dead_zone"]}
+
         # 4. RANKING (with HTF context for category-specific adjustments)
         rank_result = self.calculate_rank_score(symbol, features, regime, htf_context=htf_context)
 

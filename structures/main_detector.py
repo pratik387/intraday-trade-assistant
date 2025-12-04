@@ -172,7 +172,9 @@ class MainDetector(BaseStructure):
         """
 
         try:
-            if df is None or len(df) < 10:
+            # Reduced from 10 to 4 bars to allow early ORB detection (pro traders use 15-min range = 3 bars)
+            # Individual detectors have their own min_bars checks for structures needing more data
+            if df is None or len(df) < 4:
                 logger.debug(f"MAIN_DETECTOR: {symbol} insufficient data (len={len(df) if df is not None else 0}) - EARLY RETURN")
                 return []
 

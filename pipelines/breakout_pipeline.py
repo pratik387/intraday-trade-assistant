@@ -117,7 +117,7 @@ class BreakoutPipeline(BasePipeline):
                 # Stock is moving fast - check quality indicators
                 vwap = df5m["vwap"].iloc[-1] if "vwap" in df5m.columns else current_close
                 vwap_deviation = abs((current_close - vwap) / vwap) if vwap > 0 else 0.0
-                volume_ratio = features.get("volume_ratio", 1.0)
+                volume_ratio = features["volume_ratio"]
 
                 vwap_threshold = mom_cfg["vwap_deviation_threshold"]
                 volume_threshold = mom_cfg["volume_ratio_threshold"]
@@ -245,14 +245,21 @@ class BreakoutPipeline(BasePipeline):
         size_mult = 1.0
         min_hold = 0
 
-        # Regime rules from config - HARD GATE for chop (except ORB)
+        # ORB detection - structure detector already enforces 10:30 cutoff via should_detect_at_time()
+        # So ALL ORB setups that reach here are within the valid window - use relaxed thresholds
+        is_orb = "orb" in setup_type.lower()
+
+        # Regime rules from config - HARD GATE for chop (ORB allowed, others blocked)
         regime_cfg = self._get("gates", "regime_rules")
         if regime in regime_cfg:
-            rule = regime_cfg[regime]
-            if regime == "chop" and "orb" not in setup_type.lower():
-                # Chop regime blocks non-ORB breakouts (false breakouts common)
-                reasons.append("regime_blocked:chop_non_orb")
-                passed = False
+            if regime == "chop":
+                if is_orb:
+                    # ORB allowed in chop (structure detector enforces time cutoff)
+                    reasons.append("regime_ok:chop_orb")
+                else:
+                    # Non-ORB breakouts blocked in chop
+                    reasons.append("regime_blocked:chop_non_orb")
+                    passed = False
             else:
                 reasons.append(f"regime_ok:{regime}")
 
@@ -303,28 +310,38 @@ class BreakoutPipeline(BasePipeline):
                 else:
                     reasons.append(f"momentum_candle_pass:{candle_ratio:.2f}x")
 
-        # ADX gate from config - HARD GATE (no more size_mult penalty)
+        # ADX gate from config - HARD GATE
+        # ORB uses relaxed threshold (15) - ADX takes 14+ bars to stabilize, structure detector enforces time
         adx_cfg = self._get("gates", "adx")
-        min_adx = adx_cfg["min_value"]
+        base_min_adx = adx_cfg["min_value"]  # 20 for non-ORB
+        orb_min_adx = adx_cfg.get("orb_early_min_value")  # 15 for ORB
+        min_adx = orb_min_adx if is_orb else base_min_adx
         if adx < min_adx:
             reasons.append(f"adx_low:{adx:.1f}<{min_adx}")
             passed = False
+        else:
+            reasons.append(f"adx_ok:{adx:.1f}>={min_adx}")
 
         # RSI weak momentum gate - HARD GATE
-        # Pro trader research: weak RSI on breakouts = weak momentum = likely to fail
-        # But high RSI is fine (Minervini: "strength begets strength")
+        # ORB uses relaxed thresholds - RSI erratic at market open, structure detector enforces time
         rsi_cfg = self.cfg["rsi_penalty"]
         rsi = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns else 50.0
         if is_short:
             # Short breakouts need RSI weakness (high RSI = no selling pressure)
-            if rsi < rsi_cfg["short_weak_threshold"]:
-                reasons.append(f"rsi_no_selling_pressure:{rsi:.0f}<{rsi_cfg['short_weak_threshold']}")
+            threshold = rsi_cfg.get("orb_early_short_threshold") if is_orb else rsi_cfg["short_weak_threshold"]
+            if rsi < threshold:
+                reasons.append(f"rsi_no_selling_pressure:{rsi:.0f}<{threshold}")
                 passed = False
+            else:
+                reasons.append(f"rsi_ok:{rsi:.0f}>={threshold}")
         else:
             # Long breakouts need RSI strength (low RSI = no buying pressure)
-            if rsi < rsi_cfg["long_weak_threshold"]:
-                reasons.append(f"rsi_weak_momentum:{rsi:.0f}<{rsi_cfg['long_weak_threshold']}")
+            threshold = rsi_cfg.get("orb_early_long_threshold") if is_orb else rsi_cfg["long_weak_threshold"]
+            if rsi < threshold:
+                reasons.append(f"rsi_weak_momentum:{rsi:.0f}<{threshold}")
                 passed = False
+            else:
+                reasons.append(f"rsi_ok:{rsi:.0f}>={threshold}")
 
         return GateResult(passed=passed, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
@@ -360,17 +377,18 @@ class BreakoutPipeline(BasePipeline):
         """
         logger.debug(f"[BREAKOUT] Calculating rank score for {symbol} in {regime}")
 
-        # Extract all features from intraday_features
-        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
-        rsi = float(intraday_features.get("rsi") or 50.0)
+        # REQUIRED features (core indicators - must exist)
+        vol_ratio = float(intraday_features["volume_ratio"])
+        rsi = float(intraday_features["rsi"])
+        adx = float(intraday_features["adx"])
+        above_vwap = bool(intraday_features["above_vwap"])
+        bias = intraday_features["bias"]
+        # OPTIONAL features (derived/data-dependent - may not always be available)
         rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
-        adx = float(intraday_features.get("adx") or 0.0)
         adx_slope = float(intraday_features.get("adx_slope") or 0.0)
-        above_vwap = bool(intraday_features.get("above_vwap", True))
         dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
-        squeeze_pctile = intraday_features.get("squeeze_pctile", None)
-        acceptance_status = intraday_features.get("acceptance_status", "poor")
-        bias = intraday_features.get("bias", "long")
+        squeeze_pctile = intraday_features.get("squeeze_pctile")
+        acceptance_status = intraday_features.get("acceptance_status") or "poor"
 
         # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
@@ -439,7 +457,7 @@ class BreakoutPipeline(BasePipeline):
         base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
 
         # Extract setup_type from intraday_features (passed from run_pipeline)
-        setup_type = intraday_features.get("setup_type", "breakout")
+        setup_type = intraday_features["setup_type"]
 
         # Regime multiplier from config - check strategy-specific first, then fallback
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)

@@ -110,6 +110,26 @@
             "min_touches": 2,
             "min_level_age_bars": 5,
             "level_merge_tolerance_pct": 0.3
+        },
+        "setup_regime_blocks": {
+            "_comment": "Data-driven filters from backtest analysis - block unprofitable setup+regime combinations",
+            "range_bounce_long": {
+                "blocked_regimes": ["chop"],
+                "_evidence": "62 trades in chop, -4,048 PnL, 45.2% win rate (vs +565 in trend_up)"
+            },
+            "discount_zone_long": {
+                "blocked_regimes_before_hour": {
+                    "trend_up": 15
+                },
+                "_evidence": "In trend_up: 11-14h = -7,555 PnL (57 trades), 15h = +4,272 PnL (98 trades)"
+            }
+        },
+        "vwap_freshness": {
+            "_comment": "Parameters for fresh reclaim/lose detection",
+            "reclaim_lookback_bars": 12,
+            "max_bars_above_for_reclaim": 8,
+            "lose_lookback_bars": 12,
+            "max_bars_below_for_lose": 8
         }
     },
 

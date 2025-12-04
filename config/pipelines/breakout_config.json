@@ -86,6 +86,8 @@
         "adx": {
             "_comment": "From configuration.json - breakout_min_adx: 20.0, adx_min_strength: 15, adx_min_trend: 20",
             "min_value": 20,
+            "orb_early_min_value": 15,
+            "_orb_early_comment": "ORB EARLY WINDOW FIX: Pro traders use relaxed ADX (15) for early ORB because ADX takes 14+ bars to stabilize",
             "low_adx_threshold": 15,
             "low_adx_size_mult": 0.8
         },
@@ -94,7 +96,9 @@
                 "_comment": "REVERTED: size_mult 0.5→0.7 as 0.5 reduced position sizes too aggressively",
                 "allowed": true,
                 "size_mult": 0.7,
-                "exception": "orb_before_10:30"
+                "orb_exception_cutoff_hour": 10,
+                "orb_exception_cutoff_minute": 30,
+                "_evidence": "ORB in chop works before 10:30, fails after"
             },
             "trend_up": {
                 "allowed": true,
@@ -301,6 +305,9 @@
         "_comment": "BREAKOUT: Penalize weak momentum (low RSI for longs, high RSI for shorts)",
         "long_weak_threshold": 40,
         "short_weak_threshold": 60,
+        "orb_early_long_threshold": 35,
+        "orb_early_short_threshold": 55,
+        "_orb_early_comment": "ORB EARLY WINDOW FIX: Pro traders use relaxed RSI thresholds for early ORB because RSI is erratic at market open",
         "penalty_mult": 0.9
     }
 }

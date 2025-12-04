@@ -312,17 +312,18 @@ class MomentumPipeline(BasePipeline):
         """
         logger.debug(f"[MOMENTUM] Calculating rank score for {symbol} in {regime}")
 
-        # Extract all features from intraday_features
-        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
-        rsi = float(intraday_features.get("rsi") or 50.0)
+        # REQUIRED features (core indicators - must exist)
+        vol_ratio = float(intraday_features["volume_ratio"])
+        rsi = float(intraday_features["rsi"])
+        adx = float(intraday_features["adx"])
+        above_vwap = bool(intraday_features["above_vwap"])
+        bias = intraday_features["bias"]
+        # OPTIONAL features (derived/data-dependent - may not always be available)
         rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
-        adx = float(intraday_features.get("adx") or 0.0)
         adx_slope = float(intraday_features.get("adx_slope") or 0.0)
-        above_vwap = bool(intraday_features.get("above_vwap", True))
         dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
-        squeeze_pctile = intraday_features.get("squeeze_pctile", None)
-        acceptance_status = intraday_features.get("acceptance_status", "poor")
-        bias = intraday_features.get("bias", "long")
+        squeeze_pctile = intraday_features.get("squeeze_pctile")
+        acceptance_status = intraday_features.get("acceptance_status") or "poor"
 
         # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
@@ -391,7 +392,7 @@ class MomentumPipeline(BasePipeline):
         base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
 
         # Regime multiplier from config - momentum needs trend
-        setup_type = intraday_features.get("setup_type", "")
+        setup_type = intraday_features["setup_type"]
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
         # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
@@ -478,7 +479,7 @@ class MomentumPipeline(BasePipeline):
             entry_trigger = "squeeze_release"
         else:
             # Default momentum - use config reference (ema20 or current)
-            reference = entry_cfg.get("reference", "ema20")
+            reference = entry_cfg["reference"]
             if reference == "ema20":
                 entry_ref = ema20
             else:

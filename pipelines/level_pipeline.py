@@ -236,16 +236,70 @@ class LevelPipeline(BasePipeline):
         - High ADX = trending = level might break through, but still tradeable
         - Volume surge = confirmation, but absence isn't disqualifying
         """
-        # df5m, df1m reserved for future bar-level analysis
-        _ = df5m
+        # df1m reserved for future bar-level analysis
         _ = df1m
 
         logger.debug(f"[LEVEL] Validating gates for {symbol} {setup_type}: regime={regime}, adx={adx:.1f}, vol={vol_mult:.2f}")
+
+        # VWAP reclaim/lose re-validation: Ensure condition still holds at decision time
+        setup_lower = setup_type.lower()
+        if "vwap" in setup_lower and "vwap" in df5m.columns:
+            current_price = float(df5m["close"].iloc[-1])
+            current_vwap = float(df5m["vwap"].iloc[-1])
+
+            if "reclaim" in setup_lower:
+                # vwap_reclaim_long: Price MUST still be above VWAP
+                if current_price <= current_vwap:
+                    logger.debug(f"[LEVEL] {symbol} vwap_reclaim BLOCKED: price {current_price:.2f} <= VWAP {current_vwap:.2f}")
+                    return GateResult(
+                        passed=False,
+                        reasons=[f"vwap_reclaim_invalid:price_{current_price:.2f}<=vwap_{current_vwap:.2f}"],
+                        size_mult=1.0,
+                        min_hold_bars=0
+                    )
+            elif "lose" in setup_lower:
+                # vwap_lose_short: Price MUST still be below VWAP
+                if current_price >= current_vwap:
+                    logger.debug(f"[LEVEL] {symbol} vwap_lose BLOCKED: price {current_price:.2f} >= VWAP {current_vwap:.2f}")
+                    return GateResult(
+                        passed=False,
+                        reasons=[f"vwap_lose_invalid:price_{current_price:.2f}>=vwap_{current_vwap:.2f}"],
+                        size_mult=1.0,
+                        min_hold_bars=0
+                    )
 
         reasons = []
         passed = True
         size_mult = 1.0  # NO PENALTIES - hard gates only
         min_hold = 0
+
+        # Setup-specific regime blocks (config-driven from gates.setup_regime_blocks)
+        setup_regime_blocks = self._get("gates", "setup_regime_blocks") or {}
+
+        # Check if this setup is blocked in this regime
+        if setup_lower in setup_regime_blocks:
+            block_cfg = setup_regime_blocks[setup_lower]
+
+            # Simple regime block (e.g., range_bounce_long blocked in chop)
+            # OPTIONAL per-setup key - not all setups have blocked_regimes
+            blocked_regimes = block_cfg.get("blocked_regimes") or []
+            if regime in blocked_regimes:
+                reasons.append(f"setup_regime_blocked:{setup_lower}_{regime}")
+                logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: config blocks {setup_lower} in {regime}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+            # Time-based regime block (e.g., discount_zone_long in trend_up before 15:00)
+            # OPTIONAL per-setup key - not all setups have blocked_regimes_before_hour
+            blocked_before_hour = block_cfg.get("blocked_regimes_before_hour") or {}
+            if regime in blocked_before_hour:
+                cutoff_hour = blocked_before_hour[regime]
+                current_time = df5m.index[-1] if hasattr(df5m.index[-1], 'hour') else None
+                if current_time:
+                    current_hour = current_time.hour
+                    if current_hour < cutoff_hour:
+                        reasons.append(f"setup_regime_time_blocked:{setup_lower}_{regime}_before_{cutoff_hour}h")
+                        logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: {regime} before {cutoff_hour}:00 (hour={current_hour})")
+                        return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
         # Regime rules from config - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
@@ -319,17 +373,18 @@ class LevelPipeline(BasePipeline):
         """
         logger.debug(f"[LEVEL] Calculating rank score for {symbol} in {regime}")
 
-        # Extract all features from intraday_features
-        vol_ratio = float(intraday_features.get("volume_ratio") or 1.0)
-        rsi = float(intraday_features.get("rsi") or 50.0)
+        # REQUIRED features (core indicators - must exist)
+        vol_ratio = float(intraday_features["volume_ratio"])
+        rsi = float(intraday_features["rsi"])
+        adx = float(intraday_features["adx"])
+        above_vwap = bool(intraday_features["above_vwap"])
+        bias = intraday_features["bias"]
+        # OPTIONAL features (derived/data-dependent - may not always be available)
         rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
-        adx = float(intraday_features.get("adx") or 0.0)
         adx_slope = float(intraday_features.get("adx_slope") or 0.0)
-        above_vwap = bool(intraday_features.get("above_vwap", True))
         dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
-        squeeze_pctile = intraday_features.get("squeeze_pctile", None)
-        acceptance_status = intraday_features.get("acceptance_status", "poor")
-        bias = intraday_features.get("bias", "long")
+        squeeze_pctile = intraday_features.get("squeeze_pctile")
+        acceptance_status = intraday_features.get("acceptance_status") or "poor"
 
         # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
@@ -398,7 +453,7 @@ class LevelPipeline(BasePipeline):
         base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
 
         # Regime multiplier from config - level plays excel in chop
-        setup_type = intraday_features.get("setup_type", "")
+        setup_type = intraday_features["setup_type"]
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
         # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
@@ -461,11 +516,21 @@ class LevelPipeline(BasePipeline):
 
         # Setup-type-specific entry logic for LEVEL category
         if "vwap" in setup_lower:
-            # VWAP plays - enter at VWAP
-            if bias == "long":
-                entry_ref = vwap * 0.999  # Just below VWAP for long
+            # VWAP plays - differentiate by setup semantics
+            if "reclaim" in setup_lower:
+                # vwap_reclaim_long: Price just crossed ABOVE VWAP
+                # Entry should be AT or ABOVE VWAP (confirming the reclaim)
+                entry_ref = vwap * 1.001  # Just above VWAP
+            elif "lose" in setup_lower:
+                # vwap_lose_short: Price just crossed BELOW VWAP
+                # Entry should be AT or BELOW VWAP (confirming the lose)
+                entry_ref = vwap * 0.999  # Just below VWAP
             else:
-                entry_ref = vwap * 1.001  # Just above VWAP for short
+                # vwap_mean_reversion: Entry toward VWAP
+                if bias == "long":
+                    entry_ref = vwap * 0.999  # Below VWAP for long (buy dip)
+                else:
+                    entry_ref = vwap * 1.001  # Above VWAP for short (sell rip)
             entry_trigger = triggers["vwap"]
         elif "premium" in setup_lower or "discount" in setup_lower or "order_block" in setup_lower:
             # ICT zones - premium/discount
@@ -473,7 +538,7 @@ class LevelPipeline(BasePipeline):
                 entry_ref = orl + (orh - orl) * ict_cfg["discount_zone_frac"]  # 30% into range
             else:
                 entry_ref = orl + (orh - orl) * ict_cfg["premium_zone_frac"]  # 70% into range
-            entry_trigger = triggers.get("premium_zone", triggers["default"])
+            entry_trigger = triggers["premium_zone"]
         elif "pullback" in setup_lower or "retest" in setup_lower:
             # Pullback/Retest - enter at support (PDL) or resistance (PDH)
             if bias == "long":

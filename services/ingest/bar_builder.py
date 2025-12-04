@@ -18,7 +18,7 @@ Constructor (no hidden config):
   - index_symbols: Optional[list[str]] — symbols treated as index for convenience access
 
 Notes:
-  - Bars are time-indexed at their *close* times.
+  - Bars are time-indexed at their *start* times (5m bar closing at 10:35 has index 10:30).
   - VWAP is per-bar; 5m VWAP is volume-weighted from the 1m bars.
   - Thread-safe: single RLock protects state. Callbacks are wrapped in try/except.
 """

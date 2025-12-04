@@ -748,7 +748,10 @@ class TradeDecisionGate:
         hc_ok, hc_reasons = False, ["hcet_not_needed"]
 
         # Check if HCET might be needed for bypasses
-        insufficient_bars = (df5m_tail is None or len(df5m_tail) < 10)
+        # ORB setups have their own early window exemption (4 bars minimum vs 10 for others)
+        _is_orb = best.setup_type.startswith("orb_")
+        _min_bars = 4 if _is_orb else 10
+        insufficient_bars = (df5m_tail is None or len(df5m_tail) < _min_bars)
         regime_blocked = not self._regime_allows(best.setup_type, regime, current_time=now)
         time_blocked_check = time_blocked  # from earlier time window check
 
@@ -768,10 +771,21 @@ class TradeDecisionGate:
 
             hc_ok, hc_reasons = self._is_high_conviction_candidate(best.setup_type, regime, features)
 
-        # Insufficient bars veto unless HCET
-        if df5m_tail is None or len(df5m_tail) < 10:
+        # Insufficient bars veto unless HCET or ORB setup
+        # ORB EARLY WINDOW FIX: ORB strategies use 4-bar minimum (15-min range = 3 bars + 1 breakout bar)
+        # Pro traders enter ORB breakouts as early as 09:35 (4 bars from 09:15)
+        is_orb_setup = best.setup_type in ("orb_breakout_long", "orb_breakout_short",
+                                           "orb_breakdown_long", "orb_breakdown_short",
+                                           "orb_pullback_long", "orb_pullback_short")
+        orb_min_bars = 4  # Pro trader standard: 15-min range (3 bars) + 1 bar for breakout
+        min_bars_required = orb_min_bars if is_orb_setup else 10
+
+        if df5m_tail is None or len(df5m_tail) < min_bars_required:
             if hc_ok:
                 reasons.append(f"hcet_enable_early({len(df5m_tail) if df5m_tail is not None else 0}bars)")
+            elif is_orb_setup and len(df5m_tail) >= orb_min_bars:
+                # ORB setups with 4+ bars are allowed through (early morning detection)
+                reasons.append(f"orb_early_window({len(df5m_tail)}bars)")
             else:
                 return GateDecision(accept=False, reasons=reasons)
 

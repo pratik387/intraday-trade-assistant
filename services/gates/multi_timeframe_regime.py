@@ -444,6 +444,14 @@ class MultiTimeframeRegime:
         is_long = "long" in setup_type.lower()
         is_short = "short" in setup_type.lower()
         is_breakout = "breakout" in setup_type.lower()
+        is_orb = "orb" in setup_type.lower()
+
+        # ============ ORB EARLY WINDOW EXEMPTION ============
+        # ORB (Opening Range Breakout) is a pure intraday pattern that works regardless of daily regime
+        # Pro traders use ORB in all market conditions since it's based on the day's opening range
+        # Exempt ORB setups from daily regime blocks to allow early morning (9:35-10:30) entries
+        if is_orb:
+            return False, None
 
         # ============ EVIDENCE-BASED BLOCKS (Phase 3) ============
 

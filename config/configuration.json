@@ -430,6 +430,9 @@
       "reclaim_volume_confirmation": true,
       "min_volume_mult": 1.5,
       "_comment_volume": "VWAP OPTIMIZATION: 1.3 → 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter). Entry timing, not pre-filter.",
+      "reclaim_lookback_bars": 12,
+      "max_bars_above_for_reclaim": 8,
+      "_comment_freshness": "Fresh reclaim detection: must have been below VWAP in last 12 bars, above for max 8 bars",
       "min_stop_distance_pct": 0.5,
       "stop_distance_mult": 0.75,
       "vwap_buffer_mult": 0.15,
@@ -451,6 +454,9 @@
       "reclaim_volume_confirmation": true,
       "min_volume_mult": 1.5,
       "_comment_volume": "VWAP OPTIMIZATION: 1.3 → 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter). Entry confirmation, not pre-filter.",
+      "lose_lookback_bars": 12,
+      "max_bars_below_for_lose": 8,
+      "_comment_freshness": "Fresh lose detection: must have been above VWAP in last 12 bars, below for max 8 bars",
       "min_stop_distance_pct": 0.5,
       "stop_distance_mult": 0.75,
       "vwap_buffer_mult": 0.15,
@@ -1033,6 +1039,8 @@
     "orb_breakout_long": {
       "enabled": true,
       "orb_minutes": 15,
+      "min_bars_required": 4,
+      "_comment_min_bars": "Pro traders use 15-min range (3 bars) + 1 bar for breakout = 4 bars minimum. Allows detection from 9:35",
       "min_range_pct": 0.5,
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
@@ -1052,6 +1060,7 @@
     "orb_breakout_short": {
       "enabled": true,
       "orb_minutes": 15,
+      "min_bars_required": 4,
       "min_range_pct": 0.5,
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
@@ -1071,6 +1080,7 @@
     "orb_breakdown_short": {
       "enabled": true,
       "orb_minutes": 15,
+      "min_bars_required": 4,
       "min_range_pct": 0.5,
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
@@ -1090,6 +1100,7 @@
     "orb_breakout": {
       "enabled": true,
       "orb_minutes": 15,
+      "min_bars_required": 4,
       "min_range_pct": 0.5,
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
@@ -1109,6 +1120,7 @@
     "orb_breakdown": {
       "enabled": true,
       "orb_minutes": 15,
+      "min_bars_required": 4,
       "min_range_pct": 0.5,
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
@@ -1128,6 +1140,7 @@
     "orb_pullback_long": {
       "enabled": true,
       "orb_minutes": 15,
+      "min_bars_required": 4,
       "min_range_pct": 0.5,
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,
@@ -1147,6 +1160,7 @@
     "orb_pullback_short": {
       "enabled": true,
       "orb_minutes": 15,
+      "min_bars_required": 4,
       "min_range_pct": 0.5,
       "breakout_volume_mult": 1.5,
       "breakout_buffer_pct": 0.5,

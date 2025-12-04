@@ -70,6 +70,13 @@ class VWAPStructure(BaseStructure):
         self.reclaim_volume_confirmation = config["reclaim_volume_confirmation"]
         self.min_volume_mult = config["min_volume_mult"]
 
+        # VWAP freshness parameters (for detecting real transitions vs stale conditions)
+        # These use .get() with defaults for backward compatibility
+        self.reclaim_lookback_bars = config.get("reclaim_lookback_bars", 12)
+        self.max_bars_above_for_reclaim = config.get("max_bars_above_for_reclaim", 8)
+        self.lose_lookback_bars = config.get("lose_lookback_bars", 12)
+        self.max_bars_below_for_lose = config.get("max_bars_below_for_lose", 8)
+
         # Risk management parameters
         self.min_stop_distance_pct = config["min_stop_distance_pct"]
         self.stop_distance_mult = config["stop_distance_mult"]
@@ -222,6 +229,58 @@ class VWAPStructure(BaseStructure):
         except Exception:
             return 0
 
+    def _check_recent_below_vwap(self, df: pd.DataFrame, lookback: int) -> bool:
+        """
+        Check if price was below VWAP at any point in the last N bars.
+
+        This is used to verify a reclaim is a real transition (was below, now above)
+        rather than just sustained above VWAP.
+        """
+        try:
+            if 'vwap' not in df.columns or len(df) < lookback:
+                return False
+
+            # Get the last `lookback` bars (excluding current bar which we know is above VWAP)
+            window = df.tail(lookback + 1).iloc[:-1]  # Exclude last bar
+
+            close_prices = window['close'].values
+            vwap_values = window['vwap'].values
+
+            # Check if any bar in the window was below VWAP
+            for i in range(len(close_prices)):
+                if close_prices[i] < vwap_values[i]:
+                    return True
+
+            return False
+        except Exception:
+            return False
+
+    def _check_recent_above_vwap(self, df: pd.DataFrame, lookback: int) -> bool:
+        """
+        Check if price was above VWAP at any point in the last N bars.
+
+        This is used to verify a lose is a real transition (was above, now below)
+        rather than just sustained below VWAP.
+        """
+        try:
+            if 'vwap' not in df.columns or len(df) < lookback:
+                return False
+
+            # Get the last `lookback` bars (excluding current bar which we know is below VWAP)
+            window = df.tail(lookback + 1).iloc[:-1]  # Exclude last bar
+
+            close_prices = window['close'].values
+            vwap_values = window['vwap'].values
+
+            # Check if any bar in the window was above VWAP
+            for i in range(len(close_prices)):
+                if close_prices[i] > vwap_values[i]:
+                    return True
+
+            return False
+        except Exception:
+            return False
+
     def _check_volume_confirmation(self, df: pd.DataFrame) -> bool:
         """Check if current volume supports the setup."""
         try:
@@ -324,7 +383,14 @@ class VWAPStructure(BaseStructure):
         return events, quality_score
 
     def _detect_vwap_reclaim(self, context: MarketContext, vwap_info: VWAPLevels) -> Tuple[List[StructureEvent], float]:
-        """Detect VWAP reclaim setups (bullish)."""
+        """
+        Detect VWAP reclaim setups (bullish).
+
+        A proper VWAP reclaim requires:
+        1. Price is ABOVE VWAP now (the reclaim happened)
+        2. Price was BELOW VWAP recently (within lookback window)
+        3. Confirmation bars above VWAP (not too many - we want fresh reclaims)
+        """
 
         events = []
         quality_score = 0.0
@@ -334,9 +400,22 @@ class VWAPStructure(BaseStructure):
             logger.debug(f"VWAP: {context.symbol} - Price not above VWAP for reclaim setup")
             return events, quality_score
 
-        # Must have been below VWAP recently and now above for required bars
+        # Must have been above VWAP for minimum confirmation bars
         if vwap_info.above_vwap_bars < self.min_bars_above_vwap:
             logger.debug(f"VWAP: {context.symbol} - Above VWAP bars {vwap_info.above_vwap_bars} < required {self.min_bars_above_vwap}")
+            return events, quality_score
+
+        # KEY FIX: Verify this is a FRESH reclaim - not just sustained above VWAP
+        # Check that price was below VWAP within last N bars (from config)
+        was_below_recently = self._check_recent_below_vwap(context.df_5m, self.reclaim_lookback_bars)
+
+        if not was_below_recently:
+            logger.debug(f"VWAP: {context.symbol} - Not a fresh reclaim: no recent below-VWAP period in last {self.reclaim_lookback_bars} bars")
+            return events, quality_score
+
+        # Also cap the above_vwap_bars - very stale reclaims are less valuable (from config)
+        if vwap_info.above_vwap_bars > self.max_bars_above_for_reclaim:
+            logger.debug(f"VWAP: {context.symbol} - Stale reclaim: above VWAP for {vwap_info.above_vwap_bars} bars > {self.max_bars_above_for_reclaim}")
             return events, quality_score
 
         # Check volume confirmation if required
@@ -371,7 +450,14 @@ class VWAPStructure(BaseStructure):
         return events, quality_score
 
     def _detect_vwap_lose(self, context: MarketContext, vwap_info: VWAPLevels) -> Tuple[List[StructureEvent], float]:
-        """Detect VWAP lose setups (bearish)."""
+        """
+        Detect VWAP lose setups (bearish).
+
+        A proper VWAP lose requires:
+        1. Price is BELOW VWAP now (the lose happened)
+        2. Price was ABOVE VWAP recently (within lookback window)
+        3. Confirmation bars below VWAP (not too many - we want fresh loses)
+        """
 
         events = []
         quality_score = 0.0
@@ -381,9 +467,22 @@ class VWAPStructure(BaseStructure):
             logger.debug(f"VWAP: {context.symbol} - Price not below VWAP for lose setup")
             return events, quality_score
 
-        # Must have been above VWAP recently and now below for some bars
+        # Must have been below VWAP for minimum confirmation bars
         if vwap_info.below_vwap_bars < 2:  # At least 2 bars below
             logger.debug(f"VWAP: {context.symbol} - Below VWAP bars {vwap_info.below_vwap_bars} < 2")
+            return events, quality_score
+
+        # KEY FIX: Verify this is a FRESH lose - not just sustained below VWAP
+        # Check that price was above VWAP within last N bars (from config)
+        was_above_recently = self._check_recent_above_vwap(context.df_5m, self.lose_lookback_bars)
+
+        if not was_above_recently:
+            logger.debug(f"VWAP: {context.symbol} - Not a fresh lose: no recent above-VWAP period in last {self.lose_lookback_bars} bars")
+            return events, quality_score
+
+        # Also cap the below_vwap_bars - very stale loses are less valuable (from config)
+        if vwap_info.below_vwap_bars > self.max_bars_below_for_lose:
+            logger.debug(f"VWAP: {context.symbol} - Stale lose: below VWAP for {vwap_info.below_vwap_bars} bars > {self.max_bars_below_for_lose}")
             return events, quality_score
 
         # Check volume confirmation if required
