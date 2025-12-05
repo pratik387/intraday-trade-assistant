@@ -245,15 +245,33 @@ class ReversionPipeline(BasePipeline):
         passed = True
         size_mult = 1.0  # NO PENALTIES - hard gates only
 
+        # ========== CROSS-RUN VALIDATED FILTERS (Dec 2024) ==========
+        # These filters were validated across both backtest_20251204 and backtest_20251205
+        validated_filters = self._get("gates", "validated_filters") or {}
+        setup_lower = setup_type.lower()
+        is_long = "_long" in setup_type
+
+        # Get volume from 5m bar for volume filters
+        bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+
+        # LONG TRADE VOLUME FILTER (MIN 150K)
+        # Evidence: Winners have 2x volume (213k vs 107k)
+        if is_long:
+            filter_cfg = validated_filters.get("long_trade_volume")
+            min_volume = filter_cfg.get("min_volume")
+            if bar5_volume < min_volume:
+                reasons.append(f"long_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: Long vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+            else:
+                reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
+
         # ========== VWAP_RECLAIM VOLUME FILTER (DATA-DRIVEN Dec 2024) ==========
         # From spike test: VWAP_RECLAIM vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs
         # Low volume VWAP reclaim trades have poor execution and high slippage
-        setup_lower = setup_type.lower()
         if "vwap" in setup_lower or "mean_reversion" in setup_lower:
-            # Get volume from 5m bar
-            bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
-
             # Get threshold from config (with default from spike test)
+            # bar5_volume already calculated above for long trade filter
             vwap_reclaim_cfg = self._get("gates", "vwap_reclaim_volume")
             min_volume = vwap_reclaim_cfg.get("min_volume")
 

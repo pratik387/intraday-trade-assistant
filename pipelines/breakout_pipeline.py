@@ -237,13 +237,46 @@ class BreakoutPipeline(BasePipeline):
         # strength and vol_mult used for logging/context
         logger.debug(f"[BREAKOUT] Validating gates for {symbol} {setup_type}: regime={regime}, adx={adx:.1f}, strength={strength:.2f}, vol={vol_mult:.2f}")
 
-        # df5m reserved for future bar-level analysis
-        _ = df5m
-
         reasons = []
         passed = True
         size_mult = 1.0
         min_hold = 0
+
+        # ========== CROSS-RUN VALIDATED FILTERS (Dec 2024) ==========
+        # These filters were validated across both backtest_20251204 and backtest_20251205
+        validated_filters = self._get("gates", "validated_filters") or {}
+
+        # Get current hour from df5m index
+        current_time = df5m.index[-1] if hasattr(df5m.index[-1], 'hour') else None
+        current_hour = current_time.hour if current_time else 0
+
+        # Get volume from 5m bar for long trade volume filter
+        bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+        is_long = "_long" in setup_type
+
+        # 1. BREAKOUT_LONG: HOUR = 11 FILTER
+        # Evidence: R1: +1,695 Rs (91 trades) | R2: +1,554 Rs (92 trades) - 11AM breakouts have low WR
+        if setup_type == "breakout_long":
+            filter_cfg = validated_filters.get("breakout_long_hour_11", {})
+            blocked_hours = filter_cfg.get("blocked_hours")
+            if current_hour in blocked_hours:
+                reasons.append(f"breakout_long_blocked:hour{current_hour}_in_blocked_list")
+                logger.debug(f"[BREAKOUT] {symbol} breakout_long BLOCKED: Hour {current_hour} is in blocked hours {blocked_hours}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"breakout_long_hour_ok:{current_hour}")
+
+        # 2. LONG TRADE VOLUME FILTER (MIN 150K)
+        # Evidence: Winners have 2x volume (213k vs 107k)
+        if is_long:
+            filter_cfg = validated_filters.get("long_trade_volume")
+            min_volume = filter_cfg.get("min_volume")
+            if bar5_volume < min_volume:
+                reasons.append(f"long_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: Long vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
 
         # ORB detection - structure detector already enforces 10:30 cutoff via should_detect_at_time()
         # So ALL ORB setups that reach here are within the valid window - use relaxed thresholds

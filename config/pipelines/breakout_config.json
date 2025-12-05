@@ -112,6 +112,17 @@
                 "allowed": true,
                 "size_mult": 0.9
             }
+        },
+        "validated_filters": {
+            "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
+            "breakout_long_hour_11": {
+                "blocked_hours": [11],
+                "_evidence": "R1: +1,695 Rs (91 trades) | R2: +1,554 Rs (92 trades) - 11AM breakouts have low WR, momentum fades"
+            },
+            "long_trade_volume": {
+                "min_volume": 150000,
+                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+            }
         }
     },
 

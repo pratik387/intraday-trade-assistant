@@ -135,6 +135,29 @@
             "_comment": "DATA-DRIVEN (Dec 2024): VWAP vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs improvement",
             "min_volume": 50000,
             "_evidence": "Low volume VWAP trades have poor execution and high slippage. Blocking vol<50k improves P&L by +2,675 Rs"
+        },
+        "validated_filters": {
+            "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
+            "resistance_bounce_short_adx": {
+                "min_adx": 20,
+                "_evidence": "R1: +3,671 Rs (14 trades) | R2: +2,692 Rs (15 trades) - ADX<20 = no trend, bounce fails"
+            },
+            "support_bounce_long_adx": {
+                "min_adx": 20,
+                "_evidence": "R1: +1,819 Rs (8 trades) | R2: +1,819 Rs (8 trades) - ADX<20 = no trend, support bounce fails"
+            },
+            "premium_zone_short_adx": {
+                "min_adx": 15,
+                "_evidence": "R1: +1,244 Rs (5 trades) | R2: +1,244 Rs (5 trades) - Very low ADX = no directional movement"
+            },
+            "support_bounce_long_srr": {
+                "max_structural_rr": 3.0,
+                "_evidence": "R1: +826 Rs (36 trades) | R2: +826 Rs (36 trades) - High SRR = wide stops = poor risk management"
+            },
+            "long_trade_volume": {
+                "min_volume": 150000,
+                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+            }
         }
     },
 

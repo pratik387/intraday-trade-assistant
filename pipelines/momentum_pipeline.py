@@ -234,8 +234,6 @@ class MomentumPipeline(BasePipeline):
         - Block in chop (no trend to follow)
         - Boost in trend_up/trend_down
         """
-        # df5m reserved for future bar-level analysis
-        _ = df5m
         # df1m reserved for future 1-minute analysis
         _ = df1m
         # strength reserved for future strength-based gating
@@ -247,6 +245,39 @@ class MomentumPipeline(BasePipeline):
         passed = True
         size_mult = 1.0
         min_hold = 0
+
+        # ========== CROSS-RUN VALIDATED FILTERS (Dec 2024) ==========
+        # These filters were validated across both backtest_20251204 and backtest_20251205
+        validated_filters = self._get("gates", "validated_filters") or {}
+
+        # Get volume from 5m bar for volume filters
+        bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+        is_long = "_long" in setup_type
+
+        # 1. MOMENTUM_BREAKOUT_LONG: VOLUME < 100K FILTER
+        # Evidence: R1: +848 Rs (14 trades) | R2: +998 Rs (13 trades) - Low volume lacks conviction
+        if setup_type == "momentum_breakout_long":
+            filter_cfg = validated_filters.get("momentum_breakout_long_volume")
+            min_volume = filter_cfg.get("min_volume")
+            if bar5_volume < min_volume:
+                reasons.append(f"momentum_breakout_long_blocked:vol{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                logger.debug(f"[MOMENTUM] {symbol} momentum_breakout_long BLOCKED: Vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"momentum_breakout_long_vol_ok:{bar5_volume/1000:.0f}k")
+
+        # 2. LONG TRADE VOLUME FILTER (MIN 150K) - for OTHER long setups
+        # Evidence: Winners have 2x volume (213k vs 107k)
+        # Use elif to skip setups that already have specific volume filters above
+        elif is_long:
+            filter_cfg = validated_filters.get("long_trade_volume")
+            min_volume = filter_cfg.get("min_volume")
+            if bar5_volume < min_volume:
+                reasons.append(f"long_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED: Long vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
 
         # Regime check from config - momentum NEEDS trend - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
