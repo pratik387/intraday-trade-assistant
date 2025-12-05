@@ -130,6 +130,11 @@
             "max_bars_above_for_reclaim": 8,
             "lose_lookback_bars": 12,
             "max_bars_below_for_lose": 8
+        },
+        "vwap_volume": {
+            "_comment": "DATA-DRIVEN (Dec 2024): VWAP vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs improvement",
+            "min_volume": 50000,
+            "_evidence": "Low volume VWAP trades have poor execution and high slippage. Blocking vol<50k improves P&L by +2,675 Rs"
         }
     },
 

@@ -93,12 +93,12 @@
         },
         "regime_rules": {
             "chop": {
-                "_comment": "REVERTED: size_mult 0.5→0.7 as 0.5 reduced position sizes too aggressively",
+                "_comment": "DATA-DRIVEN (Dec 2024): ORB CHOP winners have 283k volume vs losers 107k (+164%), winners have srr 1.28 vs losers 2.28 (-44%)",
                 "allowed": true,
                 "size_mult": 0.7,
-                "orb_exception_cutoff_hour": 10,
-                "orb_exception_cutoff_minute": 30,
-                "_evidence": "ORB in chop works before 10:30, fails after"
+                "orb_chop_min_volume": 150000,
+                "orb_chop_max_structural_rr": 1.8,
+                "_orb_chop_evidence": "Filter vol>=150k AND srr<1.8: 54 trades, 64.8% WR, +5,190 Rs. Turns -8,404 Rs loser into +5,190 Rs winner. Improvement: +13,594 Rs"
             },
             "trend_up": {
                 "allowed": true,

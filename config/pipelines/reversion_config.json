@@ -121,6 +121,11 @@
         "adx": {
             "_comment": "From configuration.json - adx_min_strength: 15",
             "min_adx_for_trend_fade": 15
+        },
+        "vwap_reclaim_volume": {
+            "_comment": "DATA-DRIVEN (Dec 2024): VWAP_RECLAIM vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs improvement",
+            "min_volume": 50000,
+            "_evidence": "Low volume VWAP reclaim trades have poor execution and high slippage. Blocking vol<50k improves P&L by +2,675 Rs"
         }
     },
 

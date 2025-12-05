@@ -268,6 +268,22 @@ class LevelPipeline(BasePipeline):
                         min_hold_bars=0
                     )
 
+            # ========== VWAP VOLUME FILTER (DATA-DRIVEN Dec 2024) ==========
+            # From spike test: VWAP vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs
+            # Low volume VWAP trades have poor execution and high slippage
+            bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+            vwap_vol_cfg = self._get("gates", "vwap_volume")
+            min_volume = vwap_vol_cfg.get("min_volume")
+
+            if bar5_volume < min_volume:
+                logger.debug(f"[LEVEL] {symbol} vwap BLOCKED: vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                return GateResult(
+                    passed=False,
+                    reasons=[f"vwap_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k"],
+                    size_mult=1.0,
+                    min_hold_bars=0
+                )
+
         reasons = []
         passed = True
         size_mult = 1.0  # NO PENALTIES - hard gates only

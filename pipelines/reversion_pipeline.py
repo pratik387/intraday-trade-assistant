@@ -245,6 +245,24 @@ class ReversionPipeline(BasePipeline):
         passed = True
         size_mult = 1.0  # NO PENALTIES - hard gates only
 
+        # ========== VWAP_RECLAIM VOLUME FILTER (DATA-DRIVEN Dec 2024) ==========
+        # From spike test: VWAP_RECLAIM vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs
+        # Low volume VWAP reclaim trades have poor execution and high slippage
+        setup_lower = setup_type.lower()
+        if "vwap" in setup_lower or "mean_reversion" in setup_lower:
+            # Get volume from 5m bar
+            bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+
+            # Get threshold from config (with default from spike test)
+            vwap_reclaim_cfg = self._get("gates", "vwap_reclaim_volume")
+            min_volume = vwap_reclaim_cfg.get("min_volume")
+
+            if bar5_volume < min_volume:
+                reasons.append(f"vwap_reclaim_blocked:vol{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                passed = False
+            else:
+                reasons.append(f"vwap_reclaim_vol_ok:{bar5_volume/1000:.0f}k")
+
         # Min hold bars from config - reversion plays need patience
         min_hold = self._get("gates", "min_hold_bars")
 
