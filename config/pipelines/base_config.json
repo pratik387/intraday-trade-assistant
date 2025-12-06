@@ -118,6 +118,8 @@
         },
 
         "min_t1_rr": 1.2,
+        "min_t1_rr_long": 1.0,
+        "_comment_min_t1_rr": "DATA-DRIVEN (Dec 2024): Long trades have 0.74R avg MFE - lowering min_t1_rr for longs to allow T1=1.0R",
 
         "_comment_caps": "Matched to configuration.json values - original 2%/0.75x was too restrictive",
         "t1_max_pct": 100.0,

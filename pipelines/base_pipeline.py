@@ -1610,13 +1610,20 @@ class BasePipeline(ABC):
             plan["quality"]["rejection_reason"] = f"structural_rr {structural_rr_val:.2f} < {min_structural_rr:.2f}"
             logger.debug(f"Rejected: structural_rr {structural_rr_val:.2f} < {min_structural_rr:.2f} (strategy={strategy_type})")
 
-        # Min T1 R:R filter
-        min_t1_rr = quality_filters["min_t1_rr"]
+        # Min T1 R:R filter - check for bias-specific override
+        bias = plan.get("bias", "long")
+        if bias == "long" and "min_t1_rr_long" in quality_filters:
+            min_t1_rr = quality_filters["min_t1_rr_long"]
+        elif bias == "short" and "min_t1_rr_short" in quality_filters:
+            min_t1_rr = quality_filters["min_t1_rr_short"]
+        else:
+            min_t1_rr = quality_filters["min_t1_rr"]
+
         if plan["eligible"] and plan["targets"]:
             t1_rr = plan["targets"][0].get("rr", 0)
             if t1_rr < min_t1_rr:
                 plan["eligible"] = False
                 plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr:.2f} < {min_t1_rr}"
-                logger.debug(f"Rejected: T1_rr {t1_rr:.2f} < {min_t1_rr}")
+                logger.debug(f"Rejected: T1_rr {t1_rr:.2f} < {min_t1_rr} (bias={bias})")
 
         return plan

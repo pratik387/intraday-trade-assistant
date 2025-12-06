@@ -118,11 +118,26 @@
                 "_evidence": "62 trades in chop, -4,048 PnL, 45.2% win rate (vs +565 in trend_up)"
             },
             "discount_zone_long": {
-                "blocked_regimes_before_hour": {
-                    "trend_up": 15
-                },
-                "_evidence": "In trend_up: 11-14h = -7,555 PnL (57 trades), 15h = +4,272 PnL (98 trades)"
+                "blocked_entirely": true,
+                "_evidence": "Dec 2024 analysis: 1 trade, -500 Rs, 0% WR - block entirely"
+            },
+            "vwap_lose_short": {
+                "blocked_entirely": true,
+                "_evidence": "Dec 2024 analysis: 16 trades, -3,282 Rs, 25% WR. 0% WR in trend_up, 27% in chop. Winners have ADX 37.5 vs losers 27.2"
+            },
+            "resistance_bounce_short": {
+                "blocked_regimes": ["trend_up", "trend_down", "chop"],
+                "_evidence": "Dec 2024 + 6-month analysis: trend_up: -882 Rs (43% WR), trend_down: 42.4% hard_sl (+5,908 net), chop: 75% hard_sl (+1,437 net). Only works in squeeze."
+            },
+            "range_bounce_short": {
+                "blocked_regimes": ["chop"],
+                "_evidence": "6-month analysis: 51.7% hard_sl rate in chop, 15 trades = -8,710 Rs. Net +1,951 if blocked."
             }
+        },
+        "global_short_adx_filter": {
+            "_comment": "Dec 2024 analysis: Block all short trades when ADX < 18",
+            "min_adx": 18,
+            "_evidence": "ADX < 15 = 0% WR (-1,112 Rs). ADX 20-25 = 62% WR (+11,577 Rs). Min 18 catches weak trends."
         },
         "vwap_freshness": {
             "_comment": "Parameters for fresh reclaim/lose detection",
@@ -157,6 +172,27 @@
             "long_trade_volume": {
                 "min_volume": 150000,
                 "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+            }
+        },
+        "long_specific_filters": {
+            "_comment": "DATA-DRIVEN (Dec 2024): Filters specific to long trades based on winner/loser analysis",
+            "rsi_max": {
+                "threshold": 65,
+                "_evidence": "RSI>=70: 9.3% WR (7W/75T). RSI<60: 16.4% WR (32W/195T). High RSI = chasing exhausted moves."
+            },
+            "entry_time_cutoff": {
+                "last_entry_hour": 11,
+                "last_entry_minute": 30,
+                "_evidence": "09:15-11:00: 19% WR. 11:00-12:00: 11% WR. 13:00+: 7.7% WR. After 14:00: 0% WR."
+            },
+            "squeeze_regime_boost": {
+                "size_mult": 1.3,
+                "_evidence": "55.6% of winning longs came from squeeze regime vs only 20% from trend_up."
+            },
+            "max_hold_minutes": {
+                "enabled": true,
+                "limit": 120,
+                "_evidence": "Pro traders hold 30-90 min max. After 2 hours, momentum fades. Time-based exit if no T1 hit."
             }
         }
     },
@@ -314,8 +350,20 @@
     },
 
     "targets": {
-        "_comment": "From configuration.json support_bounce_long - target_mult_t1: 1.5, target_mult_t2: 2.5",
+        "_comment": "DATA-DRIVEN (Dec 2024): Long avg MFE=0.74R, only 15% hit 1.5R but 28% hit 1.0R. Lower T1 for longs.",
         "rr_ratios": {
+            "long": {
+                "_comment": "LOWERED: T1 1.5R→1.0R for longs. support_bounce_long has only 5% T1 hit rate at 1.5R.",
+                "t1": 1.0,
+                "t2": 2.0,
+                "t3": 2.5
+            },
+            "short": {
+                "_comment": "Shorts keep 1.5R T1 - they have 1.13R avg MFE vs 0.74R for longs",
+                "t1": 1.5,
+                "t2": 2.5,
+                "t3": 3.0
+            },
             "t1": 1.5,
             "t2": 2.5,
             "t3": 3.0

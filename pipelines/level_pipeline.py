@@ -359,12 +359,31 @@ class LevelPipeline(BasePipeline):
             else:
                 reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
 
+        # ========== GLOBAL SHORT ADX FILTER (DATA-DRIVEN Dec 2024) ==========
+        # Evidence: ADX < 15 = 0% WR (-1,112 Rs). ADX 20-25 = 62% WR (+11,577 Rs)
+        # Block ALL short trades when ADX < 18 (weak trend = shorts fail)
+        is_short = "_short" in setup_type
+        global_short_adx = self._get("gates", "global_short_adx_filter") or {}
+        if is_short and global_short_adx:
+            min_adx_for_shorts = global_short_adx.get("min_adx")
+            if adx < min_adx_for_shorts:
+                reasons.append(f"global_short_adx_blocked:{adx:.0f}<{min_adx_for_shorts}")
+                logger.debug(f"[LEVEL] {symbol} {setup_type} BLOCKED: Global short ADX filter - ADX {adx:.1f} < {min_adx_for_shorts}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
         # Setup-specific regime blocks (config-driven from gates.setup_regime_blocks)
         setup_regime_blocks = self._get("gates", "setup_regime_blocks") or {}
 
         # Check if this setup is blocked in this regime
         if setup_lower in setup_regime_blocks:
             block_cfg = setup_regime_blocks[setup_lower]
+
+            # BLOCKED ENTIRELY - setup is disabled completely (regardless of regime)
+            # Evidence-based: some setups have negative expectancy across all conditions
+            if block_cfg.get("blocked_entirely"):
+                reasons.append(f"setup_blocked_entirely:{setup_lower}")
+                logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED ENTIRELY: config disables this setup")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
             # Simple regime block (e.g., range_bounce_long blocked in chop)
             # OPTIONAL per-setup key - not all setups have blocked_regimes
@@ -697,9 +716,17 @@ class LevelPipeline(BasePipeline):
         # R:R ratios from config
         targets_cfg = self._get("targets")
         rr_ratios = targets_cfg["rr_ratios"]
-        t1_rr = rr_ratios["t1"]
-        t2_rr = rr_ratios["t2"]
-        t3_rr = rr_ratios["t3"]
+
+        # Check for bias-specific targets first (long/short may have different T1/T2/T3)
+        if bias in rr_ratios and isinstance(rr_ratios[bias], dict):
+            t1_rr = rr_ratios[bias].get("t1", rr_ratios["t1"])
+            t2_rr = rr_ratios[bias].get("t2", rr_ratios["t2"])
+            t3_rr = rr_ratios[bias].get("t3", rr_ratios["t3"])
+            logger.debug(f"[LEVEL] Using bias-specific targets for {bias}: T1={t1_rr}R, T2={t2_rr}R, T3={t3_rr}R")
+        else:
+            t1_rr = rr_ratios["t1"]
+            t2_rr = rr_ratios["t2"]
+            t3_rr = rr_ratios["t3"]
 
         # Cap targets from config (level plays shouldn't expect huge moves)
         caps = targets_cfg["caps"]

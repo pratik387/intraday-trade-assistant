@@ -564,9 +564,17 @@ class MomentumPipeline(BasePipeline):
         # R:R ratios from config
         targets_cfg = self._get("targets")
         rr_ratios = targets_cfg["rr_ratios"]
-        t1_rr = rr_ratios["t1"]
-        t2_rr = rr_ratios["t2"]
-        t3_rr = rr_ratios["t3"]
+
+        # Check for bias-specific targets first (long/short may have different T1/T2/T3)
+        if bias in rr_ratios and isinstance(rr_ratios[bias], dict):
+            t1_rr = rr_ratios[bias].get("t1", rr_ratios["t1"])
+            t2_rr = rr_ratios[bias].get("t2", rr_ratios["t2"])
+            t3_rr = rr_ratios[bias].get("t3", rr_ratios["t3"])
+            logger.debug(f"[MOMENTUM] Using bias-specific targets for {bias}: T1={t1_rr}R, T2={t2_rr}R, T3={t3_rr}R")
+        else:
+            t1_rr = rr_ratios["t1"]
+            t2_rr = rr_ratios["t2"]
+            t3_rr = rr_ratios["t3"]
 
         # Targets can be extended in trending markets - caps from config
         caps = targets_cfg["caps"]
