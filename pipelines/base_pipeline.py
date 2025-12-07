@@ -1180,6 +1180,14 @@ class BasePipeline(ABC):
             "atr": atr,  # ATR with fallback already applied - use this instead of recalculating
         }
 
+        # Add avg_daily_volume from daily_df for FHM true RVOL calculation
+        # EXPERIMENTAL: Used for First Hour Momentum RVOL calculation.
+        # May need to revert if quality degrades - see _check_fhm_conditions.
+        if daily_df is not None and len(daily_df) >= 20 and "volume" in daily_df.columns:
+            features["avg_daily_volume"] = float(daily_df["volume"].tail(20).mean())
+        else:
+            features["avg_daily_volume"] = None
+
         # daily_df now used for daily ATR fallback in morning ORB setups
 
         # 0. UNIVERSAL GATES (apply BEFORE category-specific gates)

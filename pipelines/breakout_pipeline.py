@@ -136,7 +136,142 @@ class BreakoutPipeline(BasePipeline):
             else:
                 reasons.append(f"momentum_consolidation_ok:{momentum_15min:.2f}%")
 
+        # First Hour Momentum (FHM) detection
+        # If FHM conditions are met, add to features for downstream processing
+        fhm_cfg = self._get("screening", "first_hour_momentum")
+        if fhm_cfg and fhm_cfg.get("enabled", False):
+            fhm_result = self._check_fhm_conditions(df5m, features, now, fhm_cfg)
+            features["fhm_eligible"] = fhm_result.get("eligible", False)
+            features["fhm_rvol"] = fhm_result.get("rvol", 0.0)
+            features["fhm_price_move_pct"] = fhm_result.get("price_move_pct", 0.0)
+            if fhm_result.get("eligible"):
+                reasons.append(f"fhm_eligible:rvol{fhm_result['rvol']:.1f}x,move{fhm_result['price_move_pct']:.1f}%")
+                logger.info(f"[BREAKOUT] FHM eligible: {symbol} RVOL={fhm_result['rvol']:.2f}x, Move={fhm_result['price_move_pct']:.2f}%")
+
         return ScreeningResult(passed=passed, reasons=reasons, features=features)
+
+    def _check_fhm_conditions(
+        self,
+        df5m: pd.DataFrame,
+        features: Dict[str, Any],
+        now: pd.Timestamp,
+        fhm_cfg: Dict
+    ) -> Dict[str, Any]:
+        """
+        Check if First Hour Momentum (FHM) conditions are met.
+
+        FHM captures big movers early using:
+        1. Time: 09:15 - 10:15 only (from config)
+        2. RVOL: >= min_rvol (from config)
+        3. Price move: >= min_price_move_pct (from config)
+        4. Volume: >= min_volume_1m (from config)
+
+        RVOL CALCULATION - EXPERIMENTAL:
+        ================================
+        Uses hybrid approach: avg daily volume × first-hour fraction (35%).
+        This is based on research that first hour typically accounts for ~35% of daily volume.
+
+        If this causes quality issues (too many/few FHM triggers), we may need to revert to:
+        - Option A: Pure intraday RVOL (compare current bar to recent intraday bars)
+        - Option B: Different first-hour fraction (30-40% typical range)
+        - Option C: Time-weighted approach (9:30 uses 10%, 10:15 uses 35%)
+
+        Fallback: If avg_daily_volume unavailable, uses intraday volume comparison.
+
+        All parameters MUST be defined in config - no defaults.
+        """
+        result = {"eligible": False, "rvol": 0.0, "price_move_pct": 0.0, "rvol_method": "unknown"}
+
+        # Check time window - MUST be in config
+        time_cfg = fhm_cfg["time_window"]
+        start_time = self.parse_time(time_cfg["start"])
+        end_time = self.parse_time(time_cfg["end"])
+
+        md = now.hour * 60 + now.minute
+        in_window = start_time <= md <= end_time
+
+        if not in_window:
+            return result  # Outside first hour
+
+        # Get trigger thresholds - MUST be in config
+        triggers = fhm_cfg["triggers"]
+        min_rvol = triggers["min_rvol"]
+        min_price_move = triggers["min_price_move_pct"]
+        min_volume = triggers["min_volume_1m"]
+
+        # ===========================================
+        # RVOL CALCULATION - EXPERIMENTAL HYBRID APPROACH
+        # ===========================================
+        # Uses avg daily volume with first-hour adjustment factor.
+        # May need to change if quality degrades - see docstring for alternatives.
+        #
+        # First hour (9:15-10:15) typically = 35% of daily volume.
+        # This is a common observation in Indian markets.
+        # If this doesn't work, try 30% or 40%, or use time-weighted approach.
+        FIRST_HOUR_VOLUME_FRACTION = 0.35  # EXPERIMENTAL: May need tuning
+
+        avg_daily_volume = features.get("avg_daily_volume")
+
+        if avg_daily_volume is not None and avg_daily_volume > 0 and len(df5m) >= 1:
+            # HYBRID RVOL: Use daily volume adjusted for first-hour fraction
+            # Expected first hour volume = avg daily vol × 35%
+            # Then pro-rate based on how much of first hour has elapsed
+            expected_first_hour_vol = avg_daily_volume * FIRST_HOUR_VOLUME_FRACTION
+
+            # Calculate minutes elapsed since market open (9:15)
+            market_open_minutes = 9 * 60 + 15  # 9:15 AM
+            minutes_since_open = max(5, md - market_open_minutes)  # At least 5 min
+            first_hour_duration = 60  # 60 minutes in first hour
+
+            # Expected volume so far = first hour vol × (elapsed / 60)
+            elapsed_fraction = min(1.0, minutes_since_open / first_hour_duration)
+            expected_vol_so_far = expected_first_hour_vol * elapsed_fraction
+
+            # Session volume = sum of all 5m bars so far
+            session_volume = float(df5m["volume"].sum())
+
+            # True RVOL = actual session vol / expected session vol
+            rvol = session_volume / expected_vol_so_far if expected_vol_so_far > 0 else 0.0
+            result["rvol_method"] = "hybrid_daily"
+        else:
+            # FALLBACK: Intraday-only RVOL (original approach)
+            # Use this if daily_df not available - less accurate early in session
+            if len(df5m) >= 5 and "volume" in df5m.columns:
+                current_vol = float(df5m["volume"].iloc[-1])
+                lookback = min(20, len(df5m) - 1)
+                avg_vol = df5m["volume"].iloc[-lookback-1:-1].mean() if lookback > 0 else current_vol
+                rvol = current_vol / avg_vol if avg_vol > 0 else 0.0
+                result["rvol_method"] = "intraday_fallback"
+            else:
+                rvol = features.get("volume_ratio", 0.0)
+                result["rvol_method"] = "features_fallback"
+
+        result["rvol"] = rvol
+
+        # Calculate price move from open
+        if len(df5m) >= 2:
+            open_price = float(df5m["open"].iloc[0])  # First bar open = day open
+            current_close = float(df5m["close"].iloc[-1])
+            price_move_pct = abs((current_close - open_price) / open_price) * 100 if open_price > 0 else 0.0
+        else:
+            price_move_pct = 0.0
+
+        result["price_move_pct"] = price_move_pct
+
+        # Check current bar volume
+        current_bar_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+
+        # Check all conditions
+        rvol_ok = rvol >= min_rvol
+        price_ok = price_move_pct >= min_price_move
+        volume_ok = current_bar_volume >= min_volume
+
+        result["eligible"] = rvol_ok and price_ok and volume_ok
+
+        if result["eligible"]:
+            logger.debug(f"FHM eligible: RVOL={rvol:.2f}x, Move={price_move_pct:.2f}%, Vol={current_bar_volume/1000:.0f}k")
+
+        return result
 
     # ======================== QUALITY ========================
 
@@ -281,12 +416,49 @@ class BreakoutPipeline(BasePipeline):
         # ORB detection - structure detector already enforces 10:30 cutoff via should_detect_at_time()
         # So ALL ORB setups that reach here are within the valid window - use relaxed thresholds
         is_orb = "orb" in setup_type.lower()
+        is_fhm = "first_hour_momentum" in setup_type.lower()
+
+        # ========== FHM REGIME OVERRIDE ==========
+        # Check if First Hour Momentum conditions allow regime bypass
+        # When RVOL >= threshold during first hour, institutional flow trumps regime blocking
+        # All parameters MUST be in config - no defaults
+        fhm_regime_override = False
+        fhm_cfg = self._get("screening", "first_hour_momentum")
+        if fhm_cfg and fhm_cfg.get("enabled"):
+            override_cfg = fhm_cfg.get("regime_override")
+            if override_cfg and override_cfg.get("enabled"):
+                # Check if in first hour time window - MUST be in config
+                time_cfg = fhm_cfg["time_window"]
+                start_time = self.parse_time(time_cfg["start"])
+                end_time = self.parse_time(time_cfg["end"])
+                md = current_time.hour * 60 + current_time.minute if current_time else 0
+
+                if start_time <= md <= end_time:
+                    # Calculate RVOL to check for override threshold
+                    if len(df5m) >= 5 and "volume" in df5m.columns:
+                        current_vol = float(df5m["volume"].iloc[-1])
+                        lookback = min(20, len(df5m) - 1)
+                        avg_vol = df5m["volume"].iloc[-lookback-1:-1].mean() if lookback > 0 else current_vol
+                        rvol = current_vol / avg_vol if avg_vol > 0 else 0.0
+                    else:
+                        rvol = vol_mult  # Fallback to passed volume ratio
+
+                    # RVOL threshold MUST be in config
+                    rvol_threshold = override_cfg["rvol_threshold_for_override"]
+                    if rvol >= rvol_threshold:
+                        fhm_regime_override = True
+                        reasons.append(f"fhm_regime_override:rvol{rvol:.1f}x>={rvol_threshold}x")
+                        logger.info(f"[BREAKOUT] FHM regime override for {symbol}: RVOL={rvol:.2f}x >= {rvol_threshold}x, skipping regime blocking")
 
         # Regime rules from config - HARD GATE for chop (ORB allowed with volume+srr filter, others blocked)
+        # Exception: FHM regime override bypasses this check when RVOL >= 3x
         regime_cfg = self._get("gates", "regime_rules")
         if regime in regime_cfg:
             if regime == "chop":
-                if is_orb:
+                # FHM OVERRIDE: Skip chop blocking when RVOL >= 3x (institutional flow trumps regime)
+                if fhm_regime_override or is_fhm:
+                    reasons.append(f"regime_ok:chop_fhm_override")
+                elif is_orb:
                     # DATA-DRIVEN FIX (Dec 2024 analysis):
                     # ORB in CHOP: Winners have 283k volume vs Losers 107k volume (+164% diff)
                     # ORB in CHOP: Winners have 1.28 structural_rr vs Losers 2.28 (-44% diff)

@@ -18,7 +18,8 @@
         "break_of_structure_long", "break_of_structure_short",
         "change_of_character_long", "change_of_character_short",
         "equilibrium_breakout_long", "equilibrium_breakout_short",
-        "level_breakout_long", "level_breakout_short"
+        "level_breakout_long", "level_breakout_short",
+        "first_hour_momentum_long", "first_hour_momentum_short"
     ],
 
     "screening": {
@@ -40,7 +41,34 @@
             "vwap_deviation_threshold": 0.02,
             "volume_ratio_threshold": 1.5
         },
-        "min_bars_required": 4
+        "min_bars_required": 4,
+        "first_hour_momentum": {
+            "_comment": "FHM: First Hour Momentum - Capture big movers early in the session",
+            "_rationale": "99.7% of big movers (>=3% moves) are missed. Pro traders use RVOL/price momentum in first hour.",
+            "enabled": true,
+            "time_window": {
+                "start": "09:15",
+                "end": "10:15",
+                "_comment": "ONLY active during first hour of trading"
+            },
+            "triggers": {
+                "min_rvol": 2.0,
+                "min_price_move_pct": 1.5,
+                "min_volume_1m": 100000,
+                "_rvol_comment": "RVOL > 2x signals unusual institutional activity",
+                "_price_comment": "1.5% move from open shows momentum started"
+            },
+            "vwap_position": {
+                "long_requires_above_vwap": true,
+                "short_requires_below_vwap": true,
+                "_comment": "VWAP position confirms momentum direction"
+            },
+            "regime_override": {
+                "enabled": true,
+                "rvol_threshold_for_override": 3.0,
+                "_comment": "When RVOL > 3x, skip regime blocking - institutional flow trumps regime"
+            }
+        }
     },
 
     "quality": {
@@ -270,6 +298,14 @@
                 "chop": 0.8,
                 "squeeze": 1.0,
                 "default": 1.0
+            },
+            "first_hour_momentum": {
+                "_comment": "FHM: High multipliers across all regimes - momentum trumps regime in first hour",
+                "trend_up": 1.5,
+                "trend_down": 1.5,
+                "chop": 1.3,
+                "squeeze": 1.4,
+                "default": 1.3
             }
         },
         "daily_trend_multipliers": {

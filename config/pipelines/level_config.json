@@ -126,8 +126,9 @@
                 "_evidence": "Dec 2024 analysis: 16 trades, -3,282 Rs, 25% WR. 0% WR in trend_up, 27% in chop. Winners have ADX 37.5 vs losers 27.2"
             },
             "resistance_bounce_short": {
-                "blocked_regimes": ["trend_up", "trend_down", "chop"],
-                "_evidence": "Dec 2024 + 6-month analysis: trend_up: -882 Rs (43% WR), trend_down: 42.4% hard_sl (+5,908 net), chop: 75% hard_sl (+1,437 net). Only works in squeeze."
+                "_comment": "DATA-DRIVEN Dec 2024: Block losing regime, need indicator-based analysis for hard_sl reduction",
+                "blocked_regimes": ["trend_up"],
+                "_performance": "trend_down: +8,305 Rs (66.7% WR), trend_up: -882 Rs (block), 24 hard_sl trades cost -12,322 Rs"
             },
             "range_bounce_short": {
                 "blocked_regimes": ["chop"],
@@ -157,6 +158,10 @@
                 "min_adx": 20,
                 "_evidence": "R1: +3,671 Rs (14 trades) | R2: +2,692 Rs (15 trades) - ADX<20 = no trend, bounce fails"
             },
+            "resistance_bounce_short_bb_width": {
+                "max_bb_width": 0.10,
+                "_evidence": "Dec 2024 analysis: bb_width<=0.10 reduces hard_sl from 35%→28%, 46 trades 54% WR Rs 6,465 PnL"
+            },
             "support_bounce_long_adx": {
                 "min_adx": 20,
                 "_evidence": "R1: +1,819 Rs (8 trades) | R2: +1,819 Rs (8 trades) - ADX<20 = no trend, support bounce fails"
@@ -172,6 +177,18 @@
             "long_trade_volume": {
                 "min_volume": 150000,
                 "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+            },
+            "range_bounce_short_chop_adx": {
+                "min_adx": 20,
+                "_evidence": "Dec 2024: In chop regime, ADX>=20: 10 trades Rs +4,575 (73% WR) vs ADX<20: 19 trades Rs -800. Block low ADX."
+            },
+            "vwap_lose_short_trend_up": {
+                "block_in_trend_up": true,
+                "_evidence": "Dec 2024: ALL 4 trend_up trades hit hard_sl (Rs -2,179). Shorting in uptrend = guaranteed loss."
+            },
+            "premium_zone_short_trend_down_adx": {
+                "min_adx": 32,
+                "_evidence": "Dec 2024: In trend_down, ADX>=32: 31 trades Rs +4,884 (9 HSL) vs ADX<32: 26 trades Rs -1,865 (16 HSL). Strong trends work."
             }
         },
         "long_specific_filters": {

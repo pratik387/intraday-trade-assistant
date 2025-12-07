@@ -310,6 +310,25 @@ class LevelPipeline(BasePipeline):
             else:
                 reasons.append(f"resistance_bounce_short_adx_ok:{adx:.0f}")
 
+            # 1b. RESISTANCE_BOUNCE_SHORT: BB_WIDTH FILTER
+            # Evidence: bb_width<=0.10 reduces hard_sl from 35%→28%
+            bb_width_cfg = validated_filters.get("resistance_bounce_short_bb_width")
+            if bb_width_cfg:
+                max_bb_width = bb_width_cfg.get("max_bb_width")
+                # Calculate bb_width from 5m data (normalized: 2*std/sma)
+                if len(df5m) >= 20 and "close" in df5m.columns:
+                    close = df5m["close"]
+                    sma20 = close.rolling(window=20, min_periods=20).mean()
+                    std20 = close.rolling(window=20, min_periods=20).std()
+                    if pd.notna(sma20.iloc[-1]) and pd.notna(std20.iloc[-1]) and sma20.iloc[-1] > 0:
+                        bb_width = (2 * std20.iloc[-1]) / sma20.iloc[-1]
+                        if bb_width > max_bb_width:
+                            reasons.append(f"resistance_bounce_short_blocked:bb_width{bb_width:.3f}>{max_bb_width}")
+                            logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: BB width {bb_width:.3f} > {max_bb_width}")
+                            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                        else:
+                            reasons.append(f"resistance_bounce_short_bb_ok:{bb_width:.3f}")
+
         # 2. SUPPORT_BOUNCE_LONG: ADX < 20 FILTER
         # Evidence: R1: +1,819 Rs (8 trades) | R2: +1,819 Rs (8 trades)
         if setup_type == "support_bounce_long":
@@ -358,6 +377,41 @@ class LevelPipeline(BasePipeline):
                 return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
             else:
                 reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
+
+        # 6. RANGE_BOUNCE_SHORT: ADX < 20 in CHOP FILTER
+        # Evidence: In chop, ADX>=20: 10 trades Rs +4,575 (73% WR) vs ADX<20: 19 trades Rs -800
+        if setup_type == "range_bounce_short" and regime == "chop":
+            filter_cfg = validated_filters.get("range_bounce_short_chop_adx")
+            if filter_cfg:
+                min_adx = filter_cfg.get("min_adx", 20)
+                if adx < min_adx:
+                    reasons.append(f"range_bounce_short_blocked:chop_adx{adx:.0f}<{min_adx}")
+                    logger.debug(f"[LEVEL] {symbol} range_bounce_short BLOCKED: In chop, ADX {adx:.1f} < {min_adx}")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"range_bounce_short_chop_adx_ok:{adx:.0f}")
+
+        # 7. VWAP_LOSE_SHORT: BLOCK in TREND_UP
+        # Evidence: ALL 4 trend_up trades hit hard_sl (Rs -2,179). Shorting in uptrend = guaranteed loss
+        if setup_type == "vwap_lose_short" and regime == "trend_up":
+            filter_cfg = validated_filters.get("vwap_lose_short_trend_up")
+            if filter_cfg and filter_cfg.get("block_in_trend_up", True):
+                reasons.append(f"vwap_lose_short_blocked:trend_up_regime")
+                logger.debug(f"[LEVEL] {symbol} vwap_lose_short BLOCKED: In trend_up regime - shorting uptrend fails")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+        # 8. PREMIUM_ZONE_SHORT: ADX < 32 in TREND_DOWN FILTER
+        # Evidence: ADX>=32: 31 trades Rs +4,884 (9 HSL) vs ADX<32: 26 trades Rs -1,865 (16 HSL)
+        if setup_type == "premium_zone_short" and regime == "trend_down":
+            filter_cfg = validated_filters.get("premium_zone_short_trend_down_adx")
+            if filter_cfg:
+                min_adx = filter_cfg.get("min_adx", 32)
+                if adx < min_adx:
+                    reasons.append(f"premium_zone_short_blocked:trend_down_adx{adx:.0f}<{min_adx}")
+                    logger.debug(f"[LEVEL] {symbol} premium_zone_short BLOCKED: In trend_down, ADX {adx:.1f} < {min_adx} - weak trend = HSL risk")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"premium_zone_short_trend_down_adx_ok:{adx:.0f}")
 
         # ========== GLOBAL SHORT ADX FILTER (DATA-DRIVEN Dec 2024) ==========
         # Evidence: ADX < 15 = 0% WR (-1,112 Rs). ADX 20-25 = 62% WR (+11,577 Rs)

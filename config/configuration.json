@@ -1177,6 +1177,58 @@
         "deep": 0.618
       }
     },
+    "first_hour_momentum_long": {
+      "_comment": "FHM: First Hour Momentum - Captures big movers early using RVOL and price momentum",
+      "enabled": true,
+      "min_bars_required": 4,
+      "time_window": {
+        "start": "09:15",
+        "end": "10:15",
+        "_comment": "ONLY active during first hour of trading"
+      },
+      "triggers": {
+        "min_rvol": 2.0,
+        "min_price_move_pct": 1.5,
+        "min_volume": 100000,
+        "_rvol_comment": "RVOL > 2x signals unusual institutional activity",
+        "_price_comment": "1.5% move from open shows momentum started"
+      },
+      "vwap_position": {
+        "long_requires_above_vwap": true,
+        "short_requires_below_vwap": true,
+        "_comment": "VWAP position confirms momentum direction"
+      },
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "stop_atr_mult": 2.0,
+      "confidence_high_rvol": 2.0,
+      "confidence_base": 1.5,
+      "high_rvol_threshold": 3.0
+    },
+    "first_hour_momentum_short": {
+      "_comment": "FHM: First Hour Momentum Short - Captures big down movers early",
+      "enabled": true,
+      "min_bars_required": 4,
+      "time_window": {
+        "start": "09:15",
+        "end": "10:15"
+      },
+      "triggers": {
+        "min_rvol": 2.0,
+        "min_price_move_pct": 1.5,
+        "min_volume": 100000
+      },
+      "vwap_position": {
+        "long_requires_above_vwap": true,
+        "short_requires_below_vwap": true
+      },
+      "target_mult_t1": 1.5,
+      "target_mult_t2": 2.5,
+      "stop_atr_mult": 2.0,
+      "confidence_high_rvol": 2.0,
+      "confidence_base": 1.5,
+      "high_rvol_threshold": 3.0
+    },
     "vwap_mean_reversion_long": {
       "enabled": true,
       "min_distance_bps": 50,

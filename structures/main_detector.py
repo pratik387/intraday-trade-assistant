@@ -28,6 +28,7 @@ from .support_resistance_structure import SupportResistanceStructure
 from .trend_structure import TrendStructure
 from .volume_structure import VolumeStructure
 from .range_structure import RangeStructure
+from .fhm_structure import FHMStructure
 
 logger = get_agent_logger()
 
@@ -103,6 +104,9 @@ class MainDetector(BaseStructure):
             ("range_bounce_short", RangeStructure, "range_bounce_short"),
             ("trend_continuation_long", TrendStructure, "trend_continuation_long"),
             ("trend_continuation_short", TrendStructure, "trend_continuation_short"),
+            # First Hour Momentum (FHM) - captures big movers early
+            ("first_hour_momentum_long", FHMStructure, "first_hour_momentum_long"),
+            ("first_hour_momentum_short", FHMStructure, "first_hour_momentum_short"),
             # Generic structure types (if needed for fallback)
             ("level_breakout", LevelBreakoutStructure, "level_breakout"),
             ("failure_fade", FailureFadeStructure, "failure_fade"),
@@ -522,7 +526,11 @@ class MainDetector(BaseStructure):
             'support_bounce_long': 'support_bounce_long',
             'resistance_bounce_short': 'resistance_bounce_short',
             'support_breakdown_short': 'support_breakdown_short',
-            'resistance_breakout_long': 'resistance_breakout_long'
+            'resistance_breakout_long': 'resistance_breakout_long',
+
+            # First Hour Momentum (FHM) structures
+            'first_hour_momentum_long': 'first_hour_momentum_long',
+            'first_hour_momentum_short': 'first_hour_momentum_short'
         }
 
         return direct_mappings.get(structure_type)
