@@ -2,27 +2,31 @@
 """
 First Hour Momentum (FHM) Structure Implementation.
 
-PRO TRADER RULES (from Warrior Trading + NSE India research):
+INDIAN MARKET PRO TRADER RULES (from NSE research + 6-month backtest forensics):
+
+FHM_LONG:
 1. DETECTION: Opening drive detected (RVOL >= 2x + price move >= 1.5%)
-2. ENTRY: DON'T chase the spike - WAIT for pullback to VWAP
-3. ENTRY ZONE: VWAP +/- 0.15 ATR (tight zone around VWAP)
-4. STOP: Just below VWAP for longs (above for shorts) - not arbitrary ATR
+2. ENTRY: WAIT for pullback to VWAP AND price to HOLD (candle close above VWAP)
+3. ENTRY TIME: After 9:45 (min 7 bars) - avoid first 30 min noise
+4. STOP: min(swing_low, VWAP - 0.8% of price) - structure-based, not fixed ATR
 5. TARGETS: Handled by pipeline's calculate_targets() - R:R based from config
 
-Key conditions:
-- Time window: 09:15 - 10:30 (first 75 min including pullback time)
-- RVOL >= 2.0x (unusual institutional activity)
-- Price move >= 1.5% from open (opening drive detected)
-- Volume >= 100k (sufficient liquidity)
-- VWAP position confirms direction (long above VWAP, short below VWAP)
+FHM_SHORT (Pro Trader Rules):
+1. DETECTION: Gap down from prev close + RVOL >= 2x + price move >= 3% DOWN
+2. ENTRY: WAIT for pullback to VWAP AND price to HOLD BELOW VWAP
+3. ENTRY TIME: After 9:45 (min 7 bars)
+4. STOP: Previous day close (natural resistance for gap down)
+5. GAP DOWN REQUIRED: Price must be gapping down from previous day close
 
-Structure's job: DETECT and provide essential levels (vwap, entry_price, stop_loss)
-Pipeline's job: Calculate targets, ATR already available in features dict
+BACKTEST FINDINGS (6-month, Dec 2024):
+- FHM_LONG: MAE avg -3.64R, 0 conversions = thesis wrong without confirmation
+- FHM_SHORT: +495 Rs was breakeven after costs = tighten filters (gap down, 3% move)
+- Fix: VWAP HOLD confirmation + gap down for shorts + prev close stop
 
 Sources:
-- Warrior Trading: "Instead of trying to pursue the first spike, professionals seek conviction"
-- VWAP Pullback Entry: "Wait for pullback to VWAP, enter on retest"
-- NSE India: "09:15-10:30 IST = peak momentum hours"
+- Pro traders: "Gap down continuation, stop at prev close (natural resistance)"
+- StockCharts: "High volume gap down = continuation signal"
+- Warrior Trading: "Previous close acts as resistance for shorts"
 """
 
 from __future__ import annotations
@@ -82,13 +86,22 @@ class FHMStructure(BaseStructure):
         self.entry_reference = entry_cfg["reference"]  # "vwap"
         self.entry_zone_atr_mult = entry_cfg["zone_atr_mult"]  # 0.15
 
-        # PRO TRADER STOP LOSS CONFIG - VWAP-based stops
-        # NOTE: Current stops are ~1-1.5 ATR from VWAP (wider than PRO TRADER's 0.2 ATR rule).
-        # This gives more room to avoid noise-induced stops. If 6-month backtest shows
-        # poor results (e.g., too many full SL hits), consider tightening to 0.2-0.5 ATR.
+        # INDIAN MARKET STOP LOSS CONFIG - structure-based stops
+        # NSE India research: max(swing_low, VWAP - 0.8% of price)
+        # 6-month backtest showed 0.2 ATR too tight (MAE -3.64R)
         sl_cfg = config["stop_loss"]
-        self.stop_reference = sl_cfg["reference"]  # "vwap"
-        self.stop_buffer_atr_mult = sl_cfg["buffer_atr_mult"]  # 0.2
+        self.stop_reference = sl_cfg["reference"]  # "structure" or "vwap"
+        self.stop_pct_of_price = sl_cfg.get("pct_of_price")  # 0.8% default
+        self.stop_buffer_atr_mult = sl_cfg.get("buffer_atr_mult")  # Fallback
+
+        # VWAP HOLD confirmation - require candle close above/below VWAP
+        self.require_vwap_hold = config.get("require_vwap_hold", True)
+
+        # FHM_SHORT PRO TRADER RULES
+        # Gap down required - price must be below previous day close
+        self.require_gap_down = config.get("require_gap_down", False)
+        # Stop at previous day close (natural resistance for gap down)
+        self.stop_at_prev_close = config.get("stop_at_prev_close", False)
 
         # Confidence levels - KeyError if missing (no defaults)
         self.confidence_high_rvol = config["confidence_high_rvol"]
@@ -216,17 +229,33 @@ class FHMStructure(BaseStructure):
                         rejection_reason=f"Long requires price above VWAP"
                     )
 
+                # INDIAN MARKET: VWAP HOLD confirmation - previous candle must close above VWAP
+                if self.require_vwap_hold and vwap is not None and len(df) >= 2:
+                    prev_close = df['close'].iloc[-2]
+                    if prev_close <= vwap:
+                        logger.debug(f"FHM_REJECT: {symbol} | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                    f"VWAP HOLD fail (prev_close={prev_close:.2f} <= VWAP={vwap:.2f})")
+                        return StructureAnalysis(
+                            structure_detected=False,
+                            events=[],
+                            quality_score=0.0,
+                            rejection_reason=f"VWAP hold confirmation failed - prev candle below VWAP"
+                        )
+
                 confidence = self._calculate_confidence(rvol, abs_price_move, current_volume)
 
                 # PRO TRADER: Entry at VWAP (pullback), not current price
                 entry_price = vwap if vwap else current_price
                 entry_zone_buffer = atr * self.entry_zone_atr_mult
 
-                # PRO TRADER: Stop just below VWAP
-                stop_loss = (vwap - atr * self.stop_buffer_atr_mult) if vwap else (entry_price - atr * self.stop_buffer_atr_mult)
+                # INDIAN MARKET: Stop = min(swing_low, VWAP - 0.8% of price)
+                # min() because lower is better for long stops
+                swing_low = df['low'].iloc[-5:].min() if len(df) >= 5 else current_price * 0.99
+                vwap_stop = entry_price * (1 - self.stop_pct_of_price)  # VWAP - 0.8%
+                stop_loss = min(swing_low, vwap_stop)
 
                 logger.debug(f"FHM_DETECT: {symbol} LONG | RVOL={rvol:.2f}x | Move={price_move_pct:+.2f}% | "
-                            f"Entry@VWAP={entry_price:.2f} | SL={stop_loss:.2f} | Vol={current_volume:.0f}")
+                            f"Entry@VWAP={entry_price:.2f} | SL={stop_loss:.2f} (swing={swing_low:.2f}, vwap_stop={vwap_stop:.2f}) | Vol={current_volume:.0f}")
 
                 event = StructureEvent(
                     symbol=symbol,
@@ -272,17 +301,56 @@ class FHMStructure(BaseStructure):
                         rejection_reason=f"Short requires price below VWAP"
                     )
 
+                # PRO TRADER: GAP DOWN CHECK - price must be gapping down from previous close
+                # Get previous day close from market_context or estimate from first bar
+                prev_day_close = getattr(market_context, 'prev_day_close', None)
+                if prev_day_close is None:
+                    # Estimate: first bar's open is approximately previous close
+                    prev_day_close = df['open'].iloc[0]
+
+                if self.require_gap_down:
+                    # Current price must be below previous day close (gap down)
+                    if current_price >= prev_day_close:
+                        logger.debug(f"FHM_REJECT: {symbol} | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                    f"GAP DOWN fail (price={current_price:.2f} >= prev_close={prev_day_close:.2f})")
+                        return StructureAnalysis(
+                            structure_detected=False,
+                            events=[],
+                            quality_score=0.0,
+                            rejection_reason=f"Gap down required - price not below prev close"
+                        )
+
+                # INDIAN MARKET: VWAP HOLD confirmation - previous candle must close below VWAP
+                if self.require_vwap_hold and vwap is not None and len(df) >= 2:
+                    prev_close = df['close'].iloc[-2]
+                    if prev_close >= vwap:
+                        logger.debug(f"FHM_REJECT: {symbol} | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                    f"VWAP HOLD fail (prev_close={prev_close:.2f} >= VWAP={vwap:.2f})")
+                        return StructureAnalysis(
+                            structure_detected=False,
+                            events=[],
+                            quality_score=0.0,
+                            rejection_reason=f"VWAP hold confirmation failed - prev candle above VWAP"
+                        )
+
                 confidence = self._calculate_confidence(rvol, abs_price_move, current_volume)
 
                 # PRO TRADER: Entry at VWAP (pullback), not current price
                 entry_price = vwap if vwap else current_price
                 entry_zone_buffer = atr * self.entry_zone_atr_mult
 
-                # PRO TRADER: Stop just above VWAP for shorts
-                stop_loss = (vwap + atr * self.stop_buffer_atr_mult) if vwap else (entry_price + atr * self.stop_buffer_atr_mult)
+                # PRO TRADER: Stop at previous day close (natural resistance for gap down)
+                if self.stop_at_prev_close and prev_day_close is not None:
+                    # Stop at previous day close - natural resistance for shorts
+                    stop_loss = prev_day_close
+                else:
+                    # Fallback: max(swing_high, VWAP + 0.8% of price)
+                    swing_high = df['high'].iloc[-5:].max() if len(df) >= 5 else current_price * 1.01
+                    vwap_stop = entry_price * (1 + self.stop_pct_of_price)  # VWAP + 0.8%
+                    stop_loss = max(swing_high, vwap_stop)
 
                 logger.debug(f"FHM_DETECT: {symbol} SHORT | RVOL={rvol:.2f}x | Move={price_move_pct:+.2f}% | "
-                            f"Entry@VWAP={entry_price:.2f} | SL={stop_loss:.2f} | Vol={current_volume:.0f}")
+                            f"Entry@VWAP={entry_price:.2f} | SL@PrevClose={stop_loss:.2f} | Vol={current_volume:.0f}")
 
                 event = StructureEvent(
                     symbol=symbol,
@@ -525,10 +593,10 @@ class FHMStructure(BaseStructure):
 
     def calculate_risk_params(self, entry_price: float, market_context: MarketContext) -> RiskParams:
         """
-        Calculate FHM risk parameters using PRO TRADER rules.
+        Calculate FHM risk parameters using INDIAN MARKET rules.
 
-        PRO RULE: Stop just below VWAP for longs, above VWAP for shorts.
-        This gives tight stops based on VWAP as the invalidation level.
+        INDIAN MARKET RULE: Stop = max/min(swing_level, VWAP +/- 0.8% of price)
+        This uses structure-based stops, not fixed ATR multiples.
         """
         try:
             df = market_context.df_5m
@@ -539,9 +607,6 @@ class FHMStructure(BaseStructure):
             else:
                 atr = entry_price * 0.01  # 1% fallback
 
-            # Get VWAP for stop calculation
-            vwap = float(df['vwap'].iloc[-1]) if df is not None and 'vwap' in df.columns else entry_price
-
             # Determine direction from price vs open
             if df is not None and len(df) > 0:
                 open_price = df['open'].iloc[0]
@@ -549,16 +614,34 @@ class FHMStructure(BaseStructure):
             else:
                 is_long = True
 
-            # PRO TRADER: Stop just below/above VWAP + buffer
+            # INDIAN MARKET: Structure-based stops
             if is_long:
-                hard_sl = vwap - (atr * self.stop_buffer_atr_mult)
+                # For longs: stop at min(swing_low, entry - 0.8%)
+                swing_low = df['low'].iloc[-5:].min() if df is not None and len(df) >= 5 else entry_price * 0.99
+                vwap_stop = entry_price * (1 - self.stop_pct_of_price)
+                hard_sl = min(swing_low, vwap_stop)
             else:
-                hard_sl = vwap + (atr * self.stop_buffer_atr_mult)
+                # For shorts: PRO TRADER - stop at previous day close (natural resistance)
+                if self.stop_at_prev_close:
+                    prev_day_close = getattr(market_context, 'prev_day_close', None)
+                    if prev_day_close is None and df is not None and len(df) > 0:
+                        # Estimate: first bar's open is approximately previous close
+                        prev_day_close = df['open'].iloc[0]
+                    if prev_day_close is not None:
+                        hard_sl = prev_day_close
+                    else:
+                        # Fallback
+                        hard_sl = entry_price * (1 + self.stop_pct_of_price)
+                else:
+                    # Fallback: stop at max(swing_high, entry + 0.8%)
+                    swing_high = df['high'].iloc[-5:].max() if df is not None and len(df) >= 5 else entry_price * 1.01
+                    vwap_stop = entry_price * (1 + self.stop_pct_of_price)
+                    hard_sl = max(swing_high, vwap_stop)
 
             risk_per_share = abs(entry_price - hard_sl)
 
-            # Enforce minimum stop distance
-            min_stop = entry_price * 0.005  # 0.5% minimum
+            # Enforce minimum stop distance (0.5%)
+            min_stop = entry_price * 0.005
             if risk_per_share < min_stop:
                 risk_per_share = min_stop
                 if is_long:
@@ -574,12 +657,12 @@ class FHMStructure(BaseStructure):
             )
         except Exception as e:
             logger.exception(f"FHM: calculate_risk_params failed: {e}")
-            # Safe fallback
-            atr = entry_price * 0.01
+            # Safe fallback - use 0.8% of price
+            stop_dist = entry_price * 0.008
             return RiskParams(
-                hard_sl=entry_price - atr * 2,
-                risk_per_share=atr * 2,
-                atr=atr,
+                hard_sl=entry_price - stop_dist,
+                risk_per_share=stop_dist,
+                atr=entry_price * 0.01,
                 volatility_adj=1.0
             )
 

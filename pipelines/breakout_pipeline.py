@@ -640,9 +640,11 @@ class BreakoutPipeline(BasePipeline):
         rsi_slope_cfg = weights["rsi_slope"]
         s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
 
-        # 4. ADX SCORE (s_adx)
+        # 4. ADX SCORE (s_adx) - ISSUE 3 FIX: Added cap to prevent high ADX dominating
         adx_cfg = weights["adx"]
-        s_adx = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
+        s_adx_raw = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
+        adx_cap = adx_cfg.get("cap")  # Default to no cap if not specified
+        s_adx = min(s_adx_raw, adx_cap)
 
         # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
         adx_slope_cfg = weights["adx_slope"]

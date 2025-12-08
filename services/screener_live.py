@@ -894,9 +894,16 @@ class ScreenerLive:
                     if k in last5.index:
                         bar5[k] = float(last5.get(k, 0.0))
 
+            # Build ranker dict with rank_score and FHM context if available
+            ranker_dict = {"rank_score": float(score)}
+            fhm_ctx = plan.get("fhm_context")
+            if fhm_ctx:
+                ranker_dict["fhm_rvol"] = fhm_ctx.get("rvol", 0.0)
+                ranker_dict["fhm_price_move_pct"] = fhm_ctx.get("price_move_pct", 0.0)
+
             features = {
                 "bar5": bar5,
-                "ranker": {"rank_score": float(score)},
+                "ranker": ranker_dict,
                 "time": {"minute_of_day": now.hour * 60 + now.minute, "day_of_week": now.weekday()},
             }
 

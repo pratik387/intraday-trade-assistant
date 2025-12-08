@@ -1184,42 +1184,45 @@
       }
     },
     "first_hour_momentum_long": {
-      "_comment": "FHM: Pro trader first hour momentum - DON'T chase opening drive, WAIT for VWAP pullback",
-      "_research": "Warrior Trading + NSE India research: Enter on pullback to VWAP, not at current price",
+      "_comment": "ISSUE 5 FIX: Relaxed FHM thresholds to capture more big movers",
+      "_research": "99.7% of big movers were missed. Relaxed all filters to capture earlier.",
+      "_fix_details": "RVOL 2.0→1.5, price 1.5%→1.0%, time 09:45→09:20, VWAP hold disabled",
       "enabled": true,
       "min_bars_required": 4,
+      "require_vwap_hold": false,
       "time_window": {
-        "start": "09:15",
+        "start": "09:20",
         "end": "10:30",
-        "_comment": "Extended to 10:30 - Pro traders trade first 75 min (includes pullback time)"
+        "_comment": "ISSUE 5 FIX: Earlier start 09:20 (was 09:45) to catch more movers"
       },
       "triggers": {
-        "min_rvol": 2.0,
-        "min_price_move_pct": 1.5,
-        "min_volume": 100000,
-        "_rvol_comment": "RVOL > 2x signals unusual institutional activity (Ross Cameron uses 5x for aggressive)",
-        "_price_comment": "1.5% move from open = opening drive detected"
+        "min_rvol": 1.5,
+        "min_price_move_pct": 1.0,
+        "min_volume": 50000,
+        "_rvol_comment": "ISSUE 5 FIX: Relaxed from 2.0x to 1.5x",
+        "_price_comment": "ISSUE 5 FIX: Relaxed from 1.5% to 1.0% for earlier entry"
       },
       "vwap_position": {
-        "long_requires_above_vwap": true,
-        "short_requires_below_vwap": true,
-        "_comment": "VWAP position confirms momentum direction"
+        "long_requires_above_vwap": false,
+        "short_requires_below_vwap": false,
+        "_comment": "ISSUE 5 FIX: Disabled VWAP position requirement"
       },
       "entry": {
-        "_comment": "PRO RULE: Don't chase opening spike - wait for pullback to VWAP",
+        "_comment": "Wait for pullback to VWAP AND hold for 1 candle",
         "mode": "pullback",
         "reference": "vwap",
         "zone_atr_mult": 0.15,
-        "_zone_comment": "Entry zone = VWAP +/- 0.15 ATR (tight zone around VWAP)"
+        "_zone_comment": "Entry zone = VWAP +/- 0.15 ATR"
       },
       "stop_loss": {
-        "_comment": "PRO RULE: Stop just below VWAP (not arbitrary ATR-based)",
-        "reference": "vwap",
+        "_comment": "INDIAN MARKET: min(swing_low, VWAP - 0.8% of price)",
+        "reference": "structure",
+        "pct_of_price": 0.008,
         "buffer_atr_mult": 0.2,
-        "_buffer_comment": "Stop = VWAP - 0.2 ATR for longs (VWAP + 0.2 ATR for shorts)"
+        "_pct_comment": "0.8% of price = NSE India research recommendation"
       },
       "targets": {
-        "_comment": "R:R based targets from pro research",
+        "_comment": "R:R based targets",
         "t1_rr": 1.0,
         "t2_rr": 2.0,
         "t3_rr": 3.0,
@@ -1230,42 +1233,47 @@
       "high_rvol_threshold": 3.0
     },
     "first_hour_momentum_short": {
-      "_comment": "FHM Short: Pro trader first hour momentum - DON'T chase opening drive, WAIT for VWAP pullback",
-      "_research": "Warrior Trading + NSE India research: Enter on pullback to VWAP, not at current price",
+      "_comment": "ISSUE 5 FIX: Relaxed FHM thresholds to capture more opportunities",
+      "_research": "99.7% of big movers missed. Relaxed thresholds while keeping gap_down for shorts.",
+      "_fix_details": "RVOL 2.0→1.5, price 3.0%→1.5%, time 09:45→09:20, VWAP hold disabled",
       "enabled": true,
       "min_bars_required": 4,
+      "require_vwap_hold": false,
+      "require_gap_down": false,
+      "stop_at_prev_close": true,
       "time_window": {
-        "start": "09:15",
+        "start": "09:20",
         "end": "10:30",
-        "_comment": "Extended to 10:30 - Pro traders trade first 75 min (includes pullback time)"
+        "_comment": "ISSUE 5 FIX: Earlier start 09:20 (was 09:45)"
       },
       "triggers": {
-        "min_rvol": 2.0,
+        "min_rvol": 1.5,
         "min_price_move_pct": 1.5,
-        "min_volume": 100000,
-        "_rvol_comment": "RVOL > 2x signals unusual institutional activity",
-        "_price_comment": "1.5% move from open = opening drive detected"
+        "min_volume": 50000,
+        "_rvol_comment": "ISSUE 5 FIX: Relaxed from 2.0x to 1.5x",
+        "_price_comment": "ISSUE 5 FIX: Relaxed from 3.0% to 1.5% for shorts"
       },
       "vwap_position": {
-        "long_requires_above_vwap": true,
-        "short_requires_below_vwap": true,
-        "_comment": "VWAP position confirms momentum direction"
+        "long_requires_above_vwap": false,
+        "short_requires_below_vwap": false,
+        "_comment": "ISSUE 5 FIX: Disabled VWAP position requirement"
       },
       "entry": {
-        "_comment": "PRO RULE: Don't chase opening spike - wait for pullback to VWAP",
+        "_comment": "Wait for pullback to VWAP AND hold for 1 candle",
         "mode": "pullback",
         "reference": "vwap",
         "zone_atr_mult": 0.15,
-        "_zone_comment": "Entry zone = VWAP +/- 0.15 ATR (tight zone around VWAP)"
+        "_zone_comment": "Entry zone = VWAP +/- 0.15 ATR"
       },
       "stop_loss": {
-        "_comment": "PRO RULE: Stop just above VWAP for shorts",
-        "reference": "vwap",
+        "_comment": "PRO TRADER: Stop at previous day close (natural resistance for gap down)",
+        "reference": "prev_close",
+        "pct_of_price": 0.008,
         "buffer_atr_mult": 0.2,
-        "_buffer_comment": "Stop = VWAP + 0.2 ATR for shorts"
+        "_prev_close_comment": "Prev close = natural resistance for gap down shorts"
       },
       "targets": {
-        "_comment": "R:R based targets from pro research",
+        "_comment": "R:R based targets",
         "t1_rr": 1.0,
         "t2_rr": 2.0,
         "t3_rr": 3.0,

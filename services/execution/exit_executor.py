@@ -178,6 +178,9 @@ class ExitExecutor:
         self._or_kill_observation: Dict[str, Dict] = {}  # Track OR observation states
         self._last_momentum_check: Dict[str, float] = {}  # Cache momentum calculations
 
+        # ISSUE 1 FIX: Enable intrabar inference for T1/SL race condition
+        self.intrabar_inference_enabled = bool(cfg.get("exit_intrabar_inference_enabled", True))
+
         # OR_kill enhancement config
         self.or_kill_time_adaptive = bool(cfg.get("or_kill_time_adaptive", True))
         self.or_kill_volume_confirmation = bool(cfg.get("or_kill_volume_confirmation", True))
@@ -335,6 +338,20 @@ class ExitExecutor:
                 st = pos.plan.get("_state") or {}
                 t1_done = bool(st.get("t1_done", False))
                 t2_done = bool(st.get("t2_done", False))
+
+                # ISSUE 1 FIX: Get T1 early for intrabar inference
+                t1_early, _ = self._get_targets(pos.plan)
+
+                # ISSUE 1 FIX: Check T1 FIRST if intrabar inference suggests T1 was hit before SL
+                # This prevents the race condition where SL is checked first even though T1 was hit first
+                if (not t1_done) and not math.isnan(t1_early) and not math.isnan(plan_sl):
+                    if self._intrabar_t1_first(sym, pos.side, t1_early, plan_sl):
+                        # T1 was likely hit first - process T1 before SL
+                        t1_px = self.broker.get_ltp_with_level(sym, check_level=t1_early)
+                        if t1_px is not None and self._target_hit(pos.side, t1_px, t1_early):
+                            t1_ltp = t1_px
+                            self._partial_exit_t1(sym, pos, t1_ltp, ts)
+                            continue  # T1 partial done, SL will be BE now
 
                 # Check SL with intrabar accuracy - broker handles live vs backtest polymorphically
                 if not math.isnan(plan_sl):
@@ -625,6 +642,73 @@ class ExitExecutor:
             return False
         side = side.upper()
         return (px >= tgt) if side == "BUY" else (px <= tgt)
+
+    def _intrabar_t1_first(self, sym: str, side: str, t1: float, sl: float) -> bool:
+        """
+        ISSUE 1 FIX: Intrabar inference for T1/SL race condition.
+
+        When both T1 and SL are within the current bar's [low, high] range,
+        we infer which was likely hit first based on the bar's direction:
+
+        For LONG positions:
+          - Bullish bar (close > open): Price went UP first → T1 likely hit first
+          - Bearish bar (close < open): Price went DOWN first → SL likely hit first
+
+        For SHORT positions:
+          - Bearish bar (close < open): Price went DOWN first → T1 likely hit first (favorable)
+          - Bullish bar (close > open): Price went UP first → SL likely hit first
+
+        Returns True if T1 was likely hit first, False otherwise.
+        """
+        if not self.intrabar_inference_enabled:
+            return False
+
+        # Get bar OHLC from broker's cache
+        bar_ohlc = None
+        try:
+            with self.broker._lp_lock:
+                bar_ohlc = self.broker._last_bar_ohlc.get(sym)
+        except (AttributeError, KeyError):
+            pass
+
+        if not bar_ohlc:
+            return False
+
+        try:
+            low = float(bar_ohlc["low"])
+            high = float(bar_ohlc["high"])
+            open_px = float(bar_ohlc["open"])
+            close_px = float(bar_ohlc["close"])
+        except (KeyError, TypeError, ValueError):
+            return False
+
+        # Check if both T1 and SL are within bar range
+        t1_in_range = low <= t1 <= high
+        sl_in_range = low <= sl <= high
+
+        if not (t1_in_range and sl_in_range):
+            # Only one level touched, no race condition
+            return False
+
+        # Both levels within bar range - use direction inference
+        side = side.upper()
+        is_bullish = close_px > open_px
+
+        if side == "BUY":
+            # LONG: Bullish bar = T1 first, Bearish bar = SL first
+            t1_first = is_bullish
+        else:
+            # SHORT: Bearish bar = T1 first, Bullish bar = SL first
+            t1_first = not is_bullish
+
+        if t1_first:
+            logger.info(
+                f"INTRABAR_INFERENCE | {sym} | {side} | T1_FIRST | "
+                f"Bar: O={open_px:.2f} H={high:.2f} L={low:.2f} C={close_px:.2f} | "
+                f"T1={t1:.2f} SL={sl:.2f} | Bullish={is_bullish}"
+            )
+
+        return t1_first
 
     # ---------- Trail ----------
 

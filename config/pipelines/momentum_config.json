@@ -199,10 +199,11 @@
                 "cap": 0.3
             },
             "adx": {
-                "_comment": "rank_adx_mid=25, rank_adx_divisor=20, rank_adx_floor=-0.3",
+                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score",
                 "mid": 25.0,
                 "divisor": 20.0,
-                "floor": -0.3
+                "floor": -0.3,
+                "cap": 0.4
             },
             "adx_slope": {
                 "_comment": "rank_adx_slope_cap=0.2",
@@ -313,8 +314,8 @@
     },
 
     "entry": {
-        "_comment": "From configuration.json - stop_distance_mult: 0.75 for trend_continuation",
-        "zone_mult_atr": 0.15,
+        "_comment": "ISSUE 2 FIX: Widened from 0.15 to 0.25 ATR to capture close misses (63 trades within 0.5%)",
+        "zone_mult_atr": 0.25,
         "mode": "retest",
         "triggers": {
             "long": "hold_above_ema20",

@@ -44,7 +44,7 @@
         "min_bars_required": 4,
         "first_hour_momentum": {
             "_comment": "FHM: First Hour Momentum - Capture big movers early in the session",
-            "_rationale": "99.7% of big movers (>=3% moves) are missed. Pro traders use RVOL/price momentum in first hour.",
+            "_rationale": "ISSUE 5 FIX: 99.7% of big movers were missed. Relaxed thresholds to capture more opportunities.",
             "enabled": true,
             "time_window": {
                 "start": "09:15",
@@ -52,21 +52,22 @@
                 "_comment": "ONLY active during first hour of trading"
             },
             "triggers": {
-                "min_rvol": 2.0,
-                "min_price_move_pct": 1.5,
-                "min_volume_1m": 100000,
-                "_rvol_comment": "RVOL > 2x signals unusual institutional activity",
-                "_price_comment": "1.5% move from open shows momentum started"
+                "min_rvol": 1.5,
+                "min_price_move_pct": 1.0,
+                "min_volume_1m": 50000,
+                "_rvol_comment": "ISSUE 5 FIX: Relaxed from 2.0x to 1.5x - captures more early movers",
+                "_price_comment": "ISSUE 5 FIX: Relaxed from 1.5% to 1.0% - captures earlier entry",
+                "_volume_comment": "ISSUE 5 FIX: Relaxed from 100k to 50k - FHM uses RVOL not absolute volume"
             },
             "vwap_position": {
-                "long_requires_above_vwap": true,
-                "short_requires_below_vwap": true,
-                "_comment": "VWAP position confirms momentum direction"
+                "long_requires_above_vwap": false,
+                "short_requires_below_vwap": false,
+                "_comment": "ISSUE 5 FIX: Disabled VWAP position requirement - too restrictive for early movers"
             },
             "regime_override": {
                 "enabled": true,
-                "rvol_threshold_for_override": 3.0,
-                "_comment": "When RVOL > 3x, skip regime blocking - institutional flow trumps regime"
+                "rvol_threshold_for_override": 2.0,
+                "_comment": "ISSUE 5 FIX: Lowered from 3.0x to 2.0x - allows more regime bypasses"
             }
         }
     },
@@ -196,10 +197,11 @@
                 "cap": 0.3
             },
             "adx": {
-                "_comment": "rank_adx_mid=25, rank_adx_divisor=20, rank_adx_floor=-0.3",
+                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score",
                 "mid": 25.0,
                 "divisor": 20.0,
-                "floor": -0.3
+                "floor": -0.3,
+                "cap": 0.4
             },
             "adx_slope": {
                 "_comment": "rank_adx_slope_cap=0.2",

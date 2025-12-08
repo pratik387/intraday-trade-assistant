@@ -1507,6 +1507,12 @@ class BasePipeline(ABC):
             "levels": levels,
             "pipeline_reasons": screen_result.reasons + gate_result.reasons,
             "cautions": cautions,
+            # FHM context for diagnostics logging (RVOL, price move %)
+            "fhm_context": {
+                "rvol": screen_result.features.get("fhm_rvol", 0.0),
+                "price_move_pct": screen_result.features.get("fhm_price_move_pct", 0.0),
+                "eligible": screen_result.features.get("fhm_eligible", False),
+            } if "first_hour_momentum" in setup_type else None,
         }
 
         # 10. QUALITY FILTER ENFORCEMENT (transferred from planner_internal.py lines 1358-1451)

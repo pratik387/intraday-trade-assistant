@@ -233,10 +233,11 @@
                 "cap": 0.3
             },
             "adx": {
-                "_comment": "rank_adx_mid=25, rank_adx_divisor=20, rank_adx_floor=-0.3",
+                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score (losers had 0.615 vs winners 0.475)",
                 "mid": 25.0,
                 "divisor": 20.0,
-                "floor": -0.3
+                "floor": -0.3,
+                "cap": 0.4
             },
             "adx_slope": {
                 "_comment": "rank_adx_slope_cap=0.2",

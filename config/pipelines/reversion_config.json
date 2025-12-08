@@ -155,10 +155,11 @@
                 "cap": 0.3
             },
             "adx": {
-                "_comment": "rank_adx_mid=25, rank_adx_divisor=20, rank_adx_floor=-0.3",
+                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score",
                 "mid": 25.0,
                 "divisor": 20.0,
-                "floor": -0.3
+                "floor": -0.3,
+                "cap": 0.4
             },
             "adx_slope": {
                 "_comment": "rank_adx_slope_cap=0.2",
@@ -255,8 +256,8 @@
     },
 
     "entry": {
-        "_comment": "From configuration.json planner_entry_zone_fade_mult: 0.08 - Reverted to baseline for tighter mean-reversion entries",
-        "zone_mult_atr": 0.08,
+        "_comment": "ISSUE 2 FIX: Widened from 0.08 to 0.15 ATR to capture close misses (63 trades within 0.5%)",
+        "zone_mult_atr": 0.15,
         "mode": "retest",
         "triggers": {
             "long": "reversal_from_low",
