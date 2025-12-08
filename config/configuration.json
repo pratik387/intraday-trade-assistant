@@ -30,7 +30,8 @@
       "liquidity_sweep_short",
       "discount_zone_long",
       "break_of_structure_long",
-      "change_of_character_short"
+      "change_of_character_short",
+      "first_hour_momentum_long"
     ],
     "trend_down": [
       "breakout_short",
@@ -47,7 +48,8 @@
       "liquidity_sweep_short",
       "premium_zone_short",
       "break_of_structure_short",
-      "change_of_character_long"
+      "change_of_character_long",
+      "first_hour_momentum_short"
     ],
     "chop": [
       "failure_fade_long",
@@ -65,7 +67,9 @@
       "liquidity_sweep_long",
       "liquidity_sweep_short",
       "change_of_character_long",
-      "change_of_character_short"
+      "change_of_character_short",
+      "first_hour_momentum_long",
+      "first_hour_momentum_short"
     ],
     "squeeze": [
       "squeeze_release_long",
@@ -79,7 +83,9 @@
       "liquidity_sweep_long",
       "liquidity_sweep_short",
       "break_of_structure_long",
-      "break_of_structure_short"
+      "break_of_structure_short",
+      "first_hour_momentum_long",
+      "first_hour_momentum_short"
     ]
   },
   "regime_thresholds": {
@@ -1178,53 +1184,93 @@
       }
     },
     "first_hour_momentum_long": {
-      "_comment": "FHM: First Hour Momentum - Captures big movers early using RVOL and price momentum",
+      "_comment": "FHM: Pro trader first hour momentum - DON'T chase opening drive, WAIT for VWAP pullback",
+      "_research": "Warrior Trading + NSE India research: Enter on pullback to VWAP, not at current price",
       "enabled": true,
       "min_bars_required": 4,
       "time_window": {
         "start": "09:15",
-        "end": "10:15",
-        "_comment": "ONLY active during first hour of trading"
+        "end": "10:30",
+        "_comment": "Extended to 10:30 - Pro traders trade first 75 min (includes pullback time)"
       },
       "triggers": {
         "min_rvol": 2.0,
         "min_price_move_pct": 1.5,
         "min_volume": 100000,
-        "_rvol_comment": "RVOL > 2x signals unusual institutional activity",
-        "_price_comment": "1.5% move from open shows momentum started"
+        "_rvol_comment": "RVOL > 2x signals unusual institutional activity (Ross Cameron uses 5x for aggressive)",
+        "_price_comment": "1.5% move from open = opening drive detected"
       },
       "vwap_position": {
         "long_requires_above_vwap": true,
         "short_requires_below_vwap": true,
         "_comment": "VWAP position confirms momentum direction"
       },
-      "target_mult_t1": 1.5,
-      "target_mult_t2": 2.5,
-      "stop_atr_mult": 2.0,
+      "entry": {
+        "_comment": "PRO RULE: Don't chase opening spike - wait for pullback to VWAP",
+        "mode": "pullback",
+        "reference": "vwap",
+        "zone_atr_mult": 0.15,
+        "_zone_comment": "Entry zone = VWAP +/- 0.15 ATR (tight zone around VWAP)"
+      },
+      "stop_loss": {
+        "_comment": "PRO RULE: Stop just below VWAP (not arbitrary ATR-based)",
+        "reference": "vwap",
+        "buffer_atr_mult": 0.2,
+        "_buffer_comment": "Stop = VWAP - 0.2 ATR for longs (VWAP + 0.2 ATR for shorts)"
+      },
+      "targets": {
+        "_comment": "R:R based targets from pro research",
+        "t1_rr": 1.0,
+        "t2_rr": 2.0,
+        "t3_rr": 3.0,
+        "qty_split": [60, 40, 0]
+      },
       "confidence_high_rvol": 2.0,
       "confidence_base": 1.5,
       "high_rvol_threshold": 3.0
     },
     "first_hour_momentum_short": {
-      "_comment": "FHM: First Hour Momentum Short - Captures big down movers early",
+      "_comment": "FHM Short: Pro trader first hour momentum - DON'T chase opening drive, WAIT for VWAP pullback",
+      "_research": "Warrior Trading + NSE India research: Enter on pullback to VWAP, not at current price",
       "enabled": true,
       "min_bars_required": 4,
       "time_window": {
         "start": "09:15",
-        "end": "10:15"
+        "end": "10:30",
+        "_comment": "Extended to 10:30 - Pro traders trade first 75 min (includes pullback time)"
       },
       "triggers": {
         "min_rvol": 2.0,
         "min_price_move_pct": 1.5,
-        "min_volume": 100000
+        "min_volume": 100000,
+        "_rvol_comment": "RVOL > 2x signals unusual institutional activity",
+        "_price_comment": "1.5% move from open = opening drive detected"
       },
       "vwap_position": {
         "long_requires_above_vwap": true,
-        "short_requires_below_vwap": true
+        "short_requires_below_vwap": true,
+        "_comment": "VWAP position confirms momentum direction"
       },
-      "target_mult_t1": 1.5,
-      "target_mult_t2": 2.5,
-      "stop_atr_mult": 2.0,
+      "entry": {
+        "_comment": "PRO RULE: Don't chase opening spike - wait for pullback to VWAP",
+        "mode": "pullback",
+        "reference": "vwap",
+        "zone_atr_mult": 0.15,
+        "_zone_comment": "Entry zone = VWAP +/- 0.15 ATR (tight zone around VWAP)"
+      },
+      "stop_loss": {
+        "_comment": "PRO RULE: Stop just above VWAP for shorts",
+        "reference": "vwap",
+        "buffer_atr_mult": 0.2,
+        "_buffer_comment": "Stop = VWAP + 0.2 ATR for shorts"
+      },
+      "targets": {
+        "_comment": "R:R based targets from pro research",
+        "t1_rr": 1.0,
+        "t2_rr": 2.0,
+        "t3_rr": 3.0,
+        "qty_split": [60, 40, 0]
+      },
       "confidence_high_rvol": 2.0,
       "confidence_base": 1.5,
       "high_rvol_threshold": 3.0

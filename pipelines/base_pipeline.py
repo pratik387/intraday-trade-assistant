@@ -373,7 +373,8 @@ class BasePipeline(ABC):
         bias: str,
         atr: float,
         levels: Dict[str, float],
-        measured_move: float
+        measured_move: float,
+        setup_type: str = ""
     ) -> TargetResult:
         """Calculate category-specific targets and stop loss."""
         pass
@@ -1244,13 +1245,14 @@ class BasePipeline(ABC):
 
         # 3b. UNIVERSAL RSI DEAD ZONE FILTER (for LONGS only) - CONFIG DRIVEN
         # Data-driven: RSI 35-50 has 43% of ALL hard_sl losses for LONG trades
-        # ORB setups bypass this filter - RSI erratic at market open, structure detector enforces time cutoff
+        # ORB/FHM setups bypass this filter - RSI erratic at market open, structure detector enforces time cutoff
         base_cfg = load_base_config()
         rsi_dead_zone_cfg = base_cfg["rsi_dead_zone"]
         if rsi_dead_zone_cfg["enabled"]:
             is_orb = "orb" in setup_type.lower()
-            if is_orb:
-                logger.debug(f"[{category}] {symbol} {setup_type} RSI dead zone BYPASSED: ORB setup")
+            is_fhm = "first_hour_momentum" in setup_type.lower()
+            if is_orb or is_fhm:
+                logger.debug(f"[{category}] {symbol} {setup_type} RSI dead zone BYPASSED: early morning setup")
             else:
                 rsi_val = features.get("rsi") or features.get("rsi14")
                 if rsi_val is None:
@@ -1403,7 +1405,7 @@ class BasePipeline(ABC):
 
         target_result = self.calculate_targets(
             symbol, effective_entry_price, hard_sl,
-            bias, atr, levels, measured_move
+            bias, atr, levels, measured_move, setup_type
         )
 
         # 8. POSITION SIZING - NO SOFT PENALTIES (Pro Trader Approach)

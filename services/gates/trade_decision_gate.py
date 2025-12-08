@@ -98,6 +98,9 @@ SetupType = Literal[
     "range_deviation_short",
     "range_mean_reversion_long",
     "range_mean_reversion_short",
+    # FIRST HOUR MOMENTUM - Pro trader technique using RVOL + price momentum
+    "first_hour_momentum_long",
+    "first_hour_momentum_short",
 ]
 
 
@@ -171,6 +174,8 @@ def _is_breakout(setup: SetupType) -> bool:
         "break_of_structure_short",
         "change_of_character_long",
         "change_of_character_short",
+        "first_hour_momentum_long",
+        "first_hour_momentum_short",
     }
 
 
@@ -771,21 +776,26 @@ class TradeDecisionGate:
 
             hc_ok, hc_reasons = self._is_high_conviction_candidate(best.setup_type, regime, features)
 
-        # Insufficient bars veto unless HCET or ORB setup
-        # ORB EARLY WINDOW FIX: ORB strategies use 4-bar minimum (15-min range = 3 bars + 1 breakout bar)
+        # Insufficient bars veto unless HCET, ORB, or FHM setup
+        # ORB/FHM EARLY WINDOW FIX: These strategies use 4-bar minimum (15-min range = 3 bars + 1 bar)
         # Pro traders enter ORB breakouts as early as 09:35 (4 bars from 09:15)
+        # FHM specifically targets first hour momentum - needs to work with 4+ bars
         is_orb_setup = best.setup_type in ("orb_breakout_long", "orb_breakout_short",
                                            "orb_breakdown_long", "orb_breakdown_short",
                                            "orb_pullback_long", "orb_pullback_short")
-        orb_min_bars = 4  # Pro trader standard: 15-min range (3 bars) + 1 bar for breakout
-        min_bars_required = orb_min_bars if is_orb_setup else 10
+        is_fhm_setup = best.setup_type in ("first_hour_momentum_long", "first_hour_momentum_short")
+        early_window_min_bars = 4  # Pro trader standard: 15-min range (3 bars) + 1 bar for breakout
+        min_bars_required = early_window_min_bars if (is_orb_setup or is_fhm_setup) else 10
 
         if df5m_tail is None or len(df5m_tail) < min_bars_required:
             if hc_ok:
                 reasons.append(f"hcet_enable_early({len(df5m_tail) if df5m_tail is not None else 0}bars)")
-            elif is_orb_setup and len(df5m_tail) >= orb_min_bars:
+            elif is_orb_setup and len(df5m_tail) >= early_window_min_bars:
                 # ORB setups with 4+ bars are allowed through (early morning detection)
                 reasons.append(f"orb_early_window({len(df5m_tail)}bars)")
+            elif is_fhm_setup and len(df5m_tail) >= early_window_min_bars:
+                # FHM setups with 4+ bars are allowed through (first hour momentum)
+                reasons.append(f"fhm_early_window({len(df5m_tail)}bars)")
             else:
                 return GateDecision(accept=False, reasons=reasons)
 

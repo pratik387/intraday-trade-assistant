@@ -74,6 +74,7 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "trend_pullback": SetupCategory.MOMENTUM,
     "trend_reversal": SetupCategory.MOMENTUM,
     "momentum_trend": SetupCategory.MOMENTUM,
+    "first_hour_momentum": SetupCategory.MOMENTUM,  # FHM - catches big movers early in first hour
 }
 
 

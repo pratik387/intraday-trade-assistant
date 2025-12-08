@@ -573,7 +573,8 @@ class ReversionPipeline(BasePipeline):
         bias: str,
         atr: float,
         levels: Dict[str, float],
-        measured_move: float
+        measured_move: float,
+        setup_type: str = ""
     ) -> TargetResult:
         """
         Reversion targets: VWAP is the primary target.

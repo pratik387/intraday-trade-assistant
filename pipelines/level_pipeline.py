@@ -750,7 +750,8 @@ class LevelPipeline(BasePipeline):
         bias: str,
         atr: float,
         levels: Dict[str, float],
-        measured_move: float
+        measured_move: float,
+        setup_type: str = ""
     ) -> TargetResult:
         """
         Level targets: Conservative R:R since level plays are mean-reversion.

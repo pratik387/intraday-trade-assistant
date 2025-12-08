@@ -841,7 +841,8 @@ class BreakoutPipeline(BasePipeline):
         bias: str,
         atr: float,
         levels: Dict[str, float],
-        measured_move: float
+        measured_move: float,
+        setup_type: str = ""
     ) -> TargetResult:
         """
         Breakout targets: R:R based on measured move.
