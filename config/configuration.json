@@ -1238,14 +1238,18 @@
       "high_rvol_threshold": 3.0
     },
     "first_hour_momentum_short": {
-      "_comment": "ISSUE 5 FIX: Relaxed FHM thresholds to capture more opportunities",
-      "_research": "99.7% of big movers missed. Relaxed thresholds while keeping gap_down for shorts.",
-      "_fix_details": "RVOL 2.0→1.5, price 3.0%→1.5%, time 09:45→09:20, VWAP hold disabled",
+      "_comment": "DATA-DRIVEN FHM Short - chop + below_vwap = +121 Rs/trade (2.5x improvement)",
+      "_research": "6-month backtest: chop regime + below VWAP = 46 trades, +5,569 Rs, 61% WR",
+      "_fix_details": "Regime filter: chop only. VWAP: below required. Volume filter hurts shorts!",
       "enabled": true,
       "min_bars_required": 4,
       "require_vwap_hold": false,
       "require_gap_down": false,
       "stop_at_prev_close": true,
+      "regime_filter": {
+        "_comment": "DATA-DRIVEN: chop = +121 Rs/trade, trend_down = +52, squeeze = +25. Chop only!",
+        "short_allowed_regimes": ["chop"]
+      },
       "time_window": {
         "start": "09:20",
         "end": "10:30",
@@ -1256,12 +1260,13 @@
         "min_price_move_pct": 1.5,
         "min_volume": 50000,
         "_rvol_comment": "ISSUE 5 FIX: Relaxed from 2.0x to 1.5x",
-        "_price_comment": "ISSUE 5 FIX: Relaxed from 3.0% to 1.5% for shorts"
+        "_price_comment": "ISSUE 5 FIX: Relaxed from 3.0% to 1.5% for shorts",
+        "_volume_note": "DATA-DRIVEN: Volume filter HURTS shorts! vol>=100k drops avg from +121 to +68. Keep low."
       },
       "vwap_position": {
         "long_requires_above_vwap": false,
-        "short_requires_below_vwap": false,
-        "_comment": "ISSUE 5 FIX: Disabled VWAP position requirement"
+        "short_requires_below_vwap": true,
+        "_comment": "DATA-DRIVEN: below VWAP = +121 Rs/trade (61% WR) vs all = +48 Rs/trade"
       },
       "entry": {
         "_comment": "Wait for pullback to VWAP AND hold for 1 candle",
