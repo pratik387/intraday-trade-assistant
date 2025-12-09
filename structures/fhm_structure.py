@@ -83,6 +83,11 @@ class FHMStructure(BaseStructure):
         self.long_allowed_regimes = regime_filter_cfg.get("allowed_regimes", [])  # Empty = all regimes
         self.short_allowed_regimes = regime_filter_cfg.get("short_allowed_regimes", [])  # Empty = all regimes
 
+        # DIRECTION RESTRICTION: Each detector instance should only detect its intended direction
+        # This prevents first_hour_momentum_long from detecting shorts and vice versa
+        # "long" = only detect longs, "short" = only detect shorts, "both" = detect both (default)
+        self.detect_direction = config.get("detect_direction", "both")
+
         # VWAP position config - KeyError if missing (no defaults)
         vwap_cfg = config["vwap_position"]
         self.long_requires_above_vwap = vwap_cfg["long_requires_above_vwap"]
@@ -238,6 +243,15 @@ class FHMStructure(BaseStructure):
 
             if price_move_pct > 0:
                 # Long candidate
+                # DIRECTION RESTRICTION: Skip if this detector is configured for shorts only
+                if self.detect_direction == "short":
+                    return StructureAnalysis(
+                        structure_detected=False,
+                        events=[],
+                        quality_score=0.0,
+                        rejection_reason=f"Detector configured for short only, but price move is positive"
+                    )
+
                 vwap_check = not self.long_requires_above_vwap or vwap is None or current_price > vwap
 
                 if not vwap_check:
@@ -323,6 +337,15 @@ class FHMStructure(BaseStructure):
 
             else:
                 # Short candidate
+                # DIRECTION RESTRICTION: Skip if this detector is configured for longs only
+                if self.detect_direction == "long":
+                    return StructureAnalysis(
+                        structure_detected=False,
+                        events=[],
+                        quality_score=0.0,
+                        rejection_reason=f"Detector configured for long only, but price move is negative"
+                    )
+
                 vwap_check = not self.short_requires_below_vwap or vwap is None or current_price < vwap
 
                 if not vwap_check:

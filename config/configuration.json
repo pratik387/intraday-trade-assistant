@@ -1188,6 +1188,7 @@
       "_research": "6-month backtest: 396 trades, -26,921 Rs baseline. Best 100+ Rs/trade filter found.",
       "_fix_details": "REGIME=SQUEEZE + ADX>=35 + Vol>=100k = highest avg profit per trade",
       "enabled": true,
+      "detect_direction": "long",
       "min_bars_required": 5,
       "require_vwap_hold": false,
       "time_window": {
@@ -1200,12 +1201,12 @@
         "_comment": "CRITICAL: FHM Long ONLY works in squeeze regime (chop/trend = negative)"
       },
       "triggers": {
-        "min_rvol": 1.5,
+        "min_rvol": 2.0,
         "min_price_move_pct": 1.0,
         "min_volume": 100000,
-        "min_bar5_adx": 35,
+        "_rvol_comment": "PRO STANDARD: RVOL>=2.0x indicates institutional activity (was 1.5x - too low)",
         "_volume_comment": "OPTIMIZED: bar5_volume >= 100k (was 200k) for more trades",
-        "_adx_comment": "OPTIMIZED: bar5_adx >= 35 (was 30) for stronger momentum = +104 Rs/trade"
+        "_adx_removed": "ADX requirement removed - FHM validates via RVOL, ADX unreliable in first hour (takes 14+ bars to stabilize)"
       },
       "vwap_position": {
         "long_requires_above_vwap": false,
@@ -1242,6 +1243,7 @@
       "_research": "6-month backtest: chop regime + below VWAP = 46 trades, +5,569 Rs, 61% WR",
       "_fix_details": "Regime filter: chop only. VWAP: below required. Volume filter hurts shorts!",
       "enabled": true,
+      "detect_direction": "short",
       "min_bars_required": 4,
       "require_vwap_hold": false,
       "require_gap_down": false,
@@ -1256,10 +1258,10 @@
         "_comment": "ISSUE 5 FIX: Earlier start 09:20 (was 09:45)"
       },
       "triggers": {
-        "min_rvol": 1.5,
+        "min_rvol": 2.0,
         "min_price_move_pct": 1.5,
         "min_volume": 50000,
-        "_rvol_comment": "ISSUE 5 FIX: Relaxed from 2.0x to 1.5x",
+        "_rvol_comment": "PRO STANDARD: RVOL>=2.0x indicates institutional activity",
         "_price_comment": "ISSUE 5 FIX: Relaxed from 3.0% to 1.5% for shorts",
         "_volume_note": "DATA-DRIVEN: Volume filter HURTS shorts! vol>=100k drops avg from +121 to +68. Keep low."
       },

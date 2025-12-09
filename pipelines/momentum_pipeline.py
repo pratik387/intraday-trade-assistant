@@ -66,8 +66,8 @@ class MomentumPipeline(BasePipeline):
         """
         Momentum-specific screening filters.
 
-        - ADX must show trending market (except FHM which uses RVOL)
-        - EMA stack should be aligned (relaxed for FHM)
+        - ADX must show trending market
+        - EMA stack should be aligned
         - Not in choppy conditions
         """
         # levels reserved for future level-based screening
@@ -78,32 +78,17 @@ class MomentumPipeline(BasePipeline):
         reasons = []
         passed = True
 
-        # Check if this is an FHM (First Hour Momentum) setup
-        setup_type = features.get("setup_type", "")
-        is_fhm = "first_hour_momentum" in setup_type
-
-        # ADX check from config - need trending market (bypassed for FHM)
+        # ADX check from config - need trending market
         adx = float(df5m["adx"].iloc[-1]) if "adx" in df5m.columns else 0.0
         min_adx = self._get("screening", "adx", "min_value")
 
-        if is_fhm:
-            # FHM uses RVOL-based momentum instead of ADX
-            # The FHM detector already validated RVOL >= 2.0x
-            volume_ratio = features.get("volume_ratio", 1.0)
-            if volume_ratio >= 1.5:
-                reasons.append(f"fhm_volume_ok:{volume_ratio:.2f}x")
-            else:
-                reasons.append(f"fhm_volume_low:{volume_ratio:.2f}x")
-                # Don't fail on volume - FHM detector already validated RVOL
-            reasons.append(f"fhm_adx_bypass:{adx:.1f}")
+        if adx < min_adx:
+            reasons.append(f"adx_too_low:{adx:.1f}<{min_adx}")
+            passed = False
         else:
-            if adx < min_adx:
-                reasons.append(f"adx_too_low:{adx:.1f}<{min_adx}")
-                passed = False
-            else:
-                reasons.append(f"adx_ok:{adx:.1f}>={min_adx}")
+            reasons.append(f"adx_ok:{adx:.1f}>={min_adx}")
 
-        # EMA alignment check from config (relaxed for FHM)
+        # EMA alignment check from config
         ema_required = self._get("screening", "ema_alignment", "required")
         current_close = float(df5m["close"].iloc[-1])
         ema20 = float(df5m["ema20"].iloc[-1]) if "ema20" in df5m.columns else current_close
@@ -125,8 +110,7 @@ class MomentumPipeline(BasePipeline):
         else:
             trend_dir = "flat"
             reasons.append("ema_stack_flat")
-            # FHM doesn't require EMA alignment - early movers may not have formed stack yet
-            if ema_required and not is_fhm:
+            if ema_required:
                 passed = False  # No clear trend
 
         return ScreeningResult(
@@ -249,21 +233,13 @@ class MomentumPipeline(BasePipeline):
         Momentum plays REQUIRE trending regime:
         - Block in chop (no trend to follow)
         - Boost in trend_up/trend_down
-
-        EXCEPTION: FHM (First Hour Momentum) bypasses regime/ADX gates:
-        - FHM uses RVOL-based momentum (already validated in detector)
-        - FHM happens early session before trends establish
-        - FHM only needs volume gate
         """
         # df1m reserved for future 1-minute analysis
         _ = df1m
         # strength reserved for future strength-based gating
         _ = strength
 
-        # Check if this is an FHM setup
-        is_fhm = "first_hour_momentum" in setup_type
-
-        logger.debug(f"[MOMENTUM] Validating gates for {symbol} {setup_type}: regime={regime}, adx={adx:.1f}, vol={vol_mult:.2f}, is_fhm={is_fhm}")
+        logger.debug(f"[MOMENTUM] Validating gates for {symbol} {setup_type}: regime={regime}, adx={adx:.1f}, vol={vol_mult:.2f}")
 
         reasons = []
         passed = True
@@ -278,21 +254,9 @@ class MomentumPipeline(BasePipeline):
         bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
         is_long = "_long" in setup_type
 
-        # FHM VOLUME GATE: FHM uses RVOL-based detection, but still needs reasonable volume
-        # The FHM detector already validated RVOL >= 2.0x, so we use relaxed volume gate (50k)
-        if is_fhm:
-            fhm_min_volume = 50000  # Relaxed for early session plays
-            if bar5_volume < fhm_min_volume:
-                reasons.append(f"fhm_vol_blocked:{bar5_volume/1000:.0f}k<{fhm_min_volume/1000:.0f}k")
-                logger.debug(f"[MOMENTUM] {symbol} FHM BLOCKED: Vol {bar5_volume/1000:.0f}k < {fhm_min_volume/1000:.0f}k")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            else:
-                reasons.append(f"fhm_vol_ok:{bar5_volume/1000:.0f}k")
-                logger.debug(f"[MOMENTUM] {symbol} FHM volume OK: {bar5_volume/1000:.0f}k")
-
         # 1. MOMENTUM_BREAKOUT_LONG: VOLUME < 100K FILTER
         # Evidence: R1: +848 Rs (14 trades) | R2: +998 Rs (13 trades) - Low volume lacks conviction
-        elif setup_type == "momentum_breakout_long":
+        if setup_type == "momentum_breakout_long":
             filter_cfg = validated_filters.get("momentum_breakout_long_volume")
             min_volume = filter_cfg.get("min_volume")
             if bar5_volume < min_volume:
@@ -316,14 +280,9 @@ class MomentumPipeline(BasePipeline):
                 reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
 
         # Regime check from config - momentum NEEDS trend - HARD GATES only
-        # FHM BYPASS: FHM happens early session before trends establish - allow in any regime
         regime_cfg = self._get("gates", "regime_rules")
 
-        if is_fhm:
-            # FHM bypasses regime gate - early movers often start before trend establishes
-            reasons.append(f"fhm_regime_bypass:{regime}")
-            logger.debug(f"[MOMENTUM] {symbol} FHM bypasses regime gate: {regime}")
-        elif regime in regime_cfg:
+        if regime in regime_cfg:
             rule = regime_cfg[regime]
             if not rule["allowed"]:
                 reasons.append(f"regime_blocked:{regime}")
@@ -342,14 +301,9 @@ class MomentumPipeline(BasePipeline):
                         passed = False
 
         # ADX gate from config - strict for momentum - HARD GATE
-        # FHM BYPASS: FHM uses RVOL-based momentum, not ADX
         # Note: ADX is also checked in screening, this is additional validation
         adx_cfg = self._get("gates", "adx")
-        if is_fhm:
-            # FHM bypasses ADX gate - uses RVOL instead
-            reasons.append(f"fhm_adx_bypass:{adx:.1f}")
-            logger.debug(f"[MOMENTUM] {symbol} FHM bypasses ADX gate: {adx:.1f}")
-        elif adx < adx_cfg["min_value"]:
+        if adx < adx_cfg["min_value"]:
             reasons.append(f"adx_weak:{adx:.1f}<{adx_cfg['min_value']}")
             passed = False
         else:

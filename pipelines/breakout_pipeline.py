@@ -389,6 +389,9 @@ class BreakoutPipeline(BasePipeline):
         bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
         is_long = "_long" in setup_type
 
+        # Early FHM detection for bypass logic
+        is_fhm = "first_hour_momentum" in setup_type.lower()
+
         # 1. BREAKOUT_LONG: HOUR = 11 FILTER
         # Evidence: R1: +1,695 Rs (91 trades) | R2: +1,554 Rs (92 trades) - 11AM breakouts have low WR
         if setup_type == "breakout_long":
@@ -403,7 +406,9 @@ class BreakoutPipeline(BasePipeline):
 
         # 2. LONG TRADE VOLUME FILTER (MIN 150K)
         # Evidence: Winners have 2x volume (213k vs 107k)
-        if is_long:
+        # FHM BYPASS: FHM uses RVOL (relative volume) from screening, not absolute volume
+        # Small caps with high RVOL (6.97x like MAHLOG) are valid FHM plays even with <150k absolute volume
+        if is_long and not is_fhm:
             filter_cfg = validated_filters.get("long_trade_volume")
             min_volume = filter_cfg.get("min_volume")
             if bar5_volume < min_volume:
@@ -412,11 +417,13 @@ class BreakoutPipeline(BasePipeline):
                 return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
             else:
                 reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
+        elif is_long and is_fhm:
+            reasons.append(f"fhm_long_vol_bypass:{bar5_volume/1000:.0f}k:uses_rvol")
 
         # ORB detection - structure detector already enforces 10:30 cutoff via should_detect_at_time()
         # So ALL ORB setups that reach here are within the valid window - use relaxed thresholds
         is_orb = "orb" in setup_type.lower()
-        is_fhm = "first_hour_momentum" in setup_type.lower()
+        # Note: is_fhm already defined earlier (line 393) for volume bypass
 
         # ========== FHM REGIME OVERRIDE ==========
         # Check if First Hour Momentum conditions allow regime bypass
@@ -513,8 +520,11 @@ class BreakoutPipeline(BasePipeline):
             momentum_candle_min = mom_cfg["long"]["min_ratio"]
 
         # Check 1m volume surge
+        # FHM BYPASS: FHM already validated RVOL in screening, skip 1m volume surge check
         lookback = vol_cfg["long"]["lookback_bars"]
-        if df1m is not None and len(df1m) >= 5:
+        if is_fhm:
+            reasons.append(f"fhm_volume_surge_bypass:uses_rvol_from_screening")
+        elif df1m is not None and len(df1m) >= 5:
             lookback = min(lookback, len(df1m) - 1)
             if lookback >= 4:
                 avg_volume = df1m["volume"].iloc[-lookback-1:-1].mean()
@@ -530,7 +540,10 @@ class BreakoutPipeline(BasePipeline):
                         reasons.append(f"volume_surge_pass:{volume_ratio:.2f}x")
 
         # Momentum candle filter
-        if df1m is not None and len(df1m) >= 5:
+        # FHM BYPASS: FHM uses RVOL-based momentum, not candle analysis
+        if is_fhm:
+            reasons.append(f"fhm_momentum_candle_bypass:uses_rvol")
+        elif df1m is not None and len(df1m) >= 5:
             last_5 = df1m.tail(5)
             candle_sizes = (last_5["high"] - last_5["low"]).values
             current_candle = candle_sizes[-1]
@@ -547,21 +560,29 @@ class BreakoutPipeline(BasePipeline):
 
         # ADX gate from config - HARD GATE
         # ORB uses relaxed threshold (15) - ADX takes 14+ bars to stabilize, structure detector enforces time
+        # FHM BYPASS: FHM uses RVOL-based momentum instead of ADX
         adx_cfg = self._get("gates", "adx")
-        base_min_adx = adx_cfg["min_value"]  # 20 for non-ORB
-        orb_min_adx = adx_cfg.get("orb_early_min_value")  # 15 for ORB
-        min_adx = orb_min_adx if is_orb else base_min_adx
-        if adx < min_adx:
-            reasons.append(f"adx_low:{adx:.1f}<{min_adx}")
-            passed = False
+        if is_fhm:
+            reasons.append(f"fhm_adx_bypass:{adx:.1f}:uses_rvol_instead")
         else:
-            reasons.append(f"adx_ok:{adx:.1f}>={min_adx}")
+            base_min_adx = adx_cfg["min_value"]  # 20 for non-ORB
+            orb_min_adx = adx_cfg.get("orb_early_min_value")  # 15 for ORB
+            min_adx = orb_min_adx if is_orb else base_min_adx
+            if adx < min_adx:
+                reasons.append(f"adx_low:{adx:.1f}<{min_adx}")
+                passed = False
+            else:
+                reasons.append(f"adx_ok:{adx:.1f}>={min_adx}")
 
         # RSI weak momentum gate - HARD GATE
-        # ORB uses relaxed thresholds - RSI erratic at market open, structure detector enforces time
+        # FHM BYPASS: FHM uses RVOL-based momentum instead of RSI
+        # ORB uses relaxed thresholds - RSI erratic at market open
         rsi_cfg = self.cfg["rsi_penalty"]
         rsi = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns else 50.0
-        if is_short:
+        if is_fhm:
+            # FHM validates momentum via RVOL in screening, RSI check not applicable
+            reasons.append(f"fhm_rsi_bypass:{rsi:.0f}:uses_rvol_instead")
+        elif is_short:
             # Short breakouts need RSI weakness (high RSI = no selling pressure)
             threshold = rsi_cfg.get("orb_early_short_threshold") if is_orb else rsi_cfg["short_weak_threshold"]
             if rsi < threshold:

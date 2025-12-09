@@ -1353,32 +1353,48 @@ class BasePipeline(ABC):
         adjusted_atr = atr * cap_sl_mult
         sl_below_swing_ticks = self.cfg["sl_below_swing_ticks"]
 
-        # Get structure stop from levels if available (swing low for long, swing high for short)
-        structure_stop = levels.get("structure_stop")
-        if structure_stop is None:
-            # Fallback: use ORH/ORL as structure reference
+        # FHM-SPECIFIC SL: Use percentage of price instead of ATR-based (Pro Indian market standard)
+        # PRO STANDARD: 0.5-1.5% of price for volatile momentum plays
+        # Read from breakout_config.json screening.first_hour_momentum.stop_loss config
+        is_fhm = setup_type.startswith("first_hour_momentum")
+        if is_fhm:
+            # Get FHM SL config from pipeline config (breakout_config.json)
+            # Path: screening.first_hour_momentum.stop_loss.pct_of_price
+            fhm_sl_pct = self._get("screening", "first_hour_momentum", "stop_loss", "pct_of_price")
+            fhm_sl_distance = effective_entry_price * fhm_sl_pct
             if bias == "long":
-                structure_stop = levels.get("ORL", entry_ref_price - adjusted_atr)
+                hard_sl = effective_entry_price - fhm_sl_distance
             else:
-                structure_stop = levels.get("ORH", entry_ref_price + adjusted_atr)
-
-        # Calculate both structure-based and volatility-based stops
-        # CRITICAL: Use entry_ref_price (the level), NOT effective_entry_price (fill price)
-        # Reason: SL should protect the breakout thesis - if price breaks back below the level,
-        # the breakout has failed regardless of where we filled. This matches OLD planner_internal.py.
-        # Pro trader approach: For long breakouts, SL at ORL (or below level), not relative to fill.
-        vol_stop = entry_ref_price - (sl_atr_mult * adjusted_atr) if bias == "long" else entry_ref_price + (sl_atr_mult * adjusted_atr)
-
-        if bias == "long":
-            # For LONG: SL below entry - use HIGHER value (closer to entry) = TIGHTER stop
-            structure_sl = structure_stop - sl_below_swing_ticks
-            hard_sl = max(structure_sl, vol_stop)  # Takes closer SL to entry
-            rps = max(effective_entry_price - hard_sl, 0.0)
+                hard_sl = effective_entry_price + fhm_sl_distance
+            rps = fhm_sl_distance
+            logger.debug(f"FHM_SL: {symbol} using {fhm_sl_pct*100:.1f}% of price = {fhm_sl_distance:.2f} Rs, hard_sl={hard_sl:.2f}")
         else:
-            # For SHORT: SL above entry - use LOWER value (closer to entry) = TIGHTER stop
-            structure_sl = structure_stop + sl_below_swing_ticks
-            hard_sl = min(structure_sl, vol_stop)  # Takes closer SL to entry
-            rps = max(hard_sl - effective_entry_price, 0.0)
+            # Get structure stop from levels if available (swing low for long, swing high for short)
+            structure_stop = levels.get("structure_stop")
+            if structure_stop is None:
+                # Fallback: use ORH/ORL as structure reference
+                if bias == "long":
+                    structure_stop = levels.get("ORL", entry_ref_price - adjusted_atr)
+                else:
+                    structure_stop = levels.get("ORH", entry_ref_price + adjusted_atr)
+
+            # Calculate both structure-based and volatility-based stops
+            # CRITICAL: Use entry_ref_price (the level), NOT effective_entry_price (fill price)
+            # Reason: SL should protect the breakout thesis - if price breaks back below the level,
+            # the breakout has failed regardless of where we filled. This matches OLD planner_internal.py.
+            # Pro trader approach: For long breakouts, SL at ORL (or below level), not relative to fill.
+            vol_stop = entry_ref_price - (sl_atr_mult * adjusted_atr) if bias == "long" else entry_ref_price + (sl_atr_mult * adjusted_atr)
+
+            if bias == "long":
+                # For LONG: SL below entry - use HIGHER value (closer to entry) = TIGHTER stop
+                structure_sl = structure_stop - sl_below_swing_ticks
+                hard_sl = max(structure_sl, vol_stop)  # Takes closer SL to entry
+                rps = max(effective_entry_price - hard_sl, 0.0)
+            else:
+                # For SHORT: SL above entry - use LOWER value (closer to entry) = TIGHTER stop
+                structure_sl = structure_stop + sl_below_swing_ticks
+                hard_sl = min(structure_sl, vol_stop)  # Takes closer SL to entry
+                rps = max(hard_sl - effective_entry_price, 0.0)
 
         # RPS FLOOR PROTECTION (from planner_internal.py lines 527-537)
         # Prevents too-tight stops that get hit easily
