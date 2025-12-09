@@ -41,35 +41,20 @@
             "vwap_deviation_threshold": 0.02,
             "volume_ratio_threshold": 1.5
         },
-        "min_bars_required": 4,
         "first_hour_momentum": {
-            "_comment": "FHM: First Hour Momentum - Capture big movers early in the session",
-            "_rationale": "ISSUE 5 FIX: 99.7% of big movers were missed. Relaxed thresholds to capture more opportunities.",
+            "_comment": "FHM screening config - detailed setup config in configuration.json.setups.first_hour_momentum_long/short",
             "enabled": true,
             "time_window": {
-                "start": "09:15",
-                "end": "10:15",
-                "_comment": "ONLY active during first hour of trading"
+                "start": "09:20",
+                "end": "10:30"
             },
             "triggers": {
                 "min_rvol": 1.5,
-                "min_price_move_pct": 1.0,
-                "min_volume_1m": 50000,
-                "_rvol_comment": "ISSUE 5 FIX: Relaxed from 2.0x to 1.5x - captures more early movers",
-                "_price_comment": "ISSUE 5 FIX: Relaxed from 1.5% to 1.0% - captures earlier entry",
-                "_volume_comment": "ISSUE 5 FIX: Relaxed from 100k to 50k - FHM uses RVOL not absolute volume"
-            },
-            "vwap_position": {
-                "long_requires_above_vwap": false,
-                "short_requires_below_vwap": false,
-                "_comment": "ISSUE 5 FIX: Disabled VWAP position requirement - too restrictive for early movers"
-            },
-            "regime_override": {
-                "enabled": true,
-                "rvol_threshold_for_override": 2.0,
-                "_comment": "ISSUE 5 FIX: Lowered from 3.0x to 2.0x - allows more regime bypasses"
+                "min_price_move_pct": 1.5,
+                "min_volume_1m": 50000
             }
-        }
+        },
+        "min_bars_required": 4
     },
 
     "quality": {

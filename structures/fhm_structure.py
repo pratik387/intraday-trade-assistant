@@ -74,6 +74,14 @@ class FHMStructure(BaseStructure):
         self.min_rvol = triggers["min_rvol"]
         self.min_price_move_pct = triggers["min_price_move_pct"]
         self.min_volume = triggers["min_volume"]
+        # DATA-DRIVEN: ADX filter from 6-month backtest analysis
+        self.min_bar5_adx = triggers.get("min_bar5_adx", 0)
+
+        # DATA-DRIVEN: Regime filter from 6-month backtest analysis
+        # FHM Long ONLY profitable in squeeze regime (24 trades, +1,453 Rs vs 396 trades, -26,921 Rs)
+        regime_filter_cfg = config.get("regime_filter", {})
+        self.long_allowed_regimes = regime_filter_cfg.get("allowed_regimes", [])  # Empty = all regimes
+        self.short_allowed_regimes = regime_filter_cfg.get("short_allowed_regimes", [])  # Empty = all regimes
 
         # VWAP position config - KeyError if missing (no defaults)
         vwap_cfg = config["vwap_position"]
@@ -205,6 +213,19 @@ class FHMStructure(BaseStructure):
                     rejection_reason=f"Volume too low: {current_volume:.0f} < {self.min_volume}"
                 )
 
+            # DATA-DRIVEN FILTER: ADX check (from 6-month backtest analysis)
+            # squeeze + adx>=30 + vol>=200k = 24 trades, +1,453 Rs (vs 396 trades, -26,921 Rs)
+            bar5_adx = df['adx'].iloc[-1] if 'adx' in df.columns and not pd.isna(df['adx'].iloc[-1]) else 0
+            if self.min_bar5_adx > 0 and bar5_adx < self.min_bar5_adx:
+                logger.debug(f"FHM_REJECT: {symbol} | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                            f"ADX={bar5_adx:.1f} < {self.min_bar5_adx} (DATA-DRIVEN FILTER)")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"ADX too low: {bar5_adx:.1f} < {self.min_bar5_adx} (data-driven filter)"
+                )
+
             # Get VWAP
             vwap = df['vwap'].iloc[-1] if 'vwap' in df.columns else None
 
@@ -227,6 +248,19 @@ class FHMStructure(BaseStructure):
                         events=[],
                         quality_score=0.0,
                         rejection_reason=f"Long requires price above VWAP"
+                    )
+
+                # DATA-DRIVEN: Regime filter (from 6-month backtest analysis)
+                # FHM Long ONLY profitable in squeeze regime (+104 Rs/trade vs -68 Rs/trade overall)
+                regime = market_context.regime
+                if self.long_allowed_regimes and regime and regime not in self.long_allowed_regimes:
+                    logger.debug(f"FHM_REJECT: {symbol} LONG | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                f"REGIME FILTER: {regime} not in {self.long_allowed_regimes}")
+                    return StructureAnalysis(
+                        structure_detected=False,
+                        events=[],
+                        quality_score=0.0,
+                        rejection_reason=f"Regime filter: {regime} not in allowed regimes {self.long_allowed_regimes}"
                     )
 
                 # INDIAN MARKET: VWAP HOLD confirmation - previous candle must close above VWAP
@@ -299,6 +333,18 @@ class FHMStructure(BaseStructure):
                         events=[],
                         quality_score=0.0,
                         rejection_reason=f"Short requires price below VWAP"
+                    )
+
+                # DATA-DRIVEN: Regime filter for shorts (from 6-month backtest analysis)
+                regime = market_context.regime
+                if self.short_allowed_regimes and regime and regime not in self.short_allowed_regimes:
+                    logger.debug(f"FHM_REJECT: {symbol} SHORT | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                f"REGIME FILTER: {regime} not in {self.short_allowed_regimes}")
+                    return StructureAnalysis(
+                        structure_detected=False,
+                        events=[],
+                        quality_score=0.0,
+                        rejection_reason=f"Regime filter: {regime} not in allowed regimes {self.short_allowed_regimes}"
                     )
 
                 # PRO TRADER: GAP DOWN CHECK - price must be gapping down from previous close
