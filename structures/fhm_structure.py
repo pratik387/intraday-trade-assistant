@@ -85,6 +85,10 @@ class FHMStructure(BaseStructure):
             "large_cap": cap_rvol_cfg["large_cap"],
         }
 
+        # SALVAGE FIX: Blocked cap segments (e.g., block small/micro for FHM Short)
+        blocked_cfg = config.get("blocked_cap_segments", {})
+        self.blocked_cap_segments = set(blocked_cfg.get("segments", []))
+
         # DATA-DRIVEN: Regime filter from 6-month backtest analysis
         # FHM Long ONLY profitable in squeeze regime (24 trades, +1,453 Rs vs 396 trades, -26,921 Rs)
         regime_filter_cfg = config.get("regime_filter", {})
@@ -206,6 +210,16 @@ class FHMStructure(BaseStructure):
             # RESEARCH-BASED: Get cap-specific RVOL threshold
             cap_segment = market_context.cap_segment
             min_rvol_threshold = self._get_cap_rvol_threshold(cap_segment)
+
+            # SALVAGE FIX: Check if cap segment is blocked (e.g., FHM Short blocks small/micro)
+            if cap_segment and cap_segment in self.blocked_cap_segments:
+                logger.debug(f"FHM_REJECT: {symbol} | Cap={cap_segment} BLOCKED for this setup")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"Cap segment blocked: {cap_segment}"
+                )
 
             # Calculate price move from open
             open_price = df['open'].iloc[0]

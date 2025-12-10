@@ -67,10 +67,9 @@
       "liquidity_sweep_long",
       "liquidity_sweep_short",
       "change_of_character_long",
-      "change_of_character_short",
-      "first_hour_momentum_long",
-      "first_hour_momentum_short"
+      "change_of_character_short"
     ],
+    "_comment_fhm_chop_blocked": "BLOCKED: FHM removed from chop - 90%+ of FHM losses in chop regime per backtest analysis",
     "squeeze": [
       "squeeze_release_long",
       "squeeze_release_short",
@@ -942,12 +941,12 @@
       "_comment_dual_mode": "=== DUAL-MODE ENTRY (Professional S/R Trading) ===",
       "entry_mode": "conditional",
       "_comment_entry_mode": "Entry mode: 'immediate', 'retest', or 'conditional'. Conditional = immediate if within immediate_entry_distance_pct, else retest.",
-      "immediate_entry_distance_pct": 0.3,
-      "_comment_immediate_dist": "If price is within 0.3% of support level, use immediate entry (price is at optimal zone)",
-      "retest_entry_zone_width_atr": 0.3,
-      "_comment_retest_zone": "Entry zone width around support level for retest mode (0.3 ATR around level)",
-      "retest_timeout_minutes": 45,
-      "_comment_retest_timeout": "Max minutes to wait for retest entry. After timeout, signal expires."
+      "immediate_entry_distance_pct": 0.6,
+      "_comment_immediate_dist": "OPTIMIZED: 0.3 → 0.6% - Same as resistance_bounce_short. Higher trigger rate while maintaining R:R.",
+      "retest_entry_zone_width_atr": 0.5,
+      "_comment_retest_zone": "OPTIMIZED: 0.3 → 0.5 ATR - Wider zone to increase trigger rate.",
+      "retest_timeout_minutes": 60,
+      "_comment_retest_timeout": "OPTIMIZED: 45 → 60 min - More time for retest entries."
     },
     "resistance_bounce_short": {
       "enabled": true,
@@ -977,12 +976,12 @@
       "_comment_dual_mode": "=== DUAL-MODE ENTRY (Professional S/R Trading) ===",
       "entry_mode": "conditional",
       "_comment_entry_mode": "Entry mode: 'immediate', 'retest', or 'conditional'. Conditional = immediate if within immediate_entry_distance_pct, else retest.",
-      "immediate_entry_distance_pct": 0.3,
-      "_comment_immediate_dist": "If price is within 0.3% of resistance level, use immediate entry (price is at optimal zone)",
-      "retest_entry_zone_width_atr": 0.3,
-      "_comment_retest_zone": "Entry zone width around resistance level for retest mode (0.3 ATR around level)",
-      "retest_timeout_minutes": 45,
-      "_comment_retest_timeout": "Max minutes to wait for retest entry. After timeout, signal expires."
+      "immediate_entry_distance_pct": 0.6,
+      "_comment_immediate_dist": "OPTIMIZED: 0.3 → 0.6% - Backtest showed 8.3% trigger rate too low. Widening allows more immediate entries while maintaining good R:R.",
+      "retest_entry_zone_width_atr": 0.5,
+      "_comment_retest_zone": "OPTIMIZED: 0.3 → 0.5 ATR - Wider zone to increase trigger rate from 8.3% to ~15-20%.",
+      "retest_timeout_minutes": 60,
+      "_comment_retest_timeout": "OPTIMIZED: 45 → 60 min - More time for retest entries. Regime won't change significantly in extra 15 min."
     },
     "support_breakdown_short": {
       "enabled": true,
@@ -1209,12 +1208,12 @@
         "_adx_note": "ADX filter handled by breakout_pipeline gates.adx.fhm_long_min_adx=35"
       },
       "cap_rvol_thresholds": {
-        "_comment": "RESEARCH-BASED: Cap-specific RVOL thresholds from FHM research PDF",
-        "micro_cap": 3.5,
-        "small_cap": 3.0,
+        "_comment": "OPTIMIZED: Cap-specific RVOL thresholds - raised for micro/small after backtest analysis",
+        "micro_cap": 4.0,
+        "small_cap": 3.5,
         "mid_cap": 2.0,
         "large_cap": 1.5,
-        "_rationale": "Small/micro caps need higher RVOL (3.0-3.5x) to filter noise; large caps reliable at 1.5x"
+        "_rationale": "INCREASED: micro 3.5→4.0, small 3.0→3.5 - backtest showed small/micro caps still losing despite 3.x RVOL"
       },
       "multi_bar_confirmation": {
         "enabled": true,
@@ -1237,8 +1236,8 @@
         "_comment": "Wait for pullback to VWAP AND hold for 1 candle",
         "mode": "pullback",
         "reference": "vwap",
-        "zone_atr_mult": 0.15,
-        "_zone_comment": "Entry zone = VWAP +/- 0.15 ATR"
+        "zone_atr_mult": 0.10,
+        "_zone_comment": "TIGHTENED: 0.15→0.10 ATR - Backtest showed high slippage (100-400bps); tighter zone = better entries"
       },
       "stop_loss": {
         "_comment": "INDIAN MARKET: min(swing_low, VWAP - 0.8% of price)",
@@ -1259,15 +1258,20 @@
       "high_rvol_threshold": 3.0
     },
     "first_hour_momentum_short": {
-      "_comment": "DATA-DRIVEN FHM Short - chop + below_vwap = +121 Rs/trade (2.5x improvement)",
-      "_research": "6-month backtest: chop regime + below VWAP = 46 trades, +5,569 Rs, 61% WR",
-      "_fix_details": "Regime filter: chop only. VWAP: below required. Volume filter hurts shorts!",
-      "enabled": true,
+      "_comment": "DISABLED: FHM Short thesis doesn't work in Indian markets",
+      "_research": "Deep analysis Dec 2024: -4,269 Rs loss, rejected trades simulated = -7,654 Rs more. Only 6 trades with slip<100bps were profitable.",
+      "_fix_details": "Disabled entirely. Gap-down momentum shorting not viable. Focus on FHM Long instead.",
+      "enabled": false,
       "detect_direction": "short",
       "min_bars_required": 4,
       "require_vwap_hold": false,
       "require_gap_down": false,
       "stop_at_prev_close": true,
+      "blocked_cap_segments": {
+        "_comment": "SALVAGE FIX: Block small_cap and micro_cap - 0% win rate in backtest analysis",
+        "segments": ["small_cap", "micro_cap"],
+        "_rationale": "small_cap: 0% WR, -1,767 Rs | micro_cap: 0% WR, -2,608 Rs | mid_cap: 45% WR, +958 Rs (ONLY profitable)"
+      },
       "regime_filter": {
         "_comment": "DATA-DRIVEN: chop = +121 Rs/trade, trend_down = +52, squeeze = +25. Chop only!",
         "short_allowed_regimes": ["chop"]
@@ -1315,8 +1319,8 @@
         "_comment": "Wait for pullback to VWAP AND hold for 1 candle",
         "mode": "pullback",
         "reference": "vwap",
-        "zone_atr_mult": 0.15,
-        "_zone_comment": "Entry zone = VWAP +/- 0.15 ATR"
+        "zone_atr_mult": 0.10,
+        "_zone_comment": "TIGHTENED: 0.15→0.10 ATR - Backtest showed winners have lower slippage (146 vs 204 bps)"
       },
       "stop_loss": {
         "_comment": "PRO TRADER: Stop at previous day close (natural resistance for gap down)",
@@ -1788,7 +1792,6 @@
     "_comment_volume_threshold": "TIGHTENED: 2.0x volume (was 1.5x) - require stronger institutional participation",
     "blacklist_setups": [
       "range_rejection_long",
-      "support_bounce_long",
       "vwap_lose_short",
       "pdl_break_hold_short",
       "flag_continuation_long",

@@ -1439,6 +1439,11 @@ class BasePipeline(ABC):
             bias, atr, levels, measured_move, setup_type
         )
 
+        # REJECTION: Low volatility - can't achieve viable targets
+        if target_result is None:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected: low volatility - T1 cap below threshold")
+            return {"eligible": False, "reason": "low_volatility_target", "details": ["t1_cap_below_0.8R"]}
+
         # 8. POSITION SIZING - NO SOFT PENALTIES (Pro Trader Approach)
         #
         # REMOVED ALL STACKING PENALTIES (Option A - Hard Gates Only):

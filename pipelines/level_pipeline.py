@@ -791,14 +791,27 @@ class LevelPipeline(BasePipeline):
         cap2 = min(measured_move * caps["t2"]["measured_move_frac"], entry_ref_price * caps["t2"]["max_pct"])
         cap3 = min(measured_move * caps["t3"]["measured_move_frac"], entry_ref_price * caps["t3"]["max_pct"])
 
+        # PRE-TRADE REJECTION: If T1 cap < 0.8R, reject the setup
+        # Low-volatility instruments (ETFs, liquid funds) can't hit viable targets
+        # Better to reject upfront than trade with broken T1 (0R) or force T1 at 1R and hit SL
+        min_t1_threshold = risk_per_share * 0.8
+        if cap1 < min_t1_threshold:
+            logger.info(f"[LEVEL] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
+            return None
+
+        # Calculate target distances with caps
+        t1_dist = min(t1_rr * risk_per_share, cap1)
+        t2_dist = min(t2_rr * risk_per_share, cap2)
+        t3_dist = min(t3_rr * risk_per_share, cap3)
+
         if bias == "long":
-            t1 = entry_ref_price + min(t1_rr * risk_per_share, cap1)
-            t2 = entry_ref_price + min(t2_rr * risk_per_share, cap2)
-            t3 = entry_ref_price + min(t3_rr * risk_per_share, cap3)
+            t1 = entry_ref_price + t1_dist
+            t2 = entry_ref_price + t2_dist
+            t3 = entry_ref_price + t3_dist
         else:
-            t1 = entry_ref_price - min(t1_rr * risk_per_share, cap1)
-            t2 = entry_ref_price - min(t2_rr * risk_per_share, cap2)
-            t3 = entry_ref_price - min(t3_rr * risk_per_share, cap3)
+            t1 = entry_ref_price - t1_dist
+            t2 = entry_ref_price - t2_dist
+            t3 = entry_ref_price - t3_dist
 
         # Qty splits from config
         qty_splits = targets_cfg["qty_splits"]

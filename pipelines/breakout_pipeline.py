@@ -44,7 +44,8 @@ from .base_pipeline import (
     GateResult,
     RankingResult,
     EntryResult,
-    TargetResult
+    TargetResult,
+    get_cap_segment
 )
 
 logger = get_agent_logger()
@@ -419,6 +420,53 @@ class BreakoutPipeline(BasePipeline):
                 reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
         elif is_long and is_fhm:
             reasons.append(f"fhm_long_vol_bypass:{bar5_volume/1000:.0f}k:uses_rvol")
+
+        # 3. ORB_BREAKOUT_LONG CAP SEGMENT FILTER
+        # DATA-DRIVEN (Dec 2024): Large cap 92% WR vs mid/small 43% WR
+        # Allow: large_cap always, mid_cap with strength>=0.7 and entry>=35min
+        if setup_type == "orb_breakout_long":
+            cap_filter_cfg = validated_filters.get("orb_breakout_long_cap_filter", {})
+            if cap_filter_cfg.get("enabled"):
+                cap_segment = get_cap_segment(symbol)
+                allowed_caps = cap_filter_cfg.get("allowed_caps", ["large_cap"])
+                entry_minute = current_time.minute if current_time else 30
+
+                if cap_segment in allowed_caps:
+                    # Large cap always allowed
+                    reasons.append(f"orb_cap_ok:{cap_segment}")
+                elif cap_segment == "mid_cap":
+                    # Mid cap allowed with additional filters
+                    mid_cfg = cap_filter_cfg.get("mid_cap_with_filters", {})
+                    if mid_cfg.get("enabled"):
+                        min_srr = mid_cfg.get("min_structural_rr")
+                        min_entry_min = mid_cfg.get("min_entry_minute")
+                        # strength parameter is structural_rr (passed from calculate_quality)
+                        structural_rr = strength
+
+                        srr_ok = structural_rr >= min_srr
+                        entry_ok = entry_minute >= min_entry_min
+
+                        if srr_ok and entry_ok:
+                            reasons.append(f"orb_mid_cap_ok:srr{structural_rr:.2f}>={min_srr},entry{entry_minute}>={min_entry_min}")
+                        else:
+                            fail_parts = []
+                            if not srr_ok:
+                                fail_parts.append(f"srr{structural_rr:.2f}<{min_srr}")
+                            if not entry_ok:
+                                fail_parts.append(f"entry{entry_minute}<{min_entry_min}")
+                            reasons.append(f"orb_mid_cap_blocked:{','.join(fail_parts)}")
+                            logger.info(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: mid_cap requires srr>={min_srr} AND entry>={min_entry_min}min, got srr={structural_rr:.2f}, entry={entry_minute}")
+                            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                    else:
+                        # Mid cap not allowed without filters
+                        reasons.append(f"orb_cap_blocked:mid_cap_filters_disabled")
+                        logger.info(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: mid_cap not allowed (filters disabled)")
+                        return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    # Small cap, micro cap, unknown - blocked
+                    reasons.append(f"orb_cap_blocked:{cap_segment}")
+                    logger.info(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: {cap_segment} not in allowed list {allowed_caps}")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
         # ORB detection - structure detector already enforces 10:30 cutoff via should_detect_at_time()
         # So ALL ORB setups that reach here are within the valid window - use relaxed thresholds
@@ -924,14 +972,26 @@ class BreakoutPipeline(BasePipeline):
         cap2 = min(measured_move * caps["t2"]["measured_move_frac"], entry_ref_price * caps["t2"]["max_pct"])
         cap3 = min(measured_move * caps["t3"]["measured_move_frac"], entry_ref_price * caps["t3"]["max_pct"])
 
+        # PRE-TRADE REJECTION: If T1 cap < 0.8R, reject the setup
+        # Low-volatility instruments (ETFs, liquid funds) can't hit viable targets
+        min_t1_threshold = risk_per_share * 0.8
+        if cap1 < min_t1_threshold:
+            logger.info(f"[BREAKOUT] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
+            return None
+
+        # Calculate target distances with caps
+        t1_dist = min(t1_rr * risk_per_share, cap1)
+        t2_dist = min(t2_rr * risk_per_share, cap2)
+        t3_dist = min(t3_rr * risk_per_share, cap3)
+
         if bias == "long":
-            t1 = entry_ref_price + min(t1_rr * risk_per_share, cap1)
-            t2 = entry_ref_price + min(t2_rr * risk_per_share, cap2)
-            t3 = entry_ref_price + min(t3_rr * risk_per_share, cap3)
+            t1 = entry_ref_price + t1_dist
+            t2 = entry_ref_price + t2_dist
+            t3 = entry_ref_price + t3_dist
         else:
-            t1 = entry_ref_price - min(t1_rr * risk_per_share, cap1)
-            t2 = entry_ref_price - min(t2_rr * risk_per_share, cap2)
-            t3 = entry_ref_price - min(t3_rr * risk_per_share, cap3)
+            t1 = entry_ref_price - t1_dist
+            t2 = entry_ref_price - t2_dist
+            t3 = entry_ref_price - t3_dist
 
         # Qty splits from config
         qty_splits = targets_cfg["qty_splits"]

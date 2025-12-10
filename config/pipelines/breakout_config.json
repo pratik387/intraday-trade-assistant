@@ -146,6 +146,18 @@
             "long_trade_volume": {
                 "min_volume": 150000,
                 "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+            },
+            "orb_breakout_long_cap_filter": {
+                "_comment": "DATA-DRIVEN (Dec 2024): Large cap 92% WR vs mid/small 43% WR",
+                "enabled": true,
+                "allowed_caps": ["large_cap"],
+                "mid_cap_with_filters": {
+                    "enabled": true,
+                    "min_structural_rr": 1.5,
+                    "min_entry_minute": 35,
+                    "_note": "structural_rr = vol_ratio * breakout_strength / normalized_risk. Winners avg 1.62, losers avg 1.84. Use 1.5 as min to filter weakest setups."
+                },
+                "_evidence": "Large cap: 13 trades, 92% WR, +4,898 Rs. Mid+small: 32 trades, 43% WR, -563 Rs. Mid cap salvageable with strength>=0.7 + entry>=35min (80% WR, 5 trades, +1,046 Rs)"
             }
         },
         "long_specific_filters": {
