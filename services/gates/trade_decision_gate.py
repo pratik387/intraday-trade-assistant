@@ -113,6 +113,7 @@ class SetupCandidate:
     orl: Optional[float] = None  # Opening Range Low from detector
     entry_mode: Optional[str] = None  # NEW: "immediate", "retest", or "pending" for dual-mode entry
     retest_zone: Optional[List[float]] = None  # NEW: [low, high] bounds for retest entry
+    cap_segment: Optional[str] = None  # Market cap segment passed from main_detector
 
 
 @dataclass(frozen=True)

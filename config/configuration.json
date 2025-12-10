@@ -1194,7 +1194,7 @@
       "time_window": {
         "start": "09:20",
         "end": "10:30",
-        "_comment": "First hour momentum window"
+        "_comment": "First hour momentum window - full window, filtered by multi-bar confirmation"
       },
       "regime_filter": {
         "allowed_regimes": ["squeeze"],
@@ -1204,14 +1204,34 @@
         "min_rvol": 2.0,
         "min_price_move_pct": 1.0,
         "min_volume": 100000,
-        "_rvol_comment": "PRO STANDARD: RVOL>=2.0x indicates institutional activity (was 1.5x - too low)",
+        "_rvol_comment": "PRO STANDARD: RVOL>=2.0x is DEFAULT - cap-specific thresholds below override",
         "_volume_comment": "OPTIMIZED: bar5_volume >= 100k (was 200k) for more trades",
-        "_adx_removed": "ADX requirement removed - FHM validates via RVOL, ADX unreliable in first hour (takes 14+ bars to stabilize)"
+        "_adx_note": "ADX filter handled by breakout_pipeline gates.adx.fhm_long_min_adx=35"
+      },
+      "cap_rvol_thresholds": {
+        "_comment": "RESEARCH-BASED: Cap-specific RVOL thresholds from FHM research PDF",
+        "micro_cap": 3.5,
+        "small_cap": 3.0,
+        "mid_cap": 2.0,
+        "large_cap": 1.5,
+        "_rationale": "Small/micro caps need higher RVOL (3.0-3.5x) to filter noise; large caps reliable at 1.5x"
+      },
+      "multi_bar_confirmation": {
+        "enabled": true,
+        "min_bullish_bars": 2,
+        "lookback_bars": 3,
+        "_comment": "RESEARCH: '2 of 3 consecutive 5-min bars bullish' to avoid false spikes"
+      },
+      "volume_continuation": {
+        "enabled": true,
+        "min_rvol_continuation": 1.2,
+        "lookback_bars": 2,
+        "_comment": "RESEARCH: RVOL remain >1.2x in subsequent bars to confirm follow-through"
       },
       "vwap_position": {
         "long_requires_above_vwap": false,
         "short_requires_below_vwap": false,
-        "_comment": "VWAP filter alone not effective - regime+adx+volume combo works better"
+        "_comment": "VWAP alignment - using multi-bar and volume continuation instead of distance filter"
       },
       "entry": {
         "_comment": "Wait for pullback to VWAP AND hold for 1 candle",
@@ -1255,20 +1275,41 @@
       "time_window": {
         "start": "09:20",
         "end": "10:30",
-        "_comment": "ISSUE 5 FIX: Earlier start 09:20 (was 09:45)"
+        "_comment": "First hour momentum window - full window, filtered by multi-bar confirmation"
       },
       "triggers": {
         "min_rvol": 2.0,
         "min_price_move_pct": 1.5,
         "min_volume": 50000,
-        "_rvol_comment": "PRO STANDARD: RVOL>=2.0x indicates institutional activity",
+        "_rvol_comment": "PRO STANDARD: RVOL>=2.0x is DEFAULT - cap-specific thresholds below override",
         "_price_comment": "ISSUE 5 FIX: Relaxed from 3.0% to 1.5% for shorts",
-        "_volume_note": "DATA-DRIVEN: Volume filter HURTS shorts! vol>=100k drops avg from +121 to +68. Keep low."
+        "_volume_note": "DATA-DRIVEN: Volume filter HURTS shorts! vol>=100k drops avg from +121 to +68. Keep low.",
+        "_adx_note": "ADX filter handled by breakout_pipeline gates.adx.fhm_short_min_adx=30"
+      },
+      "cap_rvol_thresholds": {
+        "_comment": "RESEARCH-BASED: Cap-specific RVOL thresholds from FHM research PDF",
+        "micro_cap": 3.5,
+        "small_cap": 3.0,
+        "mid_cap": 2.0,
+        "large_cap": 1.5,
+        "_rationale": "Small/micro caps need higher RVOL (3.0-3.5x) to filter noise; large caps reliable at 1.5x"
+      },
+      "multi_bar_confirmation": {
+        "enabled": true,
+        "min_bearish_bars": 2,
+        "lookback_bars": 3,
+        "_comment": "RESEARCH: '2 of 3 consecutive 5-min bars bearish' to avoid false spikes"
+      },
+      "volume_continuation": {
+        "enabled": true,
+        "min_rvol_continuation": 1.2,
+        "lookback_bars": 2,
+        "_comment": "RESEARCH: RVOL remain >1.2x in subsequent bars to confirm follow-through"
       },
       "vwap_position": {
         "long_requires_above_vwap": false,
         "short_requires_below_vwap": true,
-        "_comment": "DATA-DRIVEN: below VWAP = +121 Rs/trade (61% WR) vs all = +48 Rs/trade"
+        "_comment": "Shorts require below VWAP - using multi-bar and volume continuation for quality"
       },
       "entry": {
         "_comment": "Wait for pullback to VWAP AND hold for 1 candle",

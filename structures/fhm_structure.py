@@ -44,7 +44,6 @@ from .data_models import (
     MarketContext,
     StructureAnalysis
 )
-
 logger = get_agent_logger()
 
 
@@ -77,6 +76,15 @@ class FHMStructure(BaseStructure):
         # DATA-DRIVEN: ADX filter from 6-month backtest analysis
         self.min_bar5_adx = triggers.get("min_bar5_adx", 0)
 
+        # RESEARCH-BASED: Cap-specific RVOL thresholds - KeyError if missing (no defaults)
+        cap_rvol_cfg = config["cap_rvol_thresholds"]
+        self.cap_rvol_thresholds = {
+            "micro_cap": cap_rvol_cfg["micro_cap"],
+            "small_cap": cap_rvol_cfg["small_cap"],
+            "mid_cap": cap_rvol_cfg["mid_cap"],
+            "large_cap": cap_rvol_cfg["large_cap"],
+        }
+
         # DATA-DRIVEN: Regime filter from 6-month backtest analysis
         # FHM Long ONLY profitable in squeeze regime (24 trades, +1,453 Rs vs 396 trades, -26,921 Rs)
         regime_filter_cfg = config.get("regime_filter", {})
@@ -92,6 +100,19 @@ class FHMStructure(BaseStructure):
         vwap_cfg = config["vwap_position"]
         self.long_requires_above_vwap = vwap_cfg["long_requires_above_vwap"]
         self.short_requires_below_vwap = vwap_cfg["short_requires_below_vwap"]
+
+        # RESEARCH-BASED: Multi-bar confirmation - "2 of 3 consecutive bars bullish/bearish"
+        multi_bar_cfg = config.get("multi_bar_confirmation", {})
+        self.multi_bar_enabled = multi_bar_cfg.get("enabled")
+        self.min_bullish_bars = multi_bar_cfg.get("min_bullish_bars")
+        self.min_bearish_bars = multi_bar_cfg.get("min_bearish_bars")
+        self.multi_bar_lookback = multi_bar_cfg.get("lookback_bars")
+
+        # RESEARCH-BASED: Volume continuation - RVOL remain >1.2x in subsequent bars
+        vol_cont_cfg = config.get("volume_continuation", {})
+        self.vol_continuation_enabled = vol_cont_cfg.get("enabled")
+        self.min_rvol_continuation = vol_cont_cfg.get("min_rvol_continuation")
+        self.vol_cont_lookback = vol_cont_cfg.get("lookback_bars")
 
         # PRO TRADER ENTRY CONFIG - VWAP pullback entry
         entry_cfg = config["entry"]
@@ -132,6 +153,13 @@ class FHMStructure(BaseStructure):
         """Parse time string HH:MM to time object."""
         parts = time_str.split(":")
         return time(int(parts[0]), int(parts[1]))
+
+    def _get_cap_rvol_threshold(self, cap_segment: str) -> float:
+        """Get cap-specific RVOL threshold from research-based config."""
+        if cap_segment and cap_segment in self.cap_rvol_thresholds:
+            return self.cap_rvol_thresholds[cap_segment]
+        # Unknown cap_segment - use mid_cap as baseline (most common)
+        return self.cap_rvol_thresholds["mid_cap"]
 
     def detect(self, market_context: MarketContext) -> StructureAnalysis:
         """
@@ -175,6 +203,10 @@ class FHMStructure(BaseStructure):
             # Calculate RVOL
             rvol = self._calculate_rvol(df)
 
+            # RESEARCH-BASED: Get cap-specific RVOL threshold
+            cap_segment = market_context.cap_segment
+            min_rvol_threshold = self._get_cap_rvol_threshold(cap_segment)
+
             # Calculate price move from open
             open_price = df['open'].iloc[0]
             price_move_pct = ((current_price - open_price) / open_price) * 100
@@ -184,17 +216,17 @@ class FHMStructure(BaseStructure):
             current_volume = df['volume'].iloc[-1]
 
             # Log near-misses at INFO level (symbols with at least one strong signal)
-            is_near_miss = (rvol >= self.min_rvol * 0.8 or abs_price_move >= self.min_price_move_pct * 0.8)
+            is_near_miss = (rvol >= min_rvol_threshold * 0.8 or abs_price_move >= self.min_price_move_pct * 0.8)
 
-            if rvol < self.min_rvol:
+            if rvol < min_rvol_threshold:
                 if is_near_miss:
-                    logger.debug(f"FHM_REJECT: {symbol} | RVOL={rvol:.2f}x < {self.min_rvol}x | "
+                    logger.debug(f"FHM_REJECT: {symbol} | RVOL={rvol:.2f}x < {min_rvol_threshold}x ({cap_segment or 'default'}) | "
                                 f"Move={abs_price_move:.2f}% | Vol={current_volume:.0f}")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
                     quality_score=0.0,
-                    rejection_reason=f"RVOL too low: {rvol:.2f}x < {self.min_rvol}x"
+                    rejection_reason=f"RVOL too low: {rvol:.2f}x < {min_rvol_threshold}x ({cap_segment or 'default'})"
                 )
 
             if abs_price_move < self.min_price_move_pct:
@@ -264,6 +296,38 @@ class FHMStructure(BaseStructure):
                         rejection_reason=f"Long requires price above VWAP"
                     )
 
+                # RESEARCH-BASED: Multi-bar confirmation - "2 of 3 bars bullish" to avoid false spikes
+                if self.multi_bar_enabled and len(df) >= self.multi_bar_lookback:
+                    bullish_count = 0
+                    for i in range(-self.multi_bar_lookback, 0):
+                        if df['close'].iloc[i] > df['open'].iloc[i]:
+                            bullish_count += 1
+                    if bullish_count < self.min_bullish_bars:
+                        logger.debug(f"FHM_REJECT: {symbol} LONG | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                    f"MULTI-BAR FAIL: {bullish_count}/{self.multi_bar_lookback} bullish bars < {self.min_bullish_bars} required")
+                        return StructureAnalysis(
+                            structure_detected=False,
+                            events=[],
+                            quality_score=0.0,
+                            rejection_reason=f"Multi-bar confirmation failed: {bullish_count}/{self.multi_bar_lookback} bullish < {self.min_bullish_bars}"
+                        )
+
+                # RESEARCH-BASED: Volume continuation - RVOL remain >1.2x in subsequent bars
+                if self.vol_continuation_enabled and len(df) >= self.vol_cont_lookback + 1:
+                    avg_vol = df['volume'].iloc[:-self.vol_cont_lookback].mean() if len(df) > self.vol_cont_lookback else df['volume'].mean()
+                    if avg_vol > 0:
+                        cont_rvols = [df['volume'].iloc[i] / avg_vol for i in range(-self.vol_cont_lookback, 0)]
+                        min_cont_rvol = min(cont_rvols) if cont_rvols else 0
+                        if min_cont_rvol < self.min_rvol_continuation:
+                            logger.debug(f"FHM_REJECT: {symbol} LONG | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                        f"VOLUME CONTINUATION FAIL: min RVOL {min_cont_rvol:.2f}x < {self.min_rvol_continuation}x required")
+                            return StructureAnalysis(
+                                structure_detected=False,
+                                events=[],
+                                quality_score=0.0,
+                                rejection_reason=f"Volume continuation failed: RVOL {min_cont_rvol:.2f}x < {self.min_rvol_continuation}x"
+                            )
+
                 # DATA-DRIVEN: Regime filter (from 6-month backtest analysis)
                 # FHM Long ONLY profitable in squeeze regime (+104 Rs/trade vs -68 Rs/trade overall)
                 regime = market_context.regime
@@ -302,8 +366,8 @@ class FHMStructure(BaseStructure):
                 vwap_stop = entry_price * (1 - self.stop_pct_of_price)  # VWAP - 0.8%
                 stop_loss = min(swing_low, vwap_stop)
 
-                logger.debug(f"FHM_DETECT: {symbol} LONG | RVOL={rvol:.2f}x | Move={price_move_pct:+.2f}% | "
-                            f"Entry@VWAP={entry_price:.2f} | SL={stop_loss:.2f} (swing={swing_low:.2f}, vwap_stop={vwap_stop:.2f}) | Vol={current_volume:.0f}")
+                logger.debug(f"FHM_DETECT: {symbol} LONG | Cap={cap_segment} | RVOL={rvol:.2f}x (req={min_rvol_threshold}x) | Move={price_move_pct:+.2f}% | "
+                            f"Entry@VWAP={entry_price:.2f} | SL={stop_loss:.2f} | Vol={current_volume:.0f}")
 
                 event = StructureEvent(
                     symbol=symbol,
@@ -357,6 +421,38 @@ class FHMStructure(BaseStructure):
                         quality_score=0.0,
                         rejection_reason=f"Short requires price below VWAP"
                     )
+
+                # RESEARCH-BASED: Multi-bar confirmation - "2 of 3 bars bearish" to avoid false spikes
+                if self.multi_bar_enabled and len(df) >= self.multi_bar_lookback:
+                    bearish_count = 0
+                    for i in range(-self.multi_bar_lookback, 0):
+                        if df['close'].iloc[i] < df['open'].iloc[i]:
+                            bearish_count += 1
+                    if bearish_count < self.min_bearish_bars:
+                        logger.debug(f"FHM_REJECT: {symbol} SHORT | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                    f"MULTI-BAR FAIL: {bearish_count}/{self.multi_bar_lookback} bearish bars < {self.min_bearish_bars} required")
+                        return StructureAnalysis(
+                            structure_detected=False,
+                            events=[],
+                            quality_score=0.0,
+                            rejection_reason=f"Multi-bar confirmation failed: {bearish_count}/{self.multi_bar_lookback} bearish < {self.min_bearish_bars}"
+                        )
+
+                # RESEARCH-BASED: Volume continuation - RVOL remain >1.2x in subsequent bars
+                if self.vol_continuation_enabled and len(df) >= self.vol_cont_lookback + 1:
+                    avg_vol = df['volume'].iloc[:-self.vol_cont_lookback].mean() if len(df) > self.vol_cont_lookback else df['volume'].mean()
+                    if avg_vol > 0:
+                        cont_rvols = [df['volume'].iloc[i] / avg_vol for i in range(-self.vol_cont_lookback, 0)]
+                        min_cont_rvol = min(cont_rvols) if cont_rvols else 0
+                        if min_cont_rvol < self.min_rvol_continuation:
+                            logger.debug(f"FHM_REJECT: {symbol} SHORT | RVOL={rvol:.2f}x | Move={abs_price_move:.2f}% | "
+                                        f"VOLUME CONTINUATION FAIL: min RVOL {min_cont_rvol:.2f}x < {self.min_rvol_continuation}x required")
+                            return StructureAnalysis(
+                                structure_detected=False,
+                                events=[],
+                                quality_score=0.0,
+                                rejection_reason=f"Volume continuation failed: RVOL {min_cont_rvol:.2f}x < {self.min_rvol_continuation}x"
+                            )
 
                 # DATA-DRIVEN: Regime filter for shorts (from 6-month backtest analysis)
                 regime = market_context.regime
@@ -418,8 +514,8 @@ class FHMStructure(BaseStructure):
                     vwap_stop = entry_price * (1 + self.stop_pct_of_price)  # VWAP + 0.8%
                     stop_loss = max(swing_high, vwap_stop)
 
-                logger.debug(f"FHM_DETECT: {symbol} SHORT | RVOL={rvol:.2f}x | Move={price_move_pct:+.2f}% | "
-                            f"Entry@VWAP={entry_price:.2f} | SL@PrevClose={stop_loss:.2f} | Vol={current_volume:.0f}")
+                logger.debug(f"FHM_DETECT: {symbol} SHORT | Cap={cap_segment} | RVOL={rvol:.2f}x (req={min_rvol_threshold}x) | Move={price_move_pct:+.2f}% | "
+                            f"Entry@VWAP={entry_price:.2f} | SL={stop_loss:.2f} | Vol={current_volume:.0f}")
 
                 event = StructureEvent(
                     symbol=symbol,

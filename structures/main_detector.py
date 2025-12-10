@@ -29,6 +29,7 @@ from .trend_structure import TrendStructure
 from .volume_structure import VolumeStructure
 from .range_structure import RangeStructure
 from .fhm_structure import FHMStructure
+from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
 
@@ -280,6 +281,7 @@ class MainDetector(BaseStructure):
                 pdh=levels.get('PDH'),
                 pdl=levels.get('PDL'),
                 pdc=levels.get('PDC'),
+                cap_segment=get_cap_segment(symbol),
                 indicators=indicators
             )
 
@@ -420,7 +422,8 @@ class MainDetector(BaseStructure):
                         orh=market_context.orh,
                         orl=market_context.orl,
                         entry_mode=entry_mode,
-                        retest_zone=retest_zone
+                        retest_zone=retest_zone,
+                        cap_segment=market_context.cap_segment
                     ))
 
                     if entry_mode:

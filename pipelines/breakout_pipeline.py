@@ -560,7 +560,7 @@ class BreakoutPipeline(BasePipeline):
 
         # ADX gate from config - HARD GATE
         # ORB uses relaxed threshold (15) - ADX takes 14+ bars to stabilize, structure detector enforces time
-        # FHM BYPASS: FHM uses RVOL-based momentum instead of ADX
+        # FHM BYPASS: FHM uses RVOL-based momentum instead of ADX (RVOL >= 2x is the signal)
         adx_cfg = self._get("gates", "adx")
         if is_fhm:
             reasons.append(f"fhm_adx_bypass:{adx:.1f}:uses_rvol_instead")

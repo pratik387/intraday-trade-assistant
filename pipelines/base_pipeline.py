@@ -70,6 +70,11 @@ def _normalize_symbol(symbol: str) -> str:
     return symbol
 
 
+# Cache for cap_segment lookups (loaded once per session)
+_cap_segment_cache: Dict[str, str] = {}
+_cap_segment_loaded: bool = False
+
+
 def get_cap_segment(symbol: str) -> str:
     """
     Get market cap segment for a symbol from nse_all.json.
@@ -81,19 +86,26 @@ def get_cap_segment(symbol: str) -> str:
 
     Transferred from planner_internal.py lines 1074-1087.
     """
-    try:
-        nse_file = Path(__file__).parent.parent / "nse_all.json"
-        if nse_file.exists():
-            with nse_file.open() as f:
-                data = json.load(f)
-            # Build map with normalized symbol names (strip .NS suffix)
-            cap_map = {_normalize_symbol(item["symbol"]): item.get("cap_segment", "unknown") for item in data}
-            # Normalize input symbol too (strip NSE: prefix)
-            normalized = _normalize_symbol(symbol)
-            return cap_map.get(normalized, "unknown")
-    except Exception as e:
-        logger.debug(f"CAP_SIZING: Failed to load cap_segment for {symbol}: {e}")
-    return "unknown"
+    global _cap_segment_cache, _cap_segment_loaded
+
+    # Load cache once per session
+    if not _cap_segment_loaded:
+        try:
+            nse_file = Path(__file__).parent.parent / "nse_all.json"
+            if nse_file.exists():
+                with nse_file.open() as f:
+                    data = json.load(f)
+                # Build map with normalized symbol names (strip .NS suffix)
+                _cap_segment_cache = {_normalize_symbol(item["symbol"]): item.get("cap_segment", "unknown") for item in data}
+                _cap_segment_loaded = True
+                logger.debug(f"CAP_SEGMENT: Loaded {len(_cap_segment_cache)} symbols from nse_all.json")
+        except Exception as e:
+            logger.debug(f"CAP_SIZING: Failed to load cap_segment cache: {e}")
+            _cap_segment_loaded = True  # Don't retry on failure
+
+    # Normalize input symbol (strip NSE: prefix)
+    normalized = _normalize_symbol(symbol)
+    return _cap_segment_cache.get(normalized, "unknown")
 
 
 @dataclass
@@ -1105,7 +1117,8 @@ class BasePipeline(ABC):
         daily_df: Optional[pd.DataFrame] = None,
         htf_context: Optional[Dict[str, Any]] = None,
         regime_diagnostics: Optional[Dict[str, Any]] = None,
-        daily_score: float = 0.0
+        daily_score: float = 0.0,
+        cap_segment: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Run complete pipeline for a setup.
@@ -1200,11 +1213,13 @@ class BasePipeline(ABC):
         if not (opening_bell_active and self._opening_bell_bypasses("range_compression")):
             range_passed, range_reason = self._check_range_compression(df5m, atr)
             if not range_passed:
-                logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {range_reason}")
+                logger.info(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {range_reason}")
                 return {"eligible": False, "reason": "universal_gate_fail", "details": [range_reason]}
 
         # Cap-strategy blocking - block certain setups for certain market cap segments
-        cap_segment = get_cap_segment(symbol)
+        # Use passed cap_segment or fetch if not provided
+        if cap_segment is None:
+            cap_segment = get_cap_segment(symbol)
         cap_passed, cap_reason = self._check_cap_strategy_blocking(symbol, setup_type, cap_segment)
         if not cap_passed:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {cap_reason}")
@@ -1335,7 +1350,7 @@ class BasePipeline(ABC):
         # The rps is ATR-based, and ATR naturally varies by cap segment.
         # Small/micro caps have higher ATR% → larger rps → smaller qty (built-in)
         # Adding cap_size_mult on TOP of this is double-penalizing!
-        cap_segment = get_cap_segment(symbol)
+        # cap_segment already set earlier in run_pipeline (passed or fetched)
         cap_size_mult = 1.0  # DISABLED - ATR-based sizing handles cap segment risk
         cap_sl_mult = 1.0  # Keep uniform SL multiplier
 

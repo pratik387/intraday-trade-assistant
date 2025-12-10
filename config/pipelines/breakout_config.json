@@ -109,6 +109,7 @@
             "min_value": 20,
             "orb_early_min_value": 15,
             "_orb_early_comment": "ORB EARLY WINDOW FIX: Pro traders use relaxed ADX (15) for early ORB because ADX takes 14+ bars to stabilize",
+            "_fhm_note": "FHM bypasses ADX - uses RVOL-based momentum (RVOL >= 2x is the signal)",
             "low_adx_threshold": 15,
             "low_adx_size_mult": 0.8
         },

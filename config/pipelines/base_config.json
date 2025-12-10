@@ -13,15 +13,15 @@
 
     "cap_strategy_blocking": {
         "_comment": "From trade_decision_gate.py - Block certain setups for certain market cap segments",
-        "_evidence": "Micro-cap too volatile for momentum breakouts, large-cap prefers levels over reversions",
-        "enabled": false,
+        "_evidence": "DATA-DRIVEN (Dec 2024): FHM LONG only profitable in mid_cap (+1,342 Rs). large_cap=-8,934 Rs, small_cap=-18,011 Rs, micro_cap=-4,260 Rs",
+        "enabled": true,
         "blocked_setups": {
             "micro_cap": ["momentum_breakout", "squeeze_release"],
             "small_cap": [],
             "mid_cap": [],
             "large_cap": ["mean_reversion", "rsi_divergence"]
         },
-        "_note": "Disabled by default - enable if specific cap-strategy combinations underperform."
+        "_note": "DISABLED FHM_LONG CAP BLOCKING (Dec 2024): Testing research-based filters (multi-bar confirmation + volume continuation). If FHM still negative after backtest, RE-ENABLE first_hour_momentum_long blocking for micro_cap, small_cap, large_cap."
     },
 
     "opening_bell_override": {

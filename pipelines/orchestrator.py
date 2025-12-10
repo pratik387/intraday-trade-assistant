@@ -412,7 +412,8 @@ class PipelineOrchestrator:
         daily_df: Optional[pd.DataFrame] = None,
         htf_context: Optional[Dict[str, Any]] = None,
         regime_diagnostics: Optional[Dict[str, Any]] = None,
-        daily_score: float = 0.0
+        daily_score: float = 0.0,
+        cap_segment: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Process a single setup candidate through its category pipeline.
@@ -461,7 +462,8 @@ class PipelineOrchestrator:
                 daily_df=daily_df,
                 htf_context=htf_context,
                 regime_diagnostics=regime_diagnostics,
-                daily_score=daily_score
+                daily_score=daily_score,
+                cap_segment=cap_segment
             )
 
             timestamp = now.isoformat() if hasattr(now, 'isoformat') else str(now)
@@ -545,6 +547,7 @@ class PipelineOrchestrator:
         for candidate in candidates:
             setup_type = str(candidate.setup_type) if hasattr(candidate, 'setup_type') else str(candidate)
             strength = getattr(candidate, 'strength', 0.5)
+            cap_segment = getattr(candidate, 'cap_segment', None)
 
             plan = self.process_single_candidate(
                 symbol=symbol,
@@ -557,7 +560,8 @@ class PipelineOrchestrator:
                 daily_df=daily_df,
                 htf_context=htf_context,
                 regime_diagnostics=regime_diagnostics,
-                daily_score=daily_score
+                daily_score=daily_score,
+                cap_segment=cap_segment
             )
 
             if plan and plan.get("eligible", False):
