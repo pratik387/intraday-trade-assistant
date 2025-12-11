@@ -346,8 +346,9 @@
     },
 
     "entry": {
-        "_comment": "From configuration.json support_bounce_long - entry_mode: conditional, retest_entry_zone_width_atr: 0.3",
-        "zone_mult_atr": 0.3,
+        "_comment": "WIDENED (Dec 2024): zone_mult_atr 0.3->0.5, min_zone_pct 0.25->0.30. Zero-trigger setups had 0.10-0.20% zones.",
+        "zone_mult_atr": 0.5,
+        "min_zone_pct": 0.30,
         "mode": {
             "pullback": "retest",
             "retest": "retest",

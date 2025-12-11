@@ -737,13 +737,13 @@ class VWAPStructure(BaseStructure):
         # Fallback: calculate simple ATR from recent data
         try:
             df = context.df_5m
-            if len(df) >= 14:
-                highs = df['high'].tail(14)
-                lows = df['low'].tail(14)
-                closes = df['close'].tail(15)  # Need one extra for previous close
+            if len(df) >= 15:
+                highs = df['high'].tail(15).reset_index(drop=True)
+                lows = df['low'].tail(15).reset_index(drop=True)
+                closes = df['close'].tail(15).reset_index(drop=True)
 
                 true_ranges = []
-                for i in range(1, 15):
+                for i in range(1, 15):  # 14 true range values using indices 1-14
                     tr = max(
                         highs.iloc[i] - lows.iloc[i],
                         abs(highs.iloc[i] - closes.iloc[i-1]),

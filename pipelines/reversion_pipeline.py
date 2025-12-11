@@ -221,7 +221,8 @@ class ReversionPipeline(BasePipeline):
         df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
-        vol_mult: float
+        vol_mult: float,
+        regime_diagnostics: Optional[Dict[str, Any]] = None
     ) -> GateResult:
         """
         Reversion-specific gate validations - HARD GATES ONLY, NO PENALTIES.
@@ -265,6 +266,33 @@ class ReversionPipeline(BasePipeline):
                 return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
             else:
                 reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
+
+        # ========== VOLUME_SPIKE_REVERSAL_SHORT FILTER (DATA-DRIVEN Dec 2024) ==========
+        # vol>=10x + daily_regime!=trend_up: 70% WR, 246 Rs/trade (vs baseline 54% WR, 68 Rs/trade)
+        if setup_type == "volume_spike_reversal_short":
+            vsr_filter_cfg = validated_filters.get("volume_spike_reversal_short_filter", {})
+            if vsr_filter_cfg.get("enabled"):
+                min_vol_ratio = vsr_filter_cfg.get("min_volume_ratio")
+                block_regimes = vsr_filter_cfg.get("block_regimes")
+
+                # Get daily regime from regime_diagnostics
+                daily_regime = ""
+                if regime_diagnostics and "daily" in regime_diagnostics:
+                    daily_regime = (regime_diagnostics.get("daily") or {}).get("regime", "")
+
+                # Check volume ratio
+                if vol_mult < min_vol_ratio:
+                    reasons.append(f"vsr_short_vol_blocked:{vol_mult:.1f}x<{min_vol_ratio}x")
+                    logger.info(f"[REVERSION] {symbol} volume_spike_reversal_short BLOCKED: vol_ratio {vol_mult:.1f}x < {min_vol_ratio}x")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+
+                # Check daily regime
+                if daily_regime in block_regimes:
+                    reasons.append(f"vsr_short_regime_blocked:daily={daily_regime}")
+                    logger.info(f"[REVERSION] {symbol} volume_spike_reversal_short BLOCKED: daily_regime={daily_regime} in block list {block_regimes}")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+
+                reasons.append(f"vsr_short_ok:vol={vol_mult:.1f}x,daily={daily_regime}")
 
         # ========== VWAP_RECLAIM VOLUME FILTER (DATA-DRIVEN Dec 2024) ==========
         # From spike test: VWAP_RECLAIM vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs
@@ -553,6 +581,15 @@ class ReversionPipeline(BasePipeline):
         # Wider entry zone for reversion - harder to time
         zone_mult = entry_cfg["zone_mult_atr"]
         zone_width = atr * zone_mult
+
+        # Apply minimum zone width (as % of price) for large cap stocks with low ATR
+        min_zone_pct = entry_cfg.get("min_zone_pct")
+        if min_zone_pct > 0:
+            min_zone_width = entry_ref * (min_zone_pct / 100.0)
+            if zone_width < min_zone_width:
+                logger.debug(f"[REVERSION] {symbol} zone widened from {zone_width:.3f} to {min_zone_width:.3f} (min_zone_pct={min_zone_pct}%)")
+                zone_width = min_zone_width
+
         entry_zone = (entry_ref - zone_width, entry_ref + zone_width)
 
         # Reversion entries wait for confirmation

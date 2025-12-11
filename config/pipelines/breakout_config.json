@@ -323,8 +323,9 @@
     },
 
     "entry": {
-        "_comment": "From configuration.json planner_entry_zone_breakout_mult: 0.25, min_breakout_atr_mult: 0.3 - Aligned with baseline",
-        "zone_mult_atr": 0.25,
+        "_comment": "WIDENED (Dec 2024): zone_mult_atr 0.25->0.4, min_zone_pct 0.20->0.25. flag_continuation had 0.31% zones -> 0 triggers.",
+        "zone_mult_atr": 0.4,
+        "min_zone_pct": 0.25,
         "min_breakout_atr_mult": 0.3,
         "mode": "immediate",
         "triggers": {

@@ -64,6 +64,23 @@ class MainDetector(BaseStructure):
             ("ict_comprehensive", ICTStructure, "ict"),
             ("fvg", ICTStructure, "fvg"),
             ("order_block", ICTStructure, "order_block"),
+            # ICT individual setups - these inherit params from ict_comprehensive
+            ("order_block_long", ICTStructure, "order_block_long"),
+            ("order_block_short", ICTStructure, "order_block_short"),
+            ("fair_value_gap_long", ICTStructure, "fair_value_gap_long"),
+            ("fair_value_gap_short", ICTStructure, "fair_value_gap_short"),
+            ("liquidity_sweep_long", ICTStructure, "liquidity_sweep_long"),
+            ("liquidity_sweep_short", ICTStructure, "liquidity_sweep_short"),
+            ("premium_zone_short", ICTStructure, "premium_zone_short"),
+            ("discount_zone_long", ICTStructure, "discount_zone_long"),
+            ("break_of_structure_long", ICTStructure, "break_of_structure_long"),
+            ("break_of_structure_short", ICTStructure, "break_of_structure_short"),
+            ("change_of_character_long", ICTStructure, "change_of_character_long"),
+            ("change_of_character_short", ICTStructure, "change_of_character_short"),
+            # NOTE: trend_reversal_long/short and breakout_long/short are NOT mapped here because:
+            # - TrendStructure only produces: trend_pullback_long/short, trend_continuation_long/short
+            # - LevelBreakoutStructure only produces: level_breakout_long/short
+            # These config entries exist for regime_allowed_setups references but no detector produces them
             ("level_breakout_long", LevelBreakoutStructure, "level_breakout_long"),
             ("level_breakout_short", LevelBreakoutStructure, "level_breakout_short"),
             ("failure_fade_long", FailureFadeStructure, "failure_fade_long"),
@@ -122,9 +139,31 @@ class MainDetector(BaseStructure):
             ("support_resistance", SupportResistanceStructure, "support_resistance")
         ]
 
+        # ICT setups that should inherit params from ict_comprehensive
+        ict_derived_setups = {
+            "order_block_long", "order_block_short",
+            "fair_value_gap_long", "fair_value_gap_short",
+            "liquidity_sweep_long", "liquidity_sweep_short",
+            "premium_zone_short", "discount_zone_long",
+            "break_of_structure_long", "break_of_structure_short",
+            "change_of_character_long", "change_of_character_short"
+        }
+        ict_base_config = setups_config.get("ict_comprehensive", {})
+
         # Initialize all detectors uniformly
         for setup_name, detector_class, detector_key in detector_configs:
             setup_config = setups_config.get(setup_name, {})
+
+            # For ICT-derived setups, merge with ict_comprehensive params
+            if setup_name in ict_derived_setups and setup_config.get("enabled", False):
+                if ict_base_config:
+                    # Merge: start with ict_comprehensive, override with specific config
+                    merged_config = {**ict_base_config, **setup_config}
+                    setup_config = merged_config
+                    logger.debug(f"MAIN_DETECTOR: Merged {setup_name} with ict_comprehensive params")
+                else:
+                    logger.warning(f"MAIN_DETECTOR: {setup_name} enabled but ict_comprehensive not found - skipping")
+                    continue
 
             if setup_config.get("enabled", False):
                 try:

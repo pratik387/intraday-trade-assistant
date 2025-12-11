@@ -360,7 +360,8 @@ class BreakoutPipeline(BasePipeline):
         df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
-        vol_mult: float
+        vol_mult: float,
+        regime_diagnostics: Optional[Dict[str, Any]] = None
     ) -> GateResult:
         """
         Breakout-specific gate validations.
@@ -873,9 +874,17 @@ class BreakoutPipeline(BasePipeline):
                 entry_ref = orl
                 entry_trigger = triggers["short"]
 
-        # Entry zone from config - tight for breakouts
+        # Entry zone from config
         zone_mult = entry_cfg["zone_mult_atr"]
         zone_width = atr * zone_mult
+
+        # Apply minimum zone width (as % of price) for large cap stocks with low ATR
+        min_zone_pct = entry_cfg.get("min_zone_pct")
+        if min_zone_pct > 0:
+            min_zone_width = current_close * (min_zone_pct / 100.0)
+            if zone_width < min_zone_width:
+                logger.debug(f"[BREAKOUT] {symbol} zone widened from {zone_width:.3f} to {min_zone_width:.3f} (min_zone_pct={min_zone_pct}%)")
+                zone_width = min_zone_width
 
         # Entry mode from config
         entry_mode = entry_cfg["mode"]

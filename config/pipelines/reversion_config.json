@@ -132,6 +132,13 @@
             "long_trade_volume": {
                 "min_volume": 150000,
                 "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+            },
+            "volume_spike_reversal_short_filter": {
+                "_comment": "DATA-DRIVEN (Dec 2024): Volume + regime filter for volume_spike_reversal_short",
+                "enabled": true,
+                "min_volume_ratio": 10,
+                "block_regimes": ["trend_up"],
+                "_evidence": "vol>=10x + regime!=trend_up: 20 trades, 70% WR, +4,913 Rs, 246 Rs/trade (vs baseline 54% WR, 68 Rs/trade). Counter-trend shorts in trend_up are disasters (44% WR, -93 Rs avg)."
             }
         }
     },
@@ -256,8 +263,9 @@
     },
 
     "entry": {
-        "_comment": "ISSUE 2 FIX: Widened from 0.08 to 0.15 ATR to capture close misses (63 trades within 0.5%)",
-        "zone_mult_atr": 0.15,
+        "_comment": "WIDENED (Dec 2024): 0.15->0.3 ATR, min_zone_pct 0.25->0.30. Zero-trigger setups had 0.10-0.15% zones.",
+        "zone_mult_atr": 0.3,
+        "min_zone_pct": 0.30,
         "mode": "retest",
         "triggers": {
             "long": "reversal_from_low",

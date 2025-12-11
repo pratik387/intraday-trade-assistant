@@ -41,6 +41,11 @@ class SqueezeReleaseStructure(BaseStructure):
         self.width_calculation_period = config["width_calculation_period"]
         self.recent_width_bars = config["recent_width_bars"]
 
+        # PRO TRADER: NR7 Pattern (Chartink screener) - Range smallest of last 7 periods
+        # All params required from config - no defaults
+        self.enable_nr7_pattern = config["enable_nr7_pattern"]
+        self.nr7_lookback = config["nr7_lookback"]
+
         # Momentum parameters
         self.momentum_period = config["momentum_period"]
         self.min_momentum_threshold = config["min_momentum_threshold"]
@@ -90,6 +95,19 @@ class SqueezeReleaseStructure(BaseStructure):
 
             # Check for squeeze release pattern
             squeeze_release_info = self._detect_squeeze_release_pattern(df, width_series, context.symbol)
+
+            # PRO TRADER: Also check NR7 pattern as alternative squeeze signal
+            nr7_detected = False
+            if not squeeze_release_info and self.enable_nr7_pattern:
+                nr7_detected = self._detect_nr7_pattern(df, context.symbol)
+                if nr7_detected:
+                    # NR7 detected - calculate momentum for direction
+                    momentum_change = df['close'].pct_change(self.momentum_period).iloc[-1]
+                    momentum_direction = "long" if momentum_change > 0 else "short"
+                    # Use 1.0 as expansion ratio for NR7 (it's a contraction signal, not expansion)
+                    squeeze_release_info = (1.0, momentum_change, momentum_direction)
+                    logger.debug(f"SQUEEZE_DETECT: {context.symbol} - NR7 pattern detected as alternative squeeze signal")
+
             if not squeeze_release_info:
                 logger.debug(f"SQUEEZE_DETECT: {context.symbol} - REJECTED: No squeeze release pattern detected")
                 return StructureAnalysis(
@@ -226,6 +244,45 @@ class SqueezeReleaseStructure(BaseStructure):
         except Exception as e:
             logger.debug(f"SQUEEZE_RELEASE: Error detecting squeeze pattern: {e}")
             return None
+
+    def _detect_nr7_pattern(self, df: pd.DataFrame, symbol: str = "UNKNOWN") -> bool:
+        """PRO TRADER: Detect NR7 pattern (Narrow Range 7) - Chartink screener standard.
+
+        NR7 = Current bar's range is the smallest of the last 7 bars.
+        This indicates volatility contraction (squeeze) before potential expansion.
+        Used widely in Indian markets by Chartink, Screener.in, and professional traders.
+        """
+        try:
+            if len(df) < self.nr7_lookback:
+                return False
+
+            # Calculate range for each of the last N bars
+            recent_bars = df.tail(self.nr7_lookback)
+            ranges = recent_bars['high'] - recent_bars['low']
+
+            # Current bar range
+            current_range = ranges.iloc[-1]
+
+            # Previous N-1 bars ranges
+            previous_ranges = ranges.iloc[:-1]
+
+            # NR7: Current range must be smallest of all 7 bars
+            is_nr7 = current_range < previous_ranges.min()
+
+            if is_nr7:
+                # Additional validation: range should be reasonably tight
+                avg_range = ranges.mean()
+                range_contraction = current_range / avg_range if avg_range > 0 else 1.0
+
+                logger.debug(f"SQUEEZE_NR7: {symbol} - NR7 detected | Current range: {current_range:.4f} | "
+                           f"Min previous: {previous_ranges.min():.4f} | Contraction: {range_contraction:.2f}x")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"SQUEEZE_RELEASE: Error detecting NR7 pattern: {e}")
+            return False
 
     def _validate_volume_confirmation(self, df: pd.DataFrame) -> bool:
         """Validate volume confirmation for squeeze release."""

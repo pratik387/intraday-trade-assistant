@@ -346,7 +346,8 @@ class BasePipeline(ABC):
         df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
-        vol_mult: float
+        vol_mult: float,
+        regime_diagnostics: Optional[Dict[str, Any]] = None
     ) -> GateResult:
         """Apply category-specific gate validations."""
         pass
@@ -1252,7 +1253,8 @@ class BasePipeline(ABC):
             symbol, setup_type, regime, df5m, df1m,
             strength=quality_result.structural_rr,
             adx=features.get("adx") or 0.0,
-            vol_mult=features["volume_ratio"]
+            vol_mult=features["volume_ratio"],
+            regime_diagnostics=regime_diagnostics
         )
         if not gate_result.passed:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at GATES: {gate_result.reasons}")

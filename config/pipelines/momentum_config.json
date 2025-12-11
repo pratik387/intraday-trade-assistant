@@ -305,8 +305,9 @@
     },
 
     "entry": {
-        "_comment": "ISSUE 2 FIX: Widened from 0.15 to 0.25 ATR to capture close misses (63 trades within 0.5%)",
-        "zone_mult_atr": 0.25,
+        "_comment": "WIDENED (Dec 2024): 0.25->0.4 ATR, added min_zone_pct. momentum_breakout_long had 0.26% zones -> 50% trigger rate.",
+        "zone_mult_atr": 0.4,
+        "min_zone_pct": 0.25,
         "mode": "retest",
         "triggers": {
             "long": "hold_above_ema20",

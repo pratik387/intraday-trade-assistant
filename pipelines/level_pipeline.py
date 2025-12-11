@@ -220,7 +220,8 @@ class LevelPipeline(BasePipeline):
         df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
-        vol_mult: float
+        vol_mult: float,
+        regime_diagnostics: Optional[Dict[str, Any]] = None
     ) -> GateResult:
         """
         Level-specific gate validations - HARD GATES ONLY, NO PENALTIES.
@@ -723,9 +724,18 @@ class LevelPipeline(BasePipeline):
             entry_ref = orl if bias == "long" else orh
             entry_trigger = triggers["default"]
 
-        # Tight entry zone for level plays from config
+        # Entry zone for level plays from config
+        # Use ATR-based zone, but ensure minimum width for low-ATR large cap stocks
         zone_mult = entry_cfg["zone_mult_atr"]
         zone_width = atr * zone_mult
+
+        # Apply minimum zone width (as % of price) for large cap stocks with low ATR
+        min_zone_pct = entry_cfg.get("min_zone_pct")
+        if min_zone_pct > 0:
+            min_zone_width = entry_ref * (min_zone_pct / 100.0)
+            if zone_width < min_zone_width:
+                logger.debug(f"[LEVEL] {symbol} zone widened from {zone_width:.3f} to {min_zone_width:.3f} (min_zone_pct={min_zone_pct}%)")
+                zone_width = min_zone_width
 
         entry_zone = (entry_ref - zone_width, entry_ref + zone_width)
 
