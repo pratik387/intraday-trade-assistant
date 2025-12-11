@@ -55,10 +55,10 @@
                 "min_volume_1m": 50000
             },
             "stop_loss": {
-                "_comment": "FHM-SPECIFIC SL: 0.8% of price (tighter than generic 2.0 ATR breakout SL)",
-                "pct_of_price": 0.008,
+                "_comment": "DATA-DRIVEN (Dec 2024): 1m simulation showed 1.2% optimal",
+                "pct_of_price": 0.012,
                 "use_structure": true,
-                "_rationale": "Pro Indian market standard: 0.5-1.5% of price for volatile momentum plays"
+                "_rationale": "WIDENED: 0.8%->1.2% based on 1m bar simulation. Avg MAE was 0.53%, tight SL hit on recoverable moves."
             }
         },
         "min_bars_required": 4
@@ -335,13 +335,13 @@
     },
 
     "targets": {
-        "_comment": "DATA-DRIVEN (Dec 2024): Long avg MFE=0.74R, only 15% hit 1.5R but 28% hit 1.0R. Lower T1 for longs.",
+        "_comment": "DATA-DRIVEN (Dec 2024): FHM 1m simulation showed 1.2% SL + 1.5R T1 = +348% improvement. Higher T1 captures momentum.",
         "rr_ratios": {
             "long": {
-                "_comment": "LOWERED: T1 1.5R→1.0R for longs. Data shows 28% hit 1.0R vs 15% hit 1.5R. Pro traders take profits at 1R.",
-                "t1": 1.0,
-                "t2": 2.0,
-                "t3": 3.0
+                "_comment": "RAISED: T1 1.0R→1.5R for longs. FHM 1m simulation: 55 trades, Rs 1,886 baseline → Rs 8,451 with 1.5R.",
+                "t1": 1.5,
+                "t2": 2.5,
+                "t3": 3.5
             },
             "short": {
                 "_comment": "Shorts keep 1.5R T1 - they have 1.13R avg MFE vs 0.74R for longs",

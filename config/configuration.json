@@ -60,6 +60,8 @@
       "vwap_lose_short",
       "range_rejection_long",
       "range_rejection_short",
+      "range_bounce_long",
+      "range_bounce_short",
       "volume_spike_reversal_long",
       "volume_spike_reversal_short",
       "momentum_breakout_long",
@@ -83,9 +85,11 @@
       "liquidity_sweep_short",
       "break_of_structure_long",
       "break_of_structure_short",
-      "first_hour_momentum_long",
+      "range_bounce_long",
+      "range_bounce_short",
       "first_hour_momentum_short"
-    ]
+    ],
+    "_comment_fhm_long_squeeze_blocked": "BLOCKED (Dec 2024): FHM long removed from squeeze - 40 trades, -646 Rs, 38% real WR (excl EOD). Only trend_up profitable."
   },
   "regime_thresholds": {
     "vwap_min_strength": 2.0,
@@ -112,13 +116,14 @@
     "fair_value_gap": {
       "min_gap_size_pct": 0.0005,
       "_gap_comment": "Clean gap matters, not size",
-      "min_volume_ratio": 1.5,
-      "_fvg_volume_comment": "FVG institutional standard: 1.5x",
-      "max_wick_penetration_pct": 0.25,
-      "_penetration_comment": "Allow wick penetration (25% max)",
-      "vwap_distance_tolerance_pct": 0.15,
-      "_vwap_comment": "FVG proximity to VWAP/swing (15% tolerance)",
-      "swing_tolerance_pct": 0.15
+      "min_volume_ratio": 1.2,
+      "_fvg_volume_comment": "RELAXED (Dec 2024): 1.5->1.2 - only 1 detection in 6 months with 1.5x",
+      "max_wick_penetration_pct": 0.30,
+      "_penetration_comment": "RELAXED: Allow wick penetration (30% max, was 25%)",
+      "vwap_distance_tolerance_pct": 0.25,
+      "_vwap_comment": "RELAXED (Dec 2024): 0.15->0.25 - allow FVG further from VWAP",
+      "swing_tolerance_pct": 0.25,
+      "_swing_comment": "RELAXED (Dec 2024): 0.15->0.25 - allow FVG further from swing"
     }
   },
   "liquidity_gates": {
@@ -1285,15 +1290,15 @@
         "_comment": "First hour momentum window - full window, filtered by multi-bar confirmation"
       },
       "regime_filter": {
-        "allowed_regimes": ["squeeze"],
-        "_comment": "CRITICAL: FHM Long ONLY works in squeeze regime (chop/trend = negative)"
+        "allowed_regimes": ["trend_up"],
+        "_comment": "UPDATED (Dec 2024): FHM Long ONLY in trend_up. Squeeze was -646 Rs (38% WR), trend_up +545 Rs (58% WR)"
       },
       "triggers": {
         "min_rvol": 2.0,
         "min_price_move_pct": 1.0,
         "min_volume": 100000,
-        "_rvol_comment": "PRO STANDARD: RVOL>=2.0x is DEFAULT - cap-specific thresholds below override",
-        "_volume_comment": "OPTIMIZED: bar5_volume >= 100k (was 200k) for more trades",
+        "_rvol_comment": "PRO STANDARD: RVOL>=2.0x indicates institutional activity",
+        "_volume_comment": "OPTIMIZED: bar5_volume >= 100k for sufficient liquidity",
         "_adx_note": "ADX filter handled by breakout_pipeline gates.adx.fhm_long_min_adx=35"
       },
       "cap_rvol_thresholds": {
@@ -1329,18 +1334,20 @@
         "_zone_comment": "TIGHTENED: 0.15→0.10 ATR - Backtest showed high slippage (100-400bps); tighter zone = better entries"
       },
       "stop_loss": {
-        "_comment": "INDIAN MARKET: min(swing_low, VWAP - 0.8% of price)",
+        "_comment": "DATA-DRIVEN (Dec 2024): 1m simulation showed 1.2% SL + 1.5R T1 = +348% improvement",
         "reference": "structure",
-        "pct_of_price": 0.008,
+        "pct_of_price": 0.012,
         "buffer_atr_mult": 0.2,
-        "_pct_comment": "0.8% of price = NSE India research recommendation"
+        "_pct_comment": "WIDENED: 0.8% -> 1.2% - Avg MAE was 0.53%, tight SL hit on recoverable moves",
+        "_evidence": "55 trades: Current Rs 1,886 -> Proposed Rs 8,451. 4 trades rescued (SL->T1), 16 T1 trades make more profit"
       },
       "targets": {
-        "_comment": "R:R based targets",
-        "t1_rr": 1.0,
-        "t2_rr": 2.0,
-        "t3_rr": 3.0,
-        "qty_split": [70, 30, 0]
+        "_comment": "DATA-DRIVEN (Dec 2024): 1.5R T1 captures more profit from momentum moves",
+        "t1_rr": 1.5,
+        "t2_rr": 2.5,
+        "t3_rr": 3.5,
+        "qty_split": [70, 30, 0],
+        "_t1_comment": "RAISED: 1.0R -> 1.5R - t1->t1 trades gained +Rs 9,972 with higher target"
       },
       "confidence_high_rvol": 2.0,
       "confidence_base": 1.5,
@@ -1554,11 +1561,12 @@
           "min_rejection_wick_pct": 0.15
         },
         "fair_value_gap": {
-          "min_gap_size_pct": 0.001,
-          "min_volume_ratio": 1.1,
-          "max_wick_penetration_pct": 0.15,
-          "vwap_distance_tolerance_pct": 0.08,
-          "swing_tolerance_pct": 0.10
+          "min_gap_size_pct": 0.0005,
+          "min_volume_ratio": 1.2,
+          "max_wick_penetration_pct": 0.30,
+          "vwap_distance_tolerance_pct": 0.25,
+          "swing_tolerance_pct": 0.25,
+          "_comment": "RELAXED (Dec 2024): Aligned with ict_quality_filters values"
         }
       }
     },

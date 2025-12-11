@@ -267,6 +267,11 @@
         "zone_mult_atr": 0.3,
         "min_zone_pct": 0.30,
         "mode": "retest",
+        "mode_overrides": {
+            "_comment": "DATA-DRIVEN (Dec 2024): failure_fade had 20% trigger rate with retest - price moves AWAY from entry after fail. conditional triggers immediately if within zone.",
+            "failure_fade": "conditional",
+            "volume_spike_reversal": "conditional"
+        },
         "triggers": {
             "long": "reversal_from_low",
             "short": "reversal_from_high"
