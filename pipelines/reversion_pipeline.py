@@ -592,8 +592,18 @@ class ReversionPipeline(BasePipeline):
 
         entry_zone = (entry_ref - zone_width, entry_ref + zone_width)
 
-        # Reversion entries wait for confirmation
-        entry_mode = entry_cfg["mode"]
+        # Reversion entries wait for confirmation - check for setup-specific override
+        entry_mode = entry_cfg["mode"]  # default: "retest"
+        mode_overrides = entry_cfg.get("mode_overrides", {})
+
+        # Check for setup-specific entry mode override
+        for setup_pattern, override_mode in mode_overrides.items():
+            if setup_pattern.startswith("_"):  # skip comments
+                continue
+            if setup_pattern.lower() in setup_lower:
+                entry_mode = override_mode
+                logger.debug(f"[REVERSION] {symbol} {setup_type} using entry_mode={override_mode} (override for {setup_pattern})")
+                break
 
         return EntryResult(
             entry_zone=entry_zone,
