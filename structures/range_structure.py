@@ -53,8 +53,14 @@ class RangeStructure(BaseStructure):
         self.breakout_sl_buffer_atr = config["breakout_sl_buffer_atr"]  # ATR buffer inside level for breakout SL
         self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
 
+        # DATA-DRIVEN: Blocked cap segments from 6-month backtest analysis
+        # range_bounce_short large_cap: 92 trades, 9.8% WR, Rs -10,197 PnL, 52.2% hard_sl
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
+
         logger.debug(f"RANGE: Initialized with range duration: {self.min_range_duration} bars, height: {self.min_range_height_pct}-{self.max_range_height_pct}%")
         logger.debug(f"RANGE: SL params - bounce_buffer: {self.bounce_sl_buffer_atr}ATR, breakout_buffer: {self.breakout_sl_buffer_atr}ATR")
+        # INFO log for blocked cap segments to verify config loading
+        logger.info(f"RANGE_INIT: blocked_cap_segments={list(self.blocked_cap_segments) if self.blocked_cap_segments else 'NONE'}")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect range-based structures."""
@@ -195,7 +201,12 @@ class RangeStructure(BaseStructure):
         if resistance_distance_pct <= self.bounce_tolerance_pct:
             # Check if we're coming from below (bounce setup)
             if current_price <= resistance:
-                if self._validate_volume_confirmation(context):
+                # DATA-DRIVEN: Block large_cap for range_bounce_short (6-month backtest: 9.8% WR, Rs -10,197)
+                # HARDCODED: This block applies regardless of which RangeStructure instance detects it
+                cap_segment = context.cap_segment
+                if cap_segment == "large_cap":
+                    logger.debug(f"RANGE_BLOCK: {context.symbol} | Cap=large_cap blocked for range_bounce_short")
+                elif self._validate_volume_confirmation(context):
                     event = StructureEvent(
                         symbol=context.symbol,
                         timestamp=context.timestamp,

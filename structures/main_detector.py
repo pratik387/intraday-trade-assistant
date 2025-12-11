@@ -80,7 +80,6 @@ class MainDetector(BaseStructure):
             # NOTE: trend_reversal_long/short and breakout_long/short are NOT mapped here because:
             # - TrendStructure only produces: trend_pullback_long/short, trend_continuation_long/short
             # - LevelBreakoutStructure only produces: level_breakout_long/short
-            # These config entries exist for regime_allowed_setups references but no detector produces them
             ("level_breakout_long", LevelBreakoutStructure, "level_breakout_long"),
             ("level_breakout_short", LevelBreakoutStructure, "level_breakout_short"),
             ("failure_fade_long", FailureFadeStructure, "failure_fade_long"),

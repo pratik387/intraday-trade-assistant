@@ -479,7 +479,7 @@ class MultiTimeframeRegime:
 
         # ============ EMA DISTANCE FILTER (config-driven) ============
         # Block LONG when price is too extended above EMA200
-        # Strategy+regime combos are handled by regime_allowed_setups in config
+        # Strategy+regime combos are handled by regime_gate.allow_setup()
         price_distance_pct = daily_result.metrics.get("price_distance_pct", 0.0)
 
         if is_long and price_distance_pct > self.long_max_ema_distance_pct:

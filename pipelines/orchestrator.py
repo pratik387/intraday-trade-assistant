@@ -267,6 +267,33 @@ class PipelineOrchestrator:
 
         return True
 
+    def _is_hard_blocked(self, setup_type: str, regime: str) -> bool:
+        """
+        Check if a specific setup type is hard blocked in this regime.
+
+        Hard blocks are permanent blocks that CANNOT be bypassed by HCET or any other
+        mechanism. They are based on evidence showing certain setups consistently
+        lose money in specific regimes.
+
+        Single source of truth: regime_gate.py HARD_BLOCKS constant.
+
+        Args:
+            setup_type: The setup type (e.g., "first_hour_momentum_long")
+            regime: The current market regime
+
+        Returns:
+            True if this setup is permanently blocked in this regime
+        """
+        from services.gates.regime_gate import HARD_BLOCKS
+
+        # Normalize regime key (choppy/range → chop)
+        regime_key = regime
+        if regime in {"choppy", "range"}:
+            regime_key = "chop"
+
+        blocked_setups = HARD_BLOCKS.get(regime_key, [])
+        return setup_type in blocked_setups
+
     def _is_orb_priority_window(self, now: pd.Timestamp) -> bool:
         """
         Check if we're in the ORB priority window.
@@ -443,6 +470,12 @@ class PipelineOrchestrator:
         # Pass setup_type and now to enable ORB Chop Exception (ORB allowed in chop before 10:30)
         if self._is_category_blocked(category.value, regime, setup_type=setup_type, now=now):
             logger.debug(f"[ORCHESTRATOR] {category.value} blocked for regime {regime}")
+            return None
+
+        # Check HARD BLOCKS - setup types permanently blocked in specific regimes
+        # This is the SINGLE source of truth from regime_gate.py - cannot be bypassed
+        if self._is_hard_blocked(setup_type, regime):
+            logger.debug(f"[ORCHESTRATOR] HARD_BLOCK: {setup_type} permanently blocked in {regime}")
             return None
 
         pipeline = self._get_pipeline(category)
