@@ -189,6 +189,24 @@
             "premium_zone_short_trend_down_adx": {
                 "min_adx": 32,
                 "_evidence": "Dec 2024: In trend_down, ADX>=32: 31 trades Rs +4,884 (9 HSL) vs ADX<32: 26 trades Rs -1,865 (16 HSL). Strong trends work."
+            },
+            "range_bounce_short_adx": {
+                "max_adx": 30,
+                "_evidence": "6-month backtest Dec 2024: ADX>=30: 79 trades, 35% WR, Rs -9,121 | ADX<30: 119 trades, 53% WR, Rs +26,700"
+            },
+            "range_bounce_short_rr": {
+                "min_rr": 2.0,
+                "max_rr": 4.0,
+                "_evidence": "6-month backtest Dec 2024: R:R 2-4: 48 trades, 73% WR, Rs +26,512 | R:R<2: 39% WR | R:R>=4: 33% WR"
+            },
+            "resistance_bounce_short_max_adx": {
+                "max_adx": 30,
+                "_evidence": "6-month backtest Dec 2024: ADX<30: 149 trades, 53.7% WR, Rs +26,410 | ADX>=30: 133 trades, 48.1% WR, Rs +286"
+            },
+            "resistance_bounce_short_rr": {
+                "min_rr": 1.5,
+                "max_rr": 3.0,
+                "_evidence": "6-month backtest Dec 2024: R:R 1.5-3: 69 trades, 66.7% WR, Rs +24,945 | R:R<1.5: 40.5% WR | R:R>=3: 42.1% WR"
             }
         },
         "long_specific_filters": {

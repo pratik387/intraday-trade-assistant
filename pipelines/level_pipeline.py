@@ -392,6 +392,74 @@ class LevelPipeline(BasePipeline):
                 else:
                     reasons.append(f"range_bounce_short_chop_adx_ok:{adx:.0f}")
 
+        # 6b. RANGE_BOUNCE_SHORT: ADX >= max_adx GLOBAL BLOCK (DATA-DRIVEN Dec 2024)
+        # Evidence: ADX>=30: 79 trades, 35% WR, Rs -9,121 | ADX<30: 119 trades, 53% WR, Rs +26,700
+        # High ADX = strong trend = range bounces fail (price breaks through range)
+        if setup_type == "range_bounce_short":
+            filter_cfg = validated_filters.get("range_bounce_short_adx")
+            if filter_cfg:
+                max_adx_for_range = filter_cfg.get("max_adx", 30)
+                if adx >= max_adx_for_range:
+                    reasons.append(f"range_bounce_short_blocked:adx{adx:.0f}>={max_adx_for_range}")
+                    logger.debug(f"[LEVEL] {symbol} range_bounce_short BLOCKED: ADX {adx:.1f} >= {max_adx_for_range} (high ADX = trend breaks ranges)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"range_bounce_short_adx_ok:{adx:.0f}<{max_adx_for_range}")
+
+        # 6c. RANGE_BOUNCE_SHORT: R:R SWEET SPOT FILTER (DATA-DRIVEN Dec 2024)
+        # Evidence: R:R 2-4: 48 trades, 73% WR, Rs +26,512, Avg Rs 552
+        #           R:R <2: 59 trades, 39% WR, Rs +345, Avg Rs 6
+        #           R:R >=4: 12 trades, 33% WR, Rs -2,157, Avg Rs -180
+        if setup_type == "range_bounce_short":
+            filter_cfg = validated_filters.get("range_bounce_short_rr")
+            if filter_cfg:
+                min_rr = filter_cfg.get("min_rr")
+                max_rr = filter_cfg.get("max_rr")
+                if strength < min_rr:
+                    reasons.append(f"range_bounce_short_blocked:rr{strength:.2f}<{min_rr}")
+                    logger.debug(f"[LEVEL] {symbol} range_bounce_short BLOCKED: R:R {strength:.2f} < {min_rr} (low R:R = poor expectancy)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                elif strength >= max_rr:
+                    reasons.append(f"range_bounce_short_blocked:rr{strength:.2f}>={max_rr}")
+                    logger.debug(f"[LEVEL] {symbol} range_bounce_short BLOCKED: R:R {strength:.2f} >= {max_rr} (extreme R:R = unreliable)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"range_bounce_short_rr_ok:{strength:.2f}")
+
+        # 6d. RESISTANCE_BOUNCE_SHORT: ADX >= max_adx GLOBAL BLOCK (DATA-DRIVEN Dec 2024)
+        # Evidence: ADX<30: 149 trades, 53.7% WR, Rs +26,410 | ADX>=30: 133 trades, 48.1% WR, Rs +286
+        # High ADX = strong trend = resistance bounces fail (price breaks through)
+        if setup_type == "resistance_bounce_short":
+            filter_cfg = validated_filters.get("resistance_bounce_short_max_adx")
+            if filter_cfg:
+                max_adx_for_resistance = filter_cfg.get("max_adx")
+                if adx >= max_adx_for_resistance:
+                    reasons.append(f"resistance_bounce_short_blocked:adx{adx:.0f}>={max_adx_for_resistance}")
+                    logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: ADX {adx:.1f} >= {max_adx_for_resistance} (high ADX = trend breaks resistance)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"resistance_bounce_short_adx_ok:{adx:.0f}<{max_adx_for_resistance}")
+
+        # 6e. RESISTANCE_BOUNCE_SHORT: R:R SWEET SPOT FILTER (DATA-DRIVEN Dec 2024)
+        # Evidence: R:R 1.5-3: 69 trades, 66.7% WR, Rs +24,945, Avg Rs 362
+        #           R:R <1.5: 84 trades, 40.5% WR, Rs -3,923, Avg Rs -47
+        #           R:R >=3: 76 trades, 42.1% WR, Rs -2,460, Avg Rs -32
+        if setup_type == "resistance_bounce_short":
+            filter_cfg = validated_filters.get("resistance_bounce_short_rr")
+            if filter_cfg:
+                min_rr = filter_cfg.get("min_rr")
+                max_rr = filter_cfg.get("max_rr")
+                if strength < min_rr:
+                    reasons.append(f"resistance_bounce_short_blocked:rr{strength:.2f}<{min_rr}")
+                    logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: R:R {strength:.2f} < {min_rr} (low R:R = poor expectancy)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                elif strength >= max_rr:
+                    reasons.append(f"resistance_bounce_short_blocked:rr{strength:.2f}>={max_rr}")
+                    logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: R:R {strength:.2f} >= {max_rr} (extreme R:R = unreliable)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"resistance_bounce_short_rr_ok:{strength:.2f}")
+
         # 7. VWAP_LOSE_SHORT: BLOCK in TREND_UP
         # Evidence: ALL 4 trend_up trades hit hard_sl (Rs -2,179). Shorting in uptrend = guaranteed loss
         if setup_type == "vwap_lose_short" and regime == "trend_up":
