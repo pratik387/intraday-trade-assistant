@@ -105,12 +105,12 @@
             }
         },
         "adx": {
-            "_comment": "From configuration.json - breakout_min_adx: 20.0, adx_min_strength: 15, adx_min_trend: 20",
-            "min_value": 20,
-            "orb_early_min_value": 15,
+            "_comment": "RELAXED: min_value 20->15 for more data",
+            "min_value": 15,
+            "orb_early_min_value": 12,
             "_orb_early_comment": "ORB EARLY WINDOW FIX: Pro traders use relaxed ADX (15) for early ORB because ADX takes 14+ bars to stabilize",
             "_fhm_note": "FHM bypasses ADX - uses RVOL-based momentum (RVOL >= 2x is the signal)",
-            "low_adx_threshold": 15,
+            "low_adx_threshold": 12,
             "low_adx_size_mult": 0.8
         },
         "regime_rules": {
@@ -144,8 +144,8 @@
                 "_evidence": "R1: +1,695 Rs (91 trades) | R2: +1,554 Rs (92 trades) - 11AM breakouts have low WR, momentum fades"
             },
             "long_trade_volume": {
-                "min_volume": 150000,
-                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+                "min_volume": 50000,
+                "_evidence": "RELAXED: 150k->50k for more data. Original evidence: Winners have 2x volume (213k vs 107k)"
             },
             "orb_breakout_long_cap_filter": {
                 "_comment": "DATA-DRIVEN (Dec 2024): Large cap 92% WR vs mid/small 43% WR",
@@ -167,9 +167,9 @@
                 "_evidence": "RSI>=70: 9.3% WR (7W/75T). RSI<60: 16.4% WR (32W/195T). High RSI = chasing exhausted moves."
             },
             "entry_time_cutoff": {
-                "last_entry_hour": 11,
+                "last_entry_hour": 14,
                 "last_entry_minute": 30,
-                "_evidence": "09:15-11:00: 19% WR. 11:00-12:00: 11% WR. 13:00+: 7.7% WR. After 14:00: 0% WR."
+                "_evidence": "RELAXED: 11:30->14:30 for more data. Original: 09:15-11:00: 19% WR. 11:00-12:00: 11% WR"
             },
             "squeeze_regime_boost": {
                 "size_mult": 1.3,

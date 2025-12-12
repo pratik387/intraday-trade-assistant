@@ -146,14 +146,14 @@
             "recent_width_bars": 5
         },
         "validated_filters": {
-            "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
+            "_comment": "RELAXED for more data - getting more trades to analyze",
             "momentum_breakout_long_volume": {
-                "min_volume": 100000,
-                "_evidence": "R1: +848 Rs (14 trades) | R2: +998 Rs (13 trades) - Low volume momentum breakouts lack conviction"
+                "min_volume": 25000,
+                "_evidence": "RELAXED: was 100k, now 25k. Original: R1: +848 Rs (14 trades) | R2: +998 Rs (13 trades)"
             },
             "long_trade_volume": {
-                "min_volume": 150000,
-                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+                "min_volume": 25000,
+                "_evidence": "RELAXED: was 150k, now 25k. Original: Winners have 2x volume (213k vs 107k)"
             }
         },
         "long_specific_filters": {

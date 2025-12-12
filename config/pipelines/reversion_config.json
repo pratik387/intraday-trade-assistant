@@ -105,12 +105,12 @@
         },
         "min_hold_bars": 2,
         "failure_fade": {
-            "_comment": "From configuration.json failure_fade - min_fade_strength: 0.6",
-            "min_fade_strength": 0.6,
-            "rejection_candle_body_ratio_max": 0.4,
+            "_comment": "RELAXED: min_fade_strength 0.6->0.3 for more data",
+            "min_fade_strength": 0.3,
+            "rejection_candle_body_ratio_max": 0.5,
             "rejection_candle_bonus_mult": 1.1,
-            "min_pierce_size_pct": 0.1,
-            "max_pierce_size_pct": 1.0,
+            "min_pierce_size_pct": 0.05,
+            "max_pierce_size_pct": 1.5,
             "fade_confirmation_bars": 1
         },
         "volume_capitulation": {
@@ -134,11 +134,11 @@
                 "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
             },
             "volume_spike_reversal_short_filter": {
-                "_comment": "DATA-DRIVEN (Dec 2024): Volume + regime filter for volume_spike_reversal_short",
+                "_comment": "RELAXED (Dec 2024): Lowered from 10x to 3x to increase trade count for analysis",
                 "enabled": true,
-                "min_volume_ratio": 10,
-                "block_regimes": ["trend_up"],
-                "_evidence": "vol>=10x + regime!=trend_up: 20 trades, 70% WR, +4,913 Rs, 246 Rs/trade (vs baseline 54% WR, 68 Rs/trade). Counter-trend shorts in trend_up are disasters (44% WR, -93 Rs avg)."
+                "min_volume_ratio": 3,
+                "block_regimes": [],
+                "_evidence": "RELAXED: Original filter was blocking 98% of trades. Need more data to optimize."
             }
         }
     },

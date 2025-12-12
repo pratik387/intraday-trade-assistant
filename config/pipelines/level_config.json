@@ -106,16 +106,16 @@
             "min_adx_for_vwap": 8.0
         },
         "level_touch": {
-            "_comment": "From configuration.json - support_bounce_long",
-            "min_touches": 2,
+            "_comment": "RELAXED for more data: was 2 touches, now 1 touch",
+            "min_touches": 1,
             "min_level_age_bars": 5,
             "level_merge_tolerance_pct": 0.3
         },
         "setup_regime_blocks": {
             "_comment": "Data-driven filters from backtest analysis - block unprofitable setup+regime combinations",
             "range_bounce_long": {
-                "blocked_regimes": ["chop"],
-                "_evidence": "62 trades in chop, -4,048 PnL, 45.2% win rate (vs +565 in trend_up)"
+                "blocked_regimes": [],
+                "_evidence": "RELAXED: was blocking chop. Original: 62 trades in chop, -4,048 PnL, 45.2% win rate (vs +565 in trend_up)"
             },
             "discount_zone_long": {
                 "blocked_entirely": true,
@@ -148,9 +148,9 @@
             "max_bars_below_for_lose": 8
         },
         "vwap_volume": {
-            "_comment": "DATA-DRIVEN (Dec 2024): VWAP vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs improvement",
-            "min_volume": 50000,
-            "_evidence": "Low volume VWAP trades have poor execution and high slippage. Blocking vol<50k improves P&L by +2,675 Rs"
+            "_comment": "RELAXED: 50k->25k for more data. Original: VWAP vol<50k: 18 trades (6W, 12L)",
+            "min_volume": 25000,
+            "_evidence": "RELAXED for more data. Original: Low volume VWAP trades have poor execution and high slippage"
         },
         "validated_filters": {
             "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
@@ -163,20 +163,20 @@
                 "_evidence": "Dec 2024 analysis: bb_width<=0.10 reduces hard_sl from 35%→28%, 46 trades 54% WR Rs 6,465 PnL"
             },
             "support_bounce_long_adx": {
-                "min_adx": 20,
-                "_evidence": "R1: +1,819 Rs (8 trades) | R2: +1,819 Rs (8 trades) - ADX<20 = no trend, support bounce fails"
+                "min_adx": 10,
+                "_evidence": "RELAXED for more data: was 20, now 10. Original: R1: +1,819 Rs (8 trades) | R2: +1,819 Rs (8 trades)"
             },
             "premium_zone_short_adx": {
                 "min_adx": 15,
                 "_evidence": "R1: +1,244 Rs (5 trades) | R2: +1,244 Rs (5 trades) - Very low ADX = no directional movement"
             },
             "support_bounce_long_srr": {
-                "max_structural_rr": 3.0,
-                "_evidence": "R1: +826 Rs (36 trades) | R2: +826 Rs (36 trades) - High SRR = wide stops = poor risk management"
+                "max_structural_rr": 10.0,
+                "_evidence": "RELAXED for more data: was 3.0, now 10.0. Original: R1: +826 Rs (36 trades)"
             },
             "long_trade_volume": {
-                "min_volume": 150000,
-                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+                "min_volume": 50000,
+                "_evidence": "RELAXED for more data: was 150k, now 50k. Original: Winners have 2x volume (213k vs 107k)"
             },
             "range_bounce_short_chop_adx": {
                 "min_adx": 20,

@@ -110,10 +110,9 @@
         "orb_breakout_short"
       ],
       "blocked": [
-        "momentum_breakout_long",
         "momentum_breakout_short"
       ],
-      "_rationale": "Large-caps mean-revert reliably (70% WR), move slowly on momentum. Institutional HFT keeps prices efficient."
+      "_rationale": "RELAXED: Removed momentum_breakout_long from blocked for more data. Original: Large-caps mean-revert reliably (70% WR)."
     },
     "mid_cap": {
       "preferred": [
@@ -156,13 +155,8 @@
         "flag_continuation_long",
         "flag_continuation_short"
       ],
-      "blocked": [
-        "vwap_mean_reversion_long",
-        "vwap_mean_reversion_short",
-        "failure_fade_long",
-        "failure_fade_short"
-      ],
-      "_rationale": "Small-caps momentum-driven (2-3x faster moves). Mean-reversion unreliable due to low liquidity + manipulation risk."
+      "blocked": [],
+      "_rationale": "RELAXED: Removed all blocks from small_cap for more data collection"
     },
     "micro_cap": {
       "preferred": [
@@ -790,13 +784,13 @@
     },
     "failure_fade_short": {
       "enabled": true,
-      "min_pierce_size_pct": 0.1,
-      "max_pierce_size_pct": 1.0,
+      "min_pierce_size_pct": 0.05,
+      "max_pierce_size_pct": 1.5,
       "fade_confirmation_bars": 1,
       "require_volume_confirmation": false,
-      "min_volume_mult": 1.2,
-      "min_fade_strength": 0.6,
-      "_comment_fade_strength": "INSTITUTIONAL FIX: Increased from 0.3 to 0.6 for consistency with failure_fade_long",
+      "min_volume_mult": 1.0,
+      "min_fade_strength": 0.3,
+      "_comment_fade_strength": "RELAXED: 0.6->0.3 for more data. Original: INSTITUTIONAL FIX for consistency with failure_fade_long",
       "_comment_adx_filter": "INSTITUTIONAL FIX (exit-opt-004): ADX >= 15 required in regime_gate.py to avoid weak/choppy trades. Analysis: saves Rs.2,718 (18 hard_sl avoided vs 15 winners lost). Checked at DECISION time on 5m bar.",
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
@@ -937,11 +931,11 @@
     "support_bounce_long": {
       "enabled": true,
       "target_structure_type": "support_bounce_long",
-      "min_touches": 2,
-      "bounce_tolerance_pct": 0.8,
-      "_comment_tolerance": "FIXED: 0.3 → 0.8% - Professional standard for S/R zones (0.7-1.0%). Aligns with 'support as zone' industry practice.",
-      "require_volume_spike": true,
-      "min_volume_mult": 1.5,
+      "min_touches": 1,
+      "bounce_tolerance_pct": 1.5,
+      "_comment_tolerance": "RELAXED for more data: was 2 touches, 0.8% tolerance. Now 1 touch, 1.5% tolerance.",
+      "require_volume_spike": false,
+      "min_volume_mult": 1.0,
       "min_level_age_bars": 5,
       "max_level_distance_pct": 2.0,
       "level_merge_tolerance_pct": 0.3,
@@ -1864,12 +1858,10 @@
       "flag_continuation_long",
       "trend_continuation_long",
       "trend_continuation_short",
-      "vwap_mean_reversion_short",
-      "vwap_mean_reversion_long",
-      "momentum_breakout_long",
       "liquidity_sweep_long",
       "flag_continuation_short"
     ],
+    "_comment_blacklist_relaxed": "RELAXED: Removed vwap_mean_reversion_short, vwap_mean_reversion_long, momentum_breakout_long for more data",
     "max_structural_rr": 4.0,
     "high_rr_penalty": -0.3,
     "chop_throttle": {
