@@ -11,13 +11,19 @@ All indicators use industry-standard methods:
 - RSI: Wilder's smoothing (alpha=1/period)
 - MACD: EMA-based (span smoothing)
 - EMA: Standard exponential moving average
+- Volume Ratio: Current volume vs median volume
 
 Usage:
-    from services.indicators.adx import (
-        calculate_atr,
+    from services.indicators.indicators import (
+        calculate_atr, calculate_atr_series,
         calculate_adx, calculate_adx_with_di,
-        calculate_rsi, calculate_macd, calculate_ema
+        calculate_rsi, calculate_macd, calculate_ema,
+        volume_ratio
     )
+
+    # ATR
+    atr = calculate_atr(df, period=14)
+    atr_series = calculate_atr_series(df, period=14)
 
     # ADX
     adx = calculate_adx(df, period=14)
@@ -31,6 +37,9 @@ Usage:
 
     # EMA
     ema = calculate_ema(series, span=20)
+
+    # Volume Ratio
+    vol_ratio = volume_ratio(df, lookback=20)
 """
 
 import pandas as pd
@@ -218,6 +227,78 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return rsi
 
 
+# ------------------------------- Incremental RSI (O(1) per bar) -------------------------------
+
+from dataclasses import dataclass
+import math
+
+@dataclass
+class RSIState:
+    """State for incremental RSI calculation."""
+    prev_close: float = math.nan
+    avg_gain: float = 0.0     # Wilder-smoothed average gain
+    avg_loss: float = 0.0     # Wilder-smoothed average loss
+    rsi: float = 50.0         # RSI value (default to neutral 50)
+    bar_count: int = 0        # Number of bars processed (for warmup)
+
+
+def update_rsi_incremental(
+    state: RSIState,
+    close: float,
+    period: int = 14,
+    warmup: int = 14
+) -> float:
+    """
+    O(1) Wilder-style RSI update for streaming data.
+
+    Args:
+        state: RSIState object (modified in place)
+        close: Current bar's close price
+        period: RSI period (default 14)
+        warmup: Bars before RSI is valid (default 14)
+
+    Returns:
+        float: Current RSI value (50.0 during warmup)
+
+    Example:
+        >>> state = RSIState()
+        >>> for bar in bars:
+        ...     rsi = update_rsi_incremental(state, bar.close)
+    """
+    # First bar warmup: just record close
+    if not math.isfinite(state.prev_close):
+        state.prev_close = close
+        state.bar_count = 1
+        return 50.0  # Neutral RSI during warmup
+
+    # Calculate change
+    change = close - state.prev_close
+    gain = max(change, 0.0)
+    loss = max(-change, 0.0)
+
+    state.bar_count += 1
+    alpha = 1.0 / period
+
+    # Wilder EMA (RMA) updates
+    state.avg_gain = state.avg_gain + alpha * (gain - state.avg_gain)
+    state.avg_loss = state.avg_loss + alpha * (loss - state.avg_loss)
+
+    # Calculate RSI
+    if state.avg_loss <= 1e-12:
+        state.rsi = 100.0 if state.avg_gain > 1e-12 else 50.0
+    else:
+        rs = state.avg_gain / state.avg_loss
+        state.rsi = 100.0 - (100.0 / (1.0 + rs))
+
+    state.prev_close = close
+
+    # Return neutral during warmup period
+    if state.bar_count < warmup:
+        return 50.0
+
+    return float(state.rsi)
+
+
 def calculate_ema(series: pd.Series, span: int) -> pd.Series:
     """
     Calculate EMA (Exponential Moving Average).
@@ -263,3 +344,69 @@ def calculate_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: in
         'signal': signal_line,
         'histogram': histogram
     }
+
+
+def volume_ratio(df: pd.DataFrame, lookback: int = 20) -> float:
+    """
+    Calculate volume ratio vs recent median volume.
+
+    Useful for detecting unusual volume activity.
+
+    Args:
+        df: DataFrame with 'volume' column
+        lookback: Number of bars to compute median over (default 20)
+
+    Returns:
+        float: Ratio of current volume to median volume (1.0 = normal)
+
+    Example:
+        >>> ratio = volume_ratio(df, lookback=20)
+        >>> if ratio > 2.0:
+        ...     print("Volume spike detected")
+    """
+    if df is None or len(df) == 0:
+        return 1.0
+
+    v = df["volume"].astype(float)
+    med = float(v.tail(lookback).median() or 1.0)
+    return float(v.iloc[-1] / med) if med > 0 else 1.0
+
+
+def calculate_vol_z(df: pd.DataFrame, window: int = 30) -> float:
+    """
+    Calculate volume z-score (standard deviations from mean).
+
+    This centralizes the vol_z calculation that was previously duplicated
+    across 10+ structure files with varying window sizes.
+
+    Args:
+        df: DataFrame with 'volume' column
+        window: Lookback period for mean/std calculation (default 30)
+
+    Returns:
+        float: Z-score of current volume (0.0 if insufficient data)
+               - vol_z > 2.0: Strong volume surge (institutional activity)
+               - vol_z > 1.5: Moderate volume increase
+               - vol_z < -1.0: Below-average volume
+
+    Example:
+        >>> vol_z = calculate_vol_z(df, window=30)
+        >>> if vol_z >= 2.0:
+        ...     print("Institutional volume detected")
+    """
+    if df is None or len(df) < window:
+        return 0.0
+
+    try:
+        volume = df['volume'].astype(float)
+        vol_mean = volume.rolling(window, min_periods=5).mean().iloc[-1]
+        vol_std = volume.rolling(window, min_periods=5).std().iloc[-1]
+
+        if vol_std is None or vol_std == 0 or pd.isna(vol_std):
+            return 0.0
+
+        current_vol = float(volume.iloc[-1])
+        vol_z = (current_vol - vol_mean) / vol_std
+        return float(vol_z)
+    except Exception:
+        return 0.0

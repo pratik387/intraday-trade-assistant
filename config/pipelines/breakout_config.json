@@ -1,0 +1,403 @@
+{
+    "_comment": "BREAKOUT Pipeline Configuration - All values from configuration.json and pro Indian trading standards",
+    "_category": "BREAKOUT",
+    "_description": "Momentum breaks of key levels (ORB, flag continuation, squeeze release, etc.)",
+
+    "setup_types": [
+        "breakout_long", "breakout_short",
+        "orb_breakout_long", "orb_breakout_short",
+        "orb_breakdown_long", "orb_breakdown_short",
+        "flag_continuation_long", "flag_continuation_short",
+        "squeeze_release_long", "squeeze_release_short",
+        "momentum_breakout_long", "momentum_breakout_short",
+        "range_breakout_long", "range_breakout_short",
+        "range_breakdown_long", "range_breakdown_short",
+        "gap_breakout_long", "gap_breakout_short",
+        "resistance_breakout_long", "resistance_breakout_short",
+        "support_breakdown_long", "support_breakdown_short",
+        "break_of_structure_long", "break_of_structure_short",
+        "change_of_character_long", "change_of_character_short",
+        "equilibrium_breakout_long", "equilibrium_breakout_short",
+        "level_breakout_long", "level_breakout_short",
+        "first_hour_momentum_long", "first_hour_momentum_short"
+    ],
+
+    "screening": {
+        "time_windows": {
+            "_comment": "From configuration.json time_policy - NSE trading hours",
+            "morning_start": "09:15",
+            "morning_end": "12:00",
+            "lunch_block_start": "12:00",
+            "lunch_block_end": "13:00",
+            "afternoon_start": "13:00",
+            "afternoon_end": "14:45",
+            "last_entry_cutoff": "14:45",
+            "opening_bell_start": "09:15",
+            "opening_bell_end": "09:30"
+        },
+        "momentum_consolidation": {
+            "enabled": true,
+            "threshold_pct": 1.0,
+            "vwap_deviation_threshold": 0.02,
+            "volume_ratio_threshold": 1.5
+        },
+        "first_hour_momentum": {
+            "_comment": "FHM screening config - PRO STANDARD: RVOL>=2.0x indicates institutional activity",
+            "enabled": true,
+            "time_window": {
+                "start": "09:20",
+                "end": "10:30"
+            },
+            "triggers": {
+                "min_rvol": 2.0,
+                "min_rvol_comment": "PRO: RVOL>2x indicates possible big move (institutional). Was 1.5x - too low per industry research.",
+                "min_price_move_pct": 1.5,
+                "min_volume_1m": 50000
+            },
+            "stop_loss": {
+                "_comment": "DATA-DRIVEN (Dec 2024): 1m simulation showed 1.2% optimal",
+                "pct_of_price": 0.012,
+                "use_structure": true,
+                "_rationale": "WIDENED: 0.8%->1.2% based on 1m bar simulation. Avg MAE was 0.53%, tight SL hit on recoverable moves."
+            }
+        },
+        "min_bars_required": 4
+    },
+
+    "quality": {
+        "_comment": "From configuration.json - min_t1_rr: 1.2, t1_rr: 1.5",
+        "min_structural_rr": 1.2,
+        "volume_ratio_floor": 0.5,
+        "quality_thresholds": {
+            "excellent": {
+                "min_structural_rr": 2.0,
+                "min_volume_ratio": 1.5
+            },
+            "good": {
+                "min_structural_rr": 1.5,
+                "min_volume_ratio": 1.3
+            },
+            "fair": {
+                "min_structural_rr": 1.2,
+                "min_volume_ratio": 1.0
+            }
+        }
+    },
+
+    "gates": {
+        "_comment": "From configuration.json - breakout_volume_surge_min: 1.5 (long), 2.0 (short), breakout_momentum_candle_min_ratio: 2.0 (long), 2.5 (short)",
+        "volume_surge": {
+            "long": {
+                "min_ratio": 1.5,
+                "lookback_bars": 20
+            },
+            "short": {
+                "min_ratio": 2.0,
+                "lookback_bars": 20
+            }
+        },
+        "momentum_candle": {
+            "long": {
+                "min_ratio": 2.0
+            },
+            "short": {
+                "min_ratio": 2.5
+            }
+        },
+        "adx": {
+            "_comment": "From configuration.json - breakout_min_adx: 20.0, adx_min_strength: 15, adx_min_trend: 20",
+            "min_value": 20,
+            "orb_early_min_value": 15,
+            "_orb_early_comment": "ORB EARLY WINDOW FIX: Pro traders use relaxed ADX (15) for early ORB because ADX takes 14+ bars to stabilize",
+            "_fhm_note": "FHM bypasses ADX - uses RVOL-based momentum (RVOL >= 2x is the signal)",
+            "low_adx_threshold": 15,
+            "low_adx_size_mult": 0.8
+        },
+        "regime_rules": {
+            "chop": {
+                "_comment": "DATA-DRIVEN (Dec 2024): ORB CHOP winners have 283k volume vs losers 107k (+164%), winners have srr 1.28 vs losers 2.28 (-44%)",
+                "allowed": true,
+                "size_mult": 0.7,
+                "orb_chop_min_volume": 150000,
+                "orb_chop_max_structural_rr": 1.8,
+                "_orb_chop_evidence": "Filter vol>=150k AND srr<1.8: 54 trades, 64.8% WR, +5,190 Rs. Turns -8,404 Rs loser into +5,190 Rs winner. Improvement: +13,594 Rs"
+            },
+            "trend_up": {
+                "allowed": true,
+                "size_mult": 1.0
+            },
+            "trend_down": {
+                "allowed": true,
+                "size_mult": 1.0
+            },
+            "squeeze": {
+                "_comment": "DATA-DRIVEN: 55.6% of winning longs came from squeeze regime. BOOSTED from 0.9 to 1.2 for longs.",
+                "allowed": true,
+                "size_mult": 1.2,
+                "long_size_mult": 1.3
+            }
+        },
+        "validated_filters": {
+            "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
+            "breakout_long_hour_11": {
+                "blocked_hours": [11],
+                "_evidence": "R1: +1,695 Rs (91 trades) | R2: +1,554 Rs (92 trades) - 11AM breakouts have low WR, momentum fades"
+            },
+            "long_trade_volume": {
+                "min_volume": 150000,
+                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+            },
+            "orb_breakout_long_cap_filter": {
+                "_comment": "DATA-DRIVEN (Dec 2024): Large cap 92% WR vs mid/small 43% WR",
+                "enabled": true,
+                "allowed_caps": ["large_cap"],
+                "mid_cap_with_filters": {
+                    "enabled": true,
+                    "min_structural_rr": 1.5,
+                    "min_entry_minute": 35,
+                    "_note": "structural_rr = vol_ratio * breakout_strength / normalized_risk. Winners avg 1.62, losers avg 1.84. Use 1.5 as min to filter weakest setups."
+                },
+                "_evidence": "Large cap: 13 trades, 92% WR, +4,898 Rs. Mid+small: 32 trades, 43% WR, -563 Rs. Mid cap salvageable with strength>=0.7 + entry>=35min (80% WR, 5 trades, +1,046 Rs)"
+            }
+        },
+        "long_specific_filters": {
+            "_comment": "DATA-DRIVEN (Dec 2024): Filters specific to long trades based on winner/loser analysis",
+            "rsi_max": {
+                "threshold": 65,
+                "_evidence": "RSI>=70: 9.3% WR (7W/75T). RSI<60: 16.4% WR (32W/195T). High RSI = chasing exhausted moves."
+            },
+            "entry_time_cutoff": {
+                "last_entry_hour": 11,
+                "last_entry_minute": 30,
+                "_evidence": "09:15-11:00: 19% WR. 11:00-12:00: 11% WR. 13:00+: 7.7% WR. After 14:00: 0% WR."
+            },
+            "squeeze_regime_boost": {
+                "size_mult": 1.3,
+                "_evidence": "55.6% of winning longs came from squeeze regime vs only 20% from trend_up."
+            },
+            "max_hold_minutes": {
+                "enabled": true,
+                "limit": 120,
+                "_evidence": "Pro ORB traders hold 30-90 min max. After 2 hours, momentum fades. Time-based exit if no T1 hit."
+            }
+        }
+    },
+
+    "ranking": {
+        "_comment": "ALL values from OLD filters.json rank_* settings to match baseline ranker.py _intraday_strength()",
+        "weights": {
+            "volume": {
+                "_comment": "rank_vol_ratio_divisor=2.0, rank_vol_cap=3.0",
+                "divisor": 2.0,
+                "cap": 3.0
+            },
+            "rsi": {
+                "_comment": "rank_rsi_mid=50, rank_rsi_divisor=30, rank_rsi_floor=-0.5",
+                "mid": 50.0,
+                "divisor": 30.0,
+                "floor": -0.5
+            },
+            "rsi_slope": {
+                "_comment": "rank_rsi_slope_cap=0.3",
+                "cap": 0.3
+            },
+            "adx": {
+                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score",
+                "mid": 25.0,
+                "divisor": 20.0,
+                "floor": -0.3,
+                "cap": 0.4
+            },
+            "adx_slope": {
+                "_comment": "rank_adx_slope_cap=0.2",
+                "cap": 0.2
+            },
+            "vwap": {
+                "_comment": "rank_vwap_bonus=0.3, rank_vwap_penalty=-0.2",
+                "aligned_bonus": 0.3,
+                "misaligned_penalty": -0.2
+            },
+            "distance": {
+                "_comment": "rank_dist_near_bpct=0.5, rank_dist_near_score=0.4, rank_dist_ok_bpct=1.5, rank_dist_ok_score=0.2, rank_dist_far_score=-0.1",
+                "near_bpct": 0.5,
+                "near_score": 0.4,
+                "ok_bpct": 1.5,
+                "ok_score": 0.2,
+                "far_score": -0.1
+            },
+            "squeeze": {
+                "_comment": "rank_sq_score_le_50=0.3, rank_sq_score_le_70=0.2, rank_sq_score_ge_90=-0.2",
+                "low_bonus": 0.3,
+                "mid_bonus": 0.2,
+                "high_penalty": -0.2
+            },
+            "acceptance": {
+                "_comment": "rank_acceptance_bonus=0.5",
+                "excellent_bonus": 0.5,
+                "good_bonus": 0.25
+            }
+        },
+        "regime_multipliers": {
+            "_comment": "Default fallback multipliers",
+            "trend_up": 1.1,
+            "trend_down": 1.1,
+            "chop": 0.7,
+            "squeeze": 1.0
+        },
+        "strategy_regime_multipliers": {
+            "_comment": "From baseline ranker.py _get_regime_multiplier() - Strategy-specific overrides",
+            "breakout": {
+                "_comment": "Breakout poor in chop per baseline report",
+                "chop": 0.7,
+                "trend_up": 1.1,
+                "trend_down": 1.1,
+                "squeeze": 0.9,
+                "default": 0.9
+            },
+            "orb_breakout": {
+                "chop": 0.7,
+                "trend_up": 1.1,
+                "trend_down": 1.1,
+                "squeeze": 0.9,
+                "default": 0.9
+            },
+            "orb_breakdown": {
+                "chop": 0.7,
+                "trend_up": 1.1,
+                "trend_down": 1.1,
+                "squeeze": 0.9,
+                "default": 0.9
+            },
+            "momentum_breakout": {
+                "_comment": "From baseline: trend=1.4, chop=1.3, other=1.2",
+                "trend_up": 1.4,
+                "trend_down": 1.4,
+                "chop": 1.3,
+                "squeeze": 1.2,
+                "default": 1.2
+            },
+            "flag_continuation": {
+                "trend_up": 1.4,
+                "trend_down": 1.4,
+                "chop": 1.1,
+                "squeeze": 1.2,
+                "default": 1.1
+            },
+            "squeeze_release": {
+                "squeeze": 1.5,
+                "chop": 1.3,
+                "trend_up": 1.2,
+                "trend_down": 1.2,
+                "default": 1.1
+            },
+            "break_of_structure": {
+                "_comment": "From baseline: 1.2 constant for structural shifts",
+                "trend_up": 1.2,
+                "trend_down": 1.2,
+                "chop": 1.2,
+                "squeeze": 1.2,
+                "default": 1.2
+            },
+            "change_of_character": {
+                "_comment": "From baseline: trend=1.4, chop=0.8",
+                "trend_up": 1.4,
+                "trend_down": 1.4,
+                "chop": 0.8,
+                "squeeze": 1.0,
+                "default": 1.0
+            },
+            "first_hour_momentum": {
+                "_comment": "FHM: High multipliers across all regimes - momentum trumps regime in first hour",
+                "trend_up": 1.5,
+                "trend_down": 1.5,
+                "chop": 1.3,
+                "squeeze": 1.4,
+                "default": 1.3
+            }
+        },
+        "daily_trend_multipliers": {
+            "aligned": 1.25,
+            "counter": 0.75,
+            "neutral": 1.0
+        }
+    },
+
+    "entry": {
+        "_comment": "WIDENED (Dec 2024): zone_mult_atr 0.25->0.4, min_zone_pct 0.20->0.25. flag_continuation had 0.31% zones -> 0 triggers.",
+        "zone_mult_atr": 0.4,
+        "min_zone_pct": 0.25,
+        "min_breakout_atr_mult": 0.3,
+        "mode": "immediate",
+        "triggers": {
+            "long": "breakout_above_level",
+            "short": "breakdown_below_level"
+        }
+    },
+
+    "targets": {
+        "_comment": "DATA-DRIVEN (Dec 2024): FHM 1m simulation showed 1.2% SL + 1.5R T1 = +348% improvement. Higher T1 captures momentum.",
+        "rr_ratios": {
+            "long": {
+                "_comment": "RAISED: T1 1.0R→1.5R for longs. FHM 1m simulation: 55 trades, Rs 1,886 baseline → Rs 8,451 with 1.5R.",
+                "t1": 1.5,
+                "t2": 2.5,
+                "t3": 3.5
+            },
+            "short": {
+                "_comment": "Shorts keep 1.5R T1 - they have 1.13R avg MFE vs 0.74R for longs",
+                "t1": 1.5,
+                "t2": 3.0,
+                "t3": 4.0
+            },
+            "t1": 1.5,
+            "t2": 3.0,
+            "t3": 4.0
+        },
+        "qty_splits": {
+            "_comment": "70-30 split - DATA-DRIVEN: Higher T1 exit due to high hard SL rate (~41%)",
+            "t1": 0.70,
+            "t2": 0.30,
+            "t3": 0.0
+        },
+        "caps": {
+            "_comment": "FIXED: max_pct was 1.0 (1%) - way too restrictive! Old config uses 100%. Targets need to reach 2-3R for positive expectancy.",
+            "t1": {
+                "measured_move_frac": 2.0,
+                "max_pct": 100.0
+            },
+            "t2": {
+                "measured_move_frac": 3.0,
+                "max_pct": 100.0
+            },
+            "t3": {
+                "measured_move_frac": 4.0,
+                "max_pct": 100.0
+            }
+        },
+        "trail": {
+            "after_t1": {
+                "move_sl_to": "entry",
+                "offset_atr": 0.1
+            },
+            "after_t2": {
+                "move_sl_to": "t1",
+                "offset_atr": 0.0
+            }
+        }
+    },
+
+    "stop_loss": {
+        "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
+        "atr_multiplier": 2.0
+    },
+
+    "rsi_penalty": {
+        "_comment": "BREAKOUT: Penalize weak momentum (low RSI for longs, high RSI for shorts)",
+        "long_weak_threshold": 40,
+        "short_weak_threshold": 60,
+        "orb_early_long_threshold": 35,
+        "orb_early_short_threshold": 55,
+        "_orb_early_comment": "ORB EARLY WINDOW FIX: Pro traders use relaxed RSI thresholds for early ORB because RSI is erratic at market open",
+        "penalty_mult": 0.9
+    }
+}

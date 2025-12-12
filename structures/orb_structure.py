@@ -58,7 +58,11 @@ class ORBStructure(BaseStructure):
         self.confidence_no_volume = config["confidence_no_volume"]
         self.pullback_zones = config["pullback_zones"]
 
-        logger.debug(f"ORB: Initialized with config - Buffer: {self.breakout_buffer_pct:.3f}%, Stop: {self.min_stop_distance_pct:.3f}%, Targets: {self.target_mult_t1}x/{self.target_mult_t2}x")
+        # ORB-specific min bars - Pro traders use 15-min range (3 bars) + 1 bar for breakout = 4 bars minimum
+        # This allows ORB detection starting at 9:35 (after 4 bars from 9:15)
+        self.min_bars_required = config.get("min_bars_required")
+
+        logger.debug(f"ORB: Initialized with config - Buffer: {self.breakout_buffer_pct:.3f}%, Stop: {self.min_stop_distance_pct:.3f}%, Targets: {self.target_mult_t1}x/{self.target_mult_t2}x, MinBars: {self.min_bars_required}")
 
         # Session timing
         self.session_start = time(9, 15)  # Market open
@@ -89,13 +93,13 @@ class ORBStructure(BaseStructure):
                     rejection_reason="No 5m data available"
                 )
 
-            if len(df) < 10:
-                logger.debug(f"ORB: {symbol} - Insufficient data: {len(df)} bars < 10 minimum")
+            if len(df) < self.min_bars_required:
+                logger.debug(f"ORB: {symbol} - Insufficient data: {len(df)} bars < {self.min_bars_required} minimum")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
                     quality_score=0.0,
-                    rejection_reason=f"Insufficient data: {len(df)} bars < 10 minimum"
+                    rejection_reason=f"Insufficient data: {len(df)} bars < {self.min_bars_required} minimum"
                 )
 
             events = []
@@ -470,8 +474,10 @@ class ORBStructure(BaseStructure):
         try:
             current_time_of_day = current_time.time()
 
-            # Must be after session start but before cutoff
-            return self.session_start <= current_time_of_day <= self.orb_cutoff
+            # Must be after session start but BEFORE cutoff (strict <, not <=)
+            # BUGFIX: 5-minute bars are START-labeled, so bar with index 10:30 closes at 10:35.
+            # Using < ensures 10:30 bar (which closes at 10:35) is blocked, not allowed.
+            return self.session_start <= current_time_of_day < self.orb_cutoff
 
         except Exception:
             return False

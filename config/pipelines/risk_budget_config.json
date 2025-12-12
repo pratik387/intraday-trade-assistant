@@ -1,0 +1,129 @@
+{
+    "_comment": "Regime-Based Risk Budget Allocation - Professional Multi-Strategy Approach",
+    "_description": "Based on AQR/Bridgewater multi-strategy allocation: rank within categories, allocate by regime",
+    "_reference": "https://funds.aqr.com/Insights/Strategies/Multi-Strategy",
+
+    "categories": ["BREAKOUT", "MOMENTUM", "LEVEL", "REVERSION"],
+
+    "regime_risk_budgets": {
+        "_comment": "Risk budget allocation per regime - percentages must sum to 1.0",
+
+        "trend_up": {
+            "_comment": "Strong uptrend - favor momentum and breakouts",
+            "BREAKOUT": 0.30,
+            "MOMENTUM": 0.45,
+            "LEVEL": 0.15,
+            "REVERSION": 0.10
+        },
+        "trend_down": {
+            "_comment": "Strong downtrend - favor momentum shorts and breakdowns",
+            "BREAKOUT": 0.30,
+            "MOMENTUM": 0.45,
+            "LEVEL": 0.15,
+            "REVERSION": 0.10
+        },
+        "chop": {
+            "_comment": "Choppy/ranging - favor reversion and level plays",
+            "BREAKOUT": 0.10,
+            "MOMENTUM": 0.10,
+            "LEVEL": 0.30,
+            "REVERSION": 0.50
+        },
+        "squeeze": {
+            "_comment": "Volatility squeeze - favor breakouts (impending expansion)",
+            "BREAKOUT": 0.45,
+            "MOMENTUM": 0.25,
+            "LEVEL": 0.20,
+            "REVERSION": 0.10
+        },
+        "neutral": {
+            "_comment": "Unknown/neutral regime - balanced allocation",
+            "BREAKOUT": 0.25,
+            "MOMENTUM": 0.25,
+            "LEVEL": 0.25,
+            "REVERSION": 0.25
+        }
+    },
+
+    "selection_rules": {
+        "_comment": "How to select candidates based on risk budget",
+        "_testing_note": "Currently testing quality of setups - max_positions_total set to 100 to allow all candidates through for analysis",
+
+        "max_positions_per_symbol": 1,
+        "max_positions_total": 100,
+
+        "min_budget_threshold": 0.10,
+        "_min_budget_comment": "Categories with budget < threshold get 0 slots",
+
+        "slot_allocation_method": "proportional",
+        "_slot_methods_available": ["proportional", "top_budget_first", "round_robin"],
+
+        "tie_breaker": "structural_rr",
+        "_tie_breakers_available": ["structural_rr", "volume_ratio", "rank_score"],
+
+        "budget_boost_weight": 0.1,
+        "_budget_boost_comment": "Weight applied to category budget when comparing cross-category (weighted_score = score * (1 + budget * weight))",
+
+        "skip_duplicate_symbols": true
+    },
+
+    "category_constraints": {
+        "_comment": "Per-category constraints for professional risk management",
+        "_testing_note": "max_concurrent set to 100 for testing - allows all candidates through for quality analysis",
+
+        "BREAKOUT": {
+            "max_concurrent": 100,
+            "min_adx": 15,
+            "blocked_regimes": [],
+            "enabled": true
+        },
+        "MOMENTUM": {
+            "max_concurrent": 100,
+            "min_adx": 20,
+            "blocked_regimes": [],
+            "enabled": true
+        },
+        "LEVEL": {
+            "max_concurrent": 100,
+            "min_acceptance": "fair",
+            "blocked_regimes": [],
+            "enabled": true
+        },
+        "REVERSION": {
+            "max_concurrent": 100,
+            "min_extension_pct": 0.5,
+            "blocked_regimes": [],
+            "enabled": true
+        }
+    },
+
+    "logging": {
+        "log_slot_allocation": true,
+        "log_category_ranking": true,
+        "log_selection_details": true,
+        "log_budget_summary": true
+    },
+
+    "orb_priority_window": {
+        "_comment": "From trade_decision_gate.py - ORB setups prioritized during first hour",
+        "_evidence": "Opening Range Breakout has highest win rate in first hour after market open",
+        "enabled": true,
+        "start_hour": 9,
+        "start_minute": 30,
+        "end_hour": 10,
+        "end_minute": 30,
+        "score_boost": 5.0,
+        "orb_setups": ["orb_breakout_long", "orb_breakout_short", "orb_pullback_long", "orb_pullback_short"],
+        "_note": "Disabled by default - enable if ORB setups underperform relative to other setups in morning window."
+    },
+
+    "orb_chop_exception": {
+        "_comment": "From regime_gate.py - ORB allowed in chop regime before 10:30 AM",
+        "_evidence": "Opening range breakouts can still work in early session even if broader market is choppy",
+        "enabled": true,
+        "end_hour": 10,
+        "end_minute": 30,
+        "orb_setups": ["orb_breakout_long", "orb_breakout_short", "orb_pullback_long", "orb_pullback_short"],
+        "_note": "Exception to category blocking - ORB allowed in chop regime before 10:30 AM"
+    }
+}

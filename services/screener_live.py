@@ -26,7 +26,7 @@ Integration points you likely already have:
 Flow per 5m close:
   1) Stage-0 (EnergyScanner): compute_features → _filter_stage0 → shortlist
   2) Gate: TradeDecisionGate (structure + regime + events + news)
-  3) Rank: rank_candidates → keep ≥ rank_exec_threshold AND ≥ rank_pctl_min percentile
+  3) Rank: PipelineOrchestrator → category-based ranking with regime budget allocation
   4) De-dupe: block quick re-entries unless (cooloff over) AND (setup changed if required) AND (second entry score ≥ stricter bar)
   5) Plan & enqueue
 
@@ -66,9 +66,10 @@ from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision a
 # planning & ranking
 from services import levels
 from services import metrics_intraday as mi
-from services.planner_internal import generate_trade_plan
 from structures.main_detector import MainDetector
-from services.ranker import rank_candidates, get_strategy_threshold, get_time_of_day_multiplier
+
+# Category-based pipeline orchestrator (replaces services.ranker)
+from pipelines import process_setup_candidates
 
 # orders & execution
 from services.orders.order_queue import OrderQueue
@@ -134,7 +135,6 @@ def _init_worker(config_dict):
             news_spike_gate=news_gate,
             market_sentiment_gate=sentiment_gate,
             quality_filters=config_dict.get('quality_filters', {}),
-            regime_allowed_setups=config_dict.get('regime_allowed_setups', {})
         )
     except Exception as e:
         get_agent_logger().exception(f"Worker init failed: {e}")
@@ -235,7 +235,6 @@ class ScreenerLive:
             news_spike_gate=self.news_gate,
             market_sentiment_gate=self.sentiment_gate,
             quality_filters=raw.get("quality_filters", {}),
-            regime_allowed_setups=raw.get("regime_allowed_setups", {}),
         )
 
         # Stage-0 scanner
@@ -342,7 +341,7 @@ class ScreenerLive:
         # For now, just log that 15m bars are being captured
         ts = bar_15m.name if hasattr(bar_15m, "name") else datetime.now()
         logger.debug(f"HTF: 15m bar closed for {symbol} at {ts}")
-        # Future: Trigger rank_candidates() update with HTF context
+        # HTF context is now passed to pipeline orchestrator via htf_context parameter
 
     def _enhance_candidates_with_htf(self, symbol: str, candidates: List) -> List:
         """
@@ -433,6 +432,82 @@ class ScreenerLive:
             enhanced.append(adjusted_candidate)
 
         return enhanced
+
+    def _build_htf_context(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Build HTF (15m) context for pipeline ranking adjustments.
+
+        Returns dict with:
+        - htf_trend: "up", "down", or "neutral"
+        - htf_volume_surge: True if 15m volume > 1.3x median
+        - htf_momentum: normalized momentum score (-1 to 1)
+        - htf_exhaustion: True if signs of trend exhaustion on 15m
+
+        Each category pipeline uses these differently in calculate_rank_score().
+        """
+        df15 = self.agg.get_df_15m_tail(symbol, 10)
+        if df15 is None or df15.empty or len(df15) < 2:
+            return None
+
+        last_15m = df15.iloc[-1]
+        prev_15m = df15.iloc[-2]
+
+        # Trend detection
+        close_now = float(last_15m.get("close", 0.0))
+        close_prev = float(prev_15m.get("close", 0.0))
+        high_now = float(last_15m.get("high", 0.0))
+        low_now = float(last_15m.get("low", 0.0))
+        high_prev = float(prev_15m.get("high", 0.0))
+        low_prev = float(prev_15m.get("low", 0.0))
+
+        # Higher highs and higher lows = up, lower highs and lower lows = down
+        hh = high_now > high_prev
+        hl = low_now > low_prev
+        lh = high_now < high_prev
+        ll = low_now < low_prev
+
+        if hh and hl:
+            htf_trend = "up"
+        elif lh and ll:
+            htf_trend = "down"
+        else:
+            htf_trend = "neutral"
+
+        # Volume surge detection
+        htf_volume_surge = False
+        if "volume" in df15.columns and len(df15) >= 6:
+            recent_vol_15m = df15["volume"].tail(6).median()
+            current_vol_15m = float(last_15m.get("volume", 0.0) or 0.0)
+            htf_volume_surge = (current_vol_15m / recent_vol_15m) >= 1.3 if recent_vol_15m > 0 else False
+
+        # Momentum score: normalized price change vs ATR
+        htf_momentum = 0.0
+        if len(df15) >= 3:
+            atr_proxy = (df15["high"] - df15["low"]).tail(5).mean()
+            if atr_proxy > 0:
+                price_change = close_now - close_prev
+                htf_momentum = max(-1.0, min(1.0, price_change / atr_proxy))
+
+        # Exhaustion detection: long upper/lower wick relative to body
+        body = abs(close_now - float(last_15m.get("open", close_now)))
+        upper_wick = high_now - max(close_now, float(last_15m.get("open", close_now)))
+        lower_wick = min(close_now, float(last_15m.get("open", close_now))) - low_now
+        total_range = high_now - low_now
+
+        htf_exhaustion = False
+        if total_range > 0 and body > 0:
+            # Exhaustion: wick > 2x body in direction of move
+            if htf_trend == "up" and upper_wick > 2 * body:
+                htf_exhaustion = True
+            elif htf_trend == "down" and lower_wick > 2 * body:
+                htf_exhaustion = True
+
+        return {
+            "htf_trend": htf_trend,
+            "htf_volume_surge": htf_volume_surge,
+            "htf_momentum": round(htf_momentum, 3),
+            "htf_exhaustion": htf_exhaustion,
+        }
 
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
         """Main driver: invoked for each CLOSED 5m bar of any symbol."""
@@ -665,127 +740,88 @@ class ScreenerLive:
 
         dec_map = {s: d for (s, d) in decisions}
 
-        # ---------- Rank (distribution clamp) ----------
-        ranked: List[Tuple[str, float]] = self._rank_by_intraday_edge([s for s, _ in decisions], decisions)
-        if not ranked:
-            return
+        # ---------- Pipeline Orchestrator: Ranking + Planning ----------
+        # Orchestrator handles: screening + gates + quality + ranking + entry + targets
+        # Returns plans already sorted by ranking score
+        logger.info("ORCHESTRATOR | Processing %d symbols via pipeline orchestrator", len(decisions))
 
-        # percentile gate: compute once for this batch
-        pctl_score = self._compute_percentile_cut(ranked, self.cfg.rank_pctl_min)
         max_trades_per_cycle = self.raw_cfg.get("max_trades_per_cycle", 10)
         trades_planned = 0
-
-        # ---------- Plan & de-dupe & enqueue ----------
         ranking_logger = get_ranking_logger()
         events_logger = get_events_decision_logger()
-        for i, (sym, score) in enumerate(ranked):
-            # Get strategy-specific threshold
-            decision = dec_map.get(sym)
-            strategy_type = getattr(decision, "setup_type", None) if decision else None
-            base_threshold = get_strategy_threshold(strategy_type) if strategy_type else self.cfg.rank_exec_threshold
 
-            # Quick Win: Apply time-of-day multiplier (Audit Task 3)
-            # Late-day signals have poor quality (39 signals → 3 trades in 14:00-15:00)
-            # Raise threshold 1.5x after 14:00, 2.5x after 14:30
-            time_multiplier = get_time_of_day_multiplier(now)
-            threshold = base_threshold * time_multiplier
+        eligible_plans: List[Tuple[str, Dict, float]] = []  # (symbol, plan, score)
 
-            if time_multiplier > 1.0:
-                logger.debug(f"TIME_FILTER | {now.strftime('%H:%M')} - threshold raised {time_multiplier:.1f}x: {base_threshold:.2f} → {threshold:.2f}")
+        for sym, decision in decisions:
+            df5 = symbol_data_map.get(sym, (None,))[0]
+            df1m = symbol_data_map.get(sym, (None, None))[1]
+            lvl = symbol_data_map.get(sym, (None, None, {}))[2]
+            daily_df = symbol_data_map.get(sym, (None, None, None, None))[3] if len(symbol_data_map.get(sym, ())) > 3 else None
 
-            # absolute threshold gate
-            if score < threshold:
-                logger.info("RANK:REJECT sym=%s score=%.3f < threshold=%.3f (strategy=%s)",
-                           sym, score, threshold, strategy_type)
-
-                # Log ranking rejection
-                # Phase 2: Include multi-TF regime diagnostics
-                ranking_logger.log_reject(
-                    sym,
-                    "score_below_threshold",
-                    timestamp=now.isoformat(),
-                    rank_score=score,
-                    threshold=threshold,
-                    strategy_type=strategy_type or "unknown",
-                    rank_position=i + 1,
-                    total_candidates=len(ranked),
-                    percentile_score=pctl_score,
-                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
-                )
-                continue
-            # percentile gate: Skip for small batches (< 5 symbols) where percentile is statistically meaningless
-            # With 2-3 symbols, percentile creates arbitrary rejections (e.g., 2 symbols [1.09, 1.19] → 60th pctl=1.15 rejects 1.09)
-            # Strategy-specific thresholds (0.5 for fades, 1.8 for breakouts) handle filtering for small batches
-            if score < pctl_score and len(ranked) >= 5:
-                # Log percentile rejection
-                # Phase 2: Include multi-TF regime diagnostics
-                ranking_logger.log_reject(
-                    sym,
-                    "score_below_percentile",
-                    timestamp=now.isoformat(),
-                    rank_score=score,
-                    percentile_score=pctl_score,
-                    strategy_type=strategy_type or "unknown",
-                    rank_position=i + 1,
-                    total_candidates=len(ranked),
-                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
-                )
+            if df5 is None:
                 continue
 
-            # Log ranking acceptance (passed both threshold and percentile gates)
-            # Phase 2: Include multi-TF regime diagnostics
+            setup_candidates = getattr(decision, 'setup_candidates', None)
+            if not setup_candidates:
+                continue
+
+            # Build HTF context from 15m data for category-specific ranking adjustments
+            htf_context = self._build_htf_context(sym)
+
+            try:
+                plan = process_setup_candidates(
+                    symbol=sym,
+                    df5m=df5,
+                    df1m=df1m,
+                    levels=lvl,
+                    regime=decision.regime,
+                    now=now,
+                    candidates=setup_candidates,
+                    daily_df=daily_df,
+                    htf_context=htf_context
+                )
+            except Exception as e:
+                logger.exception("orchestrator failed for %s: %s", sym, e)
+                continue
+
+            if plan and plan.get("eligible", False):
+                score = plan.get("ranking", {}).get("score", 0.0)
+                eligible_plans.append((sym, plan, score, decision))
+                logger.debug(f"ORCHESTRATOR:ELIGIBLE {sym} score={score:.3f}")
+            else:
+                reason = plan.get("reason", "no_plan") if plan else "no_plan"
+                logger.debug(f"ORCHESTRATOR:REJECT {sym} reason={reason}")
+
+        # Sort by score descending
+        eligible_plans.sort(key=lambda x: x[2], reverse=True)
+
+        # Compute percentile for logging
+        if eligible_plans:
+            pctl_score = self._compute_percentile_cut([(s, sc) for s, _, sc, _ in eligible_plans], self.cfg.rank_pctl_min)
+        else:
+            pctl_score = 0.0
+
+        logger.info("ORCHESTRATOR_COMPLETE | %d eligible plans from %d decisions", len(eligible_plans), len(decisions))
+
+        # ---------- Process eligible plans → Execution ----------
+        for i, (sym, plan, score, decision) in enumerate(eligible_plans):
+            strategy_type = plan.get("strategy", "unknown")
+            df5 = symbol_data_map.get(sym, (None,))[0]
+
+            # Log ranking acceptance
             ranking_logger.log_accept(
                 sym,
                 timestamp=now.isoformat(),
                 rank_score=score,
-                threshold=threshold,
+                threshold=0.0,  # Orchestrator already applied thresholds
                 percentile_score=pctl_score,
-                strategy_type=strategy_type or "unknown",
+                strategy_type=strategy_type,
                 rank_position=i + 1,
-                total_candidates=len(ranked),
-                regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
+                total_candidates=len(eligible_plans),
+                regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None
             )
 
-            df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
-            # Phase 1: Multi-timeframe regime - fetch 210 days for EMA200 + buffer (was 90)
-            # ZERO additional API cost: get_daily() uses in-memory cache (kite_client.py:216-230)
-            daily_df = self.sdk.get_daily(sym, days=210)
-
-            try:
-                decision = dec_map[sym]
-                # Use new structure system approach with setup_candidates
-                setup_candidates = getattr(decision, 'setup_candidates', None)
-                if setup_candidates:
-                    # BUGFIX: Filter candidates to only pass the one accepted by the gate
-                    # This prevents planner from independently selecting a different candidate (potentially blacklisted)
-                    # Root cause: Gate filters/selects best candidate, but planner was re-selecting independently
-                    # Fix: Only pass the accepted candidate (matching decision.setup_type) to planner
-                    accepted_setup_type = decision.setup_type
-                    if accepted_setup_type:
-                        # Filter to only the accepted candidate
-                        accepted_candidates = [c for c in setup_candidates if c.setup_type == accepted_setup_type]
-                        if accepted_candidates:
-                            setup_candidates = accepted_candidates
-                            logger.debug(f"PLANNER: {sym} - Using gate-accepted candidate: {accepted_setup_type}")
-                        else:
-                            # Fallback: Gate accepted a setup_type not in candidates (shouldn't happen, but defensive)
-                            logger.warning(f"PLANNER: {sym} - Gate accepted {accepted_setup_type} but not in candidates. Using all candidates.")
-
-                    # Phase 1.4: Enhance candidate strength with HTF 15m confirmation
-                    setup_candidates = self._enhance_candidates_with_htf(sym, setup_candidates)
-                    plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_candidates=setup_candidates)
-                else:
-                    # Fallback for compatibility during transition
-                    plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_type=decision.setup_type)
-            except Exception as e:
-                logger.exception("planner failed for %s: %s", sym, e)
-                continue
-            if not plan:
-                logger.info("SKIP %s: empty plan (no_setup)", sym)
-                events_logger.log_reject(sym, "empty_plan", timestamp=now.isoformat(), strategy_type=strategy_type or "unknown")
-                continue
-
-            # 1) Eligibility
+            # 1) Eligibility (already checked, but keep for compatibility)
             if not plan.get("eligible", False):
                 # Try quality.rejection_reason first, then fall back to top-level reason
                 rejection_reason = (plan.get("quality") or {}).get("rejection_reason") or plan.get("reason", "unknown")
@@ -856,9 +892,16 @@ class ScreenerLive:
                     if k in last5.index:
                         bar5[k] = float(last5.get(k, 0.0))
 
+            # Build ranker dict with rank_score and FHM context if available
+            ranker_dict = {"rank_score": float(score)}
+            fhm_ctx = plan.get("fhm_context")
+            if fhm_ctx:
+                ranker_dict["fhm_rvol"] = fhm_ctx.get("rvol", 0.0)
+                ranker_dict["fhm_price_move_pct"] = fhm_ctx.get("price_move_pct", 0.0)
+
             features = {
                 "bar5": bar5,
-                "ranker": {"rank_score": float(score)},
+                "ranker": ranker_dict,
                 "time": {"minute_of_day": now.hour * 60 + now.minute, "day_of_week": now.weekday()},
             }
 
@@ -874,7 +917,7 @@ class ScreenerLive:
                 if isinstance(r, (list, tuple)): reasons_str = ";".join(str(x) for x in r)
                 elif r is not None: reasons_str = str(r)
             decision_dict = {
-                "setup_type": getattr(decision_obj, "setup_type", None) if decision_obj is not None else None,
+                "setup_type": plan.get("strategy"),  # Use plan's strategy (from pipeline), not deprecated decision_obj.setup_type
                 "regime": getattr(decision_obj, "regime", None) if decision_obj is not None else None,
                 "reasons": reasons_str,
                 "size_mult": getattr(decision_obj, "size_mult", None) if decision_obj is not None else None,
@@ -890,6 +933,8 @@ class ScreenerLive:
                     "qty": int(plan["sizing"]["qty"]),
                     "entry_zone": (plan["entry"] or {}).get("zone"),
                     "price": (plan["entry"] or {}).get("reference"),
+                    "entry_ref_price": (plan["entry"] or {}).get("reference"),
+                    "stop": plan.get("stop"),  # Full stop dict: {"hard": x, "risk_per_share": y}
                     "hard_sl": (plan.get("stop") or {}).get("hard"),
                     "targets": plan.get("targets"),
                     "trail": plan.get("trail"),
@@ -897,7 +942,7 @@ class ScreenerLive:
                     "orh": (plan.get("levels") or {}).get("ORH"),
                     "orl": (plan.get("levels") or {}).get("ORL"),
                     "decision_ts": plan["decision_ts"],
-                    "strategy": plan.get("strategy", ""),  # Add missing strategy field
+                    "strategy": plan.get("strategy", ""),
                 },
                 "meta": plan,
             }
@@ -1148,186 +1193,6 @@ class ScreenerLive:
             if not enriched_df.empty:
                 out.append(sym)
         return out[:60]
-
-    def _rank_by_intraday_edge(self, symbols: List[str], decisions: List[Tuple[str, Decision]]) -> List[Tuple[str, float]]:
-        """Map symbols → rank_scores via ranker (kept identical to your current wiring)."""
-        rows_for_ranker: List[Dict] = []
-        for sym in symbols:
-            df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
-            if df5 is None or df5.empty:
-                continue
-
-            last = df5.iloc[-1]
-            # simple features for ranker
-            if "volume" in df5.columns:
-                recent_vol = df5["volume"].tail(24)
-                med_vol = float(recent_vol[recent_vol > 0].median() or 1.0)
-                volume_ratio = float(last.get("volume", 0.0) or 0.0) / (med_vol or 1.0)
-            else:
-                volume_ratio = 1.0
-
-            adx = float(last.get("adx", 0.0) or 0.0)
-            vwap = float(last.get("vwap", last.get("close", 0.0)) or 0.0)
-            close = float(last.get("close", 0.0) or 0.0)
-            above_vwap = bool(close >= vwap) if vwap else False
-
-            sq_pct = None
-            if "bb_width_proxy" in df5.columns:
-                recent_bw = df5["bb_width_proxy"].tail(24).dropna()
-                if len(recent_bw) > 1:
-                    cur_bw = float(last.get("bb_width_proxy", 0.0) or 0.0)
-                    sq_pct = float((recent_bw <= cur_bw).mean() * 100.0)
-
-            # Get strategy type and regime from decisions
-            strategy_type = None
-            regime_context = None
-            for s, d in decisions:
-                if s == sym:
-                    strategy_type = getattr(d, "setup_type", None)
-                    regime_context = getattr(d, "regime", None)
-                    break
-
-            # Extract HTF 15m context for ranking multipliers (Phase 1.3)
-            htf_15m_context = {}
-            df15 = self.agg.get_df_15m_tail(sym, 10)  # Last 10 x 15m bars
-            if df15 is not None and not df15.empty and len(df15) >= 2:
-                last_15m = df15.iloc[-1]
-                prev_15m = df15.iloc[-2]
-
-                # 15m trend direction (price and ADX)
-                htf_15m_context["trend_aligned"] = float(last_15m.get("close", 0.0)) > float(prev_15m.get("close", 0.0))
-                htf_15m_context["adx_15m"] = float(last_15m.get("adx", 0.0) or 0.0)
-
-                # 15m volume multiplier (relative to 15m average)
-                if "volume" in df15.columns and len(df15) >= 3:
-                    recent_vol_15m = df15["volume"].tail(6).median()
-                    current_vol_15m = float(last_15m.get("volume", 0.0) or 0.0)
-                    htf_15m_context["volume_mult_15m"] = (current_vol_15m / recent_vol_15m) if recent_vol_15m > 0 else 1.0
-                else:
-                    htf_15m_context["volume_mult_15m"] = 1.0
-
-            # Strategy type detection (debug logging removed for cleaner output)
-
-            # Priority 4: Load cap_segment for regime-cap allocation bonuses
-            cap_segment = "unknown"
-            try:
-                cap_map = self._load_cap_mapping()
-                cap_data = cap_map.get(sym, {})
-                cap_segment = cap_data.get("cap_segment", "unknown")
-            except Exception:
-                cap_segment = "unknown"
-
-            rows_for_ranker.append({
-                "symbol": sym,
-                "strategy_type": strategy_type,
-                "regime": regime_context,
-                "cap_segment": cap_segment,  # Priority 4: Cap segment for regime-cap interaction
-                "daily_score": 0.0,
-                "intraday": {
-                    "volume_ratio": volume_ratio,
-                    "adx": adx,
-                    "above_vwap": above_vwap,
-                    "squeeze_pctile": sq_pct,
-                },
-                "htf_15m": htf_15m_context,
-            })
-
-        if not rows_for_ranker:
-            return []
-
-        # Log strategy distribution
-        strategy_counts = {}
-        for row in rows_for_ranker:
-            strategy = row.get("strategy_type") or "unknown"
-            strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
-        strategy_summary = ", ".join(f"{k}:{v}" for k, v in strategy_counts.items())
-        logger.info(f"RANKER_INPUT | {len(rows_for_ranker)} symbols by strategy: {strategy_summary}")
-
-        # Determine most common regime for ranking context (diagnostic report insight)
-        regime_counts = {}
-        for _, d in decisions:
-            regime = getattr(d, "regime", None)
-            if regime:
-                regime_counts[regime] = regime_counts.get(regime, 0) + 1
-
-        # Use most common regime as context for ranking
-        common_regime = max(regime_counts.keys(), key=lambda k: regime_counts[k]) if regime_counts else None
-        if common_regime:
-            logger.info(f"REGIME_CONTEXT | Using {common_regime} for ranking (regimes: {regime_counts})")
-
-        # Phase 3: Build regime_diagnostics_map for multi-TF ranking multipliers
-        regime_diagnostics_map = {}
-        for sym, decision in decisions:
-            regime_diag = getattr(decision, 'regime_diagnostics', None)
-            if regime_diag:
-                regime_diagnostics_map[sym] = regime_diag
-
-        # Apply rank_top_n cap from config
-        rank_top_n = self.raw_cfg.get("rank_top_n", 100)
-        ranked_rows = rank_candidates(
-            rows_for_ranker,
-            top_n=rank_top_n,
-            regime_context=common_regime,
-            regime_diagnostics_map=regime_diagnostics_map  # Phase 3: Multi-TF regime multipliers
-        )
-
-        # === PRIORITY 4: REGIME-CAP ALLOCATION BONUSES (institutional rotation) ===
-        regime_cap_cfg = self.raw_cfg.get("regime_cap_allocation", {})
-        if regime_cap_cfg.get("enabled", False) and common_regime and ranked_rows:
-            regime_weights = regime_cap_cfg.get(common_regime, {})
-            if regime_weights:
-                # Apply regime-cap allocation bonuses
-                for row in ranked_rows:
-                    cap_segment = row.get("cap_segment", "unknown")
-                    if cap_segment in ["large_cap", "mid_cap", "small_cap"]:
-                        weight_key = f"{cap_segment}_weight"
-                        weight = regime_weights.get(weight_key, 0.5)
-                        # Convert weight to bonus: 70% weight = +0.2 bonus, 20% weight = -0.15 penalty
-                        # Formula: bonus = (weight - 0.5) * 0.4 (scaled to ±0.2 range)
-                        regime_cap_bonus = (weight - 0.5) * 0.4
-                        old_score = row.get("rank_score", 0.0)
-                        new_score = old_score + regime_cap_bonus
-                        row["rank_score"] = new_score
-                        if abs(regime_cap_bonus) > 0.01:  # Log significant adjustments
-                            logger.debug(f"REGIME_CAP_ALLOC | {row.get('symbol')} {cap_segment} in {common_regime}: "
-                                       f"weight={weight:.2f} bonus={regime_cap_bonus:+.3f} score {old_score:.3f}→{new_score:.3f}")
-
-                # Re-sort by adjusted scores
-                ranked_rows.sort(key=lambda x: x.get("rank_score", 0.0), reverse=True)
-                logger.info(f"REGIME_CAP_ALLOC | Applied {common_regime} regime-cap bonuses to {len(ranked_rows)} symbols")
-
-        # ENHANCED FILTERING: Apply rank floors and per-cycle caps (from plan document)
-        if ranked_rows:
-            initial_count = len(ranked_rows)
-
-            # Apply rank score floor and percentile floor
-            min_rank_score = float(self.raw_cfg.get("rank_exec_threshold", 1.0))
-            min_percentile = float(self.raw_cfg.get("rank_pctl_min", 0.60))
-
-            # Filter by rank score and percentile
-            filtered_rows = []
-            for row in ranked_rows:
-                rank_score = float(row.get("rank_score", 0.0))
-                rank_percentile = float(row.get("rank_percentile", 0.7))
-
-                if rank_score >= min_rank_score and rank_percentile >= min_percentile:
-                    filtered_rows.append(row)
-
-            # Apply max per cycle cap
-            max_per_cycle = int(self.raw_cfg.get("max_per_cycle", 100))
-            if len(filtered_rows) > max_per_cycle:
-                # Sort by rank_score descending and take top N
-                filtered_rows.sort(key=lambda x: float(x.get("rank_score", 0.0)), reverse=True)
-                filtered_rows = filtered_rows[:max_per_cycle]
-
-            ranked_rows = filtered_rows
-            logger.info(f"ENHANCED_FILTERING | {initial_count} -> {len(ranked_rows)} symbols after rank floor {min_rank_score}, percentile {min_percentile}, max_per_cycle {max_per_cycle}")
-
-        if len(rows_for_ranker) > rank_top_n:
-            logger.info(f"RANKER_OUTPUT | Capped to top {len(ranked_rows)}/{len(rows_for_ranker)} symbols (rank_top_n={rank_top_n})")
-        else:
-            logger.info(f"RANKER_OUTPUT | All {len(ranked_rows)} symbols ranked")
-        return [(r.get("symbol", "?"), float(r.get("rank_score", 0.0))) for r in ranked_rows]
 
     def _reasons_for(self, sym: str, decisions: List[Tuple[str, Decision]]) -> List[str]:
         for s, d in decisions:

@@ -60,8 +60,8 @@ class BacktestCleanupAutomation:
         self.keep_oci_files = keep_oci_files
         self.keep_extracted = keep_extracted
 
-        # OCI configuration
-        self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaa4nfxmwrow3ap5dbrn6uypwvn6gzvpponpolaj3mg5nf6y3fdcwpq"
+        # OCI configuration (Basic cluster - free control plane)
+        self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaaqs7a4f5jyyhcy3dsmedknnzbmhpdmdj6dqkastv5cnaehilq5g3q"
         self.bucket_name = "backtest-results"
 
         # Local paths
@@ -486,18 +486,23 @@ Examples:
                         help='Number of parallel downloads (default: 10)')
     parser.add_argument('--skip-nodepool', action='store_true',
                         help='Skip scaling down node pool')
-    parser.add_argument('--keep-oci-files', action='store_true',
-                        help="Don't delete files from OCI bucket after download")
+    parser.add_argument('--keep-oci-files', action='store_true', default=True,
+                        help="Don't delete files from OCI bucket after download (default: True)")
+    parser.add_argument('--delete-oci-files', action='store_true',
+                        help="Delete files from OCI bucket after download (must be explicit)")
     parser.add_argument('--keep-extracted', action='store_true',
                         help="Don't delete local extracted directory after zipping")
 
     args = parser.parse_args()
 
+    # Default is to KEEP OCI files unless --delete-oci-files is explicitly passed
+    keep_oci = not args.delete_oci_files
+
     automation = BacktestCleanupAutomation(
         run_id=args.run_id,
         parallel=args.parallel,
         skip_nodepool=args.skip_nodepool,
-        keep_oci_files=args.keep_oci_files,
+        keep_oci_files=keep_oci,
         keep_extracted=args.keep_extracted
     )
 

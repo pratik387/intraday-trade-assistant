@@ -42,7 +42,12 @@ class VolumeStructure(BaseStructure):
         self.target_mult_t2 = config["target_mult_t2"]
         self.confidence_level = config["confidence_level"]
 
+        # Stop loss parameters - Pro trader: SL at spike candle extreme + ATR buffer
+        self.spike_sl_buffer_atr = config["spike_sl_buffer_atr"]  # ATR buffer beyond spike candle extreme
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
+
         logger.debug(f"VOLUME: Initialized with min spike: {self.min_volume_spike_mult}x")
+        logger.debug(f"VOLUME: SL params - spike_buffer: {self.spike_sl_buffer_atr}ATR, min_distance: {self.min_stop_distance_pct}%")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect volume-based structures."""
@@ -120,7 +125,7 @@ class VolumeStructure(BaseStructure):
         entry_price = context.current_price
         risk_params = self.calculate_risk_params(context, event, side)
         exit_levels = self.get_exit_levels(context, event, side)
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         return TradePlan(
             symbol=context.symbol,
@@ -136,16 +141,39 @@ class VolumeStructure(BaseStructure):
         )
 
     def calculate_risk_params(self, context: MarketContext, event: StructureEvent, side: str) -> RiskParams:
-        """Calculate risk parameters."""
+        """Calculate risk parameters using pro trader spike candle-based SL."""
         entry_price = context.current_price
         atr = self._get_atr(context)
+        df = context.df_5m
 
-        if side == "long":
-            hard_sl = entry_price - (atr * 1.0)
+        # Pro trader: SL at spike candle extreme + ATR buffer
+        # For reversal trades, the spike candle extreme is the logical invalidation point
+        if len(df) >= 1:
+            spike_candle_low = float(df['low'].iloc[-1])
+            spike_candle_high = float(df['high'].iloc[-1])
+
+            if side == "long":
+                # Long reversal: SL below the spike candle low (the selling climax low)
+                hard_sl = spike_candle_low - (atr * self.spike_sl_buffer_atr)
+            else:
+                # Short reversal: SL above the spike candle high (the buying climax high)
+                hard_sl = spike_candle_high + (atr * self.spike_sl_buffer_atr)
         else:
-            hard_sl = entry_price + (atr * 1.0)
+            # Fallback if no candle data
+            if side == "long":
+                hard_sl = entry_price - (atr * self.spike_sl_buffer_atr)
+            else:
+                hard_sl = entry_price + (atr * self.spike_sl_buffer_atr)
 
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,
@@ -190,13 +218,6 @@ class VolumeStructure(BaseStructure):
         if context.indicators and 'atr' in context.indicators:
             return context.indicators['atr']
         return context.current_price * 0.01
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size."""
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0
-        qty = max(1, min(int(max_risk_amount / risk_per_share), 100)) if risk_per_share > 0 else 1
-        return qty, qty * entry_price
 
     def _calculate_institutional_strength(self, context: MarketContext, vol_z: float,
                                         body_size_pct: float, side: str) -> float:

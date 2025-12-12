@@ -95,7 +95,7 @@ class DailyRegimeDetector:
 
             # Calculate weekly ADX from daily bars (5-day window = 1 trading week)
             # Use centralized ADX calculation
-            from services.indicators.adx import calculate_adx
+            from services.indicators.indicators import calculate_adx
             adx = calculate_adx(df, period=14)
             current_adx = float(adx.iloc[-1]) if len(adx) > 0 and pd.notna(adx.iloc[-1]) else 15.0
 
@@ -339,10 +339,16 @@ class MultiTimeframeRegime:
       - 5m: chop (0.60 conf) → Apply chop filters from regime_gate
     """
 
-    def __init__(self, daily_detector: DailyRegimeDetector, hourly_detector: HourlyRegimeDetector, log=None):
+    def __init__(self, daily_detector: DailyRegimeDetector, hourly_detector: HourlyRegimeDetector, cfg: dict, log=None):
         self.daily_detector = daily_detector
         self.hourly_detector = hourly_detector
         self.log = log
+
+        # Load thresholds from config (no defaults - config is required)
+        rt = cfg.get("regime_thresholds", {})
+        if "long_max_ema_distance_pct" not in rt:
+            raise ValueError("[MultiTimeframeRegime] Missing regime_thresholds.long_max_ema_distance_pct in config")
+        self.long_max_ema_distance_pct = float(rt["long_max_ema_distance_pct"])
 
     def get_unified_regime(
         self,
@@ -438,6 +444,14 @@ class MultiTimeframeRegime:
         is_long = "long" in setup_type.lower()
         is_short = "short" in setup_type.lower()
         is_breakout = "breakout" in setup_type.lower()
+        is_orb = "orb" in setup_type.lower()
+
+        # ============ ORB EARLY WINDOW EXEMPTION ============
+        # ORB (Opening Range Breakout) is a pure intraday pattern that works regardless of daily regime
+        # Pro traders use ORB in all market conditions since it's based on the day's opening range
+        # Exempt ORB setups from daily regime blocks to allow early morning (9:35-10:30) entries
+        if is_orb:
+            return False, None
 
         # ============ EVIDENCE-BASED BLOCKS (Phase 3) ============
 
@@ -462,5 +476,13 @@ class MultiTimeframeRegime:
         # 4. No specific blocks for daily chop - handled by ranking penalty instead
         #    Rationale: Chop is noisy, blocking would eliminate too many trades
         #    Instead: Apply ranking penalty (0.90x) to deprioritize in favor of cleaner setups
+
+        # ============ EMA DISTANCE FILTER (config-driven) ============
+        # Block LONG when price is too extended above EMA200
+        # Strategy+regime combos are handled by regime_gate.allow_setup()
+        price_distance_pct = daily_result.metrics.get("price_distance_pct", 0.0)
+
+        if is_long and price_distance_pct > self.long_max_ema_distance_pct:
+            return True, f"extended_long:price_{price_distance_pct:.1%}_above_ema"
 
         return False, None

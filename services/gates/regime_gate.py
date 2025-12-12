@@ -56,6 +56,32 @@ class RegimeMetrics:
     width_proxy: float
     vol_z: float
 
+
+# ================================================================================
+# CENTRALIZED HARD BLOCKS - Single source of truth for regime-based blocking
+# ================================================================================
+# These blocks CANNOT be bypassed by HCET or any other mechanism.
+# Based on backtest analysis showing these setups underperform in specific regimes.
+#
+# SQUEEZE REGIME ANALYSIS (backtest_20251211):
+#   - first_hour_momentum_long: 40 trades, Rs 119 total = Rs 3/trade avg (worthless)
+#   - volume_spike_reversal_short: 7 trades, Rs -632 total (negative)
+#   - premium_zone_short: Not in allowed list but was trading via HCET bypass
+#
+# Pro trader approach: AVOID trading during squeeze/consolidation. Wait for breakout.
+# ================================================================================
+HARD_BLOCKS = {
+    "squeeze": [
+        "first_hour_momentum_long",      # Rs 119 in 40 trades = Rs 3/trade avg
+        "volume_spike_reversal_short",   # Rs -632 in 7 trades = negative
+        "premium_zone_short",            # Not designed for squeeze regime
+    ],
+    # Add other regime hard blocks here as analysis reveals them
+    # "chop": [...],
+    # "trend_up": [...],
+    # "trend_down": [...],
+}
+
 class MarketRegimeGate:
     """
     Computes regime from 5m index bars and decides if a setup is allowed
@@ -95,6 +121,7 @@ class MarketRegimeGate:
             self.multi_tf_regime = MultiTimeframeRegime(
                 daily_detector=self.daily_detector,
                 hourly_detector=self.hourly_detector,
+                cfg=cfg,
                 log=log
             )
             if log:
@@ -135,7 +162,7 @@ class MarketRegimeGate:
         # Use centralized ADX calculation to avoid duplication across codebase
         adx_period = 14
         if len(df5) >= adx_period + 1:
-            from services.indicators.adx import calculate_adx_with_di
+            from services.indicators.indicators import calculate_adx_with_di
 
             # Calculate ADX with directional indicators (Wilder's smoothing)
             adx, plus_di, minus_di = calculate_adx_with_di(df5, adx_period)
@@ -302,21 +329,20 @@ class MarketRegimeGate:
         cap_segment: str = "unknown",  # NEW: Priority 2 - cap-specific filtering
     ) -> bool:
         """
-        Returns True iff the setup is allowed by regime AND passes evidence thresholds AND cap-strategy fit.
+        PERMISSIVE BY DEFAULT: Returns True unless setup explicitly fails evidence thresholds.
+
+        Philosophy (Dec 2024): Allow all setups unless we have evidence to block them.
+        - HARD_BLOCKS in regime_gate.py: Cannot be bypassed (data-driven blocks)
+        - Explicit checks here: Evidence thresholds for known setups
+        - Unknown setups: ALLOWED (we don't want to miss opportunities)
 
         Params:
-          setup_type   : 'breakout_long'|'breakout_short'|'vwap_reclaim_long'|'vwap_lose_short'|
-                         'squeeze_release_long'|'squeeze_release_short'|'failure_fade_long'|'failure_fade_short'|
-                         'gap_fill_long'|'gap_fill_short'|'flag_continuation_long'|'flag_continuation_short'|
-                         'support_bounce_long'|'resistance_bounce_short'|'orb_breakout_long'|'orb_breakout_short'|
-                         'vwap_mean_reversion_long'|'vwap_mean_reversion_short'|'volume_spike_reversal_long'|
-                         'volume_spike_reversal_short'|'trend_pullback_long'|'trend_pullback_short'|
-                         'range_rejection_long'|'range_rejection_short'
+          setup_type   : Any registered setup type
           regime       : 'trend_up'|'trend_down'|'chop'|'squeeze'
           strength     : structure score (0..5 normalized)
           adx_5m       : 5m ADX
           vol_mult_5m  : last5m_vol / median5m_vol (~2h)
-          cap_segment  : 'large_cap'|'mid_cap'|'small_cap'|'micro_cap'|'unknown' (Priority 2: cap-aware filtering)
+          cap_segment  : 'large_cap'|'mid_cap'|'small_cap'|'micro_cap'|'unknown'
         """
         # === PRIORITY 2: CAP-STRATEGY FILTERING (institutional evidence) ===
         cap_prefs = self.cfg.get("cap_strategy_preferences", {})
@@ -397,9 +423,15 @@ class MarketRegimeGate:
                 # Require exceptional strength + very high ADX + high volume
                 return (s >= 3.5) and (a >= 35.0) and (v >= 2.5)
 
-            # ORB breakouts disabled - poor performance per diagnostic report
+            # ADDED (Dec 2024 backtest): Profitable setups in chop
+            # ORB breakouts - ENABLED: 7 trades, Rs 3,134 profit in backtest
+            if setup_type in {"orb_breakout_long", "orb_breakout_short"}:
+                return v >= self.VWAP_MIN_VOL_MULT
+            if setup_type == "premium_zone_short":  # 9 trades, Rs 2,983
+                return v >= self.VWAP_MIN_VOL_MULT
 
-            return False
+            # PERMISSIVE: Allow unknown setups in chop (block via HARD_BLOCKS if needed)
+            return True
 
         if regime == "trend_up":
             if setup_type == "breakout_long":
@@ -414,13 +446,25 @@ class MarketRegimeGate:
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
             if setup_type == "trend_pullback_long":
                 return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-            # Support bounce disabled - poor performance per diagnostic report
+            # Support bounce - ENABLED: 7 trades, Rs 1,784 profit in backtest
+            if setup_type == "support_bounce_long":
+                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
             if setup_type == "gap_fill_long":
                 return v >= self.VWAP_MIN_VOL_MULT
             # Volume spike reversals can work as counter-trend in strong trends
             if setup_type == "volume_spike_reversal_short":
                 return v >= self.FF_MIN_VOL_MULT
-            return False
+            # ADDED (Dec 2024 backtest): Profitable setups in trend_up
+            if setup_type == "premium_zone_short":  # 11 trades, Rs 3,217
+                return v >= self.VWAP_MIN_VOL_MULT
+            if setup_type == "first_hour_momentum_long":  # 19 trades, Rs 1,611
+                return v >= self.VWAP_MIN_VOL_MULT
+            if setup_type == "range_bounce_short":  # 1 trade, Rs 818
+                return v >= self.FF_MIN_VOL_MULT
+            if setup_type == "momentum_breakout_long":  # 4 trades, Rs 242
+                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
+            # PERMISSIVE: Allow unknown setups in trend_up (block via HARD_BLOCKS if needed)
+            return True
 
         if regime == "trend_down":
             if setup_type == "breakout_short":
@@ -439,13 +483,23 @@ class MarketRegimeGate:
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
             if setup_type == "trend_pullback_short":
                 return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-            # Resistance bounce disabled - poor performance per diagnostic report
+            # Resistance bounce - ENABLED: 65 trades, Rs 10,274 profit in backtest
+            if setup_type == "resistance_bounce_short":
+                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
             if setup_type == "gap_fill_short":
                 return v >= self.VWAP_MIN_VOL_MULT
             # Volume spike reversals can work as counter-trend in strong trends
             if setup_type == "volume_spike_reversal_long":
                 return v >= self.FF_MIN_VOL_MULT
-            return False
+            # ADDED (Dec 2024 backtest): Profitable setups in trend_down
+            if setup_type == "vwap_reclaim_long":  # 3 trades, Rs 900 (counter-trend bounce)
+                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
+            if setup_type == "fair_value_gap_short":  # 1 trade, Rs 540
+                return v >= self.VWAP_MIN_VOL_MULT
+            if setup_type == "premium_zone_short":  # 21 trades, Rs -71 (marginal, but allow)
+                return v >= self.VWAP_MIN_VOL_MULT
+            # PERMISSIVE: Allow unknown setups in trend_down (block via HARD_BLOCKS if needed)
+            return True
 
         if regime == "squeeze":
             if setup_type in {"squeeze_release_long", "squeeze_release_short"}:
@@ -454,15 +508,43 @@ class MarketRegimeGate:
                 return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
             if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
                 return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
-            # ORB breakouts disabled - poor performance per diagnostic report
-            if setup_type in {"volume_spike_reversal_long", "volume_spike_reversal_short"}:
+            # volume_spike_reversal_short is in HARD_BLOCKS, volume_spike_reversal_long allowed
+            if setup_type == "volume_spike_reversal_long":
                 return v >= self.VWAP_MIN_VOL_MULT
             # Gap fills can trigger squeeze releases
             if setup_type in {"gap_fill_long", "gap_fill_short"}:
                 return v >= self.VWAP_MIN_VOL_MULT
-            return False
+            # ADDED (Dec 2024 backtest): Profitable setups in squeeze
+            # ORB breakouts - ENABLED: 9 trades, Rs 2,029 profit
+            if setup_type in {"orb_breakout_long", "orb_breakout_short"}:
+                return v >= self.VWAP_MIN_VOL_MULT
+            # Range bounce - ENABLED: 2 trades, Rs 1,926 profit
+            if setup_type in {"range_bounce_long", "range_bounce_short"}:
+                return v >= self.FF_MIN_VOL_MULT
+            # NOTE: first_hour_momentum_long, volume_spike_reversal_short, premium_zone_short are in HARD_BLOCKS
+            # PERMISSIVE: Allow unknown setups in squeeze (block via HARD_BLOCKS if needed)
+            return True
 
-        return False
+        # PERMISSIVE: Allow setups in unknown regimes (block via HARD_BLOCKS if needed)
+        return True
+
+    # ---------------- Hard Block Check ----------------
+    def is_hard_blocked(self, setup_type: str, regime: str) -> bool:
+        """
+        Check if a setup is HARD BLOCKED for a regime.
+
+        Hard blocks CANNOT be bypassed by HCET or any other mechanism.
+        This is the single source of truth for regime-based blocking.
+
+        Args:
+            setup_type: The setup type to check
+            regime: The current market regime
+
+        Returns:
+            True if the setup is hard blocked for this regime
+        """
+        blocked_setups = HARD_BLOCKS.get(regime, [])
+        return setup_type in blocked_setups
 
     # ---------------- Sizing bias ----------------
     def size_multiplier(self, regime: str, *, counter_trend: bool = False, setup_type: str = None) -> float:

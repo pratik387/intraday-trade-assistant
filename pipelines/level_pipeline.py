@@ -1,0 +1,930 @@
+# pipelines/level_pipeline.py
+"""
+Level Pipeline - Specialized pipeline for LEVEL category setups.
+
+LEVEL setups are bounces/rejections at key price levels:
+- support_bounce, resistance_bounce
+- range_bounce, range_rejection
+- vwap_reclaim, vwap_lose
+- premium_zone, discount_zone
+- orb_pullback
+- order_block
+
+Quality Metric: (retest_ok + hold_ok) * proximity_bonus
+- Level acceptance is KEY: price must respect the level
+- Retest without break confirms support/resistance
+- Close above/below level confirms commitment
+
+Key Filters:
+- Price must be near the level (ATR-normalized distance)
+- Retest should hold within acceptable tolerance
+- Current close must be on correct side of level
+- Volume spike confirms institutional interest
+
+Regime Rules:
+- Works in ALL regimes (levels are always relevant)
+- Best in chop/range (levels define the range)
+- Good in squeeze (accumulation/distribution zones)
+"""
+
+from typing import Dict, List, Optional, Any
+import pandas as pd
+
+from config.logging_config import get_agent_logger
+
+from .base_pipeline import (
+    BasePipeline,
+    ScreeningResult,
+    QualityResult,
+    GateResult,
+    RankingResult,
+    EntryResult,
+    TargetResult,
+)
+
+logger = get_agent_logger()
+
+
+class LevelPipeline(BasePipeline):
+    """Pipeline for LEVEL category setups."""
+
+    def get_category_name(self) -> str:
+        return "LEVEL"
+
+    def get_setup_types(self) -> List[str]:
+        return self._get("setup_types")
+
+    # ======================== SCREENING ========================
+
+    def screen(
+        self,
+        symbol: str,
+        df5m: pd.DataFrame,
+        features: Dict[str, Any],
+        levels: Dict[str, float],
+        now: pd.Timestamp
+    ) -> ScreeningResult:
+        """
+        Level-specific screening filters.
+
+        - Price must be near the target level
+        - Recent bars should show level test behavior
+        - No requirement for extreme momentum
+        """
+        # features reserved for future use
+        _ = features
+
+        logger.debug(f"[LEVEL] Screening {symbol} at {now}")
+
+        reasons = []
+        passed = True
+
+        # Time window check from config (more permissive than breakouts)
+        time_cfg = self._get("screening", "time_windows")
+        morning_start = self.parse_time(time_cfg["morning_start"])
+        morning_end = self.parse_time(time_cfg["morning_end"])
+        afternoon_start = self.parse_time(time_cfg["afternoon_start"])
+        afternoon_end = self.parse_time(time_cfg["afternoon_end"])
+
+        md = now.hour * 60 + now.minute
+        morning_in = morning_start <= md <= morning_end
+        afternoon_in = afternoon_start <= md <= afternoon_end
+
+        if not (morning_in or afternoon_in):
+            reasons.append(f"time_window_fail:{md}")
+            passed = False
+
+        # Level proximity check
+        current_close = float(df5m["close"].iloc[-1])
+        # Use ATR from features (already calculated with fallback in run_pipeline)
+        atr_fallback_pct = self.cfg.get("atr_fallback_pct")
+        atr = features.get("atr") or self.calculate_atr(df5m) or (current_close * atr_fallback_pct)
+
+        # Determine relevant level based on VWAP position
+        vwap = float(df5m["vwap"].iloc[-1]) if "vwap" in df5m.columns else current_close
+        orh = levels.get("ORH", current_close)
+        orl = levels.get("ORL", current_close)
+        pdh = levels.get("PDH", orh)
+        pdl = levels.get("PDL", orl)
+
+        # Find nearest level
+        candidate_levels = [orh, orl, vwap, pdh, pdl]
+        candidate_levels = [l for l in candidate_levels if l > 0]
+
+        if candidate_levels:
+            nearest_level = min(candidate_levels, key=lambda x: abs(x - current_close))
+            distance_to_level = abs(current_close - nearest_level) / max(atr, 1e-6)
+
+            # Level plays need to be near the level (from config)
+            max_distance = self._get("screening", "level_proximity", "max_distance_atr")
+            if distance_to_level > max_distance:
+                reasons.append(f"level_too_far:{distance_to_level:.2f}ATR")
+                passed = False
+            else:
+                reasons.append(f"level_proximity_ok:{distance_to_level:.2f}ATR")
+
+        return ScreeningResult(passed=passed, reasons=reasons, features=features)
+
+    # ======================== QUALITY ========================
+
+    def calculate_quality(
+        self,
+        symbol: str,
+        df5m: pd.DataFrame,
+        bias: str,
+        levels: Dict[str, float],
+        atr: float
+    ) -> QualityResult:
+        """
+        Level quality: (retest_ok + hold_ok) * proximity_bonus
+
+        From planner_internal.py lines 1179-1202:
+        - Retest score: Did price test the level without breaking?
+        - Hold score: Is current close on correct side?
+        - Proximity bonus: Closer to level = higher quality
+        """
+        logger.debug(f"[LEVEL] Calculating quality for {symbol} bias={bias}")
+        current_close = float(df5m["close"].iloc[-1])
+        orh = levels.get("ORH", current_close)
+        orl = levels.get("ORL", current_close)
+
+        # Target level based on bias
+        target_level = orh if bias == "long" else orl
+
+        # Distance to level (ATR-normalized)
+        distance_to_level = abs(current_close - target_level) / max(atr, 1e-6)
+
+        # Level acceptance scoring from config
+        acc_cfg = self._get("quality", "acceptance")
+        acc_bars = int(acc_cfg["bars"])
+        acc_bpct = float(acc_cfg["retest_bpct"])
+
+        win = df5m.tail(max(acc_bars, 2))
+
+        if bias == "long":
+            # For long bounce: low should not break below level
+            retest_score = 1.0 if (win["low"].min() >= target_level * (1 - acc_bpct/100.0)) else 0.5
+            hold_score = 1.0 if (win["close"].iloc[-1] >= target_level) else 0.3
+        else:
+            # For short bounce: high should not break above level
+            retest_score = 1.0 if (win["high"].max() <= target_level * (1 + acc_bpct/100.0)) else 0.5
+            hold_score = 1.0 if (win["close"].iloc[-1] <= target_level) else 0.3
+
+        # Proximity bonus from config (closer = better)
+        prox_cfg = self._get("quality", "proximity_bonus")
+        proximity_bonus = max(prox_cfg["floor"], prox_cfg["max_bonus"] - distance_to_level * prox_cfg["decay_per_atr"])
+
+        # Structural R:R for level plays
+        quality_mult = self._get("quality", "quality_multiplier")
+        structural_rr = (retest_score + hold_score) * proximity_bonus * quality_mult
+
+        # Quality status based on acceptance from config
+        quality_cfg = self._get("quality", "quality_thresholds")
+        if retest_score >= quality_cfg["excellent"]["retest_score"] and hold_score >= quality_cfg["excellent"]["hold_score"]:
+            quality_status = "excellent"
+        elif retest_score >= quality_cfg["good"]["retest_score"] and hold_score >= quality_cfg["good"]["hold_score"]:
+            quality_status = "good"
+        elif retest_score >= quality_cfg["fair"]["retest_score"] or hold_score >= quality_cfg["fair"]["hold_score"]:
+            quality_status = "fair"
+        else:
+            quality_status = "poor"
+
+        metrics = {
+            "retest_ok": retest_score >= 0.9,
+            "hold_ok": hold_score >= 0.9,
+            "distance_to_level": round(distance_to_level, 2),
+            "proximity_bonus": round(proximity_bonus, 2),
+        }
+
+        reasons = [
+            f"retest={retest_score:.1f}",
+            f"hold={hold_score:.1f}",
+            f"dist={distance_to_level:.2f}ATR"
+        ]
+
+        return QualityResult(
+            structural_rr=structural_rr,
+            quality_status=quality_status,
+            metrics=metrics,
+            reasons=reasons
+        )
+
+    # ======================== GATES ========================
+
+    def validate_gates(
+        self,
+        symbol: str,
+        setup_type: str,
+        regime: str,
+        df5m: pd.DataFrame,
+        df1m: Optional[pd.DataFrame],
+        strength: float,
+        adx: float,
+        vol_mult: float,
+        regime_diagnostics: Optional[Dict[str, Any]] = None
+    ) -> GateResult:
+        """
+        Level-specific gate validations - HARD GATES ONLY, NO PENALTIES.
+
+        Level plays work in all regimes but have different requirements:
+        - In trend: counter-trend requires stronger confirmation (HARD BLOCK if weak)
+        - In chop: level respect is sufficient
+        - ADX: high ADX is warning but level plays CAN work (no penalty)
+        - Volume: nice-to-have, not required (no penalty)
+
+        Pro Trader Approach (Linda Raschke):
+        - Level plays are about price structure, not momentum
+        - High ADX = trending = level might break through, but still tradeable
+        - Volume surge = confirmation, but absence isn't disqualifying
+        """
+        # df1m reserved for future bar-level analysis
+        _ = df1m
+
+        logger.debug(f"[LEVEL] Validating gates for {symbol} {setup_type}: regime={regime}, adx={adx:.1f}, vol={vol_mult:.2f}")
+
+        # VWAP reclaim/lose re-validation: Ensure condition still holds at decision time
+        setup_lower = setup_type.lower()
+        if "vwap" in setup_lower and "vwap" in df5m.columns:
+            current_price = float(df5m["close"].iloc[-1])
+            current_vwap = float(df5m["vwap"].iloc[-1])
+
+            if "reclaim" in setup_lower:
+                # vwap_reclaim_long: Price MUST still be above VWAP
+                if current_price <= current_vwap:
+                    logger.debug(f"[LEVEL] {symbol} vwap_reclaim BLOCKED: price {current_price:.2f} <= VWAP {current_vwap:.2f}")
+                    return GateResult(
+                        passed=False,
+                        reasons=[f"vwap_reclaim_invalid:price_{current_price:.2f}<=vwap_{current_vwap:.2f}"],
+                        size_mult=1.0,
+                        min_hold_bars=0
+                    )
+            elif "lose" in setup_lower:
+                # vwap_lose_short: Price MUST still be below VWAP
+                if current_price >= current_vwap:
+                    logger.debug(f"[LEVEL] {symbol} vwap_lose BLOCKED: price {current_price:.2f} >= VWAP {current_vwap:.2f}")
+                    return GateResult(
+                        passed=False,
+                        reasons=[f"vwap_lose_invalid:price_{current_price:.2f}>=vwap_{current_vwap:.2f}"],
+                        size_mult=1.0,
+                        min_hold_bars=0
+                    )
+
+            # ========== VWAP VOLUME FILTER (DATA-DRIVEN Dec 2024) ==========
+            # From spike test: VWAP vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs
+            # Low volume VWAP trades have poor execution and high slippage
+            bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+            vwap_vol_cfg = self._get("gates", "vwap_volume")
+            min_volume = vwap_vol_cfg.get("min_volume")
+
+            if bar5_volume < min_volume:
+                logger.debug(f"[LEVEL] {symbol} vwap BLOCKED: vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                return GateResult(
+                    passed=False,
+                    reasons=[f"vwap_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k"],
+                    size_mult=1.0,
+                    min_hold_bars=0
+                )
+
+        reasons = []
+        passed = True
+        size_mult = 1.0  # NO PENALTIES - hard gates only
+        min_hold = 0
+
+        # ========== CROSS-RUN VALIDATED FILTERS (Dec 2024) ==========
+        # These filters were validated across both backtest_20251204 and backtest_20251205
+        # Only implementing filters that showed consistent improvement in BOTH runs
+        validated_filters = self._get("gates", "validated_filters") or {}
+
+        # Get volume from 5m bar for long trade volume filter
+        bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+        is_long = "_long" in setup_type
+
+        # 1. RESISTANCE_BOUNCE_SHORT: ADX < 20 FILTER
+        # Evidence: R1: +3,671 Rs (14 trades) | R2: +2,692 Rs (15 trades)
+        if setup_type == "resistance_bounce_short":
+            filter_cfg = validated_filters.get("resistance_bounce_short_adx")
+            min_adx = filter_cfg.get("min_adx")
+            if adx < min_adx:
+                reasons.append(f"resistance_bounce_short_blocked:adx{adx:.0f}<{min_adx}")
+                logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: ADX {adx:.1f} < {min_adx}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"resistance_bounce_short_adx_ok:{adx:.0f}")
+
+            # 1b. RESISTANCE_BOUNCE_SHORT: BB_WIDTH FILTER
+            # Evidence: bb_width<=0.10 reduces hard_sl from 35%→28%
+            bb_width_cfg = validated_filters.get("resistance_bounce_short_bb_width")
+            if bb_width_cfg:
+                max_bb_width = bb_width_cfg.get("max_bb_width")
+                # Calculate bb_width from 5m data (normalized: 2*std/sma)
+                if len(df5m) >= 20 and "close" in df5m.columns:
+                    close = df5m["close"]
+                    sma20 = close.rolling(window=20, min_periods=20).mean()
+                    std20 = close.rolling(window=20, min_periods=20).std()
+                    if pd.notna(sma20.iloc[-1]) and pd.notna(std20.iloc[-1]) and sma20.iloc[-1] > 0:
+                        bb_width = (2 * std20.iloc[-1]) / sma20.iloc[-1]
+                        if bb_width > max_bb_width:
+                            reasons.append(f"resistance_bounce_short_blocked:bb_width{bb_width:.3f}>{max_bb_width}")
+                            logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: BB width {bb_width:.3f} > {max_bb_width}")
+                            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                        else:
+                            reasons.append(f"resistance_bounce_short_bb_ok:{bb_width:.3f}")
+
+        # 2. SUPPORT_BOUNCE_LONG: ADX < 20 FILTER
+        # Evidence: R1: +1,819 Rs (8 trades) | R2: +1,819 Rs (8 trades)
+        if setup_type == "support_bounce_long":
+            filter_cfg = validated_filters.get("support_bounce_long_adx")
+            min_adx = filter_cfg.get("min_adx")
+            if adx < min_adx:
+                reasons.append(f"support_bounce_long_blocked:adx{adx:.0f}<{min_adx}")
+                logger.debug(f"[LEVEL] {symbol} support_bounce_long BLOCKED: ADX {adx:.1f} < {min_adx}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"support_bounce_long_adx_ok:{adx:.0f}")
+
+        # 3. PREMIUM_ZONE_SHORT: ADX < 15 FILTER
+        # Evidence: R1: +1,244 Rs (5 trades) | R2: +1,244 Rs (5 trades)
+        if setup_type == "premium_zone_short":
+            filter_cfg = validated_filters.get("premium_zone_short_adx")
+            min_adx = filter_cfg.get("min_adx")
+            if adx < min_adx:
+                reasons.append(f"premium_zone_short_blocked:adx{adx:.0f}<{min_adx}")
+                logger.debug(f"[LEVEL] {symbol} premium_zone_short BLOCKED: ADX {adx:.1f} < {min_adx}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"premium_zone_short_adx_ok:{adx:.0f}")
+
+        # 4. SUPPORT_BOUNCE_LONG: STRUCTURAL_RR >= 3.0 FILTER
+        # Evidence: R1: +826 Rs (36 trades) | R2: +826 Rs (36 trades)
+        # Note: strength parameter is structural_rr passed from calculate_quality
+        if setup_type == "support_bounce_long":
+            filter_cfg = validated_filters.get("support_bounce_long_srr")
+            max_srr = filter_cfg.get("max_structural_rr")
+            if strength >= max_srr:
+                reasons.append(f"support_bounce_long_blocked:srr{strength:.2f}>={max_srr}")
+                logger.debug(f"[LEVEL] {symbol} support_bounce_long BLOCKED: SRR {strength:.2f} >= {max_srr}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"support_bounce_long_srr_ok:{strength:.2f}")
+
+        # 5. LONG TRADE VOLUME FILTER (MIN 150K)
+        # Evidence: Winners have 2x volume (213k vs 107k)
+        if is_long:
+            filter_cfg = validated_filters.get("long_trade_volume")
+            min_volume = filter_cfg.get("min_volume")
+            if bar5_volume < min_volume:
+                reasons.append(f"long_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                logger.debug(f"[LEVEL] {symbol} {setup_type} BLOCKED: Long vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            else:
+                reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
+
+        # 6. RANGE_BOUNCE_SHORT: ADX < 20 in CHOP FILTER
+        # Evidence: In chop, ADX>=20: 10 trades Rs +4,575 (73% WR) vs ADX<20: 19 trades Rs -800
+        if setup_type == "range_bounce_short" and regime == "chop":
+            filter_cfg = validated_filters.get("range_bounce_short_chop_adx")
+            if filter_cfg:
+                min_adx = filter_cfg.get("min_adx", 20)
+                if adx < min_adx:
+                    reasons.append(f"range_bounce_short_blocked:chop_adx{adx:.0f}<{min_adx}")
+                    logger.debug(f"[LEVEL] {symbol} range_bounce_short BLOCKED: In chop, ADX {adx:.1f} < {min_adx}")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"range_bounce_short_chop_adx_ok:{adx:.0f}")
+
+        # 6b. RANGE_BOUNCE_SHORT: ADX >= max_adx GLOBAL BLOCK (DATA-DRIVEN Dec 2024)
+        # Evidence: ADX>=30: 79 trades, 35% WR, Rs -9,121 | ADX<30: 119 trades, 53% WR, Rs +26,700
+        # High ADX = strong trend = range bounces fail (price breaks through range)
+        if setup_type == "range_bounce_short":
+            filter_cfg = validated_filters.get("range_bounce_short_adx")
+            if filter_cfg:
+                max_adx_for_range = filter_cfg.get("max_adx", 30)
+                if adx >= max_adx_for_range:
+                    reasons.append(f"range_bounce_short_blocked:adx{adx:.0f}>={max_adx_for_range}")
+                    logger.debug(f"[LEVEL] {symbol} range_bounce_short BLOCKED: ADX {adx:.1f} >= {max_adx_for_range} (high ADX = trend breaks ranges)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"range_bounce_short_adx_ok:{adx:.0f}<{max_adx_for_range}")
+
+        # 6c. RANGE_BOUNCE_SHORT: R:R SWEET SPOT FILTER (DATA-DRIVEN Dec 2024)
+        # Evidence: R:R 2-4: 48 trades, 73% WR, Rs +26,512, Avg Rs 552
+        #           R:R <2: 59 trades, 39% WR, Rs +345, Avg Rs 6
+        #           R:R >=4: 12 trades, 33% WR, Rs -2,157, Avg Rs -180
+        if setup_type == "range_bounce_short":
+            filter_cfg = validated_filters.get("range_bounce_short_rr")
+            if filter_cfg:
+                min_rr = filter_cfg.get("min_rr")
+                max_rr = filter_cfg.get("max_rr")
+                if strength < min_rr:
+                    reasons.append(f"range_bounce_short_blocked:rr{strength:.2f}<{min_rr}")
+                    logger.debug(f"[LEVEL] {symbol} range_bounce_short BLOCKED: R:R {strength:.2f} < {min_rr} (low R:R = poor expectancy)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                elif strength >= max_rr:
+                    reasons.append(f"range_bounce_short_blocked:rr{strength:.2f}>={max_rr}")
+                    logger.debug(f"[LEVEL] {symbol} range_bounce_short BLOCKED: R:R {strength:.2f} >= {max_rr} (extreme R:R = unreliable)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"range_bounce_short_rr_ok:{strength:.2f}")
+
+        # 6d. RESISTANCE_BOUNCE_SHORT: ADX >= max_adx GLOBAL BLOCK (DATA-DRIVEN Dec 2024)
+        # Evidence: ADX<30: 149 trades, 53.7% WR, Rs +26,410 | ADX>=30: 133 trades, 48.1% WR, Rs +286
+        # High ADX = strong trend = resistance bounces fail (price breaks through)
+        if setup_type == "resistance_bounce_short":
+            filter_cfg = validated_filters.get("resistance_bounce_short_max_adx")
+            if filter_cfg:
+                max_adx_for_resistance = filter_cfg.get("max_adx")
+                if adx >= max_adx_for_resistance:
+                    reasons.append(f"resistance_bounce_short_blocked:adx{adx:.0f}>={max_adx_for_resistance}")
+                    logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: ADX {adx:.1f} >= {max_adx_for_resistance} (high ADX = trend breaks resistance)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"resistance_bounce_short_adx_ok:{adx:.0f}<{max_adx_for_resistance}")
+
+        # 6e. RESISTANCE_BOUNCE_SHORT: R:R SWEET SPOT FILTER (DATA-DRIVEN Dec 2024)
+        # Evidence: R:R 1.5-3: 69 trades, 66.7% WR, Rs +24,945, Avg Rs 362
+        #           R:R <1.5: 84 trades, 40.5% WR, Rs -3,923, Avg Rs -47
+        #           R:R >=3: 76 trades, 42.1% WR, Rs -2,460, Avg Rs -32
+        if setup_type == "resistance_bounce_short":
+            filter_cfg = validated_filters.get("resistance_bounce_short_rr")
+            if filter_cfg:
+                min_rr = filter_cfg.get("min_rr")
+                max_rr = filter_cfg.get("max_rr")
+                if strength < min_rr:
+                    reasons.append(f"resistance_bounce_short_blocked:rr{strength:.2f}<{min_rr}")
+                    logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: R:R {strength:.2f} < {min_rr} (low R:R = poor expectancy)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                elif strength >= max_rr:
+                    reasons.append(f"resistance_bounce_short_blocked:rr{strength:.2f}>={max_rr}")
+                    logger.debug(f"[LEVEL] {symbol} resistance_bounce_short BLOCKED: R:R {strength:.2f} >= {max_rr} (extreme R:R = unreliable)")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"resistance_bounce_short_rr_ok:{strength:.2f}")
+
+        # 7. VWAP_LOSE_SHORT: BLOCK in TREND_UP
+        # Evidence: ALL 4 trend_up trades hit hard_sl (Rs -2,179). Shorting in uptrend = guaranteed loss
+        if setup_type == "vwap_lose_short" and regime == "trend_up":
+            filter_cfg = validated_filters.get("vwap_lose_short_trend_up")
+            if filter_cfg and filter_cfg.get("block_in_trend_up", True):
+                reasons.append(f"vwap_lose_short_blocked:trend_up_regime")
+                logger.debug(f"[LEVEL] {symbol} vwap_lose_short BLOCKED: In trend_up regime - shorting uptrend fails")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+        # 8. PREMIUM_ZONE_SHORT: ADX < 32 in TREND_DOWN FILTER
+        # Evidence: ADX>=32: 31 trades Rs +4,884 (9 HSL) vs ADX<32: 26 trades Rs -1,865 (16 HSL)
+        if setup_type == "premium_zone_short" and regime == "trend_down":
+            filter_cfg = validated_filters.get("premium_zone_short_trend_down_adx")
+            if filter_cfg:
+                min_adx = filter_cfg.get("min_adx", 32)
+                if adx < min_adx:
+                    reasons.append(f"premium_zone_short_blocked:trend_down_adx{adx:.0f}<{min_adx}")
+                    logger.debug(f"[LEVEL] {symbol} premium_zone_short BLOCKED: In trend_down, ADX {adx:.1f} < {min_adx} - weak trend = HSL risk")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"premium_zone_short_trend_down_adx_ok:{adx:.0f}")
+
+        # ========== GLOBAL SHORT ADX FILTER (DATA-DRIVEN Dec 2024) ==========
+        # Evidence: ADX < 15 = 0% WR (-1,112 Rs). ADX 20-25 = 62% WR (+11,577 Rs)
+        # Block ALL short trades when ADX < 18 (weak trend = shorts fail)
+        is_short = "_short" in setup_type
+        global_short_adx = self._get("gates", "global_short_adx_filter") or {}
+        if is_short and global_short_adx:
+            min_adx_for_shorts = global_short_adx.get("min_adx")
+            if adx < min_adx_for_shorts:
+                reasons.append(f"global_short_adx_blocked:{adx:.0f}<{min_adx_for_shorts}")
+                logger.debug(f"[LEVEL] {symbol} {setup_type} BLOCKED: Global short ADX filter - ADX {adx:.1f} < {min_adx_for_shorts}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+        # Setup-specific regime blocks (config-driven from gates.setup_regime_blocks)
+        setup_regime_blocks = self._get("gates", "setup_regime_blocks") or {}
+
+        # Check if this setup is blocked in this regime
+        if setup_lower in setup_regime_blocks:
+            block_cfg = setup_regime_blocks[setup_lower]
+
+            # BLOCKED ENTIRELY - setup is disabled completely (regardless of regime)
+            # Evidence-based: some setups have negative expectancy across all conditions
+            if block_cfg.get("blocked_entirely"):
+                reasons.append(f"setup_blocked_entirely:{setup_lower}")
+                logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED ENTIRELY: config disables this setup")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+            # Simple regime block (e.g., range_bounce_long blocked in chop)
+            # OPTIONAL per-setup key - not all setups have blocked_regimes
+            blocked_regimes = block_cfg.get("blocked_regimes") or []
+            if regime in blocked_regimes:
+                reasons.append(f"setup_regime_blocked:{setup_lower}_{regime}")
+                logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: config blocks {setup_lower} in {regime}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+            # Time-based regime block (e.g., discount_zone_long in trend_up before 15:00)
+            # OPTIONAL per-setup key - not all setups have blocked_regimes_before_hour
+            blocked_before_hour = block_cfg.get("blocked_regimes_before_hour") or {}
+            if regime in blocked_before_hour:
+                cutoff_hour = blocked_before_hour[regime]
+                current_time = df5m.index[-1] if hasattr(df5m.index[-1], 'hour') else None
+                if current_time:
+                    current_hour = current_time.hour
+                    if current_hour < cutoff_hour:
+                        reasons.append(f"setup_regime_time_blocked:{setup_lower}_{regime}_before_{cutoff_hour}h")
+                        logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: {regime} before {cutoff_hour}:00 (hour={current_hour})")
+                        return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+        # Regime rules from config - HARD GATES only
+        regime_cfg = self._get("gates", "regime_rules")
+
+        if regime in regime_cfg:
+            rule = regime_cfg[regime]
+            if not rule["allowed"]:
+                reasons.append(f"regime_blocked:{regime}")
+                passed = False
+            else:
+                reasons.append(f"regime_ok:{regime}")
+
+                # Counter-trend check for trending regimes - HARD BLOCK if too weak
+                if regime in ("trend_up", "trend_down"):
+                    min_strength = rule["min_strength_counter_trend"]
+                    is_long = "_long" in setup_type
+                    is_counter = (regime == "trend_up" and not is_long) or (regime == "trend_down" and is_long)
+
+                    if is_counter and strength < min_strength:
+                        reasons.append(f"counter_trend_blocked:strength={strength:.2f}<{min_strength}")
+                        passed = False
+                    elif is_counter:
+                        reasons.append(f"counter_trend_ok:strength={strength:.2f}")
+                    else:
+                        reasons.append("trend_aligned")
+
+        # Volume confirmation - info only, no penalty
+        vol_cfg = self._get("gates", "volume_confirmation")
+        if vol_mult >= vol_cfg["threshold"]:
+            reasons.append(f"volume_confirmed:{vol_mult:.2f}x")
+        else:
+            reasons.append(f"volume_low:{vol_mult:.2f}x")
+
+        # ADX check - info only, no penalty (level plays work even in high ADX)
+        adx_cfg = self._get("gates", "adx")
+        if adx > adx_cfg["high_adx_threshold"]:
+            reasons.append(f"high_adx_warning:{adx:.1f}")
+        else:
+            reasons.append(f"adx_ok:{adx:.1f}")
+
+        return GateResult(passed=passed, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+    # ======================== RANKING ========================
+
+    def calculate_rank_score(
+        self,
+        symbol: str,
+        intraday_features: Dict[str, Any],
+        regime: str,
+        daily_trend: Optional[str] = None,
+        htf_context: Optional[Dict] = None
+    ) -> RankingResult:
+        """
+        Level-specific ranking - ALL 9 COMPONENTS FROM OLD ranker.py _intraday_strength().
+
+        From ranker.py lines 95-131:
+        1. s_vol  - Volume ratio: min(vol_ratio / divisor, cap)
+        2. s_rsi  - RSI score: max((rsi - mid) / divisor, floor)
+        3. s_rsis - RSI slope: max(min(rsi_slope, cap), 0)
+        4. s_adx  - ADX score: max((adx - mid) / divisor, floor)
+        5. s_adxs - ADX slope: max(min(adx_slope, cap), 0)
+        6. s_vwap - VWAP alignment: bonus if aligned, penalty if not
+        7. s_dist - Distance from level: near/ok/far scoring
+        8. s_sq   - Squeeze percentile: <=50/<=70/>=90 scoring
+        9. s_acc  - Acceptance status: excellent/good bonus
+
+        HTF Logic for LEVEL:
+        - Level plays (bounces) often work AGAINST the HTF trend
+        - +15% bonus if HTF trend OPPOSING (bounce into trend)
+        - -5% penalty if HTF trend aligned (less important, not blocking)
+        """
+        logger.debug(f"[LEVEL] Calculating rank score for {symbol} in {regime}")
+
+        # REQUIRED features (core indicators - must exist)
+        vol_ratio = float(intraday_features["volume_ratio"])
+        rsi = float(intraday_features["rsi"])
+        adx = float(intraday_features["adx"])
+        above_vwap = bool(intraday_features["above_vwap"])
+        bias = intraday_features["bias"]
+        # OPTIONAL features (derived/data-dependent - may not always be available)
+        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
+        adx_slope = float(intraday_features.get("adx_slope") or 0.0)
+        dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
+        squeeze_pctile = intraday_features.get("squeeze_pctile")
+        acceptance_status = intraday_features.get("acceptance_status") or "poor"
+
+        # Component scores from config - ALL 9 COMPONENTS
+        weights = self._get("ranking", "weights")
+
+        # 1. VOLUME SCORE (s_vol)
+        vol_cfg = weights["volume"]
+        s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
+
+        # 2. RSI SCORE (s_rsi) - PORTED FROM OLD ranker.py line 97
+        rsi_cfg = weights["rsi"]
+        s_rsi = max((rsi - rsi_cfg["mid"]) / rsi_cfg["divisor"], rsi_cfg["floor"])
+
+        # 3. RSI SLOPE SCORE (s_rsis) - PORTED FROM OLD ranker.py line 98
+        rsi_slope_cfg = weights["rsi_slope"]
+        s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
+
+        # 4. ADX SCORE (s_adx) - ISSUE 3 FIX: Added cap to prevent high ADX dominating
+        adx_cfg = weights["adx"]
+        s_adx_raw = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
+        adx_cap = adx_cfg.get("cap")  # Default to no cap if not specified
+        s_adx = min(s_adx_raw, adx_cap)
+
+        # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
+        adx_slope_cfg = weights["adx_slope"]
+        s_adxs = max(min(adx_slope, adx_slope_cfg["cap"]), 0.0)
+
+        # 6. VWAP ALIGNMENT SCORE (s_vwap)
+        vwap_cfg = weights["vwap"]
+        if bias == "long":
+            s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
+        else:
+            s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
+
+        # 7. DISTANCE FROM LEVEL SCORE (s_dist) - PORTED FROM OLD ranker.py lines 107-113
+        dist_cfg = weights["distance"]
+        adist = abs(dist_from_level_bpct)
+        if adist <= dist_cfg["near_bpct"]:
+            s_dist = dist_cfg["near_score"]
+        elif adist <= dist_cfg["ok_bpct"]:
+            s_dist = dist_cfg["ok_score"]
+        else:
+            s_dist = dist_cfg["far_score"]
+
+        # 8. SQUEEZE PERCENTILE SCORE (s_sq) - FROM OLD ranker.py lines 115-122
+        squeeze_cfg = weights["squeeze"]
+        if squeeze_pctile is not None:
+            if squeeze_pctile <= 50:
+                s_sq = squeeze_cfg["low_bonus"]
+            elif squeeze_pctile <= 70:
+                s_sq = squeeze_cfg["mid_bonus"]
+            elif squeeze_pctile >= 90:
+                s_sq = squeeze_cfg["high_penalty"]
+            else:
+                s_sq = 0.0
+        else:
+            s_sq = 0.0
+
+        # 9. ACCEPTANCE STATUS SCORE (s_acc) - PORTED FROM OLD ranker.py lines 124-130
+        acc_cfg = weights["acceptance"]
+        if acceptance_status == "excellent":
+            s_acc = acc_cfg["excellent_bonus"]
+        elif acceptance_status == "good":
+            s_acc = acc_cfg["good_bonus"]
+        else:
+            s_acc = 0.0
+
+        # BASE SCORE = SUM OF ALL 9 COMPONENTS (exactly like OLD ranker.py line 132)
+        base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
+
+        # Regime multiplier from config - level plays excel in chop
+        setup_type = intraday_features["setup_type"]
+        regime_mult = self._get_strategy_regime_mult(setup_type, regime)
+
+        # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
+        # to match OLD ranker.py which applies them once in rank_candidates().
+        # DO NOT apply them here - that would cause double-application!
+        _ = daily_trend  # Unused here - applied in universal adjustments
+        _ = htf_context  # Unused here - applied in universal adjustments
+
+        final_score = base_score * regime_mult
+
+        logger.debug(f"[LEVEL] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f}")
+
+        return RankingResult(
+            score=final_score,
+            components={
+                "volume": s_vol,
+                "rsi": s_rsi,
+                "rsi_slope": s_rsis,
+                "adx": s_adx,
+                "adx_slope": s_adxs,
+                "vwap": s_vwap,
+                "distance": s_dist,
+                "squeeze": s_sq,
+                "acceptance": s_acc
+            },
+            multipliers={"regime": regime_mult}  # daily/htf applied in universal adjustments
+        )
+
+    # ======================== ENTRY ========================
+
+    def calculate_entry(
+        self,
+        symbol: str,
+        df5m: pd.DataFrame,
+        bias: str,
+        levels: Dict[str, float],
+        atr: float,
+        setup_type: str
+    ) -> EntryResult:
+        """
+        Level entry: Tight zones at the level.
+
+        Level plays need entries AT or very near the level for optimal R:R.
+        Entry zone is tighter than breakouts (0.10 ATR).
+        """
+        logger.debug(f"[LEVEL] Calculating entry for {symbol} {setup_type} bias={bias}")
+
+        current_close = float(df5m["close"].iloc[-1])
+        orh = levels.get("ORH", current_close)
+        orl = levels.get("ORL", current_close)
+        pdh = levels.get("PDH", orh)
+        pdl = levels.get("PDL", orl)
+        vwap = float(df5m["vwap"].iloc[-1]) if "vwap" in df5m.columns else current_close
+
+        entry_cfg = self._get("entry")
+        triggers = entry_cfg["triggers"]
+        mode_cfg = entry_cfg["mode"]
+        ict_cfg = entry_cfg["ict_zones"]
+        setup_lower = setup_type.lower()
+
+        # Setup-type-specific entry logic for LEVEL category
+        if "vwap" in setup_lower:
+            # VWAP plays - differentiate by setup semantics
+            if "reclaim" in setup_lower:
+                # vwap_reclaim_long: Price just crossed ABOVE VWAP
+                # Entry should be AT or ABOVE VWAP (confirming the reclaim)
+                entry_ref = vwap * 1.001  # Just above VWAP
+            elif "lose" in setup_lower:
+                # vwap_lose_short: Price just crossed BELOW VWAP
+                # Entry should be AT or BELOW VWAP (confirming the lose)
+                entry_ref = vwap * 0.999  # Just below VWAP
+            else:
+                # vwap_mean_reversion: Entry toward VWAP
+                if bias == "long":
+                    entry_ref = vwap * 0.999  # Below VWAP for long (buy dip)
+                else:
+                    entry_ref = vwap * 1.001  # Above VWAP for short (sell rip)
+            entry_trigger = triggers["vwap"]
+        elif "premium" in setup_lower or "discount" in setup_lower or "order_block" in setup_lower:
+            # ICT zones - premium/discount
+            if bias == "long":
+                entry_ref = orl + (orh - orl) * ict_cfg["discount_zone_frac"]  # 30% into range
+            else:
+                entry_ref = orl + (orh - orl) * ict_cfg["premium_zone_frac"]  # 70% into range
+            entry_trigger = triggers["premium_zone"]
+        elif "pullback" in setup_lower or "retest" in setup_lower:
+            # Pullback/Retest - enter at support (PDL) or resistance (PDH)
+            if bias == "long":
+                entry_ref = min(orl, pdl) if pdl > 0 else orl
+            else:
+                entry_ref = max(orh, pdh) if pdh > 0 else orh
+            entry_trigger = triggers["default"]
+        elif "reversal" in setup_lower:
+            # Level reversal - enter at structure
+            if bias == "long":
+                entry_ref = min(orl, pdl) if pdl > 0 else orl
+            else:
+                entry_ref = max(orh, pdh) if pdh > 0 else orh
+            entry_trigger = triggers["default"]
+        elif "range" in setup_lower:
+            # Range play - enter at range edge
+            entry_ref = orl if bias == "long" else orh
+            entry_trigger = triggers["default"]
+        else:
+            # Default LEVEL - entry at support/resistance
+            entry_ref = orl if bias == "long" else orh
+            entry_trigger = triggers["default"]
+
+        # Entry zone for level plays from config
+        # Use ATR-based zone, but ensure minimum width for low-ATR large cap stocks
+        zone_mult = entry_cfg["zone_mult_atr"]
+        zone_width = atr * zone_mult
+
+        # Apply minimum zone width (as % of price) for large cap stocks with low ATR
+        min_zone_pct = entry_cfg.get("min_zone_pct")
+        if min_zone_pct > 0:
+            min_zone_width = entry_ref * (min_zone_pct / 100.0)
+            if zone_width < min_zone_width:
+                logger.debug(f"[LEVEL] {symbol} zone widened from {zone_width:.3f} to {min_zone_width:.3f} (min_zone_pct={min_zone_pct}%)")
+                zone_width = min_zone_width
+
+        entry_zone = (entry_ref - zone_width, entry_ref + zone_width)
+
+        # Entry mode from config
+        if "pullback" in setup_type.lower() or "retest" in setup_type.lower():
+            entry_mode = mode_cfg["pullback"]
+        else:
+            entry_mode = mode_cfg["default"]
+
+        return EntryResult(
+            entry_zone=entry_zone,
+            entry_ref_price=entry_ref,
+            entry_trigger=entry_trigger,
+            entry_mode=entry_mode
+        )
+
+    # ======================== TARGETS ========================
+
+    def calculate_targets(
+        self,
+        symbol: str,
+        entry_ref_price: float,
+        hard_sl: float,
+        bias: str,
+        atr: float,
+        levels: Dict[str, float],
+        measured_move: float,
+        setup_type: str = ""
+    ) -> TargetResult:
+        """
+        Level targets: Conservative R:R since level plays are mean-reversion.
+
+        Level plays typically don't run as far as breakouts:
+        - T1: 1.2R (quick scalp)
+        - T2: 2.0R (standard)
+        - T3: 2.5R (extended - rare)
+        """
+        # levels and atr reserved for future level-based target adjustments
+        _ = levels
+        _ = atr
+
+        logger.debug(f"[LEVEL] Calculating targets for {symbol} entry={entry_ref_price:.2f}, sl={hard_sl:.2f}, mm={measured_move:.2f}")
+        risk_per_share = abs(entry_ref_price - hard_sl)
+
+        # R:R ratios from config
+        targets_cfg = self._get("targets")
+        rr_ratios = targets_cfg["rr_ratios"]
+
+        # Check for bias-specific targets first (long/short may have different T1/T2/T3)
+        if bias in rr_ratios and isinstance(rr_ratios[bias], dict):
+            t1_rr = rr_ratios[bias].get("t1", rr_ratios["t1"])
+            t2_rr = rr_ratios[bias].get("t2", rr_ratios["t2"])
+            t3_rr = rr_ratios[bias].get("t3", rr_ratios["t3"])
+            logger.debug(f"[LEVEL] Using bias-specific targets for {bias}: T1={t1_rr}R, T2={t2_rr}R, T3={t3_rr}R")
+        else:
+            t1_rr = rr_ratios["t1"]
+            t2_rr = rr_ratios["t2"]
+            t3_rr = rr_ratios["t3"]
+
+        # Cap targets from config (level plays shouldn't expect huge moves)
+        caps = targets_cfg["caps"]
+        cap1 = min(measured_move * caps["t1"]["measured_move_frac"], entry_ref_price * caps["t1"]["max_pct"])
+        cap2 = min(measured_move * caps["t2"]["measured_move_frac"], entry_ref_price * caps["t2"]["max_pct"])
+        cap3 = min(measured_move * caps["t3"]["measured_move_frac"], entry_ref_price * caps["t3"]["max_pct"])
+
+        # PRE-TRADE REJECTION: If T1 cap < 0.8R, reject the setup
+        # Low-volatility instruments (ETFs, liquid funds) can't hit viable targets
+        # Better to reject upfront than trade with broken T1 (0R) or force T1 at 1R and hit SL
+        min_t1_threshold = risk_per_share * 0.8
+        if cap1 < min_t1_threshold:
+            logger.info(f"[LEVEL] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
+            return None
+
+        # Calculate target distances with caps
+        t1_dist = min(t1_rr * risk_per_share, cap1)
+        t2_dist = min(t2_rr * risk_per_share, cap2)
+        t3_dist = min(t3_rr * risk_per_share, cap3)
+
+        if bias == "long":
+            t1 = entry_ref_price + t1_dist
+            t2 = entry_ref_price + t2_dist
+            t3 = entry_ref_price + t3_dist
+        else:
+            t1 = entry_ref_price - t1_dist
+            t2 = entry_ref_price - t2_dist
+            t3 = entry_ref_price - t3_dist
+
+        # Qty splits from config
+        qty_splits = targets_cfg["qty_splits"]
+        targets = [
+            {"name": "T1", "level": round(t1, 2), "rr": round(t1_rr, 2), "qty_pct": qty_splits["t1"]},
+            {"name": "T2", "level": round(t2, 2), "rr": round(t2_rr, 2), "qty_pct": qty_splits["t2"]},
+            {"name": "T3", "level": round(t3, 2), "rr": round(t3_rr, 2), "qty_pct": qty_splits["t3"]},
+        ]
+
+        # Trail config from config file
+        trail_config = targets_cfg["trail"]
+
+        return TargetResult(
+            targets=targets,
+            hard_sl=hard_sl,
+            risk_per_share=risk_per_share,
+            trail_config=trail_config
+        )
+
+    # ======================== RSI PENALTY ========================
+
+    def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:
+        """
+        LEVEL RSI penalty: DISABLED - extreme RSI at levels is CONFIRMATION.
+
+        Pro Trader Research (Linda Raschke, Al Brooks):
+        - Extreme RSI + level = "probability increases dramatically"
+        - Oversold at support = STRONG long signal
+        - Overbought at resistance = STRONG short signal
+        - Neutral RSI at level = weaker signal (no momentum confirmation)
+
+        This is the OPPOSITE of what we previously thought!
+        Extreme RSI is GOOD for level plays, not bad.
+        """
+        # RSI not used for level plays - extreme RSI is confirmation, not penalty
+        _ = rsi_val
+        _ = bias
+        return (1.0, None)

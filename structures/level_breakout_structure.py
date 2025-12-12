@@ -61,6 +61,10 @@ class LevelBreakoutStructure(BaseStructure):
         self.retest_timeout_minutes = config["retest_timeout_minutes"]
         self.allow_both_modes = config["allow_both_modes"]
 
+        # Stop loss parameters - Pro trader: SL at breakout level + ATR buffer
+        self.sl_atr_multiplier = config["sl_atr_multiplier"]  # ATR multiplier for stop loss
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
+
         # Track traded breakouts to prevent double exposure
         self.traded_breakouts_today = set()
 
@@ -534,7 +538,7 @@ class LevelBreakoutStructure(BaseStructure):
         entry_price = context.current_price
         risk_params = self.calculate_risk_params(context, event, side)
         exit_levels = self.get_exit_levels(context, event, side)
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         return TradePlan(
             symbol=context.symbol,
@@ -566,15 +570,21 @@ class LevelBreakoutStructure(BaseStructure):
             breakout_level = entry_price
 
         # NSE FIX: Set stop loss relative to ENTRY price, not breakout level
-        # Use configured sl_atr_multiplier instead of hardcoded value
-        # PHASE 1 FIX: Was hardcoded to 1.5x, now uses config value (2.0x per MFE/MAE analysis)
-        sl_mult = self.config.get("sl_atr_multiplier", 2.0)
+        # Use configured sl_atr_multiplier - no default, must be in config
         if side == "long":
-            hard_sl = entry_price - (atr * sl_mult)  # Stop sl_mult×ATR below entry
+            hard_sl = entry_price - (atr * self.sl_atr_multiplier)  # Stop sl_atr_multiplier×ATR below entry
         else:
-            hard_sl = entry_price + (atr * sl_mult)  # Stop sl_mult×ATR above entry
+            hard_sl = entry_price + (atr * self.sl_atr_multiplier)  # Stop sl_atr_multiplier×ATR above entry
 
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,
@@ -620,13 +630,6 @@ class LevelBreakoutStructure(BaseStructure):
         """Validate timing for level breakout trades."""
         # Level breakouts can occur throughout the session
         return True, "Level breakout timing validated"
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0  # Maximum risk per trade
-        qty = max(1, min(int(max_risk_amount / risk_per_share), 100)) if risk_per_share > 0 else 1
-        return qty, qty * entry_price
 
     def _calculate_institutional_strength(self, context: MarketContext, vol_z: float,
                                         final_strength: float, breakout_size_atr: float,

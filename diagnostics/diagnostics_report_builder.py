@@ -67,9 +67,10 @@ def build_csv_from_events(log_dir: Path | None = None,
     MAX_EXITS = 12
 
     for tid, evs in by_tid.items():
-        evs.sort(key=lambda e: (_ts(e.get("ts")), {"DECISION":0,"ENTRY":1,"EXIT":2}.get(e.get("type"), 9)))
+        evs.sort(key=lambda e: (_ts(e.get("ts")), {"DECISION":0,"TRIGGER":1,"ENTRY":2,"EXIT":3}.get(e.get("type"), 9)))
         first = evs[0]
         dec = next((e for e in evs if e.get("type") == "DECISION"), None)
+        triggers = [e for e in evs if e.get("type") == "TRIGGER"]  # FIX: Also extract TRIGGER events
         entries = [e for e in evs if e.get("type") == "ENTRY"]
         exits   = [e for e in evs if e.get("type") == "EXIT"]
 
@@ -123,7 +124,8 @@ def build_csv_from_events(log_dir: Path | None = None,
             e0 = entries[0]; ent0 = e0.get("entry") or {}
             row["entry_ts"]    = e0.get("ts")
             row["side"]        = ent0.get("side")
-            row["entry_price"] = ent0.get("price")
+            # FIX: Round entry price to 2 decimal places to avoid floating-point artifacts
+            row["entry_price"] = round(ent0.get("price"), 2) if ent0.get("price") is not None else None
             for en in entries:
                 enq = int((_g(en,"entry","qty") or 0))
                 total_entry_qty += enq
@@ -133,6 +135,19 @@ def build_csv_from_events(log_dir: Path | None = None,
             row["pos_after_qty_entry"] = meta.get("pos_after_qty")
             row["pos_after_avg_entry"] = meta.get("pos_after_avg")
             row["scaled_in"]           = meta.get("scaled_in")
+        # FIX: Fallback to TRIGGER events if no ENTRY events (common in backtest mode)
+        elif triggers:
+            t0 = triggers[0]; trig0 = t0.get("trigger") or t0.get("entry") or {}
+            row["entry_ts"]    = t0.get("ts")
+            row["side"]        = trig0.get("side") or row.get("plan_bias")
+            ep = trig0.get("price") or trig0.get("entry_price")
+            row["entry_price"] = round(ep, 2) if ep is not None else None
+            # Extract qty from trigger event
+            trig_qty = trig0.get("qty") or trig0.get("quantity")
+            if trig_qty:
+                total_entry_qty = int(trig_qty)
+                if ep is not None:
+                    entry_prices.append((total_entry_qty, float(ep)))
         else:
             row["entry_ts"] = None; row["side"] = None; row["entry_price"] = None
         row["qty"] = total_entry_qty
@@ -148,8 +163,9 @@ def build_csv_from_events(log_dir: Path | None = None,
             exd = ex.get("exit") or {}
             gross_exit_qty += int(exd.get("qty") or 0)
 
-        row["label_hit_t1"] = any((_g(ex,"exit","reason") in ("t1_partial",)) for ex in exits)
-        row["label_hit_t2"] = any((_g(ex,"exit","reason") in ("target_t2",)) for ex in exits)
+        # FIX: Include all T1/T2 exit reason variants used by exit_executor.py
+        row["label_hit_t1"] = any((_g(ex,"exit","reason") in ("t1_partial", "t1_partial_t2_infeasible", "t1_partial_fast_scalp_lane")) for ex in exits)
+        row["label_hit_t2"] = any((_g(ex,"exit","reason") in ("target_t2", "target_t2_full", "tick_target_t2", "t2_partial")) for ex in exits)
 
         realized = None
         if total_entry_qty > 0 and entry_prices and exits:
