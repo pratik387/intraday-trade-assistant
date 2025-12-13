@@ -134,11 +134,11 @@
                 "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
             },
             "volume_spike_reversal_short_filter": {
-                "_comment": "RELAXED (Dec 2024): Lowered from 10x to 3x to increase trade count for analysis",
+                "_comment": "DATA-DRIVEN (Dec 2024): Volume + regime filter for volume_spike_reversal_short",
                 "enabled": true,
-                "min_volume_ratio": 3,
-                "block_regimes": [],
-                "_evidence": "RELAXED: Original filter was blocking 98% of trades. Need more data to optimize."
+                "min_volume_ratio": 10,
+                "block_regimes": ["trend_up"],
+                "_evidence": "vol>=10x + regime!=trend_up: 20 trades, 70% WR, +4,913 Rs, 246 Rs/trade. Counter-trend shorts in trend_up are disasters."
             }
         }
     },

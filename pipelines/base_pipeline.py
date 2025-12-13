@@ -1366,7 +1366,16 @@ class BasePipeline(ABC):
         # 6. STOP LOSS - Structure-based SL with RPS floor protection
         # Ported from OLD planner_internal.py lines 512-537
         # Uses: structure_stop from levels, ATR-based volatility stop, RPS floor
+
+        # Check for setup-specific SL multiplier first (DATA-DRIVEN Dec 2024)
         sl_atr_mult = self.cfg["sl_atr_mult"]
+        setup_specific_sl = self.cfg.get("stop_loss", {}).get("setup_specific")
+        if setup_specific_sl and setup_type in setup_specific_sl:
+            setup_sl_cfg = setup_specific_sl[setup_type]
+            if "atr_multiplier" in setup_sl_cfg:
+                sl_atr_mult = setup_sl_cfg["atr_multiplier"]
+                logger.debug(f"[PLAN] Using setup-specific SL for {setup_type}: atr_mult={sl_atr_mult}")
+
         adjusted_atr = atr * cap_sl_mult
         sl_below_swing_ticks = self.cfg["sl_below_swing_ticks"]
 

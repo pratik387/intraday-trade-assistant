@@ -1741,9 +1741,10 @@
   "metrics_enable_vwap": false,
   "_comment_energy_scanner": "=== ENERGY SCANNER (STAGE-0) ===",
   "energy_scanner": {
-    "top_k_long": 200,
-    "top_k_short": 200,
-    "top_k_mr": 20
+    "top_k_long": 250,
+    "top_k_short": 250,
+    "top_k_mr": 20,
+    "_comment": "INCREASED: 200->250 to get more MR coverage (75 vs 60 stocks) without sacrificing momentum"
   },
   "_comment_scanner_filters": "=== SCANNER FILTERS ===",
   "scanner_min_bar5_volume": 1000,

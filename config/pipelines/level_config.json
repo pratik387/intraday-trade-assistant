@@ -114,8 +114,8 @@
         "setup_regime_blocks": {
             "_comment": "Data-driven filters from backtest analysis - block unprofitable setup+regime combinations",
             "range_bounce_long": {
-                "blocked_regimes": [],
-                "_evidence": "RELAXED: was blocking chop. Original: 62 trades in chop, -4,048 PnL, 45.2% win rate (vs +565 in trend_up)"
+                "blocked_regimes": ["chop"],
+                "_evidence": "62 trades in chop, -4,048 PnL, 45.2% win rate (vs +565 in trend_up)"
             },
             "discount_zone_long": {
                 "blocked_entirely": true,
@@ -148,9 +148,9 @@
             "max_bars_below_for_lose": 8
         },
         "vwap_volume": {
-            "_comment": "RELAXED: 50k->25k for more data. Original: VWAP vol<50k: 18 trades (6W, 12L)",
-            "min_volume": 25000,
-            "_evidence": "RELAXED for more data. Original: Low volume VWAP trades have poor execution and high slippage"
+            "_comment": "DATA-DRIVEN (Dec 2024): VWAP vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs improvement",
+            "min_volume": 50000,
+            "_evidence": "Low volume VWAP trades have poor execution and high slippage. Blocking vol<50k improves P&L by +2,675 Rs"
         },
         "validated_filters": {
             "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
@@ -171,8 +171,12 @@
                 "_evidence": "R1: +1,244 Rs (5 trades) | R2: +1,244 Rs (5 trades) - Very low ADX = no directional movement"
             },
             "support_bounce_long_srr": {
-                "max_structural_rr": 10.0,
-                "_evidence": "RELAXED for more data: was 3.0, now 10.0. Original: R1: +826 Rs (36 trades)"
+                "max_structural_rr": 3.0,
+                "_evidence": "OPTIMIZED Dec 2024: RSI<50 + RR<3.0 = 19 trades, 81.8% WR, Rs 3,650 NET after Zerodha charges+tax (Rs 192/trade)"
+            },
+            "support_bounce_long_rsi": {
+                "max_rsi": 50,
+                "_evidence": "OPTIMIZED Dec 2024: RSI<50 filters for quality setups. Fewer trades but Rs 362 gross/trade vs Rs 77 baseline"
             },
             "long_trade_volume": {
                 "min_volume": 50000,
@@ -387,10 +391,16 @@
     },
 
     "targets": {
-        "_comment": "DATA-DRIVEN (Dec 2024): Long avg MFE=0.74R, only 15% hit 1.5R but 28% hit 1.0R. Lower T1 for longs.",
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific targets optimized via 1m bar simulation",
         "rr_ratios": {
+            "support_bounce_long": {
+                "_comment": "OPTIMIZED Dec 2024: T1 1.5R (was 1.0R). 1m simulation showed +27% PnL with wider targets",
+                "t1": 1.5,
+                "t2": 2.5,
+                "t3": 3.0
+            },
             "long": {
-                "_comment": "LOWERED: T1 1.5R→1.0R for longs. support_bounce_long has only 5% T1 hit rate at 1.5R.",
+                "_comment": "Default for other long setups: T1 1.0R",
                 "t1": 1.0,
                 "t2": 2.0,
                 "t3": 2.5
@@ -439,9 +449,15 @@
     },
 
     "stop_loss": {
-        "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific SL optimized via 1m bar simulation",
         "atr_multiplier": 2.0,
-        "min_stop_distance_pct": 0.5
+        "min_stop_distance_pct": 0.5,
+        "setup_specific": {
+            "support_bounce_long": {
+                "atr_multiplier": 2.4,
+                "_comment": "OPTIMIZED Dec 2024: 1.2x wider SL (2.0→2.4 ATR). Reduces premature stops, +27% PnL combined with T1 1.5x"
+            }
+        }
     },
 
     "rsi_penalty": {

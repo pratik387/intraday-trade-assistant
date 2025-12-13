@@ -59,8 +59,7 @@ class RangeStructure(BaseStructure):
 
         logger.debug(f"RANGE: Initialized with range duration: {self.min_range_duration} bars, height: {self.min_range_height_pct}-{self.max_range_height_pct}%")
         logger.debug(f"RANGE: SL params - bounce_buffer: {self.bounce_sl_buffer_atr}ATR, breakout_buffer: {self.breakout_sl_buffer_atr}ATR")
-        # INFO log for blocked cap segments to verify config loading
-        logger.info(f"RANGE_INIT: blocked_cap_segments={list(self.blocked_cap_segments) if self.blocked_cap_segments else 'NONE'}")
+        logger.debug(f"RANGE_INIT: blocked_cap_segments={list(self.blocked_cap_segments) if self.blocked_cap_segments else 'NONE'}")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect range-based structures."""

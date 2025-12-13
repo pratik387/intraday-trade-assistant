@@ -359,13 +359,39 @@ class LevelPipeline(BasePipeline):
         # Note: strength parameter is structural_rr passed from calculate_quality
         if setup_type == "support_bounce_long":
             filter_cfg = validated_filters.get("support_bounce_long_srr")
-            max_srr = filter_cfg.get("max_structural_rr")
-            if strength >= max_srr:
-                reasons.append(f"support_bounce_long_blocked:srr{strength:.2f}>={max_srr}")
-                logger.debug(f"[LEVEL] {symbol} support_bounce_long BLOCKED: SRR {strength:.2f} >= {max_srr}")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            else:
-                reasons.append(f"support_bounce_long_srr_ok:{strength:.2f}")
+            if filter_cfg and "max_structural_rr" in filter_cfg:
+                max_srr = filter_cfg["max_structural_rr"]
+                if strength >= max_srr:
+                    reasons.append(f"support_bounce_long_blocked:srr{strength:.2f}>={max_srr}")
+                    logger.debug(f"[LEVEL] {symbol} support_bounce_long BLOCKED: SRR {strength:.2f} >= {max_srr}")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                else:
+                    reasons.append(f"support_bounce_long_srr_ok:{strength:.2f}")
+
+        # 4b. SUPPORT_BOUNCE_LONG: RSI >= 50 FILTER (DATA-DRIVEN Dec 2024)
+        # Evidence: RSI<50 = 19 trades, 81.8% WR, Rs 3,650 NET after Zerodha charges+tax (Rs 192/trade)
+        # Filters for quality setups where RSI shows oversold condition for bounce
+        if setup_type == "support_bounce_long":
+            filter_cfg = validated_filters.get("support_bounce_long_rsi")
+            if filter_cfg and "max_rsi" in filter_cfg:
+                max_rsi = filter_cfg["max_rsi"]
+                # Calculate RSI from df5m
+                if len(df5m) >= 14 and "close" in df5m.columns:
+                    close = df5m["close"]
+                    delta = close.diff()
+                    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    rs = gain / loss.replace(0, 1e-10)
+                    rsi = 100 - (100 / (1 + rs))
+                    if not rsi.empty and not pd.isna(rsi.iloc[-1]):
+                        current_rsi = float(rsi.iloc[-1])
+
+                        if current_rsi >= max_rsi:
+                            reasons.append(f"support_bounce_long_blocked:rsi{current_rsi:.0f}>={max_rsi}")
+                            logger.debug(f"[LEVEL] {symbol} support_bounce_long BLOCKED: RSI {current_rsi:.1f} >= {max_rsi} (not oversold)")
+                            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                        else:
+                            reasons.append(f"support_bounce_long_rsi_ok:{current_rsi:.0f}")
 
         # 5. LONG TRADE VOLUME FILTER (MIN 150K)
         # Evidence: Winners have 2x volume (213k vs 107k)
@@ -852,8 +878,14 @@ class LevelPipeline(BasePipeline):
         targets_cfg = self._get("targets")
         rr_ratios = targets_cfg["rr_ratios"]
 
-        # Check for bias-specific targets first (long/short may have different T1/T2/T3)
-        if bias in rr_ratios and isinstance(rr_ratios[bias], dict):
+        # Check for setup_type specific targets first (e.g., support_bounce_long)
+        # Then fallback to bias-specific (long/short), then to defaults
+        if setup_type in rr_ratios and isinstance(rr_ratios[setup_type], dict):
+            t1_rr = rr_ratios[setup_type].get("t1", rr_ratios["t1"])
+            t2_rr = rr_ratios[setup_type].get("t2", rr_ratios["t2"])
+            t3_rr = rr_ratios[setup_type].get("t3", rr_ratios["t3"])
+            logger.debug(f"[LEVEL] Using setup-specific targets for {setup_type}: T1={t1_rr}R, T2={t2_rr}R, T3={t3_rr}R")
+        elif bias in rr_ratios and isinstance(rr_ratios[bias], dict):
             t1_rr = rr_ratios[bias].get("t1", rr_ratios["t1"])
             t2_rr = rr_ratios[bias].get("t2", rr_ratios["t2"])
             t3_rr = rr_ratios[bias].get("t3", rr_ratios["t3"])
