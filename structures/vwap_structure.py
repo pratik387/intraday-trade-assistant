@@ -56,6 +56,10 @@ class VWAPStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "vwap"
 
+        # Track which specific setup type this detector is for (e.g., "vwap_reclaim_long")
+        # This ensures we only produce signals for the configured direction
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Mean reversion parameters
@@ -129,6 +133,13 @@ class VWAPStructure(BaseStructure):
             lose_events, lose_quality = self._detect_vwap_lose(context, vwap_info)
             events.extend(lose_events)
             max_quality = max(max_quality, lose_quality)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"VWAP: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No VWAP setups detected"

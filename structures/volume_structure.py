@@ -32,6 +32,10 @@ class VolumeStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "volume"
 
+        # Track which specific setup type this detector is for (e.g., "volume_spike_reversal_long")
+        # This ensures we only produce signals for the configured direction
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # Volume parameters
         self.min_volume_spike_mult = config["min_volume_spike_mult"]
         self.min_body_size_pct = config["min_body_size_pct"]
@@ -92,9 +96,12 @@ class VolumeStructure(BaseStructure):
                         },
                         price=current_price
                     )
-                    events.append(event)
-
-                    logger.debug(f"VOLUME: {context.symbol} - Volume spike reversal {side.upper()}: vol_z {current_vol_z:.1f}, body {body_size_pct:.1f}%")
+                    # Only add event if it matches our configured setup type (or no filter configured)
+                    if self.configured_setup_type is None or structure_type == self.configured_setup_type:
+                        events.append(event)
+                        logger.debug(f"VOLUME: {context.symbol} - Volume spike reversal {side.upper()}: vol_z {current_vol_z:.1f}, body {body_size_pct:.1f}%")
+                    else:
+                        logger.debug(f"VOLUME: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
 
             return StructureAnalysis(
                 structure_detected=len(events) > 0,

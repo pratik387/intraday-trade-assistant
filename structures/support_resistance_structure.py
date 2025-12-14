@@ -102,7 +102,15 @@ class SupportResistanceStructure(BaseStructure):
 
         # Target structure type filter - each instance only detects its specific structure
         # Valid values: "support_bounce_long", "resistance_bounce_short", "support_breakdown_short", "resistance_breakout_long", or "all"
-        self.target_structure_type = config.get("target_structure_type", "all")
+        # Also derive from _setup_name if target_structure_type is not explicitly set
+        self.configured_setup_type = config.get("_setup_name", None)
+        explicit_target = config.get("target_structure_type")
+        if explicit_target:
+            self.target_structure_type = explicit_target
+        elif self.configured_setup_type:
+            self.target_structure_type = self.configured_setup_type
+        else:
+            self.target_structure_type = "all"
 
         logger.debug(f"S/R: Initialized with min touches: {self.min_touches}, tolerance: {self.bounce_tolerance_pct}%")
         logger.debug(f"S/R: Volume spike required: {self.require_volume_spike}, min mult: {self.min_volume_mult}")

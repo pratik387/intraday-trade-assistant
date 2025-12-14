@@ -33,6 +33,9 @@ class LevelBreakoutStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "level_breakout"
 
+        # Track which specific setup type this detector is for (e.g., "level_breakout_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Breakout parameters
@@ -128,6 +131,13 @@ class LevelBreakoutStructure(BaseStructure):
                     )
                     if breakdown_event:
                         events.append(breakdown_event)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             quality_score = self._calculate_quality_score(events, vol_z_current) if events else 0.0
             logger.debug(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} detection complete - found {len(events)} events, quality: {quality_score:.2f}")

@@ -549,12 +549,7 @@ class BasePipeline(ABC):
         # Note: We apply this as a threshold multiplier, not a score multiplier
         # The actual filtering happens in the orchestrator when comparing to threshold
 
-        # 2. BLACKLIST PENALTY
-        blacklist_penalty = self._get_blacklist_penalty(strategy_type, ranking_cfg)
-        score += blacklist_penalty
-        adjustments["blacklist_penalty"] = blacklist_penalty
-
-        # 3. UNREALISTIC RR PENALTY
+        # 2. UNREALISTIC RR PENALTY
         rr_penalty = self._get_unrealistic_rr_penalty(structural_rr, ranking_cfg)
         score += rr_penalty
         adjustments["rr_penalty"] = rr_penalty
@@ -630,31 +625,6 @@ class BasePipeline(ABC):
 
         # Final hour (14:30+): aggressive filter
         return final_hour_mult
-
-    def _get_blacklist_penalty(
-        self,
-        strategy_type: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply penalty for historically poor-performing setups.
-
-        From ranker.py lines 513-517:
-        - Blacklisted strategies get a severe penalty (-999 by default)
-        - This effectively prevents them from being selected
-        """
-        blacklist_cfg = ranking_cfg["blacklist"]
-        if not blacklist_cfg["enabled"]:
-            return 0.0
-
-        blacklisted_setups = blacklist_cfg["strategies"]
-        penalty = blacklist_cfg["penalty"]
-
-        if strategy_type in blacklisted_setups:
-            logger.debug(f"BLACKLIST_PENALTY: {strategy_type} penalty={penalty}")
-            return penalty
-
-        return 0.0
 
     def _get_unrealistic_rr_penalty(
         self,

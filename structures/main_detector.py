@@ -51,6 +51,13 @@ class MainDetector(BaseStructure):
             self.detectors = {}
             return
 
+        # Load blacklist - setups in this list will NOT be initialized as detectors
+        # blacklist_setups is nested inside quality_filters
+        quality_filters = config.get("quality_filters", {})
+        self.blacklist_setups = quality_filters.get("blacklist_setups", [])
+        if self.blacklist_setups:
+            logger.info(f"MAIN_DETECTOR: Blacklisted setups ({len(self.blacklist_setups)}): {self.blacklist_setups}")
+
         logger.debug(f"MAIN_DETECTOR: Found {len(setups_config)} setup configurations")
         logger.debug(f"MAIN_DETECTOR: Setup names: {list(setups_config.keys())}")
         logger.debug(f"MAIN_DETECTOR: Will initialize {len([s for s in setups_config.values() if s.get('enabled', False)])} enabled detectors")
@@ -164,8 +171,15 @@ class MainDetector(BaseStructure):
                     logger.warning(f"MAIN_DETECTOR: {setup_name} enabled but ict_comprehensive not found - skipping")
                     continue
 
+            # Check blacklist BEFORE checking enabled - blacklisted setups should never initialize
+            if detector_key in self.blacklist_setups or setup_name in self.blacklist_setups:
+                logger.info(f"MAIN_DETECTOR: {setup_name}/{detector_key} BLACKLISTED - skipping initialization")
+                continue
+
             if setup_config.get("enabled", False):
                 try:
+                    # Inject setup name so detectors can filter by their configured type
+                    setup_config["_setup_name"] = setup_name
                     self.detectors[detector_key] = detector_class(setup_config)
                     logger.debug(f"MAIN_DETECTOR: Initialized {detector_key} from {setup_name}")
                 except Exception as e:

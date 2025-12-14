@@ -51,6 +51,9 @@ class TrendStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "trend"
 
+        # Track which specific setup type this detector is for (e.g., "trend_pullback_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Trend detection parameters
@@ -119,6 +122,13 @@ class TrendStructure(BaseStructure):
             continuation_events, continuation_quality = self._detect_trend_continuation(context, trend_info)
             events.extend(continuation_events)
             max_quality = max(max_quality, continuation_quality)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"TREND: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No trend setups detected"

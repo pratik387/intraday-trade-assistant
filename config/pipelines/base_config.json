@@ -173,14 +173,6 @@
             "_note": "Multiplier applied to threshold, not score. Higher = harder to qualify."
         },
 
-        "blacklist": {
-            "_comment": "From ranker.py lines 513-517 - Penalty for poor-performing setups",
-            "enabled": true,
-            "strategies": [],
-            "penalty": -999.0,
-            "_note": "Add strategy names to blacklist based on backtest performance analysis"
-        },
-
         "unrealistic_rr": {
             "_comment": "From ranker.py lines 519-525 - Penalty for unrealistic R:R",
             "enabled": true,

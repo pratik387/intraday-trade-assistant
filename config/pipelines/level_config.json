@@ -106,8 +106,8 @@
             "min_adx_for_vwap": 8.0
         },
         "level_touch": {
-            "_comment": "RELAXED for more data: was 2 touches, now 1 touch",
-            "min_touches": 1,
+            "_comment": "From configuration.json - support_bounce_long",
+            "min_touches": 2,
             "min_level_age_bars": 5,
             "level_merge_tolerance_pct": 0.3
         },
@@ -163,8 +163,8 @@
                 "_evidence": "Dec 2024 analysis: bb_width<=0.10 reduces hard_sl from 35%→28%, 46 trades 54% WR Rs 6,465 PnL"
             },
             "support_bounce_long_adx": {
-                "min_adx": 10,
-                "_evidence": "RELAXED for more data: was 20, now 10. Original: R1: +1,819 Rs (8 trades) | R2: +1,819 Rs (8 trades)"
+                "min_adx": 22,
+                "_evidence": "OPTIMIZED Dec 2024: min_adx 20->22. Big winners avg ADX=24.6 vs losers=20.7. Combined with RSI<45 = 83% WR, Rs 137/trade"
             },
             "premium_zone_short_adx": {
                 "min_adx": 15,
@@ -172,15 +172,15 @@
             },
             "support_bounce_long_srr": {
                 "max_structural_rr": 3.0,
-                "_evidence": "OPTIMIZED Dec 2024: RSI<50 + RR<3.0 = 19 trades, 81.8% WR, Rs 3,650 NET after Zerodha charges+tax (Rs 192/trade)"
+                "_evidence": "Keep max_structural_rr at 3.0. Winners avg 1.52 vs losers 1.62 - tight stops work better"
             },
             "support_bounce_long_rsi": {
-                "max_rsi": 50,
-                "_evidence": "OPTIMIZED Dec 2024: RSI<50 filters for quality setups. Fewer trades but Rs 362 gross/trade vs Rs 77 baseline"
+                "max_rsi": 45,
+                "_evidence": "OPTIMIZED Dec 2024: RSI<45 (from 50). Big winners avg RSI=39 vs losers=47. Combined with ADX>=22 = 83% WR, Rs 137/trade"
             },
             "long_trade_volume": {
-                "min_volume": 50000,
-                "_evidence": "RELAXED for more data: was 150k, now 50k. Original: Winners have 2x volume (213k vs 107k)"
+                "min_volume": 150000,
+                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
             },
             "range_bounce_short_chop_adx": {
                 "min_adx": 20,
@@ -391,10 +391,10 @@
     },
 
     "targets": {
-        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific targets optimized via 1m bar simulation",
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific targets optimized via backtest analysis",
         "rr_ratios": {
             "support_bounce_long": {
-                "_comment": "OPTIMIZED Dec 2024: T1 1.5R (was 1.0R). 1m simulation showed +27% PnL with wider targets",
+                "_comment": "OPTIMIZED Dec 2024: T1 1.5R (was 1.0R). Wider targets with wider SL = +Rs 3,831 improvement",
                 "t1": 1.5,
                 "t2": 2.5,
                 "t3": 3.0
@@ -449,13 +449,13 @@
     },
 
     "stop_loss": {
-        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific SL optimized via 1m bar simulation",
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific SL optimized via backtest analysis",
         "atr_multiplier": 2.0,
         "min_stop_distance_pct": 0.5,
         "setup_specific": {
             "support_bounce_long": {
                 "atr_multiplier": 2.4,
-                "_comment": "OPTIMIZED Dec 2024: 1.2x wider SL (2.0→2.4 ATR). Reduces premature stops, +27% PnL combined with T1 1.5x"
+                "_comment": "OPTIMIZED Dec 2024: 1.2x wider SL (2.0→2.4 ATR). Reduces premature stops, combined with T1 1.5R = +Rs 3,831"
             }
         }
     },

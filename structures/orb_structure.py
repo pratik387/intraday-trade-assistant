@@ -45,6 +45,9 @@ class ORBStructure(BaseStructure):
         """Initialize ORB structure with configuration."""
         super().__init__(config)
 
+        # Track which specific setup type this detector is for (e.g., "orb_breakout_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
         self.orb_minutes = config["orb_minutes"]
         self.min_range_pct = config["min_range_pct"] / 100.0
@@ -199,6 +202,13 @@ class ORBStructure(BaseStructure):
             # Detect pullback opportunities
             pullback_events = self._detect_pullback_opportunities(market_context)
             events.extend(pullback_events)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"ORB: {symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             structure_detected = len(events) > 0
             quality_score = self._calculate_quality_score(market_context, events) if structure_detected else 0.0

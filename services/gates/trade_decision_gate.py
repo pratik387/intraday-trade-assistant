@@ -590,9 +590,6 @@ class TradeDecisionGate:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
             return GateDecision(accept=False, reasons=["no_structure_event"])
 
-        # NOTE: Global blacklist filtering is now done in MainDetector (before this gate)
-        # This ensures blacklists work for ALL execution paths (local and cloud)
-
         # OPENING BELL FILTERING: Only allow specific setups during opening bell window
         if in_opening_bell_window and opening_bell_enabled:
             allowed_setups = opening_bell_config.get('allowed_setups', [])

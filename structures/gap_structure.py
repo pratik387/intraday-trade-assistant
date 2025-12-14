@@ -32,6 +32,9 @@ class GapStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "gap"
 
+        # Track which specific setup type this detector is for (e.g., "gap_fill_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # Gap parameters - will crash with KeyError if missing
         self.min_gap_pct = config["min_gap_pct"]
         self.max_gap_pct = config["max_gap_pct"]
@@ -100,9 +103,12 @@ class GapStructure(BaseStructure):
                         },
                         price=current_price
                     )
-                    events.append(event)
-
-                    logger.debug(f"GAP: {context.symbol} - {structure_type} detected: {gap_pct:.1f}% gap")
+                    # Only add event if it matches configured setup type
+                    if self.configured_setup_type is None or structure_type == self.configured_setup_type:
+                        events.append(event)
+                        logger.debug(f"GAP: {context.symbol} - {structure_type} detected: {gap_pct:.1f}% gap")
+                    else:
+                        logger.debug(f"GAP: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
 
             return StructureAnalysis(
                 structure_detected=len(events) > 0,

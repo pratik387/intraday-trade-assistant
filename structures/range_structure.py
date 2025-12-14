@@ -32,6 +32,9 @@ class RangeStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "range"
 
+        # Track which specific setup type this detector is for (e.g., "range_bounce_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # Range parameters
         self.min_range_duration = config["min_range_duration"]
         self.max_range_height_pct = config["max_range_height_pct"]
@@ -59,7 +62,6 @@ class RangeStructure(BaseStructure):
 
         logger.debug(f"RANGE: Initialized with range duration: {self.min_range_duration} bars, height: {self.min_range_height_pct}-{self.max_range_height_pct}%")
         logger.debug(f"RANGE: SL params - bounce_buffer: {self.bounce_sl_buffer_atr}ATR, breakout_buffer: {self.breakout_sl_buffer_atr}ATR")
-        logger.debug(f"RANGE_INIT: blocked_cap_segments={list(self.blocked_cap_segments) if self.blocked_cap_segments else 'NONE'}")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect range-based structures."""
@@ -90,6 +92,13 @@ class RangeStructure(BaseStructure):
                 # Range breakout strategies
                 breakout_events = self._detect_range_breakout(context, range_info)
                 events.extend(breakout_events)
+
+                # Filter events to only include those matching configured setup type
+                if self.configured_setup_type and events:
+                    filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                    if len(filtered_events) < len(events):
+                        logger.debug(f"RANGE: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                    events = filtered_events
 
                 if events:
                     logger.debug(f"RANGE_DETECT: {context.symbol} - DETECTED: {len(events)} events")
