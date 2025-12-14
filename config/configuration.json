@@ -1857,21 +1857,6 @@
     "_comment_vwap_threshold": "TIGHTENED: 1.5% from VWAP (was 2.0%) - only early-stage moves, not chasing tops",
     "momentum_volume_ratio_threshold": 2.0,
     "_comment_volume_threshold": "TIGHTENED: 2.0x volume (was 1.5x) - require stronger institutional participation",
-    "blacklist_setups": [
-      "range_rejection_long",
-      "vwap_lose_short",
-      "pdl_break_hold_short",
-      "flag_continuation_long",
-      "trend_continuation_long",
-      "trend_continuation_short",
-      "vwap_mean_reversion_short",
-      "vwap_mean_reversion_long",
-      "momentum_breakout_long",
-      "liquidity_sweep_long",
-      "flag_continuation_short",
-      "volume_spike_reversal_short",
-      "vwap_reclaim_long"
-    ],
     "max_structural_rr": 4.0,
     "high_rr_penalty": -0.3,
     "chop_throttle": {

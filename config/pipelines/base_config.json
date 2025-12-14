@@ -208,6 +208,28 @@
             "weight_daily": 0.3,
             "weight_intraday": 0.7,
             "_note": "final_score = w_daily * daily_score + w_intraday * intraday_score"
+        },
+
+        "blacklist": {
+            "_comment": "From ranker.py lines 513-517 - Penalty for historically poor setups",
+            "_description": "Blacklisted setups get -999 penalty (effectively blocking them) but still get detected so other detectors can work",
+            "enabled": true,
+            "penalty": -999,
+            "strategies": [
+                "range_rejection_long",
+                "vwap_lose_short",
+                "flag_continuation_long",
+                "trend_continuation_long",
+                "trend_continuation_short",
+                "vwap_mean_reversion_short",
+                "vwap_mean_reversion_long",
+                "momentum_breakout_long",
+                "liquidity_sweep_long",
+                "flag_continuation_short",
+                "volume_spike_reversal_short",
+                "vwap_reclaim_long"
+            ],
+            "_note": "Penalty applied at ranking, not detector init - prevents spillover to other detectors"
         }
     },
 
