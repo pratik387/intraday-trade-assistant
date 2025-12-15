@@ -133,6 +133,10 @@
             "range_bounce_short": {
                 "blocked_regimes": ["chop"],
                 "_evidence": "6-month analysis: 51.7% hard_sl rate in chop, 15 trades = -8,710 Rs. Net +1,951 if blocked."
+            },
+            "premium_zone_short": {
+                "blocked_regimes": ["trend_down"],
+                "_evidence": "Dec 2024: 27 trades in trend_down = -1,607 Rs (40.7% WR, 12 hard_sl). Block = +2,284 net PnL."
             }
         },
         "global_short_adx_filter": {
