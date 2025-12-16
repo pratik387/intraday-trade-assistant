@@ -264,7 +264,7 @@ class KiteClient:
             Returns None if no data or API error.
         """
         token = self._token_for(symbol)
-
+        logger.info("KiteClient.get_historical_1m: fetching 1m data for %s from %s to %s", symbol, from_dt, to_dt)
         for attempt in range(3):
             try:
                 self._rate_limit()
@@ -281,6 +281,7 @@ class KiteClient:
                 df["date"] = pd.to_datetime(df["date"], errors="coerce")
                 df = df.set_index("date")
                 df = df[["open", "high", "low", "close", "volume"]].astype(float)
+                logger.info("KiteClient.get_historical_1m: fetched %d rows for %s", len(df), symbol)
                 return df
 
             except Exception as e:
