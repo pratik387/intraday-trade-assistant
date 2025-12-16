@@ -513,6 +513,8 @@ class PipelineOrchestrator:
             else:
                 reason = plan.get("reason", "unknown") if plan else "no_plan"
                 rejection_reason = plan.get("quality", {}).get("rejection_reason") if plan else None
+                # Get detailed gate_fail reasons if available
+                gate_details = plan.get("details") if plan else None
                 logger.debug(f"[ORCHESTRATOR] {symbol} {setup_type} rejected: {reason}")
 
                 planning_log = _get_planning_logger()
@@ -524,7 +526,8 @@ class PipelineOrchestrator:
                         strategy_type=setup_type,
                         category=category.value,
                         structural_rr=plan.get("quality", {}).get("structural_rr") if plan else None,
-                        regime=regime
+                        regime=regime,
+                        gate_details=gate_details 
                     )
 
             return plan
