@@ -1038,6 +1038,11 @@ class ScreenerLive:
         - Computing levels for all 1992 symbols takes ~54s in OCI (2 CPUs)
         - By computing once at 09:35 instead of on every bar, we save ~30 minutes per day
 
+        Late Start Recovery:
+        - If server starts after 09:30 (e.g., 10:00 AM), 5m bars for opening range are missing
+        - Detect this by checking if we have bars before 09:35 in df5_by_symbol
+        - Trigger recovery via _recover_orb_levels_from_historical() which fetches 1m data from broker
+
         Returns:
             Dict[symbol, Dict[str, float]] if computed/cached, None if before 09:35
         """
@@ -1058,6 +1063,36 @@ class ScreenerLive:
 
         import time as time_module
         start_time = time_module.perf_counter()
+
+        # LATE START DETECTION: Check if we have opening range bars (09:15-09:30)
+        # If not, we likely started late and need to recover from historical data
+        has_opening_range_bars = False
+        orb_end_time = dtime(9, 30)
+
+        for sym, df5 in df5_by_symbol.items():
+            if df5 is not None and len(df5) >= 3:
+                # Check if any bar is from before 09:30 (indicating we have opening range data)
+                earliest_bar_time = df5.index[0].time() if hasattr(df5.index[0], 'time') else None
+                if earliest_bar_time and earliest_bar_time < orb_end_time:
+                    has_opening_range_bars = True
+                    break
+
+        if not has_opening_range_bars:
+            # Late start detected - recover ORB levels from historical 1m data
+            logger.warning(f"ORB_CACHE | Late start detected at {current_time}. No opening range bars found in 5m data.")
+            levels_by_symbol = self._recover_orb_levels_from_historical(session_date)
+
+            if levels_by_symbol:
+                self._orb_levels_cache[session_date] = levels_by_symbol
+                elapsed = time_module.perf_counter() - start_time
+                logger.info(f"ORB_CACHE | Late start recovery complete. Cached {len(levels_by_symbol)} symbols | Time: {elapsed:.2f}s")
+                return levels_by_symbol
+            else:
+                logger.error("ORB_CACHE | Late start recovery failed. ORB setups will be unavailable.")
+                # Cache empty dict to prevent repeated recovery attempts
+                self._orb_levels_cache[session_date] = {}
+                return {}
+
         logger.info(f"ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for all symbols once at {current_time} (session_date={session_date})")
 
         levels_by_symbol = {}
@@ -1090,6 +1125,90 @@ class ScreenerLive:
             f"ORB_CACHE | Cached levels for {success_count} symbols (failed: {fail_count}) | "
             f"Session: {session_date} | Time: {elapsed:.2f}s | "
             f"This is a ONE-TIME cost - all subsequent bars will use cached values"
+        )
+
+        return levels_by_symbol
+
+    def _recover_orb_levels_from_historical(self, session_date) -> Dict[str, Dict[str, float]]:
+        """
+        Recover ORH/ORL from historical 1-minute data when server starts late.
+
+        This handles the case when the server starts after 09:30 (e.g., 10:00 AM)
+        and misses the opening range bars. We fetch historical 1m data from the
+        broker API for the 09:15-09:30 window and compute ORH/ORL directly.
+
+        PDH/PDL/PDC are computed normally from daily data (unaffected by late start).
+
+        Returns:
+            Dict[symbol, Dict[str, float]] with ORH, ORL, PDH, PDL, PDC
+        """
+        import time as time_module
+        from datetime import datetime as dt, time as dtime
+
+        # Check if SDK supports historical 1m fetch
+        if not hasattr(self.sdk, 'get_historical_1m'):
+            logger.warning("ORB_RECOVERY | SDK doesn't support get_historical_1m. ORB levels unavailable.")
+            return {}
+
+        start_time = time_module.perf_counter()
+        logger.info(f"ORB_RECOVERY | Late start detected. Fetching historical 1m data for ORB window (09:15-09:30)")
+
+        orb_start = dt.combine(session_date, dtime(9, 15))
+        orb_end = dt.combine(session_date, dtime(9, 30))
+
+        levels_by_symbol = {}
+        success_count = 0
+        fail_count = 0
+
+        for sym in self.core_symbols:
+            try:
+                # Fetch 1m historical data for opening range window
+                df_1m = self.sdk.get_historical_1m(sym, orb_start, orb_end)
+
+                if df_1m is None or len(df_1m) < 10:  # Need at least 10 bars for reliable ORH/ORL
+                    logger.debug(f"ORB_RECOVERY | {sym}: Insufficient 1m data ({len(df_1m) if df_1m is not None else 0} bars)")
+                    orh, orl = float("nan"), float("nan")
+                else:
+                    orh = float(df_1m["high"].max())
+                    orl = float(df_1m["low"].min())
+
+                # PDH/PDL/PDC from daily data (works normally)
+                daily = self.sdk.get_daily(sym, days=210)
+                level_dict = get_previous_day_levels(
+                    daily_df=daily,
+                    session_date=session_date,
+                    fallback_df=None,
+                    enable_fallback=False
+                )
+                pdh = level_dict.get("PDH", float("nan"))
+                pdl = level_dict.get("PDL", float("nan"))
+                pdc = level_dict.get("PDC", float("nan"))
+
+                levels_by_symbol[sym] = {
+                    "ORH": orh,
+                    "ORL": orl,
+                    "PDH": pdh,
+                    "PDL": pdl,
+                    "PDC": pdc,
+                }
+
+                if not (pd.isna(orh) or pd.isna(orl)):
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+            except Exception as e:
+                logger.warning(f"ORB_RECOVERY | {sym}: Failed - {e}")
+                levels_by_symbol[sym] = {
+                    "ORH": float("nan"), "ORL": float("nan"),
+                    "PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")
+                }
+                fail_count += 1
+
+        elapsed = time_module.perf_counter() - start_time
+        logger.info(
+            f"ORB_RECOVERY | Complete. Recovered ORH/ORL for {success_count}/{len(self.core_symbols)} symbols | "
+            f"Failed: {fail_count} | Time: {elapsed:.2f}s"
         )
 
         return levels_by_symbol

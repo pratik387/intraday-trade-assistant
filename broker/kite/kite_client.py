@@ -248,3 +248,46 @@ class KiteClient:
         self._rps = max(0.5, float(rps))
         self._rl_min_dt = 1.0 / self._rps
 
+    def get_historical_1m(self, symbol: str, from_dt: datetime, to_dt: datetime) -> Optional[pd.DataFrame]:
+        """
+        Fetch historical 1-minute OHLCV data from Zerodha API.
+        Used for late-start ORB recovery when server starts after 09:30.
+
+        Args:
+            symbol: NSE symbol (e.g., "NSE:RELIANCE")
+            from_dt: Start datetime (IST)
+            to_dt: End datetime (IST)
+
+        Returns:
+            DataFrame with columns: [open, high, low, close, volume]
+            Index: datetime
+            Returns None if no data or API error.
+        """
+        token = self._token_for(symbol)
+
+        for attempt in range(3):
+            try:
+                self._rate_limit()
+                candles = self._kc.historical_data(
+                    instrument_token=token,
+                    from_date=from_dt,
+                    to_date=to_dt,
+                    interval="minute"  # 1-minute candles
+                )
+                if not candles:
+                    return None
+
+                df = pd.DataFrame(candles)
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.set_index("date")
+                df = df[["open", "high", "low", "close", "volume"]].astype(float)
+                return df
+
+            except Exception as e:
+                if attempt == 2:
+                    logger.exception("get_historical_1m failed for %s: %s", symbol, e)
+                    return None
+                time.sleep(0.5 + 0.4 * attempt + random.random() * 0.2)
+
+        return None
+
