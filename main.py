@@ -145,6 +145,11 @@ class _DryRunBroker:
     def get_ltp_batch(self, symbols):
         return self._real.get_ltp_batch(symbols)
 
+    @property
+    def _last_bar_ohlc(self):
+        """Delegate to underlying MockBroker's OHLC cache for T1/T2 detection."""
+        return self._real._last_bar_ohlc
+
 
 # ------------------------ Main orchestration ------------------------
 
