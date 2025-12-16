@@ -15,6 +15,7 @@ from config.filters_setup import load_filters
 from services.orders.order_queue import OrderQueue
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 from diagnostics.diag_event_log import diag_event_log
+from pipelines.breakout_pipeline import BreakoutPipeline
 
 # Import from unified validator
 from services.execution.trigger_validation_engine import (
@@ -247,10 +248,8 @@ class TriggerAwareExecutor:
         - If targets aren't recalculated, T2 gives wrong R-multiple
 
         Solution:
-        - Get risk_per_share (rps) from plan
-        - Calculate targets as R-multiples from actual_entry
-        - T1 = actual_entry ± 1.5R (configurable)
-        - T2 = actual_entry ± 2.0R (configurable)
+        - For ORB setups: Use OR range-based targets (pro standard)
+        - For other setups: Use R-multiples from actual entry
 
         Van Tharp: Targets must be based on YOUR entry, not some theoretical entry.
         """
@@ -258,6 +257,12 @@ class TriggerAwareExecutor:
         adjusted_plan = copy.deepcopy(plan)
 
         try:
+            # Check if this is an ORB setup - use OR range-based targets (pro standard)
+            # Delegate to breakout pipeline which has the config (no hardcoded values here)
+            strategy = plan.get("strategy", "") or ""
+            if "orb" in strategy.lower():
+                breakout_pipeline = BreakoutPipeline()
+                return breakout_pipeline.recalculate_orb_targets_at_trigger(adjusted_plan, actual_entry, side)
             # Get stop data from plan - exec_item now includes full "stop" dict
             stop_data = plan.get("stop", {})
             hard_sl = stop_data.get("hard")

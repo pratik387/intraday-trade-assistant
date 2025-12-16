@@ -19,6 +19,7 @@
         "change_of_character_long", "change_of_character_short",
         "equilibrium_breakout_long", "equilibrium_breakout_short",
         "level_breakout_long", "level_breakout_short",
+        "orb_level_breakout_long", "orb_level_breakout_short",
         "first_hour_momentum_long", "first_hour_momentum_short"
     ],
 
@@ -389,6 +390,20 @@
     "stop_loss": {
         "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
         "atr_multiplier": 2.0
+    },
+
+    "orb_target_recalculation": {
+        "_comment": "Pro ORB traders (Toby Crabel, Mark Fisher) use OR range for targets. Recalculated at trigger time based on actual entry.",
+        "enabled": true,
+        "t1_or_range_mult": 1.0,
+        "t2_or_range_mult": 1.5,
+        "sl_buffer_or_range_mult": 0.1,
+        "qty_splits": {
+            "t1": 0.60,
+            "t2": 0.40,
+            "t3": 0.0
+        },
+        "_evidence": "OR-based targets are achievable within normal ORB price action. R-multiples can push targets too far when actual entry differs from planned entry."
     },
 
     "rsi_penalty": {

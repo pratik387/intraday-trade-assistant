@@ -114,6 +114,7 @@ class SetupCandidate:
     entry_mode: Optional[str] = None  # NEW: "immediate", "retest", or "pending" for dual-mode entry
     retest_zone: Optional[List[float]] = None  # NEW: [low, high] bounds for retest entry
     cap_segment: Optional[str] = None  # Market cap segment passed from main_detector
+    detected_level: Optional[float] = None  # Level detected by structure (e.g., nearest_support, range resistance)
 
 
 @dataclass(frozen=True)

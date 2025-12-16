@@ -1020,6 +1020,96 @@ class BreakoutPipeline(BasePipeline):
             trail_config=trail_config
         )
 
+    # ======================== ORB TARGET RECALCULATION AT TRIGGER ========================
+
+    def recalculate_orb_targets_at_trigger(
+        self,
+        plan: Dict[str, Any],
+        actual_entry: float,
+        side: str
+    ) -> Dict[str, Any]:
+        """
+        Recalculate ORB targets at trigger time based on actual entry price.
+
+        Pro ORB traders (Toby Crabel, Mark Fisher) use OR range for targets:
+        - T1 = t1_or_range_mult × OR range from actual entry
+        - T2 = t2_or_range_mult × OR range from actual entry
+        - Stop = Other side of OR + buffer
+
+        This ensures targets are achievable within normal ORB price action,
+        rather than using R-multiples that can push targets too far when
+        actual entry differs from planned entry.
+
+        Args:
+            plan: Original trade plan dict
+            actual_entry: The actual fill price at trigger
+            side: "BUY" or "SELL"
+
+        Returns:
+            Updated plan dict with recalculated targets and stop
+        """
+        # Get ORB recalculation config - NO DEFAULTS, will KeyError if missing
+        orb_cfg = self.cfg["orb_target_recalculation"]
+
+        if not orb_cfg["enabled"]:
+            logger.debug("ORB target recalculation disabled in config")
+            return plan
+
+        # Get OR levels from plan
+        levels = plan.get("levels", {})
+        orh = levels.get("ORH") or plan.get("orh")
+        orl = levels.get("ORL") or plan.get("orl")
+
+        if orh is None or orl is None:
+            logger.warning(f"ORB_TARGET_RECALC: missing ORH/ORL, keeping original targets")
+            return plan
+
+        or_range = orh - orl
+        if or_range <= 0:
+            logger.warning(f"ORB_TARGET_RECALC: invalid OR range {or_range}, keeping original targets")
+            return plan
+
+        # Get config values - NO DEFAULTS
+        t1_mult = orb_cfg["t1_or_range_mult"]
+        t2_mult = orb_cfg["t2_or_range_mult"]
+        sl_buffer_mult = orb_cfg["sl_buffer_or_range_mult"]
+        qty_splits = orb_cfg["qty_splits"]
+
+        # Calculate new targets based on OR range
+        if side.upper() == "BUY":
+            new_t1 = actual_entry + (or_range * t1_mult)
+            new_t2 = actual_entry + (or_range * t2_mult)
+            new_sl = orl - (or_range * sl_buffer_mult)
+        else:  # SELL (short)
+            new_t1 = actual_entry - (or_range * t1_mult)
+            new_t2 = actual_entry - (or_range * t2_mult)
+            new_sl = orh + (or_range * sl_buffer_mult)
+
+        new_rps = abs(actual_entry - new_sl)
+
+        # Calculate R-multiples for logging/tracking
+        t1_r = (or_range * t1_mult) / new_rps if new_rps > 0 else t1_mult
+        t2_r = (or_range * t2_mult) / new_rps if new_rps > 0 else t2_mult
+
+        logger.info(f"ORB_TARGET_RECALC: entry={actual_entry:.2f}, OR={or_range:.2f}, "
+                   f"T1={new_t1:.2f} ({t1_r:.2f}R), T2={new_t2:.2f} ({t2_r:.2f}R), SL={new_sl:.2f}")
+
+        # Update targets
+        plan["targets"] = [
+            {"level": round(new_t1, 2), "name": "T1", "rr": round(t1_r, 2), "qty_pct": qty_splits["t1"] * 100},
+            {"level": round(new_t2, 2), "name": "T2", "rr": round(t2_r, 2), "qty_pct": qty_splits["t2"] * 100}
+        ]
+
+        # Update stop loss
+        if "stop" in plan and isinstance(plan["stop"], dict):
+            plan["stop"]["hard"] = round(new_sl, 2)
+            plan["stop"]["risk_per_share"] = round(new_rps, 2)
+
+        plan["risk_per_share"] = round(new_rps, 2)
+        plan["actual_entry"] = round(actual_entry, 2)
+
+        return plan
+
     # ======================== RSI PENALTY ========================
 
     def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:

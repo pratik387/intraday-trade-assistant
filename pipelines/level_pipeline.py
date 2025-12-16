@@ -145,11 +145,34 @@ class LevelPipeline(BasePipeline):
         """
         logger.debug(f"[LEVEL] Calculating quality for {symbol} bias={bias}")
         current_close = float(df5m["close"].iloc[-1])
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
 
-        # Target level based on bias
-        target_level = orh if bias == "long" else orl
+        # PRO TRADER APPROACH: Use the actual level detected by the structure detector
+        # The detector finds nearest_support/nearest_resistance which may include:
+        # - PDH/PDL (previous day)
+        # - ORH/ORL (opening range)
+        # - Computed range support/resistance (from intraday price action)
+        #
+        # Priority: detected_level > PDH/PDL > ORH/ORL
+        detected_level = levels.get("detected_level")
+        pdh = levels.get("PDH")
+        pdl = levels.get("PDL")
+        orh = levels.get("ORH")
+        orl = levels.get("ORL")
+
+        # Use detected_level if available (this is what the structure detector actually found)
+        # Fall back to PDH/PDL (always available from daily cache)
+        # Last resort: ORH/ORL (may be NaN on late starts)
+        if detected_level is not None and not pd.isna(detected_level):
+            target_level = detected_level
+            logger.debug(f"[LEVEL] {symbol} using detected_level={detected_level:.2f}")
+        elif bias == "long":
+            # For long bounce, use support level (PDL preferred, then ORL)
+            target_level = pdl if not pd.isna(pdl) else orl
+            logger.debug(f"[LEVEL] {symbol} fallback to PDL/ORL={target_level}")
+        else:
+            # For short bounce, use resistance level (PDH preferred, then ORH)
+            target_level = pdh if not pd.isna(pdh) else orh
+            logger.debug(f"[LEVEL] {symbol} fallback to PDH/ORH={target_level}")
 
         # Distance to level (ATR-normalized)
         distance_to_level = abs(current_close - target_level) / max(atr, 1e-6)

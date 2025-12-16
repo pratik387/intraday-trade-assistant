@@ -42,6 +42,7 @@ from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 import multiprocessing as mp
+import threading
 
 import pandas as pd
 
@@ -101,7 +102,6 @@ def _init_worker(config_dict):
 
         # Apply structure caching in worker process (if enabled via config flag)
         if config_dict.get("_enable_structure_cache", False):
-            import tools.cached_engine_structures  # noqa: F401
             if worker_logger:
                 worker_logger.info("[CACHE] Worker process: Structure caching enabled")
             else:
@@ -256,6 +256,9 @@ class ScreenerLive:
         # ORB levels cache: computed once per day at 09:35 and reused for entire day
         # Key: date, Value: Dict[symbol, Dict[str, float]] containing PDH/PDL/PDC/ORH/ORL
         self._orb_levels_cache: Dict = {}
+        self._orb_cache_lock = threading.Lock()
+        self._orb_recovery_in_progress = False
+        self._orb_recovery_thread: Optional[threading.Thread] = None
 
         # NEW: de-dupe memory (per symbol last accepted)
         # stores: {symbol: {"ts": pd.Timestamp, "setup": str|None, "score": float}}
@@ -426,7 +429,8 @@ class ScreenerLive:
                     strength=adjusted_strength,
                     reasons=updated_reasons,
                     orh=getattr(candidate, 'orh', None),
-                    orl=getattr(candidate, 'orl', None)
+                    orl=getattr(candidate, 'orl', None),
+                    detected_level=getattr(candidate, 'detected_level', None)
                 )
 
             enhanced.append(adjusted_candidate)
@@ -1049,6 +1053,8 @@ class ScreenerLive:
         if not now:
             return None
 
+        from datetime import time as dtime  # Import at function scope for time comparisons
+
         session_date = now.date()
         current_time = now.time()
 
@@ -1078,20 +1084,45 @@ class ScreenerLive:
                     break
 
         if not has_opening_range_bars:
-            # Late start detected - recover ORB levels from historical 1m data
-            logger.warning(f"ORB_CACHE | Late start detected at {current_time}. No opening range bars found in 5m data.")
-            levels_by_symbol = self._recover_orb_levels_from_historical(session_date)
+            # Late start detected - check if recovery is even worth it
+            # ORB setups are disabled after 10:30 (orb_structure.py:86), so skip recovery if too late
+            ORB_CUTOFF = dtime(10, 30)
 
-            if levels_by_symbol:
-                self._orb_levels_cache[session_date] = levels_by_symbol
-                elapsed = time_module.perf_counter() - start_time
-                logger.info(f"ORB_CACHE | Late start recovery complete. Cached {len(levels_by_symbol)} symbols | Time: {elapsed:.2f}s")
-                return levels_by_symbol
-            else:
-                logger.error("ORB_CACHE | Late start recovery failed. ORB setups will be unavailable.")
-                # Cache empty dict to prevent repeated recovery attempts
-                self._orb_levels_cache[session_date] = {}
+            if current_time >= ORB_CUTOFF:
+                logger.info(
+                    f"ORB_CACHE | Late start at {current_time} is AFTER ORB cutoff ({ORB_CUTOFF}). "
+                    f"Skipping recovery - ORB setups disabled anyway. Non-ORB setups work normally."
+                )
                 return {}
+
+            # Still within ORB window - spawn background thread for recovery
+            # This allows the app to continue processing non-ORB setups immediately
+            with self._orb_cache_lock:
+                if self._orb_recovery_in_progress:
+                    logger.debug("ORB_CACHE | Background recovery already in progress, skipping")
+                    return {}
+
+                if session_date in self._orb_levels_cache:
+                    # Recovery completed by background thread
+                    return self._orb_levels_cache[session_date]
+
+                # Start background recovery
+                self._orb_recovery_in_progress = True
+                logger.warning(
+                    f"ORB_CACHE | Late start at {current_time} but BEFORE ORB cutoff ({ORB_CUTOFF}). "
+                    f"Starting BACKGROUND recovery (app continues running)."
+                )
+
+                self._orb_recovery_thread = threading.Thread(
+                    target=self._background_orb_recovery,
+                    args=(session_date,),
+                    name="ORB-Recovery",
+                    daemon=True
+                )
+                self._orb_recovery_thread.start()
+
+            # Return empty cache so app continues - ORB setups won't work until recovery completes
+            return {}
 
         logger.info(f"ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for all symbols once at {current_time} (session_date={session_date})")
 
@@ -1212,6 +1243,47 @@ class ScreenerLive:
         )
 
         return levels_by_symbol
+
+    def _background_orb_recovery(self, session_date) -> None:
+        """
+        Background thread wrapper for ORB level recovery.
+
+        This runs in a daemon thread so the main app can continue processing
+        non-ORB setups while we fetch historical 1m data from the broker.
+
+        Based on code analysis:
+        - Only ORBStructure REQUIRES ORH/ORL (returns rejection without them)
+        - All other structures (support_bounce, resistance_bounce, failure_fade,
+          level_breakout, vwap, momentum, etc.) work fine without ORH/ORL
+
+        So this allows:
+        1. Non-ORB setups to work immediately with PDH/PDL/PDC
+        2. ORB setups to enable once recovery completes
+        """
+        try:
+            logger.info(f"ORB_BACKGROUND_RECOVERY | Starting for {session_date} | core_symbols: {len(self.core_symbols)}")
+
+            # Do the actual recovery (fetches 1m data, computes ORH/ORL)
+            levels_by_symbol = self._recover_orb_levels_from_historical(session_date)
+
+            # Update cache atomically
+            with self._orb_cache_lock:
+                self._orb_levels_cache[session_date] = levels_by_symbol
+                self._orb_recovery_in_progress = False
+
+            orb_count = sum(1 for v in levels_by_symbol.values()
+                           if not (pd.isna(v.get("ORH")) or pd.isna(v.get("ORL"))))
+            logger.info(
+                f"ORB_BACKGROUND_RECOVERY | Complete | {orb_count}/{len(levels_by_symbol)} symbols with valid ORH/ORL | "
+                f"ORB setups now ENABLED"
+            )
+
+        except Exception as e:
+            logger.exception(f"ORB_BACKGROUND_RECOVERY | Failed: {e}")
+            with self._orb_cache_lock:
+                self._orb_recovery_in_progress = False
+                # Cache empty dict so we don't retry
+                self._orb_levels_cache[session_date] = {}
 
     def _levels_for(self, symbol: str, df5: pd.DataFrame, now) -> Dict[str, float]:
         """Prev-day PDH/PDL/PDC and today ORH/ORL (cached per (symbol, session_date))."""

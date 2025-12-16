@@ -156,6 +156,10 @@ class ExitExecutor:
         self.sl_time_widening_second_after_minutes = float(cfg["sl_time_widening_second_after_minutes"])
         self.sl_time_widening_second_atr_add = float(cfg["sl_time_widening_second_atr_add"])
 
+        # PRO TRADER: ORB-specific max hold time (Crabel: ideal trade profits instantly)
+        # Pro traders hold ORB for 30-90 min max. Exit if no target hit within this time.
+        self.orb_max_hold_minutes = float(cfg.get("orb_max_hold_minutes", 60))
+
         # execution params
         self.exec_product = str(cfg.get("exec_product", "MIS")).upper()
         self.exec_variety = str(cfg.get("exec_variety", "regular")).lower()
@@ -298,6 +302,51 @@ class ExitExecutor:
                 if self.eod_md is not None and _minute_of_day(ts) >= self.eod_md:
                     self._exit(sym, pos, float(px), ts, f"eod_squareoff_{self.eod_hhmm}")
                     continue
+
+                # 0.5) PRO TRADER: Failed breakout exit for ORB trades
+                # If candle closes back inside OR, exit immediately (Crabel standard)
+                setup_type = pos.plan.get("setup_type", "")
+                if setup_type in ("orb_breakout_long", "orb_breakdown_short"):
+                    levels = pos.plan.get("levels", {})
+                    orh = levels.get("ORH") or levels.get("orh")
+                    orl = levels.get("ORL") or levels.get("orl")
+
+                    if orh is not None and orl is not None:
+                        # Check if candle CLOSE is back inside OR (using px as close price)
+                        candle_close = float(px)  # At bar end, px is the close
+
+                        if setup_type == "orb_breakout_long" and candle_close < orh:
+                            # Long breakout failed - price closed back below ORH
+                            logger.info(f"FAILED_BREAKOUT | {sym} | LONG closed below ORH | Close: {candle_close:.2f} < ORH: {orh:.2f}")
+                            self._exit(sym, pos, candle_close, ts, "failed_breakout_back_inside_or")
+                            continue
+
+                        elif setup_type == "orb_breakdown_short" and candle_close > orl:
+                            # Short breakdown failed - price closed back above ORL
+                            logger.info(f"FAILED_BREAKOUT | {sym} | SHORT closed above ORL | Close: {candle_close:.2f} > ORL: {orl:.2f}")
+                            self._exit(sym, pos, candle_close, ts, "failed_breakout_back_inside_or")
+                            continue
+
+                # 0.6) PRO TRADER: ORB max hold time (Crabel: ideal trade profits instantly)
+                # Exit ORB trades if held longer than max hold time without hitting target
+                if setup_type in ("orb_breakout_long", "orb_breakdown_short"):
+                    entry_ts_str = pos.plan.get("entry_ts") or pos.plan.get("decision_ts")
+                    if entry_ts_str:
+                        try:
+                            entry_ts = pd.Timestamp(entry_ts_str)
+                            time_held_minutes = (ts - entry_ts).total_seconds() / 60.0
+
+                            if time_held_minutes >= self.orb_max_hold_minutes:
+                                # Check if still no T1 hit
+                                st = pos.plan.get("_state") or {}
+                                t1_done = bool(st.get("t1_done", False))
+
+                                if not t1_done:
+                                    logger.info(f"ORB_TIME_STOP | {sym} | Held {time_held_minutes:.0f}m >= {self.orb_max_hold_minutes}m | No T1 hit | Exiting")
+                                    self._exit(sym, pos, float(px), ts, f"orb_time_stop_{time_held_minutes:.0f}m")
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"ORB time stop check failed for {sym}: {e}")
 
                 # 1) Hard SL first, but anchor to ATR sanity if available
                 plan_sl = self._get_plan_sl(pos.plan)

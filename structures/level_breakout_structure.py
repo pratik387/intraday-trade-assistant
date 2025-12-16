@@ -250,10 +250,14 @@ class LevelBreakoutStructure(BaseStructure):
         if entry_mode is None:
             return None
 
+        # Use orb_level_breakout_* for ORH/ORL to ensure is_orb check passes in breakout_pipeline
+        # This allows ORB-related level breakouts to use relaxed chop regime filtering
+        structure_type = "orb_level_breakout_long" if level_name in ("ORH", "ORL") else "level_breakout_long"
+
         event = StructureEvent(
             symbol=context.symbol,
             timestamp=context.timestamp,
-            structure_type="level_breakout_long",
+            structure_type=structure_type,
             side="long",
             confidence=confidence,
             levels={level_name: level_value, "breakout_size": breakout_size},
@@ -355,10 +359,14 @@ class LevelBreakoutStructure(BaseStructure):
             level_name=level_name
         )
 
+        # Use orb_level_breakout_* for ORH/ORL to ensure is_orb check passes in breakout_pipeline
+        # This allows ORB-related level breakouts to use relaxed chop regime filtering
+        structure_type = "orb_level_breakout_short" if level_name in ("ORH", "ORL") else "level_breakout_short"
+
         event = StructureEvent(
             symbol=context.symbol,
             timestamp=context.timestamp,
-            structure_type="level_breakout_short",
+            structure_type=structure_type,
             side="short",
             confidence=confidence,
             levels={level_name: level_value, "breakdown_size": breakdown_size},

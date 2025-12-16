@@ -513,6 +513,8 @@ class PipelineOrchestrator:
             else:
                 reason = plan.get("reason", "unknown") if plan else "no_plan"
                 rejection_reason = plan.get("quality", {}).get("rejection_reason") if plan else None
+                # Get detailed gate_fail reasons if available
+                gate_details = plan.get("details") if plan else None
                 logger.debug(f"[ORCHESTRATOR] {symbol} {setup_type} rejected: {reason}")
 
                 planning_log = _get_planning_logger()
@@ -524,7 +526,8 @@ class PipelineOrchestrator:
                         strategy_type=setup_type,
                         category=category.value,
                         structural_rr=plan.get("quality", {}).get("structural_rr") if plan else None,
-                        regime=regime
+                        regime=regime,
+                        gate_details=gate_details  # Add detailed gate_fail reasons
                     )
 
             return plan
@@ -581,13 +584,20 @@ class PipelineOrchestrator:
             setup_type = str(candidate.setup_type) if hasattr(candidate, 'setup_type') else str(candidate)
             strength = getattr(candidate, 'strength', 0.5)
             cap_segment = getattr(candidate, 'cap_segment', None)
+            detected_level = getattr(candidate, 'detected_level', None)
+
+            # Merge detected_level into levels dict for quality calculation
+            # Pro trader approach: use the actual detected level, not hardcoded PDH/PDL
+            candidate_levels = dict(levels)  # Copy to avoid mutating original
+            if detected_level is not None:
+                candidate_levels["detected_level"] = detected_level
 
             plan = self.process_single_candidate(
                 symbol=symbol,
                 setup_type=setup_type,
                 df5m=df5m,
                 df1m=df1m,
-                levels=levels,
+                levels=candidate_levels,
                 regime=regime,
                 now=now,
                 daily_df=daily_df,
@@ -746,13 +756,19 @@ class PipelineOrchestrator:
 
             for candidate in candidates:
                 setup_type = str(candidate.setup_type) if hasattr(candidate, 'setup_type') else str(candidate)
+                detected_level = getattr(candidate, 'detected_level', None)
+
+                # Merge detected_level into levels dict for quality calculation
+                candidate_levels = dict(levels)  # Copy to avoid mutating original
+                if detected_level is not None:
+                    candidate_levels["detected_level"] = detected_level
 
                 plan = self.process_single_candidate(
                     symbol=symbol,
                     setup_type=setup_type,
                     df5m=df5m,
                     df1m=df1m,
-                    levels=levels,
+                    levels=candidate_levels,
                     regime=regime,
                     now=now,
                     daily_df=daily_df,

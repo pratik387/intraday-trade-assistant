@@ -79,9 +79,11 @@ class MainDetector(BaseStructure):
             ("change_of_character_short", ICTStructure, "change_of_character_short"),
             # NOTE: trend_reversal_long/short and breakout_long/short are NOT mapped here because:
             # - TrendStructure only produces: trend_pullback_long/short, trend_continuation_long/short
-            # - LevelBreakoutStructure only produces: level_breakout_long/short
+            # - LevelBreakoutStructure produces: level_breakout_long/short for PDH/PDL, orb_level_breakout_long/short for ORH/ORL
             ("level_breakout_long", LevelBreakoutStructure, "level_breakout_long"),
             ("level_breakout_short", LevelBreakoutStructure, "level_breakout_short"),
+            ("orb_level_breakout_long", LevelBreakoutStructure, "orb_level_breakout_long"),
+            ("orb_level_breakout_short", LevelBreakoutStructure, "orb_level_breakout_short"),
             ("failure_fade_long", FailureFadeStructure, "failure_fade_long"),
             ("failure_fade_short", FailureFadeStructure, "failure_fade_short"),
             ("squeeze_release_long", SqueezeReleaseStructure, "squeeze_release_long"),
@@ -454,6 +456,18 @@ class MainDetector(BaseStructure):
                 entry_mode = event.context.get('entry_mode') if event.context else None
                 retest_zone = event.context.get('retest_zone') if event.context else None
 
+                # Extract detected level from event.levels (pro trader: use actual detected level for quality)
+                # Structure detectors store: support_bounce -> {"support": level}, resistance_bounce -> {"resistance": level}
+                # Range detectors store: {"support": level, "resistance": level}
+                detected_level = None
+                if event.levels:
+                    if event.side == "long":
+                        # Long setups bounce off support
+                        detected_level = event.levels.get("support") or event.levels.get("nearest_support")
+                    else:
+                        # Short setups bounce off resistance
+                        detected_level = event.levels.get("resistance") or event.levels.get("nearest_resistance")
+
                 if setup_type:
                     setup_candidates.append(SetupCandidate(
                         setup_type=setup_type,
@@ -463,7 +477,8 @@ class MainDetector(BaseStructure):
                         orl=market_context.orl,
                         entry_mode=entry_mode,
                         retest_zone=retest_zone,
-                        cap_segment=market_context.cap_segment
+                        cap_segment=market_context.cap_segment,
+                        detected_level=detected_level
                     ))
 
                     if entry_mode:
