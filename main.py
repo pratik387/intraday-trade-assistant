@@ -227,6 +227,12 @@ def main() -> int:
         sdk = KiteClient()
         broker = KiteBroker(dry_run=True)
         logger.warning("🧪 PAPER TRADING MODE: Live data, simulated orders (no real trades)")
+
+        # Pre-warm daily data cache BEFORE market opens (avoids 11-min delay at 09:40)
+        # This populates Kite SDK's internal cache so ORB level computation is instant
+        if not args.skip_prewarm:
+            logger.info("🔥 Pre-warming daily data cache (this takes ~11 minutes but saves time later)...")
+            sdk.prewarm_daily_cache(days=210)
     elif args.dry_run:
         # Backtesting: historical data + mock broker
         if not args.session_date:
@@ -246,6 +252,11 @@ def main() -> int:
         sdk = KiteClient()
         broker = KiteBroker(dry_run=False)
         logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
+
+        # Pre-warm daily data cache BEFORE market opens (avoids 11-min delay at 09:40)
+        if not args.skip_prewarm:
+            logger.info("🔥 Pre-warming daily data cache (this takes ~11 minutes but saves time later)...")
+            sdk.prewarm_daily_cache(days=210)
 
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq)
@@ -377,6 +388,7 @@ def _parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="Use mock broker + archived ticks")
     ap.add_argument("--paper-trading", action="store_true", help="Paper trading mode: live data, simulated orders")
+    ap.add_argument("--skip-prewarm", action="store_true", help="Skip daily data pre-warming (faster startup but 11-min delay at 09:40)")
     ap.add_argument("--with-capital-limits", action="store_true", help="Enable capital management for backtests (default: disabled for fast testing)")
     ap.add_argument("--session-date", help="YYYY-MM-DD (required with --dry-run)")
     ap.add_argument("--from-hhmm", default="09:10")
