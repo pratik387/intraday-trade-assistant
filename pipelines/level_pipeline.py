@@ -41,6 +41,7 @@ from .base_pipeline import (
     EntryResult,
     TargetResult,
     get_cap_segment,
+    safe_level_get,
 )
 
 logger = get_agent_logger()
@@ -103,10 +104,10 @@ class LevelPipeline(BasePipeline):
 
         # Determine relevant level based on VWAP position
         vwap = float(df5m["vwap"].iloc[-1]) if "vwap" in df5m.columns else current_close
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
-        pdh = levels.get("PDH", orh)
-        pdl = levels.get("PDL", orl)
+        orh = safe_level_get(levels, "ORH", current_close)
+        orl = safe_level_get(levels, "ORL", current_close)
+        pdh = safe_level_get(levels, "PDH", orh)
+        pdl = safe_level_get(levels, "PDL", orl)
 
         # Find nearest level
         candidate_levels = [orh, orl, vwap, pdh, pdl]
@@ -982,6 +983,18 @@ class LevelPipeline(BasePipeline):
             t1_rr = rr_ratios["t1"]
             t2_rr = rr_ratios["t2"]
             t3_rr = rr_ratios["t3"]
+
+        # DATA-DRIVEN TARGET MULTIPLIERS (Dec 2024)
+        # Some setups benefit from wider targets (e.g., orb_pullback_short t1_mult=1.5, t2_mult=1.5)
+        setup_regime_blocks = self._get("gates", "setup_regime_blocks") or {}
+        setup_block_cfg = setup_regime_blocks.get(setup_type.lower(), {})
+        t1_mult = setup_block_cfg.get("t1_mult", 1.0)
+        t2_mult = setup_block_cfg.get("t2_mult", 1.0)
+
+        if t1_mult != 1.0 or t2_mult != 1.0:
+            t1_rr = t1_rr * t1_mult
+            t2_rr = t2_rr * t2_mult
+            logger.debug(f"[LEVEL] {symbol} {setup_type} TARGET MULTIPLIERS: t1_mult={t1_mult}, t2_mult={t2_mult} -> T1={t1_rr}R, T2={t2_rr}R")
 
         # Cap targets from config (level plays shouldn't expect huge moves)
         caps = targets_cfg["caps"]

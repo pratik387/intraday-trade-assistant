@@ -140,6 +140,9 @@
                 "block_regimes": ["trend_up"],
                 "_evidence": "vol>=10x + regime!=trend_up: 20 trades, 70% WR, +4,913 Rs, 246 Rs/trade (vs baseline 54% WR, 68 Rs/trade). Counter-trend shorts in trend_up are disasters (44% WR, -93 Rs avg)."
             }
+        },
+        "setup_regime_blocks": {
+            "_comment": "Setup-specific blocks (max_rank_score, t1_mult, t2_mult supported)"
         }
     },
 

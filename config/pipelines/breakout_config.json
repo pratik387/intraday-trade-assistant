@@ -187,6 +187,9 @@
                 "limit": 120,
                 "_evidence": "Pro ORB traders hold 30-90 min max. After 2 hours, momentum fades. Time-based exit if no T1 hit."
             }
+        },
+        "setup_regime_blocks": {
+            "_comment": "Setup-specific blocks (max_rank_score, t1_mult, t2_mult supported)"
         }
     },
 

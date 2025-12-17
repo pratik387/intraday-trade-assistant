@@ -120,11 +120,12 @@
                 "_evidence": "33 trades total. ADX 30-35: 75% WR +Rs 463. ADX 20-25: 25% WR -Rs 1094. trend_up+ADX<30 = 33% WR, -Rs 1982."
             },
             "orb_pullback_short": {
-                "_comment": "DATA-DRIVEN (Dec 2024): Only small+micro cap profitable. SL +50%, T1 +50% wider.",
-                "allowed_caps": ["small_cap", "micro_cap"],
-                "sl_mult": 1.5,
+                "_comment": "DATA-DRIVEN (Dec 2024): small_cap + rank<1 + T1/T2 +50% wider. SL widening removed (hurts).",
+                "allowed_caps": ["small_cap"],
+                "max_rank_score": 1.0,
                 "t1_mult": 1.5,
-                "_evidence": "166 trades small+micro: Rs 114.76 avg with SL+50%/T1+50%. Large/mid cap negative."
+                "t2_mult": 1.5,
+                "_evidence": "Spike test Dec 2024: rank<1 + T1/T2 +50%: 98 trades, Rs 180.62 avg, 88.8% WR, Rs 17,701 total. Net profit Rs 12,115 vs baseline Rs 9,785. micro_cap underperforms (Rs 37.87 avg vs small_cap Rs 128.08)."
             },
             "range_bounce_long": {
                 "blocked_regimes": ["chop"],

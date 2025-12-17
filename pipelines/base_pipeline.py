@@ -27,6 +27,21 @@ from services.indicators.indicators import (
 logger = get_agent_logger()
 
 
+def safe_level_get(levels: Dict, key: str, fallback: float) -> float:
+    """
+    Safely get a level value with proper NaN handling.
+
+    CRITICAL: dict.get(key, fallback) returns the value if key exists, even if value is NaN.
+    This function properly returns the fallback when the value is NaN.
+
+    This is important for late server starts when ORH/ORL are NaN.
+    """
+    val = levels.get(key)
+    if val is None or pd.isna(val):
+        return fallback
+    return val
+
+
 def calculate_structure_stop(
     entry_price: float,
     bias: str,
@@ -1243,9 +1258,10 @@ class BasePipeline(ABC):
         # 2. QUALITY
         quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr)
 
-        # Log quality metrics (like QUALITY_BREAKOUT, QUALITY_LEVEL in planner_internal.py)
+        # Log quality metrics
+        clean_metrics = {k: round(float(v), 2) if v is not None else None for k, v in quality_result.metrics.items()}
         logger.info(f"QUALITY_{category}: {symbol} structural_rr={quality_result.structural_rr:.2f} "
-                   f"status={quality_result.quality_status} metrics={quality_result.metrics}")
+                   f"status={quality_result.quality_status} metrics={clean_metrics}")
 
         # NOTE: Structural R:R min check with strategy-specific overrides is done in _apply_quality_filters()
         # This allows breakouts to use relaxed thresholds while other categories use stricter defaults
@@ -1305,9 +1321,20 @@ class BasePipeline(ABC):
             daily_trend=daily_trend
         )
 
+        # 4c. MAX RANK SCORE FILTER (setup-specific, DATA-DRIVEN Dec 2024)
+        # Some setups perform better with lower rank scores (counter-intuitive finding)
+        # e.g., orb_pullback_short: rank_score < 1.0 performs better
+        setup_regime_blocks = self._get("gates", "setup_regime_blocks")
+        setup_block_cfg = setup_regime_blocks.get(setup_type.lower(), {})
+        max_rank_score = setup_block_cfg.get("max_rank_score")
+
+        if max_rank_score is not None and adjusted_score > max_rank_score:
+            logger.info(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} > max_rank_score {max_rank_score}")
+            return {"eligible": False, "reason": "max_rank_score_exceeded", "details": [f"rank_{adjusted_score:.3f}_gt_{max_rank_score}"]}
+
         # 5. ENTRY - Category pipeline handles setup-type-specific entry logic
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
+        orh = safe_level_get(levels, "ORH", current_close)
+        orl = safe_level_get(levels, "ORL", current_close)
 
         # Get entry from category pipeline (includes setup-type-specific logic)
         entry_result = self.calculate_entry(symbol, df5m, bias, levels, atr, setup_type)
@@ -1399,12 +1426,16 @@ class BasePipeline(ABC):
         else:
             # Get structure stop from levels if available (swing low for long, swing high for short)
             structure_stop = levels.get("structure_stop")
-            if structure_stop is None:
+            if structure_stop is None or pd.isna(structure_stop):
                 # Fallback: use ORH/ORL as structure reference
+                # CRITICAL: Handle NaN properly - levels.get(key, fallback) returns NaN if key exists but value is NaN
+                # This happens when server starts late (after ORB window) - ORH/ORL will be NaN
                 if bias == "long":
-                    structure_stop = levels.get("ORL", entry_ref_price - adjusted_atr)
+                    orl_val = levels.get("ORL")
+                    structure_stop = orl_val if (orl_val is not None and not pd.isna(orl_val)) else (entry_ref_price - adjusted_atr)
                 else:
-                    structure_stop = levels.get("ORH", entry_ref_price + adjusted_atr)
+                    orh_val = levels.get("ORH")
+                    structure_stop = orh_val if (orh_val is not None and not pd.isna(orh_val)) else (entry_ref_price + adjusted_atr)
 
             # Calculate both structure-based and volatility-based stops
             # CRITICAL: Use entry_ref_price (the level), NOT effective_entry_price (fill price)
@@ -1423,6 +1454,11 @@ class BasePipeline(ABC):
                 structure_sl = structure_stop + sl_below_swing_ticks
                 hard_sl = min(structure_sl, vol_stop)  # Takes closer SL to entry
                 rps = max(hard_sl - effective_entry_price, 0.0)
+
+            # SAFETY CHECK: Reject if hard_sl or rps is NaN (bad level data)
+            if pd.isna(hard_sl) or pd.isna(rps):
+                logger.warning(f"[{category}] {symbol} REJECTED: hard_sl or rps is NaN (hard_sl={hard_sl}, rps={rps}, structure_stop={structure_stop})")
+                return {"eligible": False, "reason": "nan_stop_loss", "details": [f"hard_sl={hard_sl}", f"rps={rps}"]}
 
         # RPS FLOOR PROTECTION (from planner_internal.py lines 527-537)
         # Prevents too-tight stops that get hit easily

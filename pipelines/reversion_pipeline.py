@@ -40,7 +40,8 @@ from .base_pipeline import (
     GateResult,
     RankingResult,
     EntryResult,
-    TargetResult
+    TargetResult,
+    safe_level_get
 )
 
 logger = get_agent_logger()
@@ -534,8 +535,8 @@ class ReversionPipeline(BasePipeline):
 
         current_close = float(df5m["close"].iloc[-1])
         vwap = float(df5m["vwap"].iloc[-1]) if "vwap" in df5m.columns else current_close
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
+        orh = safe_level_get(levels, "ORH", current_close)
+        orl = safe_level_get(levels, "ORL", current_close)
 
         entry_cfg = self._get("entry")
         triggers = entry_cfg["triggers"]
@@ -647,7 +648,7 @@ class ReversionPipeline(BasePipeline):
         fallback_rr = targets_cfg["fallback_rr_ratios"]
 
         # Get VWAP for target calculation
-        vwap = levels.get("VWAP", entry_ref_price)
+        vwap = safe_level_get(levels, "VWAP", entry_ref_price)
 
         # Calculate move to VWAP
         if bias == "long":

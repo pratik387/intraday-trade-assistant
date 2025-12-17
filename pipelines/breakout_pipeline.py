@@ -45,7 +45,8 @@ from .base_pipeline import (
     RankingResult,
     EntryResult,
     TargetResult,
-    get_cap_segment
+    get_cap_segment,
+    safe_level_get
 )
 
 logger = get_agent_logger()
@@ -297,8 +298,8 @@ class BreakoutPipeline(BasePipeline):
         """
         logger.debug(f"[BREAKOUT] Calculating quality for {symbol} bias={bias}")
         current_close = float(df5m["close"].iloc[-1])
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
+        orh = safe_level_get(levels, "ORH", current_close)
+        orl = safe_level_get(levels, "ORL", current_close)
 
         # Volume ratio with floor from config
         vol_ratio = self.get_volume_ratio(df5m)
@@ -985,8 +986,8 @@ class BreakoutPipeline(BasePipeline):
         # DATA-DRIVEN FIX: Use structure-based risk for ORB
         # When ORH and ORL are available, use them for risk calculation
         # This produces tighter, more realistic targets for intraday trading
-        orh = levels.get("ORH", 0)
-        orl = levels.get("ORL", 0)
+        orh = safe_level_get(levels, "ORH", 0)
+        orl = safe_level_get(levels, "ORL", 0)
 
         # Use structure-based risk when ORH/ORL available and valid
         if orh > 0 and orl > 0 and orh > orl:
