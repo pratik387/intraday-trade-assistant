@@ -40,16 +40,15 @@ from dataclasses import dataclass
 from datetime import datetime, time as dtime
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import partial
-import multiprocessing as mp
 import threading
 
 import pandas as pd
 
 from config.filters_setup import load_filters
 from config.logging_config import get_agent_logger, get_screener_logger, get_ranking_logger, get_events_decision_logger
+from config.env_setup import env
 from utils.level_utils import get_previous_day_levels
-from utils.dataframe_utils import validate_df, has_column, safe_get_last
+from utils.dataframe_utils import validate_df, safe_get_last
 
 # ingest / streaming
 from services.ingest.stream_client import WSClient
@@ -211,8 +210,12 @@ class ScreenerLive:
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
         self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
         self.ws.on_message(self.router.handle_raw)
-        # Register on_close to trigger clean exit when replay ends (don't use datetime.now())
-        self.ws.on_close(lambda: self._handle_eod())  # No timestamp - just trigger shutdown
+        # Register on_close to trigger clean exit when replay ends (DRY_RUN only)
+        # In live/paper mode, WebSocket drops are handled by Kite SDK auto-reconnect
+        if env.DRY_RUN:
+            self.ws.on_close(lambda: self._handle_eod())  # Replay ended = EOD shutdown
+        else:
+            self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
         self.subs = SubscriptionManager(self.ws)
 
         # Gates - Use MainDetector directly for structure detection

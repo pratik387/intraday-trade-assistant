@@ -248,6 +248,65 @@ class KiteClient:
         self._rps = max(0.5, float(rps))
         self._rl_min_dt = 1.0 / self._rps
 
+    def prewarm_daily_cache(self, symbols: List[str] = None, days: int = 210) -> dict:
+        """
+        Pre-warm the daily data cache for all symbols BEFORE market opens.
+
+        Call this at server startup (e.g., 09:00) so that when ORB cache computation
+        happens at 09:40, all get_daily() calls are instant cache hits.
+
+        Args:
+            symbols: List of symbols to pre-warm. If None, uses all equity instruments.
+            days: Number of days of daily data to fetch (default 210 for regime detection)
+
+        Returns:
+            dict with 'success', 'failed', 'elapsed_seconds' counts
+        """
+        import time as time_module
+
+        if symbols is None:
+            symbols = self._equity_instruments
+
+        total = len(symbols)
+        logger.info(f"PREWARM_DAILY | Starting pre-warm for {total} symbols ({days} days each)")
+        logger.info(f"PREWARM_DAILY | Estimated time: {total / self._rps / 60:.1f} minutes at {self._rps} RPS")
+
+        start_time = time_module.perf_counter()
+        success_count = 0
+        fail_count = 0
+
+        for i, symbol in enumerate(symbols):
+            try:
+                # This populates self._daily_cache[symbol]
+                df = self.get_daily(symbol, days=days)
+                if df is not None and not df.empty:
+                    success_count += 1
+                else:
+                    fail_count += 1
+            except Exception as e:
+                fail_count += 1
+                if fail_count <= 5:  # Only log first 5 failures
+                    logger.warning(f"PREWARM_DAILY | Failed for {symbol}: {e}")
+
+            # Progress logging every 500 symbols
+            if (i + 1) % 500 == 0:
+                elapsed = time_module.perf_counter() - start_time
+                rate = (i + 1) / elapsed
+                remaining = (total - i - 1) / rate if rate > 0 else 0
+                logger.info(f"PREWARM_DAILY | Progress: {i+1}/{total} ({success_count} ok, {fail_count} fail) | "
+                           f"Elapsed: {elapsed:.0f}s | Remaining: {remaining:.0f}s")
+
+        elapsed = time_module.perf_counter() - start_time
+        logger.info(f"PREWARM_DAILY | Complete: {success_count}/{total} symbols cached | "
+                   f"Failed: {fail_count} | Time: {elapsed:.1f}s ({elapsed/60:.1f} min)")
+
+        return {
+            "success": success_count,
+            "failed": fail_count,
+            "total": total,
+            "elapsed_seconds": elapsed
+        }
+
     def get_historical_1m(self, symbol: str, from_dt: datetime, to_dt: datetime) -> Optional[pd.DataFrame]:
         """
         Fetch historical 1-minute OHLCV data from Zerodha API.
