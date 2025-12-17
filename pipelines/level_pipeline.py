@@ -817,10 +817,23 @@ class LevelPipeline(BasePipeline):
         logger.debug(f"[LEVEL] Calculating entry for {symbol} {setup_type} bias={bias}")
 
         current_close = float(df5m["close"].iloc[-1])
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
-        pdh = levels.get("PDH", orh)
-        pdl = levels.get("PDL", orl)
+
+        # Handle NaN properly - levels.get() returns NaN if the key exists but value is NaN
+        orh = levels.get("ORH")
+        orl = levels.get("ORL")
+        pdh = levels.get("PDH")
+        pdl = levels.get("PDL")
+        detected_level = levels.get("detected_level")
+
+        # Replace NaN with fallbacks
+        if orh is None or pd.isna(orh):
+            orh = current_close
+        if orl is None or pd.isna(orl):
+            orl = current_close
+        if pdh is None or pd.isna(pdh):
+            pdh = orh
+        if pdl is None or pd.isna(pdl):
+            pdl = orl
         vwap = float(df5m["vwap"].iloc[-1]) if "vwap" in df5m.columns else current_close
 
         entry_cfg = self._get("entry")
@@ -869,13 +882,29 @@ class LevelPipeline(BasePipeline):
                 entry_ref = max(orh, pdh) if pdh > 0 else orh
             entry_trigger = triggers["default"]
         elif "range" in setup_lower:
-            # Range play - enter at range edge
-            entry_ref = orl if bias == "long" else orh
+            # Range play - use detected_level (actual computed range level) if available
+            if detected_level is not None and not pd.isna(detected_level):
+                entry_ref = detected_level
+                logger.debug(f"[LEVEL] {symbol} range using detected_level={detected_level:.2f}")
+            else:
+                entry_ref = orl if bias == "long" else orh
             entry_trigger = triggers["default"]
         else:
-            # Default LEVEL - entry at support/resistance
-            entry_ref = orl if bias == "long" else orh
+            # Default LEVEL (support_bounce, resistance_bounce, etc.)
+            # Use detected_level first (actual level found by structure detector)
+            if detected_level is not None and not pd.isna(detected_level):
+                entry_ref = detected_level
+                logger.debug(f"[LEVEL] {symbol} {setup_lower} using detected_level={detected_level:.2f}")
+            elif bias == "long":
+                entry_ref = pdl if pdl > 0 else orl
+            else:
+                entry_ref = pdh if pdh > 0 else orh
             entry_trigger = triggers["default"]
+
+        # Final safety check - REJECT if entry_ref is NaN (don't risk money on bad data)
+        if pd.isna(entry_ref):
+            logger.warning(f"[LEVEL] {symbol} REJECTED: entry_ref is NaN - no valid level data")
+            return None
 
         # Entry zone for level plays from config
         # Use ATR-based zone, but ensure minimum width for low-ATR large cap stocks

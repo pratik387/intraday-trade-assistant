@@ -848,12 +848,25 @@ class BreakoutPipeline(BasePipeline):
         logger.debug(f"[BREAKOUT] Calculating entry for {symbol} {setup_type} bias={bias}")
 
         current_close = float(df5m["close"].iloc[-1])
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
+        setup_lower = setup_type.lower()
+
+        # Get raw ORH/ORL values (may be NaN)
+        orh_raw = levels.get("ORH")
+        orl_raw = levels.get("ORL")
+        orh_valid = orh_raw is not None and not pd.isna(orh_raw)
+        orl_valid = orl_raw is not None and not pd.isna(orl_raw)
+
+        # For ORB setups, REJECT if ORH/ORL are invalid (can't do ORB without OR levels)
+        if "orb" in setup_lower and (not orh_valid or not orl_valid):
+            logger.warning(f"[BREAKOUT] {symbol} REJECTED: ORB setup requires valid ORH/ORL (ORH={orh_raw}, ORL={orl_raw})")
+            return None
+
+        # Use valid values or fallback for non-ORB setups
+        orh = orh_raw if orh_valid else current_close
+        orl = orl_raw if orl_valid else current_close
 
         entry_cfg = self._get("entry")
         triggers = entry_cfg["triggers"]
-        setup_lower = setup_type.lower()
 
         # Setup-type-specific entry logic
         if bias == "long":
@@ -898,6 +911,11 @@ class BreakoutPipeline(BasePipeline):
             else:
                 entry_ref = orl
                 entry_trigger = triggers["short"]
+
+        # Final safety check - REJECT if entry_ref is NaN (don't risk money on bad data)
+        if pd.isna(entry_ref):
+            logger.warning(f"[BREAKOUT] {symbol} REJECTED: entry_ref is NaN - no valid level data")
+            return None
 
         # Entry zone from config
         zone_mult = entry_cfg["zone_mult_atr"]

@@ -1094,9 +1094,25 @@ class ScreenerLive:
             if current_time >= ORB_CUTOFF:
                 logger.info(
                     f"ORB_CACHE | Late start at {current_time} is AFTER ORB cutoff ({ORB_CUTOFF}). "
-                    f"Skipping recovery - ORB setups disabled anyway. Non-ORB setups work normally."
+                    f"Computing PDH/PDL/PDC only (ORH/ORL will be NaN - ORB setups disabled anyway)."
                 )
-                return {}
+                # Still compute PDH/PDL/PDC from pre-warmed daily data for level-based setups
+                # Only ORH/ORL will be NaN (which is fine since ORB setups are disabled after 10:30)
+                levels_by_symbol = {}
+                for sym, df5 in df5_by_symbol.items():
+                    try:
+                        lvl = self._levels_for(sym, df5, now)
+                        # Keep PDH/PDL/PDC even if ORH/ORL are NaN
+                        levels_by_symbol[sym] = lvl
+                    except Exception as e:
+                        logger.debug(f"ORB_CACHE | Late start: Failed to compute levels for {sym}: {e}")
+                        levels_by_symbol[sym] = {}
+
+                # Cache for the day
+                self._orb_levels_cache[session_date] = levels_by_symbol
+                valid_pdh = sum(1 for v in levels_by_symbol.values() if not pd.isna(v.get("PDH")))
+                logger.info(f"ORB_CACHE | Late start: Computed PDH/PDL/PDC for {valid_pdh}/{len(levels_by_symbol)} symbols")
+                return levels_by_symbol
 
             # Still within ORB window - spawn background thread for recovery
             # This allows the app to continue processing non-ORB setups immediately
