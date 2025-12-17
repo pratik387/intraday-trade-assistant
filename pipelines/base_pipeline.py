@@ -1332,6 +1332,26 @@ class BasePipeline(ABC):
             logger.info(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} > max_rank_score {max_rank_score}")
             return {"eligible": False, "reason": "max_rank_score_exceeded", "details": [f"rank_{adjusted_score:.3f}_gt_{max_rank_score}"]}
 
+        # 4d. MIN RANK SCORE FILTER (setup-specific, DATA-DRIVEN Dec 2024)
+        # Some setups require higher quality signals to be profitable
+        # e.g., resistance_bounce_short: rank_score >= 2 performs better
+        min_rank_score = setup_block_cfg.get("min_rank_score")
+
+        if min_rank_score is not None and adjusted_score < min_rank_score:
+            logger.info(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} < min_rank_score {min_rank_score}")
+            return {"eligible": False, "reason": "min_rank_score_not_met", "details": [f"rank_{adjusted_score:.3f}_lt_{min_rank_score}"]}
+
+        # 4e. ALLOWED HOURS FILTER (setup-specific, DATA-DRIVEN Dec 2024)
+        # Some setups only work during specific hours
+        # e.g., resistance_bounce_short: Hour 11 only, range_bounce_short: Hours 10-11
+        allowed_hours = setup_block_cfg.get("allowed_hours")
+
+        if allowed_hours is not None:
+            current_hour = df5m.index[-1].hour if hasattr(df5m.index[-1], 'hour') else None
+            if current_hour is not None and current_hour not in allowed_hours:
+                logger.info(f"[{category}] {symbol} {setup_type} BLOCKED: hour {current_hour} not in allowed_hours {allowed_hours}")
+                return {"eligible": False, "reason": "hour_not_allowed", "details": [f"hour_{current_hour}_not_in_{allowed_hours}"]}
+
         # 5. ENTRY - Category pipeline handles setup-type-specific entry logic
         orh = safe_level_get(levels, "ORH", current_close)
         orl = safe_level_get(levels, "ORL", current_close)
