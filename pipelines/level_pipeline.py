@@ -40,6 +40,7 @@ from .base_pipeline import (
     RankingResult,
     EntryResult,
     TargetResult,
+    get_cap_segment,
 )
 
 logger = get_agent_logger()
@@ -577,6 +578,41 @@ class LevelPipeline(BasePipeline):
                         reasons.append(f"setup_regime_time_blocked:{setup_lower}_{regime}_before_{cutoff_hour}h")
                         logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: {regime} before {cutoff_hour}:00 (hour={current_hour})")
                         return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+            # ========== DATA-DRIVEN ADX FILTERS (Dec 2024) ==========
+            # Block setups based on ADX thresholds from config
+            setup_min_adx = block_cfg.get("min_adx")
+            setup_max_adx = block_cfg.get("max_adx")
+
+            if setup_min_adx is not None and adx < setup_min_adx:
+                reasons.append(f"setup_adx_blocked:{setup_lower}_adx{adx:.0f}<{setup_min_adx}")
+                logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: ADX {adx:.1f} < min_adx {setup_min_adx}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+            if setup_max_adx is not None and adx >= setup_max_adx:
+                reasons.append(f"setup_adx_blocked:{setup_lower}_adx{adx:.0f}>={setup_max_adx}")
+                logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: ADX {adx:.1f} >= max_adx {setup_max_adx}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+            # ========== DATA-DRIVEN CAP SEGMENT FILTERS (Dec 2024) ==========
+            # Block setups based on market cap segment
+            blocked_caps = block_cfg.get("blocked_caps") or []
+            allowed_caps = block_cfg.get("allowed_caps")  # If set, only these caps are allowed
+
+            if blocked_caps or allowed_caps:
+                cap_segment = get_cap_segment(symbol)
+
+                if cap_segment in blocked_caps:
+                    reasons.append(f"setup_cap_blocked:{setup_lower}_{cap_segment}")
+                    logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: cap_segment {cap_segment} in blocked_caps {blocked_caps}")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+                if allowed_caps and cap_segment not in allowed_caps:
+                    reasons.append(f"setup_cap_not_allowed:{setup_lower}_{cap_segment}_not_in_{allowed_caps}")
+                    logger.debug(f"[LEVEL] {symbol} {setup_lower} BLOCKED: cap_segment {cap_segment} not in allowed_caps {allowed_caps}")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+                reasons.append(f"setup_cap_ok:{cap_segment}")
 
         # Regime rules from config - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")

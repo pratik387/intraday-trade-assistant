@@ -422,6 +422,31 @@ class BreakoutPipeline(BasePipeline):
         elif is_long and is_fhm:
             reasons.append(f"fhm_long_vol_bypass:{bar5_volume/1000:.0f}k:uses_rvol")
 
+        # 2b. FIRST_HOUR_MOMENTUM_LONG DATA-DRIVEN FILTERS (Dec 2024)
+        # These filters apply BEFORE the standard FHM bypass because they're based on backtest analysis
+        # Evidence: large_cap 25% WR -Rs 3608, ADX>=25 has 33% WR -Rs 2166
+        if is_fhm and is_long:
+            fhm_filter_cfg = validated_filters.get("first_hour_momentum_long", {})
+
+            # Max ADX filter - even though FHM bypasses normal ADX, high ADX hurts FHM longs
+            fhm_max_adx = fhm_filter_cfg.get("max_adx")
+            if fhm_max_adx is not None and adx >= fhm_max_adx:
+                reasons.append(f"fhm_long_adx_blocked:adx{adx:.0f}>={fhm_max_adx}")
+                logger.info(f"[BREAKOUT] {symbol} first_hour_momentum_long BLOCKED: ADX {adx:.1f} >= max_adx {fhm_max_adx}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+            # Blocked caps filter
+            fhm_blocked_caps = fhm_filter_cfg.get("blocked_caps", [])
+            if fhm_blocked_caps:
+                cap_segment = get_cap_segment(symbol)
+                if cap_segment in fhm_blocked_caps:
+                    reasons.append(f"fhm_long_cap_blocked:{cap_segment}")
+                    logger.info(f"[BREAKOUT] {symbol} first_hour_momentum_long BLOCKED: cap_segment {cap_segment} in blocked_caps {fhm_blocked_caps}")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                reasons.append(f"fhm_long_cap_ok:{cap_segment}")
+
+            reasons.append(f"fhm_long_filters_passed:adx{adx:.0f}")
+
         # 3. ORB_BREAKOUT_LONG CAP SEGMENT FILTER
         # DATA-DRIVEN (Dec 2024): Large cap 92% WR vs mid/small 43% WR
         # Allow: large_cap always, mid_cap with strength>=0.7 and entry>=35min

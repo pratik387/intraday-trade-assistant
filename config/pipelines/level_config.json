@@ -113,6 +113,19 @@
         },
         "setup_regime_blocks": {
             "_comment": "Data-driven filters from backtest analysis - block unprofitable setup+regime combinations",
+            "orb_pullback_long": {
+                "_comment": "DATA-DRIVEN (Dec 2024): ADX 30-35 is 75% WR. ADX 20-25 is only 25% WR. Require high ADX for trend trades.",
+                "min_adx": 30,
+                "blocked_caps": ["micro_cap"],
+                "_evidence": "33 trades total. ADX 30-35: 75% WR +Rs 463. ADX 20-25: 25% WR -Rs 1094. trend_up+ADX<30 = 33% WR, -Rs 1982."
+            },
+            "orb_pullback_short": {
+                "_comment": "DATA-DRIVEN (Dec 2024): Only small+micro cap profitable. SL +50%, T1 +50% wider.",
+                "allowed_caps": ["small_cap", "micro_cap"],
+                "sl_mult": 1.5,
+                "t1_mult": 1.5,
+                "_evidence": "166 trades small+micro: Rs 114.76 avg with SL+50%/T1+50%. Large/mid cap negative."
+            },
             "range_bounce_long": {
                 "blocked_regimes": ["chop"],
                 "_evidence": "62 trades in chop, -4,048 PnL, 45.2% win rate (vs +565 in trend_up)"
@@ -126,17 +139,28 @@
                 "_evidence": "Dec 2024 analysis: 16 trades, -3,282 Rs, 25% WR. 0% WR in trend_up, 27% in chop. Winners have ADX 37.5 vs losers 27.2"
             },
             "resistance_bounce_short": {
-                "_comment": "DATA-DRIVEN Dec 2024: Block losing regime, need indicator-based analysis for hard_sl reduction",
+                "_comment": "DATA-DRIVEN (Dec 2024): Block trend_up + ADX<30 + SL/T1 +50%. Rs 165 avg",
                 "blocked_regimes": ["trend_up"],
-                "_performance": "trend_down: +8,305 Rs (66.7% WR), trend_up: -882 Rs (block), 24 hard_sl trades cost -12,322 Rs"
+                "max_adx": 30,
+                "sl_mult": 1.5,
+                "t1_mult": 1.5,
+                "_evidence": "ADX<30 + SL+50%/T1+50%: 136 trades Rs 22,468 (Rs 165 avg, 62.5% WR). Baseline: 137 trades Rs 108 avg."
             },
             "range_bounce_short": {
-                "blocked_regimes": ["chop"],
-                "_evidence": "6-month analysis: 51.7% hard_sl rate in chop, 15 trades = -8,710 Rs. Net +1,951 if blocked."
+                "_comment": "DATA-DRIVEN (Dec 2024): ADX>=25 + block trend_up + SL/T1 +50%. Rs 324 avg!",
+                "blocked_regimes": ["chop", "trend_up"],
+                "min_adx": 25,
+                "sl_mult": 1.5,
+                "t1_mult": 1.5,
+                "_evidence": "ADX>=25 + NOT trend_up + SL+50%/T1+50%: 80 trades Rs 25,941 (Rs 324 avg, 68.8% WR). Baseline: 203 trades Rs 86 avg."
             },
             "premium_zone_short": {
-                "blocked_regimes": ["trend_down"],
-                "_evidence": "Dec 2024: 27 trades in trend_down = -1,607 Rs (40.7% WR, 12 hard_sl). Block = +2,284 net PnL."
+                "_comment": "DATA-DRIVEN (Dec 2024): ADX<30 + block micro_cap + block ADX 30-35 (worst zone). SL/T1 +50%.",
+                "max_adx": 30,
+                "blocked_caps": ["micro_cap"],
+                "sl_mult": 1.5,
+                "t1_mult": 1.5,
+                "_evidence": "96 trades. micro_cap: 29% WR -Rs 1601. ADX 30-35: 26% WR -Rs 3223. chop+ADX<25: 83% WR +Rs 3648. Max ADX 30 blocks worst ADX zone."
             }
         },
         "global_short_adx_filter": {
