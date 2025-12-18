@@ -250,6 +250,6 @@
     "sl_below_swing_ticks": 0.0,
     "_comment_sl_ticks": "Buffer below structure stop (swing low/high) - from OLD config",
 
-    "risk_per_trade_rupees": 500.0,
-    "_comment_risk": "Risk per trade in Rupees - from OLD configuration.json"
+    "risk_per_trade_rupees": 1000.0,
+    "_comment_risk": "Risk per trade in Rupees - 1% of 1L capital"
 }

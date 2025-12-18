@@ -90,6 +90,7 @@ class ExitExecutor:
         bar_builder=None,  # For tick-level exit validation
         trading_logger=None,  # Enhanced logging service
         capital_manager=None,  # Capital release on exits
+        persistence=None,  # Position persistence for crash recovery
     ) -> None:
         self.broker = broker
         self.positions = positions
@@ -97,6 +98,7 @@ class ExitExecutor:
         self.bar_builder = bar_builder
         self.trading_logger = trading_logger
         self.capital_manager = capital_manager
+        self.persistence = persistence  # For updating/removing positions on exit
 
         # Hook into tick stream for live/paper mode instant exits
         if bar_builder is not None:
@@ -1043,6 +1045,10 @@ class ExitExecutor:
                     if exit_result:
                         trade_logger.info(f"OR_KILL_PARTIAL | {symbol} | {pos.side} {partial_qty} @ {px:.2f} | remaining: {pos.qty - partial_qty}")
                         self.positions.reduce(symbol, partial_qty)  # Update position quantity
+                        # Update persistence with new qty (crash recovery)
+                        if self.persistence:
+                            new_qty = pos.qty - partial_qty
+                            self.persistence.update_position(symbol, new_qty=new_qty)
                         observation["partial_exit_done"] = True
                         observation["partial_qty_exited"] = partial_qty
                     else:
@@ -1166,6 +1172,8 @@ class ExitExecutor:
 
         try:
             exit_side = "SELL" if pos.side.upper() == "BUY" else "BUY"
+            # Get trade_id from plan if available (for tagging exit orders)
+            trade_id = pos.plan.get("trade_id") if pos.plan else None
             args = {
                 "symbol": sym,
                 "side": exit_side,
@@ -1173,6 +1181,7 @@ class ExitExecutor:
                 "order_type": self.exec_mode,
                 "product": self.exec_product,
                 "variety": self.exec_variety,
+                "trade_id": trade_id,  # For order tagging (ITDA_xxx) - identifies app orders
             }
             self.broker.place_order(**args)
         except Exception as e:
@@ -1333,6 +1342,10 @@ class ExitExecutor:
         self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
         self.positions.close(sym)
 
+        # Remove from persistence (crash recovery)
+        if self.persistence:
+            self.persistence.remove_position(sym)
+
         # Release capital (free margin) on full exit
         if self.capital_manager:
             self.capital_manager.exit_position(sym)
@@ -1444,6 +1457,11 @@ class ExitExecutor:
                 pass
         pos.plan["_state"] = st
 
+        # Update persistence with new qty and state (crash recovery)
+        if self.persistence:
+            new_qty = current_qty - int(qty_exit)
+            self.persistence.update_position(sym, new_qty=new_qty, state_updates={"t1_done": True})
+
         if self.eod_md is not None and ts is not None:
             try:
                 if _minute_of_day(ts) >= int(self.eod_md):
@@ -1516,6 +1534,10 @@ class ExitExecutor:
         st["t2_booked_price"] = px
         st["t2_profit"] = profit_booked
         pos.plan["_state"] = st
+
+        # Update persistence with new qty and state (crash recovery)
+        if self.persistence:
+            self.persistence.update_position(sym, new_qty=remaining_qty, state_updates={"t1_done": True, "t2_done": True})
 
     def _fabricate_eod_ts(self, pos: Position) -> pd.Timestamp:
         try:
@@ -1663,6 +1685,11 @@ class ExitExecutor:
                     st["breakout_short_new_sl"] = new_sl
                     pos.plan["_state"] = st
 
+                    # Update persistence with new qty (crash recovery)
+                    if self.persistence:
+                        new_qty = qty - qty_exit
+                        self.persistence.update_position(sym, new_qty=new_qty, state_updates={"breakout_short_partial_done": True})
+
                     logger.info(f"BREAKOUT_SHORT_RISK: {sym} moved SL to {self.breakout_short_sl_to_neg}R @ {new_sl:.2f}")
                 except Exception as e:
                     logger.warning(f"BREAKOUT_SHORT_RISK: {sym} failed to move SL: {e}")
@@ -1722,6 +1749,12 @@ class ExitExecutor:
 
                     st["eod_scale_out_first_done"] = True
                     pos.plan["_state"] = st
+
+                    # Update persistence with new qty (crash recovery)
+                    if self.persistence:
+                        new_qty = qty - qty_exit
+                        self.persistence.update_position(sym, new_qty=new_qty, state_updates={"eod_scale_out_first_done": True})
+
                     return True
 
             # Final exit at 15:07 if <0.4R

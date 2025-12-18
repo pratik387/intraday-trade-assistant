@@ -55,7 +55,9 @@ class CapitalManager:
         mis_enabled: bool = False,
         mis_config_path: Optional[str] = None,
         max_positions: int = 25,
-        capital_utilization: float = 0.85
+        capital_utilization: float = 0.85,
+        max_allocation_per_trade: float = 0.20,
+        risk_pct_per_trade: float = 0.01
     ):
         """
         Initialize CapitalManager.
@@ -66,7 +68,11 @@ class CapitalManager:
             mis_enabled: If True, use MIS leverage from config
             mis_config_path: Path to MIS margins config (default: config/mis_margins.json)
             max_positions: Maximum concurrent positions
-            capital_utilization: Max % of capital to use per trade (0.8-0.9 recommended for safety buffer)
+            capital_utilization: Safety buffer on available capital (0.85 = use 85% of available)
+            max_allocation_per_trade: Max % of total capital per trade (0.20 = 20% per trade)
+                                      Set to 0.20 for 5 concurrent trades, 0.25 for 4, etc.
+            risk_pct_per_trade: Risk per trade as % of total capital (0.01 = 1%)
+                               Used for dynamic position sizing based on capital
         """
         self.enabled = enabled
         self.total_capital = initial_capital
@@ -74,6 +80,8 @@ class CapitalManager:
         self.mis_enabled = mis_enabled
         self.max_positions = max_positions
         self.capital_utilization = max(0.5, min(1.0, capital_utilization))  # Clamp to [0.5, 1.0]
+        self.max_allocation_per_trade = max(0.05, min(1.0, max_allocation_per_trade))  # Clamp to [5%, 100%]
+        self.risk_pct_per_trade = max(0.001, min(0.05, risk_pct_per_trade))  # Clamp to [0.1%, 5%]
 
         # Position tracking
         self.positions: Dict[str, Dict] = {}  # symbol -> position info
@@ -95,12 +103,34 @@ class CapitalManager:
         self.mis_config = None
 
         # Log mode
+        risk_rupees = self.total_capital * self.risk_pct_per_trade
         if not enabled:
             logger.info("CapitalManager: DISABLED | Mode: Unlimited capital (all trades allowed)")
         elif mis_enabled:
-            logger.info(f"CapitalManager: ENABLED + MIS | Initial: Rs.{initial_capital:,} | Max positions: {max_positions}")
+            logger.info(f"CapitalManager: ENABLED + MIS | Capital: Rs.{initial_capital:,} | "
+                       f"Risk: {self.risk_pct_per_trade*100:.1f}% (Rs.{risk_rupees:,.0f}) | "
+                       f"Max positions: {max_positions}")
         else:
-            logger.info(f"CapitalManager: ENABLED (No MIS) | Initial: Rs.{initial_capital:,} | Max positions: {max_positions}")
+            logger.info(f"CapitalManager: ENABLED (No MIS) | Capital: Rs.{initial_capital:,} | "
+                       f"Risk: {self.risk_pct_per_trade*100:.1f}% (Rs.{risk_rupees:,.0f}) | "
+                       f"Max positions: {max_positions}")
+
+    def get_risk_per_trade(self, fallback: float = 1000.0) -> float:
+        """
+        Get risk per trade in Rupees.
+
+        For live/paper trading (enabled=True): Returns capital * risk_pct_per_trade
+        For backtests (enabled=False): Returns fallback value from config
+
+        Args:
+            fallback: Value to use when capital manager is disabled (backtest mode)
+
+        Returns:
+            Risk per trade in Rupees
+        """
+        if not self.enabled:
+            return fallback
+        return self.total_capital * self.risk_pct_per_trade
 
     def _load_mis_config(self, config_path: Optional[str] = None) -> Dict:
         """Load MIS margin configuration."""
@@ -153,8 +183,10 @@ class CapitalManager:
             cap_cfg = segment_cfg.get(cap_segment, {})
             return cap_cfg.get('leverage', 5.0)
 
-        # PRIORITY 3: Default fallback (no MIS)
-        return 1.0
+        # PRIORITY 3: Default fallback - use conservative 5x for MIS
+        # Professional algo traders use fixed estimates; actual Zerodha margin may vary
+        # but 5x is a safe conservative estimate for most liquid stocks
+        return 5.0 if self.mis_enabled else 1.0
 
     def can_enter_position(
         self,
@@ -202,10 +234,31 @@ class CapitalManager:
         notional = qty * price
         margin_required = notional / leverage
 
-        # Check 2: Sufficient capital?
+        # Check 2: Per-trade allocation limit (e.g., 20% of total capital per trade)
+        max_margin_per_trade = self.total_capital * self.max_allocation_per_trade
+        if margin_required > max_margin_per_trade:
+            # Scale down to fit per-trade limit
+            max_notional = max_margin_per_trade * leverage
+            adjusted_qty = int(max_notional / price)
+
+            if adjusted_qty < 1:
+                self.stats['trades_rejected_capital'] += 1
+                reason = f"per_trade_limit_exceeded_need_{margin_required:.0f}_max_{max_margin_per_trade:.0f}"
+                logger.warning(f"CAP_REJECT | {symbol} | {reason}")
+                return False, 0, reason
+
+            # Update margin for subsequent checks
+            margin_required = (adjusted_qty * price) / leverage
+            notional = adjusted_qty * price
+            qty = adjusted_qty
+            logger.info(
+                f"CAP_LIMIT | {symbol} | Per-trade limit {int(self.max_allocation_per_trade*100)}% | "
+                f"Max margin Rs.{max_margin_per_trade:,.0f} | SCALED to qty={adjusted_qty}"
+            )
+
+        # Check 3: Sufficient available capital?
         if self.available_capital < margin_required:
             # Scale down quantity to fit available capital with safety buffer
-            # Use only capital_utilization% of available capital (default 85%)
             usable_capital = self.available_capital * self.capital_utilization
             max_notional = usable_capital * leverage
             adjusted_qty = int(max_notional / price)
@@ -220,7 +273,7 @@ class CapitalManager:
             # Accept with scaled quantity
             self.stats['trades_accepted'] += 1
             adjusted_margin = (adjusted_qty * price) / leverage
-            reason = f"scaled_qty_{qty}→{adjusted_qty}_margin_{adjusted_margin:.0f}@{leverage}x_buffer_{int(self.capital_utilization*100)}%"
+            reason = f"scaled_qty_{qty}→{adjusted_qty}_margin_{adjusted_margin:.0f}@{leverage}x_avail_{int(self.capital_utilization*100)}%"
             logger.info(
                 f"CAP_SCALE | {symbol} | Requested qty={qty} margin={margin_required:.0f} | "
                 f"Available={self.available_capital:.0f} ({int(self.capital_utilization*100)}% buffer) | "
@@ -228,7 +281,7 @@ class CapitalManager:
             )
             return True, adjusted_qty, reason
 
-        # All checks passed - use original quantity
+        # All checks passed - use (possibly already scaled) quantity
         self.stats['trades_accepted'] += 1
         return True, qty, f"margin_{margin_required:.0f}@{leverage}x"
 

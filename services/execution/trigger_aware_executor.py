@@ -144,7 +144,7 @@ class TriggerAwareExecutor:
                     logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
                     return False
 
-            # Place order
+            # Place order with trade_id for tagging (identifies app-placed orders)
             order_args = {
                 "symbol": symbol,
                 "side": side,
@@ -152,8 +152,9 @@ class TriggerAwareExecutor:
                 "order_type": "MARKET",  # Using market orders for trigger execution
                 "product": "MIS",
                 "variety": "regular",
+                "trade_id": trade.trade_id,  # For order tagging (ITDA_xxx)
             }
-            
+
             order_id = self.broker.place_order(**order_args)
 
             # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
@@ -229,6 +230,22 @@ class TriggerAwareExecutor:
                     plan=adjusted_plan
                 )
                 self.positions.upsert(pos)
+
+                # Persist position for crash recovery (Phase 5)
+                if self.persistence:
+                    from broker.kite.kite_broker import APP_ORDER_TAG_PREFIX
+                    order_tag = f"{APP_ORDER_TAG_PREFIX}{trade.trade_id[-12:]}"
+                    self.persistence.save_position(
+                        symbol=symbol,
+                        side=side,
+                        qty=qty,
+                        avg_price=price,
+                        trade_id=trade.trade_id,
+                        order_id=order_id,
+                        order_tag=order_tag,
+                        plan=adjusted_plan,
+                        state={}  # Initial state (t1_done=False, etc.)
+                    )
 
             return True
             
@@ -432,12 +449,14 @@ class TriggerAwareExecutor:
         get_ltp_ts: Callable[[str], Tuple[Optional[float], Optional[pd.Timestamp]]],
         bar_builder,  # We'll hook into the BarBuilder's 1m callbacks
         trading_logger=None,  # Enhanced logging service
-        capital_manager=None  # Capital & MIS management
+        capital_manager=None,  # Capital & MIS management
+        persistence=None  # Position persistence for crash recovery
     ):
         self.broker = broker
         self.oq = order_queue
         self.trading_logger = trading_logger
         self.capital_manager = capital_manager
+        self.persistence = persistence  # For saving positions on entry
         self.risk = risk_state
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts

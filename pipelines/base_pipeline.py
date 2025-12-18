@@ -178,6 +178,27 @@ class TargetResult:
 _BASE_CONFIG_CACHE: Optional[Dict[str, Any]] = None
 
 
+def set_base_config_override(key: str, value: Any) -> None:
+    """
+    Override a value in the cached base config.
+
+    This allows main.py to set runtime values (like risk_per_trade_rupees from
+    capital manager) that will be picked up by all pipelines.
+
+    MUST be called AFTER load_base_config() has been called at least once.
+
+    Args:
+        key: Config key to override (e.g., "risk_per_trade_rupees")
+        value: New value to set
+    """
+    global _BASE_CONFIG_CACHE
+    if _BASE_CONFIG_CACHE is None:
+        # Force load first
+        load_base_config()
+    _BASE_CONFIG_CACHE[key] = value
+    logger.info(f"CONFIG_OVERRIDE: Set {key}={value}")
+
+
 def load_base_config() -> Dict[str, Any]:
     """
     Load base configuration (universal settings for all pipelines).
@@ -1257,6 +1278,11 @@ class BasePipeline(ABC):
 
         # 2. QUALITY
         quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr)
+
+        # Reject if quality calculation failed (e.g., missing required levels)
+        if quality_result is None:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected at QUALITY: missing required data")
+            return {"eligible": False, "reason": "quality_fail", "details": ["missing_required_levels"]}
 
         # Log quality metrics
         clean_metrics = {k: round(float(v), 2) if v is not None else None for k, v in quality_result.metrics.items()}

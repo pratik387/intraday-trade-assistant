@@ -31,8 +31,12 @@ Requires env OR explicit params: KITE_API_KEY, KITE_ACCESS_TOKEN
 Requires: `pip install kiteconnect`
 """
 import time
+import uuid
 from typing import Dict, List, Optional, Tuple
 from config.env_setup import env
+
+# Order tagging prefix for identifying app-placed trades
+APP_ORDER_TAG_PREFIX = "ITDA_"  # Intraday Trade Assistant
 
 from kiteconnect import KiteConnect
 
@@ -60,7 +64,7 @@ def _split_symbol(symbol: str) -> Tuple[str, str]:
 
 
 class KiteBroker:
-    def __init__(self, api_key: Optional[str] = None, access_token: Optional[str] = None, dry_run: bool = False) -> None:
+    def __init__(self, api_key: Optional[str] = None, access_token: Optional[str] = None, dry_run: bool = False, ltp_cache=None) -> None:
         self.api_key = env.KITE_API_KEY
         self.access_token = env.KITE_ACCESS_TOKEN
         if not self.api_key or not self.access_token:
@@ -76,7 +80,12 @@ class KiteBroker:
         self._paper_orders: List[Dict] = []  # Log orders in paper trading
         self._paper_order_counter = 0
 
-        # Rate limiting for LTP calls (Zerodha limit: 3 req/sec)
+        # Websocket LTP cache - use for instant price lookups (no rate limit)
+        # Falls back to REST API if cache miss
+        self._ltp_cache = ltp_cache
+
+        # Rate limiting for LTP REST API calls (Zerodha limit: 3 req/sec)
+        # Only used when cache miss (symbol not subscribed to websocket)
         self._ltp_rps = 2.5  # Stay under 3 req/sec limit
         self._ltp_min_interval = 1.0 / self._ltp_rps  # ~0.4s between calls
         self._ltp_last_call = 0.0
@@ -172,6 +181,7 @@ class KiteBroker:
         variety: str = "regular",
         validity: str = "DAY",
         tag: Optional[str] = None,
+        trade_id: Optional[str] = None,
         check_margins: bool = True,
         auto_fallback_cnc: bool = True,
     ) -> str:
@@ -181,6 +191,7 @@ class KiteBroker:
         Args:
             check_margins: If True, check MIS availability before placing MIS order
             auto_fallback_cnc: If True and MIS not available, fallback to CNC automatically
+            trade_id: Optional trade ID for tagging (generates ITDA_<12chars> tag)
 
         Returns:
             order_id as string
@@ -189,6 +200,13 @@ class KiteBroker:
             ValueError: Invalid parameters
             RuntimeError: Order placement failed
         """
+        # Generate order tag from trade_id for trade identification
+        if trade_id and not tag:
+            # Use last 12 chars of trade_id (trade IDs are like "NSE:RELIANCE_abc123def456")
+            tag = f"{APP_ORDER_TAG_PREFIX}{trade_id[-12:]}"
+        elif not tag:
+            # Generate random tag if no trade_id provided
+            tag = f"{APP_ORDER_TAG_PREFIX}{uuid.uuid4().hex[:12]}"
         side_u = side.upper()
         if side_u not in ("BUY", "SELL"):
             raise ValueError(f"side must be BUY/SELL, got {side}")
@@ -279,6 +297,13 @@ class KiteBroker:
 
     # ------------------------------ Market data -------------------------
     def get_ltp(self, symbol: str, **kwargs) -> float:
+        # 1. Try websocket cache first (instant, no rate limit)
+        if self._ltp_cache:
+            cached = self._ltp_cache.get_ltp(symbol)
+            if cached is not None:
+                return cached
+
+        # 2. Fallback to REST API only if cache miss (symbol not in websocket subscription)
         self._rate_limit_ltp()
         exch, tsym = _split_symbol(symbol)
         key = f"{exch}:{tsym}"
@@ -334,6 +359,32 @@ class KiteBroker:
                     continue
                 raise
         return {}
+
+    # ------------------------------ Position & Order Queries ----------------
+    def get_positions(self) -> Dict:
+        """Get all intraday positions from broker."""
+        if self.dry_run:
+            return {"day": [], "net": []}  # Paper trading has no real positions
+        try:
+            return self.kc.positions()
+        except Exception as e:
+            logger.error(f"Failed to fetch broker positions: {e}")
+            return {"day": [], "net": []}
+
+    def get_orders(self) -> List[Dict]:
+        """Get all orders for today."""
+        if self.dry_run:
+            return self._paper_orders  # Return simulated orders in paper mode
+        try:
+            return self.kc.orders()
+        except Exception as e:
+            logger.error(f"Failed to fetch orders: {e}")
+            return []
+
+    def get_app_orders(self) -> List[Dict]:
+        """Get only orders placed by this app (tagged with ITDA_)."""
+        orders = self.get_orders()
+        return [o for o in orders if o.get("tag", "").startswith(APP_ORDER_TAG_PREFIX)]
 
     # ------------------------------ Paper Trading ---------------------------
     def _simulate_order(

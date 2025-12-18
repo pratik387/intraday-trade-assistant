@@ -336,7 +336,7 @@
 
   "breakout_momentum_candle_min_ratio_short": 2.5,
   "_comment_momentum_short": "PHASE 4 REVERT: Back to 2.5x for shorts - short breakouts require larger candles to avoid false breakdowns.",
-  "risk_per_trade_rupees": 500.0,
+  "risk_per_trade_rupees": 1000.0,
   "fees_slippage_bps": 5.0,
   "enable_lunch_pause": true,
   "lunch_start": "12:15",

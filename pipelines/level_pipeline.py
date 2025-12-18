@@ -176,6 +176,11 @@ class LevelPipeline(BasePipeline):
             target_level = pdh if not pd.isna(pdh) else orh
             logger.debug(f"[LEVEL] {symbol} fallback to PDH/ORH={target_level}")
 
+        # Reject if no valid target level - can't trade level setups without a level
+        if target_level is None or pd.isna(target_level):
+            logger.warning(f"[LEVEL] {symbol} rejected: no valid target level found")
+            return None
+
         # Distance to level (ATR-normalized)
         distance_to_level = abs(current_close - target_level) / max(atr, 1e-6)
 
