@@ -30,6 +30,7 @@ Features:
 Requires env OR explicit params: KITE_API_KEY, KITE_ACCESS_TOKEN
 Requires: `pip install kiteconnect`
 """
+import time
 from typing import Dict, List, Optional, Tuple
 from config.env_setup import env
 
@@ -74,6 +75,11 @@ class KiteBroker:
         self.dry_run = dry_run
         self._paper_orders: List[Dict] = []  # Log orders in paper trading
         self._paper_order_counter = 0
+
+        # Rate limiting for LTP calls (Zerodha limit: 3 req/sec)
+        self._ltp_rps = 2.5  # Stay under 3 req/sec limit
+        self._ltp_min_interval = 1.0 / self._ltp_rps  # ~0.4s between calls
+        self._ltp_last_call = 0.0
 
         if self.dry_run:
             logger.warning("🧪 PAPER TRADING MODE - Orders will be simulated, not sent to Zerodha")
@@ -262,13 +268,32 @@ class KiteBroker:
                 logger.error(f"Order placement failed for {symbol}: {e}")
                 raise RuntimeError(f"Order placement failed: {e}")
 
+    # ------------------------------ Rate limiting -------------------------
+    def _rate_limit_ltp(self) -> None:
+        """Enforce rate limit for LTP calls (Zerodha: 3 req/sec)."""
+        now = time.monotonic()
+        elapsed = now - self._ltp_last_call
+        if elapsed < self._ltp_min_interval:
+            time.sleep(self._ltp_min_interval - elapsed)
+        self._ltp_last_call = time.monotonic()
+
     # ------------------------------ Market data -------------------------
     def get_ltp(self, symbol: str, **kwargs) -> float:
+        self._rate_limit_ltp()
         exch, tsym = _split_symbol(symbol)
         key = f"{exch}:{tsym}"
-        data = self.kc.ltp([key])
-        node = data.get(key) or {}
-        return float(node.get("last_price") or 0.0)
+        for attempt in range(3):
+            try:
+                data = self.kc.ltp([key])
+                node = data.get(key) or {}
+                return float(node.get("last_price") or 0.0)
+            except Exception as e:
+                if "Too many requests" in str(e) and attempt < 2:
+                    logger.warning(f"Rate limited on LTP call, backing off (attempt {attempt+1})")
+                    time.sleep(1.0 + attempt * 0.5)  # Back off: 1s, 1.5s
+                    continue
+                raise
+        return 0.0
 
     def get_ltp_with_level(self, symbol: str, check_level: Optional[float] = None, **kwargs) -> float:
         """
@@ -290,15 +315,25 @@ class KiteBroker:
     def get_ltp_batch(self, symbols: List[str]) -> Dict[str, float]:
         if not symbols:
             return {}
+        self._rate_limit_ltp()
         keys = []
         for s in symbols:
             exch, tsym = _split_symbol(s)
             keys.append(f"{exch}:{tsym}")
-        data = self.kc.ltp(keys)
-        out: Dict[str, float] = {}
-        for k, v in data.items():
-            out[k] = float(v.get("last_price") or 0.0)
-        return out
+        for attempt in range(3):
+            try:
+                data = self.kc.ltp(keys)
+                out: Dict[str, float] = {}
+                for k, v in data.items():
+                    out[k] = float(v.get("last_price") or 0.0)
+                return out
+            except Exception as e:
+                if "Too many requests" in str(e) and attempt < 2:
+                    logger.warning(f"Rate limited on LTP batch call, backing off (attempt {attempt+1})")
+                    time.sleep(1.0 + attempt * 0.5)
+                    continue
+                raise
+        return {}
 
     # ------------------------------ Paper Trading ---------------------------
     def _simulate_order(

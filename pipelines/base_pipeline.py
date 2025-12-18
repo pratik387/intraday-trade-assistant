@@ -1166,7 +1166,7 @@ class BasePipeline(ABC):
             daily_atr = self.calculate_atr(daily_df, period=14)
             if daily_atr is not None:
                 atr = daily_atr
-                logger.info(f"[{category}] {symbol} {setup_type}: Using daily ATR {atr:.2f} for morning ORB (intraday ATR unavailable)")
+                logger.debug(f"[{category}] {symbol} {setup_type}: Using daily ATR {atr:.2f} for morning ORB (intraday ATR unavailable)")
 
         current_close = float(df5m["close"].iloc[-1])
 
@@ -1352,6 +1352,19 @@ class BasePipeline(ABC):
                 logger.info(f"[{category}] {symbol} {setup_type} BLOCKED: hour {current_hour} not in allowed_hours {allowed_hours}")
                 return {"eligible": False, "reason": "hour_not_allowed", "details": [f"hour_{current_hour}_not_in_{allowed_hours}"]}
 
+        # 4f. RSI RANGE FILTER (setup-specific, DATA-DRIVEN Dec 2024)
+        # Filter trades based on RSI range - e.g., resistance_bounce_short works best with RSI 38-48
+        min_rsi = setup_block_cfg.get("min_rsi")
+        max_rsi = setup_block_cfg.get("max_rsi")
+
+        if min_rsi is not None or max_rsi is not None:
+            current_rsi = features.get("rsi", 50)
+            if current_rsi is not None:
+                if min_rsi is not None and current_rsi < min_rsi:
+                    return {"eligible": False, "reason": "rsi_below_min", "details": [f"rsi_{current_rsi:.0f}_lt_{min_rsi}"]}
+                if max_rsi is not None and current_rsi > max_rsi:
+                    return {"eligible": False, "reason": "rsi_above_max", "details": [f"rsi_{current_rsi:.0f}_gt_{max_rsi}"]}
+
         # 5. ENTRY - Category pipeline handles setup-type-specific entry logic
         orh = safe_level_get(levels, "ORH", current_close)
         orl = safe_level_get(levels, "ORL", current_close)
@@ -1497,6 +1510,42 @@ class BasePipeline(ABC):
                 hard_sl = effective_entry_price + rps_floor
             rps = rps_floor
             logger.debug(f"RPS_FLOOR: {symbol} rps widened to floor={rps_floor:.4f}")
+
+        # 6b. SETUP-SPECIFIC SL MULTIPLIER (sl_mult from level_config.json setup_regime_blocks)
+        # This WIDENS the stop loss for setups that need more room (e.g., resistance_bounce_short sl_mult=1.5)
+        sl_mult = setup_block_cfg.get("sl_mult", 1.0)
+        if sl_mult != 1.0:
+            if bias == "long":
+                # For long, SL is below entry - widening moves it lower
+                risk_distance = effective_entry_price - hard_sl
+                widened_risk = risk_distance * sl_mult
+                hard_sl = effective_entry_price - widened_risk
+            else:
+                # For short, SL is above entry - widening moves it higher
+                risk_distance = hard_sl - effective_entry_price
+                widened_risk = risk_distance * sl_mult
+                hard_sl = effective_entry_price + widened_risk
+            rps = widened_risk
+            logger.debug(f"SL_MULT: {symbol} {setup_type} sl_mult={sl_mult} -> hard_sl={hard_sl:.2f}, rps={rps:.2f}")
+
+        # 6c. VALIDATE SL IS OUTSIDE ENTRY ZONE - REJECT if not
+        # For shorts: SL must be > entry_zone_high (above where we can enter)
+        # For longs: SL must be < entry_zone_low (below where we can enter)
+        #
+        # If SL is inside entry zone, the trade is structurally broken:
+        # - We could fill at edge of zone where SL is on WRONG side of entry
+        # - E.g., short fills at 228, SL at 227.75 = SL below entry = exits on profit not loss
+        #
+        # REJECT rather than auto-adjust - don't risk real money on broken setups
+        entry_zone = entry_result.entry_zone
+        if bias == "long":
+            if hard_sl >= entry_zone[0]:
+                logger.warning(f"[{category}] {symbol} {setup_type} REJECTED: SL ({hard_sl:.2f}) >= entry_zone_low ({entry_zone[0]:.2f}) - SL inside entry zone")
+                return {"eligible": False, "reason": "sl_inside_entry_zone", "details": [f"sl={hard_sl:.2f}", f"zone_low={entry_zone[0]:.2f}"]}
+        else:  # short
+            if hard_sl <= entry_zone[1]:
+                logger.warning(f"[{category}] {symbol} {setup_type} REJECTED: SL ({hard_sl:.2f}) <= entry_zone_high ({entry_zone[1]:.2f}) - SL inside entry zone")
+                return {"eligible": False, "reason": "sl_inside_entry_zone", "details": [f"sl={hard_sl:.2f}", f"zone_high={entry_zone[1]:.2f}"]}
 
         # 7. TARGETS
         # CRITICAL: Use effective_entry_price for target calculations

@@ -150,16 +150,19 @@
                 "_evidence": "Dec 2024 analysis: 16 trades, -3,282 Rs, 25% WR. 0% WR in trend_up, 27% in chop. Winners have ADX 37.5 vs losers 27.2"
             },
             "resistance_bounce_short": {
-                "_comment": "DATA-DRIVEN (Dec 2024): rank>=2 + Hour 11 + NOT large_cap + SL/T1/T2 1.5x. Spike test validated.",
+                "_comment": "DATA-DRIVEN (Dec 2024): RSI 38-48 + rank>=2 + Hour 11 + NOT large_cap + SL/T1/T2 1.5x.",
                 "blocked_regimes": ["trend_up"],
                 "blocked_caps": ["large_cap"],
                 "max_adx": 30,
                 "min_rank_score": 2,
                 "allowed_hours": [11],
+                "min_rsi": 38,
+                "max_rsi": 48,
                 "sl_mult": 1.5,
                 "t1_mult": 1.5,
                 "t2_mult": 1.5,
-                "_evidence": "Dec 2024 Spike Test: 131 trades Rs 270 avg gross, Rs 126 avg net, 54.2% WR. t2_mult 1.5x adds +Rs 8,024 gross."
+                "_evidence": "Dec 2024: RSI 38-48 filter. 46 trades, Rs 277 avg net, Rs 12,732 total net (+55% vs no RSI), 71.7% WR.",
+                "_review": "REVIEW after 2 years of backtesting. If RSI 38-48 underperforms, change to max_rsi: 50 only (62 trades, Rs 142 avg net)."
             },
             "range_bounce_short": {
                 "_comment": "DATA-DRIVEN (Dec 2024): squeeze + rank>=2 + Hour 10-11 + SL/T1/T2 1.5x. Spike test validated.",

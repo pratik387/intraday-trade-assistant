@@ -994,7 +994,8 @@ class LevelPipeline(BasePipeline):
         if t1_mult != 1.0 or t2_mult != 1.0:
             t1_rr = t1_rr * t1_mult
             t2_rr = t2_rr * t2_mult
-            logger.debug(f"[LEVEL] {symbol} {setup_type} TARGET MULTIPLIERS: t1_mult={t1_mult}, t2_mult={t2_mult} -> T1={t1_rr}R, T2={t2_rr}R")
+            t3_rr = t3_rr * t2_mult  # T3 scales with T2 to maintain T1 < T2 < T3 ordering
+            logger.debug(f"[LEVEL] {symbol} {setup_type} TARGET MULTIPLIERS: t1_mult={t1_mult}, t2_mult={t2_mult} -> T1={t1_rr}R, T2={t2_rr}R, T3={t3_rr}R")
 
         # Cap targets from config (level plays shouldn't expect huge moves)
         caps = targets_cfg["caps"]
