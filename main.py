@@ -35,6 +35,7 @@ from services.ingest.tick_router import register_tick_listener
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
 from services.state import PositionPersistence, BrokerReconciliation
+from services.state.daily_cache_persistence import DailyCachePersistence
 from pipelines.base_pipeline import set_base_config_override, load_base_config
 
 # Dry-run adapter (patched MockBroker with LTP cache + Feather replay)
@@ -325,7 +326,6 @@ def main() -> int:
     # Apply structure caching if requested (monkey-patches TradeDecisionGate.evaluate)
     # Also set flag in config so worker processes can enable caching
     if args.enable_cache:
-        import tools.cached_engine_structures  # noqa: F401
         logger.info("[CACHE] Structure detection caching enabled")
         cfg["_enable_structure_cache"] = True  # Pass flag to worker processes
 
@@ -369,6 +369,17 @@ def main() -> int:
     # Order queue handles pacing/retries; it reads its own config internally
     oq = OrderQueue()
 
+    def _prewarm_daily_cache(sdk):
+        """Pre-warm daily cache: try disk first (2-5s), fallback to API (15min)."""
+        cache_persistence = DailyCachePersistence()
+        cached_data = cache_persistence.load_today()
+        if cached_data:
+            sdk.set_daily_cache(cached_data)
+        result = sdk.prewarm_daily_cache(days=210)
+        # Save to disk if we fetched from API (for next restart)
+        if result.get("source") == "api":
+            cache_persistence.save(sdk.get_daily_cache())
+
     # Pick mode
     if args.paper_trading:
         # Paper trading: live data + simulated orders
@@ -379,11 +390,8 @@ def main() -> int:
         broker = KiteBroker(dry_run=True, ltp_cache=ltp_cache)
         logger.warning("🧪 PAPER TRADING MODE: Live data, simulated orders (no real trades)")
 
-        # Pre-warm daily data cache BEFORE market opens (avoids 11-min delay at 09:40)
-        # This populates Kite SDK's internal cache so ORB level computation is instant
         if not args.skip_prewarm:
-            logger.info("🔥 Pre-warming daily data cache (this takes ~11 minutes but saves time later)...")
-            sdk.prewarm_daily_cache(days=210)
+            _prewarm_daily_cache(sdk)
     elif args.dry_run:
         # Backtesting: historical data + mock broker
         if not args.session_date:
@@ -404,10 +412,8 @@ def main() -> int:
         broker = KiteBroker(dry_run=False, ltp_cache=ltp_cache)
         logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
 
-        # Pre-warm daily data cache BEFORE market opens (avoids 11-min delay at 09:40)
         if not args.skip_prewarm:
-            logger.info("🔥 Pre-warming daily data cache (this takes ~11 minutes but saves time later)...")
-            sdk.prewarm_daily_cache(days=210)
+            _prewarm_daily_cache(sdk)
 
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq)

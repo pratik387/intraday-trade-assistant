@@ -30,7 +30,8 @@ class KiteClient:
         self._sym2inst: Dict[str, _Inst] = {}
         self._tok2sym: Dict[int, str] = {}
         self._equity_instruments: List[str] = []
-                # ---- Daily history: per-day in-memory cache + simple rate limiter (tz-naive) ----
+
+        # ---- Daily history: per-day in-memory cache ----
         self._daily_cache_day: Optional[str] = None   # "YYYY-MM-DD"
         self._daily_cache: Dict[str, pd.DataFrame] = {}
         self._daily_cache_lock = threading.RLock()
@@ -170,6 +171,21 @@ class KiteClient:
                 self._daily_cache.clear()
                 self._daily_cache_day = today
 
+    # ---- Daily cache getter/setter for external persistence ----
+
+    def get_daily_cache(self) -> Dict[str, pd.DataFrame]:
+        """Get the current daily cache (for persistence layer to save)."""
+        with self._daily_cache_lock:
+            return dict(self._daily_cache)
+
+    def set_daily_cache(self, cache: Dict[str, pd.DataFrame]) -> None:
+        """Set the daily cache from external source (persistence layer load)."""
+        today = datetime.now().date().isoformat()
+        with self._daily_cache_lock:
+            self._daily_cache = cache
+            self._daily_cache_day = today
+        logger.info(f"DAILY_CACHE | Injected {len(cache)} symbols from external source")
+
     def _token_for(self, symbol: str) -> int:
         inst = self._sym2inst.get(symbol.upper())
         if not inst:
@@ -256,10 +272,13 @@ class KiteClient:
 
     def prewarm_daily_cache(self, symbols: List[str] = None, days: int = 210) -> dict:
         """
-        Pre-warm the daily data cache for all symbols BEFORE market opens.
+        Pre-warm the daily data cache by fetching from Kite API.
 
         Call this at server startup (e.g., 09:00) so that when ORB cache computation
         happens at 09:40, all get_daily() calls are instant cache hits.
+
+        NOTE: Disk persistence is handled externally by DailyCachePersistence.
+        Use set_daily_cache() to inject cached data before calling this.
 
         Args:
             symbols: List of symbols to pre-warm. If None, uses all equity instruments.
@@ -274,6 +293,18 @@ class KiteClient:
             symbols = self._equity_instruments
 
         total = len(symbols)
+
+        # Check if cache already populated (e.g., from disk persistence)
+        if len(self._daily_cache) >= total * 0.9:  # 90% threshold
+            logger.info(f"PREWARM_DAILY | Cache already has {len(self._daily_cache)} symbols, skipping API fetch")
+            return {
+                "success": len(self._daily_cache),
+                "failed": 0,
+                "total": total,
+                "elapsed_seconds": 0.0,
+                "source": "cache"
+            }
+
         logger.info(f"PREWARM_DAILY | Starting pre-warm for {total} symbols ({days} days each)")
         logger.info(f"PREWARM_DAILY | Estimated time: {total / self._rps / 60:.1f} minutes at {self._rps} RPS")
 
@@ -310,7 +341,8 @@ class KiteClient:
             "success": success_count,
             "failed": fail_count,
             "total": total,
-            "elapsed_seconds": elapsed
+            "elapsed_seconds": elapsed,
+            "source": "api"
         }
 
     def get_historical_1m(self, symbol: str, from_dt: datetime, to_dt: datetime) -> Optional[pd.DataFrame]:

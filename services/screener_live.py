@@ -283,12 +283,6 @@ class ScreenerLive:
         )
         logger.info("ScreenerLive: Persistent worker pool created (2 workers)")
 
-        # Pre-warm daily data cache for all symbols (avoid 6s per bar disk I/O)
-        if hasattr(self.sdk, 'prewarm_daily_cache'):
-            self.sdk.prewarm_daily_cache(self.core_symbols, days=210)
-            logger.info("ScreenerLive: Daily cache pre-warmed for all symbols")
-        else:
-            logger.info("ScreenerLive: SDK doesn't support cache pre-warming (live mode)")
 
         logger.debug(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
