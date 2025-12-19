@@ -92,6 +92,7 @@ class CapitalManager:
             'trades_accepted': 0,
             'trades_rejected_capital': 0,
             'trades_rejected_positions': 0,
+            'trades_shadow': 0,  # Shadow trades (tracked but no capital)
             'max_concurrent_positions': 0,
             'max_capital_used': 0.0,
             'total_margin_used_sum': 0.0,  # For averaging
@@ -188,13 +189,24 @@ class CapitalManager:
         # but 5x is a safe conservative estimate for most liquid stocks
         return 5.0 if self.mis_enabled else 1.0
 
+    def is_at_capacity(self) -> bool:
+        """
+        Check if we're at maximum position capacity.
+
+        Used for shadow trade decision - if at capacity, new trades become shadow trades.
+        """
+        if not self.enabled:
+            return False  # Unlimited capacity when disabled
+        return len(self.positions) >= self.max_positions
+
     def can_enter_position(
         self,
         symbol: str,
         qty: int,
         price: float,
         cap_segment: str = "unknown",
-        mis_leverage: Optional[float] = None
+        mis_leverage: Optional[float] = None,
+        shadow: bool = False
     ) -> Tuple[bool, int, str]:
         """
         Check if we can enter a new position and return adjusted quantity if needed.
@@ -205,14 +217,22 @@ class CapitalManager:
             price: Entry price
             cap_segment: Market cap segment (for MIS leverage lookup)
             mis_leverage: Direct MIS leverage from stock data (from nse_all.json)
+            shadow: If True, this is a shadow trade (no capital consumed)
 
         Returns:
             (can_enter: bool, adjusted_qty: int, reason: str)
             - If capital is sufficient: (True, original_qty, reason)
             - If capital is insufficient: (True, scaled_down_qty, reason)
             - If position limit reached: (False, 0, reason)
+            - If shadow trade: (True, original_qty, "shadow_trade")
         """
         self.stats['trades_attempted'] += 1
+
+        # Shadow trades always allowed - they don't consume capital
+        if shadow:
+            self.stats['trades_shadow'] += 1
+            logger.info(f"CAP_SHADOW | {symbol} | Shadow trade (no capital) | Qty: {qty}")
+            return True, qty, "shadow_trade"
 
         # MODE 1: DISABLED - Always allow (unlimited capital)
         if not self.enabled:
@@ -292,7 +312,8 @@ class CapitalManager:
         price: float,
         cap_segment: str = "unknown",
         timestamp: Optional[datetime] = None,
-        mis_leverage: Optional[float] = None
+        mis_leverage: Optional[float] = None,
+        shadow: bool = False
     ) -> None:
         """
         Record a new position and allocate capital.
@@ -304,9 +325,15 @@ class CapitalManager:
             cap_segment: Market cap segment
             timestamp: Entry timestamp
             mis_leverage: Direct MIS leverage from stock data (from nse_all.json)
+            shadow: If True, this is a shadow trade (no margin allocated)
         """
         if not self.enabled:
             # No tracking in disabled mode
+            return
+
+        # Shadow trades: skip margin allocation entirely
+        if shadow:
+            logger.info(f"CAP_SHADOW_ENTRY | {symbol} | Shadow trade - no margin allocated | Qty: {qty} @ Rs.{price:.2f}")
             return
 
         leverage = self._get_leverage(symbol, cap_segment, mis_leverage)
@@ -337,14 +364,23 @@ class CapitalManager:
                     f"Available: Rs.{self.available_capital:,.0f}/{self.total_capital:,.0f} | "
                     f"Positions: {len(self.positions)}/{self.max_positions}")
 
-    def exit_position(self, symbol: str) -> None:
+    def exit_position(self, symbol: str, shadow: bool = False) -> None:
         """
         Release capital when a position is closed.
 
         Args:
             symbol: Stock symbol
+            shadow: If True, this is a shadow trade (no margin to release)
         """
-        if not self.enabled or symbol not in self.positions:
+        if not self.enabled:
+            return
+
+        # Shadow trades: no margin was allocated, nothing to release
+        if shadow:
+            logger.info(f"CAP_SHADOW_EXIT | {symbol} | Shadow trade - no margin to release")
+            return
+
+        if symbol not in self.positions:
             return
 
         pos = self.positions[symbol]
@@ -377,6 +413,7 @@ class CapitalManager:
             'trades_accepted': self.stats['trades_accepted'],
             'trades_rejected_capital': self.stats['trades_rejected_capital'],
             'trades_rejected_positions': self.stats['trades_rejected_positions'],
+            'trades_shadow': self.stats['trades_shadow'],
             'acceptance_rate_pct': (self.stats['trades_accepted'] / self.stats['trades_attempted'] * 100) if self.stats['trades_attempted'] > 0 else 100
         }
 
@@ -399,6 +436,7 @@ class CapitalManager:
             'trade_stats': {
                 'trades_attempted': self.stats['trades_attempted'],
                 'trades_accepted': self.stats['trades_accepted'],
+                'trades_shadow': self.stats['trades_shadow'],
                 'trades_rejected': {
                     'capital': self.stats['trades_rejected_capital'],
                     'positions': self.stats['trades_rejected_positions'],

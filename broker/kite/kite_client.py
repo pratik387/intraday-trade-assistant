@@ -77,15 +77,21 @@ class KiteClient:
                 continue
 
             # Safe equity filter
+            tsym_upper = tsym.upper()
             if (
                 exch != "NSE" or
                 seg != "NSE" or
                 itype != "EQ" or
                 expiry or
                 not name or len(name) < 3 or
-                tsym.upper().startswith(tuple(str(i) for i in range(10))) or  # starts with digit
-                any(x in tsym.upper() for x in ["SDL", "NCD", "GSEC", "GOI", "GS", "T-BILL"]) or
-                "-" in tsym
+                tsym_upper.startswith(tuple(str(i) for i in range(10))) or  # starts with digit
+                any(x in tsym_upper for x in ["SDL", "NCD", "GSEC", "GOI", "GS", "T-BILL"]) or
+                "-" in tsym or
+                # ETF filter: exclude all ETFs
+                # Kite API `name` field contains "ETF" as a word for all exchange-traded funds
+                # e.g., "NIPPON INDIA ETF NIFTY BEES", "KOTAK BANKING ETF"
+                # This is dynamic - works for any new ETFs without hardcoded lists
+                "etf" in name.split()
             ):
                 continue
 

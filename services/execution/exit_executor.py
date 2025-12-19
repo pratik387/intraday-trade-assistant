@@ -1171,19 +1171,26 @@ class ExitExecutor:
             return
 
         try:
-            exit_side = "SELL" if pos.side.upper() == "BUY" else "BUY"
-            # Get trade_id from plan if available (for tagging exit orders)
-            trade_id = pos.plan.get("trade_id") if pos.plan else None
-            args = {
-                "symbol": sym,
-                "side": exit_side,
-                "qty": int(qty_exit),
-                "order_type": self.exec_mode,
-                "product": self.exec_product,
-                "variety": self.exec_variety,
-                "trade_id": trade_id,  # For order tagging (ITDA_xxx) - identifies app orders
-            }
-            self.broker.place_order(**args)
+            # Check if this is a shadow trade (simulated, no real orders)
+            is_shadow = pos.plan.get("shadow", False) if pos.plan else False
+
+            if is_shadow:
+                # SHADOW TRADE: Don't place real exit order, just simulate
+                logger.info(f"SHADOW_EXIT_ORDER | {sym} | Simulated exit (no broker call) | qty={qty_exit} reason={reason}")
+            else:
+                exit_side = "SELL" if pos.side.upper() == "BUY" else "BUY"
+                # Get trade_id from plan if available (for tagging exit orders)
+                trade_id = pos.plan.get("trade_id") if pos.plan else None
+                args = {
+                    "symbol": sym,
+                    "side": exit_side,
+                    "qty": int(qty_exit),
+                    "order_type": self.exec_mode,
+                    "product": self.exec_product,
+                    "variety": self.exec_variety,
+                    "trade_id": trade_id,  # For order tagging (ITDA_xxx) - identifies app orders
+                }
+                self.broker.place_order(**args)
         except Exception as e:
             logger.warning("exit.place_order failed sym=%s qty=%s reason=%s err=%s", sym, qty_exit, reason, e)
 
@@ -1243,6 +1250,7 @@ class ExitExecutor:
                 'pnl': round(pnl, 2),
                 'reason': reason,
                 'timestamp': str(ts) if ts else str(pd.Timestamp.now()),
+                'shadow': pos.plan.get('shadow', False),  # Shadow trade flag
                 # Edge diagnostic fields for exit analysis
                 'diagnostics': {
                     'exit_type': 'partial' if qty_exit < pos.qty else 'full',
@@ -1347,8 +1355,10 @@ class ExitExecutor:
             self.persistence.remove_position(sym)
 
         # Release capital (free margin) on full exit
+        # Shadow trades have no margin to release
         if self.capital_manager:
-            self.capital_manager.exit_position(sym)
+            is_shadow = pos.plan.get("shadow", False)
+            self.capital_manager.exit_position(sym, shadow=is_shadow)
 
         try:
             st = pos.plan.get("_state") or {}

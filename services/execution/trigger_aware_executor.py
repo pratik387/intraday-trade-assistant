@@ -88,22 +88,31 @@ class TriggerAwareExecutor:
                 price = trade.trigger_price or plan.get("price", 0)
                 cap_segment = plan.get("cap_segment", "unknown")
 
+                # SHADOW TRADE LOGIC: If at capacity, mark as shadow instead of rejecting
+                # Shadow trades go through entire pipeline but don't consume capital
+                is_shadow = plan.get("shadow", False)  # May already be marked
+                if not is_shadow and self.capital_manager.is_at_capacity():
+                    trade.plan["shadow"] = True
+                    is_shadow = True
+                    logger.info(f"SHADOW_TRADE | {trade.symbol} | At max capacity - continuing as shadow trade")
+
                 can_enter, adjusted_qty, reason = self.capital_manager.can_enter_position(
-                    trade.symbol, qty, price, cap_segment
+                    trade.symbol, qty, price, cap_segment, shadow=is_shadow
                 )
 
                 if not can_enter:
+                    # This should only happen for capital insufficiency (not max positions, since shadow handles that)
                     logger.warning(f"Capital check failed: {trade.symbol} - {reason}")
                     return False
 
-                # Update plan with adjusted quantity if scaled down
-                if adjusted_qty != qty:
-                    logger.info(f"Capital scaling: {trade.symbol} qty {qty} → {adjusted_qty}")
+                # Update plan with adjusted quantity if scaled down (not applicable for shadow trades)
+                if adjusted_qty != qty and not is_shadow:
+                    logger.info(f"Capital scaling: {trade.symbol} qty {qty} -> {adjusted_qty}")
                     trade.plan["qty"] = adjusted_qty
                     trade.plan["_original_qty"] = qty  # Keep original for reference
 
             return True
-            
+
         except Exception as e:
             logger.exception(f"Final execution check failed: {trade.symbol}: {e}")
             return False
@@ -144,18 +153,25 @@ class TriggerAwareExecutor:
                     logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
                     return False
 
-            # Place order with trade_id for tagging (identifies app-placed orders)
-            order_args = {
-                "symbol": symbol,
-                "side": side,
-                "qty": qty,
-                "order_type": "MARKET",  # Using market orders for trigger execution
-                "product": "MIS",
-                "variety": "regular",
-                "trade_id": trade.trade_id,  # For order tagging (ITDA_xxx)
-            }
+            # Check if this is a shadow trade (simulated, no capital consumed)
+            is_shadow = plan.get("shadow", False)
 
-            order_id = self.broker.place_order(**order_args)
+            if is_shadow:
+                # SHADOW TRADE: Don't place real broker order, generate simulated order_id
+                order_id = f"shadow-{trade.trade_id}"
+                logger.info(f"SHADOW_ORDER | {symbol} | Simulated order (no broker call) | order_id={order_id}")
+            else:
+                # Place order with trade_id for tagging (identifies app-placed orders)
+                order_args = {
+                    "symbol": symbol,
+                    "side": side,
+                    "qty": qty,
+                    "order_type": "MARKET",  # Using market orders for trigger execution
+                    "product": "MIS",
+                    "variety": "regular",
+                    "trade_id": trade.trade_id,  # For order tagging (ITDA_xxx)
+                }
+                order_id = self.broker.place_order(**order_args)
 
             # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
             # Reason: Both trade_logger.info() (removed) and trading_logger.log_trigger() (below)
@@ -184,6 +200,7 @@ class TriggerAwareExecutor:
                     'regime': plan.get('regime', ''),
                     'order_id': order_id,
                     'side': side,
+                    'shadow': plan.get('shadow', False),  # Shadow trade flag
                     'diagnostics': {
                         'confidence_score': trade.confidence_score,
                         'trigger_price': trade.trigger_price,
@@ -201,14 +218,17 @@ class TriggerAwareExecutor:
             }
 
             # Record position in capital manager (allocate margin)
+            # Shadow trades skip margin allocation
             if self.capital_manager:
                 cap_segment = plan.get("cap_segment", "unknown")
+                is_shadow = plan.get("shadow", False)
                 self.capital_manager.enter_position(
                     symbol=symbol,
                     qty=qty,
                     price=price,
                     cap_segment=cap_segment,
-                    timestamp=trade.trigger_timestamp
+                    timestamp=trade.trigger_timestamp,
+                    shadow=is_shadow
                 )
 
             # Update shared position store for exit executor
