@@ -361,7 +361,7 @@ class KiteClient:
             Returns None if no data or API error.
         """
         token = self._token_for(symbol)
-        logger.info("KiteClient.get_historical_1m: fetching 1m data for %s from %s to %s", symbol, from_dt, to_dt)
+        logger.debug("KiteClient.get_historical_1m: fetching 1m data for %s from %s to %s", symbol, from_dt, to_dt)
         for attempt in range(3):
             try:
                 self._rate_limit()

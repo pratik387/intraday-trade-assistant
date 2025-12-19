@@ -1623,6 +1623,9 @@ class BasePipeline(ABC):
         notional = qty * effective_entry_price
 
         # 9. BUILD PLAN
+        # CRITICAL: For immediate mode, use effective_entry_price (current_close) as the reference
+        # since targets are calculated from there. This ensures plan is consistent.
+        plan_entry_ref = effective_entry_price if entry_result.entry_mode == "immediate" else entry_ref_price
         plan = {
             "symbol": symbol,
             "eligible": True,
@@ -1631,9 +1634,9 @@ class BasePipeline(ABC):
             "regime": regime,
             "category": self.get_category_name(),
 
-            "entry_ref_price": round(entry_ref_price, 2),
+            "entry_ref_price": round(plan_entry_ref, 2),
             "entry": {
-                "reference": round(entry_ref_price, 2),
+                "reference": round(plan_entry_ref, 2),
                 "zone": [round(entry_result.entry_zone[0], 2), round(entry_result.entry_zone[1], 2)],
                 "trigger": entry_result.entry_trigger,
                 "mode": entry_result.entry_mode,
@@ -1702,7 +1705,7 @@ class BasePipeline(ABC):
         plan = self._apply_quality_filters(plan, effective_entry_price, atr, measured_move)
 
         if plan["eligible"]:
-            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (base={rank_result.score:.2f}), quality={quality_result.quality_status}, entry={entry_ref_price:.2f}")
+            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (base={rank_result.score:.2f}), quality={quality_result.quality_status}, entry={plan_entry_ref:.2f}")
         else:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected by quality filters: {plan.get('quality', {}).get('rejection_reason', 'unknown')}")
 

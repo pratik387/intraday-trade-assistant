@@ -203,8 +203,9 @@ class ExitExecutor:
         """
         Enhanced tick handler that checks exits for open positions.
 
-        Note: 'price' parameter is required by bar_builder.on_tick signature but not used here.
-        We call broker.get_ltp_with_level() instead for polymorphic behavior.
+        Uses the tick price directly for instant exit checking in live/paper mode.
+        This avoids race conditions with ltp_cache (which is updated after this callback)
+        and eliminates REST API calls that would be rate-limited.
         """
         # Call original on_tick first
         if callable(self.original_on_tick):
@@ -213,16 +214,20 @@ class ExitExecutor:
             except Exception as e:
                 logger.exception(f"Original on_tick failed for {symbol}: {e}")
 
-        # Check exits on tick - broker.get_ltp_with_level() handles live vs backtest polymorphically
-        self._check_tick_exits(symbol, ts)
+        # Check exits using the tick price directly (no API call needed)
+        self._check_tick_exits(symbol, price, ts)
 
-    def _check_tick_exits(self, symbol: str, ts) -> None:
+    def _check_tick_exits(self, symbol: str, tick_price: float, ts) -> None:
         """
         Check if tick hits SL/targets for open positions.
 
-        Uses broker.get_ltp_with_level() for polymorphic behavior:
-        - Live/paper: Returns current LTP (real-time tick)
-        - Backtest: Checks if bar OHLC touched level, returns level or close
+        In live/paper mode, uses the tick price directly for instant exit checking.
+        This eliminates race conditions with ltp_cache and avoids rate-limited API calls.
+
+        Args:
+            symbol: Trading symbol
+            tick_price: Current tick price from websocket
+            ts: Tick timestamp
         """
         try:
             open_pos = self.positions.list_open()
@@ -233,34 +238,31 @@ class ExitExecutor:
             # Convert timestamp
             ts_pd = pd.Timestamp(ts) if not isinstance(ts, pd.Timestamp) else ts
 
-            # Check SL - broker handles intrabar accuracy polymorphically
+            # Check SL using tick price directly
             plan_sl = self._get_plan_sl(pos.plan)
             if not math.isnan(plan_sl):
-                sl_px = self.broker.get_ltp_with_level(symbol, check_level=plan_sl)
-                if sl_px is not None and self._breach_sl(pos.side, sl_px, plan_sl):
-                    logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={sl_px:.2f} sl={plan_sl:.2f}")
-                    self._exit(symbol, pos, sl_px, ts_pd, "tick_sl")
+                if self._breach_sl(pos.side, tick_price, plan_sl):
+                    logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f}")
+                    self._exit(symbol, pos, tick_price, ts_pd, "tick_sl")
                     return
 
-            # Check targets - broker handles intrabar accuracy polymorphically
+            # Check targets using tick price directly
             t1, t2 = self._get_targets(pos.plan)
             st = pos.plan.get("_state") or {}
             t1_done = bool(st.get("t1_done", False))
 
             # T2 (full exit)
             if not math.isnan(t2):
-                t2_px = self.broker.get_ltp_with_level(symbol, check_level=t2)
-                if t2_px is not None and self._target_hit(pos.side, t2_px, t2):
-                    logger.info(f"TICK_T2_HIT: {symbol} {pos.side} price={t2_px:.2f} t2={t2:.2f}")
-                    self._exit(symbol, pos, t2_px, ts_pd, "tick_target_t2")
+                if self._target_hit(pos.side, tick_price, t2):
+                    logger.info(f"TICK_T2_HIT: {symbol} {pos.side} price={tick_price:.2f} t2={t2:.2f}")
+                    self._exit(symbol, pos, tick_price, ts_pd, "tick_target_t2")
                     return
 
             # T1 (partial exit)
             if (not t1_done) and not math.isnan(t1):
-                t1_px = self.broker.get_ltp_with_level(symbol, check_level=t1)
-                if t1_px is not None and self._target_hit(pos.side, t1_px, t1):
-                    logger.info(f"TICK_T1_HIT: {symbol} {pos.side} price={t1_px:.2f} t1={t1:.2f}")
-                    self._partial_exit_t1(symbol, pos, t1_px, ts_pd)
+                if self._target_hit(pos.side, tick_price, t1):
+                    logger.info(f"TICK_T1_HIT: {symbol} {pos.side} price={tick_price:.2f} t1={t1:.2f}")
+                    self._partial_exit_t1(symbol, pos, tick_price, ts_pd)
                     return
 
         except Exception as e:
