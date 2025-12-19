@@ -255,17 +255,24 @@ class TriggerAwareExecutor:
                 if self.persistence:
                     from broker.kite.kite_broker import APP_ORDER_TAG_PREFIX
                     order_tag = f"{APP_ORDER_TAG_PREFIX}{trade.trade_id[-12:]}"
-                    self.persistence.save_position(
-                        symbol=symbol,
-                        side=side,
-                        qty=qty,
-                        avg_price=price,
-                        trade_id=trade.trade_id,
-                        order_id=order_id,
-                        order_tag=order_tag,
-                        plan=adjusted_plan,
-                        state={}  # Initial state (t1_done=False, etc.)
-                    )
+                    logger.info(f"[PERSIST] Saving position: {symbol} {side} {qty}@{price} trade_id={trade.trade_id}")
+                    try:
+                        self.persistence.save_position(
+                            symbol=symbol,
+                            side=side,
+                            qty=qty,
+                            avg_price=price,
+                            trade_id=trade.trade_id,
+                            order_id=order_id,
+                            order_tag=order_tag,
+                            plan=adjusted_plan,
+                            state={}  # Initial state (t1_done=False, etc.)
+                        )
+                        logger.info(f"[PERSIST] Position saved successfully: {symbol}")
+                    except Exception as e:
+                        logger.error(f"[PERSIST] Failed to save position {symbol}: {e}")
+                else:
+                    logger.warning(f"[PERSIST] persistence is None - position {symbol} NOT saved")
 
             return True
             

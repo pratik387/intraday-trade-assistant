@@ -75,6 +75,7 @@ from pipelines import process_setup_candidates
 from services.orders.order_queue import OrderQueue
 from services.scan.energy_scanner import EnergyScanner
 from diagnostics.diag_event_log import diag_event_log, mint_trade_id
+from services.state.orb_cache_persistence import ORBCachePersistence
 import uuid
 
 
@@ -262,6 +263,10 @@ class ScreenerLive:
         self._orb_cache_lock = threading.Lock()
         self._orb_recovery_in_progress = False
         self._orb_recovery_thread: Optional[threading.Thread] = None
+
+        # ORB cache persistence for restart recovery
+        self._orb_cache_persistence = ORBCachePersistence()
+        self._load_orb_cache_from_disk()
 
         # NEW: de-dupe memory (per symbol last accepted)
         # stores: {symbol: {"ts": pd.Timestamp, "setup": str|None, "score": float}}
@@ -1029,6 +1034,33 @@ class ScreenerLive:
             return pd.DataFrame()
         return idx if isinstance(idx, pd.DataFrame) else pd.DataFrame()
 
+    def _load_orb_cache_from_disk(self) -> None:
+        """
+        Load ORB levels cache from disk on startup.
+
+        If the server restarts after 09:40, the opening range bars (09:15-09:30)
+        may not be available from the broker's intraday API. This loads the
+        previously computed ORB levels from disk.
+        """
+        try:
+            cached_levels = self._orb_cache_persistence.load_today()
+            if cached_levels:
+                today = datetime.now().date()
+                with self._orb_cache_lock:
+                    self._orb_levels_cache[today] = cached_levels
+                logger.info(
+                    f"ORB_CACHE | Loaded {len(cached_levels)} symbols from disk cache on startup"
+                )
+        except Exception as e:
+            logger.warning(f"ORB_CACHE | Failed to load from disk on startup: {e}")
+
+    def _save_orb_cache_to_disk(self, session_date, levels_by_symbol: Dict[str, Dict[str, float]]) -> None:
+        """Save ORB levels cache to disk for restart recovery."""
+        try:
+            self._orb_cache_persistence.save(session_date, levels_by_symbol)
+        except Exception as e:
+            logger.warning(f"ORB_CACHE | Failed to save to disk: {e}")
+
     def _compute_orb_levels_once(self, now, df5_by_symbol: Dict[str, pd.DataFrame]) -> Optional[Dict[str, Dict[str, float]]]:
         """
         Compute ORH/ORL/PDH/PDL/PDC for all symbols once at 09:35 and cache for the day.
@@ -1104,6 +1136,7 @@ class ScreenerLive:
 
                 # Cache for the day
                 self._orb_levels_cache[session_date] = levels_by_symbol
+                self._save_orb_cache_to_disk(session_date, levels_by_symbol)
                 valid_pdh = sum(1 for v in levels_by_symbol.values() if not pd.isna(v.get("PDH")))
                 logger.info(f"ORB_CACHE | Late start: Computed PDH/PDL/PDC for {valid_pdh}/{len(levels_by_symbol)} symbols")
                 return levels_by_symbol
@@ -1163,6 +1196,9 @@ class ScreenerLive:
 
         # Cache for the entire day
         self._orb_levels_cache[session_date] = levels_by_symbol
+
+        # Persist to disk for restart recovery
+        self._save_orb_cache_to_disk(session_date, levels_by_symbol)
 
         elapsed = time_module.perf_counter() - start_time
         logger.info(
@@ -1283,6 +1319,9 @@ class ScreenerLive:
             with self._orb_cache_lock:
                 self._orb_levels_cache[session_date] = levels_by_symbol
                 self._orb_recovery_in_progress = False
+
+            # Persist to disk for restart recovery
+            self._save_orb_cache_to_disk(session_date, levels_by_symbol)
 
             orb_count = sum(1 for v in levels_by_symbol.values()
                            if not (pd.isna(v.get("ORH")) or pd.isna(v.get("ORL"))))

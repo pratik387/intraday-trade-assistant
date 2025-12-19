@@ -34,7 +34,7 @@ from services.execution.exit_executor import ExitExecutor
 from services.ingest.tick_router import register_tick_listener
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
-from services.state import PositionPersistence, BrokerReconciliation
+from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
 from services.state.daily_cache_persistence import DailyCachePersistence
 from pipelines.base_pipeline import set_base_config_override, load_base_config
 
@@ -177,13 +177,14 @@ def startup_recovery(
     is_live_mode: bool,
     is_paper_mode: bool,
     log_dir,
-    position_store: _PositionStore
+    position_store: _PositionStore,
+    trading_logger_instance=None
 ) -> Optional[PositionPersistence]:
     """
     Recover position state on startup.
 
     For live mode: Reconciles with broker positions
-    For paper mode: Loads from snapshot only (no broker reconciliation)
+    For paper mode: Validates positions against current price (SL/T1/T2 checks)
     For dry-run (backtest): Returns None (no persistence needed)
 
     Args:
@@ -192,6 +193,7 @@ def startup_recovery(
         is_paper_mode: True if paper trading
         log_dir: Directory for position snapshot
         position_store: PositionStore to populate
+        trading_logger_instance: TradingLogger for phantom exit logging
 
     Returns:
         PositionPersistence instance (or None for backtests)
@@ -279,8 +281,49 @@ def startup_recovery(
             logger.warning(f"[RECOVERY] Restored {len(persisted)} positions from snapshot (no broker verification)")
 
     else:  # Paper mode
-        # Paper mode: Trust snapshot (no broker to reconcile with)
+        # Paper mode: Validate positions against current price before restoring
+        # This handles positions where SL/T1/T2 would have been hit while offline
+        restored_count = 0
+        phantom_exit_count = 0
+
         for sym, pers_pos in persisted.items():
+            # Get current price to validate position
+            try:
+                current_price = broker.get_ltp(sym)
+                if current_price is None:
+                    logger.warning(f"[RECOVERY] Could not get LTP for {sym}, skipping validation")
+                    current_price = pers_pos.avg_price  # Fallback to entry price
+            except Exception as e:
+                logger.warning(f"[RECOVERY] LTP fetch failed for {sym}: {e}, using entry price")
+                current_price = pers_pos.avg_price
+
+            # Validate position against current price (SL/T1/T2 checks)
+            should_restore, state_updates, phantom_logged = validate_paper_position_on_recovery(
+                pers_pos=pers_pos,
+                current_price=current_price,
+                trading_logger=trading_logger_instance,
+                persistence=persistence
+            )
+
+            if phantom_logged:
+                phantom_exit_count += 1
+
+            if not should_restore:
+                continue  # Position was stopped out or T2 hit - already handled
+
+            # Apply state updates (e.g., t1_done=True if T1 was hit)
+            if state_updates:
+                if pers_pos.state is None:
+                    pers_pos.state = {}
+                pers_pos.state.update(state_updates)
+
+                # Update quantity if T1 was hit (partial exit happened)
+                if "_remaining_qty" in state_updates:
+                    pers_pos.qty = state_updates["_remaining_qty"]
+
+                # Update persistence with new state
+                persistence.update_position(sym, new_qty=pers_pos.qty, state_updates=state_updates)
+
             merged_plan = _merge_persisted_state_into_plan(pers_pos)
             position_store.upsert(Position(
                 symbol=pers_pos.symbol,
@@ -289,9 +332,16 @@ def startup_recovery(
                 avg_price=pers_pos.avg_price,
                 plan=merged_plan,
             ))
-            logger.info(f"[RECOVERY] Restored position (paper): {sym} {pers_pos.side} {pers_pos.qty}@{pers_pos.avg_price} state={pers_pos.state}")
+            restored_count += 1
+            logger.info(
+                f"[RECOVERY] Restored position (paper): {sym} {pers_pos.side} {pers_pos.qty}@{pers_pos.avg_price} "
+                f"state={pers_pos.state} current_price={current_price:.2f}"
+            )
 
-        logger.info(f"[RECOVERY] Recovered {len(persisted)} positions from snapshot")
+        logger.info(
+            f"[RECOVERY] Paper mode recovery complete: restored={restored_count} "
+            f"phantom_exits={phantom_exit_count} total_persisted={len(persisted)}"
+        )
 
     return persistence
 
@@ -437,7 +487,8 @@ def main() -> int:
         is_live_mode=is_live,
         is_paper_mode=args.paper_trading,
         log_dir=get_log_directory(),
-        position_store=positions
+        position_store=positions,
+        trading_logger_instance=trading_logger  # For phantom exit logging in paper mode
     )
 
     trader = TriggerAwareExecutor(

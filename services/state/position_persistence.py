@@ -102,15 +102,37 @@ class PositionPersistence:
         self._load_from_file()
 
     def _load_from_file(self) -> None:
-        """Load positions from snapshot file if it exists."""
+        """Load positions from snapshot file if it exists.
+
+        Date validation: Only loads positions from today's snapshot.
+        Stale snapshots (from previous days) are rejected because:
+        - Positions would have been squared off at EOD
+        - Loading yesterday's positions would be incorrect
+        """
         if not self.state_file.exists():
             return
         try:
             with open(self.state_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
+
+            # Date validation: Check if snapshot is from today
+            snapshot_ts = data.get("timestamp")
+            if snapshot_ts:
+                try:
+                    snapshot_date = datetime.fromisoformat(snapshot_ts).date()
+                    today = datetime.now().date()
+                    if snapshot_date != today:
+                        logger.warning(
+                            f"[PERSIST] Stale snapshot rejected: {snapshot_date} != today ({today}). "
+                            f"Positions would have been EOD squared off."
+                        )
+                        return  # Don't load stale positions
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"[PERSIST] Could not parse snapshot timestamp: {snapshot_ts}, skipping date check")
+
             for sym, pos_data in data.get("positions", {}).items():
                 self._positions[sym] = PersistedPosition.from_dict(pos_data)
-            logger.info(f"Loaded {len(self._positions)} positions from snapshot")
+            logger.info(f"[PERSIST] Loaded {len(self._positions)} positions from snapshot (today's date validated)")
         except Exception as e:
             logger.error(f"Failed to load position snapshot: {e}")
 
