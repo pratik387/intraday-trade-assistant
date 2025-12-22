@@ -32,6 +32,7 @@ from services.screener_live import ScreenerLive
 from services.execution.trade_executor import RiskState, Position
 from services.execution.exit_executor import ExitExecutor
 from services.ingest.tick_router import register_tick_listener
+from services.ingest.tick_recorder import TickRecorder
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
 from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
@@ -475,6 +476,13 @@ def main() -> int:
 
     register_tick_listener(_ltp_tap)
 
+    # Start tick recording for paper trading mode
+    tick_recorder: Optional[TickRecorder] = None
+    if args.paper_trading:
+        tick_recorder = TickRecorder(output_dir="recordings")
+        tick_recorder.start()
+        logger.info(f"Tick recording started: {tick_recorder.file_path}")
+
     # Risk + shared positions
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
     positions = _PositionStore()
@@ -546,12 +554,18 @@ def main() -> int:
     logger.info("trigger-monitor: started")
 
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec, trader)
-    
+    _run_until_eod(screener, exit_exec, trader, tick_recorder)
+
     return 0
 
 
-def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: TriggerAwareExecutor, poll_sec: float = 0.2) -> None:
+def _run_until_eod(
+    screener: ScreenerLive,
+    exit_exec: ExitExecutor,
+    trader: TriggerAwareExecutor,
+    tick_recorder: Optional[TickRecorder] = None,
+    poll_sec: float = 0.2
+) -> None:
     logger.info("session start")
     stop = threading.Event()
 
@@ -594,7 +608,14 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: Trig
             trader.stop()
         except Exception as e:
             logger.warning("trader.stop failed: %s", e)
-            
+
+        # Stop tick recording
+        if tick_recorder:
+            try:
+                tick_recorder.stop()
+                logger.info(f"Tick recording saved: {tick_recorder.file_path} ({tick_recorder.tick_count:,} ticks)")
+            except Exception as e:
+                logger.warning("tick_recorder.stop failed: %s", e)
 
     logger.info("session end (EOD)")
 

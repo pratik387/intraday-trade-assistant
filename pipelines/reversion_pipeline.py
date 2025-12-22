@@ -247,53 +247,66 @@ class ReversionPipeline(BasePipeline):
         passed = True
         size_mult = 1.0  # NO PENALTIES - hard gates only
 
-        # ========== CROSS-RUN VALIDATED FILTERS (Dec 2024) ==========
-        # These filters were validated across both backtest_20251204 and backtest_20251205
+        # ========== UNIFIED FILTER STRUCTURE (Dec 2024) ==========
+        setup_filters = self._get("gates", "setup_filters") or {}
         validated_filters = self._get("gates", "validated_filters") or {}
         setup_lower = setup_type.lower()
         is_long = "_long" in setup_type
+        bias = "long" if is_long else "short"
 
         # Get volume from 5m bar for volume filters
         bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
 
-        # LONG TRADE VOLUME FILTER (MIN 150K)
-        # Evidence: Winners have 2x volume (213k vs 107k)
-        if is_long:
-            filter_cfg = validated_filters.get("long_trade_volume")
-            min_volume = filter_cfg.get("min_volume")
-            if bar5_volume < min_volume:
-                reasons.append(f"long_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
-                logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: Long vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
-            else:
-                reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
+        # Get RSI for global filters
+        rsi_val = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns and not pd.isna(df5m["rsi"].iloc[-1]) else None
 
-        # ========== VOLUME_SPIKE_REVERSAL_SHORT FILTER (DATA-DRIVEN Dec 2024) ==========
-        # vol>=10x + daily_regime!=trend_up: 70% WR, 246 Rs/trade (vs baseline 54% WR, 68 Rs/trade)
-        if setup_type == "volume_spike_reversal_short":
-            vsr_filter_cfg = validated_filters.get("volume_spike_reversal_short_filter", {})
-            if vsr_filter_cfg.get("enabled"):
-                min_vol_ratio = vsr_filter_cfg.get("min_volume_ratio")
-                block_regimes = vsr_filter_cfg.get("block_regimes")
+        # ========== 1. GLOBAL FILTERS ==========
+        global_passed, global_reasons = self.apply_global_filters(
+            setup_type=setup_type, symbol=symbol, bias=bias,
+            adx=adx, rsi=rsi_val, volume=bar5_volume
+        )
+        reasons.extend(global_reasons)
+        if not global_passed:
+            logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED by global filters: {global_reasons}")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
 
-                # Get daily regime from regime_diagnostics
+        # ========== 2. SETUP-SPECIFIC FILTERS (unified structure) ==========
+        setup_filter_cfg = setup_filters.get(setup_type, {})
+
+        # Check if setup filter is enabled (default True for backwards compat)
+        if setup_filter_cfg.get("enabled", True):
+            # 2a. Min volume filter
+            min_volume = setup_filter_cfg.get("min_volume")
+            if min_volume:
+                if bar5_volume < min_volume:
+                    reasons.append(f"setup_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                    logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: Vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+                else:
+                    reasons.append(f"setup_vol_ok:{bar5_volume/1000:.0f}k")
+
+            # 2b. Min volume ratio filter (for volume_spike_reversal_short)
+            min_vol_ratio = setup_filter_cfg.get("min_volume_ratio")
+            if min_vol_ratio:
+                if vol_mult < min_vol_ratio:
+                    reasons.append(f"setup_vol_ratio_blocked:{vol_mult:.1f}x<{min_vol_ratio}x")
+                    logger.info(f"[REVERSION] {symbol} {setup_type} BLOCKED: vol_ratio {vol_mult:.1f}x < {min_vol_ratio}x")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+                else:
+                    reasons.append(f"setup_vol_ratio_ok:{vol_mult:.1f}x")
+
+            # 2c. Blocked daily regimes filter (for volume_spike_reversal_short)
+            blocked_daily_regimes = setup_filter_cfg.get("blocked_daily_regimes", [])
+            if blocked_daily_regimes:
                 daily_regime = ""
                 if regime_diagnostics and "daily" in regime_diagnostics:
                     daily_regime = (regime_diagnostics.get("daily") or {}).get("regime", "")
-
-                # Check volume ratio
-                if vol_mult < min_vol_ratio:
-                    reasons.append(f"vsr_short_vol_blocked:{vol_mult:.1f}x<{min_vol_ratio}x")
-                    logger.info(f"[REVERSION] {symbol} volume_spike_reversal_short BLOCKED: vol_ratio {vol_mult:.1f}x < {min_vol_ratio}x")
+                if daily_regime in blocked_daily_regimes:
+                    reasons.append(f"setup_daily_regime_blocked:{daily_regime}")
+                    logger.info(f"[REVERSION] {symbol} {setup_type} BLOCKED: daily_regime={daily_regime} in blocked list")
                     return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
-
-                # Check daily regime
-                if daily_regime in block_regimes:
-                    reasons.append(f"vsr_short_regime_blocked:daily={daily_regime}")
-                    logger.info(f"[REVERSION] {symbol} volume_spike_reversal_short BLOCKED: daily_regime={daily_regime} in block list {block_regimes}")
-                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
-
-                reasons.append(f"vsr_short_ok:vol={vol_mult:.1f}x,daily={daily_regime}")
+                else:
+                    reasons.append(f"setup_daily_regime_ok:{daily_regime or 'unknown'}")
 
         # ========== VWAP_RECLAIM VOLUME FILTER (DATA-DRIVEN Dec 2024) ==========
         # From spike test: VWAP_RECLAIM vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs
@@ -374,82 +387,99 @@ class ReversionPipeline(BasePipeline):
         htf_context: Optional[Dict] = None
     ) -> RankingResult:
         """
-        Reversion-specific ranking - ALL 9 COMPONENTS FROM OLD ranker.py _intraday_strength().
+        REVERSION-SPECIFIC RANKING (Dec 2024 Recalibration)
 
-        From ranker.py lines 95-131:
-        1. s_vol  - Volume ratio: min(vol_ratio / divisor, cap)
-        2. s_rsi  - RSI score: max((rsi - mid) / divisor, floor)
-        3. s_rsis - RSI slope: max(min(rsi_slope, cap), 0)
-        4. s_adx  - ADX score: max((adx - mid) / divisor, floor)
-        5. s_adxs - ADX slope: max(min(adx_slope, cap), 0)
-        6. s_vwap - VWAP alignment: bonus if aligned, penalty if not
-        7. s_dist - Distance from level: near/ok/far scoring
-        8. s_sq   - Squeeze percentile: <=50/<=70/>=90 scoring
-        9. s_acc  - Acceptance status: excellent/good bonus
+        Pro trader research findings for REVERSION/MEAN-REVERSION plays:
+        - Low ADX = GOOD (ranging market = mean reversion works)
+        - Extreme RSI = GOOD (oversold/overbought = exhaustion signal)
+        - Counter-VWAP = GOOD (extended from VWAP = reversion opportunity)
+        - Far from level = GOOD (overextension = reversion setup)
 
-        HTF Logic for REVERSION:
-        - Reversion REQUIRES exhaustion on HTF timeframe
-        - +25% bonus if HTF shows exhaustion (wick rejection)
-        - +15% bonus if HTF trend opposing (trading against exhausted move)
+        7 weighted components:
+        1. Volume (10%): Moderate - exhaustion volume is key
+        2. RSI (25%): Extreme RSI = exhaustion signal
+        3. ADX (20%): Low ADX = ranging market
+        4. VWAP (15%): Counter-VWAP = overextension
+        5. Distance (10%): Far = overextension opportunity
+        6. Squeeze (10%): Low squeeze = ranging market
+        7. Acceptance (10%): Disabled - exhaustion matters more than structure
         """
         logger.debug(f"[REVERSION] Calculating rank score for {symbol} in {regime}")
 
-        # REQUIRED features (core indicators - must exist)
+        # REQUIRED features
         vol_ratio = float(intraday_features["volume_ratio"])
         rsi = float(intraday_features["rsi"])
         adx = float(intraday_features["adx"])
         above_vwap = bool(intraday_features["above_vwap"])
         bias = intraday_features["bias"]
-        # OPTIONAL features (derived/data-dependent - may not always be available)
-        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
-        adx_slope = float(intraday_features.get("adx_slope") or 0.0)
-        dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
+
+        # OPTIONAL features (None = skip scoring, no hidden defaults)
+        dist_from_level_bpct = intraday_features.get("dist_from_level_bpct")
         squeeze_pctile = intraday_features.get("squeeze_pctile")
-        acceptance_status = intraday_features.get("acceptance_status") or "poor"
+        acceptance_status = intraday_features.get("acceptance_status")
 
-        # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
+        score_scale = self._get("ranking", "score_scale")
 
-        # 1. VOLUME SCORE (s_vol)
+        # 1. VOLUME SCORE - Moderate for reversion
         vol_cfg = weights["volume"]
         s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
 
-        # 2. RSI SCORE (s_rsi) - PORTED FROM OLD ranker.py line 97
+        # 2. RSI SCORE - EXTREME = GOOD for reversion (exhaustion signal)
         rsi_cfg = weights["rsi"]
-        s_rsi = max((rsi - rsi_cfg["mid"]) / rsi_cfg["divisor"], rsi_cfg["floor"])
+        if bias == "long":
+            if rsi <= rsi_cfg["long_very_oversold_threshold"]:
+                s_rsi = rsi_cfg["extreme_bonus"]  # RSI < 25 = extreme oversold
+            elif rsi <= rsi_cfg["long_oversold_threshold"]:
+                s_rsi = rsi_cfg["good_bonus"]  # RSI < 35 = oversold
+            elif rsi >= rsi_cfg["long_overbought_penalty_threshold"]:
+                s_rsi = rsi_cfg["penalty"]  # RSI > 60 = wrong direction
+            else:
+                s_rsi = 0.0
+        else:  # short
+            if rsi >= rsi_cfg["short_very_overbought_threshold"]:
+                s_rsi = rsi_cfg["extreme_bonus"]  # RSI > 75 = extreme overbought
+            elif rsi >= rsi_cfg["short_overbought_threshold"]:
+                s_rsi = rsi_cfg["good_bonus"]  # RSI > 65 = overbought
+            elif rsi <= rsi_cfg["short_oversold_penalty_threshold"]:
+                s_rsi = rsi_cfg["penalty"]  # RSI < 40 = wrong direction
+            else:
+                s_rsi = 0.0
 
-        # 3. RSI SLOPE SCORE (s_rsis) - PORTED FROM OLD ranker.py line 98
-        rsi_slope_cfg = weights["rsi_slope"]
-        s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
-
-        # 4. ADX SCORE (s_adx) - ISSUE 3 FIX: Added cap to prevent high ADX dominating
+        # 3. ADX SCORE - LOW = GOOD for reversion (ranging market)
         adx_cfg = weights["adx"]
-        s_adx_raw = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
-        adx_cap = adx_cfg.get("cap")  # Default to no cap if not specified
-        s_adx = min(s_adx_raw, adx_cap)
+        if adx <= adx_cfg["ideal_max"]:
+            s_adx = adx_cfg["ideal_bonus"]  # ADX < 20 = ideal ranging
+        elif adx <= adx_cfg["acceptable_max"]:
+            s_adx = adx_cfg["acceptable_bonus"]  # ADX < 25 = acceptable
+        elif adx >= adx_cfg["penalty_threshold"]:
+            s_adx = adx_cfg["penalty"]  # ADX > 35 = trending (bad for reversion)
+        else:
+            s_adx = 0.0
 
-        # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
-        adx_slope_cfg = weights["adx_slope"]
-        s_adxs = max(min(adx_slope, adx_slope_cfg["cap"]), 0.0)
-
-        # 6. VWAP ALIGNMENT SCORE (s_vwap)
+        # 4. VWAP SCORE - COUNTER = GOOD for reversion (overextension)
         vwap_cfg = weights["vwap"]
         if bias == "long":
-            s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
+            # Long reversion: want to buy BELOW vwap (counter = extended down)
+            s_vwap = vwap_cfg["counter_bonus"] if not above_vwap else vwap_cfg["aligned_bonus"]
         else:
-            s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
+            # Short reversion: want to sell ABOVE vwap (counter = extended up)
+            s_vwap = vwap_cfg["counter_bonus"] if above_vwap else vwap_cfg["aligned_bonus"]
 
-        # 7. DISTANCE FROM LEVEL SCORE (s_dist) - PORTED FROM OLD ranker.py lines 107-113
+        # 5. DISTANCE SCORE - FAR = GOOD for reversion (overextension)
         dist_cfg = weights["distance"]
-        adist = abs(dist_from_level_bpct)
-        if adist <= dist_cfg["near_bpct"]:
-            s_dist = dist_cfg["near_score"]
-        elif adist <= dist_cfg["ok_bpct"]:
-            s_dist = dist_cfg["ok_score"]
+        if dist_from_level_bpct is not None:
+            adist = abs(dist_from_level_bpct)
+            if adist <= dist_cfg["near_bpct"]:
+                s_dist = dist_cfg["near_score"]  # Near = less overextension
+            elif adist <= dist_cfg["ok_bpct"]:
+                s_dist = dist_cfg["ok_score"]  # Moderate extension
+            else:
+                s_dist = dist_cfg["far_score"]  # Far = good overextension
         else:
-            s_dist = dist_cfg["far_score"]
+            s_dist = 0.0
 
-        # 8. SQUEEZE PERCENTILE SCORE (s_sq) - FROM OLD ranker.py lines 115-122
+        # 6. SQUEEZE SCORE - Low squeeze = good for reversion
         squeeze_cfg = weights["squeeze"]
         if squeeze_pctile is not None:
             if squeeze_pctile <= 50:
@@ -463,46 +493,54 @@ class ReversionPipeline(BasePipeline):
         else:
             s_sq = 0.0
 
-        # 9. ACCEPTANCE STATUS SCORE (s_acc) - PORTED FROM OLD ranker.py lines 124-130
+        # 7. ACCEPTANCE SCORE - Disabled for reversion
         acc_cfg = weights["acceptance"]
-        if acceptance_status == "excellent":
-            s_acc = acc_cfg["excellent_bonus"]
-        elif acceptance_status == "good":
-            s_acc = acc_cfg["good_bonus"]
+        if acc_cfg["enabled"]:
+            if acceptance_status == "excellent":
+                s_acc = acc_cfg["excellent_bonus"]
+            elif acceptance_status == "good":
+                s_acc = acc_cfg["good_bonus"]
+            else:
+                s_acc = 0.0
         else:
             s_acc = 0.0
 
-        # BASE SCORE = SUM OF ALL 9 COMPONENTS (exactly like OLD ranker.py line 132)
-        base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
+        # WEIGHTED SUM (not simple addition) scaled to usable range
+        weighted_sum = (
+            s_vol * vol_cfg["weight"] +
+            s_rsi * rsi_cfg["weight"] +
+            s_adx * adx_cfg["weight"] +
+            s_vwap * vwap_cfg["weight"] +
+            s_dist * dist_cfg["weight"] +
+            s_sq * squeeze_cfg["weight"] +
+            s_acc * acc_cfg["weight"]
+        )
+        base_score = weighted_sum * score_scale
 
-        # Regime multiplier from config - reversion thrives in chop
+        # Regime multiplier
         setup_type = intraday_features["setup_type"]
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
-        # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
-        # to match OLD ranker.py which applies them once in rank_candidates().
-        # DO NOT apply them here - that would cause double-application!
-        _ = daily_trend  # Unused here - applied in universal adjustments
-        _ = htf_context  # Unused here - applied in universal adjustments
+        # HTF context handled in universal adjustments
+        _ = daily_trend
+        _ = htf_context
 
         final_score = base_score * regime_mult
 
-        logger.debug(f"[REVERSION] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f}")
+        logger.debug(f"[REVERSION] {symbol} score={final_score:.3f} (weighted_sum={weighted_sum:.3f}*scale={score_scale}) * regime={regime_mult:.2f}")
 
         return RankingResult(
             score=final_score,
             components={
                 "volume": s_vol,
                 "rsi": s_rsi,
-                "rsi_slope": s_rsis,
                 "adx": s_adx,
-                "adx_slope": s_adxs,
                 "vwap": s_vwap,
                 "distance": s_dist,
                 "squeeze": s_sq,
                 "acceptance": s_acc
             },
-            multipliers={"regime": regime_mult}  # daily/htf applied in universal adjustments
+            multipliers={"regime": regime_mult, "score_scale": score_scale}
         )
 
     # ======================== ENTRY ========================

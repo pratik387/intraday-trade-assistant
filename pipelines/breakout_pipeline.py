@@ -380,8 +380,9 @@ class BreakoutPipeline(BasePipeline):
         size_mult = 1.0
         min_hold = 0
 
-        # ========== CROSS-RUN VALIDATED FILTERS (Dec 2024) ==========
-        # These filters were validated across both backtest_20251204 and backtest_20251205
+        # ========== UNIFIED FILTER STRUCTURE (Dec 2024) ==========
+        # Uses setup_filters for per-setup config, validated_filters for backwards compat
+        setup_filters = self._get("gates", "setup_filters") or {}
         validated_filters = self._get("gates", "validated_filters") or {}
 
         # Get current hour from df5m index
@@ -391,103 +392,114 @@ class BreakoutPipeline(BasePipeline):
         # Get volume from 5m bar for long trade volume filter
         bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
         is_long = "_long" in setup_type
+        bias = "long" if is_long else "short"
+
+        # Get cap segment for filtering
+        cap_segment = get_cap_segment(symbol)
+
+        # Get RSI for global filters
+        rsi_val = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns and not pd.isna(df5m["rsi"].iloc[-1]) else None
 
         # Early FHM detection for bypass logic
         is_fhm = "first_hour_momentum" in setup_type.lower()
 
-        # 1. BREAKOUT_LONG: HOUR = 11 FILTER
-        # Evidence: R1: +1,695 Rs (91 trades) | R2: +1,554 Rs (92 trades) - 11AM breakouts have low WR
-        if setup_type == "breakout_long":
-            filter_cfg = validated_filters.get("breakout_long_hour_11", {})
-            blocked_hours = filter_cfg.get("blocked_hours")
-            if current_hour in blocked_hours:
-                reasons.append(f"breakout_long_blocked:hour{current_hour}_in_blocked_list")
-                logger.debug(f"[BREAKOUT] {symbol} breakout_long BLOCKED: Hour {current_hour} is in blocked hours {blocked_hours}")
+        # ========== 1. GLOBAL FILTERS (skip for FHM - uses RVOL-based filtering) ==========
+        if not is_fhm:
+            global_passed, global_reasons = self.apply_global_filters(
+                setup_type=setup_type, symbol=symbol, bias=bias,
+                adx=adx, rsi=rsi_val, volume=bar5_volume
+            )
+            reasons.extend(global_reasons)
+            if not global_passed:
+                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED by global filters: {global_reasons}")
                 return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            else:
-                reasons.append(f"breakout_long_hour_ok:{current_hour}")
+        else:
+            reasons.append("fhm_global_filters_bypass:uses_rvol")
 
-        # 2. LONG TRADE VOLUME FILTER (MIN 150K)
-        # Evidence: Winners have 2x volume (213k vs 107k)
-        # FHM BYPASS: FHM uses RVOL (relative volume) from screening, not absolute volume
-        # Small caps with high RVOL (6.97x like MAHLOG) are valid FHM plays even with <150k absolute volume
-        if is_long and not is_fhm:
-            filter_cfg = validated_filters.get("long_trade_volume")
-            min_volume = filter_cfg.get("min_volume")
-            if bar5_volume < min_volume:
-                reasons.append(f"long_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
-                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: Long vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+        # ========== 2. SETUP-SPECIFIC FILTERS (unified structure) ==========
+        setup_filter_cfg = setup_filters.get(setup_type, {})
+
+        # Check if setup filter is enabled (default True for backwards compat)
+        if setup_filter_cfg.get("enabled", True):
+            # 2a. Blocked hours filter
+            blocked_hours = setup_filter_cfg.get("blocked_hours", [])
+            if blocked_hours and current_hour in blocked_hours:
+                reasons.append(f"setup_blocked:hour{current_hour}_in_blocked_list")
+                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: Hour {current_hour} in blocked hours {blocked_hours}")
                 return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            else:
-                reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
-        elif is_long and is_fhm:
-            reasons.append(f"fhm_long_vol_bypass:{bar5_volume/1000:.0f}k:uses_rvol")
+            elif blocked_hours:
+                reasons.append(f"setup_hour_ok:{current_hour}")
 
-        # 2b. FIRST_HOUR_MOMENTUM_LONG DATA-DRIVEN FILTERS (Dec 2024)
-        # These filters apply BEFORE the standard FHM bypass because they're based on backtest analysis
-        # Evidence: large_cap 25% WR -Rs 3608, ADX>=25 has 33% WR -Rs 2166
-        if is_fhm and is_long:
-            fhm_filter_cfg = validated_filters.get("first_hour_momentum_long", {})
-
-            # Max ADX filter - even though FHM bypasses normal ADX, high ADX hurts FHM longs
-            fhm_max_adx = fhm_filter_cfg.get("max_adx")
-            if fhm_max_adx is not None and adx >= fhm_max_adx:
-                reasons.append(f"fhm_long_adx_blocked:adx{adx:.0f}>={fhm_max_adx}")
-                logger.info(f"[BREAKOUT] {symbol} first_hour_momentum_long BLOCKED: ADX {adx:.1f} >= max_adx {fhm_max_adx}")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-
-            # Blocked caps filter
-            fhm_blocked_caps = fhm_filter_cfg.get("blocked_caps", [])
-            if fhm_blocked_caps:
-                cap_segment = get_cap_segment(symbol)
-                if cap_segment in fhm_blocked_caps:
-                    reasons.append(f"fhm_long_cap_blocked:{cap_segment}")
-                    logger.info(f"[BREAKOUT] {symbol} first_hour_momentum_long BLOCKED: cap_segment {cap_segment} in blocked_caps {fhm_blocked_caps}")
+            # 2b. Min volume filter (FHM bypasses - uses RVOL)
+            min_volume = setup_filter_cfg.get("min_volume")
+            if min_volume and not is_fhm:
+                if bar5_volume < min_volume:
+                    reasons.append(f"setup_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                    logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: Vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
                     return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-                reasons.append(f"fhm_long_cap_ok:{cap_segment}")
+                else:
+                    reasons.append(f"setup_vol_ok:{bar5_volume/1000:.0f}k")
+            elif min_volume and is_fhm:
+                reasons.append(f"fhm_vol_bypass:{bar5_volume/1000:.0f}k:uses_rvol")
 
-            reasons.append(f"fhm_long_filters_passed:adx{adx:.0f}")
+            # 2c. Max ADX filter (for FHM - high ADX hurts FHM longs)
+            max_adx = setup_filter_cfg.get("max_adx")
+            if max_adx is not None and adx >= max_adx:
+                reasons.append(f"setup_adx_blocked:adx{adx:.0f}>={max_adx}")
+                logger.info(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: ADX {adx:.1f} >= max_adx {max_adx}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            elif max_adx is not None:
+                reasons.append(f"setup_adx_ok:{adx:.0f}<{max_adx}")
 
-        # 3. ORB_BREAKOUT_LONG CAP SEGMENT FILTER
+            # 2d. Blocked caps filter
+            blocked_caps = setup_filter_cfg.get("blocked_caps", [])
+            if blocked_caps and cap_segment in blocked_caps:
+                reasons.append(f"setup_cap_blocked:{cap_segment}")
+                logger.info(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: {cap_segment} in blocked_caps {blocked_caps}")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+            elif blocked_caps:
+                reasons.append(f"setup_cap_ok:{cap_segment}")
+
+            # 2e. Allowed caps filter (if set, only those caps allowed)
+            allowed_caps = setup_filter_cfg.get("allowed_caps")
+            # Skip allowed_caps check here - complex ORB cap logic handled below in specialized section
+
+        # ========== 3. SPECIALIZED FILTERS (complex logic from config) ==========
+        specialized_filters = self._get("gates", "specialized_filters") or {}
+
+        # 3a. ORB_BREAKOUT_LONG CAP SEGMENT FILTER
         # DATA-DRIVEN (Dec 2024): Large cap 92% WR vs mid/small 43% WR
         # Allow: large_cap always, mid_cap with strength>=0.7 and entry>=35min
         if setup_type == "orb_breakout_long":
-            cap_filter_cfg = validated_filters.get("orb_breakout_long_cap_filter", {})
-            if cap_filter_cfg.get("enabled"):
-                cap_segment = get_cap_segment(symbol)
-                allowed_caps = cap_filter_cfg.get("allowed_caps", ["large_cap"])
+            orb_cap_cfg = specialized_filters.get("orb_cap_filter_with_mid_cap_conditions", {})
+            if orb_cap_cfg.get("enabled", True):
+                # Use allowed_caps from setup_filters, specialized logic from specialized_filters
+                allowed_caps = setup_filter_cfg.get("allowed_caps", ["large_cap"])
                 entry_minute = current_time.minute if current_time else 30
 
                 if cap_segment in allowed_caps:
                     # Large cap always allowed
                     reasons.append(f"orb_cap_ok:{cap_segment}")
                 elif cap_segment == "mid_cap":
-                    # Mid cap allowed with additional filters
-                    mid_cfg = cap_filter_cfg.get("mid_cap_with_filters", {})
-                    if mid_cfg.get("enabled"):
-                        min_srr = mid_cfg.get("min_structural_rr")
-                        min_entry_min = mid_cfg.get("min_entry_minute")
-                        # strength parameter is structural_rr (passed from calculate_quality)
-                        structural_rr = strength
+                    # Mid cap allowed with additional filters from specialized_filters
+                    min_srr = orb_cap_cfg.get("mid_cap_min_structural_rr", 1.5)
+                    min_entry_min = orb_cap_cfg.get("mid_cap_min_entry_minute", 35)
+                    # strength parameter is structural_rr (passed from calculate_quality)
+                    structural_rr = strength
 
-                        srr_ok = structural_rr >= min_srr
-                        entry_ok = entry_minute >= min_entry_min
+                    srr_ok = structural_rr >= min_srr
+                    entry_ok = entry_minute >= min_entry_min
 
-                        if srr_ok and entry_ok:
-                            reasons.append(f"orb_mid_cap_ok:srr{structural_rr:.2f}>={min_srr},entry{entry_minute}>={min_entry_min}")
-                        else:
-                            fail_parts = []
-                            if not srr_ok:
-                                fail_parts.append(f"srr{structural_rr:.2f}<{min_srr}")
-                            if not entry_ok:
-                                fail_parts.append(f"entry{entry_minute}<{min_entry_min}")
-                            reasons.append(f"orb_mid_cap_blocked:{','.join(fail_parts)}")
-                            logger.info(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: mid_cap requires srr>={min_srr} AND entry>={min_entry_min}min, got srr={structural_rr:.2f}, entry={entry_minute}")
-                            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+                    if srr_ok and entry_ok:
+                        reasons.append(f"orb_mid_cap_ok:srr{structural_rr:.2f}>={min_srr},entry{entry_minute}>={min_entry_min}")
                     else:
-                        # Mid cap not allowed without filters
-                        reasons.append(f"orb_cap_blocked:mid_cap_filters_disabled")
-                        logger.info(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: mid_cap not allowed (filters disabled)")
+                        fail_parts = []
+                        if not srr_ok:
+                            fail_parts.append(f"srr{structural_rr:.2f}<{min_srr}")
+                        if not entry_ok:
+                            fail_parts.append(f"entry{entry_minute}<{min_entry_min}")
+                        reasons.append(f"orb_mid_cap_blocked:{','.join(fail_parts)}")
+                        logger.info(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: mid_cap requires srr>={min_srr} AND entry>={min_entry_min}min, got srr={structural_rr:.2f}, entry={entry_minute}")
                         return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
                 else:
                     # Small cap, micro cap, unknown - blocked
@@ -687,83 +699,89 @@ class BreakoutPipeline(BasePipeline):
         htf_context: Optional[Dict] = None
     ) -> RankingResult:
         """
-        Breakout-specific ranking - ALL 9 COMPONENTS FROM OLD ranker.py _intraday_strength().
+        BREAKOUT-SPECIFIC RANKING (Dec 2024 Recalibration)
 
-        From ranker.py lines 95-131:
-        1. s_vol  - Volume ratio: min(vol_ratio / divisor, cap)
-        2. s_rsi  - RSI score: max((rsi - mid) / divisor, floor)
-        3. s_rsis - RSI slope: max(min(rsi_slope, cap), 0)
-        4. s_adx  - ADX score: max((adx - mid) / divisor, floor)
-        5. s_adxs - ADX slope: max(min(adx_slope, cap), 0)
-        6. s_vwap - VWAP alignment: bonus if aligned, penalty if not
-        7. s_dist - Distance from level: near/ok/far scoring
-        8. s_sq   - Squeeze percentile: <=50/<=70/>=90 scoring
-        9. s_acc  - Acceptance status: excellent/good bonus
+        Pro trader research findings for BREAKOUT/MOMENTUM plays:
+        - High ADX = GOOD (strong trend confirms breakout validity)
+        - Neutral RSI = GOOD (room to run, not overbought/oversold)
+        - VWAP aligned = CRITICAL (momentum in direction of VWAP)
+        - Volume = CRITICAL (confirms institutional participation)
 
-        HTF Logic for BREAKOUT:
-        - Breakouts want HTF (15m) trend ALIGNED with setup direction
-        - +20% boost if HTF trend aligned
-        - -10% penalty if HTF trend opposing
-        - +10% bonus if HTF volume surge (confirms institutional participation)
+        6 weighted components (simplified from 9):
+        1. Volume (20%): High volume confirms breakout
+        2. RSI (15%): Neutral RSI = room to run
+        3. ADX (20%): High ADX = strong trend
+        4. VWAP (15%): Aligned = critical for momentum
+        5. Distance (10%): Less critical for breakouts
+        6. Squeeze (10%): Squeeze release = pent-up energy
+        7. Acceptance (10%): R:R matters for breakouts
         """
         logger.debug(f"[BREAKOUT] Calculating rank score for {symbol} in {regime}")
 
-        # REQUIRED features (core indicators - must exist)
+        # REQUIRED features
         vol_ratio = float(intraday_features["volume_ratio"])
         rsi = float(intraday_features["rsi"])
         adx = float(intraday_features["adx"])
         above_vwap = bool(intraday_features["above_vwap"])
         bias = intraday_features["bias"]
-        # OPTIONAL features (derived/data-dependent - may not always be available)
-        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
-        adx_slope = float(intraday_features.get("adx_slope") or 0.0)
-        dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
+
+        # OPTIONAL features (None = skip scoring, no hidden defaults)
+        dist_from_level_bpct = intraday_features.get("dist_from_level_bpct")
         squeeze_pctile = intraday_features.get("squeeze_pctile")
-        acceptance_status = intraday_features.get("acceptance_status") or "poor"
+        acceptance_status = intraday_features.get("acceptance_status")
 
-        # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
+        score_scale = self._get("ranking", "score_scale")
 
-        # 1. VOLUME SCORE (s_vol)
+        # 1. VOLUME SCORE - Critical for breakouts
         vol_cfg = weights["volume"]
         s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
 
-        # 2. RSI SCORE (s_rsi) - PORTED FROM OLD ranker.py line 97
+        # 2. RSI SCORE - NEUTRAL = GOOD for breakouts (room to run)
         rsi_cfg = weights["rsi"]
-        s_rsi = max((rsi - rsi_cfg["mid"]) / rsi_cfg["divisor"], rsi_cfg["floor"])
+        if rsi_cfg["neutral_min"] <= rsi <= rsi_cfg["neutral_max"]:
+            s_rsi = rsi_cfg["neutral_bonus"]  # Ideal: 45-55
+        elif rsi_cfg["good_min"] <= rsi <= rsi_cfg["good_max"]:
+            s_rsi = rsi_cfg["good_bonus"]  # Good: 40-60
+        elif bias == "long" and rsi >= rsi_cfg["long_overbought_threshold"]:
+            s_rsi = rsi_cfg["penalty"]  # Overbought = bad for long breakout
+        elif bias == "short" and rsi <= rsi_cfg["short_oversold_threshold"]:
+            s_rsi = rsi_cfg["penalty"]  # Oversold = bad for short breakout
+        else:
+            s_rsi = 0.0
 
-        # 3. RSI SLOPE SCORE (s_rsis) - PORTED FROM OLD ranker.py line 98
-        rsi_slope_cfg = weights["rsi_slope"]
-        s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
-
-        # 4. ADX SCORE (s_adx) - ISSUE 3 FIX: Added cap to prevent high ADX dominating
+        # 3. ADX SCORE - HIGH = GOOD for breakouts (strong trend confirms momentum)
         adx_cfg = weights["adx"]
-        s_adx_raw = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
-        adx_cap = adx_cfg.get("cap")  # Default to no cap if not specified
-        s_adx = min(s_adx_raw, adx_cap)
+        if adx >= adx_cfg["strong_threshold"]:
+            s_adx = adx_cfg["strong_bonus"]  # ADX > 35 = strong trend
+        elif adx >= adx_cfg["good_threshold"]:
+            s_adx = adx_cfg["good_bonus"]  # ADX > 25 = good trend
+        elif adx <= adx_cfg["weak_threshold"]:
+            s_adx = adx_cfg["weak_penalty"]  # ADX < 20 = no trend (bad for breakout)
+        else:
+            s_adx = 0.0
 
-        # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
-        adx_slope_cfg = weights["adx_slope"]
-        s_adxs = max(min(adx_slope, adx_slope_cfg["cap"]), 0.0)
-
-        # 6. VWAP ALIGNMENT SCORE (s_vwap)
+        # 4. VWAP SCORE - ALIGNED = CRITICAL for breakouts
         vwap_cfg = weights["vwap"]
         if bias == "long":
             s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
         else:
             s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
 
-        # 7. DISTANCE FROM LEVEL SCORE (s_dist) - PORTED FROM OLD ranker.py lines 107-113
+        # 5. DISTANCE SCORE - Less critical for breakouts
         dist_cfg = weights["distance"]
-        adist = abs(dist_from_level_bpct)
-        if adist <= dist_cfg["near_bpct"]:
-            s_dist = dist_cfg["near_score"]
-        elif adist <= dist_cfg["ok_bpct"]:
-            s_dist = dist_cfg["ok_score"]
+        if dist_from_level_bpct is not None:
+            adist = abs(dist_from_level_bpct)
+            if adist <= dist_cfg["near_bpct"]:
+                s_dist = dist_cfg["near_score"]
+            elif adist <= dist_cfg["ok_bpct"]:
+                s_dist = dist_cfg["ok_score"]
+            else:
+                s_dist = dist_cfg["far_score"]
         else:
-            s_dist = dist_cfg["far_score"]
+            s_dist = 0.0
 
-        # 8. SQUEEZE PERCENTILE SCORE (s_sq) - FROM OLD ranker.py lines 115-122
+        # 6. SQUEEZE SCORE - Squeeze release = pent-up energy
         squeeze_cfg = weights["squeeze"]
         if squeeze_pctile is not None:
             if squeeze_pctile <= 50:
@@ -777,49 +795,54 @@ class BreakoutPipeline(BasePipeline):
         else:
             s_sq = 0.0
 
-        # 9. ACCEPTANCE STATUS SCORE (s_acc) - PORTED FROM OLD ranker.py lines 124-130
+        # 7. ACCEPTANCE SCORE - Keep for breakouts (R:R matters)
         acc_cfg = weights["acceptance"]
-        if acceptance_status == "excellent":
-            s_acc = acc_cfg["excellent_bonus"]
-        elif acceptance_status == "good":
-            s_acc = acc_cfg["good_bonus"]
+        if acc_cfg["enabled"]:
+            if acceptance_status == "excellent":
+                s_acc = acc_cfg["excellent_bonus"]
+            elif acceptance_status == "good":
+                s_acc = acc_cfg["good_bonus"]
+            else:
+                s_acc = 0.0
         else:
             s_acc = 0.0
 
-        # BASE SCORE = SUM OF ALL 9 COMPONENTS (exactly like OLD ranker.py line 132)
-        base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
+        # WEIGHTED SUM (not simple addition) scaled to usable range
+        weighted_sum = (
+            s_vol * vol_cfg["weight"] +
+            s_rsi * rsi_cfg["weight"] +
+            s_adx * adx_cfg["weight"] +
+            s_vwap * vwap_cfg["weight"] +
+            s_dist * dist_cfg["weight"] +
+            s_sq * squeeze_cfg["weight"] +
+            s_acc * acc_cfg["weight"]
+        )
+        base_score = weighted_sum * score_scale
 
-        # Extract setup_type from intraday_features (passed from run_pipeline)
+        # Regime multiplier
         setup_type = intraday_features["setup_type"]
-
-        # Regime multiplier from config - check strategy-specific first, then fallback
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
-        # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
-        # to match OLD ranker.py which applies them once in rank_candidates().
-        # DO NOT apply them here - that would cause double-application!
-        # (daily_trend and htf_context are passed to category ranking for logging only)
-        _ = daily_trend  # Unused here - applied in universal adjustments
-        _ = htf_context  # Unused here - applied in universal adjustments
+        # HTF context handled in universal adjustments
+        _ = daily_trend
+        _ = htf_context
 
         final_score = base_score * regime_mult
 
-        logger.debug(f"[BREAKOUT] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f}")
+        logger.debug(f"[BREAKOUT] {symbol} score={final_score:.3f} (weighted_sum={weighted_sum:.3f}*scale={score_scale}) * regime={regime_mult:.2f}")
 
         return RankingResult(
             score=final_score,
             components={
                 "volume": s_vol,
                 "rsi": s_rsi,
-                "rsi_slope": s_rsis,
                 "adx": s_adx,
-                "adx_slope": s_adxs,
                 "vwap": s_vwap,
                 "distance": s_dist,
                 "squeeze": s_sq,
                 "acceptance": s_acc
             },
-            multipliers={"regime": regime_mult}  # daily/htf applied in universal adjustments
+            multipliers={"regime": regime_mult, "score_scale": score_scale}
         )
 
     # ======================== ENTRY ========================

@@ -180,9 +180,10 @@ class TradingLogger:
         price = trade_data.get('price', 0)
         strategy = trade_data.get('strategy', '')
         order_id = trade_data.get('order_id', '')
+        side = trade_data.get('side', 'BUY')
 
         self.trade_logger.info(
-            f"TRIGGER_EXEC | {symbol} | BUY {qty} @ {price} | strategy={strategy} | order_id={order_id}"
+            f"TRIGGER_EXEC | {symbol} | {side} {qty} @ {price} | strategy={strategy} | order_id={order_id}"
         )
 
         # NOTE: Live performance summary updates removed - performance tracking now done in post-processing only

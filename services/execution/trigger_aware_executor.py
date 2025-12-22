@@ -124,7 +124,11 @@ class TriggerAwareExecutor:
             symbol = trade.symbol
             
             # Extract order parameters
-            side = plan.get("side", "BUY")
+            # Derive side from bias if not explicitly set
+            side = plan.get("side")
+            if not side:
+                bias = plan.get("bias", "long")
+                side = "SELL" if bias.lower() == "short" else "BUY"
             qty = int(plan.get("qty", 0))
             price = trade.trigger_price or plan.get("price")
             

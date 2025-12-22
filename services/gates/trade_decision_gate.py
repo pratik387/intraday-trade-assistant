@@ -675,35 +675,6 @@ class TradeDecisionGate:
             # Fallback to 5m-only regime
             regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
 
-        # Phase 3: Check if setup should be blocked by daily regime (evidence-based)
-        # Linda Raschke MTF filtering: Block counter-trend setups when daily conf ≥ 0.70
-        if regime_diagnostics and "daily" in regime_diagnostics:
-            from services.gates.multi_timeframe_regime import DailyRegimeResult
-            daily_data = regime_diagnostics["daily"]
-            daily_result = DailyRegimeResult(
-                regime=daily_data.get("regime", "chop"),
-                confidence=daily_data.get("confidence", 0.0),
-                trend_strength=daily_data.get("trend_strength", 0.0),
-                metrics=daily_data.get("metrics", {})
-            )
-
-            # Check if multi-TF regime wants to block this setup
-            if hasattr(self.regime_gate, 'multi_tf_regime') and hasattr(self.regime_gate.multi_tf_regime, 'should_block_setup'):
-                should_block, block_reason = self.regime_gate.multi_tf_regime.should_block_setup(
-                    setup_type=best.setup_type,
-                    daily_result=daily_result,
-                    min_daily_confidence=0.70
-                )
-                if should_block:
-                    return GateDecision(
-                        accept=False,
-                        reasons=[f"blocked_by_daily_regime:{block_reason}"],
-                        setup_type=best.setup_type,
-                        regime=regime,
-                        regime_conf=regime_confidence,
-                        regime_diagnostics=regime_diagnostics
-                    )
-
         # Evidence for regime gate
         strength = _safe_float(best.strength, 0.0)
         if df5m_tail is not None and not df5m_tail.empty:
