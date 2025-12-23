@@ -142,21 +142,25 @@
             }
         },
         "setup_filters": {
-            "_comment": "UNIFIED FILTER STRUCTURE (Dec 2024) - Per-setup filters with enable/disable flags",
+            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Optimized for ~23K trades, 94% ROI at Rs 3L capital",
+            "_active_profile": "MODERATE",
             "failure_fade_long": {
                 "enabled": true,
-                "min_adx": 15,
-                "min_volume": 150000,
-                "_comment": "MIGRATED from regime_gate.py allow_setup() - ADX>=15 for trend fade setups"
+                "blocked_entirely": true,
+                "_moderate_filter": "BLOCKED - negative expectancy",
+                "_evidence": "MODERATE: Block failure_fade_long"
             },
             "failure_fade_short": {
                 "enabled": true,
-                "min_adx": 15,
-                "_comment": "MIGRATED from regime_gate.py allow_setup() - ADX>=15 for trend fade setups"
+                "blocked_entirely": true,
+                "_moderate_filter": "BLOCKED - negative expectancy",
+                "_evidence": "MODERATE: Block failure_fade_short"
             },
             "volume_spike_reversal_long": {
-                "enabled": false,
-                "min_volume": 150000
+                "enabled": true,
+                "blocked_regimes": ["chop"],
+                "_moderate_filter": "Block chop regime only",
+                "_evidence": "MODERATE: blocked_regimes=['chop'] improves quality"
             },
             "volume_spike_reversal_short": {
                 "enabled": false,

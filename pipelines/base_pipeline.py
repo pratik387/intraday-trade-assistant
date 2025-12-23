@@ -643,7 +643,7 @@ class BasePipeline(ABC):
         blocked_hours = filter_cfg.get("blocked_hours") or []
         if current_hour in blocked_hours:
             reasons.append(f"hour_blocked:{setup_lower}_{current_hour}")
-            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: hour {current_hour} in blocked_hours")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: hour {current_hour} in blocked_hours {blocked_hours}")
             return False, reasons, modifiers
 
         allowed_hours = filter_cfg.get("allowed_hours")
@@ -666,18 +666,20 @@ class BasePipeline(ABC):
             return False, reasons, modifiers
 
         # 6. RSI FILTERS
-        if rsi is not None:
-            min_rsi = filter_cfg.get("min_rsi")
-            if min_rsi is not None and rsi < min_rsi:
+        min_rsi = filter_cfg.get("min_rsi")
+        if min_rsi is not None:
+            if rsi is None:
+                logger.debug(f"[FILTER] {symbol} {setup_lower} RSI filter skipped: RSI is None (min_rsi={min_rsi})")
+            elif rsi < min_rsi:
                 reasons.append(f"rsi_below_min:{setup_lower}_rsi{rsi:.0f}<{min_rsi}")
                 logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: RSI {rsi:.1f} < min_rsi {min_rsi}")
                 return False, reasons, modifiers
 
-            max_rsi = filter_cfg.get("max_rsi")
-            if max_rsi is not None and rsi > max_rsi:
-                reasons.append(f"rsi_above_max:{setup_lower}_rsi{rsi:.0f}>{max_rsi}")
-                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: RSI {rsi:.1f} > max_rsi {max_rsi}")
-                return False, reasons, modifiers
+        max_rsi = filter_cfg.get("max_rsi")
+        if max_rsi is not None and rsi is not None and rsi > max_rsi:
+            reasons.append(f"rsi_above_max:{setup_lower}_rsi{rsi:.0f}>{max_rsi}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: RSI {rsi:.1f} > max_rsi {max_rsi}")
+            return False, reasons, modifiers
 
         # 7. VOLUME FILTERS
         min_volume = filter_cfg.get("min_volume")
@@ -1539,7 +1541,7 @@ class BasePipeline(ABC):
         if not (opening_bell_active and self._opening_bell_bypasses("range_compression")):
             range_passed, range_reason = self._check_range_compression(df5m, atr)
             if not range_passed:
-                logger.info(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {range_reason}")
+                logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {range_reason}")
                 return {"eligible": False, "reason": "universal_gate_fail", "details": [range_reason]}
 
         # Cap-strategy blocking - block certain setups for certain market cap segments
@@ -1571,10 +1573,10 @@ class BasePipeline(ABC):
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at QUALITY: missing required data")
             return {"eligible": False, "reason": "quality_fail", "details": ["missing_required_levels"]}
 
-        # Log quality metrics
+        # Log quality metrics (DEBUG - detailed data in planning.jsonl)
         clean_metrics = {k: round(float(v), 2) if v is not None else None for k, v in quality_result.metrics.items()}
-        logger.info(f"QUALITY_{category}: {symbol} structural_rr={quality_result.structural_rr:.2f} "
-                   f"status={quality_result.quality_status} metrics={clean_metrics}")
+        logger.debug(f"QUALITY_{category}: {symbol} structural_rr={quality_result.structural_rr:.2f} "
+                    f"status={quality_result.quality_status} metrics={clean_metrics}")
 
         # NOTE: Structural R:R min check with strategy-specific overrides is done in _apply_quality_filters()
         # This allows breakouts to use relaxed thresholds while other categories use stricter defaults
@@ -1652,7 +1654,7 @@ class BasePipeline(ABC):
             # e.g., orb_pullback_short: rank_score < 1.0 performs better
             max_rank_score = setup_block_cfg.get("max_rank_score")
             if max_rank_score is not None and adjusted_score > max_rank_score:
-                logger.info(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} > max_rank_score {max_rank_score}")
+                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} > max_rank_score {max_rank_score}")
                 return {"eligible": False, "reason": "max_rank_score_exceeded", "details": [f"rank_{adjusted_score:.3f}_gt_{max_rank_score}"]}
 
             # 4c.2 MIN RANK SCORE FILTER (DATA-DRIVEN Dec 2024)
@@ -1660,7 +1662,7 @@ class BasePipeline(ABC):
             # e.g., resistance_bounce_short: rank_score >= 2 performs better
             min_rank_score = setup_block_cfg.get("min_rank_score")
             if min_rank_score is not None and adjusted_score < min_rank_score:
-                logger.info(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} < min_rank_score {min_rank_score}")
+                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} < min_rank_score {min_rank_score}")
                 return {"eligible": False, "reason": "min_rank_score_not_met", "details": [f"rank_{adjusted_score:.3f}_lt_{min_rank_score}"]}
 
         # NOTE: allowed_hours, min_rsi, max_rsi filters removed - handled pre-ranking in validate_gates()

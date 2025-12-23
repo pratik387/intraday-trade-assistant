@@ -112,85 +112,73 @@
             "level_merge_tolerance_pct": 0.3
         },
         "setup_filters": {
-            "_comment": "UNIFIED FILTER SYSTEM: All per-setup filters with enabled flags. Replaces setup_regime_blocks and validated_filters.",
+            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Optimized for ~23K trades, 94% ROI at Rs 3L capital",
+            "_active_profile": "MODERATE",
             "orb_pullback_long": {
-                "enabled": false,
-                "min_adx": 30,
-                "blocked_caps": ["micro_cap"],
-                "_evidence": "33 trades total. ADX 30-35: 75% WR +Rs 463. ADX 20-25: 25% WR -Rs 1094."
+                "enabled": true,
+                "blocked_caps": ["large_cap"],
+                "_moderate_filter": "Block large_cap only",
+                "_evidence": "MODERATE: blocked_caps=['large_cap'] improves quality"
             },
             "orb_pullback_short": {
-                "enabled": false,
-                "allowed_caps": ["small_cap"],
-                "min_adx": 25,
-                "max_rank_score": 1.0,
-                "t1_mult": 1.5,
-                "t2_mult": 1.5,
-                "_evidence": "Dec 2024: ADX>=25: 52 trades Rs 191 avg, 76.9% WR."
+                "enabled": true,
+                "_moderate_filter": "All allowed - no restrictions",
+                "_evidence": "MODERATE: All orb_pullback_short allowed"
             },
             "support_bounce_long": {
-                "enabled": false,
-                "blocked_entirely": true,
-                "_evidence": "35 trades, -Rs 8,770, 34% WR. Block entirely."
+                "enabled": true,
+                "allowed_caps": ["micro_cap"],
+                "min_rank_score": 1.5,
+                "_moderate_filter": "micro_cap only + rank >= 1.5",
+                "_evidence": "MODERATE: Micro cap + rank 1.5 turns -1.4M loss into profit"
             },
             "range_bounce_long": {
-                "enabled": false,
-                "blocked_regimes": ["trend_down", "chop"],
-                "max_adx": 28,
-                "t1_mult": 1.5,
-                "t2_mult": 1.5,
-                "_evidence": "ADX<28 + NOT trend_down: 9 trades, Rs 506 avg, 88.9% WR."
+                "enabled": true,
+                "min_rsi": 55,
+                "blocked_hours": [10],
+                "_moderate_filter": "RSI >= 55 + block 10:00 hour",
+                "_evidence": "MODERATE: RSI >= 55 + block hour 10 (53% SL, -Rs 205 avg). Saves Rs 18,335 over 3 years."
             },
             "discount_zone_long": {
-                "enabled": false,
+                "enabled": true,
                 "blocked_entirely": true,
-                "_evidence": "Dec 2024 analysis: 1 trade, -500 Rs, 0% WR"
+                "_moderate_filter": "BLOCKED - negative expectancy",
+                "_evidence": "MODERATE: Rs -357K loss over 3 years, block entirely"
             },
             "vwap_lose_short": {
-                "enabled": false,
+                "enabled": true,
                 "blocked_entirely": true,
                 "_evidence": "Dec 2024 analysis: 16 trades, -3,282 Rs, 25% WR"
             },
             "resistance_bounce_short": {
-                "enabled": false,
-                "blocked_regimes": ["trend_up"],
-                "blocked_caps": ["large_cap"],
-                "min_adx": 20,
-                "max_adx": 30,
-                "min_rank_score": 2,
-                "allowed_hours": [11],
-                "min_rsi": 38,
-                "max_rsi": 48,
-                "min_rr": 1.5,
-                "max_rr": 3.0,
-                "sl_mult": 1.5,
-                "t1_mult": 1.5,
-                "t2_mult": 1.5,
-                "_evidence": "RSI 38-48 filter. 46 trades, Rs 277 avg net, 71.7% WR."
+                "enabled": true,
+                "allowed_caps": ["micro_cap", "small_cap"],
+                "_moderate_filter": "micro_cap + small_cap only",
+                "_evidence": "MODERATE: allowed_caps filter improves quality"
             },
             "range_bounce_short": {
-                "enabled": false,
-                "blocked_regimes": ["chop", "trend_up", "trend_down"],
-                "min_adx": 25,
-                "max_adx": 30,
-                "min_rank_score": 2,
-                "allowed_hours": [10, 11],
-                "min_rr": 2.0,
-                "max_rr": 4.0,
-                "sl_mult": 1.5,
-                "t1_mult": 1.5,
-                "t2_mult": 1.5,
-                "_evidence": "Spike test: 101 trades Rs 329 avg gross, 50.5% WR."
+                "enabled": true,
+                "allowed_caps": ["micro_cap", "small_cap"],
+                "_moderate_filter": "micro_cap + small_cap only",
+                "_evidence": "MODERATE: allowed_caps=['micro_cap', 'small_cap'] -> +Rs 1.5M"
             },
             "premium_zone_short": {
-                "enabled": false,
-                "blocked_regimes": ["trend_up"],
-                "blocked_caps": ["micro_cap"],
-                "min_adx": 15,
-                "max_adx": 30,
-                "sl_mult": 1.5,
-                "t1_mult": 1.5,
-                "_evidence": "NOT trend_up: 11 trades Rs 213 avg, 54.5% WR."
+                "enabled": true,
+                "min_adx": 20,
+                "max_adx": 20,
+                "_moderate_filter": "ADX = 20 exactly",
+                "_evidence": "MODERATE: Exact ADX=20 filter for precision"
+            },
+            "order_block_short": {
+                "enabled": true,
+                "_moderate_filter": "All allowed",
+                "_evidence": "MODERATE: order_block_short all allowed"
+            },
+            "order_block_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_moderate_filter": "BLOCKED - negative expectancy",
+                "_evidence": "MODERATE: Block order_block_long"
             }
         },
         "global_filters": {

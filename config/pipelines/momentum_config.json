@@ -178,28 +178,36 @@
             }
         },
         "setup_filters": {
-            "_comment": "UNIFIED FILTER STRUCTURE (Dec 2024) - Per-setup filters with enable/disable flags",
+            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Momentum setups not in MODERATE profile - disabled",
+            "_active_profile": "MODERATE",
+            "_note": "Momentum setups not included in MODERATE profile - kept disabled",
             "momentum_breakout_long": {
                 "enabled": false,
                 "min_volume": 100000,
+                "_moderate_filter": "Not in MODERATE profile",
                 "_evidence": "R1: +848 Rs (14 trades) - Low volume momentum breakouts lack conviction"
             },
             "momentum_breakout_short": {
-                "enabled": false
+                "enabled": false,
+                "_moderate_filter": "Not in MODERATE profile"
             },
             "trend_continuation_long": {
                 "enabled": false,
-                "min_volume": 150000
+                "min_volume": 150000,
+                "_moderate_filter": "Not in MODERATE profile"
             },
             "trend_continuation_short": {
-                "enabled": false
+                "enabled": false,
+                "_moderate_filter": "Not in MODERATE profile"
             },
             "trend_pullback_long": {
                 "enabled": false,
-                "min_volume": 150000
+                "min_volume": 150000,
+                "_moderate_filter": "Not in MODERATE profile"
             },
             "trend_pullback_short": {
-                "enabled": false
+                "enabled": false,
+                "_moderate_filter": "Not in MODERATE profile"
             }
         },
         "global_filters": {

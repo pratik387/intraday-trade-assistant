@@ -148,7 +148,7 @@ class BreakoutPipeline(BasePipeline):
             features["fhm_price_move_pct"] = fhm_result.get("price_move_pct", 0.0)
             if fhm_result.get("eligible"):
                 reasons.append(f"fhm_eligible:rvol{fhm_result['rvol']:.1f}x,move{fhm_result['price_move_pct']:.1f}%")
-                logger.info(f"[BREAKOUT] FHM eligible: {symbol} RVOL={fhm_result['rvol']:.2f}x, Move={fhm_result['price_move_pct']:.2f}%")
+                logger.debug(f"[BREAKOUT] FHM eligible: {symbol} RVOL={fhm_result['rvol']:.2f}x, Move={fhm_result['price_move_pct']:.2f}%")
 
         return ScreeningResult(passed=passed, reasons=reasons, features=features)
 
@@ -419,9 +419,29 @@ class BreakoutPipeline(BasePipeline):
         # ========== 2. SETUP-SPECIFIC FILTERS (unified structure) ==========
         setup_filter_cfg = setup_filters.get(setup_type, {})
 
+        # 2a. BLOCKED_ENTIRELY check (MODERATE profile blocks certain setups completely)
+        if setup_filter_cfg.get("blocked_entirely"):
+            reasons.append(f"blocked_entirely:{setup_type}")
+            logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: blocked_entirely=true (MODERATE profile)")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+        # 2b. BLOCKED_REGIMES check (e.g., break_of_structure_long blocks trend_up)
+        blocked_regimes = setup_filter_cfg.get("blocked_regimes", [])
+        if blocked_regimes and regime in blocked_regimes:
+            reasons.append(f"blocked_regime:{regime}")
+            logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: regime {regime} in blocked_regimes {blocked_regimes}")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+        # 2c. ALLOWED_REGIMES check (e.g., breakout_long only in trend_down)
+        allowed_regimes = setup_filter_cfg.get("allowed_regimes", [])
+        if allowed_regimes and regime not in allowed_regimes:
+            reasons.append(f"regime_not_allowed:{regime}")
+            logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: regime {regime} not in allowed_regimes {allowed_regimes}")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
         # Check if setup filter is enabled (default True for backwards compat)
         if setup_filter_cfg.get("enabled", True):
-            # 2a. Blocked hours filter
+            # 2d. Blocked hours filter
             blocked_hours = setup_filter_cfg.get("blocked_hours", [])
             if blocked_hours and current_hour in blocked_hours:
                 reasons.append(f"setup_blocked:hour{current_hour}_in_blocked_list")
@@ -446,7 +466,7 @@ class BreakoutPipeline(BasePipeline):
             max_adx = setup_filter_cfg.get("max_adx")
             if max_adx is not None and adx >= max_adx:
                 reasons.append(f"setup_adx_blocked:adx{adx:.0f}>={max_adx}")
-                logger.info(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: ADX {adx:.1f} >= max_adx {max_adx}")
+                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: ADX {adx:.1f} >= max_adx {max_adx}")
                 return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
             elif max_adx is not None:
                 reasons.append(f"setup_adx_ok:{adx:.0f}<{max_adx}")
@@ -455,7 +475,7 @@ class BreakoutPipeline(BasePipeline):
             blocked_caps = setup_filter_cfg.get("blocked_caps", [])
             if blocked_caps and cap_segment in blocked_caps:
                 reasons.append(f"setup_cap_blocked:{cap_segment}")
-                logger.info(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: {cap_segment} in blocked_caps {blocked_caps}")
+                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: {cap_segment} in blocked_caps {blocked_caps}")
                 return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
             elif blocked_caps:
                 reasons.append(f"setup_cap_ok:{cap_segment}")
@@ -499,12 +519,12 @@ class BreakoutPipeline(BasePipeline):
                         if not entry_ok:
                             fail_parts.append(f"entry{entry_minute}<{min_entry_min}")
                         reasons.append(f"orb_mid_cap_blocked:{','.join(fail_parts)}")
-                        logger.info(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: mid_cap requires srr>={min_srr} AND entry>={min_entry_min}min, got srr={structural_rr:.2f}, entry={entry_minute}")
+                        logger.debug(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: mid_cap requires srr>={min_srr} AND entry>={min_entry_min}min, got srr={structural_rr:.2f}, entry={entry_minute}")
                         return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
                 else:
                     # Small cap, micro cap, unknown - blocked
                     reasons.append(f"orb_cap_blocked:{cap_segment}")
-                    logger.info(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: {cap_segment} not in allowed list {allowed_caps}")
+                    logger.debug(f"[BREAKOUT] {symbol} orb_breakout_long BLOCKED: {cap_segment} not in allowed list {allowed_caps}")
                     return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
         # ORB detection - structure detector already enforces 10:30 cutoff via should_detect_at_time()
@@ -542,7 +562,7 @@ class BreakoutPipeline(BasePipeline):
                     if rvol >= rvol_threshold:
                         fhm_regime_override = True
                         reasons.append(f"fhm_regime_override:rvol{rvol:.1f}x>={rvol_threshold}x")
-                        logger.info(f"[BREAKOUT] FHM regime override for {symbol}: RVOL={rvol:.2f}x >= {rvol_threshold}x, skipping regime blocking")
+                        logger.debug(f"[BREAKOUT] FHM regime override for {symbol}: RVOL={rvol:.2f}x >= {rvol_threshold}x, skipping regime blocking")
 
         # Regime rules from config - HARD GATE for chop (ORB allowed with volume+srr filter, others blocked)
         # Exception: FHM regime override bypasses this check when RVOL >= 3x
@@ -1052,7 +1072,7 @@ class BreakoutPipeline(BasePipeline):
         # Low-volatility instruments (ETFs, liquid funds) can't hit viable targets
         min_t1_threshold = risk_per_share * 0.8
         if cap1 < min_t1_threshold:
-            logger.info(f"[BREAKOUT] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
+            logger.debug(f"[BREAKOUT] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
             return None
 
         # Calculate target distances with caps
@@ -1158,8 +1178,8 @@ class BreakoutPipeline(BasePipeline):
         t1_r = (or_range * t1_mult) / new_rps if new_rps > 0 else t1_mult
         t2_r = (or_range * t2_mult) / new_rps if new_rps > 0 else t2_mult
 
-        logger.info(f"ORB_TARGET_RECALC: entry={actual_entry:.2f}, OR={or_range:.2f}, "
-                   f"T1={new_t1:.2f} ({t1_r:.2f}R), T2={new_t2:.2f} ({t2_r:.2f}R), SL={new_sl:.2f}")
+        logger.debug(f"ORB_TARGET_RECALC: entry={actual_entry:.2f}, OR={or_range:.2f}, "
+                    f"T1={new_t1:.2f} ({t1_r:.2f}R), T2={new_t2:.2f} ({t2_r:.2f}R), SL={new_sl:.2f}")
 
         # Update targets
         plan["targets"] = [

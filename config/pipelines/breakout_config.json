@@ -189,29 +189,31 @@
             }
         },
         "setup_filters": {
-            "_comment": "UNIFIED FILTER STRUCTURE (Dec 2024) - Per-setup filters with enable/disable flags",
+            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Optimized for ~23K trades, 94% ROI at Rs 3L capital",
+            "_active_profile": "MODERATE",
             "breakout_long": {
-                "enabled": false,
-                "blocked_hours": [11],
-                "min_volume": 150000,
-                "_evidence": "Hour 11: low WR, momentum fades. Volume: winners have 2x (213k vs 107k)"
+                "enabled": true,
+                "allowed_regimes": ["trend_down"],
+                "_moderate_filter": "Only trend_down regime allowed",
+                "_evidence": "MODERATE: allowed_regimes=['trend_down'] for counter-trend breakouts"
             },
             "breakout_short": {
                 "enabled": false
             },
             "first_hour_momentum_long": {
-                "enabled": false,
-                "blocked_caps": ["large_cap"],
-                "max_adx": 25,
-                "_evidence": "large_cap: 25% WR -Rs 3608. ADX<25: 67% WR +Rs 2091"
+                "enabled": true,
+                "blocked_entirely": true,
+                "_moderate_filter": "BLOCKED - major loser",
+                "_evidence": "MODERATE: Rs -309K loss, 2234 trades - block entirely"
             },
             "first_hour_momentum_short": {
                 "enabled": false
             },
             "orb_breakout_long": {
-                "enabled": false,
-                "allowed_caps": ["large_cap"],
-                "_note": "mid_cap with filters handled in specialized_filters"
+                "enabled": true,
+                "blocked_entirely": true,
+                "_moderate_filter": "BLOCKED - negative expectancy",
+                "_evidence": "MODERATE: Rs -120K loss, 1541 trades - block entirely"
             },
             "orb_breakout_short": {
                 "enabled": false
@@ -221,6 +223,17 @@
             },
             "orb_breakdown_short": {
                 "enabled": false
+            },
+            "squeeze_release_long": {
+                "enabled": true,
+                "_moderate_filter": "All allowed - profitable setup",
+                "_evidence": "MODERATE: squeeze_release_long all allowed"
+            },
+            "break_of_structure_long": {
+                "enabled": true,
+                "blocked_regimes": ["trend_up"],
+                "_moderate_filter": "Block trend_up regime",
+                "_evidence": "MODERATE: blocked_regimes=['trend_up'] improves quality"
             }
         },
         "global_filters": {

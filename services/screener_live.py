@@ -698,7 +698,7 @@ class ScreenerLive:
                     )
                     continue
 
-                logger.info(
+                logger.debug(
                     "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
                     sym, decision.setup_type, decision.regime, decision.size_mult, decision.min_hold_bars,
                     ";".join(decision.reasons),

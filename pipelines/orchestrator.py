@@ -349,7 +349,7 @@ class PipelineOrchestrator:
                 if strategy in orb_setups:
                     new_score = score + score_boost
                     plan["ranking"]["orb_priority_boost"] = score_boost
-                    logger.info(f"ORB_PRIORITY: {symbol} {strategy} score boosted {score:.2f} → {new_score:.2f}")
+                    logger.debug(f"ORB_PRIORITY: {symbol} {strategy} score boosted {score:.2f} → {new_score:.2f}")
                     boosted_plans.append((plan, new_score, symbol))
                 else:
                     boosted_plans.append((plan, score, symbol))

@@ -273,9 +273,22 @@ class ReversionPipeline(BasePipeline):
         # ========== 2. SETUP-SPECIFIC FILTERS (unified structure) ==========
         setup_filter_cfg = setup_filters.get(setup_type, {})
 
+        # 2a. BLOCKED_ENTIRELY check (MODERATE profile blocks certain setups completely)
+        if setup_filter_cfg.get("blocked_entirely"):
+            reasons.append(f"blocked_entirely:{setup_type}")
+            logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: blocked_entirely=true (MODERATE profile)")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+
+        # 2b. BLOCKED_REGIMES check (e.g., volume_spike_reversal_long blocks chop)
+        blocked_regimes = setup_filter_cfg.get("blocked_regimes", [])
+        if blocked_regimes and regime in blocked_regimes:
+            reasons.append(f"blocked_regime:{regime}")
+            logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: regime {regime} in blocked_regimes {blocked_regimes}")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+
         # Check if setup filter is enabled (default True for backwards compat)
         if setup_filter_cfg.get("enabled", True):
-            # 2a. Min volume filter
+            # 2c. Min volume filter
             min_volume = setup_filter_cfg.get("min_volume")
             if min_volume:
                 if bar5_volume < min_volume:
@@ -290,7 +303,7 @@ class ReversionPipeline(BasePipeline):
             if min_vol_ratio:
                 if vol_mult < min_vol_ratio:
                     reasons.append(f"setup_vol_ratio_blocked:{vol_mult:.1f}x<{min_vol_ratio}x")
-                    logger.info(f"[REVERSION] {symbol} {setup_type} BLOCKED: vol_ratio {vol_mult:.1f}x < {min_vol_ratio}x")
+                    logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: vol_ratio {vol_mult:.1f}x < {min_vol_ratio}x")
                     return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
                 else:
                     reasons.append(f"setup_vol_ratio_ok:{vol_mult:.1f}x")
@@ -303,7 +316,7 @@ class ReversionPipeline(BasePipeline):
                     daily_regime = (regime_diagnostics.get("daily") or {}).get("regime", "")
                 if daily_regime in blocked_daily_regimes:
                     reasons.append(f"setup_daily_regime_blocked:{daily_regime}")
-                    logger.info(f"[REVERSION] {symbol} {setup_type} BLOCKED: daily_regime={daily_regime} in blocked list")
+                    logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: daily_regime={daily_regime} in blocked list")
                     return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
                 else:
                     reasons.append(f"setup_daily_regime_ok:{daily_regime or 'unknown'}")

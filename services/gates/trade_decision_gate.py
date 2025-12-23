@@ -815,6 +815,14 @@ class TradeDecisionGate:
             strength=strength,
             lane_type=lane_type
         )
+
+        # NEW: Check for high-impact events that should BLOCK trades (Budget, Earnings, etc.)
+        # Uses EventsLoader for accurate date detection from static JSON + dynamic cache
+        event_mult, event_reason = self.event_gate.get_trading_multiplier(now.date(), symbol)
+        if event_mult == 0.0 and event_reason:
+            reasons.append(f"event_hard_block:{event_reason}")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
         # Check policy permissions
         if _is_breakout(best.setup_type) and not policy.allow_breakout:
             reasons.append("event_block:breakout")
@@ -1030,6 +1038,12 @@ class TradeDecisionGate:
                     reasons.append("entry_validation_price_action_pass")
             except Exception as e:
                 reasons.append(f"entry_validation_price_action_error:{e.__class__.__name__}")
+
+        # ---------------- EVENT SIZE ADJUSTMENT ----------------
+        # Apply size reduction for RBI/Expiry days (blocking events already handled above)
+        if event_mult < 1.0 and event_mult > 0.0:
+            size_mult *= event_mult
+            reasons.append(f"event_size_adj:{event_reason}:{event_mult:.2f}x")
 
         # ---------------- HCET sizing/hold tweaks ----------------
         if hc_ok:

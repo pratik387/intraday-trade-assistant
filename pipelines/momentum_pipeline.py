@@ -646,7 +646,7 @@ class MomentumPipeline(BasePipeline):
         # Low-volatility instruments (ETFs, liquid funds) can't hit viable targets
         min_t1_threshold = risk_per_share * 0.8
         if cap1 < min_t1_threshold:
-            logger.info(f"[MOMENTUM] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
+            logger.debug(f"[MOMENTUM] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
             return None
 
         # Calculate target distances with caps
