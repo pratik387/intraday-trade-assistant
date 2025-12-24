@@ -3,7 +3,13 @@ Comprehensive Backtest Report Generator
 Generates both high-level executive summary and detailed analysis reports.
 
 Usage:
+    # Auto-discover all backtest_*.zip and backtest_*_extracted/ directories
     python tools/generate_backtest_report.py
+
+    # Specify specific files/directories
+    python tools/generate_backtest_report.py backtest_20251217-143652_extracted
+    python tools/generate_backtest_report.py backtest_20251201.zip backtest_20251215.zip
+    python tools/generate_backtest_report.py backtest_*_extracted  # glob patterns work
 
 Output Structure:
     analysis/reports/3year_backtest/run_YYYYMMDD_HHMMSS/
@@ -12,6 +18,7 @@ Output Structure:
         - data.json               (machine-readable data)
 """
 import json
+import sys
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
@@ -34,19 +41,45 @@ SEBI_RATE = 0.000001  # 0.0001%
 STAMP_DUTY_RATE = 0.00003  # 0.003% on BUY side
 GST_RATE = 0.18  # 18% on brokerage + exchange charges
 
-def discover_backtest_sources():
+def discover_backtest_sources(specific_paths=None):
     """
     Auto-discover backtest directories and zip files.
     Extracts zips if needed and returns list of (dir_path, period, start, end).
+
+    Args:
+        specific_paths: Optional list of specific paths/patterns to use instead of auto-discovery.
+                       Supports glob patterns (e.g., "backtest_*_extracted").
     """
     sources = []
 
-    # Find all backtest zips and extracted directories
-    zips = sorted(glob.glob("backtest_*.zip"))
-    dirs = sorted(glob.glob("backtest_*_extracted")) + sorted([
-        d for d in glob.glob("backtest_2025*")
-        if Path(d).is_dir() and not d.endswith('.zip')
-    ])
+    if specific_paths:
+        # Use provided paths instead of auto-discovery
+        zips = []
+        dirs = []
+        for pattern in specific_paths:
+            # Expand glob patterns
+            matches = glob.glob(pattern)
+            if not matches:
+                # Try as literal path
+                if Path(pattern).exists():
+                    matches = [pattern]
+                else:
+                    print(f"      WARNING: No match for '{pattern}'")
+                    continue
+            for match in matches:
+                if match.endswith('.zip'):
+                    zips.append(match)
+                elif Path(match).is_dir():
+                    dirs.append(match)
+        zips = sorted(set(zips))
+        dirs = sorted(set(dirs))
+    else:
+        # Auto-discover all backtest zips and extracted directories
+        zips = sorted(glob.glob("backtest_*.zip"))
+        dirs = sorted(glob.glob("backtest_*_extracted")) + sorted([
+            d for d in glob.glob("backtest_2025*")
+            if Path(d).is_dir() and not d.endswith('.zip')
+        ])
 
     # Extract any zips that don't have corresponding extracted dirs
     for zip_path in zips:
@@ -907,8 +940,15 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("\n[0/6] Discovering backtest sources...")
-    BACKTEST_DIRS = discover_backtest_sources()
+    # Check for command-line arguments
+    specific_paths = sys.argv[1:] if len(sys.argv) > 1 else None
+
+    if specific_paths:
+        print(f"\n[0/6] Using specified sources: {', '.join(specific_paths)}")
+    else:
+        print("\n[0/6] Auto-discovering backtest sources...")
+
+    BACKTEST_DIRS = discover_backtest_sources(specific_paths)
     if not BACKTEST_DIRS:
         print("      ERROR: No backtest directories or zips found!")
         print("      Expected: backtest_*.zip or backtest_*_extracted/ directories")
