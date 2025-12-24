@@ -1018,7 +1018,15 @@ class ScreenerLive:
         try:
             self.symbol_map = self.sdk.get_symbol_map()
             self.token_map = self.sdk.get_token_map()
-            self.core_symbols = list(self.symbol_map.keys())
+            # Filter out ETFs - symbols ending with "ETF" (e.g., TNIDETF, SBIETFPB)
+            all_symbols = list(self.symbol_map.keys())
+            self.core_symbols = [
+                sym for sym in all_symbols
+                if not sym.replace("NSE:", "").upper().endswith("ETF")
+            ]
+            etf_count = len(all_symbols) - len(self.core_symbols)
+            if etf_count > 0:
+                logger.info(f"ETF_FILTER | Excluded {etf_count} ETF symbols from trading universe")
         except Exception as e:
             raise RuntimeError(f"ScreenerLive: sdk.list_equities() failed: {e}")
         return self.token_map
