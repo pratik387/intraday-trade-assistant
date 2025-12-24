@@ -194,17 +194,19 @@
             "breakout_long": {
                 "enabled": true,
                 "allowed_regimes": ["trend_down"],
-                "_moderate_filter": "Only trend_down regime allowed",
-                "_evidence": "MODERATE: allowed_regimes=['trend_down'] for counter-trend breakouts"
+                "min_rsi": 40,
+                "max_rsi": 60,
+                "_salvage_filter": "trend_down regime + RSI 40-60",
+                "_evidence": "ELIMINATION Dec 2024: 14 trades, Rs 127 net avg (was 1,211 trades, Rs -107 net)"
             },
             "breakout_short": {
                 "enabled": false
             },
             "first_hour_momentum_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_moderate_filter": "BLOCKED - major loser",
-                "_evidence": "MODERATE: Rs -309K loss, 2234 trades - block entirely"
+                "max_adx": 15,
+                "_salvage_filter": "ADX < 15",
+                "_evidence": "ELIMINATION Dec 2024: 22 trades, Rs 106 net avg (was 2,234 trades, Rs -197 net)"
             },
             "first_hour_momentum_short": {
                 "enabled": false
@@ -226,14 +228,15 @@
             },
             "squeeze_release_long": {
                 "enabled": true,
-                "_moderate_filter": "All allowed - profitable setup",
-                "_evidence": "MODERATE: squeeze_release_long all allowed"
+                "max_rsi": 70,
+                "_moderate_filter": "RSI <= 70 - block overbought entries",
+                "_evidence": "OPTION A Dec 2024: ADX 25-30 (Rs 702 net), RSI 70+ blocked (Rs -31 net). 45 trades remain profitable."
             },
             "break_of_structure_long": {
                 "enabled": true,
-                "blocked_regimes": ["trend_up"],
-                "_moderate_filter": "Block trend_up regime",
-                "_evidence": "MODERATE: blocked_regimes=['trend_up'] improves quality"
+                "blocked_entirely": true,
+                "_reason": "NOT SALVAGEABLE - all filter combos negative",
+                "_evidence": "ELIMINATION Dec 2024: 64 trades, Rs -345 net - no profitable combo found"
             }
         },
         "global_filters": {

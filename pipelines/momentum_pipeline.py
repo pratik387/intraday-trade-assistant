@@ -39,6 +39,7 @@ from .base_pipeline import (
     RankingResult,
     EntryResult,
     TargetResult,
+    get_cap_segment,
     safe_level_get
 )
 
@@ -249,12 +250,17 @@ class MomentumPipeline(BasePipeline):
         min_hold = 0
 
         # ========== UNIFIED FILTER STRUCTURE (Dec 2024) ==========
-        setup_filters = self._get("gates", "setup_filters") or {}
+        # Get current hour from df5m index
+        current_time = df5m.index[-1] if hasattr(df5m.index[-1], 'hour') else None
+        current_hour = current_time.hour if current_time else 0
 
         # Get volume from 5m bar for volume filters
         bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
         is_long = "_long" in setup_type
         bias = "long" if is_long else "short"
+
+        # Get cap segment for filtering
+        cap_segment = get_cap_segment(symbol)
 
         # Get RSI for global filters
         rsi_val = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns and not pd.isna(df5m["rsi"].iloc[-1]) else None
@@ -269,20 +275,22 @@ class MomentumPipeline(BasePipeline):
             logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED by global filters: {global_reasons}")
             return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
-        # ========== 2. SETUP-SPECIFIC FILTERS (unified structure) ==========
-        setup_filter_cfg = setup_filters.get(setup_type, {})
-
-        # Check if setup filter is enabled (default True for backwards compat)
-        if setup_filter_cfg.get("enabled", True):
-            # 2a. Min volume filter
-            min_volume = setup_filter_cfg.get("min_volume")
-            if min_volume:
-                if bar5_volume < min_volume:
-                    reasons.append(f"setup_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
-                    logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED: Vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
-                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-                else:
-                    reasons.append(f"setup_vol_ok:{bar5_volume/1000:.0f}k")
+        # ========== 2. SETUP-SPECIFIC FILTERS (use base class unified filter) ==========
+        setup_passed, setup_reasons, modifiers = self.apply_setup_filters(
+            setup_type=setup_type,
+            symbol=symbol,
+            regime=regime,
+            adx=adx,
+            rsi=rsi_val,
+            volume=bar5_volume,
+            current_hour=current_hour,
+            cap_segment=cap_segment,
+            structural_rr=strength
+        )
+        reasons.extend(setup_reasons)
+        if not setup_passed:
+            logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED by setup filters: {setup_reasons}")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
         # Regime check from config - momentum NEEDS trend - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")

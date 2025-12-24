@@ -159,8 +159,9 @@
             "volume_spike_reversal_long": {
                 "enabled": true,
                 "blocked_regimes": ["chop"],
-                "_moderate_filter": "Block chop regime only",
-                "_evidence": "MODERATE: blocked_regimes=['chop'] improves quality"
+                "min_adx": 15,
+                "_moderate_filter": "Block chop regime + ADX >= 15",
+                "_evidence": "OPTION A Dec 2024: ADX 20+ blocks Rs -388 trades. ADX 15+ as buffer. 311 trades, Rs 159 net avg."
             },
             "volume_spike_reversal_short": {
                 "enabled": false,

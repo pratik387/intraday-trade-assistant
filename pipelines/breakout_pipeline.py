@@ -416,75 +416,25 @@ class BreakoutPipeline(BasePipeline):
         else:
             reasons.append("fhm_global_filters_bypass:uses_rvol")
 
-        # ========== 2. SETUP-SPECIFIC FILTERS (unified structure) ==========
-        setup_filter_cfg = setup_filters.get(setup_type, {})
-
-        # 2a. BLOCKED_ENTIRELY check (MODERATE profile blocks certain setups completely)
-        if setup_filter_cfg.get("blocked_entirely"):
-            reasons.append(f"blocked_entirely:{setup_type}")
-            logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: blocked_entirely=true (MODERATE profile)")
+        # ========== 2. SETUP-SPECIFIC FILTERS (use base class unified filter) ==========
+        setup_passed, setup_reasons, modifiers = self.apply_setup_filters(
+            setup_type=setup_type,
+            symbol=symbol,
+            regime=regime,
+            adx=adx,
+            rsi=rsi_val,
+            volume=bar5_volume,
+            current_hour=current_hour,
+            cap_segment=cap_segment,
+            structural_rr=strength
+        )
+        reasons.extend(setup_reasons)
+        if not setup_passed:
+            logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED by setup filters: {setup_reasons}")
             return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-
-        # 2b. BLOCKED_REGIMES check (e.g., break_of_structure_long blocks trend_up)
-        blocked_regimes = setup_filter_cfg.get("blocked_regimes", [])
-        if blocked_regimes and regime in blocked_regimes:
-            reasons.append(f"blocked_regime:{regime}")
-            logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: regime {regime} in blocked_regimes {blocked_regimes}")
-            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-
-        # 2c. ALLOWED_REGIMES check (e.g., breakout_long only in trend_down)
-        allowed_regimes = setup_filter_cfg.get("allowed_regimes", [])
-        if allowed_regimes and regime not in allowed_regimes:
-            reasons.append(f"regime_not_allowed:{regime}")
-            logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: regime {regime} not in allowed_regimes {allowed_regimes}")
-            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-
-        # Check if setup filter is enabled (default True for backwards compat)
-        if setup_filter_cfg.get("enabled", True):
-            # 2d. Blocked hours filter
-            blocked_hours = setup_filter_cfg.get("blocked_hours", [])
-            if blocked_hours and current_hour in blocked_hours:
-                reasons.append(f"setup_blocked:hour{current_hour}_in_blocked_list")
-                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: Hour {current_hour} in blocked hours {blocked_hours}")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            elif blocked_hours:
-                reasons.append(f"setup_hour_ok:{current_hour}")
-
-            # 2b. Min volume filter (FHM bypasses - uses RVOL)
-            min_volume = setup_filter_cfg.get("min_volume")
-            if min_volume and not is_fhm:
-                if bar5_volume < min_volume:
-                    reasons.append(f"setup_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
-                    logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: Vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
-                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-                else:
-                    reasons.append(f"setup_vol_ok:{bar5_volume/1000:.0f}k")
-            elif min_volume and is_fhm:
-                reasons.append(f"fhm_vol_bypass:{bar5_volume/1000:.0f}k:uses_rvol")
-
-            # 2c. Max ADX filter (for FHM - high ADX hurts FHM longs)
-            max_adx = setup_filter_cfg.get("max_adx")
-            if max_adx is not None and adx >= max_adx:
-                reasons.append(f"setup_adx_blocked:adx{adx:.0f}>={max_adx}")
-                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: ADX {adx:.1f} >= max_adx {max_adx}")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            elif max_adx is not None:
-                reasons.append(f"setup_adx_ok:{adx:.0f}<{max_adx}")
-
-            # 2d. Blocked caps filter
-            blocked_caps = setup_filter_cfg.get("blocked_caps", [])
-            if blocked_caps and cap_segment in blocked_caps:
-                reasons.append(f"setup_cap_blocked:{cap_segment}")
-                logger.debug(f"[BREAKOUT] {symbol} {setup_type} BLOCKED: {cap_segment} in blocked_caps {blocked_caps}")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            elif blocked_caps:
-                reasons.append(f"setup_cap_ok:{cap_segment}")
-
-            # 2e. Allowed caps filter (if set, only those caps allowed)
-            allowed_caps = setup_filter_cfg.get("allowed_caps")
-            # Skip allowed_caps check here - complex ORB cap logic handled below in specialized section
 
         # ========== 3. SPECIALIZED FILTERS (complex logic from config) ==========
+        setup_filter_cfg = setup_filters.get(setup_type, {})
         specialized_filters = self._get("gates", "specialized_filters") or {}
 
         # 3a. ORB_BREAKOUT_LONG CAP SEGMENT FILTER

@@ -41,6 +41,7 @@ from .base_pipeline import (
     RankingResult,
     EntryResult,
     TargetResult,
+    get_cap_segment,
     safe_level_get
 )
 
@@ -249,13 +250,19 @@ class ReversionPipeline(BasePipeline):
 
         # ========== UNIFIED FILTER STRUCTURE (Dec 2024) ==========
         setup_filters = self._get("gates", "setup_filters") or {}
-        validated_filters = self._get("gates", "validated_filters") or {}
         setup_lower = setup_type.lower()
         is_long = "_long" in setup_type
         bias = "long" if is_long else "short"
 
+        # Get current hour from df5m index
+        current_time = df5m.index[-1] if hasattr(df5m.index[-1], 'hour') else None
+        current_hour = current_time.hour if current_time else 0
+
         # Get volume from 5m bar for volume filters
         bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
+
+        # Get cap segment for filtering
+        cap_segment = get_cap_segment(symbol)
 
         # Get RSI for global filters
         rsi_val = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns and not pd.isna(df5m["rsi"].iloc[-1]) else None
@@ -270,35 +277,28 @@ class ReversionPipeline(BasePipeline):
             logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED by global filters: {global_reasons}")
             return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
 
-        # ========== 2. SETUP-SPECIFIC FILTERS (unified structure) ==========
+        # ========== 2. SETUP-SPECIFIC FILTERS (use base class unified filter) ==========
+        setup_passed, setup_reasons, modifiers = self.apply_setup_filters(
+            setup_type=setup_type,
+            symbol=symbol,
+            regime=regime,
+            adx=adx,
+            rsi=rsi_val,
+            volume=bar5_volume,
+            current_hour=current_hour,
+            cap_segment=cap_segment,
+            structural_rr=strength
+        )
+        reasons.extend(setup_reasons)
+        if not setup_passed:
+            logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED by setup filters: {setup_reasons}")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+
+        # ========== 3. SPECIALIZED REVERSION FILTERS ==========
         setup_filter_cfg = setup_filters.get(setup_type, {})
 
-        # 2a. BLOCKED_ENTIRELY check (MODERATE profile blocks certain setups completely)
-        if setup_filter_cfg.get("blocked_entirely"):
-            reasons.append(f"blocked_entirely:{setup_type}")
-            logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: blocked_entirely=true (MODERATE profile)")
-            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
-
-        # 2b. BLOCKED_REGIMES check (e.g., volume_spike_reversal_long blocks chop)
-        blocked_regimes = setup_filter_cfg.get("blocked_regimes", [])
-        if blocked_regimes and regime in blocked_regimes:
-            reasons.append(f"blocked_regime:{regime}")
-            logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: regime {regime} in blocked_regimes {blocked_regimes}")
-            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
-
-        # Check if setup filter is enabled (default True for backwards compat)
+        # 3a. Min volume ratio filter (for volume_spike_reversal_short - needs vol spike)
         if setup_filter_cfg.get("enabled", True):
-            # 2c. Min volume filter
-            min_volume = setup_filter_cfg.get("min_volume")
-            if min_volume:
-                if bar5_volume < min_volume:
-                    reasons.append(f"setup_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
-                    logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: Vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
-                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
-                else:
-                    reasons.append(f"setup_vol_ok:{bar5_volume/1000:.0f}k")
-
-            # 2b. Min volume ratio filter (for volume_spike_reversal_short)
             min_vol_ratio = setup_filter_cfg.get("min_volume_ratio")
             if min_vol_ratio:
                 if vol_mult < min_vol_ratio:
@@ -308,7 +308,7 @@ class ReversionPipeline(BasePipeline):
                 else:
                     reasons.append(f"setup_vol_ratio_ok:{vol_mult:.1f}x")
 
-            # 2c. Blocked daily regimes filter (for volume_spike_reversal_short)
+            # 3b. Blocked daily regimes filter (for volume_spike_reversal_short)
             blocked_daily_regimes = setup_filter_cfg.get("blocked_daily_regimes", [])
             if blocked_daily_regimes:
                 daily_regime = ""

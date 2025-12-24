@@ -127,23 +127,23 @@
             },
             "support_bounce_long": {
                 "enabled": true,
-                "allowed_caps": ["micro_cap"],
-                "min_rank_score": 1.5,
-                "_moderate_filter": "micro_cap only + rank >= 1.5",
-                "_evidence": "MODERATE: Micro cap + rank 1.5 turns -1.4M loss into profit"
+                "min_rsi": 70,
+                "_salvage_filter": "RSI >= 70",
+                "_evidence": "ELIMINATION Dec 2024: 49 trades, Rs 194 net avg (was 9,261 trades, Rs -169 net)"
             },
             "range_bounce_long": {
                 "enabled": true,
-                "min_rsi": 55,
-                "blocked_hours": [10],
-                "_moderate_filter": "RSI >= 55 + block 10:00 hour",
-                "_evidence": "MODERATE: RSI >= 55 + block hour 10 (53% SL, -Rs 205 avg). Saves Rs 18,335 over 3 years."
+                "min_rsi": 60,
+                "allowed_regimes": ["trend_up"],
+                "_salvage_filter": "RSI >= 60 + trend_up regime",
+                "_evidence": "ELIMINATION Dec 2024: 16 trades, Rs 357 net avg (was 14,948 trades, Rs -253 net)"
             },
             "discount_zone_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_moderate_filter": "BLOCKED - negative expectancy",
-                "_evidence": "MODERATE: Rs -357K loss over 3 years, block entirely"
+                "min_rank_score": 1.5,
+                "allowed_regimes": ["trend_up"],
+                "_salvage_filter": "Rank >= 1.5 + trend_up regime",
+                "_evidence": "ELIMINATION Dec 2024: 13 trades, Rs 61 net avg (was 1,439 trades, Rs -268 net)"
             },
             "vwap_lose_short": {
                 "enabled": true,
@@ -153,21 +153,28 @@
             "resistance_bounce_short": {
                 "enabled": true,
                 "allowed_caps": ["micro_cap", "small_cap"],
-                "_moderate_filter": "micro_cap + small_cap only",
-                "_evidence": "MODERATE: allowed_caps filter improves quality"
+                "min_rank_score": 1.4,
+                "min_adx": 20,
+                "max_rsi": 70,
+                "_moderate_filter": "micro_cap + small_cap + rank >= 1.4 + ADX >= 20 + RSI <= 70",
+                "_evidence": "OPTION A Dec 2024: ADX 20-25 (Rs 29 net), RSI 30-60 (Rs 58-62 net), RSI 70+ blocked (Rs -90 net)"
             },
             "range_bounce_short": {
                 "enabled": true,
                 "allowed_caps": ["micro_cap", "small_cap"],
-                "_moderate_filter": "micro_cap + small_cap only",
-                "_evidence": "MODERATE: allowed_caps=['micro_cap', 'small_cap'] -> +Rs 1.5M"
+                "min_rank_score": 1.5,
+                "min_rsi": 40,
+                "max_rsi": 70,
+                "_moderate_filter": "micro_cap + small_cap + rank >= 1.5 + RSI 40-70",
+                "_evidence": "OPTION A Dec 2024: RSI 50-60 (Rs 82 net), RSI 30-40 blocked (Rs -209 net), Rank 1.5-2 (Rs 58 net)"
             },
             "premium_zone_short": {
                 "enabled": true,
-                "min_adx": 20,
-                "max_adx": 20,
-                "_moderate_filter": "ADX = 20 exactly",
-                "_evidence": "MODERATE: Exact ADX=20 filter for precision"
+                "max_adx": 15,
+                "min_rsi": 40,
+                "max_rsi": 50,
+                "_salvage_filter": "ADX < 15 + RSI 40-50",
+                "_evidence": "ELIMINATION Dec 2024: 57 trades, Rs 166 net avg (was 9,930 trades, Rs -74 net)"
             },
             "order_block_short": {
                 "enabled": true,
