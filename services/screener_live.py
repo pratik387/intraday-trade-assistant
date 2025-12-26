@@ -1132,9 +1132,12 @@ class ScreenerLive:
                 )
                 # Still compute PDH/PDL/PDC from pre-warmed daily data for level-based setups
                 # Only ORH/ORL will be NaN (which is fine since ORB setups are disabled after 10:30)
+                # IMPORTANT: Iterate over ALL core_symbols, not just df5_by_symbol
+                # PDH/PDL/PDC come from daily cache, don't need 5m bars
                 levels_by_symbol = {}
-                for sym, df5 in df5_by_symbol.items():
+                for sym in self.core_symbols:
                     try:
+                        df5 = df5_by_symbol.get(sym)  # May be None, that's OK for PDH/PDL/PDC
                         lvl = self._levels_for(sym, df5, now)
                         # Keep PDH/PDL/PDC even if ORH/ORL are NaN
                         levels_by_symbol[sym] = lvl
