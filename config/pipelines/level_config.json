@@ -419,22 +419,34 @@
     },
 
     "targets": {
-        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific targets optimized via backtest analysis",
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific targets optimized via 1m backtest simulation",
         "rr_ratios": {
             "support_bounce_long": {
-                "_comment": "OPTIMIZED Dec 2024: T1 1.5R (was 1.0R). Wider targets with wider SL = +Rs 3,831 improvement",
-                "t1": 1.5,
-                "t2": 2.5,
-                "t3": 3.0
+                "_comment": "OPTIMIZED Dec 2024: T1 1.0R + SL 0.9x. Tighter targets = 79% hit rate. +Rs 9.15L improvement over 3yr",
+                "t1": 1.0,
+                "t2": 1.25,
+                "t3": 1.5
+            },
+            "resistance_bounce_short": {
+                "_comment": "OPTIMIZED Dec 2024: T1 3.0R + SL 1.5x. Wider targets = let winners run. +Rs 5.12L improvement over 3yr",
+                "t1": 3.0,
+                "t2": 3.5,
+                "t3": 4.0
+            },
+            "range_bounce_short": {
+                "_comment": "OPTIMIZED Dec 2024: T1 3.0R + SL 1.5x. Wider targets = let winners run. +Rs 4.83L improvement over 3yr",
+                "t1": 3.0,
+                "t2": 3.5,
+                "t3": 4.0
             },
             "long": {
-                "_comment": "Default for other long setups: T1 1.0R",
+                "_comment": "Default for other long setups: T1 1.0R (tighter targets work better for longs)",
                 "t1": 1.0,
-                "t2": 2.0,
-                "t3": 2.5
+                "t2": 1.5,
+                "t3": 2.0
             },
             "short": {
-                "_comment": "Shorts keep 1.5R T1 - they have 1.13R avg MFE vs 0.74R for longs",
+                "_comment": "Default for other short setups: T1 1.5R",
                 "t1": 1.5,
                 "t2": 2.5,
                 "t3": 3.0
@@ -477,13 +489,21 @@
     },
 
     "stop_loss": {
-        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific SL optimized via backtest analysis",
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific SL optimized via 1m backtest simulation",
         "atr_multiplier": 2.0,
         "min_stop_distance_pct": 0.5,
         "setup_specific": {
             "support_bounce_long": {
-                "atr_multiplier": 2.4,
-                "_comment": "OPTIMIZED Dec 2024: 1.2x wider SL (2.0→2.4 ATR). Reduces premature stops, combined with T1 1.5R = +Rs 3,831"
+                "atr_multiplier": 1.8,
+                "_comment": "OPTIMIZED Dec 2024: 0.9x tighter SL (2.0→1.8 ATR). Tighter SL + T1 1.0R = +Rs 9.15L over 3yr"
+            },
+            "resistance_bounce_short": {
+                "atr_multiplier": 3.0,
+                "_comment": "OPTIMIZED Dec 2024: 1.5x wider SL (2.0→3.0 ATR). More room + T1 3.0R = +Rs 5.12L over 3yr"
+            },
+            "range_bounce_short": {
+                "atr_multiplier": 3.0,
+                "_comment": "OPTIMIZED Dec 2024: 1.5x wider SL (2.0→3.0 ATR). More room + T1 3.0R = +Rs 4.83L over 3yr"
             }
         }
     },

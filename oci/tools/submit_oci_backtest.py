@@ -26,10 +26,43 @@ from pathlib import Path
 import sys
 import oci
 from oci.object_storage import ObjectStorageClient
+import pandas as pd
 
-# Add parent directory to path to import utils
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from utils.util import is_trading_day
+# Project root
+ROOT = Path(__file__).parent.parent.parent
+HOLIDAY_FILE = ROOT / "assets" / "nse_holidays.json"
+
+
+def is_trading_day(date):
+    """
+    Returns True if the given date is a valid NSE trading day (not weekend, not holiday).
+    Self-contained version for OCI tools to avoid circular imports.
+    """
+    try:
+        dt = pd.Timestamp(date).normalize()
+
+        # Weekend check
+        if dt.weekday() >= 5:
+            return False
+
+        # Load holidays
+        if not HOLIDAY_FILE.exists():
+            print(f"Warning: Holiday file not found at {HOLIDAY_FILE}, assuming all weekdays are trading days")
+            return True
+
+        with open(HOLIDAY_FILE, "r", encoding="utf-8") as f:
+            items = json.load(f)
+            holidays = [
+                pd.to_datetime(item.get("tradingDate") or item.get("holidayDate"), format="%d-%b-%Y", errors="coerce").normalize()
+                for item in items
+            ]
+            holidays = [d for d in holidays if not pd.isna(d)]
+
+        return dt not in holidays
+
+    except Exception as e:
+        print(f"Warning: is_trading_day error: {e}, assuming trading day")
+        return True
 
 
 class OCIBacktestSubmitter:
@@ -53,15 +86,11 @@ class OCIBacktestSubmitter:
         self.root = Path(__file__).parent.parent.parent
 
     def _get_namespace(self):
-        """Get OCI Object Storage namespace"""
+        """Get OCI Object Storage namespace using OCI SDK"""
         try:
-            result = subprocess.run(
-                ['oci', 'os', 'ns', 'get', '--query', 'data', '--raw-output'],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            return result.stdout.strip()
+            config = oci.config.from_file()
+            client = ObjectStorageClient(config)
+            return client.get_namespace().data
         except Exception as e:
             print(f"❌ Error getting namespace: {e}")
             print("Make sure OCI CLI is configured: oci setup config")
@@ -326,60 +355,6 @@ class OCIBacktestSubmitter:
 
         return succeeded == total_days
 
-    def download_results(self, run_id):
-        """Download results from OCI Object Storage"""
-        print(f"\n[5/5] 📥 Downloading results...")
-
-        results_dir = self.root / 'cloud_results' / run_id
-        results_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # List objects in results bucket for this run
-            list_objects_response = self.os_client.list_objects(
-                namespace_name=self.namespace,
-                bucket_name=self.results_bucket,
-                prefix=f"{run_id}/"
-            )
-
-            objects = list_objects_response.data.objects
-
-            if not objects:
-                print(f"  ⚠️  No results found in oci://{self.results_bucket}/{run_id}/")
-                return
-
-            downloaded = 0
-            for obj in objects:
-                object_name = obj.name
-
-                # Skip directory markers
-                if object_name.endswith('/'):
-                    continue
-
-                # Local file path
-                relative_path = object_name.replace(f"{run_id}/", "")
-                local_path = results_dir / relative_path
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Download object
-                get_obj = self.os_client.get_object(
-                    namespace_name=self.namespace,
-                    bucket_name=self.results_bucket,
-                    object_name=object_name
-                )
-
-                with open(local_path, 'wb') as f:
-                    for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
-                        f.write(chunk)
-
-                downloaded += 1
-                if downloaded % 10 == 0:
-                    print(f"  Downloaded {downloaded} files...", end='\r')
-
-            print(f"  ✓ Downloaded {downloaded} files to: {results_dir}")
-
-        except Exception as e:
-            print(f"  ❌ Download failed: {e}")
-
     def print_summary(self, run_id, start_date, end_date, total_days, description):
         """Print submission summary"""
         print()
@@ -477,29 +452,19 @@ class OCIBacktestSubmitter:
 
         if no_wait:
             print(f"\n✅ Job submitted (not waiting for completion)")
-            print(f"\nMonitor: python tools/monitor_oci_backtest.py {run_id}")
-            print(f"Download: python tools/download_oci_results.py {run_id}")
+            print(f"\nMonitor & cleanup: python oci/tools/monitor_and_cleanup_backtest.py {run_id}")
             return
 
-        # Monitor progress
-        success = self.monitor_job(run_id, len(dates), parallelism)
+        # Hand off to monitor_and_cleanup_backtest.py for monitoring, download, and cleanup
+        print(f"\n[4/5] 📊 Handing off to monitor_and_cleanup_backtest.py...")
+        monitor_script = self.root / 'oci' / 'tools' / 'monitor_and_cleanup_backtest.py'
 
-        if not success:
+        cmd = [sys.executable, str(monitor_script), run_id]
+        result = subprocess.run(cmd)
+
+        if result.returncode != 0:
+            print(f"\n❌ Monitor/cleanup failed with exit code {result.returncode}")
             return
-
-        # Download results
-        self.download_results(run_id)
-
-        print()
-        print("━" * 60)
-        print("✅ Backtest Complete!")
-        print("━" * 60)
-        print()
-        print(f"Results: ./cloud_results/{run_id}/")
-        print()
-        print(f"Next: python tools/analyze_6month_backtest.py cloud_results/{run_id}/")
-        print("━" * 60)
-        print()
 
 
 def main():
