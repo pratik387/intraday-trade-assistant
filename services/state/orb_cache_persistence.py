@@ -10,6 +10,7 @@ Similar pattern to DailyCachePersistence - atomic writes, thread-safe, auto-clea
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from datetime import datetime
@@ -98,12 +99,23 @@ class ORBCachePersistence:
                 logger.warning(f"ORB_CACHE_PERSIST | Cache date mismatch: {cached_date} != {today}")
                 return None
 
-            levels = data.get("levels", {})
+            raw_levels = data.get("levels", {})
+
+            # Convert None values back to float("nan") for consistency
+            # (JSON doesn't support NaN, so we store as None and convert back)
+            levels = {}
+            for sym, lvls in raw_levels.items():
+                levels[sym] = {
+                    k: (float("nan") if v is None else v)
+                    for k, v in lvls.items()
+                }
+
             elapsed = time.perf_counter() - start_time
 
-            # Count valid ORH/ORL entries
+            # Count valid ORH/ORL entries (check for NaN, not None)
             valid_orb = sum(1 for v in levels.values()
-                           if v.get("ORH") is not None and v.get("ORL") is not None)
+                           if not math.isnan(v.get("ORH", float("nan")))
+                           and not math.isnan(v.get("ORL", float("nan"))))
 
             logger.info(
                 f"ORB_CACHE_PERSIST | Loaded {len(levels)} symbols from disk "

@@ -111,10 +111,16 @@ class EnergyScanner:
 
             # Optional: distances to structural levels to nudge rank
             lvs = (levels_by_symbol or {}).get(sym, {})
-            dist_pdh = ((close - float(lvs.get("PDH", np.nan))) / close) if "PDH" in lvs else np.nan
-            dist_pdl = ((close - float(lvs.get("PDL", np.nan))) / close) if "PDL" in lvs else np.nan
-            dist_orh = ((close - float(lvs.get("ORH", np.nan))) / close) if "ORH" in lvs else np.nan
-            dist_orl = ((close - float(lvs.get("ORL", np.nan))) / close) if "ORL" in lvs else np.nan
+            # Safe float conversion - handle None values
+            def _safe_dist(key):
+                val = lvs.get(key)
+                if val is None:
+                    return np.nan
+                return (close - float(val)) / close
+            dist_pdh = _safe_dist("PDH")
+            dist_pdl = _safe_dist("PDL")
+            dist_orh = _safe_dist("ORH")
+            dist_orl = _safe_dist("ORL")
             # PROFESSIONAL: Winning-focused energy scores
             # Focus on extreme volume + directional bias + gap momentum
             
