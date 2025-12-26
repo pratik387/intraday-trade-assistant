@@ -62,7 +62,7 @@ class TickRecorder:
         self._qtys: List[int] = []
         self._volumes: List[int] = []  # Cumulative day volume
         self._timestamps: List[datetime] = []
-        self._buffer_lock = threading.Lock()
+        self._buffer_lock = threading.RLock()  # RLock to allow reentrant locking
 
         self._file_path: Optional[Path] = None
         self._part_num = 0  # For chunked writes

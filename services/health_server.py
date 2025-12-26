@@ -145,10 +145,12 @@ class HealthServer:
             # Capital info
             capital = {}
             if self._capital_manager and self._capital_manager.enabled:
+                stats = self._capital_manager.get_stats()
                 capital = {
-                    "available": round(self._capital_manager.available_capital, 2),
-                    "allocated": round(self._capital_manager.allocated_capital, 2),
-                    "total": round(self._capital_manager.total_capital, 2),
+                    "available": round(stats.get("available_capital", 0), 2),
+                    "margin_used": round(stats.get("margin_used", 0), 2),
+                    "total": round(stats.get("total_capital", 0), 2),
+                    "positions": stats.get("positions_count", 0),
                 }
 
             return {
@@ -214,29 +216,33 @@ class _HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/health" or self.path == "/":
-            status = self.health_server.get_status()
-            is_healthy = status["state"] in [
-                SessionState.TRADING, SessionState.WARMING, SessionState.RECOVERING
-            ]
-            self._send_json(
-                {"status": "ok" if is_healthy else "unhealthy", "state": status["state"]},
-                200 if is_healthy else 503
-            )
+        try:
+            if self.path == "/health" or self.path == "/":
+                status = self.health_server.get_status()
+                is_healthy = status["state"] in [
+                    SessionState.TRADING, SessionState.WARMING, SessionState.RECOVERING
+                ]
+                self._send_json(
+                    {"status": "ok" if is_healthy else "unhealthy", "state": status["state"]},
+                    200 if is_healthy else 503
+                )
 
-        elif self.path == "/status":
-            self._send_json(self.health_server.get_status())
+            elif self.path == "/status":
+                self._send_json(self.health_server.get_status())
 
-        elif self.path == "/positions":
-            status = self.health_server.get_status()
-            self._send_json({
-                "positions": status["positions"],
-                "count": status["positions_count"],
-                "unrealized_pnl": status["unrealized_pnl"]
-            })
+            elif self.path == "/positions":
+                status = self.health_server.get_status()
+                self._send_json({
+                    "positions": status["positions"],
+                    "count": status["positions_count"],
+                    "unrealized_pnl": status["unrealized_pnl"]
+                })
 
-        else:
-            self._send_json({"error": "Not found"}, 404)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+        except Exception as e:
+            logger.exception(f"[HEALTH] Error handling GET {self.path}: {e}")
+            self._send_json({"error": str(e)}, 500)
 
     def do_POST(self):
         if self.path == "/shutdown":
