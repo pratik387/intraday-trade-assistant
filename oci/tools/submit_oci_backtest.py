@@ -96,6 +96,40 @@ class OCIBacktestSubmitter:
             print("Make sure OCI CLI is configured: oci setup config")
             sys.exit(1)
 
+    def _get_next_retry_number(self, base_run_id):
+        """
+        Find the next retry number for a given base run ID.
+
+        Checks cloud_results directory for existing retries and returns the next number.
+
+        Args:
+            base_run_id: The original run ID (without -retry suffix)
+
+        Returns:
+            Next retry number (1 if no retries exist)
+        """
+        cloud_results = self.root / 'cloud_results'
+        if not cloud_results.exists():
+            return 1
+
+        # Find all existing retry directories for this base run
+        existing_retries = []
+        for d in cloud_results.iterdir():
+            if d.is_dir() and d.name.startswith(base_run_id):
+                if '-retry' in d.name:
+                    try:
+                        # Extract retry number from name like "20251121-084341-retry2"
+                        retry_part = d.name.split('-retry')[-1]
+                        retry_num = int(retry_part)
+                        existing_retries.append(retry_num)
+                    except ValueError:
+                        pass
+
+        if not existing_retries:
+            return 1
+
+        return max(existing_retries) + 1
+
     def generate_trading_dates(self, start_date, end_date):
         """
         Generate list of trading dates (exclude weekends and NSE holidays).
@@ -370,12 +404,13 @@ class OCIBacktestSubmitter:
         print()
         print("━" * 60)
 
-    def scale_up_nodepool(self, num_nodes):
+    def scale_up_nodepool(self, num_nodes, wait_seconds=180):
         """
         Scale up the node pool to the specified number of nodes.
 
         Args:
             num_nodes: Number of nodes to scale to
+            wait_seconds: Seconds to wait after scaling (default: 180 = 3 minutes)
 
         Returns:
             True if successful, False otherwise
@@ -404,8 +439,23 @@ class OCIBacktestSubmitter:
 
             print(f"✅ Node pool scaling initiated to {num_nodes} nodes")
             print()
-            print("⏳ Nodes will take ~2-3 minutes to become ready")
-            print("   Job will start once nodes are available")
+
+            # Wait for nodes to become ready
+            if wait_seconds > 0:
+                print(f"⏳ Waiting {wait_seconds}s for nodes to become ready...")
+                print()
+
+                for remaining in range(wait_seconds, 0, -1):
+                    mins, secs = divmod(remaining, 60)
+                    print(f"   Starting job in {mins:02d}:{secs:02d}...", end='\r')
+                    time.sleep(1)
+
+                print()
+                print("✅ Wait complete, proceeding with job submission")
+            else:
+                print("⏳ Nodes will take ~2-3 minutes to become ready")
+                print("   Job will start once nodes are available")
+
             print()
             print("━" * 60)
 
@@ -420,20 +470,69 @@ class OCIBacktestSubmitter:
             print("━" * 60)
             return False
 
-    def run(self, start_date, end_date, description=None, no_wait=False, max_parallel=None, num_nodes=None):
-        """Main workflow"""
-        # Generate run ID (use hyphens for Kubernetes DNS compliance)
-        run_id = datetime.now().strftime('%Y%m%d-%H%M%S')
+    def run(self, start_date=None, end_date=None, description=None, no_wait=False,
+            max_parallel=None, num_nodes=None, wait_after_scale=180, failed_dates_file=None):
+        """Main workflow
 
-        # Generate trading dates
-        dates = self.generate_trading_dates(start_date, end_date)
+        Args:
+            start_date: Start date (YYYY-MM-DD) - required if not using failed_dates_file
+            end_date: End date (YYYY-MM-DD) - required if not using failed_dates_file
+            description: Optional description
+            no_wait: If True, submit and exit without waiting
+            max_parallel: Max parallel pods
+            num_nodes: Number of nodes to scale to
+            wait_after_scale: Seconds to wait after scaling (default: 180)
+            failed_dates_file: Path to JSON file containing failed dates to re-run
+        """
+        # Handle failed dates re-run
+        if failed_dates_file:
+            with open(failed_dates_file, 'r') as f:
+                failed_data = json.load(f)
 
-        # Print summary
-        self.print_summary(run_id, start_date, end_date, len(dates), description)
+            dates = failed_data.get('failed_dates', [])
+            original_run_id = failed_data.get('run_id', 'unknown')
+
+            if not dates:
+                print("❌ No failed dates found in the file")
+                return
+
+            # Generate run ID based on original with retry suffix
+            # Check for existing retries to increment the counter
+            base_run_id = original_run_id.split('-retry')[0]  # Strip any existing retry suffix
+            retry_num = self._get_next_retry_number(base_run_id)
+            run_id = f"{base_run_id}-retry{retry_num}"
+
+            start_date = min(dates)
+            end_date = max(dates)
+
+            print()
+            print("━" * 60)
+            print(f"RE-RUNNING FAILED DATES (Retry #{retry_num})")
+            print("━" * 60)
+            print()
+            print(f"Original Run: {original_run_id}")
+            print(f"Retry Run ID: {run_id}")
+            print(f"Failed Dates: {len(dates)}")
+            print(f"Date Range: {start_date} to {end_date}")
+            print()
+            print("━" * 60)
+        else:
+            if not start_date or not end_date:
+                print("❌ Either --start/--end or --failed-dates is required")
+                return
+
+            # Generate run ID (use hyphens for Kubernetes DNS compliance)
+            run_id = datetime.now().strftime('%Y%m%d-%H%M%S')
+
+            # Generate trading dates
+            dates = self.generate_trading_dates(start_date, end_date)
+
+            # Print summary
+            self.print_summary(run_id, start_date, end_date, len(dates), description)
 
         # Scale up node pool if requested
         if num_nodes is not None:
-            if not self.scale_up_nodepool(num_nodes):
+            if not self.scale_up_nodepool(num_nodes, wait_seconds=wait_after_scale):
                 print("⚠️  Node pool scaling failed, but continuing anyway...")
                 print()
 
@@ -481,11 +580,17 @@ Examples:
 
   # With custom parallelism limit
   python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --max-parallel 50
+
+  # Skip wait after node scaling (for already-running nodes)
+  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --wait-after-scale 0
+
+  # Re-run only failed dates from a previous run
+  python oci/tools/submit_oci_backtest.py --failed-dates cloud_results/20251121-084341/failed_dates.json --nodes 4
         """
     )
 
-    parser.add_argument('--start', required=True, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end', required=True, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--start', help='Start date (YYYY-MM-DD). Required unless using --failed-dates')
+    parser.add_argument('--end', help='End date (YYYY-MM-DD). Required unless using --failed-dates')
     parser.add_argument('--description', help='Description of this backtest run')
     parser.add_argument('--no-wait', action='store_true', help='Submit and exit without waiting')
     parser.add_argument('--max-parallel', type=int, default=None,
@@ -493,8 +598,18 @@ Examples:
     parser.add_argument('--nodes', type=int, default=None,
                         help='Number of nodes to scale node pool to before starting (e.g., 4). '
                              'If not specified, assumes nodes are already running.')
+    parser.add_argument('--wait-after-scale', type=int, default=180,
+                        help='Seconds to wait after scaling up nodes (default: 180 = 3 minutes). '
+                             'Set to 0 to skip wait.')
+    parser.add_argument('--failed-dates', type=str, default=None,
+                        help='Path to failed_dates.json file to re-run only failed dates. '
+                             'If specified, --start and --end are ignored.')
 
     args = parser.parse_args()
+
+    # Validate arguments
+    if not args.failed_dates and (not args.start or not args.end):
+        parser.error("Either --start/--end or --failed-dates is required")
 
     submitter = OCIBacktestSubmitter()
     submitter.run(
@@ -503,7 +618,9 @@ Examples:
         description=args.description,
         no_wait=args.no_wait,
         max_parallel=args.max_parallel,
-        num_nodes=args.nodes
+        num_nodes=args.nodes,
+        wait_after_scale=args.wait_after_scale,
+        failed_dates_file=args.failed_dates
     )
 
 

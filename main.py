@@ -32,7 +32,6 @@ from services.screener_live import ScreenerLive
 from services.execution.trade_executor import RiskState, Position
 from services.execution.exit_executor import ExitExecutor
 from services.ingest.tick_router import register_tick_listener
-from services.ingest.tick_recorder import TickRecorder
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
 from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
@@ -470,19 +469,28 @@ def main() -> int:
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq)
 
+    # Bootstrap from sidecar data (instant startup on late start)
+    # This populates ORB cache, daily levels, and 5m bars from pre-collected sidecar data
+    # Sidecar also handles tick persistence, so main engine doesn't need to record separately
+    bootstrap_result = {"success": False, "skipped": True, "reason": "not_attempted"}
+    try:
+        from sidecar import maybe_bootstrap_from_sidecar
+        bootstrap_result = maybe_bootstrap_from_sidecar(screener)
+        if bootstrap_result.get("success"):
+            logger.info(f"SIDECAR | Bootstrapped: {bootstrap_result['orb_count']} ORB, "
+                       f"{bootstrap_result.get('daily_levels_count', 0)} daily levels, "
+                       f"{bootstrap_result['bars_count']} bars for {bootstrap_result['symbols_count']} symbols")
+        elif bootstrap_result.get("skipped"):
+            logger.debug(f"SIDECAR | Skipped: {bootstrap_result.get('reason', 'unknown')}")
+    except Exception as e:
+        logger.debug(f"SIDECAR | Bootstrap not available: {e}")
+
     # Tap the central tick router so entries & exits share the same tick clock
     def _ltp_tap(sym: str, price: float, qty: float, ts_dt):
         ts_pd = pd.Timestamp(ts_dt)  # ensure pandas timestamp
         ltp_cache.update(sym, price, ts_pd)
 
     register_tick_listener(_ltp_tap)
-
-    # Start tick recording for paper trading mode
-    tick_recorder: Optional[TickRecorder] = None
-    if args.paper_trading:
-        tick_recorder = TickRecorder(output_dir="recordings")
-        tick_recorder.start()
-        logger.info(f"Tick recording started: {tick_recorder.file_path}")
 
     # Risk + shared positions
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
@@ -566,7 +574,7 @@ def main() -> int:
     health.set_state(SessionState.TRADING)
 
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec, trader, tick_recorder, health)
+    _run_until_eod(screener, exit_exec, trader, health)
 
     return 0
 
@@ -575,7 +583,6 @@ def _run_until_eod(
     screener: ScreenerLive,
     exit_exec: ExitExecutor,
     trader: TriggerAwareExecutor,
-    tick_recorder: Optional[TickRecorder] = None,
     health = None,
     poll_sec: float = 0.2
 ) -> None:
@@ -634,14 +641,6 @@ def _run_until_eod(
             trader.stop()
         except Exception as e:
             logger.warning("trader.stop failed: %s", e)
-
-        # Stop tick recording
-        if tick_recorder:
-            try:
-                tick_recorder.stop()
-                logger.info(f"Tick recording saved: {tick_recorder.file_path} ({tick_recorder.tick_count:,} ticks)")
-            except Exception as e:
-                logger.warning("tick_recorder.stop failed: %s", e)
 
         # Stop health server
         if health:
