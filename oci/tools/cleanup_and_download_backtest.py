@@ -10,6 +10,10 @@ Automates the complete post-backtest workflow:
 4. Clean up OCI bucket
 5. Clean up local extracted directory
 
+IMPORTANT: This script automatically finds and downloads ALL related runs
+(original + retries) when given a base run ID. All session data is merged
+into a single output directory and zip file.
+
 This script bypasses the manual confirmation issue with bulk-download
 by using the OCI Python SDK directly.
 
@@ -21,15 +25,25 @@ Usage:
 
 Arguments:
     run_id: The backtest run ID (e.g., 20251121-084341)
+            - If base ID (no -retry suffix): downloads ALL related runs
+            - If specific retry ID (e.g., 20251121-084341-retry1): downloads only that run
 
 Options:
     --parallel N: Number of parallel downloads (default: 10)
     --skip-nodepool: Skip scaling down node pool
     --keep-oci-files: Don't delete files from OCI bucket after download
     --keep-extracted: Don't delete local extracted directory after zipping
+    --no-zip: Skip creating zip archive (just download files)
 
 Example:
+    # Download all runs (original + retries) for this backtest
     python oci/tools/cleanup_and_download_backtest.py 20251121-084341
+
+    # Download only a specific retry
+    python oci/tools/cleanup_and_download_backtest.py 20251121-084341-retry2
+
+    # Just download, no zip (for local machine)
+    python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --no-zip
 """
 
 import argparse
@@ -43,32 +57,44 @@ import time
 
 
 class BacktestCleanupAutomation:
-    def __init__(self, run_id, parallel=10, skip_nodepool=False, keep_oci_files=False, keep_extracted=False):
+    def __init__(self, run_id, parallel=10, skip_nodepool=False, keep_oci_files=False, keep_extracted=False, no_zip=False):
         """
         Initialize automation.
 
         Args:
-            run_id: Backtest run ID
+            run_id: Backtest run ID (can be base ID or specific retry ID)
+                    - If base ID: downloads ALL related runs (original + retries)
+                    - If retry ID: downloads only that specific retry
             parallel: Number of parallel downloads
             skip_nodepool: Skip node pool scaling
             keep_oci_files: Don't delete OCI files
             keep_extracted: Don't delete local extracted directory
+            no_zip: Skip creating zip archive (just download)
         """
         self.run_id = run_id
+        # Extract base run ID (strip -retryN suffix if present)
+        if '-retry' in run_id:
+            self.base_run_id = run_id.split('-retry')[0]
+            self.download_all_related = False  # Specific retry requested
+        else:
+            self.base_run_id = run_id
+            self.download_all_related = True  # Download all related runs
+
         self.parallel = parallel
         self.skip_nodepool = skip_nodepool
         self.keep_oci_files = keep_oci_files
         self.keep_extracted = keep_extracted
+        self.no_zip = no_zip
 
         # OCI configuration (Basic cluster - free control plane)
         self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaaqs7a4f5jyyhcy3dsmedknnzbmhpdmdj6dqkastv5cnaehilq5g3q"
         self.bucket_name = "backtest-results"
 
-        # Local paths
+        # Local paths - use base run ID for unified output
         self.script_dir = Path(__file__).parent
         self.project_root = self.script_dir.parent.parent
-        self.download_dir = self.project_root / f"{run_id}_full"
-        self.zip_file = self.project_root / f"backtest_{run_id}.zip"
+        self.download_dir = self.project_root / f"{self.base_run_id}_full"
+        self.zip_file = self.project_root / f"backtest_{self.base_run_id}.zip"
 
         # Initialize OCI clients
         print("Initializing OCI clients...")
@@ -115,9 +141,51 @@ class BacktestCleanupAutomation:
             print()
             # Continue anyway - this is not critical
 
+    def find_related_run_ids(self):
+        """
+        Find all run IDs related to the base run ID (original + retries).
+
+        Returns:
+            List of run ID prefixes found in bucket
+        """
+        related_runs = []
+        next_start = None
+
+        try:
+            # List all top-level prefixes that start with base_run_id
+            while True:
+                list_response = self.os_client.list_objects(
+                    namespace_name=self.namespace,
+                    bucket_name=self.bucket_name,
+                    prefix=f"{self.base_run_id}",
+                    delimiter='/',
+                    start=next_start,
+                    limit=1000
+                )
+
+                # Get prefixes (folders)
+                if list_response.data.prefixes:
+                    for prefix in list_response.data.prefixes:
+                        # Remove trailing slash
+                        run_id = prefix.rstrip('/')
+                        # Only include exact match or -retryN versions
+                        if run_id == self.base_run_id or run_id.startswith(f"{self.base_run_id}-retry"):
+                            related_runs.append(run_id)
+
+                next_start = list_response.data.next_start_with
+                if not next_start:
+                    break
+
+            return sorted(set(related_runs))
+
+        except Exception as e:
+            print(f"WARNING: Could not list prefixes: {e}")
+            # Fall back to just the requested run_id
+            return [self.run_id]
+
     def list_all_objects(self):
         """
-        List all objects in the bucket with the run_id prefix.
+        List all objects in the bucket for the run_id (and related runs if base ID).
 
         Returns:
             List of object names
@@ -127,37 +195,59 @@ class BacktestCleanupAutomation:
         print("=" * 80)
 
         print(f"Bucket: {self.bucket_name}")
-        print(f"Prefix: {self.run_id}/")
+
+        # Find all related run IDs if downloading all
+        if self.download_all_related:
+            print(f"Looking for all runs related to: {self.base_run_id}")
+            self.related_run_ids = self.find_related_run_ids()
+            if len(self.related_run_ids) > 1:
+                print(f"Found {len(self.related_run_ids)} related runs:")
+                for rid in self.related_run_ids:
+                    print(f"  - {rid}")
+            elif len(self.related_run_ids) == 1:
+                print(f"Found 1 run: {self.related_run_ids[0]}")
+            else:
+                print(f"No runs found for prefix: {self.base_run_id}")
+                return []
+        else:
+            print(f"Downloading specific run: {self.run_id}")
+            self.related_run_ids = [self.run_id]
+
         print()
 
         all_objects = []
-        next_start = None
 
         try:
-            while True:
-                # List objects (paginated)
-                list_response = self.os_client.list_objects(
-                    namespace_name=self.namespace,
-                    bucket_name=self.bucket_name,
-                    prefix=f"{self.run_id}/",
-                    start=next_start,
-                    limit=1000  # Max per page
-                )
+            for run_id in self.related_run_ids:
+                next_start = None
+                run_objects = []
 
-                objects = list_response.data.objects
+                while True:
+                    # List objects (paginated)
+                    list_response = self.os_client.list_objects(
+                        namespace_name=self.namespace,
+                        bucket_name=self.bucket_name,
+                        prefix=f"{run_id}/",
+                        start=next_start,
+                        limit=1000  # Max per page
+                    )
 
-                # Filter out directory markers
-                files = [obj.name for obj in objects if not obj.name.endswith('/')]
-                all_objects.extend(files)
+                    objects = list_response.data.objects
 
-                # Check if there are more pages
-                next_start = list_response.data.next_start_with
-                if not next_start:
-                    break
+                    # Filter out directory markers
+                    files = [obj.name for obj in objects if not obj.name.endswith('/')]
+                    run_objects.extend(files)
 
-                print(f"Listed {len(all_objects)} objects so far...", end='\r')
+                    # Check if there are more pages
+                    next_start = list_response.data.next_start_with
+                    if not next_start:
+                        break
 
-            print(f"\nOK: Found {len(all_objects)} files to download")
+                print(f"  {run_id}: {len(run_objects)} files")
+                all_objects.extend(run_objects)
+
+            print()
+            print(f"OK: Found {len(all_objects)} total files to download")
             print()
 
             return all_objects
@@ -184,9 +274,23 @@ class BacktestCleanupAutomation:
                 object_name=object_name
             )
 
-            # Determine local path (remove run_id prefix)
-            relative_path = object_name.replace(f"{self.run_id}/", "")
+            # Determine local path - strip the run_id prefix (handles multiple related runs)
+            # Object name format: run_id/date/file.ext or run_id-retryN/date/file.ext
+            # We want to merge all into a single directory structure by date
+            for run_id in self.related_run_ids:
+                if object_name.startswith(f"{run_id}/"):
+                    relative_path = object_name[len(run_id) + 1:]  # +1 for the slash
+                    break
+            else:
+                # Fallback: just use the object name as-is
+                relative_path = object_name
+
             local_path = self.download_dir / relative_path
+
+            # Skip if file already exists (from another run - don't overwrite)
+            # Actually, DO overwrite - retry runs should have newer/corrected data
+            # if local_path.exists():
+            #     return True
 
             # Create parent directories
             local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -351,7 +455,8 @@ class BacktestCleanupAutomation:
         except Exception as e:
             print(f"ERROR: Failed to delete OCI files: {e}")
             print("You can clean up manually with:")
-            print(f"  oci os object bulk-delete --bucket-name {self.bucket_name} --prefix {self.run_id}/ --force")
+            for run_id in self.related_run_ids:
+                print(f"  oci os object bulk-delete --bucket-name {self.bucket_name} --prefix {run_id}/ --force")
             print()
 
     def cleanup_local_directory(self):
@@ -388,7 +493,10 @@ class BacktestCleanupAutomation:
         print("OCI BACKTEST CLEANUP & DOWNLOAD AUTOMATION")
         print("=" * 80)
         print(f"Run ID: {self.run_id}")
+        print(f"Base Run ID: {self.base_run_id}")
+        print(f"Download all related runs: {self.download_all_related}")
         print(f"Parallel downloads: {self.parallel}")
+        print(f"Create zip: {not self.no_zip}")
         print("=" * 80)
         print()
 
@@ -410,29 +518,44 @@ class BacktestCleanupAutomation:
                 print("ERROR: No files were downloaded successfully")
                 sys.exit(1)
 
-            # Step 4: Create zip archive
-            self.create_zip_archive()
+            if self.no_zip:
+                # Skip zip and cleanup - just download
+                print()
+                print("=" * 80)
+                print("DOWNLOAD COMPLETED SUCCESSFULLY")
+                print("=" * 80)
+                print()
+                print(f"Downloaded to: {self.download_dir}")
+                print()
+                print("Next steps:")
+                print(f"  1. Process the backtest: python oci/process_backtest_run.py {self.download_dir}")
+                print()
+                print("=" * 80)
+                print()
+            else:
+                # Step 4: Create zip archive
+                self.create_zip_archive()
 
-            # Step 5: Cleanup OCI files
-            self.cleanup_oci_files(object_names)
+                # Step 5: Cleanup OCI files
+                self.cleanup_oci_files(object_names)
 
-            # Step 6: Cleanup local directory
-            self.cleanup_local_directory()
+                # Step 6: Cleanup local directory
+                self.cleanup_local_directory()
 
-            # Success!
-            print()
-            print("=" * 80)
-            print("AUTOMATION COMPLETED SUCCESSFULLY")
-            print("=" * 80)
-            print()
-            print(f"Archive: {self.zip_file}")
-            print(f"Size: {self.zip_file.stat().st_size / (1024 * 1024):.1f} MB")
-            print()
-            print("Next steps:")
-            print(f"  1. Process the backtest: python oci/process_backtest_run.py {self.zip_file}")
-            print()
-            print("=" * 80)
-            print()
+                # Success!
+                print()
+                print("=" * 80)
+                print("AUTOMATION COMPLETED SUCCESSFULLY")
+                print("=" * 80)
+                print()
+                print(f"Archive: {self.zip_file}")
+                print(f"Size: {self.zip_file.stat().st_size / (1024 * 1024):.1f} MB")
+                print()
+                print("Next steps:")
+                print(f"  1. Process the backtest: python oci/process_backtest_run.py {self.zip_file}")
+                print()
+                print("=" * 80)
+                print()
 
         except KeyboardInterrupt:
             print()
@@ -478,6 +601,9 @@ Examples:
 
   # Keep local extracted directory
   python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --keep-extracted
+
+  # Just download, no zip (for local machine)
+  python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --no-zip
         """
     )
 
@@ -492,6 +618,8 @@ Examples:
                         help="Delete files from OCI bucket after download (must be explicit)")
     parser.add_argument('--keep-extracted', action='store_true',
                         help="Don't delete local extracted directory after zipping")
+    parser.add_argument('--no-zip', action='store_true',
+                        help="Skip creating zip archive (just download files to local directory)")
 
     args = parser.parse_args()
 
@@ -503,7 +631,8 @@ Examples:
         parallel=args.parallel,
         skip_nodepool=args.skip_nodepool,
         keep_oci_files=keep_oci,
-        keep_extracted=args.keep_extracted
+        keep_extracted=args.keep_extracted,
+        no_zip=args.no_zip
     )
 
     automation.run()

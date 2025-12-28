@@ -142,47 +142,52 @@
             }
         },
         "setup_filters": {
-            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Optimized for ~23K trades, 94% ROI at Rs 3L capital",
-            "_active_profile": "MODERATE",
+            "_comment": "3-YEAR OPTIMIZED FILTERS (Dec 2024): Analyzed 4,604 triggered trades, 732 trading days",
+            "_active_profile": "3YEAR_OPTIMIZED",
+            "_analysis_date": "2024-12-27",
             "failure_fade_long": {
                 "enabled": true,
                 "blocked_entirely": true,
-                "_moderate_filter": "BLOCKED - negative expectancy",
-                "_evidence": "MODERATE: Block failure_fade_long"
+                "_evidence": "Keep existing - not enough trades for reanalysis"
             },
             "failure_fade_short": {
                 "enabled": true,
                 "blocked_entirely": true,
-                "_moderate_filter": "BLOCKED - negative expectancy",
-                "_evidence": "MODERATE: Block failure_fade_short"
+                "_evidence": "Keep existing - not enough trades for reanalysis"
             },
             "volume_spike_reversal_long": {
                 "enabled": true,
-                "blocked_regimes": ["chop"],
-                "min_adx": 15,
-                "_moderate_filter": "Block chop regime + ADX >= 15",
-                "_evidence": "OPTION A Dec 2024: ADX 20+ blocks Rs -388 trades. ADX 15+ as buffer. 311 trades, Rs 159 net avg."
+                "blocked_caps": ["mid_cap"],
+                "_filter": "BASELINE with block mid_cap only",
+                "_evidence": "3YR VERIFIED: 161 trades, Rs 50,295 net (Rs 312 avg). Baseline 186 trades Rs 49,150 (Rs 264 avg).",
+                "_why_baseline": "All regimes profitable (squeeze Rs 26K, trend_up Rs 17K, trend_down Rs 5.5K). 59% win rate. Aggressive filtering HURTS total PnL.",
+                "_why_block_mid_cap": "mid_cap: 25 trades (11W/14L), Rs -1,146 net = only unprofitable segment. Blocking gives +Rs 1,146 improvement.",
+                "_rejected_filter": "rank>=1 + block trend_down + small_cap was WRONG: cut Rs 109K winners but only avoided Rs 68K losses = net -Rs 23K"
             },
             "volume_spike_reversal_short": {
                 "enabled": false,
                 "min_volume_ratio": 10,
                 "blocked_daily_regimes": ["trend_up"],
-                "_evidence": "vol>=10x + regime!=trend_up: 70% WR, 246 Rs/trade"
+                "_evidence": "Keep existing - not enough trades for reanalysis"
             },
             "vwap_mean_reversion_long": {
                 "enabled": false,
-                "min_volume": 50000
+                "min_volume": 50000,
+                "_evidence": "Keep existing - disabled"
             },
             "vwap_mean_reversion_short": {
                 "enabled": false,
-                "min_volume": 50000
+                "min_volume": 50000,
+                "_evidence": "Keep existing - disabled"
             },
             "gap_fill_long": {
                 "enabled": false,
-                "min_volume": 150000
+                "min_volume": 150000,
+                "_evidence": "Keep existing - disabled"
             },
             "gap_fill_short": {
-                "enabled": false
+                "enabled": false,
+                "_evidence": "Keep existing - disabled"
             }
         },
         "global_filters": {

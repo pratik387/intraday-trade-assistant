@@ -100,7 +100,6 @@ def bootstrap_screener_from_sidecar(screener: "ScreenerLive") -> dict:
                 merged_levels[symbol].update(daily_levels[symbol])
 
         if hasattr(screener, '_orb_levels_cache'):
-            from datetime import datetime
             session_date = datetime.now().strftime("%Y-%m-%d")
             screener._orb_levels_cache[session_date] = merged_levels
             logger.info(f"SIDECAR_BOOTSTRAP | Injected merged levels for {len(merged_levels)} symbols")

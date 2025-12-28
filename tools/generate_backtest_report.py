@@ -19,6 +19,7 @@ Output Structure:
 """
 import json
 import sys
+import re
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
@@ -31,6 +32,23 @@ import statistics
 import zipfile
 import glob
 
+
+def extract_run_id_from_path(path_str: str) -> str:
+    """
+    Extract the backtest run ID from a path.
+
+    Examples:
+        - 20251228-075841_full -> 20251228-075841
+        - backtest_20251228-075841_extracted -> 20251228-075841
+        - backtest_20251228-120054.zip -> 20251228-120054
+    """
+    # Pattern: YYYYMMDD-HHMMSS (timestamp format)
+    pattern = r'(\d{8}-\d{6})'
+    match = re.search(pattern, path_str)
+    if match:
+        return match.group(1)
+    return None
+
 # ============================================================================
 # ZERODHA INTRADAY EQUITY CHARGES
 # ============================================================================
@@ -40,6 +58,167 @@ EXCHANGE_RATE = 0.0000345  # NSE charges ~0.00345%
 SEBI_RATE = 0.000001  # 0.0001%
 STAMP_DUTY_RATE = 0.00003  # 0.003% on BUY side
 GST_RATE = 0.18  # 18% on brokerage + exchange charges
+
+# ============================================================================
+# INCOME TAX ON SPECULATIVE BUSINESS INCOME
+# ============================================================================
+TAX_RATE = 0.30  # 30% (highest slab for speculative income)
+CESS_RATE = 0.04  # 4% health and education cess on tax
+
+# ============================================================================
+# MIS LEVERAGE (Zerodha Margin Intraday Square-off)
+# ============================================================================
+NRML_MARGIN_PCT = 0.50  # NRML margin is typically 50% for most stocks
+
+# Try to load pandas for MIS margin file reading
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+
+
+def load_mis_margins(mis_file=None):
+    """
+    Load MIS margin data from Excel file.
+
+    Args:
+        mis_file: Path to Excel file with MIS margin percentages.
+                  If None, searches common locations.
+
+    Returns:
+        Dict mapping symbol -> MIS margin percentage (e.g., 0.20 for 20%)
+    """
+    if not PANDAS_AVAILABLE:
+        return {}
+
+    # Find MIS file if not provided
+    if not mis_file:
+        # Project root is parent of tools directory
+        project_root = Path(__file__).parent.parent
+        candidates = [
+            project_root / 'zerodha_mis_margin.xlsx',  # E:\Codebase\intraday-trade-assistant\zerodha_mis_margin.xlsx
+            Path.cwd() / 'zerodha_mis_margin.xlsx',
+            project_root / 'config' / 'zerodha_mis_margin.xlsx',
+            Path.home() / 'zerodha_mis_margin.xlsx',
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                mis_file = str(candidate)
+                print(f"      Found MIS file: {mis_file}")
+                break
+
+    if not mis_file or not Path(mis_file).exists():
+        return {}
+
+    try:
+        df = pd.read_excel(mis_file)
+        margins = {}
+
+        # Find symbol and margin columns
+        symbol_col = None
+        margin_col = None
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if 'scrip' in col_lower or 'symbol' in col_lower or 'tradingsymbol' in col_lower:
+                symbol_col = col
+            elif 'mis' in col_lower:
+                margin_col = col
+            elif 'margin' in col_lower and margin_col is None:
+                margin_col = col
+
+        if symbol_col and margin_col:
+            for _, row in df.iterrows():
+                symbol = str(row[symbol_col]).upper().strip()
+                if symbol in ('NAN', 'SCRIP', 'SYMBOL', '') or pd.isna(row[symbol_col]):
+                    continue
+
+                margin = row[margin_col]
+                if isinstance(margin, str) and 'margin' in margin.lower():
+                    continue
+
+                try:
+                    if isinstance(margin, str):
+                        margin = float(margin.replace('%', '').replace('x', '').strip())
+                    else:
+                        margin = float(margin)
+
+                    # If value > 1, assume it's a percentage (e.g., 20 = 20%)
+                    if margin > 1:
+                        margin = margin / 100
+
+                    if margin > 0:
+                        margins[symbol] = margin
+                        # Also add without exchange prefix
+                        if ':' in symbol:
+                            margins[symbol.split(':')[-1]] = margin
+                except (ValueError, TypeError):
+                    continue
+
+        print(f"      Loaded MIS margins for {len(margins)} symbols")
+        return margins
+
+    except Exception as e:
+        print(f"      Warning: Could not load MIS data: {e}")
+        return {}
+
+
+def get_mis_multiplier(symbol, mis_margins):
+    """
+    Get MIS leverage multiplier for a symbol.
+
+    Multiplier = NRML_MARGIN / MIS_MARGIN
+    Example: NRML 50% / MIS 20% = 2.5x leverage
+    """
+    clean_symbol = symbol.upper().strip()
+    if ':' in clean_symbol:
+        clean_symbol = clean_symbol.split(':')[-1]
+    if '_' in clean_symbol:
+        clean_symbol = clean_symbol.split('_')[0]
+
+    mis_margin = mis_margins.get(clean_symbol, NRML_MARGIN_PCT)
+
+    if mis_margin <= 0:
+        return 1.0
+
+    return NRML_MARGIN_PCT / mis_margin
+
+
+def calculate_income_tax(profit_after_fees):
+    """
+    Calculate income tax on trading profits.
+
+    For intraday trading, profits are classified as "Speculative Business Income"
+    and taxed at individual's applicable slab rate.
+    Uses highest slab (30%) for conservative estimate.
+
+    Args:
+        profit_after_fees: Net profit after all trading fees
+
+    Returns:
+        Dict with tax breakdown
+    """
+    if profit_after_fees <= 0:
+        return {
+            'taxable_income': 0,
+            'base_tax': 0,
+            'cess': 0,
+            'total_tax': 0,
+            'net_after_tax': profit_after_fees
+        }
+
+    base_tax = profit_after_fees * TAX_RATE
+    cess = base_tax * CESS_RATE
+    total_tax = base_tax + cess
+
+    return {
+        'taxable_income': round(profit_after_fees, 2),
+        'base_tax': round(base_tax, 2),
+        'cess': round(cess, 2),
+        'total_tax': round(total_tax, 2),
+        'net_after_tax': round(profit_after_fees - total_tax, 2)
+    }
+
 
 def discover_backtest_sources(specific_paths=None):
     """
@@ -120,7 +299,10 @@ def discover_backtest_sources(specific_paths=None):
             else:
                 period = f"{start_year}-{end_year}"
 
-            sources.append((dir_path, period, start_date, end_date))
+            # Extract run ID from directory name
+            run_id = extract_run_id_from_path(dir_path)
+
+            sources.append((dir_path, period, start_date, end_date, run_id))
 
     return sources
 
@@ -142,7 +324,7 @@ def extract_all_data():
     trades = []
     sessions = []
 
-    for dir_name, period, start_date, end_date in BACKTEST_DIRS:
+    for dir_name, period, start_date, end_date, run_id in BACKTEST_DIRS:
         base_path = Path(dir_name)
         if not base_path.exists():
             continue
@@ -187,11 +369,18 @@ def extract_all_data():
                             if trade_id and event.get("is_final_exit"):
                                 decision = decisions.get(trade_id, {})
                                 trigger = triggers.get(trade_id, {})
+                                # Get fees from analytics (calculated by TradingLogger)
+                                fees_data = event.get("fees", {})
+                                total_fees = fees_data.get("total_fees", 0) if fees_data else 0
+
                                 trade = {
                                     "trade_id": trade_id,
                                     "date": date,
                                     "period": period,
+                                    "symbol": event.get("symbol", ""),  # For MIS leverage calculation
                                     "pnl": event.get("total_trade_pnl", 0),
+                                    "fees": total_fees,  # Actual fees from TradingLogger
+                                    "net_pnl": event.get("net_pnl", 0),  # PnL after fees
                                     "exit_reason": event.get("reason", "unknown"),
                                     "exit_time": parse_timestamp(event.get("timestamp")),
                                     "setup": event.get("setup_type", decision.get("setup", "unknown")),
@@ -221,7 +410,7 @@ def extract_order_data():
     """Extract order-level data for charges calculation from analytics files."""
     orders = []
 
-    for dir_name, period, start_date, end_date in BACKTEST_DIRS:
+    for dir_name, period, start_date, end_date, run_id in BACKTEST_DIRS:
         base_path = Path(dir_name)
         if not base_path.exists():
             continue
@@ -245,6 +434,9 @@ def extract_order_data():
                             if exit_price <= 0 or qty <= 0:
                                 continue
 
+                            # Extract pre-calculated fees if available
+                            fees = ev.get('fees', {})
+
                             orders.append({
                                 'exit_price': exit_price,
                                 'entry_price': entry_price if entry_price > 0 else exit_price,
@@ -252,7 +444,11 @@ def extract_order_data():
                                 'exit_sequence': exit_seq,
                                 'is_final': ev.get('is_final_exit', False),
                                 'gross_pnl': ev.get('total_trade_pnl', 0) if ev.get('is_final_exit') else 0,
+                                'net_pnl': ev.get('net_pnl', 0) if ev.get('is_final_exit') else 0,
                                 'setup': setup,
+                                # Pre-calculated fees from analytics (if available)
+                                'fees': fees,
+                                'has_precalc_fees': bool(fees),
                             })
                         except:
                             continue
@@ -260,7 +456,12 @@ def extract_order_data():
 
 
 def calculate_charges(orders):
-    """Calculate Zerodha intraday equity charges from order data."""
+    """
+    Calculate Zerodha intraday equity charges from order data.
+
+    Uses pre-calculated fees from analytics.jsonl when available (from TradingLogger).
+    Falls back to local calculation for backward compatibility with older data.
+    """
     total_brokerage = 0
     total_stt = 0
     total_exchange = 0
@@ -269,28 +470,54 @@ def calculate_charges(orders):
     total_sebi = 0
     total_turnover = 0
     total_orders = 0
+    precalc_count = 0
 
     for order in orders:
         exit_turnover = order['exit_price'] * order['qty']
         entry_turnover = order['entry_price'] * order['qty']
 
-        # Entry order counted only once per trade (on first exit)
-        if order['exit_sequence'] == 1:
+        # Use pre-calculated fees if available
+        if order.get('has_precalc_fees') and order.get('fees'):
+            fees = order['fees']
+            total_brokerage += fees.get('brokerage', 0)
+            total_stt += fees.get('stt', 0)
+            total_exchange += fees.get('exchange', 0)
+            total_gst += fees.get('gst', 0)
+            total_stamp += fees.get('stamp_duty', 0)
+            total_sebi += fees.get('sebi', 0)
+            total_turnover += entry_turnover + exit_turnover
+            total_orders += 2 if order['exit_sequence'] == 1 else 1
+            precalc_count += 1
+        else:
+            # Fallback: calculate locally for backward compatibility
+            # Entry order counted only once per trade (on first exit)
+            if order['exit_sequence'] == 1:
+                total_orders += 1
+                total_brokerage += BROKERAGE_PER_ORDER
+                total_stamp += entry_turnover * STAMP_DUTY_RATE
+                total_turnover += entry_turnover
+
+            # Exit order (each partial exit is separate)
             total_orders += 1
             total_brokerage += BROKERAGE_PER_ORDER
-            total_stamp += entry_turnover * STAMP_DUTY_RATE
-            total_turnover += entry_turnover
+            total_stt += exit_turnover * STT_RATE
+            total_exchange += exit_turnover * EXCHANGE_RATE
+            total_sebi += exit_turnover * SEBI_RATE
+            total_turnover += exit_turnover
 
-        # Exit order (each partial exit is separate)
-        total_orders += 1
-        total_brokerage += BROKERAGE_PER_ORDER
-        total_stt += exit_turnover * STT_RATE
-        total_exchange += exit_turnover * EXCHANGE_RATE
-        total_sebi += exit_turnover * SEBI_RATE
-        total_turnover += exit_turnover
-
-    # GST on brokerage + exchange
-    total_gst = (total_brokerage + total_exchange) * GST_RATE
+    # GST on brokerage + exchange (only for fallback-calculated orders)
+    # Pre-calculated fees already include GST
+    if precalc_count < len(orders):
+        # Some orders used fallback calculation, need to add GST for those
+        fallback_brokerage = sum(
+            BROKERAGE_PER_ORDER * (2 if o['exit_sequence'] == 1 else 1)
+            for o in orders if not o.get('has_precalc_fees')
+        )
+        fallback_exchange = sum(
+            o['exit_price'] * o['qty'] * EXCHANGE_RATE
+            for o in orders if not o.get('has_precalc_fees')
+        )
+        total_gst += (fallback_brokerage + fallback_exchange) * GST_RATE
 
     total_charges = total_brokerage + total_stt + total_exchange + total_gst + total_stamp + total_sebi
 
@@ -304,6 +531,8 @@ def calculate_charges(orders):
         'stamp_duty': total_stamp,
         'sebi': total_sebi,
         'total_charges': total_charges,
+        'precalc_count': precalc_count,
+        'fallback_count': len(orders) - precalc_count,
     }
 
 
@@ -513,16 +742,28 @@ def calculate_capital_requirements(trades):
     }
 
 
-def simulate_capital_constraint(trades, capital_limit):
+def simulate_capital_constraint(trades, capital_limit, mis_margins=None):
+    """
+    Simulate trading with a capital constraint.
+
+    Args:
+        trades: List of trade dicts with entry_time, exit_time, notional, pnl, symbol, fees
+        capital_limit: Maximum capital to deploy at any time
+        mis_margins: Dict of symbol -> MIS margin percentage (for leverage calculation)
+
+    Returns:
+        Dict with trades_taken, gross_pnl_mis, fees, tax, net_pnl, capture_rate
+    """
     by_date = defaultdict(list)
     for t in trades:
         if t["entry_time"] and t["exit_time"] and t["notional"] > 0:
             by_date[t["date"]].append(t)
 
-    total_taken = 0
-    total_skipped = 0
+    trades_taken = 0
+    trades_skipped = 0
     pnl_taken = 0
     pnl_skipped = 0
+    fees_taken = 0
 
     for date, day_trades in by_date.items():
         day_trades.sort(key=lambda x: x["entry_time"])
@@ -530,20 +771,38 @@ def simulate_capital_constraint(trades, capital_limit):
         for t in day_trades:
             active = [(et, n) for et, n in active if et > t["entry_time"]]
             current = sum(n for _, n in active)
+
+            # Calculate MIS-adjusted PnL for this trade
+            if mis_margins:
+                multiplier = get_mis_multiplier(t.get("symbol", ""), mis_margins)
+            else:
+                multiplier = 1.0
+            mis_pnl = t["pnl"] * multiplier
+
             if current + t["notional"] <= capital_limit:
                 active.append((t["exit_time"], t["notional"]))
-                pnl_taken += t["pnl"]
-                total_taken += 1
+                pnl_taken += mis_pnl
+                fees_taken += t.get("fees", 0)  # Use actual fees from trade
+                trades_taken += 1
             else:
-                pnl_skipped += t["pnl"]
-                total_skipped += 1
+                pnl_skipped += mis_pnl
+                trades_skipped += 1
+
+    # Net after fees (using actual fees from trades taken)
+    net_after_fees = pnl_taken - fees_taken
+
+    # Calculate tax on profit
+    tax_result = calculate_income_tax(net_after_fees)
+    net_pnl = tax_result['net_after_tax']
 
     return {
-        "trades_taken": total_taken,
-        "trades_skipped": total_skipped,
-        "pnl_taken": pnl_taken,
-        "pnl_skipped": pnl_skipped,
-        "capture_rate": total_taken / (total_taken + total_skipped) * 100 if (total_taken + total_skipped) > 0 else 0,
+        "trades_taken": trades_taken,
+        "trades_skipped": trades_skipped,
+        "gross_pnl_mis": pnl_taken,
+        "fees": fees_taken,
+        "tax": tax_result['total_tax'],
+        "net_pnl": net_pnl,
+        "capture_rate": trades_taken / (trades_taken + trades_skipped) * 100 if (trades_taken + trades_skipped) > 0 else 0,
     }
 
 
@@ -657,16 +916,51 @@ def generate_executive_summary(data, output_path):
     lines.append(f"  TOTAL CHARGES:                 Rs {chg['total_charges']:>12,.0f}")
     lines.append("")
 
+    # MIS Leverage section
+    mis = data.get("mis_leverage", {})
+    tax = data.get("tax", {})
+
     lines.append("-" * 80)
-    lines.append("NET P&L (AFTER ALL CHARGES)")
+    lines.append("NET P&L CALCULATION")
     lines.append("-" * 80)
-    lines.append(f"  Gross P&L:               Rs {perf['total_pnl']:>15,.2f}")
-    lines.append(f"  Total Charges:           Rs {chg['total_charges']:>15,.2f}")
-    lines.append(f"  ════════════════════════════════════════════════")
-    lines.append(f"  NET P&L:                 Rs {net_after_charges:>15,.2f}")
-    lines.append(f"  Avg Net per Trade:       Rs {net_after_charges/perf['total_trades']:>15,.2f}")
-    status = "PROFITABLE ✓" if net_after_charges > 0 else "UNPROFITABLE ✗"
-    lines.append(f"  Status:                  {status:>15}")
+    lines.append(f"  Gross P&L (NRML):        Rs {perf['total_pnl']:>15,.2f}")
+
+    if mis.get('has_mis_data'):
+        lines.append(f"  MIS Leverage (avg):      {mis.get('avg_multiplier', 1.0):>14.2f}x")
+        lines.append(f"  Gross P&L (with MIS):    Rs {mis.get('gross_pnl_mis', perf['total_pnl']):>15,.2f}")
+        lines.append(f"  Less: Trading Charges:   Rs {chg['total_charges']:>15,.2f}")
+        lines.append(f"  ────────────────────────────────────────────────")
+        lines.append(f"  Net P&L (after fees):    Rs {mis.get('net_after_fees_mis', net_after_charges):>15,.2f}")
+    else:
+        lines.append(f"  (MIS data not available - showing NRML 1x)")
+        lines.append(f"  Less: Trading Charges:   Rs {chg['total_charges']:>15,.2f}")
+        lines.append(f"  ────────────────────────────────────────────────")
+        lines.append(f"  Net P&L (after fees):    Rs {net_after_charges:>15,.2f}")
+    lines.append("")
+
+    # Tax section
+    lines.append("-" * 80)
+    lines.append("INCOME TAX (Speculative Business Income)")
+    lines.append("-" * 80)
+    if tax.get('taxable_income', 0) > 0:
+        lines.append(f"  Taxable Income:          Rs {tax.get('taxable_income', 0):>15,.2f}")
+        lines.append(f"  Base Tax (30%):          Rs {tax.get('base_tax', 0):>15,.2f}")
+        lines.append(f"  Health & Ed Cess (4%):   Rs {tax.get('cess', 0):>15,.2f}")
+        lines.append(f"  ────────────────────────────────────────────────")
+        lines.append(f"  Total Tax:               Rs {tax.get('total_tax', 0):>15,.2f}")
+    else:
+        lines.append(f"  No tax applicable (no profit)")
+    lines.append("")
+
+    # Final net PnL
+    final_net = tax.get('net_after_tax', net_after_charges)
+    lines.append("-" * 80)
+    lines.append("═══════════════════════════════════════════════════════════════════════════════")
+    lines.append(f"  FINAL NET P&L (after fees + tax): Rs {final_net:>15,.2f}")
+    lines.append(f"  Avg Net per Trade:                Rs {final_net/perf['total_trades']:>15,.2f}")
+    status = "PROFITABLE ✓" if final_net > 0 else "UNPROFITABLE ✗"
+    lines.append(f"  Status: {status}")
+    lines.append("═══════════════════════════════════════════════════════════════════════════════")
     lines.append("")
 
     lines.append("-" * 80)
@@ -712,15 +1006,22 @@ def generate_executive_summary(data, output_path):
     lines.append("")
 
     lines.append("-" * 80)
-    lines.append("CAPITAL SCENARIO ANALYSIS")
+    lines.append("CAPITAL SCENARIO ANALYSIS (MIS + Fees + Tax)")
     lines.append("-" * 80)
-    lines.append(f"  {'Capital':<15} {'PnL Captured':>15} {'Capture %':>12} {'Annual ROI':>12}")
-    lines.append("  " + "-" * 55)
+    lines.append(f"  {'Capital':<10} {'Trades':>8} {'Gross MIS':>12} {'Fees':>10} {'Tax':>10} {'Net PnL':>12} {'ROI/yr':>10}")
+    lines.append("  " + "-" * 75)
     years = data["period"]["years"] or 1
     for label, sim in data["capital_scenarios"].items():
         cap_val = int(label.replace("L", "")) * 100000
-        annual_roi = (sim["pnl_taken"] / cap_val / years) * 100
-        lines.append(f"  Rs {label:<12} Rs {sim['pnl_taken']:>12,.0f} {sim['capture_rate']:>11.1f}% {annual_roi:>11.1f}%")
+        annual_roi = (sim["net_pnl"] / cap_val / years) * 100
+        lines.append(
+            f"  Rs {label:<7} {sim['trades_taken']:>8} "
+            f"Rs {sim['gross_pnl_mis']:>9,.0f} "
+            f"Rs {sim['fees']:>7,.0f} "
+            f"Rs {sim['tax']:>7,.0f} "
+            f"Rs {sim['net_pnl']:>9,.0f} "
+            f"{annual_roi:>9.1f}%"
+        )
     lines.append("")
 
     lines.append("-" * 80)
@@ -873,14 +1174,21 @@ def generate_detailed_report(data, output_path):
     lines.append(f"  95th Percentile:           Rs {cap['percentile_95']:>15,.0f}")
     lines.append(f"  Max Concurrent Trades:     {cap['max_concurrent_trades']:>15}")
     lines.append("")
-    lines.append("  Capital Constraint Simulation:")
-    lines.append(f"    {'Capital':<12} {'Taken':>10} {'Skipped':>10} {'PnL':>15} {'Capture%':>10} {'ROI/Yr':>10}")
-    lines.append("    " + "-" * 70)
+    lines.append("  Capital Constraint Simulation (MIS + Fees + Tax):")
+    lines.append(f"    {'Capital':<10} {'Trades':>8} {'Gross MIS':>12} {'Fees':>10} {'Tax':>10} {'Net PnL':>12} {'ROI/Yr':>10}")
+    lines.append("    " + "-" * 75)
     years = data["period"]["years"] or 1
     for label, sim in data["capital_scenarios"].items():
         cap_val = int(label.replace("L", "")) * 100000
-        annual_roi = (sim["pnl_taken"] / cap_val / years) * 100
-        lines.append(f"    Rs {label:<9} {sim['trades_taken']:>10} {sim['trades_skipped']:>10} Rs {sim['pnl_taken']:>12,.0f} {sim['capture_rate']:>9.1f}% {annual_roi:>9.1f}%")
+        annual_roi = (sim["net_pnl"] / cap_val / years) * 100
+        lines.append(
+            f"    Rs {label:<7} {sim['trades_taken']:>8} "
+            f"Rs {sim['gross_pnl_mis']:>9,.0f} "
+            f"Rs {sim['fees']:>7,.0f} "
+            f"Rs {sim['tax']:>7,.0f} "
+            f"Rs {sim['net_pnl']:>9,.0f} "
+            f"{annual_roi:>9.1f}%"
+        )
     lines.append("")
 
     # SECTION 7
@@ -954,8 +1262,13 @@ def main():
         print("      Expected: backtest_*.zip or backtest_*_extracted/ directories")
         return
 
-    for dir_path, period, start, end in BACKTEST_DIRS:
-        print(f"      Found: {dir_path} [{period}] ({start} to {end})")
+    # Collect run IDs from all sources
+    backtest_run_ids = []
+    for dir_path, period, start, end, run_id in BACKTEST_DIRS:
+        run_id_str = f" [run: {run_id}]" if run_id else ""
+        print(f"      Found: {dir_path} [{period}] ({start} to {end}){run_id_str}")
+        if run_id:
+            backtest_run_ids.append(run_id)
 
     print("\n[1/7] Extracting trade data...")
     trades, sessions = extract_all_data()
@@ -970,23 +1283,50 @@ def main():
     yearly = calculate_yearly_breakdown(trades, sessions)
     monthly = calculate_monthly_breakdown(trades, sessions)
 
-    print("[4/7] Calculating Zerodha charges...")
+    print("[4/8] Calculating Zerodha charges...")
     charges = calculate_charges(orders)
     setup_charges = calculate_setup_charges(orders)
+    net_after_fees = performance['total_pnl'] - charges['total_charges']
     print(f"      Total charges: Rs {charges['total_charges']:,.0f}")
-    print(f"      Net P&L after charges: Rs {performance['total_pnl'] - charges['total_charges']:,.0f}")
+    print(f"      Net P&L after charges: Rs {net_after_fees:,.0f}")
 
-    print("[5/7] Analyzing setup and regime performance...")
+    print("[5/8] Loading MIS margins and calculating leverage...")
+    mis_margins = load_mis_margins()
+    if mis_margins:
+        # Calculate MIS-adjusted PnL per trade
+        multipliers = []
+        mis_pnl_total = 0
+        for trade in trades:
+            multiplier = get_mis_multiplier(trade.get('symbol', ''), mis_margins)
+            multipliers.append(multiplier)
+            mis_pnl_total += trade.get('pnl', 0) * multiplier
+        avg_multiplier = sum(multipliers) / len(multipliers) if multipliers else 1.0
+        mis_net_after_fees = mis_pnl_total - charges['total_charges']
+        print(f"      Avg MIS multiplier: {avg_multiplier:.2f}x")
+        print(f"      Gross PnL with MIS: Rs {mis_pnl_total:,.0f}")
+        print(f"      Net PnL with MIS (after fees): Rs {mis_net_after_fees:,.0f}")
+    else:
+        print(f"      No MIS file found, using 1x leverage (NRML)")
+        avg_multiplier = 1.0
+        mis_pnl_total = performance['total_pnl']
+        mis_net_after_fees = net_after_fees
+
+    # Calculate income tax on profit after fees (using MIS-adjusted if available)
+    tax_result = calculate_income_tax(mis_net_after_fees)
+    print(f"      Income tax (30% + 4% cess): Rs {tax_result['total_tax']:,.0f}")
+    print(f"      Final Net PnL after tax: Rs {tax_result['net_after_tax']:,.0f}")
+
+    print("[6/8] Analyzing setup and regime performance...")
     setups = calculate_setup_performance(trades)
     regimes = calculate_regime_performance(trades)
 
-    print("[6/7] Analyzing capital requirements...")
+    print("[7/8] Analyzing capital requirements...")
     capital = calculate_capital_requirements(trades)
     capital_scenarios = {}
     for limit, label in [(300000, "3L"), (500000, "5L"), (600000, "6L"), (1000000, "10L")]:
-        capital_scenarios[label] = simulate_capital_constraint(trades, limit)
+        capital_scenarios[label] = simulate_capital_constraint(trades, limit, mis_margins)
 
-    print("[7/7] Calculating risk metrics...")
+    print("[8/8] Calculating risk metrics...")
     risk_metrics = calculate_risk_metrics(trades, sessions)
     drawdown = calculate_drawdown_analysis(sessions)
 
@@ -1008,6 +1348,14 @@ def main():
         "sessions": sessions,
         "charges": charges,
         "setup_charges": setup_charges,
+        "mis_leverage": {
+            "avg_multiplier": round(avg_multiplier, 2),
+            "gross_pnl_nrml": performance['total_pnl'],
+            "gross_pnl_mis": mis_pnl_total,
+            "net_after_fees_mis": mis_net_after_fees,
+            "has_mis_data": bool(mis_margins),
+        },
+        "tax": tax_result,
     }
 
     print("[6/6] Generating reports...")
@@ -1036,17 +1384,23 @@ def main():
         "date_range": f"{start_year}-{end_year}",
         "start_date": data["period"]["start"],
         "end_date": data["period"]["end"],
+        "backtest_run_ids": backtest_run_ids,  # OCI job run IDs used for this backtest
     }
     with open(json_path, "w") as f:
         json.dump(json_data, f, indent=2, default=str)
     print(f"      JSON Data: {json_path.name}")
+    if backtest_run_ids:
+        print(f"      Run IDs: {', '.join(backtest_run_ids)}")
 
     print("\n" + "=" * 70)
     print("REPORT GENERATION COMPLETE")
     print("=" * 70)
 
     with open(exec_path, "r", encoding="utf-8") as f:
-        print("\n" + f.read())
+        content = f.read()
+        # Replace Unicode box characters that may not print on Windows console
+        content = content.replace("═", "=").replace("─", "-").replace("✓", "[OK]").replace("✗", "[X]")
+        print("\n" + content)
 
 
 if __name__ == "__main__":
