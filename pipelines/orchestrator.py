@@ -523,6 +523,7 @@ class PipelineOrchestrator:
                         structural_rr=plan.get("quality", {}).get("structural_rr") if plan else None,
                         regime=regime,
                         gate_details=gate_details  # Add detailed gate_fail reasons
+
                     )
 
             return plan
