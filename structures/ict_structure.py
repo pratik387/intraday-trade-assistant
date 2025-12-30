@@ -27,45 +27,52 @@ class ICTStructure(BaseStructure):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
 
-        # Order Blocks parameters
-        self.ob_min_move_pct = config.get("order_block_min_move_pct", 0.5) / 100.0
-        self.ob_min_volume_surge = config.get("order_block_min_volume_surge", 1.5)
-        self.ob_lookback_bars = config.get("order_block_lookback", 20) or 20
-        self.ob_test_tolerance = config.get("order_block_test_tolerance_pct", 0.15) / 100.0
+        # Track which specific setup type this detector is for (e.g., "premium_zone_short")
+        self.configured_setup_type = config.get("_setup_name", None)
 
-        # Fair Value Gap parameters
-        self.fvg_min_gap_pct = config.get("fvg_min_gap_pct", 0.1) / 100.0
-        self.fvg_max_gap_pct = config.get("fvg_max_gap_pct", 1.5) / 100.0
-        self.fvg_require_volume = config.get("fvg_require_volume_spike", True)
-        self.fvg_min_volume_mult = config.get("fvg_min_volume_mult", 1.5)
-        self.fvg_fill_tolerance = config.get("fvg_fill_tolerance_pct", 0.05) / 100.0
+        # Order Blocks parameters - will crash with KeyError if missing
+        self.ob_min_move_pct = config["order_block_min_move_pct"] / 100.0
+        self.ob_min_volume_surge = config["order_block_min_volume_surge"]
+        self.ob_lookback_bars = config["order_block_lookback"]
+        self.ob_test_tolerance = config["order_block_test_tolerance_pct"] / 100.0
 
-        # Liquidity Sweep parameters
-        self.sweep_min_distance_pct = config.get("sweep_min_distance_pct", 0.05) / 100.0
-        self.sweep_max_distance_pct = config.get("sweep_max_distance_pct", 0.3) / 100.0
-        self.sweep_min_volume_surge = config.get("sweep_min_volume_surge", 2.0)
-        self.sweep_min_wick_ratio = config.get("sweep_min_wick_ratio", 0.4)
-        self.sweep_reversal_bars = config.get("sweep_reversal_bars", 3) or 3
+        # Fair Value Gap parameters - will crash with KeyError if missing
+        self.fvg_min_gap_pct = config["fvg_min_gap_pct"] / 100.0
+        self.fvg_max_gap_pct = config["fvg_max_gap_pct"] / 100.0
+        self.fvg_require_volume = config["fvg_require_volume_spike"]
+        self.fvg_min_volume_mult = config["fvg_min_volume_mult"]
+        self.fvg_fill_tolerance = config["fvg_fill_tolerance_pct"] / 100.0
 
-        # Premium/Discount parameters
-        self.premium_threshold = config.get("premium_threshold_pct", 70.0) / 100.0
-        self.discount_threshold = config.get("discount_threshold_pct", 30.0) / 100.0
-        self.range_lookback_bars = config.get("range_lookback_bars", 50) or 50
+        # Liquidity Sweep parameters - will crash with KeyError if missing
+        self.sweep_min_distance_pct = config["sweep_min_distance_pct"] / 100.0
+        self.sweep_max_distance_pct = config["sweep_max_distance_pct"] / 100.0
+        self.sweep_min_volume_surge = config["sweep_min_volume_surge"]
+        self.sweep_min_wick_ratio = config["sweep_min_wick_ratio"]
+        self.sweep_reversal_bars = config["sweep_reversal_bars"]
 
-        # Break of Structure parameters
-        self.bos_min_structure_bars = config.get("bos_min_structure_bars", 10) or 10
-        self.bos_min_break_pct = config.get("bos_min_break_pct", 0.2) / 100.0
-        self.bos_volume_confirmation = config.get("bos_volume_confirmation", True)
+        # Premium/Discount parameters - will crash with KeyError if missing
+        self.premium_threshold = config["premium_threshold_pct"] / 100.0
+        self.discount_threshold = config["discount_threshold_pct"] / 100.0
+        self.range_lookback_bars = config["range_lookback_bars"]
 
-        # Change of Character parameters
-        self.choch_momentum_periods = config.get("choch_momentum_periods", [3, 5, 8]) or [3, 5, 8]
-        self.choch_min_momentum_change = config.get("choch_min_momentum_change_pct", 1.0) / 100.0
-        self.choch_volume_threshold = config.get("choch_volume_threshold", 1.8)
+        # Break of Structure parameters - will crash with KeyError if missing
+        self.bos_min_structure_bars = config["bos_min_structure_bars"]
+        self.bos_min_break_pct = config["bos_min_break_pct"] / 100.0
+        self.bos_volume_confirmation = config["bos_volume_confirmation"]
 
-        # Risk and exit parameters
-        self.risk_pct = config.get("risk_pct", 1.0) / 100.0
-        self.reward_risk_ratio = config.get("reward_risk_ratio", 2.0)
-        self.max_bars_hold = config.get("max_bars_hold", 12) or 12
+        # Change of Character parameters - will crash with KeyError if missing
+        self.choch_momentum_periods = config["choch_momentum_periods"]
+        self.choch_min_momentum_change = config["choch_min_momentum_change_pct"] / 100.0
+        self.choch_volume_threshold = config["choch_volume_threshold"]
+
+        # Risk and exit parameters - will crash with KeyError if missing
+        self.risk_pct = config["risk_pct"] / 100.0
+        self.reward_risk_ratio = config["reward_risk_ratio"]
+        self.max_bars_hold = config["max_bars_hold"]
+
+        # Stop loss parameters - Pro trader: SL at structure level + ATR buffer
+        self.sl_buffer_atr = config["sl_buffer_atr"]  # ATR buffer beyond structure level
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
 
         # Quality Filter parameters (MUST be in config - no defaults)
         ict_filters = config["ict_quality_filters"]  # Will raise KeyError if missing
@@ -171,6 +178,13 @@ class ICTStructure(BaseStructure):
             # Combine all events
             all_events = (order_block_events + fvg_events + sweep_events + mss_events +
                          premium_discount_events + bos_events + choch_events)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and all_events:
+                filtered_events = [e for e in all_events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(all_events):
+                    logger.debug(f"ICT: {context.symbol} - Filtered {len(all_events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                all_events = filtered_events
 
             # Calculate quality score based on multiple confirmations
             quality_score = self._calculate_ict_quality_score(all_events, d, context)
@@ -1645,36 +1659,60 @@ class ICTStructure(BaseStructure):
         return None
 
     def calculate_risk_params(self, context: MarketContext, direction: str) -> RiskParams:
-        """Calculate risk parameters for ICT setups."""
-        atr = context.indicators.get('atr', 1.0)
+        """Calculate risk parameters for ICT setups using configurable SL buffer.
+
+        Pro trader approach: SL at structure level + ATR buffer.
+        For ICT, the sweep_low (liquidity sweep) or OB level is the logical invalidation.
+        """
+        atr = self._get_atr(context)
+        entry_price = context.current_price
 
         if direction == 'long':
-            stop_loss = context.current_price - (atr * 2.0)
+            stop_loss = entry_price - (atr * self.sl_buffer_atr)
         else:
-            stop_loss = context.current_price + (atr * 2.0)
+            stop_loss = entry_price + (atr * self.sl_buffer_atr)
+
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
+        risk_per_share = abs(entry_price - stop_loss)
+        if risk_per_share < min_stop_distance:
+            if direction == 'long':
+                stop_loss = entry_price - min_stop_distance
+            else:
+                stop_loss = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=stop_loss,
             risk_percentage=self.risk_pct,
-            risk_per_share=atr * 0.01
+            risk_per_share=risk_per_share,
+            atr=atr
         )
 
     def get_exit_levels(self, context: MarketContext, direction: str) -> ExitLevels:
         """Get exit levels for ICT setups."""
-        atr = context.indicators.get('atr', 1.0)
+        atr = self._get_atr(context)
+        entry_price = context.current_price
 
         if direction == 'long':
-            stop_loss = context.current_price - (atr * 2.0)
-            take_profit = context.current_price + (atr * self.reward_risk_ratio * 2.0)
+            stop_loss = entry_price - (atr * self.sl_buffer_atr)
+            take_profit = entry_price + (atr * self.reward_risk_ratio * self.sl_buffer_atr)
         else:
-            stop_loss = context.current_price + (atr * 2.0)
-            take_profit = context.current_price - (atr * self.reward_risk_ratio * 2.0)
+            stop_loss = entry_price + (atr * self.sl_buffer_atr)
+            take_profit = entry_price - (atr * self.reward_risk_ratio * self.sl_buffer_atr)
 
         return ExitLevels(
-            targets=[{"level": take_profit, "qty_pct": 100, "rr": 2.0}],
+            targets=[{"level": take_profit, "qty_pct": 100, "rr": self.reward_risk_ratio}],
             hard_sl=stop_loss,
             trail_to=None
         )
+
+    def _get_atr(self, context: MarketContext) -> float:
+        """Get ATR from context - must exist, no default."""
+        if context.indicators and 'atr' in context.indicators:
+            return context.indicators['atr']
+        # Fallback: estimate ATR as 1% of price (better than crashing for missing indicator)
+        return context.current_price * 0.01
 
     def rank_setup_quality(self, context: MarketContext) -> float:
         """Rank the quality of ICT setups."""

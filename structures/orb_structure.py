@@ -45,6 +45,9 @@ class ORBStructure(BaseStructure):
         """Initialize ORB structure with configuration."""
         super().__init__(config)
 
+        # Track which specific setup type this detector is for (e.g., "orb_breakout_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
         self.orb_minutes = config["orb_minutes"]
         self.min_range_pct = config["min_range_pct"] / 100.0
@@ -58,7 +61,25 @@ class ORBStructure(BaseStructure):
         self.confidence_no_volume = config["confidence_no_volume"]
         self.pullback_zones = config["pullback_zones"]
 
-        logger.debug(f"ORB: Initialized with config - Buffer: {self.breakout_buffer_pct:.3f}%, Stop: {self.min_stop_distance_pct:.3f}%, Targets: {self.target_mult_t1}x/{self.target_mult_t2}x")
+        # ORB-specific min bars - Pro traders use 15-min range (3 bars) + 1 bar for breakout = 4 bars minimum
+        # This allows ORB detection starting at 9:35 (after 4 bars from 9:15)
+        self.min_bars_required = config["min_bars_required"]
+
+        # PRO TRADER: Candle close confirmation (Crabel standard)
+        # Wait for bar CLOSE above ORH/below ORL, not just intra-bar price
+        self.require_candle_close = config["require_candle_close"]
+
+        # PRO TRADER: NR7 Daily Filter (Crabel's #1 ORB filter)
+        # Only trade ORB after previous day was NR7 (narrowest range of last 7 days)
+        # This indicates volatility contraction before expansion
+        self.require_nr7_day = config["require_nr7_day"]
+        self.nr7_lookback_days = config["nr7_lookback_days"]
+
+        # PRO TRADER: VWAP alignment gate
+        # Longs must be above VWAP, shorts below - trading with institutional flow
+        self.require_vwap_alignment = config["require_vwap_alignment"]
+
+        logger.debug(f"ORB: Initialized with config - Buffer: {self.breakout_buffer_pct:.3f}%, Stop: {self.min_stop_distance_pct:.3f}%, Targets: {self.target_mult_t1}x/{self.target_mult_t2}x, MinBars: {self.min_bars_required}, CandleClose: {self.require_candle_close}, NR7: {self.require_nr7_day}, VWAP: {self.require_vwap_alignment}")
 
         # Session timing
         self.session_start = time(9, 15)  # Market open
@@ -89,13 +110,13 @@ class ORBStructure(BaseStructure):
                     rejection_reason="No 5m data available"
                 )
 
-            if len(df) < 10:
-                logger.debug(f"ORB: {symbol} - Insufficient data: {len(df)} bars < 10 minimum")
+            if len(df) < self.min_bars_required:
+                logger.debug(f"ORB: {symbol} - Insufficient data: {len(df)} bars < {self.min_bars_required} minimum")
                 return StructureAnalysis(
                     structure_detected=False,
                     events=[],
                     quality_score=0.0,
-                    rejection_reason=f"Insufficient data: {len(df)} bars < 10 minimum"
+                    rejection_reason=f"Insufficient data: {len(df)} bars < {self.min_bars_required} minimum"
                 )
 
             events = []
@@ -143,58 +164,98 @@ class ORBStructure(BaseStructure):
                     rejection_reason=f"ORB range too small: {orb_range_pct:.3f}% < {self.min_range_pct:.3f}%"
                 )
 
+            # PRO TRADER: NR7 Daily Filter (Crabel's #1 ORB filter)
+            if self.require_nr7_day:
+                is_nr7 = self._check_nr7_day(market_context)
+                if not is_nr7:
+                    logger.debug(f"ORB: {symbol} - Rejected: NOT an NR7 day (volatility not contracted)")
+                    return StructureAnalysis(
+                        structure_detected=False,
+                        events=[],
+                        quality_score=0.0,
+                        rejection_reason="Not NR7 day - previous day not narrowest of 7 days"
+                    )
+
             current_price = market_context.current_price
             current_time = market_context.timestamp
 
-            logger.debug(f"ORB: {symbol} - Price: {current_price:.2f}, ORH: {orh:.2f}, ORL: {orl:.2f}")
+            # PRO TRADER: Use candle CLOSE for breakout confirmation (Crabel standard)
+            # Avoids wick fakeouts - only confirm breakout when bar CLOSES outside range
+            candle_close = float(df["close"].iloc[-1])
+            breakout_price = candle_close if self.require_candle_close else current_price
 
-            # Detect ORH breakout
-            if current_price > orh:
-                logger.debug(f"ORB: {symbol} - Price above ORH, checking volume confirmation")
+            logger.debug(f"ORB: {symbol} - Price: {current_price:.2f}, Candle Close: {candle_close:.2f}, ORH: {orh:.2f}, ORL: {orl:.2f}, Using: {'candle_close' if self.require_candle_close else 'current_price'}")
+
+            # Detect ORH breakout - PRO: Check candle CLOSE above ORH
+            if breakout_price > orh:
+                logger.debug(f"ORB: {symbol} - {'Candle closed' if self.require_candle_close else 'Price'} above ORH, checking volume confirmation")
                 volume_confirmed = self._check_volume_confirmation(df, "breakout")
 
-                confidence = self._calculate_institutional_strength(market_context, orb_range_pct, volume_confirmed, "long", orh, orl)
-                logger.debug(f"ORB: {symbol} - ORH breakout detected | Price: {current_price:.2f} > ORH: {orh:.2f} | Volume confirmed: {volume_confirmed} | Confidence: {confidence:.2f}")
+                # PRO TRADER: VWAP alignment check - longs must be above VWAP
+                vwap_aligned = True
+                if self.require_vwap_alignment:
+                    vwap_aligned = self._check_vwap_alignment(market_context, "long")
+                    if not vwap_aligned:
+                        logger.debug(f"ORB: {symbol} - LONG breakout rejected: Price below VWAP (counter-institutional)")
 
-                event = StructureEvent(
-                    symbol=market_context.symbol,
-                    timestamp=current_time,
-                    structure_type="orb_breakout_long",
-                    side="long",
-                    confidence=confidence,
-                    levels={"orh": orh, "orl": orl, "entry": current_price},
-                    context={"range_pct": orb_range_pct, "volume_confirmed": volume_confirmed},
-                    price=current_price
-                )
-                events.append(event)
+                if vwap_aligned:
+                    confidence = self._calculate_institutional_strength(market_context, orb_range_pct, volume_confirmed, "long", orh, orl)
+                    logger.debug(f"ORB: {symbol} - ORH breakout detected | {'Close' if self.require_candle_close else 'Price'}: {breakout_price:.2f} > ORH: {orh:.2f} | Volume confirmed: {volume_confirmed} | VWAP aligned: {vwap_aligned} | Confidence: {confidence:.2f}")
 
-            # Detect ORL breakdown
-            elif current_price < orl:
-                logger.debug(f"ORB: {symbol} - Price below ORL, checking volume confirmation")
+                    event = StructureEvent(
+                        symbol=market_context.symbol,
+                        timestamp=current_time,
+                        structure_type="orb_breakout_long",
+                        side="long",
+                        confidence=confidence,
+                        levels={"orh": orh, "orl": orl, "entry": current_price, "candle_close": candle_close},
+                        context={"range_pct": orb_range_pct, "volume_confirmed": volume_confirmed, "candle_close_confirmed": self.require_candle_close, "vwap_aligned": vwap_aligned},
+                        price=current_price
+                    )
+                    events.append(event)
+
+            # Detect ORL breakdown - PRO: Check candle CLOSE below ORL
+            elif breakout_price < orl:
+                logger.debug(f"ORB: {symbol} - {'Candle closed' if self.require_candle_close else 'Price'} below ORL, checking volume confirmation")
                 volume_confirmed = self._check_volume_confirmation(df, "breakdown")
 
-                confidence = self._calculate_institutional_strength(market_context, orb_range_pct, volume_confirmed, "short", orh, orl)
-                logger.debug(f"ORB: {symbol} - ORL breakdown detected | Price: {current_price:.2f} < ORL: {orl:.2f} | Volume confirmed: {volume_confirmed} | Confidence: {confidence:.2f}")
+                # PRO TRADER: VWAP alignment check - shorts must be below VWAP
+                vwap_aligned = True
+                if self.require_vwap_alignment:
+                    vwap_aligned = self._check_vwap_alignment(market_context, "short")
+                    if not vwap_aligned:
+                        logger.debug(f"ORB: {symbol} - SHORT breakdown rejected: Price above VWAP (counter-institutional)")
 
-                event = StructureEvent(
-                    symbol=market_context.symbol,
-                    timestamp=current_time,
-                    structure_type="orb_breakdown_short",
-                    side="short",
-                    confidence=confidence,
-                    levels={"orh": orh, "orl": orl, "entry": current_price},
-                    context={"range_pct": orb_range_pct, "volume_confirmed": volume_confirmed},
-                    price=current_price
-                )
-                events.append(event)
+                if vwap_aligned:
+                    confidence = self._calculate_institutional_strength(market_context, orb_range_pct, volume_confirmed, "short", orh, orl)
+                    logger.debug(f"ORB: {symbol} - ORL breakdown detected | {'Close' if self.require_candle_close else 'Price'}: {breakout_price:.2f} < ORL: {orl:.2f} | Volume confirmed: {volume_confirmed} | VWAP aligned: {vwap_aligned} | Confidence: {confidence:.2f}")
+
+                    event = StructureEvent(
+                        symbol=market_context.symbol,
+                        timestamp=current_time,
+                        structure_type="orb_breakdown_short",
+                        side="short",
+                        confidence=confidence,
+                        levels={"orh": orh, "orl": orl, "entry": current_price, "candle_close": candle_close},
+                        context={"range_pct": orb_range_pct, "volume_confirmed": volume_confirmed, "candle_close_confirmed": self.require_candle_close, "vwap_aligned": vwap_aligned},
+                        price=current_price
+                    )
+                    events.append(event)
 
             # Price within OR range
             else:
-                logger.debug(f"ORB: {symbol} - Price within OR range: {orl:.2f} <= {current_price:.2f} <= {orh:.2f}")
+                logger.debug(f"ORB: {symbol} - {'Candle close' if self.require_candle_close else 'Price'} within OR range: {orl:.2f} <= {breakout_price:.2f} <= {orh:.2f}")
 
             # Detect pullback opportunities
             pullback_events = self._detect_pullback_opportunities(market_context)
             events.extend(pullback_events)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"ORB: {symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             structure_detected = len(events) > 0
             quality_score = self._calculate_quality_score(market_context, events) if structure_detected else 0.0
@@ -470,8 +531,10 @@ class ORBStructure(BaseStructure):
         try:
             current_time_of_day = current_time.time()
 
-            # Must be after session start but before cutoff
-            return self.session_start <= current_time_of_day <= self.orb_cutoff
+            # Must be after session start but BEFORE cutoff (strict <, not <=)
+            # BUGFIX: 5-minute bars are START-labeled, so bar with index 10:30 closes at 10:35.
+            # Using < ensures 10:30 bar (which closes at 10:35) is blocked, not allowed.
+            return self.session_start <= current_time_of_day < self.orb_cutoff
 
         except Exception:
             return False
@@ -514,6 +577,77 @@ class ORBStructure(BaseStructure):
         except Exception as e:
             logger.exception(f"ORB: Volume confirmation error: {e}")
             return False
+
+    def _check_nr7_day(self, market_context: MarketContext) -> bool:
+        """
+        PRO TRADER: Check if previous day was NR7 (Crabel's #1 ORB filter).
+
+        NR7 = Previous day's range was the smallest of the last 7 days.
+        This indicates volatility contraction before potential expansion.
+        Crabel: "ORB most effective after NR7 day"
+        """
+        try:
+            df_daily = market_context.df_daily
+            if df_daily is None or len(df_daily) < self.nr7_lookback_days:
+                logger.debug(f"ORB: NR7 check skipped - insufficient daily data (need {self.nr7_lookback_days} days, have {len(df_daily) if df_daily is not None else 0})")
+                return True  # Allow through if no daily data (don't block)
+
+            # Calculate daily ranges for last N days
+            recent_daily = df_daily.tail(self.nr7_lookback_days)
+            daily_ranges = recent_daily['high'] - recent_daily['low']
+
+            # Previous day's range (second to last, since last is today/incomplete)
+            if len(daily_ranges) < 2:
+                return True
+
+            prev_day_range = daily_ranges.iloc[-2]
+            prior_ranges = daily_ranges.iloc[:-2]  # Days before previous day
+
+            if len(prior_ranges) < 1:
+                return True
+
+            # NR7: Previous day range must be smallest of all lookback days
+            is_nr7 = prev_day_range < prior_ranges.min()
+
+            if is_nr7:
+                logger.debug(f"ORB: NR7 day detected | Prev day range: {prev_day_range:.2f} < Min prior: {prior_ranges.min():.2f}")
+            else:
+                logger.debug(f"ORB: NOT an NR7 day | Prev day range: {prev_day_range:.2f} vs Min prior: {prior_ranges.min():.2f}")
+
+            return is_nr7
+
+        except Exception as e:
+            logger.debug(f"ORB: NR7 check error: {e}")
+            return True  # Allow through on error
+
+    def _check_vwap_alignment(self, market_context: MarketContext, side: str) -> bool:
+        """
+        PRO TRADER: Check VWAP alignment for ORB trades.
+
+        Longs must be above VWAP (trading with institutional buying)
+        Shorts must be below VWAP (trading with institutional selling)
+        """
+        try:
+            df = market_context.df_5m
+            if df is None or 'vwap' not in df.columns:
+                logger.debug(f"ORB: VWAP check skipped - no VWAP data")
+                return True  # Allow through if no VWAP
+
+            current_vwap = float(df['vwap'].iloc[-1])
+            current_price = market_context.current_price
+
+            if side == "long":
+                aligned = current_price > current_vwap
+                logger.debug(f"ORB: VWAP check for LONG | Price: {current_price:.2f} {'>' if aligned else '<='} VWAP: {current_vwap:.2f} | Aligned: {aligned}")
+            else:  # short
+                aligned = current_price < current_vwap
+                logger.debug(f"ORB: VWAP check for SHORT | Price: {current_price:.2f} {'<' if aligned else '>='} VWAP: {current_vwap:.2f} | Aligned: {aligned}")
+
+            return aligned
+
+        except Exception as e:
+            logger.debug(f"ORB: VWAP check error: {e}")
+            return True  # Allow through on error
 
     def _detect_pullback_opportunities(self, market_context: MarketContext) -> List[StructureEvent]:
         """Detect ORB pullback opportunities after breakout."""

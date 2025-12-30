@@ -34,7 +34,69 @@ class TradeLifecycle:
 
 class TradingLogger:
     """Enhanced logging service for trading analytics"""
-    
+
+    # ========================================================================
+    # ZERODHA INTRADAY EQUITY CHARGES (as of Dec 2024)
+    # Reference: https://zerodha.com/brokerage-calculator
+    # ========================================================================
+    BROKERAGE_PER_ORDER = 20        # Rs 20 per executed order (flat)
+    STT_RATE = 0.00025              # 0.025% on SELL side only
+    EXCHANGE_RATE = 0.0000297       # NSE charges ~0.00297%
+    SEBI_RATE = 0.000001            # 0.0001% (Rs 10 per crore)
+    STAMP_DUTY_RATE = 0.00003       # 0.003% on BUY side
+    GST_RATE = 0.18                 # 18% on brokerage + exchange + SEBI
+
+    @classmethod
+    def calculate_trade_fees(cls, entry_price: float, exit_price: float, qty: int,
+                            is_entry_order: bool = True) -> Dict[str, float]:
+        """
+        Calculate Zerodha intraday equity fees for a trade/exit.
+
+        Args:
+            entry_price: Entry price per share
+            exit_price: Exit price per share
+            qty: Quantity traded
+            is_entry_order: True if this exit includes entry order fees (first exit of trade)
+
+        Returns:
+            Dict with fee breakdown and total
+        """
+        entry_turnover = entry_price * qty
+        exit_turnover = exit_price * qty
+
+        # Brokerage: Rs 20 per order
+        # Entry order counted only on first exit (is_entry_order=True)
+        brokerage = cls.BROKERAGE_PER_ORDER  # Exit order
+        if is_entry_order:
+            brokerage += cls.BROKERAGE_PER_ORDER  # Entry order
+
+        # STT: 0.025% on sell side only
+        stt = exit_turnover * cls.STT_RATE
+
+        # Exchange transaction charges (on exit turnover)
+        exchange = exit_turnover * cls.EXCHANGE_RATE
+
+        # SEBI charges (on exit turnover)
+        sebi = exit_turnover * cls.SEBI_RATE
+
+        # Stamp duty: 0.003% on buy side only
+        stamp_duty = entry_turnover * cls.STAMP_DUTY_RATE if is_entry_order else 0
+
+        # GST: 18% on (brokerage + exchange + SEBI)
+        gst = (brokerage + exchange + sebi) * cls.GST_RATE
+
+        total = brokerage + stt + exchange + sebi + stamp_duty + gst
+
+        return {
+            'brokerage': round(brokerage, 2),
+            'stt': round(stt, 2),
+            'exchange': round(exchange, 2),
+            'sebi': round(sebi, 2),
+            'stamp_duty': round(stamp_duty, 2),
+            'gst': round(gst, 2),
+            'total_fees': round(total, 2)
+        }
+
     def __init__(self, session_id: str, log_dir: Path):
         self.session_id = session_id
         self.log_dir = Path(log_dir)
@@ -180,9 +242,10 @@ class TradingLogger:
         price = trade_data.get('price', 0)
         strategy = trade_data.get('strategy', '')
         order_id = trade_data.get('order_id', '')
+        side = trade_data.get('side', 'BUY')
 
         self.trade_logger.info(
-            f"TRIGGER_EXEC | {symbol} | BUY {qty} @ {price} | strategy={strategy} | order_id={order_id}"
+            f"TRIGGER_EXEC | {symbol} | {side} {qty} @ {price} | strategy={strategy} | order_id={order_id}"
         )
 
         # NOTE: Live performance summary updates removed - performance tracking now done in post-processing only
@@ -539,10 +602,23 @@ class TradingLogger:
                             self.session_stats['rank_scores_skipped'].remove(rank_score)
                             self.session_stats['rank_scores_triggered'].append(rank_score)
 
-                    # Log enhanced analytics for last exit (full trade summary)
-                    last_exit = exit_events[-1]
-                    analytics_data = self._create_enhanced_analytics(decision_event, last_exit, trigger_event, pnl)
-                    self.analytics_logger.info(json.dumps(analytics_data))
+                    # FIX: Log analytics for EACH exit event (captures partial exits)
+                    # Each exit gets its own analytics record with its specific qty/price/pnl
+                    for i, exit_ev in enumerate(exit_events):
+                        # Calculate PnL for this specific exit
+                        exit_pnl = self._calculate_single_exit_pnl(decision_event, exit_ev, trigger_event)
+                        # Mark if this is the final exit
+                        is_final = (i == len(exit_events) - 1)
+                        analytics_data = self._create_enhanced_analytics(
+                            decision_event, exit_ev, trigger_event, exit_pnl
+                        )
+                        # Add exit sequence info
+                        analytics_data['exit_sequence'] = i + 1
+                        analytics_data['total_exits'] = len(exit_events)
+                        analytics_data['is_final_exit'] = is_final
+                        if is_final:
+                            analytics_data['total_trade_pnl'] = pnl  # Include total PnL on final exit
+                        self.analytics_logger.info(json.dumps(analytics_data))
 
             # Count triggered trades
             self.session_stats['triggered_trades'] = len(triggers)
@@ -605,6 +681,11 @@ class TradingLogger:
         except Exception as e:
             print(f"[analytics] ERROR: Failed to calculate PnL for {decision_event.get('symbol')}: {e}")
             return 0.0
+
+    def _calculate_single_exit_pnl(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
+                                   trigger_event: Optional[Dict[str, Any]] = None) -> float:
+        """Calculate PnL for a single exit event (used for partial exit analytics)"""
+        return self._calculate_trade_pnl(decision_event, exit_event, trigger_event)
 
     def _calculate_trade_pnl(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
                            trigger_event: Optional[Dict[str, Any]] = None) -> float:
@@ -676,6 +757,18 @@ class TradingLogger:
             'time_decay_factor': 1.0,
             'execution_probability': 0.15
         }
+
+        # Calculate and add fees
+        entry_price = analytics.get('actual_entry_price') or analytics.get('entry_reference', 0)
+        exit_price = analytics.get('exit_price', 0)
+        qty = analytics.get('qty', 0)
+
+        if entry_price > 0 and exit_price > 0 and qty > 0:
+            # For now, assume each exit is a complete trade (is_entry_order=True)
+            # TODO: Handle partial exits properly (exit_sequence tracking)
+            fees = self.calculate_trade_fees(entry_price, exit_price, qty, is_entry_order=True)
+            analytics['fees'] = fees
+            analytics['net_pnl'] = round(pnl - fees['total_fees'], 2)
 
         return analytics
 

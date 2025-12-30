@@ -297,21 +297,20 @@ class FastConditionValidator:
         """Fast entry zone validation"""
         try:
             current_price = float(bar_1m.get("close", 0))
-            
+
             # Get entry range from context
             entry_zone = context.get("entry_zone", [])
             if len(entry_zone) == 2:
                 entry_min, entry_max = float(entry_zone[0]), float(entry_zone[1])
                 return entry_min <= current_price <= entry_max
-            
-            # Fallback: reasonable range around current price (±0.2%)
-            fallback_range = current_price * 0.002
-            entry_min = current_price - fallback_range
-            entry_max = current_price + fallback_range
-            return entry_min <= current_price <= entry_max
-            
+
+            # No valid entry zone - FAIL the check (don't use always-true fallback)
+            # This forces trades to have proper entry zones defined
+            logger.debug(f"No valid entry_zone in context, failing entry zone check")
+            return False
+
         except Exception:
-            return True  # Default to true for speed
+            return False  # Default to false - require valid entry zone
     
     def _get_cached_avg_volume(self, symbol: str, current_volume: float) -> float:
         """Get cached average volume for fast lookups"""

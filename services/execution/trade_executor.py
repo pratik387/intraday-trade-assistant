@@ -107,40 +107,43 @@ class TradeExecutor:
     # -------- helpers: extract/patch exits on plan -------- #
     @staticmethod
     def _extract_plan_exits(plan: Dict[str, Any]) -> Tuple[float, float, float]:
-        """Return (sl, t1, t2) as floats or NaN if unavailable."""
-        sl = float("nan")
-        for k in ("hard_sl", "hard_stop"):
-            if k in plan and plan[k] is not None:
-                try:
-                    sl = float(plan[k]); break
-                except Exception:
-                    pass
-        if math.isnan(sl):
-            stop = plan.get("stop")
-            if isinstance(stop, dict) and stop.get("hard") is not None:
-                try: sl = float(stop["hard"])
-                except Exception: sl = float("nan")
-            elif isinstance(stop, (int, float)):
-                sl = float(stop)
+        """
+        Extract (sl, t1, t2) from plan.
 
+        Pipeline contract:
+        - SL: plan["stop"]["hard"]
+        - T1: plan["targets"][0]["level"]
+        - T2: plan["targets"][1]["level"]
+        """
+        # SL from plan["stop"]["hard"]
+        try:
+            sl = float(plan["stop"]["hard"])
+        except (KeyError, TypeError, ValueError):
+            sl = float("nan")
+
+        # Targets from plan["targets"][n]["level"]
         t1 = t2 = float("nan")
-        tgts = plan.get("targets") or []
-        if len(tgts) > 0 and tgts[0] and "level" in tgts[0] and tgts[0]["level"] is not None:
-            try: t1 = float(tgts[0]["level"])
-            except Exception: t1 = float("nan")
-        if len(tgts) > 1 and tgts[1] and "level" in tgts[1] and tgts[1]["level"] is not None:
-            try: t2 = float(tgts[1]["level"])
-            except Exception: t2 = float("nan")
+        targets = plan.get("targets") or []
+        if len(targets) > 0:
+            try:
+                t1 = float(targets[0]["level"])
+            except (KeyError, TypeError, ValueError):
+                pass
+        if len(targets) > 1:
+            try:
+                t2 = float(targets[1]["level"])
+            except (KeyError, TypeError, ValueError):
+                pass
+
         return sl, t1, t2
 
     @staticmethod
     def _inject_plan_exits(plan: Dict[str, Any], sl: float, t1: float, t2: float) -> None:
-        """Write (sl, t1, t2) back into plan in a tolerant way."""
-        if isinstance(plan.get("stop"), dict):
-            plan["stop"]["hard"] = round(float(sl), 2)
-        else:
-            plan["stop"] = {"hard": round(float(sl), 2)}
-        plan["hard_sl"] = round(float(sl), 2)
+        """Write (sl, t1, t2) back into plan using standard format."""
+        # Ensure stop dict exists
+        if "stop" not in plan or not isinstance(plan["stop"], dict):
+            plan["stop"] = {}
+        plan["stop"]["hard"] = round(float(sl), 2)
 
         if not isinstance(plan.get("targets"), list):
             plan["targets"] = []

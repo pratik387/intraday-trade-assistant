@@ -56,6 +56,9 @@ class MarketContext:
     regime: Optional[str] = None  # "trend", "chop", "squeeze"
     volatility: Optional[float] = None
 
+    # Cap segment for cap-aware filters
+    cap_segment: Optional[str] = None  # "large_cap", "mid_cap", "small_cap", "micro_cap"
+
     # Technical indicators
     indicators: Optional[Dict[str, float]] = None
 

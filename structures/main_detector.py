@@ -28,6 +28,8 @@ from .support_resistance_structure import SupportResistanceStructure
 from .trend_structure import TrendStructure
 from .volume_structure import VolumeStructure
 from .range_structure import RangeStructure
+from .fhm_structure import FHMStructure
+from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
 
@@ -62,8 +64,26 @@ class MainDetector(BaseStructure):
             ("ict_comprehensive", ICTStructure, "ict"),
             ("fvg", ICTStructure, "fvg"),
             ("order_block", ICTStructure, "order_block"),
+            # ICT individual setups - these inherit params from ict_comprehensive
+            ("order_block_long", ICTStructure, "order_block_long"),
+            ("order_block_short", ICTStructure, "order_block_short"),
+            ("fair_value_gap_long", ICTStructure, "fair_value_gap_long"),
+            ("fair_value_gap_short", ICTStructure, "fair_value_gap_short"),
+            ("liquidity_sweep_long", ICTStructure, "liquidity_sweep_long"),
+            ("liquidity_sweep_short", ICTStructure, "liquidity_sweep_short"),
+            ("premium_zone_short", ICTStructure, "premium_zone_short"),
+            ("discount_zone_long", ICTStructure, "discount_zone_long"),
+            ("break_of_structure_long", ICTStructure, "break_of_structure_long"),
+            ("break_of_structure_short", ICTStructure, "break_of_structure_short"),
+            ("change_of_character_long", ICTStructure, "change_of_character_long"),
+            ("change_of_character_short", ICTStructure, "change_of_character_short"),
+            # NOTE: trend_reversal_long/short and breakout_long/short are NOT mapped here because:
+            # - TrendStructure only produces: trend_pullback_long/short, trend_continuation_long/short
+            # - LevelBreakoutStructure produces: level_breakout_long/short for PDH/PDL, orb_level_breakout_long/short for ORH/ORL
             ("level_breakout_long", LevelBreakoutStructure, "level_breakout_long"),
             ("level_breakout_short", LevelBreakoutStructure, "level_breakout_short"),
+            ("orb_level_breakout_long", LevelBreakoutStructure, "orb_level_breakout_long"),
+            ("orb_level_breakout_short", LevelBreakoutStructure, "orb_level_breakout_short"),
             ("failure_fade_long", FailureFadeStructure, "failure_fade_long"),
             ("failure_fade_short", FailureFadeStructure, "failure_fade_short"),
             ("squeeze_release_long", SqueezeReleaseStructure, "squeeze_release_long"),
@@ -103,6 +123,9 @@ class MainDetector(BaseStructure):
             ("range_bounce_short", RangeStructure, "range_bounce_short"),
             ("trend_continuation_long", TrendStructure, "trend_continuation_long"),
             ("trend_continuation_short", TrendStructure, "trend_continuation_short"),
+            # First Hour Momentum (FHM) - captures big movers early
+            ("first_hour_momentum_long", FHMStructure, "first_hour_momentum_long"),
+            ("first_hour_momentum_short", FHMStructure, "first_hour_momentum_short"),
             # Generic structure types (if needed for fallback)
             ("level_breakout", LevelBreakoutStructure, "level_breakout"),
             ("failure_fade", FailureFadeStructure, "failure_fade"),
@@ -117,12 +140,36 @@ class MainDetector(BaseStructure):
             ("support_resistance", SupportResistanceStructure, "support_resistance")
         ]
 
+        # ICT setups that should inherit params from ict_comprehensive
+        ict_derived_setups = {
+            "order_block_long", "order_block_short",
+            "fair_value_gap_long", "fair_value_gap_short",
+            "liquidity_sweep_long", "liquidity_sweep_short",
+            "premium_zone_short", "discount_zone_long",
+            "break_of_structure_long", "break_of_structure_short",
+            "change_of_character_long", "change_of_character_short"
+        }
+        ict_base_config = setups_config.get("ict_comprehensive", {})
+
         # Initialize all detectors uniformly
         for setup_name, detector_class, detector_key in detector_configs:
             setup_config = setups_config.get(setup_name, {})
 
+            # For ICT-derived setups, merge with ict_comprehensive params
+            if setup_name in ict_derived_setups and setup_config.get("enabled", False):
+                if ict_base_config:
+                    # Merge: start with ict_comprehensive, override with specific config
+                    merged_config = {**ict_base_config, **setup_config}
+                    setup_config = merged_config
+                    logger.debug(f"MAIN_DETECTOR: Merged {setup_name} with ict_comprehensive params")
+                else:
+                    logger.warning(f"MAIN_DETECTOR: {setup_name} enabled but ict_comprehensive not found - skipping")
+                    continue
+
             if setup_config.get("enabled", False):
                 try:
+                    # Inject setup name so detectors can filter by their configured type
+                    setup_config["_setup_name"] = setup_name
                     self.detectors[detector_key] = detector_class(setup_config)
                     logger.debug(f"MAIN_DETECTOR: Initialized {detector_key} from {setup_name}")
                 except Exception as e:
@@ -172,7 +219,9 @@ class MainDetector(BaseStructure):
         """
 
         try:
-            if df is None or len(df) < 10:
+            # Reduced from 10 to 4 bars to allow early ORB detection (pro traders use 15-min range = 3 bars)
+            # Individual detectors have their own min_bars checks for structures needing more data
+            if df is None or len(df) < 4:
                 logger.debug(f"MAIN_DETECTOR: {symbol} insufficient data (len={len(df) if df is not None else 0}) - EARLY RETURN")
                 return []
 
@@ -274,6 +323,7 @@ class MainDetector(BaseStructure):
                 pdh=levels.get('PDH'),
                 pdl=levels.get('PDL'),
                 pdc=levels.get('PDC'),
+                cap_segment=get_cap_segment(symbol),
                 indicators=indicators
             )
 
@@ -406,6 +456,18 @@ class MainDetector(BaseStructure):
                 entry_mode = event.context.get('entry_mode') if event.context else None
                 retest_zone = event.context.get('retest_zone') if event.context else None
 
+                # Extract detected level from event.levels (pro trader: use actual detected level for quality)
+                # Structure detectors store: support_bounce -> {"support": level}, resistance_bounce -> {"resistance": level}
+                # Range detectors store: {"support": level, "resistance": level}
+                detected_level = None
+                if event.levels:
+                    if event.side == "long":
+                        # Long setups bounce off support
+                        detected_level = event.levels.get("support") or event.levels.get("nearest_support")
+                    else:
+                        # Short setups bounce off resistance
+                        detected_level = event.levels.get("resistance") or event.levels.get("nearest_resistance")
+
                 if setup_type:
                     setup_candidates.append(SetupCandidate(
                         setup_type=setup_type,
@@ -414,7 +476,9 @@ class MainDetector(BaseStructure):
                         orh=market_context.orh,
                         orl=market_context.orl,
                         entry_mode=entry_mode,
-                        retest_zone=retest_zone
+                        retest_zone=retest_zone,
+                        cap_segment=market_context.cap_segment,
+                        detected_level=detected_level
                     ))
 
                     if entry_mode:
@@ -520,7 +584,11 @@ class MainDetector(BaseStructure):
             'support_bounce_long': 'support_bounce_long',
             'resistance_bounce_short': 'resistance_bounce_short',
             'support_breakdown_short': 'support_breakdown_short',
-            'resistance_breakout_long': 'resistance_breakout_long'
+            'resistance_breakout_long': 'resistance_breakout_long',
+
+            # First Hour Momentum (FHM) structures
+            'first_hour_momentum_long': 'first_hour_momentum_long',
+            'first_hour_momentum_short': 'first_hour_momentum_short'
         }
 
         return direct_mappings.get(structure_type)

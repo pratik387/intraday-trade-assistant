@@ -33,6 +33,10 @@ class MomentumStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "momentum"
 
+        # Track which specific setup type this detector is for (e.g., "momentum_breakout_long")
+        # This ensures we only produce signals for the configured direction
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Momentum breakout parameters
@@ -57,7 +61,13 @@ class MomentumStructure(BaseStructure):
         self.confidence_strong_momentum = config["confidence_strong_momentum"]
         self.confidence_weak_momentum = config["confidence_weak_momentum"]
 
+        # Stop loss parameters - Pro trader: SL at swing low/high + ATR buffer
+        self.swing_sl_buffer_atr = config["swing_sl_buffer_atr"]  # ATR buffer beyond swing level
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
+        self.swing_lookback_bars = config["swing_lookback_bars"]  # Bars to look back for swing
+
         logger.debug(f"MOMENTUM: Initialized with 3-bar threshold: {self.min_momentum_3bar_pct}%, 5-bar trend: {self.min_trend_5bar_pct}%")
+        logger.debug(f"MOMENTUM: SL params - swing_buffer: {self.swing_sl_buffer_atr}ATR, min_distance: {self.min_stop_distance_pct}%")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -97,6 +107,13 @@ class MomentumStructure(BaseStructure):
             # Detect trend continuation patterns
             trend_events = self._detect_trend_continuations(context, df_calc, vol_z_required)
             events.extend(trend_events)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"MOMENTUM: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             quality_score = self._calculate_quality_score(events, df_calc) if events else 0.0
 
@@ -517,7 +534,7 @@ class MomentumStructure(BaseStructure):
         entry_price = context.current_price
         risk_params = self.calculate_risk_params(context, event, side)
         exit_levels = self.get_exit_levels(context, event, side)
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         return TradePlan(
             symbol=context.symbol,
@@ -533,17 +550,43 @@ class MomentumStructure(BaseStructure):
         )
 
     def calculate_risk_params(self, context: MarketContext, event: StructureEvent, side: str) -> RiskParams:
-        """Calculate risk parameters for momentum trades."""
+        """Calculate risk parameters for momentum trades using pro trader swing-based SL.
+
+        Pro trader approach: SL at recent swing low/high + ATR buffer.
+        For momentum trades, the recent swing is the logical invalidation point.
+        """
         entry_price = context.current_price
         atr = self._get_atr(context)
+        df = context.df_5m
 
-        # For momentum trades, use ATR-based stops
-        if side == "long":
-            hard_sl = entry_price - (atr * self.stop_mult)
+        # Find recent swing low/high for SL placement
+        if len(df) >= self.swing_lookback_bars:
+            lookback_df = df.tail(self.swing_lookback_bars)
+
+            if side == "long":
+                # Long: SL below recent swing low + ATR buffer
+                swing_low = float(lookback_df['low'].min())
+                hard_sl = swing_low - (atr * self.swing_sl_buffer_atr)
+            else:
+                # Short: SL above recent swing high + ATR buffer
+                swing_high = float(lookback_df['high'].max())
+                hard_sl = swing_high + (atr * self.swing_sl_buffer_atr)
         else:
-            hard_sl = entry_price + (atr * self.stop_mult)
+            # Fallback to ATR-based stops if not enough data
+            if side == "long":
+                hard_sl = entry_price - (atr * self.stop_mult)
+            else:
+                hard_sl = entry_price + (atr * self.stop_mult)
 
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,
@@ -611,9 +654,3 @@ class MomentumStructure(BaseStructure):
         except:
             return context.current_price * 0.01  # 1% fallback
 
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0  # Maximum risk per trade
-        qty = max(1, min(int(max_risk_amount / risk_per_share), 100)) if risk_per_share > 0 else 1
-        return qty, qty * entry_price

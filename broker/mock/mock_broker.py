@@ -251,9 +251,18 @@ class MockBroker:
                 self._consolidated_daily_cache = pd.DataFrame()
                 return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
-        # Extract symbol data
+        # Extract symbol data - normalize symbol to plain format (RELIANCE, not NSE:RELIANCE)
         df_all = self._consolidated_daily_cache
-        symbol_data = df_all[df_all['symbol'] == symbol].copy()
+        # Consolidated cache stores plain symbols, so strip prefix/suffix
+        plain_symbol = symbol.upper()
+        if ":" in plain_symbol:
+            plain_symbol = plain_symbol.split(":", 1)[1]  # NSE:RELIANCE -> RELIANCE
+        if plain_symbol.endswith(".NS"):
+            plain_symbol = plain_symbol[:-3]  # RELIANCE.NS -> RELIANCE
+        elif plain_symbol.endswith(".BSE"):
+            plain_symbol = plain_symbol[:-4]  # RELIANCE.BSE -> RELIANCE
+
+        symbol_data = df_all[df_all['symbol'] == plain_symbol].copy()
 
         if symbol_data.empty:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])

@@ -56,6 +56,10 @@ class VWAPStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "vwap"
 
+        # Track which specific setup type this detector is for (e.g., "vwap_reclaim_long")
+        # This ensures we only produce signals for the configured direction
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Mean reversion parameters
@@ -69,6 +73,13 @@ class VWAPStructure(BaseStructure):
         self.min_bars_above_vwap = config["min_bars_above_vwap"]
         self.reclaim_volume_confirmation = config["reclaim_volume_confirmation"]
         self.min_volume_mult = config["min_volume_mult"]
+
+        # VWAP freshness parameters (for detecting real transitions vs stale conditions)
+        # These use .get() with defaults for backward compatibility
+        self.reclaim_lookback_bars = config.get("reclaim_lookback_bars", 12)
+        self.max_bars_above_for_reclaim = config.get("max_bars_above_for_reclaim", 8)
+        self.lose_lookback_bars = config.get("lose_lookback_bars", 12)
+        self.max_bars_below_for_lose = config.get("max_bars_below_for_lose", 8)
 
         # Risk management parameters
         self.min_stop_distance_pct = config["min_stop_distance_pct"]
@@ -122,6 +133,13 @@ class VWAPStructure(BaseStructure):
             lose_events, lose_quality = self._detect_vwap_lose(context, vwap_info)
             events.extend(lose_events)
             max_quality = max(max_quality, lose_quality)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"VWAP: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No VWAP setups detected"
@@ -221,6 +239,58 @@ class VWAPStructure(BaseStructure):
             return count
         except Exception:
             return 0
+
+    def _check_recent_below_vwap(self, df: pd.DataFrame, lookback: int) -> bool:
+        """
+        Check if price was below VWAP at any point in the last N bars.
+
+        This is used to verify a reclaim is a real transition (was below, now above)
+        rather than just sustained above VWAP.
+        """
+        try:
+            if 'vwap' not in df.columns or len(df) < lookback:
+                return False
+
+            # Get the last `lookback` bars (excluding current bar which we know is above VWAP)
+            window = df.tail(lookback + 1).iloc[:-1]  # Exclude last bar
+
+            close_prices = window['close'].values
+            vwap_values = window['vwap'].values
+
+            # Check if any bar in the window was below VWAP
+            for i in range(len(close_prices)):
+                if close_prices[i] < vwap_values[i]:
+                    return True
+
+            return False
+        except Exception:
+            return False
+
+    def _check_recent_above_vwap(self, df: pd.DataFrame, lookback: int) -> bool:
+        """
+        Check if price was above VWAP at any point in the last N bars.
+
+        This is used to verify a lose is a real transition (was above, now below)
+        rather than just sustained below VWAP.
+        """
+        try:
+            if 'vwap' not in df.columns or len(df) < lookback:
+                return False
+
+            # Get the last `lookback` bars (excluding current bar which we know is below VWAP)
+            window = df.tail(lookback + 1).iloc[:-1]  # Exclude last bar
+
+            close_prices = window['close'].values
+            vwap_values = window['vwap'].values
+
+            # Check if any bar in the window was above VWAP
+            for i in range(len(close_prices)):
+                if close_prices[i] > vwap_values[i]:
+                    return True
+
+            return False
+        except Exception:
+            return False
 
     def _check_volume_confirmation(self, df: pd.DataFrame) -> bool:
         """Check if current volume supports the setup."""
@@ -324,7 +394,14 @@ class VWAPStructure(BaseStructure):
         return events, quality_score
 
     def _detect_vwap_reclaim(self, context: MarketContext, vwap_info: VWAPLevels) -> Tuple[List[StructureEvent], float]:
-        """Detect VWAP reclaim setups (bullish)."""
+        """
+        Detect VWAP reclaim setups (bullish).
+
+        A proper VWAP reclaim requires:
+        1. Price is ABOVE VWAP now (the reclaim happened)
+        2. Price was BELOW VWAP recently (within lookback window)
+        3. Confirmation bars above VWAP (not too many - we want fresh reclaims)
+        """
 
         events = []
         quality_score = 0.0
@@ -334,9 +411,22 @@ class VWAPStructure(BaseStructure):
             logger.debug(f"VWAP: {context.symbol} - Price not above VWAP for reclaim setup")
             return events, quality_score
 
-        # Must have been below VWAP recently and now above for required bars
+        # Must have been above VWAP for minimum confirmation bars
         if vwap_info.above_vwap_bars < self.min_bars_above_vwap:
             logger.debug(f"VWAP: {context.symbol} - Above VWAP bars {vwap_info.above_vwap_bars} < required {self.min_bars_above_vwap}")
+            return events, quality_score
+
+        # KEY FIX: Verify this is a FRESH reclaim - not just sustained above VWAP
+        # Check that price was below VWAP within last N bars (from config)
+        was_below_recently = self._check_recent_below_vwap(context.df_5m, self.reclaim_lookback_bars)
+
+        if not was_below_recently:
+            logger.debug(f"VWAP: {context.symbol} - Not a fresh reclaim: no recent below-VWAP period in last {self.reclaim_lookback_bars} bars")
+            return events, quality_score
+
+        # Also cap the above_vwap_bars - very stale reclaims are less valuable (from config)
+        if vwap_info.above_vwap_bars > self.max_bars_above_for_reclaim:
+            logger.debug(f"VWAP: {context.symbol} - Stale reclaim: above VWAP for {vwap_info.above_vwap_bars} bars > {self.max_bars_above_for_reclaim}")
             return events, quality_score
 
         # Check volume confirmation if required
@@ -371,7 +461,14 @@ class VWAPStructure(BaseStructure):
         return events, quality_score
 
     def _detect_vwap_lose(self, context: MarketContext, vwap_info: VWAPLevels) -> Tuple[List[StructureEvent], float]:
-        """Detect VWAP lose setups (bearish)."""
+        """
+        Detect VWAP lose setups (bearish).
+
+        A proper VWAP lose requires:
+        1. Price is BELOW VWAP now (the lose happened)
+        2. Price was ABOVE VWAP recently (within lookback window)
+        3. Confirmation bars below VWAP (not too many - we want fresh loses)
+        """
 
         events = []
         quality_score = 0.0
@@ -381,9 +478,22 @@ class VWAPStructure(BaseStructure):
             logger.debug(f"VWAP: {context.symbol} - Price not below VWAP for lose setup")
             return events, quality_score
 
-        # Must have been above VWAP recently and now below for some bars
+        # Must have been below VWAP for minimum confirmation bars
         if vwap_info.below_vwap_bars < 2:  # At least 2 bars below
             logger.debug(f"VWAP: {context.symbol} - Below VWAP bars {vwap_info.below_vwap_bars} < 2")
+            return events, quality_score
+
+        # KEY FIX: Verify this is a FRESH lose - not just sustained below VWAP
+        # Check that price was above VWAP within last N bars (from config)
+        was_above_recently = self._check_recent_above_vwap(context.df_5m, self.lose_lookback_bars)
+
+        if not was_above_recently:
+            logger.debug(f"VWAP: {context.symbol} - Not a fresh lose: no recent above-VWAP period in last {self.lose_lookback_bars} bars")
+            return events, quality_score
+
+        # Also cap the below_vwap_bars - very stale loses are less valuable (from config)
+        if vwap_info.below_vwap_bars > self.max_bars_below_for_lose:
+            logger.debug(f"VWAP: {context.symbol} - Stale lose: below VWAP for {vwap_info.below_vwap_bars} bars > {self.max_bars_below_for_lose}")
             return events, quality_score
 
         # Check volume confirmation if required
@@ -430,7 +540,7 @@ class VWAPStructure(BaseStructure):
 
         # Determine position size based on risk
         entry_price = context.current_price
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         plan = TradePlan(
             symbol=context.symbol,
@@ -466,7 +576,7 @@ class VWAPStructure(BaseStructure):
 
         # Determine position size based on risk
         entry_price = context.current_price
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         plan = TradePlan(
             symbol=context.symbol,
@@ -638,13 +748,13 @@ class VWAPStructure(BaseStructure):
         # Fallback: calculate simple ATR from recent data
         try:
             df = context.df_5m
-            if len(df) >= 14:
-                highs = df['high'].tail(14)
-                lows = df['low'].tail(14)
-                closes = df['close'].tail(15)  # Need one extra for previous close
+            if len(df) >= 15:
+                highs = df['high'].tail(15).reset_index(drop=True)
+                lows = df['low'].tail(15).reset_index(drop=True)
+                closes = df['close'].tail(15).reset_index(drop=True)
 
                 true_ranges = []
-                for i in range(1, 15):
+                for i in range(1, 15):  # 14 true range values using indices 1-14
                     tr = max(
                         highs.iloc[i] - lows.iloc[i],
                         abs(highs.iloc[i] - closes.iloc[i-1]),
@@ -662,27 +772,6 @@ class VWAPStructure(BaseStructure):
         fallback_atr = context.current_price * 0.01  # 1% of price
         logger.warning(f"VWAP: {context.symbol} - Using emergency ATR fallback: {fallback_atr:.3f}")
         return fallback_atr
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-
-        # This should be enhanced with actual portfolio size and risk management
-        # For now, use basic calculation
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0  # Should be configurable
-
-        if risk_per_share > 0:
-            max_qty = int(max_risk_amount / risk_per_share)
-            # Ensure minimum viable position
-            qty = max(1, min(max_qty, 100))  # Min 1, max 100 shares
-        else:
-            qty = 1
-
-        notional = qty * entry_price
-
-        logger.debug(f"VWAP: {context.symbol} - Position calc: risk/share {risk_per_share:.3f}, qty {qty}, notional {notional:.2f}")
-
-        return qty, notional
 
     def _calculate_institutional_strength(self, context: MarketContext, vwap_info: VWAPLevels, setup_type: str = "reclaim") -> float:
         """

@@ -39,7 +39,7 @@ from .event_policy_gate import EventPolicyGate
 from .news_spike_gate import NewsSpikeGate
 from .market_sentiment_gate import MarketSentimentGate
 from services.features import compute_hcet_features
-from services.indicators.adx import calculate_rsi
+from services.indicators.indicators import calculate_rsi
 from collections import defaultdict
 from datetime import datetime, timedelta
 from config.logging_config import get_agent_logger
@@ -98,6 +98,9 @@ SetupType = Literal[
     "range_deviation_short",
     "range_mean_reversion_long",
     "range_mean_reversion_short",
+    # FIRST HOUR MOMENTUM - Pro trader technique using RVOL + price momentum
+    "first_hour_momentum_long",
+    "first_hour_momentum_short",
 ]
 
 
@@ -110,6 +113,8 @@ class SetupCandidate:
     orl: Optional[float] = None  # Opening Range Low from detector
     entry_mode: Optional[str] = None  # NEW: "immediate", "retest", or "pending" for dual-mode entry
     retest_zone: Optional[List[float]] = None  # NEW: [low, high] bounds for retest entry
+    cap_segment: Optional[str] = None  # Market cap segment passed from main_detector
+    detected_level: Optional[float] = None  # Level detected by structure (e.g., nearest_support, range resistance)
 
 
 @dataclass(frozen=True)
@@ -171,6 +176,8 @@ def _is_breakout(setup: SetupType) -> bool:
         "break_of_structure_short",
         "change_of_character_long",
         "change_of_character_short",
+        "first_hour_momentum_long",
+        "first_hour_momentum_short",
     }
 
 
@@ -201,7 +208,7 @@ def _safe_float(x, default: float = 0.0) -> float:
     except Exception:
         return default
 
-# REMOVED: Hardcoded regime allowlist - now config-driven via TradeDecisionGate.regime_allowed_setups
+# REMOVED (Dec 2024): Regime allowlist config - now handled by regime_gate.py (single source of truth)
 
 
 # ---------------------------- TradeDecisionGate --------------------------------
@@ -221,17 +228,13 @@ class TradeDecisionGate:
         news_spike_gate: NewsSpikeGate,
         market_sentiment_gate=None,
         quality_filters: Optional[dict] = None,
-        regime_allowed_setups: Optional[dict] = None,
     ) -> None:
         self.structure = structure_detector
         self.regime_gate = regime_gate
         self.event_gate = event_policy_gate
         self.news_gate = news_spike_gate
         self.sentiment_gate = market_sentiment_gate
-
-        # Store regime-allowed setups configuration
-        # Default to permissive (allow all) if not provided
-        self.regime_allowed_setups = regime_allowed_setups or {}
+        # NOTE: regime_allowed_setups removed (Dec 2024) - regime_gate.py is single source of truth
 
         # Setup sequencing tracker - Enhancement 3
         self.setup_history = defaultdict(list)  # symbol -> [(timestamp, setup_type, success)]
@@ -255,50 +258,29 @@ class TradeDecisionGate:
         # Add current setup (success will be determined later)
         self.setup_history[symbol].append((timestamp, setup_type, None))
 
-    def _regime_allows(self, setup: str, regime: str, current_time=None) -> bool:
+    def _is_hard_blocked(self, setup: str, regime: str) -> bool:
         """
-        Config-driven regime allowlist check with time-based exceptions.
-        Returns True if the setup is allowed in the given regime based on configuration.
-        If no config provided, defaults to allowing all setups (permissive).
+        Check if setup is HARD BLOCKED for this regime (cannot be bypassed by HCET).
 
-        Special case: ORB setups in chop regime before 10:30 are allowed (breakout from consolidation).
+        Hard blocks are centralized in regime_gate.py - single source of truth.
+        This is the ONLY blocking check here - all other regime-based filtering
+        is handled by regime_gate.allow_setup() with evidence-based thresholds.
+
+        ARCHITECTURE SIMPLIFICATION (Dec 2024):
+        - Removed config whitelist check (was redundant with allow_setup())
+        - regime_gate.py is now the single source of truth for regime decisions
+        - Config whitelists are kept for documentation only
         """
-        if not self.regime_allowed_setups:
-            # No config provided - allow all setups (permissive default)
-            return True
-
-        # Normalize regime names (config uses "chop", code may use "choppy" or "range")
+        # Normalize regime names
         regime_key = regime
         if regime in {"choppy", "range"}:
             regime_key = "chop"
 
-        # TIME-BASED EXCEPTION: ORB in chop regime before 10:30
-        # Professional ORB strategy: catch breakout FROM consolidation INTO trend (early session)
-        # This is the classic ORB setup - not a false breakout
-        if regime_key == "chop" and "orb" in setup.lower() and current_time is not None:
-            try:
-                import pandas as pd
-                from datetime import time as dt_time
-                ts = pd.to_datetime(current_time)
-                current_time_of_day = ts.time()
-                orb_cutoff = dt_time(10, 30)
-
-                if current_time_of_day <= orb_cutoff:
-                    # Allow ORB in chop before 10:30 (consolidation breakout window)
-                    logger.debug(f"ORB_REGIME_EXCEPTION: {setup} in {regime} allowed before 10:30 (time={current_time_of_day})")
-                    return True
-            except Exception as e:
-                logger.debug(f"ORB_REGIME_EXCEPTION: Failed to parse time for ORB exception: {e}")
-                # Continue to normal regime check on error
-
-        # Check if regime exists in config
-        if regime_key not in self.regime_allowed_setups:
-            # Unknown regime - default to allow
+        # Check centralized hard blocks (cannot be bypassed by HCET)
+        if self.regime_gate and self.regime_gate.is_hard_blocked(setup, regime_key):
+            logger.debug(f"HARD_BLOCK: {setup} permanently blocked in {regime_key} regime")
             return True
-
-        # Check if setup is in the allowed list for this regime
-        allowed_setups = self.regime_allowed_setups[regime_key]
-        return setup in allowed_setups
+        return False
 
     def _get_sequence_multiplier(self, symbol: str, current_setup: str) -> float:
         """
@@ -609,9 +591,6 @@ class TradeDecisionGate:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
             return GateDecision(accept=False, reasons=["no_structure_event"])
 
-        # NOTE: Global blacklist filtering is now done in MainDetector (before this gate)
-        # This ensures blacklists work for ALL execution paths (local and cloud)
-
         # OPENING BELL FILTERING: Only allow specific setups during opening bell window
         if in_opening_bell_window and opening_bell_enabled:
             allowed_setups = opening_bell_config.get('allowed_setups', [])
@@ -696,35 +675,6 @@ class TradeDecisionGate:
             # Fallback to 5m-only regime
             regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
 
-        # Phase 3: Check if setup should be blocked by daily regime (evidence-based)
-        # Linda Raschke MTF filtering: Block counter-trend setups when daily conf ≥ 0.70
-        if regime_diagnostics and "daily" in regime_diagnostics:
-            from services.gates.multi_timeframe_regime import DailyRegimeResult
-            daily_data = regime_diagnostics["daily"]
-            daily_result = DailyRegimeResult(
-                regime=daily_data.get("regime", "chop"),
-                confidence=daily_data.get("confidence", 0.0),
-                trend_strength=daily_data.get("trend_strength", 0.0),
-                metrics=daily_data.get("metrics", {})
-            )
-
-            # Check if multi-TF regime wants to block this setup
-            if hasattr(self.regime_gate, 'multi_tf_regime') and hasattr(self.regime_gate.multi_tf_regime, 'should_block_setup'):
-                should_block, block_reason = self.regime_gate.multi_tf_regime.should_block_setup(
-                    setup_type=best.setup_type,
-                    daily_result=daily_result,
-                    min_daily_confidence=0.70
-                )
-                if should_block:
-                    return GateDecision(
-                        accept=False,
-                        reasons=[f"blocked_by_daily_regime:{block_reason}"],
-                        setup_type=best.setup_type,
-                        regime=regime,
-                        regime_conf=regime_confidence,
-                        regime_diagnostics=regime_diagnostics
-                    )
-
         # Evidence for regime gate
         strength = _safe_float(best.strength, 0.0)
         if df5m_tail is not None and not df5m_tail.empty:
@@ -746,8 +696,12 @@ class TradeDecisionGate:
         hc_ok, hc_reasons = False, ["hcet_not_needed"]
 
         # Check if HCET might be needed for bypasses
-        insufficient_bars = (df5m_tail is None or len(df5m_tail) < 10)
-        regime_blocked = not self._regime_allows(best.setup_type, regime, current_time=now)
+        # ORB setups have their own early window exemption (4 bars minimum vs 10 for others)
+        _is_orb = best.setup_type.startswith("orb_")
+        _min_bars = 4 if _is_orb else 10
+        insufficient_bars = (df5m_tail is None or len(df5m_tail) < _min_bars)
+        # Always compute HCET - allow_setup() may block and HCET can bypass (unless hard blocked)
+        regime_blocked = not self._is_hard_blocked(best.setup_type, regime)  # True = might need HCET
         time_blocked_check = time_blocked  # from earlier time window check
 
         if insufficient_bars or regime_blocked or time_blocked_check:
@@ -766,49 +720,73 @@ class TradeDecisionGate:
 
             hc_ok, hc_reasons = self._is_high_conviction_candidate(best.setup_type, regime, features)
 
-        # Insufficient bars veto unless HCET
-        if df5m_tail is None or len(df5m_tail) < 10:
+        # Insufficient bars veto unless HCET, ORB, or FHM setup
+        # ORB/FHM EARLY WINDOW FIX: These strategies use 4-bar minimum (15-min range = 3 bars + 1 bar)
+        # Pro traders enter ORB breakouts as early as 09:35 (4 bars from 09:15)
+        # FHM specifically targets first hour momentum - needs to work with 4+ bars
+        is_orb_setup = best.setup_type in ("orb_breakout_long", "orb_breakout_short",
+                                           "orb_breakdown_long", "orb_breakdown_short",
+                                           "orb_pullback_long", "orb_pullback_short")
+        is_fhm_setup = best.setup_type in ("first_hour_momentum_long", "first_hour_momentum_short")
+        early_window_min_bars = 4  # Pro trader standard: 15-min range (3 bars) + 1 bar for breakout
+        min_bars_required = early_window_min_bars if (is_orb_setup or is_fhm_setup) else 10
+
+        if df5m_tail is None or len(df5m_tail) < min_bars_required:
             if hc_ok:
                 reasons.append(f"hcet_enable_early({len(df5m_tail) if df5m_tail is not None else 0}bars)")
+            elif is_orb_setup and len(df5m_tail) >= early_window_min_bars:
+                # ORB setups with 4+ bars are allowed through (early morning detection)
+                reasons.append(f"orb_early_window({len(df5m_tail)}bars)")
+            elif is_fhm_setup and len(df5m_tail) >= early_window_min_bars:
+                # FHM setups with 4+ bars are allowed through (first hour momentum)
+                reasons.append(f"fhm_early_window({len(df5m_tail)}bars)")
             else:
                 return GateDecision(accept=False, reasons=reasons)
 
-        # Regime allow-list (strict) unless HCET
-        if not self._regime_allows(best.setup_type, regime, current_time=now):
-            # fallback to your injected regime_gate.allow_setup if you want both
-            # Priority 2: Get cap_segment for cap-aware strategy filtering
+        # ========================================================================
+        # REGIME FILTERING (Simplified Dec 2024)
+        # Single source of truth: regime_gate.py
+        # 1. Hard blocks - cannot be bypassed by HCET
+        # 2. allow_setup() - evidence-based thresholds (can be bypassed by HCET)
+        # ========================================================================
+
+        # Step 1: Check hard blocks (CANNOT be bypassed)
+        hard_blocked = self._is_hard_blocked(best.setup_type, regime)
+        if hard_blocked:
+            reasons.append(f"hard_block:{regime}:{best.setup_type}")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
+        # Step 2: Check evidence-based thresholds via allow_setup()
+        # Priority 2: Get cap_segment for cap-aware strategy filtering
+        cap_segment = "unknown"
+        try:
+            import json
+            from pathlib import Path
+            nse_file = Path(__file__).parent.parent.parent / "nse_all.json"
+            if nse_file.exists():
+                with nse_file.open() as f:
+                    data = json.load(f)
+                cap_map = {item["symbol"]: item.get("cap_segment", "unknown") for item in data}
+                cap_segment = cap_map.get(symbol, "unknown")
+        except Exception:
             cap_segment = "unknown"
-            try:
-                import json
-                from pathlib import Path
-                nse_file = Path(__file__).parent.parent.parent / "nse_all.json"
-                if nse_file.exists():
-                    with nse_file.open() as f:
-                        data = json.load(f)
-                    cap_map = {item["symbol"]: item.get("cap_segment", "unknown") for item in data}
-                    cap_segment = cap_map.get(symbol, "unknown")
-            except Exception:
-                cap_segment = "unknown"
 
-            if hasattr(self.regime_gate, "allow_setup"):
-                base_allow = bool(self.regime_gate.allow_setup(
-                    best.setup_type, regime, strength, adx_5m, vol_mult_5m, cap_segment=cap_segment
-                ))
-            else:
-                base_allow = False
+        base_allow = False
+        if hasattr(self.regime_gate, "allow_setup"):
+            base_allow = bool(self.regime_gate.allow_setup(
+                best.setup_type, regime, strength, adx_5m, vol_mult_5m, cap_segment=cap_segment
+            ))
 
-            if not base_allow and not hc_ok:
-                reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f},cap={cap_segment}]")
-                return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
-            elif not base_allow and hc_ok:
-                reasons.append(f"hcet_bypass_regime:{','.join(hc_reasons)}")
+        if not base_allow and not hc_ok:
+            reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f},cap={cap_segment}]")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+        elif not base_allow and hc_ok:
+            reasons.append(f"hcet_bypass_regime:{','.join(hc_reasons)}")
 
+        # NO SIZE_MULT PENALTIES - Pro Trader Approach (Van Tharp CPR)
+        # If setup doesn't qualify, BLOCK it (hard gate). No soft penalties.
         size_mult = 1.0
-        if hasattr(self.regime_gate, "size_multiplier"):
-            try:
-                size_mult *= float(self.regime_gate.size_multiplier(regime))
-            except Exception:
-                pass
+        # REMOVED: regime_gate.size_multiplier penalty
         reasons.append(f"regime:{regime}")
 
         # If time window blocked, allow only HCET to proceed
@@ -837,6 +815,14 @@ class TradeDecisionGate:
             strength=strength,
             lane_type=lane_type
         )
+
+        # NEW: Check for high-impact events that should BLOCK trades (Budget, Earnings, etc.)
+        # Uses EventsLoader for accurate date detection from static JSON + dynamic cache
+        event_mult, event_reason = self.event_gate.get_trading_multiplier(now.date(), symbol)
+        if event_mult == 0.0 and event_reason:
+            reasons.append(f"event_hard_block:{event_reason}")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
         # Check policy permissions
         if _is_breakout(best.setup_type) and not policy.allow_breakout:
             reasons.append("event_block:breakout")
@@ -867,8 +853,8 @@ class TradeDecisionGate:
             reasons.append(f"{session_or_event}:fast_scalp_rejected")
             return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
-        # Apply policy adjustments
-        size_mult *= float(policy.size_mult)
+        # Apply policy adjustments - HOLD BARS ONLY, no size penalty
+        # REMOVED: size_mult *= float(policy.size_mult) - use hard gates instead
         min_hold = int(policy.min_hold_bars)
         if ctx:
             reasons.append("event_ctx:" + ",".join(sorted(ctx.keys())))
@@ -877,8 +863,8 @@ class TradeDecisionGate:
         spike, sig = self.news_gate.has_symbol_spike(df1m_tail)
         if spike:
             adj = self.news_gate.adjustment_for(sig)
-            min_hold += int(adj.require_hold_bars)
-            size_mult *= float(adj.size_mult)
+            min_hold += int(adj.require_hold_bars)  # Keep hold bars for caution
+            # REMOVED: size_mult *= float(adj.size_mult) - no penalty, use hold bars instead
             reasons.append("news_spike:" + ";".join(sig.reasons))
 
         # ---------------- SENTIMENT --------------------
@@ -895,9 +881,9 @@ class TradeDecisionGate:
                     reasons.append(f"sentiment_block:{sentiment.sentiment_level.value}")
                     return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
                 sentiment_bias = self.sentiment_gate.get_setup_bias(best.setup_type, sentiment)
-                size_mult *= sentiment_bias
+                # REMOVED: size_mult *= sentiment_bias - no penalty, sentiment gate already blocks if needed
                 reasons.append(f"sentiment:{sentiment.sentiment_level.value}_{sentiment.market_trend.value}")
-                reasons.append(f"sentiment_bias:{sentiment_bias:.2f}")
+                reasons.append(f"sentiment_bias_info:{sentiment_bias:.2f}")
             except Exception as e:
                 reasons.append(f"sentiment_error:{getattr(e, '__class__', type('E', (), {})).__name__}")
 
@@ -1053,28 +1039,29 @@ class TradeDecisionGate:
             except Exception as e:
                 reasons.append(f"entry_validation_price_action_error:{e.__class__.__name__}")
 
+        # ---------------- EVENT SIZE ADJUSTMENT ----------------
+        # Apply size reduction for RBI/Expiry days (blocking events already handled above)
+        if event_mult < 1.0 and event_mult > 0.0:
+            size_mult *= event_mult
+            reasons.append(f"event_size_adj:{event_reason}:{event_mult:.2f}x")
+
         # ---------------- HCET sizing/hold tweaks ----------------
         if hc_ok:
             reasons.append("hcet:enabled")
+            # Keep HCET bonus - this is a REWARD for confluence, not a penalty
             size_mult *= 1.15               # reward confluence, modestly
             min_hold = max(min_hold, 2)     # small confirmation hold
-        else:
-            # keep chop smaller by default
-            if regime in {"choppy", "range"}:
-                size_mult *= 0.8
+        # REMOVED: chop regime penalty (0.8x) - use hard gates instead of soft penalties
 
         # ---------------- SETUP SEQUENCING (Enhancement 3) ----------------
-        # Track this setup for future sequence analysis
+        # Track this setup for future sequence analysis (info only, no penalty)
         try:
             import pandas as pd
             current_time = pd.to_datetime(now) if hasattr(pd, 'to_datetime') else datetime.now()
             self._track_setup(symbol, current_time, best.setup_type)
 
-            # Apply sequence-based confidence multiplier
-            sequence_multiplier = self._get_sequence_multiplier(symbol, best.setup_type)
-            if sequence_multiplier != 1.0:
-                size_mult *= sequence_multiplier
-                reasons.append(f"sequence_multiplier:{sequence_multiplier:.2f}")
+            # REMOVED: sequence_multiplier penalty - use hard gates instead
+            # sequence_multiplier = self._get_sequence_multiplier(symbol, best.setup_type)
         except Exception as e:
             reasons.append(f"sequence_error:{e.__class__.__name__}")
 

@@ -90,6 +90,7 @@ class ExitExecutor:
         bar_builder=None,  # For tick-level exit validation
         trading_logger=None,  # Enhanced logging service
         capital_manager=None,  # Capital release on exits
+        persistence=None,  # Position persistence for crash recovery
     ) -> None:
         self.broker = broker
         self.positions = positions
@@ -97,6 +98,7 @@ class ExitExecutor:
         self.bar_builder = bar_builder
         self.trading_logger = trading_logger
         self.capital_manager = capital_manager
+        self.persistence = persistence  # For updating/removing positions on exit
 
         # Hook into tick stream for live/paper mode instant exits
         if bar_builder is not None:
@@ -148,6 +150,18 @@ class ExitExecutor:
         self.trail_time_tighten = str(cfg.get("exit_trail_time_tighten", "14:30"))
         self.trail_atr_mult_late = float(cfg.get("exit_trail_atr_mult_late", 1.5))
 
+        # Time-based SL widening (Pro Trader Standard - reduces morning whipsaw)
+        self.sl_time_widening_enabled = bool(cfg["sl_time_widening_enabled"])
+        self.sl_time_widening_after_minutes = float(cfg["sl_time_widening_after_minutes"])
+        self.sl_time_widening_atr_add = float(cfg["sl_time_widening_atr_add"])
+        self.sl_time_widening_max_r_from_entry = float(cfg["sl_time_widening_max_r_from_entry"])
+        self.sl_time_widening_second_after_minutes = float(cfg["sl_time_widening_second_after_minutes"])
+        self.sl_time_widening_second_atr_add = float(cfg["sl_time_widening_second_atr_add"])
+
+        # PRO TRADER: ORB-specific max hold time (Crabel: ideal trade profits instantly)
+        # Pro traders hold ORB for 30-90 min max. Exit if no target hit within this time.
+        self.orb_max_hold_minutes = float(cfg.get("orb_max_hold_minutes", 60))
+
         # execution params
         self.exec_product = str(cfg.get("exec_product", "MIS")).upper()
         self.exec_variety = str(cfg.get("exec_variety", "regular")).lower()
@@ -170,6 +184,9 @@ class ExitExecutor:
         self._or_kill_observation: Dict[str, Dict] = {}  # Track OR observation states
         self._last_momentum_check: Dict[str, float] = {}  # Cache momentum calculations
 
+        # ISSUE 1 FIX: Enable intrabar inference for T1/SL race condition
+        self.intrabar_inference_enabled = bool(cfg.get("exit_intrabar_inference_enabled", True))
+
         # OR_kill enhancement config
         self.or_kill_time_adaptive = bool(cfg.get("or_kill_time_adaptive", True))
         self.or_kill_volume_confirmation = bool(cfg.get("or_kill_volume_confirmation", True))
@@ -186,8 +203,9 @@ class ExitExecutor:
         """
         Enhanced tick handler that checks exits for open positions.
 
-        Note: 'price' parameter is required by bar_builder.on_tick signature but not used here.
-        We call broker.get_ltp_with_level() instead for polymorphic behavior.
+        Uses the tick price directly for instant exit checking in live/paper mode.
+        This avoids race conditions with ltp_cache (which is updated after this callback)
+        and eliminates REST API calls that would be rate-limited.
         """
         # Call original on_tick first
         if callable(self.original_on_tick):
@@ -196,16 +214,20 @@ class ExitExecutor:
             except Exception as e:
                 logger.exception(f"Original on_tick failed for {symbol}: {e}")
 
-        # Check exits on tick - broker.get_ltp_with_level() handles live vs backtest polymorphically
-        self._check_tick_exits(symbol, ts)
+        # Check exits using the tick price directly (no API call needed)
+        self._check_tick_exits(symbol, price, ts)
 
-    def _check_tick_exits(self, symbol: str, ts) -> None:
+    def _check_tick_exits(self, symbol: str, tick_price: float, ts) -> None:
         """
         Check if tick hits SL/targets for open positions.
 
-        Uses broker.get_ltp_with_level() for polymorphic behavior:
-        - Live/paper: Returns current LTP (real-time tick)
-        - Backtest: Checks if bar OHLC touched level, returns level or close
+        In live/paper mode, uses the tick price directly for instant exit checking.
+        This eliminates race conditions with ltp_cache and avoids rate-limited API calls.
+
+        Args:
+            symbol: Trading symbol
+            tick_price: Current tick price from websocket
+            ts: Tick timestamp
         """
         try:
             open_pos = self.positions.list_open()
@@ -216,34 +238,31 @@ class ExitExecutor:
             # Convert timestamp
             ts_pd = pd.Timestamp(ts) if not isinstance(ts, pd.Timestamp) else ts
 
-            # Check SL - broker handles intrabar accuracy polymorphically
+            # Check SL using tick price directly
             plan_sl = self._get_plan_sl(pos.plan)
             if not math.isnan(plan_sl):
-                sl_px = self.broker.get_ltp_with_level(symbol, check_level=plan_sl)
-                if sl_px is not None and self._breach_sl(pos.side, sl_px, plan_sl):
-                    logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={sl_px:.2f} sl={plan_sl:.2f}")
-                    self._exit(symbol, pos, sl_px, ts_pd, "tick_sl")
+                if self._breach_sl(pos.side, tick_price, plan_sl):
+                    logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f}")
+                    self._exit(symbol, pos, tick_price, ts_pd, "tick_sl")
                     return
 
-            # Check targets - broker handles intrabar accuracy polymorphically
+            # Check targets using tick price directly
             t1, t2 = self._get_targets(pos.plan)
             st = pos.plan.get("_state") or {}
             t1_done = bool(st.get("t1_done", False))
 
             # T2 (full exit)
             if not math.isnan(t2):
-                t2_px = self.broker.get_ltp_with_level(symbol, check_level=t2)
-                if t2_px is not None and self._target_hit(pos.side, t2_px, t2):
-                    logger.info(f"TICK_T2_HIT: {symbol} {pos.side} price={t2_px:.2f} t2={t2:.2f}")
-                    self._exit(symbol, pos, t2_px, ts_pd, "tick_target_t2")
+                if self._target_hit(pos.side, tick_price, t2):
+                    logger.info(f"TICK_T2_HIT: {symbol} {pos.side} price={tick_price:.2f} t2={t2:.2f}")
+                    self._exit(symbol, pos, tick_price, ts_pd, "tick_target_t2")
                     return
 
             # T1 (partial exit)
             if (not t1_done) and not math.isnan(t1):
-                t1_px = self.broker.get_ltp_with_level(symbol, check_level=t1)
-                if t1_px is not None and self._target_hit(pos.side, t1_px, t1):
-                    logger.info(f"TICK_T1_HIT: {symbol} {pos.side} price={t1_px:.2f} t1={t1:.2f}")
-                    self._partial_exit_t1(symbol, pos, t1_px, ts_pd)
+                if self._target_hit(pos.side, tick_price, t1):
+                    logger.info(f"TICK_T1_HIT: {symbol} {pos.side} price={tick_price:.2f} t1={t1:.2f}")
+                    self._partial_exit_t1(symbol, pos, tick_price, ts_pd)
                     return
 
         except Exception as e:
@@ -288,6 +307,51 @@ class ExitExecutor:
                     self._exit(sym, pos, float(px), ts, f"eod_squareoff_{self.eod_hhmm}")
                     continue
 
+                # 0.5) PRO TRADER: Failed breakout exit for ORB trades
+                # If candle closes back inside OR, exit immediately (Crabel standard)
+                setup_type = pos.plan.get("setup_type", "")
+                if setup_type in ("orb_breakout_long", "orb_breakdown_short"):
+                    levels = pos.plan.get("levels", {})
+                    orh = levels.get("ORH") or levels.get("orh")
+                    orl = levels.get("ORL") or levels.get("orl")
+
+                    if orh is not None and orl is not None:
+                        # Check if candle CLOSE is back inside OR (using px as close price)
+                        candle_close = float(px)  # At bar end, px is the close
+
+                        if setup_type == "orb_breakout_long" and candle_close < orh:
+                            # Long breakout failed - price closed back below ORH
+                            logger.info(f"FAILED_BREAKOUT | {sym} | LONG closed below ORH | Close: {candle_close:.2f} < ORH: {orh:.2f}")
+                            self._exit(sym, pos, candle_close, ts, "failed_breakout_back_inside_or")
+                            continue
+
+                        elif setup_type == "orb_breakdown_short" and candle_close > orl:
+                            # Short breakdown failed - price closed back above ORL
+                            logger.info(f"FAILED_BREAKOUT | {sym} | SHORT closed above ORL | Close: {candle_close:.2f} > ORL: {orl:.2f}")
+                            self._exit(sym, pos, candle_close, ts, "failed_breakout_back_inside_or")
+                            continue
+
+                # 0.6) PRO TRADER: ORB max hold time (Crabel: ideal trade profits instantly)
+                # Exit ORB trades if held longer than max hold time without hitting target
+                if setup_type in ("orb_breakout_long", "orb_breakdown_short"):
+                    entry_ts_str = pos.plan.get("entry_ts") or pos.plan.get("decision_ts")
+                    if entry_ts_str:
+                        try:
+                            entry_ts = pd.Timestamp(entry_ts_str)
+                            time_held_minutes = (ts - entry_ts).total_seconds() / 60.0
+
+                            if time_held_minutes >= self.orb_max_hold_minutes:
+                                # Check if still no T1 hit
+                                st = pos.plan.get("_state") or {}
+                                t1_done = bool(st.get("t1_done", False))
+
+                                if not t1_done:
+                                    logger.info(f"ORB_TIME_STOP | {sym} | Held {time_held_minutes:.0f}m >= {self.orb_max_hold_minutes}m | No T1 hit | Exiting")
+                                    self._exit(sym, pos, float(px), ts, f"orb_time_stop_{time_held_minutes:.0f}m")
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"ORB time stop check failed for {sym}: {e}")
+
                 # 1) Hard SL first, but anchor to ATR sanity if available
                 plan_sl = self._get_plan_sl(pos.plan)
                 original_sl = plan_sl  # Store original for logging
@@ -320,10 +384,27 @@ class ExitExecutor:
 
                         plan_sl = new_plan_sl
 
+                # Apply time-based SL widening (Pro Trader Standard - reduces morning whipsaw)
+                plan_sl = self._apply_time_based_sl_widening(sym, pos, plan_sl, float(px), ts)
+
                 # Get state early to check if T1/T2 were already hit (for better exit reason labeling)
                 st = pos.plan.get("_state") or {}
                 t1_done = bool(st.get("t1_done", False))
                 t2_done = bool(st.get("t2_done", False))
+
+                # ISSUE 1 FIX: Get T1 early for intrabar inference
+                t1_early, _ = self._get_targets(pos.plan)
+
+                # ISSUE 1 FIX: Check T1 FIRST if intrabar inference suggests T1 was hit before SL
+                # This prevents the race condition where SL is checked first even though T1 was hit first
+                if (not t1_done) and not math.isnan(t1_early) and not math.isnan(plan_sl):
+                    if self._intrabar_t1_first(sym, pos.side, t1_early, plan_sl):
+                        # T1 was likely hit first - process T1 before SL
+                        t1_px = self.broker.get_ltp_with_level(sym, check_level=t1_early)
+                        if t1_px is not None and self._target_hit(pos.side, t1_px, t1_early):
+                            t1_ltp = t1_px
+                            self._partial_exit_t1(sym, pos, t1_ltp, ts)
+                            continue  # T1 partial done, SL will be BE now
 
                 # Check SL with intrabar accuracy - broker handles live vs backtest polymorphically
                 if not math.isnan(plan_sl):
@@ -457,13 +538,129 @@ class ExitExecutor:
             return False
 
     def _get_plan_sl(self, plan: Dict[str, Any]) -> float:
-        sl = plan.get("hard_sl", plan.get("stop"))
+        """
+        Extract SL from plan using standard format.
+
+        Pipeline contract: plan["stop"]["hard"]
+        """
         try:
-            if isinstance(sl, dict) and "hard" in sl:
-                return float(sl["hard"])
-            return float(sl) if sl is not None else float("nan")
-        except Exception:
+            return float(plan["stop"]["hard"])
+        except (KeyError, TypeError, ValueError):
             return float("nan")
+
+    def _apply_time_based_sl_widening(self, sym: str, pos: Position, plan_sl: float, current_price: float, ts: pd.Timestamp) -> float:
+        """
+        Apply time-based SL widening to avoid morning volatility whipsaw.
+
+        Pro trader standard: After 30-60 minutes in trade, if price is within 0.5R of entry,
+        widen SL by 0.3-0.5 ATR to give trade room to work.
+
+        Returns: Widened SL price (or original if widening not applicable)
+        """
+        if not self.sl_time_widening_enabled:
+            return plan_sl
+
+        if math.isnan(plan_sl):
+            return plan_sl
+
+        # Get entry timestamp
+        entry_ts_raw = pos.plan.get("entry_ts") or pos.plan.get("entry_epoch_ms")
+        if not entry_ts_raw:
+            return plan_sl
+
+        try:
+            if isinstance(entry_ts_raw, (int, float)) and entry_ts_raw > 1e10:
+                entry_ts = pd.Timestamp(entry_ts_raw, unit='ms')
+            else:
+                entry_ts = pd.Timestamp(entry_ts_raw)
+        except Exception:
+            return plan_sl
+
+        # Calculate time in trade
+        try:
+            time_in_trade_minutes = (ts - entry_ts).total_seconds() / 60.0
+        except Exception:
+            return plan_sl
+
+        # Get ATR for widening calculation
+        atr_cached = float(pos.plan.get("indicators", {}).get("atr", float("nan")))
+        if math.isnan(atr_cached) or atr_cached <= 0:
+            return plan_sl
+
+        # Calculate current R from entry
+        entry_price = pos.avg_price
+        side = pos.side.upper()
+        risk = abs(entry_price - plan_sl)
+        if risk <= 0:
+            return plan_sl
+
+        if side == "BUY":
+            current_r = (current_price - entry_price) / risk
+        else:
+            current_r = (entry_price - current_price) / risk
+
+        # Check state to avoid re-widening
+        st = pos.plan.get("_state") or {}
+        first_widening_done = st.get("sl_time_widening_1_done", False)
+        second_widening_done = st.get("sl_time_widening_2_done", False)
+
+        widened_sl = plan_sl
+
+        # First widening: after 30 minutes (configurable)
+        if not first_widening_done and time_in_trade_minutes >= self.sl_time_widening_after_minutes:
+            # Only widen if trade is within max_r from entry
+            if abs(current_r) <= self.sl_time_widening_max_r_from_entry:
+                if side == "BUY":
+                    widened_sl = plan_sl - (self.sl_time_widening_atr_add * atr_cached)
+                else:
+                    widened_sl = plan_sl + (self.sl_time_widening_atr_add * atr_cached)
+
+                # Update plan with widened SL
+                if isinstance(pos.plan.get("stop"), dict):
+                    pos.plan["stop"]["hard"] = widened_sl
+                pos.plan["hard_sl"] = widened_sl
+
+                # Mark first widening done
+                st["sl_time_widening_1_done"] = True
+                st["sl_time_widening_1_at"] = str(ts)
+                pos.plan["_state"] = st
+
+                logger.info(
+                    f"SL_TIME_WIDENING_1 | {sym} | {side} | "
+                    f"Time_In_Trade: {time_in_trade_minutes:.1f}min | Current_R: {current_r:.2f} | "
+                    f"Original_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
+                    f"ATR_Add: {self.sl_time_widening_atr_add * atr_cached:.2f}"
+                )
+                return widened_sl
+
+        # Second widening: after 60 minutes (configurable)
+        if first_widening_done and not second_widening_done and time_in_trade_minutes >= self.sl_time_widening_second_after_minutes:
+            # Only widen if trade is within max_r from entry
+            if abs(current_r) <= self.sl_time_widening_max_r_from_entry:
+                if side == "BUY":
+                    widened_sl = plan_sl - (self.sl_time_widening_second_atr_add * atr_cached)
+                else:
+                    widened_sl = plan_sl + (self.sl_time_widening_second_atr_add * atr_cached)
+
+                # Update plan with widened SL
+                if isinstance(pos.plan.get("stop"), dict):
+                    pos.plan["stop"]["hard"] = widened_sl
+                pos.plan["hard_sl"] = widened_sl
+
+                # Mark second widening done
+                st["sl_time_widening_2_done"] = True
+                st["sl_time_widening_2_at"] = str(ts)
+                pos.plan["_state"] = st
+
+                logger.info(
+                    f"SL_TIME_WIDENING_2 | {sym} | {side} | "
+                    f"Time_In_Trade: {time_in_trade_minutes:.1f}min | Current_R: {current_r:.2f} | "
+                    f"Previous_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
+                    f"ATR_Add: {self.sl_time_widening_second_atr_add * atr_cached:.2f}"
+                )
+                return widened_sl
+
+        return plan_sl
 
     def _breach_sl(self, side: str, price: float, sl: float) -> bool:
         if math.isnan(sl) or math.isnan(price):
@@ -472,15 +669,25 @@ class ExitExecutor:
         return (price <= sl) if side == "BUY" else (price >= sl)
 
     def _get_targets(self, plan: Dict[str, Any]) -> Tuple[float, float]:
+        """
+        Extract T1 and T2 from plan using standard format.
+
+        Pipeline contract: plan["targets"][n]["level"]
+        """
         t1 = t2 = float("nan")
-        try:
-            ts = plan.get("targets") or []
-            if len(ts) > 0 and ts[0] and "level" in ts[0]:
-                t1 = float(ts[0]["level"])
-            if len(ts) > 1 and ts[1] and "level" in ts[1]:
-                t2 = float(ts[1]["level"])
-        except Exception:
-            pass
+        targets = plan.get("targets") or []
+
+        if len(targets) > 0:
+            try:
+                t1 = float(targets[0]["level"])
+            except (KeyError, TypeError, ValueError):
+                pass
+        if len(targets) > 1:
+            try:
+                t2 = float(targets[1]["level"])
+            except (KeyError, TypeError, ValueError):
+                pass
+
         return t1, t2
 
     def _target_hit(self, side: str, px: float, tgt: float) -> bool:
@@ -488,6 +695,73 @@ class ExitExecutor:
             return False
         side = side.upper()
         return (px >= tgt) if side == "BUY" else (px <= tgt)
+
+    def _intrabar_t1_first(self, sym: str, side: str, t1: float, sl: float) -> bool:
+        """
+        ISSUE 1 FIX: Intrabar inference for T1/SL race condition.
+
+        When both T1 and SL are within the current bar's [low, high] range,
+        we infer which was likely hit first based on the bar's direction:
+
+        For LONG positions:
+          - Bullish bar (close > open): Price went UP first → T1 likely hit first
+          - Bearish bar (close < open): Price went DOWN first → SL likely hit first
+
+        For SHORT positions:
+          - Bearish bar (close < open): Price went DOWN first → T1 likely hit first (favorable)
+          - Bullish bar (close > open): Price went UP first → SL likely hit first
+
+        Returns True if T1 was likely hit first, False otherwise.
+        """
+        if not self.intrabar_inference_enabled:
+            return False
+
+        # Get bar OHLC from broker's cache
+        bar_ohlc = None
+        try:
+            with self.broker._lp_lock:
+                bar_ohlc = self.broker._last_bar_ohlc.get(sym)
+        except (AttributeError, KeyError):
+            pass
+
+        if not bar_ohlc:
+            return False
+
+        try:
+            low = float(bar_ohlc["low"])
+            high = float(bar_ohlc["high"])
+            open_px = float(bar_ohlc["open"])
+            close_px = float(bar_ohlc["close"])
+        except (KeyError, TypeError, ValueError):
+            return False
+
+        # Check if both T1 and SL are within bar range
+        t1_in_range = low <= t1 <= high
+        sl_in_range = low <= sl <= high
+
+        if not (t1_in_range and sl_in_range):
+            # Only one level touched, no race condition
+            return False
+
+        # Both levels within bar range - use direction inference
+        side = side.upper()
+        is_bullish = close_px > open_px
+
+        if side == "BUY":
+            # LONG: Bullish bar = T1 first, Bearish bar = SL first
+            t1_first = is_bullish
+        else:
+            # SHORT: Bearish bar = T1 first, Bullish bar = SL first
+            t1_first = not is_bullish
+
+        if t1_first:
+            logger.info(
+                f"INTRABAR_INFERENCE | {sym} | {side} | T1_FIRST | "
+                f"Bar: O={open_px:.2f} H={high:.2f} L={low:.2f} C={close_px:.2f} | "
+                f"T1={t1:.2f} SL={sl:.2f} | Bullish={is_bullish}"
+            )
+
+        return t1_first
 
     # ---------- Trail ----------
 
@@ -773,6 +1047,10 @@ class ExitExecutor:
                     if exit_result:
                         trade_logger.info(f"OR_KILL_PARTIAL | {symbol} | {pos.side} {partial_qty} @ {px:.2f} | remaining: {pos.qty - partial_qty}")
                         self.positions.reduce(symbol, partial_qty)  # Update position quantity
+                        # Update persistence with new qty (crash recovery)
+                        if self.persistence:
+                            new_qty = pos.qty - partial_qty
+                            self.persistence.update_position(symbol, new_qty=new_qty)
                         observation["partial_exit_done"] = True
                         observation["partial_qty_exited"] = partial_qty
                     else:
@@ -895,16 +1173,26 @@ class ExitExecutor:
             return
 
         try:
-            exit_side = "SELL" if pos.side.upper() == "BUY" else "BUY"
-            args = {
-                "symbol": sym,
-                "side": exit_side,
-                "qty": int(qty_exit),
-                "order_type": self.exec_mode,
-                "product": self.exec_product,
-                "variety": self.exec_variety,
-            }
-            self.broker.place_order(**args)
+            # Check if this is a shadow trade (simulated, no real orders)
+            is_shadow = pos.plan.get("shadow", False) if pos.plan else False
+
+            if is_shadow:
+                # SHADOW TRADE: Don't place real exit order, just simulate
+                logger.info(f"SHADOW_EXIT_ORDER | {sym} | Simulated exit (no broker call) | qty={qty_exit} reason={reason}")
+            else:
+                exit_side = "SELL" if pos.side.upper() == "BUY" else "BUY"
+                # Get trade_id from plan if available (for tagging exit orders)
+                trade_id = pos.plan.get("trade_id") if pos.plan else None
+                args = {
+                    "symbol": sym,
+                    "side": exit_side,
+                    "qty": int(qty_exit),
+                    "order_type": self.exec_mode,
+                    "product": self.exec_product,
+                    "variety": self.exec_variety,
+                    "trade_id": trade_id,  # For order tagging (ITDA_xxx) - identifies app orders
+                }
+                self.broker.place_order(**args)
         except Exception as e:
             logger.warning("exit.place_order failed sym=%s qty=%s reason=%s err=%s", sym, qty_exit, reason, e)
 
@@ -964,6 +1252,7 @@ class ExitExecutor:
                 'pnl': round(pnl, 2),
                 'reason': reason,
                 'timestamp': str(ts) if ts else str(pd.Timestamp.now()),
+                'shadow': pos.plan.get('shadow', False),  # Shadow trade flag
                 # Edge diagnostic fields for exit analysis
                 'diagnostics': {
                     'exit_type': 'partial' if qty_exit < pos.qty else 'full',
@@ -1063,9 +1352,15 @@ class ExitExecutor:
         self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
         self.positions.close(sym)
 
+        # Remove from persistence (crash recovery)
+        if self.persistence:
+            self.persistence.remove_position(sym)
+
         # Release capital (free margin) on full exit
+        # Shadow trades have no margin to release
         if self.capital_manager:
-            self.capital_manager.exit_position(sym)
+            is_shadow = pos.plan.get("shadow", False)
+            self.capital_manager.exit_position(sym, shadow=is_shadow)
 
         try:
             st = pos.plan.get("_state") or {}
@@ -1106,7 +1401,9 @@ class ExitExecutor:
 
     def _partial_exit_t1(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
         # Enhanced partial exit logic - always use partial exits for better R:R
-        qty = int(pos.qty)
+        current_qty = int(pos.qty)
+        if current_qty <= 0:
+            return
 
         # Check if T2 is infeasible (T1-only scalp mode) or Fast Scalp Lane
         t2_exit_mode = pos.plan.get("quality", {}).get("t2_exit_mode", None)
@@ -1117,29 +1414,32 @@ class ExitExecutor:
             self._exit(sym, pos, float(px), ts, f"target_t1_full_{reason_suffix}")
             return
 
-        # Store original entry quantity for T2 percentage calculation
+        # Get or store original entry quantity (for consistent 60-40 split)
+        # This ensures T1 uses correct qty even if T2 fired first
         st = pos.plan.get("_state") or {}
         if "entry_qty" not in st:
-            st["entry_qty"] = qty  # Store original entry qty before any exits
+            st["entry_qty"] = current_qty  # Store original entry qty on first access
             pos.plan["_state"] = st
+        original_qty = st["entry_qty"]
 
         # Use config-driven percentage (60-40-0 split from config)
+        # FIX: Calculate based on ORIGINAL entry qty, not current remaining
         actual_pct = max(1.0, self.t1_book_pct)
 
-        qty_exit = int(max(1, round(qty * (actual_pct / 100.0))))
-        qty_exit = min(qty_exit, qty)
+        qty_exit = int(max(1, round(original_qty * (actual_pct / 100.0))))
+        qty_exit = min(qty_exit, current_qty)  # Can't exit more than we have
 
         # Enhanced logic for small quantities
-        if qty_exit >= qty:
-            if qty > 2:  # Changed from 1 to 2 - allow partial even for small positions
-                qty_exit = max(1, qty // 2)  # Take 50% minimum
+        if qty_exit >= current_qty:
+            if current_qty > 2:  # Changed from 1 to 2 - allow partial even for small positions
+                qty_exit = max(1, current_qty // 2)  # Take 50% minimum
             else:
                 self._exit(sym, pos, float(px), ts, "target_t1_full")
                 return
 
         # Log enhanced partial exit info
         profit_booked = qty_exit * (px - pos.avg_price)
-        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{self.t2_book_pct:.0f}%-0% split]")
+        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{original_qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{self.t2_book_pct:.0f}%-0% split]")
 
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
         self.positions.reduce(sym, int(qty_exit))
@@ -1168,6 +1468,11 @@ class ExitExecutor:
             except Exception:
                 pass
         pos.plan["_state"] = st
+
+        # Update persistence with new qty and state (crash recovery)
+        if self.persistence:
+            new_qty = current_qty - int(qty_exit)
+            self.persistence.update_position(sym, new_qty=new_qty, state_updates={"t1_done": True})
 
         if self.eod_md is not None and ts is not None:
             try:
@@ -1198,20 +1503,30 @@ class ExitExecutor:
         if qty <= 0:
             return
 
-        # Get T2 booking percentage from config
+        # If no trail configured (T1+T2 >= 100%), exit ALL remaining at T2
+        # This avoids rounding issues and matches 60-40-0 intent
+        no_trail = (self.t1_book_pct + self.t2_book_pct) >= 100.0
+        if no_trail:
+            logger.info(f"exit_executor: {sym} T2_FULL exit (no trail configured: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-0%)")
+            self._exit(sym, pos, float(px), ts, "target_t2_full")
+            return
+
+        # Trail is configured - do partial T2 exit
         t2_pct = self.t2_book_pct
 
-        # Get original entry quantity from state (stored at T1)
+        # Get or store original entry quantity (for consistent split)
         st = pos.plan.get("_state") or {}
-        original_entry_qty = st.get("entry_qty", qty)  # Fallback to current if not stored
+        if "entry_qty" not in st:
+            st["entry_qty"] = qty  # Store original entry qty if T2 fires first
+            pos.plan["_state"] = st
+        original_entry_qty = st["entry_qty"]
 
-        # CRITICAL FIX: Calculate T2 qty as percentage of ORIGINAL entry, not remaining
+        # Calculate T2 qty as percentage of ORIGINAL entry
         qty_exit = int(max(1, round(original_entry_qty * (t2_pct / 100.0))))
         qty_exit = min(qty_exit, qty)  # Cap at current position size
 
-        # Enhanced logic for small quantities
+        # Exit fully if calculated qty covers remaining position
         if qty_exit >= qty:
-            # Exit fully if T2 qty would be entire remaining position
             self._exit(sym, pos, float(px), ts, "target_t2_full")
             return
 
@@ -1219,8 +1534,8 @@ class ExitExecutor:
         profit_booked = qty_exit * (px - pos.avg_price)
         t2_pct_of_original = (qty_exit / original_entry_qty * 100) if original_entry_qty > 0 else 0
         remaining_qty = qty - qty_exit
-        remaining_pct_of_original = (remaining_qty / original_entry_qty * 100) if original_entry_qty > 0 else 0
-        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-0%, leaving {remaining_qty} ({remaining_pct_of_original:.0f}%) for trail]")
+        trail_pct = 100.0 - self.t1_book_pct - self.t2_book_pct
+        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-{trail_pct:.0f}%, leaving {remaining_qty} for trail]")
 
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
         self.positions.reduce(sym, int(qty_exit))
@@ -1231,6 +1546,10 @@ class ExitExecutor:
         st["t2_booked_price"] = px
         st["t2_profit"] = profit_booked
         pos.plan["_state"] = st
+
+        # Update persistence with new qty and state (crash recovery)
+        if self.persistence:
+            self.persistence.update_position(sym, new_qty=remaining_qty, state_updates={"t1_done": True, "t2_done": True})
 
     def _fabricate_eod_ts(self, pos: Position) -> pd.Timestamp:
         try:
@@ -1378,6 +1697,11 @@ class ExitExecutor:
                     st["breakout_short_new_sl"] = new_sl
                     pos.plan["_state"] = st
 
+                    # Update persistence with new qty (crash recovery)
+                    if self.persistence:
+                        new_qty = qty - qty_exit
+                        self.persistence.update_position(sym, new_qty=new_qty, state_updates={"breakout_short_partial_done": True})
+
                     logger.info(f"BREAKOUT_SHORT_RISK: {sym} moved SL to {self.breakout_short_sl_to_neg}R @ {new_sl:.2f}")
                 except Exception as e:
                     logger.warning(f"BREAKOUT_SHORT_RISK: {sym} failed to move SL: {e}")
@@ -1437,6 +1761,12 @@ class ExitExecutor:
 
                     st["eod_scale_out_first_done"] = True
                     pos.plan["_state"] = st
+
+                    # Update persistence with new qty (crash recovery)
+                    if self.persistence:
+                        new_qty = qty - qty_exit
+                        self.persistence.update_position(sym, new_qty=new_qty, state_updates={"eod_scale_out_first_done": True})
+
                     return True
 
             # Final exit at 15:07 if <0.4R

@@ -33,6 +33,9 @@ class LevelBreakoutStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "level_breakout"
 
+        # Track which specific setup type this detector is for (e.g., "level_breakout_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Breakout parameters
@@ -60,6 +63,10 @@ class LevelBreakoutStructure(BaseStructure):
         self.retest_entry_zone_width_atr = config["retest_entry_zone_width_atr"]
         self.retest_timeout_minutes = config["retest_timeout_minutes"]
         self.allow_both_modes = config["allow_both_modes"]
+
+        # Stop loss parameters - Pro trader: SL at breakout level + ATR buffer
+        self.sl_atr_multiplier = config["sl_atr_multiplier"]  # ATR multiplier for stop loss
+        self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
 
         # Track traded breakouts to prevent double exposure
         self.traded_breakouts_today = set()
@@ -124,6 +131,13 @@ class LevelBreakoutStructure(BaseStructure):
                     )
                     if breakdown_event:
                         events.append(breakdown_event)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             quality_score = self._calculate_quality_score(events, vol_z_current) if events else 0.0
             logger.debug(f"LEVEL_BREAKOUT_DETECTOR: {context.symbol} detection complete - found {len(events)} events, quality: {quality_score:.2f}")
@@ -236,10 +250,14 @@ class LevelBreakoutStructure(BaseStructure):
         if entry_mode is None:
             return None
 
+        # Use orb_level_breakout_* for ORH/ORL to ensure is_orb check passes in breakout_pipeline
+        # This allows ORB-related level breakouts to use relaxed chop regime filtering
+        structure_type = "orb_level_breakout_long" if level_name in ("ORH", "ORL") else "level_breakout_long"
+
         event = StructureEvent(
             symbol=context.symbol,
             timestamp=context.timestamp,
-            structure_type="level_breakout_long",
+            structure_type=structure_type,
             side="long",
             confidence=confidence,
             levels={level_name: level_value, "breakout_size": breakout_size},
@@ -341,10 +359,14 @@ class LevelBreakoutStructure(BaseStructure):
             level_name=level_name
         )
 
+        # Use orb_level_breakout_* for ORH/ORL to ensure is_orb check passes in breakout_pipeline
+        # This allows ORB-related level breakouts to use relaxed chop regime filtering
+        structure_type = "orb_level_breakout_short" if level_name in ("ORH", "ORL") else "level_breakout_short"
+
         event = StructureEvent(
             symbol=context.symbol,
             timestamp=context.timestamp,
-            structure_type="level_breakout_short",
+            structure_type=structure_type,
             side="short",
             confidence=confidence,
             levels={level_name: level_value, "breakdown_size": breakdown_size},
@@ -534,7 +556,7 @@ class LevelBreakoutStructure(BaseStructure):
         entry_price = context.current_price
         risk_params = self.calculate_risk_params(context, event, side)
         exit_levels = self.get_exit_levels(context, event, side)
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         return TradePlan(
             symbol=context.symbol,
@@ -566,15 +588,21 @@ class LevelBreakoutStructure(BaseStructure):
             breakout_level = entry_price
 
         # NSE FIX: Set stop loss relative to ENTRY price, not breakout level
-        # Use configured sl_atr_multiplier instead of hardcoded value
-        # PHASE 1 FIX: Was hardcoded to 1.5x, now uses config value (2.0x per MFE/MAE analysis)
-        sl_mult = self.config.get("sl_atr_multiplier", 2.0)
+        # Use configured sl_atr_multiplier - no default, must be in config
         if side == "long":
-            hard_sl = entry_price - (atr * sl_mult)  # Stop sl_mult×ATR below entry
+            hard_sl = entry_price - (atr * self.sl_atr_multiplier)  # Stop sl_atr_multiplier×ATR below entry
         else:
-            hard_sl = entry_price + (atr * sl_mult)  # Stop sl_mult×ATR above entry
+            hard_sl = entry_price + (atr * self.sl_atr_multiplier)  # Stop sl_atr_multiplier×ATR above entry
 
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,
@@ -620,13 +648,6 @@ class LevelBreakoutStructure(BaseStructure):
         """Validate timing for level breakout trades."""
         # Level breakouts can occur throughout the session
         return True, "Level breakout timing validated"
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0  # Maximum risk per trade
-        qty = max(1, min(int(max_risk_amount / risk_per_share), 100)) if risk_per_share > 0 else 1
-        return qty, qty * entry_price
 
     def _calculate_institutional_strength(self, context: MarketContext, vol_z: float,
                                         final_strength: float, breakout_size_atr: float,

@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
 
+# Import centralized indicator utilities
+from services.indicators.indicators import volume_ratio as _volume_ratio
+
 def _wick_bpct(row):
     rng = float(row["high"] - row["low"])
     if rng <= 0: return 0.0, 0.0
@@ -19,12 +22,6 @@ def _momentum_5m(df5m: pd.DataFrame, bars: int = 3):
     if df5m is None or len(df5m) < bars + 1: return 0.0
     c = df5m["close"].astype(float)
     return float((c.iloc[-1] - c.iloc[-1 - bars]) / c.iloc[-1 - bars])
-
-def _volume_ratio(df5m: pd.DataFrame, med_window: int = 20):
-    if df5m is None or len(df5m) == 0: return 1.0
-    v = df5m["volume"].astype(float)
-    med = float(v.tail(med_window).median() or 1.0)
-    return float(v.iloc[-1] / med) if med > 0 else 1.0
 
 def _volume_profile_patterns(df5m: pd.DataFrame):
     """

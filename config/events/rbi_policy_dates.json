@@ -1,0 +1,31 @@
+{
+  "description": "RBI Monetary Policy Committee (MPC) meeting dates",
+  "source": "https://www.rbi.org.in/",
+  "last_updated": "2025-12-22",
+  "events": {
+    "2023": [
+      {"date": "2023-02-08", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2023-04-06", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2023-06-08", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2023-08-10", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2023-10-06", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2023-12-08", "type": "rbi_mpc", "impact": "high"}
+    ],
+    "2024": [
+      {"date": "2024-02-08", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2024-04-05", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2024-06-07", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2024-08-08", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2024-10-09", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2024-12-06", "type": "rbi_mpc", "impact": "high"}
+    ],
+    "2025": [
+      {"date": "2025-02-07", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2025-04-09", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2025-06-06", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2025-08-08", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2025-10-08", "type": "rbi_mpc", "impact": "high"},
+      {"date": "2025-12-05", "type": "rbi_mpc", "impact": "high"}
+    ]
+  }
+}

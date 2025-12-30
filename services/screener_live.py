@@ -26,7 +26,7 @@ Integration points you likely already have:
 Flow per 5m close:
   1) Stage-0 (EnergyScanner): compute_features → _filter_stage0 → shortlist
   2) Gate: TradeDecisionGate (structure + regime + events + news)
-  3) Rank: rank_candidates → keep ≥ rank_exec_threshold AND ≥ rank_pctl_min percentile
+  3) Rank: PipelineOrchestrator → category-based ranking with regime budget allocation
   4) De-dupe: block quick re-entries unless (cooloff over) AND (setup changed if required) AND (second entry score ≥ stricter bar)
   5) Plan & enqueue
 
@@ -40,15 +40,15 @@ from dataclasses import dataclass
 from datetime import datetime, time as dtime
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import partial
-import multiprocessing as mp
+import threading
 
 import pandas as pd
 
 from config.filters_setup import load_filters
 from config.logging_config import get_agent_logger, get_screener_logger, get_ranking_logger, get_events_decision_logger
+from config.env_setup import env
 from utils.level_utils import get_previous_day_levels
-from utils.dataframe_utils import validate_df, has_column, safe_get_last
+from utils.dataframe_utils import validate_df, safe_get_last
 
 # ingest / streaming
 from services.ingest.stream_client import WSClient
@@ -66,14 +66,16 @@ from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision a
 # planning & ranking
 from services import levels
 from services import metrics_intraday as mi
-from services.planner_internal import generate_trade_plan
 from structures.main_detector import MainDetector
-from services.ranker import rank_candidates, get_strategy_threshold, get_time_of_day_multiplier
+
+# Category-based pipeline orchestrator (replaces services.ranker)
+from pipelines import process_setup_candidates
 
 # orders & execution
 from services.orders.order_queue import OrderQueue
 from services.scan.energy_scanner import EnergyScanner
 from diagnostics.diag_event_log import diag_event_log, mint_trade_id
+from services.state.orb_cache_persistence import ORBCachePersistence
 import uuid
 
 
@@ -100,7 +102,6 @@ def _init_worker(config_dict):
 
         # Apply structure caching in worker process (if enabled via config flag)
         if config_dict.get("_enable_structure_cache", False):
-            import tools.cached_engine_structures  # noqa: F401
             if worker_logger:
                 worker_logger.info("[CACHE] Worker process: Structure caching enabled")
             else:
@@ -134,7 +135,6 @@ def _init_worker(config_dict):
             news_spike_gate=news_gate,
             market_sentiment_gate=sentiment_gate,
             quality_filters=config_dict.get('quality_filters', {}),
-            regime_allowed_setups=config_dict.get('regime_allowed_setups', {})
         )
     except Exception as e:
         get_agent_logger().exception(f"Worker init failed: {e}")
@@ -211,8 +211,12 @@ class ScreenerLive:
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
         self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
         self.ws.on_message(self.router.handle_raw)
-        # Register on_close to trigger clean exit when replay ends (don't use datetime.now())
-        self.ws.on_close(lambda: self._handle_eod())  # No timestamp - just trigger shutdown
+        # Register on_close to trigger clean exit when replay ends (DRY_RUN only)
+        # In live/paper mode, WebSocket drops are handled by Kite SDK auto-reconnect
+        if env.DRY_RUN:
+            self.ws.on_close(lambda: self._handle_eod())  # Replay ended = EOD shutdown
+        else:
+            self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
         self.subs = SubscriptionManager(self.ws)
 
         # Gates - Use MainDetector directly for structure detection
@@ -235,7 +239,6 @@ class ScreenerLive:
             news_spike_gate=self.news_gate,
             market_sentiment_gate=self.sentiment_gate,
             quality_filters=raw.get("quality_filters", {}),
-            regime_allowed_setups=raw.get("regime_allowed_setups", {}),
         )
 
         # Stage-0 scanner
@@ -257,6 +260,13 @@ class ScreenerLive:
         # ORB levels cache: computed once per day at 09:35 and reused for entire day
         # Key: date, Value: Dict[symbol, Dict[str, float]] containing PDH/PDL/PDC/ORH/ORL
         self._orb_levels_cache: Dict = {}
+        self._orb_cache_lock = threading.Lock()
+        self._orb_recovery_in_progress = False
+        self._orb_recovery_thread: Optional[threading.Thread] = None
+
+        # ORB cache persistence for restart recovery
+        self._orb_cache_persistence = ORBCachePersistence()
+        self._load_orb_cache_from_disk()
 
         # NEW: de-dupe memory (per symbol last accepted)
         # stores: {symbol: {"ts": pd.Timestamp, "setup": str|None, "score": float}}
@@ -278,12 +288,6 @@ class ScreenerLive:
         )
         logger.info("ScreenerLive: Persistent worker pool created (2 workers)")
 
-        # Pre-warm daily data cache for all symbols (avoid 6s per bar disk I/O)
-        if hasattr(self.sdk, 'prewarm_daily_cache'):
-            self.sdk.prewarm_daily_cache(self.core_symbols, days=210)
-            logger.info("ScreenerLive: Daily cache pre-warmed for all symbols")
-        else:
-            logger.info("ScreenerLive: SDK doesn't support cache pre-warming (live mode)")
 
         logger.debug(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
@@ -342,7 +346,7 @@ class ScreenerLive:
         # For now, just log that 15m bars are being captured
         ts = bar_15m.name if hasattr(bar_15m, "name") else datetime.now()
         logger.debug(f"HTF: 15m bar closed for {symbol} at {ts}")
-        # Future: Trigger rank_candidates() update with HTF context
+        # HTF context is now passed to pipeline orchestrator via htf_context parameter
 
     def _enhance_candidates_with_htf(self, symbol: str, candidates: List) -> List:
         """
@@ -427,12 +431,89 @@ class ScreenerLive:
                     strength=adjusted_strength,
                     reasons=updated_reasons,
                     orh=getattr(candidate, 'orh', None),
-                    orl=getattr(candidate, 'orl', None)
+                    orl=getattr(candidate, 'orl', None),
+                    detected_level=getattr(candidate, 'detected_level', None)
                 )
 
             enhanced.append(adjusted_candidate)
 
         return enhanced
+
+    def _build_htf_context(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Build HTF (15m) context for pipeline ranking adjustments.
+
+        Returns dict with:
+        - htf_trend: "up", "down", or "neutral"
+        - htf_volume_surge: True if 15m volume > 1.3x median
+        - htf_momentum: normalized momentum score (-1 to 1)
+        - htf_exhaustion: True if signs of trend exhaustion on 15m
+
+        Each category pipeline uses these differently in calculate_rank_score().
+        """
+        df15 = self.agg.get_df_15m_tail(symbol, 10)
+        if df15 is None or df15.empty or len(df15) < 2:
+            return None
+
+        last_15m = df15.iloc[-1]
+        prev_15m = df15.iloc[-2]
+
+        # Trend detection
+        close_now = float(last_15m.get("close", 0.0))
+        close_prev = float(prev_15m.get("close", 0.0))
+        high_now = float(last_15m.get("high", 0.0))
+        low_now = float(last_15m.get("low", 0.0))
+        high_prev = float(prev_15m.get("high", 0.0))
+        low_prev = float(prev_15m.get("low", 0.0))
+
+        # Higher highs and higher lows = up, lower highs and lower lows = down
+        hh = high_now > high_prev
+        hl = low_now > low_prev
+        lh = high_now < high_prev
+        ll = low_now < low_prev
+
+        if hh and hl:
+            htf_trend = "up"
+        elif lh and ll:
+            htf_trend = "down"
+        else:
+            htf_trend = "neutral"
+
+        # Volume surge detection
+        htf_volume_surge = False
+        if "volume" in df15.columns and len(df15) >= 6:
+            recent_vol_15m = df15["volume"].tail(6).median()
+            current_vol_15m = float(last_15m.get("volume", 0.0) or 0.0)
+            htf_volume_surge = (current_vol_15m / recent_vol_15m) >= 1.3 if recent_vol_15m > 0 else False
+
+        # Momentum score: normalized price change vs ATR
+        htf_momentum = 0.0
+        if len(df15) >= 3:
+            atr_proxy = (df15["high"] - df15["low"]).tail(5).mean()
+            if atr_proxy > 0:
+                price_change = close_now - close_prev
+                htf_momentum = max(-1.0, min(1.0, price_change / atr_proxy))
+
+        # Exhaustion detection: long upper/lower wick relative to body
+        body = abs(close_now - float(last_15m.get("open", close_now)))
+        upper_wick = high_now - max(close_now, float(last_15m.get("open", close_now)))
+        lower_wick = min(close_now, float(last_15m.get("open", close_now))) - low_now
+        total_range = high_now - low_now
+
+        htf_exhaustion = False
+        if total_range > 0 and body > 0:
+            # Exhaustion: wick > 2x body in direction of move
+            if htf_trend == "up" and upper_wick > 2 * body:
+                htf_exhaustion = True
+            elif htf_trend == "down" and lower_wick > 2 * body:
+                htf_exhaustion = True
+
+        return {
+            "htf_trend": htf_trend,
+            "htf_volume_surge": htf_volume_surge,
+            "htf_momentum": round(htf_momentum, 3),
+            "htf_exhaustion": htf_exhaustion,
+        }
 
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
         """Main driver: invoked for each CLOSED 5m bar of any symbol."""
@@ -617,7 +698,7 @@ class ScreenerLive:
                     )
                     continue
 
-                logger.info(
+                logger.debug(
                     "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
                     sym, decision.setup_type, decision.regime, decision.size_mult, decision.min_hold_bars,
                     ";".join(decision.reasons),
@@ -665,127 +746,88 @@ class ScreenerLive:
 
         dec_map = {s: d for (s, d) in decisions}
 
-        # ---------- Rank (distribution clamp) ----------
-        ranked: List[Tuple[str, float]] = self._rank_by_intraday_edge([s for s, _ in decisions], decisions)
-        if not ranked:
-            return
+        # ---------- Pipeline Orchestrator: Ranking + Planning ----------
+        # Orchestrator handles: screening + gates + quality + ranking + entry + targets
+        # Returns plans already sorted by ranking score
+        logger.info("ORCHESTRATOR | Processing %d symbols via pipeline orchestrator", len(decisions))
 
-        # percentile gate: compute once for this batch
-        pctl_score = self._compute_percentile_cut(ranked, self.cfg.rank_pctl_min)
         max_trades_per_cycle = self.raw_cfg.get("max_trades_per_cycle", 10)
         trades_planned = 0
-
-        # ---------- Plan & de-dupe & enqueue ----------
         ranking_logger = get_ranking_logger()
         events_logger = get_events_decision_logger()
-        for i, (sym, score) in enumerate(ranked):
-            # Get strategy-specific threshold
-            decision = dec_map.get(sym)
-            strategy_type = getattr(decision, "setup_type", None) if decision else None
-            base_threshold = get_strategy_threshold(strategy_type) if strategy_type else self.cfg.rank_exec_threshold
 
-            # Quick Win: Apply time-of-day multiplier (Audit Task 3)
-            # Late-day signals have poor quality (39 signals → 3 trades in 14:00-15:00)
-            # Raise threshold 1.5x after 14:00, 2.5x after 14:30
-            time_multiplier = get_time_of_day_multiplier(now)
-            threshold = base_threshold * time_multiplier
+        eligible_plans: List[Tuple[str, Dict, float]] = []  # (symbol, plan, score)
 
-            if time_multiplier > 1.0:
-                logger.debug(f"TIME_FILTER | {now.strftime('%H:%M')} - threshold raised {time_multiplier:.1f}x: {base_threshold:.2f} → {threshold:.2f}")
+        for sym, decision in decisions:
+            df5 = symbol_data_map.get(sym, (None,))[0]
+            df1m = symbol_data_map.get(sym, (None, None))[1]
+            lvl = symbol_data_map.get(sym, (None, None, {}))[2]
+            daily_df = symbol_data_map.get(sym, (None, None, None, None))[3] if len(symbol_data_map.get(sym, ())) > 3 else None
 
-            # absolute threshold gate
-            if score < threshold:
-                logger.info("RANK:REJECT sym=%s score=%.3f < threshold=%.3f (strategy=%s)",
-                           sym, score, threshold, strategy_type)
-
-                # Log ranking rejection
-                # Phase 2: Include multi-TF regime diagnostics
-                ranking_logger.log_reject(
-                    sym,
-                    "score_below_threshold",
-                    timestamp=now.isoformat(),
-                    rank_score=score,
-                    threshold=threshold,
-                    strategy_type=strategy_type or "unknown",
-                    rank_position=i + 1,
-                    total_candidates=len(ranked),
-                    percentile_score=pctl_score,
-                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
-                )
-                continue
-            # percentile gate: Skip for small batches (< 5 symbols) where percentile is statistically meaningless
-            # With 2-3 symbols, percentile creates arbitrary rejections (e.g., 2 symbols [1.09, 1.19] → 60th pctl=1.15 rejects 1.09)
-            # Strategy-specific thresholds (0.5 for fades, 1.8 for breakouts) handle filtering for small batches
-            if score < pctl_score and len(ranked) >= 5:
-                # Log percentile rejection
-                # Phase 2: Include multi-TF regime diagnostics
-                ranking_logger.log_reject(
-                    sym,
-                    "score_below_percentile",
-                    timestamp=now.isoformat(),
-                    rank_score=score,
-                    percentile_score=pctl_score,
-                    strategy_type=strategy_type or "unknown",
-                    rank_position=i + 1,
-                    total_candidates=len(ranked),
-                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
-                )
+            if df5 is None:
                 continue
 
-            # Log ranking acceptance (passed both threshold and percentile gates)
-            # Phase 2: Include multi-TF regime diagnostics
+            setup_candidates = getattr(decision, 'setup_candidates', None)
+            if not setup_candidates:
+                continue
+
+            # Build HTF context from 15m data for category-specific ranking adjustments
+            htf_context = self._build_htf_context(sym)
+
+            try:
+                plan = process_setup_candidates(
+                    symbol=sym,
+                    df5m=df5,
+                    df1m=df1m,
+                    levels=lvl,
+                    regime=decision.regime,
+                    now=now,
+                    candidates=setup_candidates,
+                    daily_df=daily_df,
+                    htf_context=htf_context
+                )
+            except Exception as e:
+                logger.exception("orchestrator failed for %s: %s", sym, e)
+                continue
+
+            if plan and plan.get("eligible", False):
+                score = plan.get("ranking", {}).get("score", 0.0)
+                eligible_plans.append((sym, plan, score, decision))
+                logger.debug(f"ORCHESTRATOR:ELIGIBLE {sym} score={score:.3f}")
+            else:
+                reason = plan.get("reason", "no_plan") if plan else "no_plan"
+                logger.debug(f"ORCHESTRATOR:REJECT {sym} reason={reason}")
+
+        # Sort by score descending
+        eligible_plans.sort(key=lambda x: x[2], reverse=True)
+
+        # Compute percentile for logging
+        if eligible_plans:
+            pctl_score = self._compute_percentile_cut([(s, sc) for s, _, sc, _ in eligible_plans], self.cfg.rank_pctl_min)
+        else:
+            pctl_score = 0.0
+
+        logger.info("ORCHESTRATOR_COMPLETE | %d eligible plans from %d decisions", len(eligible_plans), len(decisions))
+
+        # ---------- Process eligible plans → Execution ----------
+        for i, (sym, plan, score, decision) in enumerate(eligible_plans):
+            strategy_type = plan.get("strategy", "unknown")
+            df5 = symbol_data_map.get(sym, (None,))[0]
+
+            # Log ranking acceptance
             ranking_logger.log_accept(
                 sym,
                 timestamp=now.isoformat(),
                 rank_score=score,
-                threshold=threshold,
+                threshold=0.0,  # Orchestrator already applied thresholds
                 percentile_score=pctl_score,
-                strategy_type=strategy_type or "unknown",
+                strategy_type=strategy_type,
                 rank_position=i + 1,
-                total_candidates=len(ranked),
-                regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None  # Phase 2: Multi-TF regime
+                total_candidates=len(eligible_plans),
+                regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None
             )
 
-            df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
-            # Phase 1: Multi-timeframe regime - fetch 210 days for EMA200 + buffer (was 90)
-            # ZERO additional API cost: get_daily() uses in-memory cache (kite_client.py:216-230)
-            daily_df = self.sdk.get_daily(sym, days=210)
-
-            try:
-                decision = dec_map[sym]
-                # Use new structure system approach with setup_candidates
-                setup_candidates = getattr(decision, 'setup_candidates', None)
-                if setup_candidates:
-                    # BUGFIX: Filter candidates to only pass the one accepted by the gate
-                    # This prevents planner from independently selecting a different candidate (potentially blacklisted)
-                    # Root cause: Gate filters/selects best candidate, but planner was re-selecting independently
-                    # Fix: Only pass the accepted candidate (matching decision.setup_type) to planner
-                    accepted_setup_type = decision.setup_type
-                    if accepted_setup_type:
-                        # Filter to only the accepted candidate
-                        accepted_candidates = [c for c in setup_candidates if c.setup_type == accepted_setup_type]
-                        if accepted_candidates:
-                            setup_candidates = accepted_candidates
-                            logger.debug(f"PLANNER: {sym} - Using gate-accepted candidate: {accepted_setup_type}")
-                        else:
-                            # Fallback: Gate accepted a setup_type not in candidates (shouldn't happen, but defensive)
-                            logger.warning(f"PLANNER: {sym} - Gate accepted {accepted_setup_type} but not in candidates. Using all candidates.")
-
-                    # Phase 1.4: Enhance candidate strength with HTF 15m confirmation
-                    setup_candidates = self._enhance_candidates_with_htf(sym, setup_candidates)
-                    plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_candidates=setup_candidates)
-                else:
-                    # Fallback for compatibility during transition
-                    plan = generate_trade_plan(df=df5, symbol=sym, daily_df=daily_df, setup_type=decision.setup_type)
-            except Exception as e:
-                logger.exception("planner failed for %s: %s", sym, e)
-                continue
-            if not plan:
-                logger.info("SKIP %s: empty plan (no_setup)", sym)
-                events_logger.log_reject(sym, "empty_plan", timestamp=now.isoformat(), strategy_type=strategy_type or "unknown")
-                continue
-
-            # 1) Eligibility
+            # 1) Eligibility (already checked, but keep for compatibility)
             if not plan.get("eligible", False):
                 # Try quality.rejection_reason first, then fall back to top-level reason
                 rejection_reason = (plan.get("quality") or {}).get("rejection_reason") or plan.get("reason", "unknown")
@@ -856,9 +898,16 @@ class ScreenerLive:
                     if k in last5.index:
                         bar5[k] = float(last5.get(k, 0.0))
 
+            # Build ranker dict with rank_score and FHM context if available
+            ranker_dict = {"rank_score": float(score)}
+            fhm_ctx = plan.get("fhm_context")
+            if fhm_ctx:
+                ranker_dict["fhm_rvol"] = fhm_ctx.get("rvol", 0.0)
+                ranker_dict["fhm_price_move_pct"] = fhm_ctx.get("price_move_pct", 0.0)
+
             features = {
                 "bar5": bar5,
-                "ranker": {"rank_score": float(score)},
+                "ranker": ranker_dict,
                 "time": {"minute_of_day": now.hour * 60 + now.minute, "day_of_week": now.weekday()},
             }
 
@@ -874,7 +923,7 @@ class ScreenerLive:
                 if isinstance(r, (list, tuple)): reasons_str = ";".join(str(x) for x in r)
                 elif r is not None: reasons_str = str(r)
             decision_dict = {
-                "setup_type": getattr(decision_obj, "setup_type", None) if decision_obj is not None else None,
+                "setup_type": plan.get("strategy"),  # Use plan's strategy (from pipeline), not deprecated decision_obj.setup_type
                 "regime": getattr(decision_obj, "regime", None) if decision_obj is not None else None,
                 "reasons": reasons_str,
                 "size_mult": getattr(decision_obj, "size_mult", None) if decision_obj is not None else None,
@@ -890,6 +939,8 @@ class ScreenerLive:
                     "qty": int(plan["sizing"]["qty"]),
                     "entry_zone": (plan["entry"] or {}).get("zone"),
                     "price": (plan["entry"] or {}).get("reference"),
+                    "entry_ref_price": (plan["entry"] or {}).get("reference"),
+                    "stop": plan.get("stop"),  # Full stop dict: {"hard": x, "risk_per_share": y}
                     "hard_sl": (plan.get("stop") or {}).get("hard"),
                     "targets": plan.get("targets"),
                     "trail": plan.get("trail"),
@@ -897,7 +948,7 @@ class ScreenerLive:
                     "orh": (plan.get("levels") or {}).get("ORH"),
                     "orl": (plan.get("levels") or {}).get("ORL"),
                     "decision_ts": plan["decision_ts"],
-                    "strategy": plan.get("strategy", ""),  # Add missing strategy field
+                    "strategy": plan.get("strategy", ""),
                 },
                 "meta": plan,
             }
@@ -967,7 +1018,15 @@ class ScreenerLive:
         try:
             self.symbol_map = self.sdk.get_symbol_map()
             self.token_map = self.sdk.get_token_map()
-            self.core_symbols = list(self.symbol_map.keys())
+            # Filter out ETFs - symbols ending with "ETF" (e.g., TNIDETF, SBIETFPB)
+            all_symbols = list(self.symbol_map.keys())
+            self.core_symbols = [
+                sym for sym in all_symbols
+                if not sym.replace("NSE:", "").upper().endswith("ETF")
+            ]
+            etf_count = len(all_symbols) - len(self.core_symbols)
+            if etf_count > 0:
+                logger.info(f"ETF_FILTER | Excluded {etf_count} ETF symbols from trading universe")
         except Exception as e:
             raise RuntimeError(f"ScreenerLive: sdk.list_equities() failed: {e}")
         return self.token_map
@@ -983,6 +1042,33 @@ class ScreenerLive:
             return pd.DataFrame()
         return idx if isinstance(idx, pd.DataFrame) else pd.DataFrame()
 
+    def _load_orb_cache_from_disk(self) -> None:
+        """
+        Load ORB levels cache from disk on startup.
+
+        If the server restarts after 09:40, the opening range bars (09:15-09:30)
+        may not be available from the broker's intraday API. This loads the
+        previously computed ORB levels from disk.
+        """
+        try:
+            cached_levels = self._orb_cache_persistence.load_today()
+            if cached_levels:
+                today = datetime.now().date()
+                with self._orb_cache_lock:
+                    self._orb_levels_cache[today] = cached_levels
+                logger.info(
+                    f"ORB_CACHE | Loaded {len(cached_levels)} symbols from disk cache on startup"
+                )
+        except Exception as e:
+            logger.warning(f"ORB_CACHE | Failed to load from disk on startup: {e}")
+
+    def _save_orb_cache_to_disk(self, session_date, levels_by_symbol: Dict[str, Dict[str, float]]) -> None:
+        """Save ORB levels cache to disk for restart recovery."""
+        try:
+            self._orb_cache_persistence.save(session_date, levels_by_symbol)
+        except Exception as e:
+            logger.warning(f"ORB_CACHE | Failed to save to disk: {e}")
+
     def _compute_orb_levels_once(self, now, df5_by_symbol: Dict[str, pd.DataFrame]) -> Optional[Dict[str, Dict[str, float]]]:
         """
         Compute ORH/ORL/PDH/PDL/PDC for all symbols once at 09:35 and cache for the day.
@@ -993,11 +1079,18 @@ class ScreenerLive:
         - Computing levels for all 1992 symbols takes ~54s in OCI (2 CPUs)
         - By computing once at 09:35 instead of on every bar, we save ~30 minutes per day
 
+        Late Start Recovery:
+        - If server starts after 09:30 (e.g., 10:00 AM), 5m bars for opening range are missing
+        - Detect this by checking if we have bars before 09:35 in df5_by_symbol
+        - Trigger recovery via _recover_orb_levels_from_historical() which fetches 1m data from broker
+
         Returns:
             Dict[symbol, Dict[str, float]] if computed/cached, None if before 09:35
         """
         if not now:
             return None
+
+        from datetime import time as dtime  # Import at function scope for time comparisons
 
         session_date = now.date()
         current_time = now.time()
@@ -1013,6 +1106,81 @@ class ScreenerLive:
 
         import time as time_module
         start_time = time_module.perf_counter()
+
+        # LATE START DETECTION: Check if we have opening range bars (09:15-09:30)
+        # If not, we likely started late and need to recover from historical data
+        has_opening_range_bars = False
+        orb_end_time = dtime(9, 30)
+
+        for sym, df5 in df5_by_symbol.items():
+            if df5 is not None and len(df5) >= 3:
+                # Check if any bar is from before 09:30 (indicating we have opening range data)
+                earliest_bar_time = df5.index[0].time() if hasattr(df5.index[0], 'time') else None
+                if earliest_bar_time and earliest_bar_time < orb_end_time:
+                    has_opening_range_bars = True
+                    break
+
+        if not has_opening_range_bars:
+            # Late start detected - check if recovery is even worth it
+            # ORB setups are disabled after 10:30 (orb_structure.py:86), so skip recovery if too late
+            ORB_CUTOFF = dtime(10, 30)
+
+            if current_time >= ORB_CUTOFF:
+                logger.info(
+                    f"ORB_CACHE | Late start at {current_time} is AFTER ORB cutoff ({ORB_CUTOFF}). "
+                    f"Computing PDH/PDL/PDC only (ORH/ORL will be NaN - ORB setups disabled anyway)."
+                )
+                # Still compute PDH/PDL/PDC from pre-warmed daily data for level-based setups
+                # Only ORH/ORL will be NaN (which is fine since ORB setups are disabled after 10:30)
+                # IMPORTANT: Iterate over ALL core_symbols, not just df5_by_symbol
+                # PDH/PDL/PDC come from daily cache, don't need 5m bars
+                levels_by_symbol = {}
+                for sym in self.core_symbols:
+                    try:
+                        df5 = df5_by_symbol.get(sym)  # May be None, that's OK for PDH/PDL/PDC
+                        lvl = self._levels_for(sym, df5, now)
+                        # Keep PDH/PDL/PDC even if ORH/ORL are NaN
+                        levels_by_symbol[sym] = lvl
+                    except Exception as e:
+                        logger.debug(f"ORB_CACHE | Late start: Failed to compute levels for {sym}: {e}")
+                        levels_by_symbol[sym] = {}
+
+                # Cache for the day
+                self._orb_levels_cache[session_date] = levels_by_symbol
+                self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+                valid_pdh = sum(1 for v in levels_by_symbol.values() if not pd.isna(v.get("PDH")))
+                logger.info(f"ORB_CACHE | Late start: Computed PDH/PDL/PDC for {valid_pdh}/{len(levels_by_symbol)} symbols")
+                return levels_by_symbol
+
+            # Still within ORB window - spawn background thread for recovery
+            # This allows the app to continue processing non-ORB setups immediately
+            with self._orb_cache_lock:
+                if self._orb_recovery_in_progress:
+                    logger.debug("ORB_CACHE | Background recovery already in progress, skipping")
+                    return {}
+
+                if session_date in self._orb_levels_cache:
+                    # Recovery completed by background thread
+                    return self._orb_levels_cache[session_date]
+
+                # Start background recovery
+                self._orb_recovery_in_progress = True
+                logger.warning(
+                    f"ORB_CACHE | Late start at {current_time} but BEFORE ORB cutoff ({ORB_CUTOFF}). "
+                    f"Starting BACKGROUND recovery (app continues running)."
+                )
+
+                self._orb_recovery_thread = threading.Thread(
+                    target=self._background_orb_recovery,
+                    args=(session_date,),
+                    name="ORB-Recovery",
+                    daemon=True
+                )
+                self._orb_recovery_thread.start()
+
+            # Return empty cache so app continues - ORB setups won't work until recovery completes
+            return {}
+
         logger.info(f"ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for all symbols once at {current_time} (session_date={session_date})")
 
         levels_by_symbol = {}
@@ -1040,6 +1208,9 @@ class ScreenerLive:
         # Cache for the entire day
         self._orb_levels_cache[session_date] = levels_by_symbol
 
+        # Persist to disk for restart recovery
+        self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+
         elapsed = time_module.perf_counter() - start_time
         logger.info(
             f"ORB_CACHE | Cached levels for {success_count} symbols (failed: {fail_count}) | "
@@ -1048,6 +1219,134 @@ class ScreenerLive:
         )
 
         return levels_by_symbol
+
+    def _recover_orb_levels_from_historical(self, session_date) -> Dict[str, Dict[str, float]]:
+        """
+        Recover ORH/ORL from historical 1-minute data when server starts late.
+
+        This handles the case when the server starts after 09:30 (e.g., 10:00 AM)
+        and misses the opening range bars. We fetch historical 1m data from the
+        broker API for the 09:15-09:30 window and compute ORH/ORL directly.
+
+        PDH/PDL/PDC are computed normally from daily data (unaffected by late start).
+
+        Returns:
+            Dict[symbol, Dict[str, float]] with ORH, ORL, PDH, PDL, PDC
+        """
+        import time as time_module
+        from datetime import datetime as dt, time as dtime
+
+        # Check if SDK supports historical 1m fetch
+        if not hasattr(self.sdk, 'get_historical_1m'):
+            logger.warning("ORB_RECOVERY | SDK doesn't support get_historical_1m. ORB levels unavailable.")
+            return {}
+
+        start_time = time_module.perf_counter()
+        logger.info(f"ORB_RECOVERY | Late start detected. Fetching historical 1m data for ORB window (09:15-09:30)")
+
+        orb_start = dt.combine(session_date, dtime(9, 15))
+        orb_end = dt.combine(session_date, dtime(9, 30))
+
+        levels_by_symbol = {}
+        success_count = 0
+        fail_count = 0
+
+        for sym in self.core_symbols:
+            try:
+                # Fetch 1m historical data for opening range window
+                df_1m = self.sdk.get_historical_1m(sym, orb_start, orb_end)
+
+                if df_1m is None or len(df_1m) < 10:  # Need at least 10 bars for reliable ORH/ORL
+                    logger.debug(f"ORB_RECOVERY | {sym}: Insufficient 1m data ({len(df_1m) if df_1m is not None else 0} bars)")
+                    orh, orl = float("nan"), float("nan")
+                else:
+                    orh = float(df_1m["high"].max())
+                    orl = float(df_1m["low"].min())
+
+                # PDH/PDL/PDC from daily data (works normally)
+                daily = self.sdk.get_daily(sym, days=210)
+                level_dict = get_previous_day_levels(
+                    daily_df=daily,
+                    session_date=session_date,
+                    fallback_df=None,
+                    enable_fallback=False
+                )
+                pdh = level_dict.get("PDH", float("nan"))
+                pdl = level_dict.get("PDL", float("nan"))
+                pdc = level_dict.get("PDC", float("nan"))
+
+                levels_by_symbol[sym] = {
+                    "ORH": orh,
+                    "ORL": orl,
+                    "PDH": pdh,
+                    "PDL": pdl,
+                    "PDC": pdc,
+                }
+
+                if not (pd.isna(orh) or pd.isna(orl)):
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+            except Exception as e:
+                logger.warning(f"ORB_RECOVERY | {sym}: Failed - {e}")
+                levels_by_symbol[sym] = {
+                    "ORH": float("nan"), "ORL": float("nan"),
+                    "PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")
+                }
+                fail_count += 1
+
+        elapsed = time_module.perf_counter() - start_time
+        logger.info(
+            f"ORB_RECOVERY | Complete. Recovered ORH/ORL for {success_count}/{len(self.core_symbols)} symbols | "
+            f"Failed: {fail_count} | Time: {elapsed:.2f}s"
+        )
+
+        return levels_by_symbol
+
+    def _background_orb_recovery(self, session_date) -> None:
+        """
+        Background thread wrapper for ORB level recovery.
+
+        This runs in a daemon thread so the main app can continue processing
+        non-ORB setups while we fetch historical 1m data from the broker.
+
+        Based on code analysis:
+        - Only ORBStructure REQUIRES ORH/ORL (returns rejection without them)
+        - All other structures (support_bounce, resistance_bounce, failure_fade,
+          level_breakout, vwap, momentum, etc.) work fine without ORH/ORL
+
+        So this allows:
+        1. Non-ORB setups to work immediately with PDH/PDL/PDC
+        2. ORB setups to enable once recovery completes
+        """
+        try:
+            logger.info(f"ORB_BACKGROUND_RECOVERY | Starting for {session_date} | core_symbols: {len(self.core_symbols)}")
+
+            # Do the actual recovery (fetches 1m data, computes ORH/ORL)
+            levels_by_symbol = self._recover_orb_levels_from_historical(session_date)
+
+            # Update cache atomically
+            with self._orb_cache_lock:
+                self._orb_levels_cache[session_date] = levels_by_symbol
+                self._orb_recovery_in_progress = False
+
+            # Persist to disk for restart recovery
+            self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+
+            orb_count = sum(1 for v in levels_by_symbol.values()
+                           if not (pd.isna(v.get("ORH")) or pd.isna(v.get("ORL"))))
+            logger.info(
+                f"ORB_BACKGROUND_RECOVERY | Complete | {orb_count}/{len(levels_by_symbol)} symbols with valid ORH/ORL | "
+                f"ORB setups now ENABLED"
+            )
+
+        except Exception as e:
+            logger.exception(f"ORB_BACKGROUND_RECOVERY | Failed: {e}")
+            with self._orb_cache_lock:
+                self._orb_recovery_in_progress = False
+                # Cache empty dict so we don't retry
+                self._orb_levels_cache[session_date] = {}
 
     def _levels_for(self, symbol: str, df5: pd.DataFrame, now) -> Dict[str, float]:
         """Prev-day PDH/PDL/PDC and today ORH/ORL (cached per (symbol, session_date))."""
@@ -1149,186 +1448,6 @@ class ScreenerLive:
                 out.append(sym)
         return out[:60]
 
-    def _rank_by_intraday_edge(self, symbols: List[str], decisions: List[Tuple[str, Decision]]) -> List[Tuple[str, float]]:
-        """Map symbols → rank_scores via ranker (kept identical to your current wiring)."""
-        rows_for_ranker: List[Dict] = []
-        for sym in symbols:
-            df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
-            if df5 is None or df5.empty:
-                continue
-
-            last = df5.iloc[-1]
-            # simple features for ranker
-            if "volume" in df5.columns:
-                recent_vol = df5["volume"].tail(24)
-                med_vol = float(recent_vol[recent_vol > 0].median() or 1.0)
-                volume_ratio = float(last.get("volume", 0.0) or 0.0) / (med_vol or 1.0)
-            else:
-                volume_ratio = 1.0
-
-            adx = float(last.get("adx", 0.0) or 0.0)
-            vwap = float(last.get("vwap", last.get("close", 0.0)) or 0.0)
-            close = float(last.get("close", 0.0) or 0.0)
-            above_vwap = bool(close >= vwap) if vwap else False
-
-            sq_pct = None
-            if "bb_width_proxy" in df5.columns:
-                recent_bw = df5["bb_width_proxy"].tail(24).dropna()
-                if len(recent_bw) > 1:
-                    cur_bw = float(last.get("bb_width_proxy", 0.0) or 0.0)
-                    sq_pct = float((recent_bw <= cur_bw).mean() * 100.0)
-
-            # Get strategy type and regime from decisions
-            strategy_type = None
-            regime_context = None
-            for s, d in decisions:
-                if s == sym:
-                    strategy_type = getattr(d, "setup_type", None)
-                    regime_context = getattr(d, "regime", None)
-                    break
-
-            # Extract HTF 15m context for ranking multipliers (Phase 1.3)
-            htf_15m_context = {}
-            df15 = self.agg.get_df_15m_tail(sym, 10)  # Last 10 x 15m bars
-            if df15 is not None and not df15.empty and len(df15) >= 2:
-                last_15m = df15.iloc[-1]
-                prev_15m = df15.iloc[-2]
-
-                # 15m trend direction (price and ADX)
-                htf_15m_context["trend_aligned"] = float(last_15m.get("close", 0.0)) > float(prev_15m.get("close", 0.0))
-                htf_15m_context["adx_15m"] = float(last_15m.get("adx", 0.0) or 0.0)
-
-                # 15m volume multiplier (relative to 15m average)
-                if "volume" in df15.columns and len(df15) >= 3:
-                    recent_vol_15m = df15["volume"].tail(6).median()
-                    current_vol_15m = float(last_15m.get("volume", 0.0) or 0.0)
-                    htf_15m_context["volume_mult_15m"] = (current_vol_15m / recent_vol_15m) if recent_vol_15m > 0 else 1.0
-                else:
-                    htf_15m_context["volume_mult_15m"] = 1.0
-
-            # Strategy type detection (debug logging removed for cleaner output)
-
-            # Priority 4: Load cap_segment for regime-cap allocation bonuses
-            cap_segment = "unknown"
-            try:
-                cap_map = self._load_cap_mapping()
-                cap_data = cap_map.get(sym, {})
-                cap_segment = cap_data.get("cap_segment", "unknown")
-            except Exception:
-                cap_segment = "unknown"
-
-            rows_for_ranker.append({
-                "symbol": sym,
-                "strategy_type": strategy_type,
-                "regime": regime_context,
-                "cap_segment": cap_segment,  # Priority 4: Cap segment for regime-cap interaction
-                "daily_score": 0.0,
-                "intraday": {
-                    "volume_ratio": volume_ratio,
-                    "adx": adx,
-                    "above_vwap": above_vwap,
-                    "squeeze_pctile": sq_pct,
-                },
-                "htf_15m": htf_15m_context,
-            })
-
-        if not rows_for_ranker:
-            return []
-
-        # Log strategy distribution
-        strategy_counts = {}
-        for row in rows_for_ranker:
-            strategy = row.get("strategy_type") or "unknown"
-            strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
-        strategy_summary = ", ".join(f"{k}:{v}" for k, v in strategy_counts.items())
-        logger.info(f"RANKER_INPUT | {len(rows_for_ranker)} symbols by strategy: {strategy_summary}")
-
-        # Determine most common regime for ranking context (diagnostic report insight)
-        regime_counts = {}
-        for _, d in decisions:
-            regime = getattr(d, "regime", None)
-            if regime:
-                regime_counts[regime] = regime_counts.get(regime, 0) + 1
-
-        # Use most common regime as context for ranking
-        common_regime = max(regime_counts.keys(), key=lambda k: regime_counts[k]) if regime_counts else None
-        if common_regime:
-            logger.info(f"REGIME_CONTEXT | Using {common_regime} for ranking (regimes: {regime_counts})")
-
-        # Phase 3: Build regime_diagnostics_map for multi-TF ranking multipliers
-        regime_diagnostics_map = {}
-        for sym, decision in decisions:
-            regime_diag = getattr(decision, 'regime_diagnostics', None)
-            if regime_diag:
-                regime_diagnostics_map[sym] = regime_diag
-
-        # Apply rank_top_n cap from config
-        rank_top_n = self.raw_cfg.get("rank_top_n", 100)
-        ranked_rows = rank_candidates(
-            rows_for_ranker,
-            top_n=rank_top_n,
-            regime_context=common_regime,
-            regime_diagnostics_map=regime_diagnostics_map  # Phase 3: Multi-TF regime multipliers
-        )
-
-        # === PRIORITY 4: REGIME-CAP ALLOCATION BONUSES (institutional rotation) ===
-        regime_cap_cfg = self.raw_cfg.get("regime_cap_allocation", {})
-        if regime_cap_cfg.get("enabled", False) and common_regime and ranked_rows:
-            regime_weights = regime_cap_cfg.get(common_regime, {})
-            if regime_weights:
-                # Apply regime-cap allocation bonuses
-                for row in ranked_rows:
-                    cap_segment = row.get("cap_segment", "unknown")
-                    if cap_segment in ["large_cap", "mid_cap", "small_cap"]:
-                        weight_key = f"{cap_segment}_weight"
-                        weight = regime_weights.get(weight_key, 0.5)
-                        # Convert weight to bonus: 70% weight = +0.2 bonus, 20% weight = -0.15 penalty
-                        # Formula: bonus = (weight - 0.5) * 0.4 (scaled to ±0.2 range)
-                        regime_cap_bonus = (weight - 0.5) * 0.4
-                        old_score = row.get("rank_score", 0.0)
-                        new_score = old_score + regime_cap_bonus
-                        row["rank_score"] = new_score
-                        if abs(regime_cap_bonus) > 0.01:  # Log significant adjustments
-                            logger.debug(f"REGIME_CAP_ALLOC | {row.get('symbol')} {cap_segment} in {common_regime}: "
-                                       f"weight={weight:.2f} bonus={regime_cap_bonus:+.3f} score {old_score:.3f}→{new_score:.3f}")
-
-                # Re-sort by adjusted scores
-                ranked_rows.sort(key=lambda x: x.get("rank_score", 0.0), reverse=True)
-                logger.info(f"REGIME_CAP_ALLOC | Applied {common_regime} regime-cap bonuses to {len(ranked_rows)} symbols")
-
-        # ENHANCED FILTERING: Apply rank floors and per-cycle caps (from plan document)
-        if ranked_rows:
-            initial_count = len(ranked_rows)
-
-            # Apply rank score floor and percentile floor
-            min_rank_score = float(self.raw_cfg.get("rank_exec_threshold", 1.0))
-            min_percentile = float(self.raw_cfg.get("rank_pctl_min", 0.60))
-
-            # Filter by rank score and percentile
-            filtered_rows = []
-            for row in ranked_rows:
-                rank_score = float(row.get("rank_score", 0.0))
-                rank_percentile = float(row.get("rank_percentile", 0.7))
-
-                if rank_score >= min_rank_score and rank_percentile >= min_percentile:
-                    filtered_rows.append(row)
-
-            # Apply max per cycle cap
-            max_per_cycle = int(self.raw_cfg.get("max_per_cycle", 100))
-            if len(filtered_rows) > max_per_cycle:
-                # Sort by rank_score descending and take top N
-                filtered_rows.sort(key=lambda x: float(x.get("rank_score", 0.0)), reverse=True)
-                filtered_rows = filtered_rows[:max_per_cycle]
-
-            ranked_rows = filtered_rows
-            logger.info(f"ENHANCED_FILTERING | {initial_count} -> {len(ranked_rows)} symbols after rank floor {min_rank_score}, percentile {min_percentile}, max_per_cycle {max_per_cycle}")
-
-        if len(rows_for_ranker) > rank_top_n:
-            logger.info(f"RANKER_OUTPUT | Capped to top {len(ranked_rows)}/{len(rows_for_ranker)} symbols (rank_top_n={rank_top_n})")
-        else:
-            logger.info(f"RANKER_OUTPUT | All {len(ranked_rows)} symbols ranked")
-        return [(r.get("symbol", "?"), float(r.get("rank_score", 0.0))) for r in ranked_rows]
-
     def _reasons_for(self, sym: str, decisions: List[Tuple[str, Decision]]) -> List[str]:
         for s, d in decisions:
             if s == sym:
@@ -1423,23 +1542,52 @@ class ScreenerLive:
         vr_min = float(cfg.get("scanner_vol_ratio_min", 1.2))
 
         df = feats.copy()
+        initial_count = len(df)
+
         if "volume" in df.columns and vmin > 0:
             df = df[df["volume"] >= vmin]
+            if len(df) < initial_count:
+                logger.debug(f"STAGE0_DEBUG | volume filter: {initial_count}→{len(df)} (vmin={vmin})")
 
+        after_vol = len(df)
         if "dist_to_vwap" in df.columns:
             cap_bps = float(vwap_caps.get(bkt, 100))
             df = df[(df["dist_to_vwap"].abs() * 10000.0) <= cap_bps]
+            if len(df) < after_vol:
+                logger.debug(f"STAGE0_DEBUG | vwap filter: {after_vol}→{len(df)} (cap_bps={cap_bps}, bkt={bkt})")
 
+        after_vwap = len(df)
         if "ret_1" in df.columns:
             df = df[df["ret_1"].abs() <= ret1_max]
+            if len(df) < after_vwap:
+                logger.debug(f"STAGE0_DEBUG | ret_1 filter: {after_vwap}→{len(df)} (max={ret1_max})")
 
         # OPENING BELL FIX: Skip volume persistence filter during opening bell (09:20-09:30)
         # With only 1-2 bars, vol_persist_ok would reject all symbols
+        after_ret = len(df)
         if not skip_vol_persist:
             if "vol_persist_ok" in df.columns:
+                before_vp = len(df)
                 df = df[df["vol_persist_ok"] >= (1 if vp_bars >= 2 else 0)]
+                if len(df) < before_vp:
+                    logger.debug(f"STAGE0_DEBUG | vol_persist filter: {before_vp}→{len(df)} (vp_bars={vp_bars})")
             if "vol_ratio" in df.columns:
+                before_vr = len(df)
                 df = df[df["vol_ratio"] >= vr_min]
+                if len(df) < before_vr:
+                    logger.debug(f"STAGE0_DEBUG | vol_ratio filter: {before_vr}→{len(df)} (vr_min={vr_min})")
+
+        # Log if all symbols were filtered
+        if len(df) == 0 and initial_count > 0:
+            # Show which filter killed all symbols
+            sample_feats = feats.head(3)
+            sample_info = ""
+            if not sample_feats.empty:
+                for col in ["volume", "dist_to_vwap", "ret_1", "vol_persist_ok", "vol_ratio"]:
+                    if col in sample_feats.columns:
+                        vals = sample_feats[col].tolist()
+                        sample_info += f"{col}={vals[:3]} "
+            logger.warning(f"STAGE0_DEBUG | ALL symbols filtered! initial={initial_count} skip_vol_persist={skip_vol_persist} sample: {sample_info}")
 
         # ========== CAP-AWARE LIQUIDITY GATES (Priority 1) ==========
         liq_cfg = cfg.get("liquidity_gates", {})

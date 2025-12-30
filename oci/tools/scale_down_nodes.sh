@@ -1,7 +1,8 @@
 #!/bin/bash
 # Scale down your OCI node pool to 0 after backtest completes
 
-NODE_POOL_ID="ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaabubudw3xoianqghlakhdbmoqfn4cddqk4j7spyuornkdlg2oxwkq"
+# Basic cluster node pool (free control plane)
+NODE_POOL_ID="ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaaqs7a4f5jyyhcy3dsmedknnzbmhpdmdj6dqkastv5cnaehilq5g3q"
 
 echo "Checking for running backtest jobs..."
 

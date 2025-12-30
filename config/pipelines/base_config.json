@@ -1,0 +1,255 @@
+{
+    "_comment": "BASE Pipeline Configuration - Universal settings applied to ALL categories",
+    "_description": "Risk management, sizing, and quality filter settings shared across all pipelines",
+
+    "range_compression": {
+        "_comment": "From trade_decision_gate.py - Reject during volatility expansion",
+        "_evidence": "Volatility expansion invalidates support/resistance levels",
+        "enabled": false,
+        "lookback_bars": 20,
+        "max_expansion_ratio": 0.8,
+        "_note": "Ratio > 0.8 means current ATR is expanding vs avg - bad for level setups. Disabled by default - enable if level setups underperform."
+    },
+
+    "cap_strategy_blocking": {
+        "_comment": "From trade_decision_gate.py - Block certain setups for certain market cap segments",
+        "_evidence": "DATA-DRIVEN (Dec 2024): FHM LONG only profitable in mid_cap (+1,342 Rs). large_cap=-8,934 Rs, small_cap=-18,011 Rs, micro_cap=-4,260 Rs",
+        "enabled": true,
+        "blocked_setups": {
+            "micro_cap": ["momentum_breakout", "squeeze_release"],
+            "small_cap": [],
+            "mid_cap": [],
+            "large_cap": ["mean_reversion", "rsi_divergence"]
+        },
+        "_note": "DISABLED FHM_LONG CAP BLOCKING (Dec 2024): Testing research-based filters (multi-bar confirmation + volume continuation). If FHM still negative after backtest, RE-ENABLE first_hour_momentum_long blocking for micro_cap, small_cap, large_cap."
+    },
+
+    "opening_bell_override": {
+        "_comment": "From trade_decision_gate.py lines 443-573 - Opening bell has different volatility patterns",
+        "_evidence": "First 15 min has high participation, some gates should be bypassed",
+        "enabled": true,
+        "start_hour": 9,
+        "start_minute": 15,
+        "end_hour": 9,
+        "end_minute": 30,
+        "bypass_gates": ["range_compression", "momentum_consolidation"],
+        "_note": "During 9:15-9:30 AM window, bypass specified gates due to opening volatility"
+    },
+
+    "price_action_directionality": {
+        "_comment": "From trade_decision_gate.py lines 1041-1056 - Validates recent price action aligns with trade direction",
+        "_evidence": "Prevents counter-trend entry fills by checking last 3 bars",
+        "enabled": false,
+        "_note": "Long: close[-1] >= close[-3], Short: close[-1] <= close[-3] - rejects if price moving against intended direction"
+    },
+
+    "volatility_sizing": {
+        "_comment": "From planner_internal.py lines 547-581 - Van Tharp position sizing",
+        "enabled": true,
+        "low_volatility_threshold": 0.8,
+        "high_volatility_threshold": 2.5,
+        "low_volatility_multiplier": 1.5,
+        "normal_volatility_multiplier": 1.0,
+        "high_volatility_multiplier": 0.5,
+        "max_size_adjustment": 2.0,
+        "min_size_adjustment": 0.5
+    },
+
+    "cap_risk_adjustments": {
+        "_comment": "From baseline configuration.json (commit 3ded63d) - Van Tharp evidence-based cap sizing with 2.0x ATR for all caps",
+        "enabled": true,
+        "large_cap": {
+            "_comment": "Lower volatility, can size up",
+            "size_multiplier": 1.2,
+            "max_position_pct": 5.0,
+            "sl_atr_multiplier": 2.0,
+            "_rationale": "ALIGNED TO BASELINE: 2.0x ATR based on 6-month MFE/MAE analysis"
+        },
+        "mid_cap": {
+            "_comment": "Baseline",
+            "size_multiplier": 1.0,
+            "max_position_pct": 3.0,
+            "sl_atr_multiplier": 2.0,
+            "_rationale": "ALIGNED TO BASELINE: 2.0x ATR based on 6-month MFE/MAE analysis"
+        },
+        "small_cap": {
+            "_comment": "Higher volatility, size down",
+            "size_multiplier": 0.6,
+            "max_position_pct": 2.0,
+            "sl_atr_multiplier": 2.0,
+            "_rationale": "ALIGNED TO BASELINE: 2.0x ATR based on 6-month MFE/MAE analysis"
+        },
+        "micro_cap": {
+            "_comment": "Highest volatility, smallest size",
+            "size_multiplier": 0.5,
+            "max_position_pct": 1.5,
+            "sl_atr_multiplier": 2.0,
+            "_rationale": "ALIGNED TO BASELINE: 2.0x ATR based on 6-month MFE/MAE analysis (baseline: 43.8% WR, 1.63 PF)"
+        }
+    },
+
+    "quality_filters": {
+        "_comment": "From planner_internal.py lines 1358-1451 - Professional quality enforcement",
+        "enabled": true,
+
+        "min_structural_rr": 1.2,
+        "strategy_structural_rr_overrides": {
+            "_comment": "INSTITUTIONAL FIX: Root cause analysis revealed distance-based R:R is inversely correlated with breakout quality. Breakouts enter AT the level (distance~0), so structural_rr~0 is expected. Use very low thresholds.",
+            "orb_breakout_long": 0.25,
+            "orb_breakout_short": 0.25,
+            "orb_breakdown_short": 0.25,
+            "orb_breakdown_long": 0.25,
+            "breakout_long": 0.3,
+            "breakout_short": 0.3,
+            "momentum_breakout_long": 0.3,
+            "momentum_breakout_short": 0.3,
+            "flag_continuation_long": 0.4,
+            "flag_continuation_short": 0.4,
+            "squeeze_release_long": 0.3,
+            "squeeze_release_short": 0.3,
+            "range_breakout_long": 0.3,
+            "range_breakout_short": 0.3,
+            "gap_breakout_long": 0.3,
+            "gap_breakout_short": 0.3,
+            "break_of_structure_long": 0.3,
+            "break_of_structure_short": 0.3,
+            "change_of_character_long": 0.3,
+            "change_of_character_short": 0.3,
+            "_comment_fhm": "FHM uses RVOL-based quality (not ADX*EMA), so structural_rr is calculated differently. Relaxed threshold since FHM entry is at VWAP pullback.",
+            "first_hour_momentum_long": 0.5,
+            "first_hour_momentum_short": 0.5
+        },
+
+        "min_t1_rr": 1.2,
+        "min_t1_rr_long": 1.0,
+        "min_t1_rr_short": 1.0,
+        "_comment_min_t1_rr": "DATA-DRIVEN (Dec 2024): Long trades have 0.74R avg MFE. FHM uses T1=1.0R targets for both longs and shorts.",
+
+        "_comment_caps": "Matched to configuration.json values - original 2%/0.75x was too restrictive",
+        "t1_max_pct": 100.0,
+        "t1_max_mm_frac": 2.0,
+        "t2_max_pct": 100.0,
+        "t2_max_mm_frac": 3.0
+    },
+
+    "late_entry_penalty": {
+        "_comment": "RSI penalties DISABLED - need context-aware implementation (see todo.md)",
+        "rsi_above": 70,
+        "rsi_below": 30,
+        "macd_above": 0.5,
+        "_note": "RSI penalties disabled in base_pipeline.py. MACD histogram penalty (0.8x) still active."
+    },
+
+    "intraday_gate": {
+        "_comment": "From planner_internal.py lines 1031-1056 - Soft intraday gates",
+        "min_volume_ratio": 0.8,
+        "min_rsi": 30,
+        "max_rsi": 70,
+        "min_adx": 15,
+        "max_adx": 60,
+        "_note": "RSI penalty disabled. Active penalties: weak_volume (0.8x), adx_out_of_band (0.9x)"
+    },
+
+    "planner_precision": {
+        "_comment": "From planner_internal.py lines 527-537 - RPS floor protection",
+        "min_rps_bpct": 0.45,
+        "atr_rps_mult": 0.35,
+        "min_tick": 0.05,
+        "_note": "Floor RPS = max(price * 0.45%, ATR * 0.35) - prevents too-tight stops"
+    },
+
+    "universal_ranking": {
+        "_comment": "Universal ranking adjustments from ranker.py - apply to ALL categories",
+        "_description": "Time-of-day filtering, blacklist penalties, RR caps, multi-TF adjustments",
+
+        "time_of_day": {
+            "_comment": "From ranker.py lines 569-622 - Late-day noise filtering",
+            "_audit_finding": "39 signals in 14:00-15:00 window, only 3 trades (7.7% conversion = noise)",
+            "enabled": true,
+            "late_afternoon_start_hour": 14,
+            "late_afternoon_end_minute": 30,
+            "late_afternoon_mult": 1.5,
+            "final_hour_mult": 2.5,
+            "_note": "Multiplier applied to threshold, not score. Higher = harder to qualify."
+        },
+
+        "unrealistic_rr": {
+            "_comment": "From ranker.py lines 519-525 - Penalty for unrealistic R:R",
+            "enabled": true,
+            "max_structural_rr": 4.0,
+            "penalty": -0.3,
+            "_note": "Unrealistic R:R often indicates bad level placement or data issues"
+        },
+
+        "multi_tf_daily": {
+            "_comment": "From ranker.py lines 350-399 - Linda Raschke MTF filtering",
+            "_evidence": "Professional traders require HTF alignment for optimal setups",
+            "enabled": true,
+            "min_confidence": 0.70,
+            "aligned_mult": 1.15,
+            "counter_mult": 0.85,
+            "squeeze_mult": 0.90,
+            "_note": "±15% adjustment based on daily regime alignment at confidence ≥ 0.70"
+        },
+
+        "multi_tf_hourly": {
+            "_comment": "From ranker.py lines 402-447 - Linda Raschke lower TF execution",
+            "_evidence": "Enter on aligned lower TF for better timing",
+            "enabled": true,
+            "min_confidence": 0.60,
+            "aligned_mult": 1.10,
+            "counter_mult": 0.90,
+            "_note": "±10% adjustment based on hourly session bias at confidence ≥ 0.60"
+        },
+
+        "daily_score_weighting": {
+            "_comment": "From ranker.py line 505 - Combine daily and intraday scores",
+            "enabled": true,
+            "weight_daily": 0.3,
+            "weight_intraday": 0.7,
+            "_note": "final_score = w_daily * daily_score + w_intraday * intraday_score"
+        },
+
+        "blacklist": {
+            "_comment": "From ranker.py lines 513-517 - Penalty for historically poor setups",
+            "_description": "Blacklisted setups get -999 penalty (effectively blocking them) but still get detected so other detectors can work",
+            "enabled": true,
+            "penalty": -999,
+            "strategies": [
+                "range_rejection_long",
+                "vwap_lose_short",
+                "flag_continuation_long",
+                "trend_continuation_long",
+                "trend_continuation_short",
+                "vwap_mean_reversion_short",
+                "vwap_mean_reversion_long",
+                "momentum_breakout_long",
+                "liquidity_sweep_long",
+                "flag_continuation_short",
+                "volume_spike_reversal_short",
+                "vwap_reclaim_long"
+            ],
+            "_note": "Penalty applied at ranking, not detector init - prevents spillover to other detectors"
+        }
+    },
+
+    "rsi_dead_zone": {
+        "_comment": "Data-driven filter: RSI 35-50 causes 43% of ALL hard_sl losses for LONG trades",
+        "enabled": true,
+        "long_min": 35,
+        "long_max": 50,
+        "_evidence": "101 hard_sl trades in RSI 40-50 = -54,687 loss (43% of ALL hard_sl loss)"
+    },
+
+    "sl_atr_mult": 1.6,
+    "_comment_sl_atr_mult": "Base SL ATR multiplier - Aligned to OLD configuration.json which uses 1.6x ATR",
+
+    "atr_fallback_pct": 0.0075,
+    "_comment_atr_fallback": "Fallback ATR as percentage of price (0.75%) when ATR indicator unavailable",
+
+    "sl_below_swing_ticks": 0.0,
+    "_comment_sl_ticks": "Buffer below structure stop (swing low/high) - from OLD config",
+
+    "risk_per_trade_rupees": 1000.0,
+    "_comment_risk": "Risk per trade in Rupees - 1% of 1L capital"
+}

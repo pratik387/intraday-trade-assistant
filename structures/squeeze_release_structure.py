@@ -33,6 +33,9 @@ class SqueezeReleaseStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "squeeze_release"
 
+        # Track which specific setup type this detector is for (e.g., "squeeze_release_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Squeeze detection parameters
@@ -40,6 +43,11 @@ class SqueezeReleaseStructure(BaseStructure):
         self.expansion_ratio = config["expansion_ratio"]
         self.width_calculation_period = config["width_calculation_period"]
         self.recent_width_bars = config["recent_width_bars"]
+
+        # PRO TRADER: NR7 Pattern (Chartink screener) - Range smallest of last 7 periods
+        # All params required from config - no defaults
+        self.enable_nr7_pattern = config["enable_nr7_pattern"]
+        self.nr7_lookback = config["nr7_lookback"]
 
         # Momentum parameters
         self.momentum_period = config["momentum_period"]
@@ -90,6 +98,19 @@ class SqueezeReleaseStructure(BaseStructure):
 
             # Check for squeeze release pattern
             squeeze_release_info = self._detect_squeeze_release_pattern(df, width_series, context.symbol)
+
+            # PRO TRADER: Also check NR7 pattern as alternative squeeze signal
+            nr7_detected = False
+            if not squeeze_release_info and self.enable_nr7_pattern:
+                nr7_detected = self._detect_nr7_pattern(df, context.symbol)
+                if nr7_detected:
+                    # NR7 detected - calculate momentum for direction
+                    momentum_change = df['close'].pct_change(self.momentum_period).iloc[-1]
+                    momentum_direction = "long" if momentum_change > 0 else "short"
+                    # Use 1.0 as expansion ratio for NR7 (it's a contraction signal, not expansion)
+                    squeeze_release_info = (1.0, momentum_change, momentum_direction)
+                    logger.debug(f"SQUEEZE_DETECT: {context.symbol} - NR7 pattern detected as alternative squeeze signal")
+
             if not squeeze_release_info:
                 logger.debug(f"SQUEEZE_DETECT: {context.symbol} - REJECTED: No squeeze release pattern detected")
                 return StructureAnalysis(
@@ -149,9 +170,12 @@ class SqueezeReleaseStructure(BaseStructure):
                 price=context.current_price
             )
 
-            events.append(event)
-
-            logger.debug(f"SQUEEZE_DETECT: ✅ {context.symbol} - {structure_type} DETECTED with expansion ratio: {expansion_ratio_actual:.2f}, momentum: {momentum:.4f}, confidence: {confidence:.2f}")
+            # Only add event if it matches configured setup type
+            if self.configured_setup_type is None or structure_type == self.configured_setup_type:
+                events.append(event)
+                logger.debug(f"SQUEEZE_DETECT: ✅ {context.symbol} - {structure_type} DETECTED with expansion ratio: {expansion_ratio_actual:.2f}, momentum: {momentum:.4f}, confidence: {confidence:.2f}")
+            else:
+                logger.debug(f"SQUEEZE_DETECT: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
 
             quality_score = self._calculate_quality_score(expansion_ratio_actual, abs(momentum), df)
 
@@ -227,6 +251,45 @@ class SqueezeReleaseStructure(BaseStructure):
             logger.debug(f"SQUEEZE_RELEASE: Error detecting squeeze pattern: {e}")
             return None
 
+    def _detect_nr7_pattern(self, df: pd.DataFrame, symbol: str = "UNKNOWN") -> bool:
+        """PRO TRADER: Detect NR7 pattern (Narrow Range 7) - Chartink screener standard.
+
+        NR7 = Current bar's range is the smallest of the last 7 bars.
+        This indicates volatility contraction (squeeze) before potential expansion.
+        Used widely in Indian markets by Chartink, Screener.in, and professional traders.
+        """
+        try:
+            if len(df) < self.nr7_lookback:
+                return False
+
+            # Calculate range for each of the last N bars
+            recent_bars = df.tail(self.nr7_lookback)
+            ranges = recent_bars['high'] - recent_bars['low']
+
+            # Current bar range
+            current_range = ranges.iloc[-1]
+
+            # Previous N-1 bars ranges
+            previous_ranges = ranges.iloc[:-1]
+
+            # NR7: Current range must be smallest of all 7 bars
+            is_nr7 = current_range < previous_ranges.min()
+
+            if is_nr7:
+                # Additional validation: range should be reasonably tight
+                avg_range = ranges.mean()
+                range_contraction = current_range / avg_range if avg_range > 0 else 1.0
+
+                logger.debug(f"SQUEEZE_NR7: {symbol} - NR7 detected | Current range: {current_range:.4f} | "
+                           f"Min previous: {previous_ranges.min():.4f} | Contraction: {range_contraction:.2f}x")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"SQUEEZE_RELEASE: Error detecting NR7 pattern: {e}")
+            return False
+
     def _validate_volume_confirmation(self, df: pd.DataFrame) -> bool:
         """Validate volume confirmation for squeeze release."""
         if not self.require_volume_confirmation:
@@ -283,7 +346,7 @@ class SqueezeReleaseStructure(BaseStructure):
         entry_price = context.current_price
         risk_params = self.calculate_risk_params(context, event, side)
         exit_levels = self.get_exit_levels(context, event, side)
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         return TradePlan(
             symbol=context.symbol,
@@ -370,13 +433,6 @@ class SqueezeReleaseStructure(BaseStructure):
             return max(0.005, float(atr))  # Minimum 0.5%
         except:
             return context.current_price * 0.01  # 1% fallback
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0  # Maximum risk per trade
-        qty = max(1, min(int(max_risk_amount / risk_per_share), 100)) if risk_per_share > 0 else 1
-        return qty, qty * entry_price
 
     def _calculate_institutional_strength(self, context: MarketContext, expansion_ratio: float,
                                         momentum: float, vol_z: float, direction: str) -> float:

@@ -15,6 +15,7 @@ from config.filters_setup import load_filters
 from services.orders.order_queue import OrderQueue
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 from diagnostics.diag_event_log import diag_event_log
+from pipelines.breakout_pipeline import BreakoutPipeline
 
 # Import from unified validator
 from services.execution.trigger_validation_engine import (
@@ -87,22 +88,31 @@ class TriggerAwareExecutor:
                 price = trade.trigger_price or plan.get("price", 0)
                 cap_segment = plan.get("cap_segment", "unknown")
 
+                # SHADOW TRADE LOGIC: If at capacity, mark as shadow instead of rejecting
+                # Shadow trades go through entire pipeline but don't consume capital
+                is_shadow = plan.get("shadow", False)  # May already be marked
+                if not is_shadow and self.capital_manager.is_at_capacity():
+                    trade.plan["shadow"] = True
+                    is_shadow = True
+                    logger.info(f"SHADOW_TRADE | {trade.symbol} | At max capacity - continuing as shadow trade")
+
                 can_enter, adjusted_qty, reason = self.capital_manager.can_enter_position(
-                    trade.symbol, qty, price, cap_segment
+                    trade.symbol, qty, price, cap_segment, shadow=is_shadow
                 )
 
                 if not can_enter:
+                    # This should only happen for capital insufficiency (not max positions, since shadow handles that)
                     logger.warning(f"Capital check failed: {trade.symbol} - {reason}")
                     return False
 
-                # Update plan with adjusted quantity if scaled down
-                if adjusted_qty != qty:
-                    logger.info(f"Capital scaling: {trade.symbol} qty {qty} → {adjusted_qty}")
+                # Update plan with adjusted quantity if scaled down (not applicable for shadow trades)
+                if adjusted_qty != qty and not is_shadow:
+                    logger.info(f"Capital scaling: {trade.symbol} qty {qty} -> {adjusted_qty}")
                     trade.plan["qty"] = adjusted_qty
                     trade.plan["_original_qty"] = qty  # Keep original for reference
 
             return True
-            
+
         except Exception as e:
             logger.exception(f"Final execution check failed: {trade.symbol}: {e}")
             return False
@@ -114,7 +124,11 @@ class TriggerAwareExecutor:
             symbol = trade.symbol
             
             # Extract order parameters
-            side = plan.get("side", "BUY")
+            # Derive side from bias if not explicitly set
+            side = plan.get("side")
+            if not side:
+                bias = plan.get("bias", "long")
+                side = "SELL" if bias.lower() == "short" else "BUY"
             qty = int(plan.get("qty", 0))
             price = trade.trigger_price or plan.get("price")
             
@@ -143,17 +157,25 @@ class TriggerAwareExecutor:
                     logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
                     return False
 
-            # Place order
-            order_args = {
-                "symbol": symbol,
-                "side": side,
-                "qty": qty,
-                "order_type": "MARKET",  # Using market orders for trigger execution
-                "product": "MIS",
-                "variety": "regular",
-            }
-            
-            order_id = self.broker.place_order(**order_args)
+            # Check if this is a shadow trade (simulated, no capital consumed)
+            is_shadow = plan.get("shadow", False)
+
+            if is_shadow:
+                # SHADOW TRADE: Don't place real broker order, generate simulated order_id
+                order_id = f"shadow-{trade.trade_id}"
+                logger.info(f"SHADOW_ORDER | {symbol} | Simulated order (no broker call) | order_id={order_id}")
+            else:
+                # Place order with trade_id for tagging (identifies app-placed orders)
+                order_args = {
+                    "symbol": symbol,
+                    "side": side,
+                    "qty": qty,
+                    "order_type": "MARKET",  # Using market orders for trigger execution
+                    "product": "MIS",
+                    "variety": "regular",
+                    "trade_id": trade.trade_id,  # For order tagging (ITDA_xxx)
+                }
+                order_id = self.broker.place_order(**order_args)
 
             # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
             # Reason: Both trade_logger.info() (removed) and trading_logger.log_trigger() (below)
@@ -182,6 +204,7 @@ class TriggerAwareExecutor:
                     'regime': plan.get('regime', ''),
                     'order_id': order_id,
                     'side': side,
+                    'shadow': plan.get('shadow', False),  # Shadow trade flag
                     'diagnostics': {
                         'confidence_score': trade.confidence_score,
                         'trigger_price': trade.trigger_price,
@@ -199,47 +222,196 @@ class TriggerAwareExecutor:
             }
 
             # Record position in capital manager (allocate margin)
+            # Shadow trades skip margin allocation
             if self.capital_manager:
                 cap_segment = plan.get("cap_segment", "unknown")
+                is_shadow = plan.get("shadow", False)
                 self.capital_manager.enter_position(
                     symbol=symbol,
                     qty=qty,
                     price=price,
                     cap_segment=cap_segment,
-                    timestamp=trade.trigger_timestamp
+                    timestamp=trade.trigger_timestamp,
+                    shadow=is_shadow
                 )
 
             # Update shared position store for exit executor
             if self.positions:
                 from services.execution.trade_executor import Position
+
+                # CRITICAL FIX: Recalculate targets based on ACTUAL entry price
+                # Original targets were calculated from entry_ref_price, but actual
+                # trigger price may differ. Targets must be R-based from actual entry.
+                adjusted_plan = self._recalculate_targets_for_actual_entry(
+                    trade.plan, price, side
+                )
+
                 pos = Position(
                     symbol=symbol,
                     side=side,
                     qty=qty,
                     avg_price=price,
-                    plan=trade.plan
+                    plan=adjusted_plan
                 )
                 self.positions.upsert(pos)
+
+                # Persist position for crash recovery (Phase 5)
+                if self.persistence:
+                    from broker.kite.kite_broker import APP_ORDER_TAG_PREFIX
+                    order_tag = f"{APP_ORDER_TAG_PREFIX}{trade.trade_id[-12:]}"
+                    logger.info(f"[PERSIST] Saving position: {symbol} {side} {qty}@{price} trade_id={trade.trade_id}")
+                    try:
+                        self.persistence.save_position(
+                            symbol=symbol,
+                            side=side,
+                            qty=qty,
+                            avg_price=price,
+                            trade_id=trade.trade_id,
+                            order_id=order_id,
+                            order_tag=order_tag,
+                            plan=adjusted_plan,
+                            state={}  # Initial state (t1_done=False, etc.)
+                        )
+                        logger.info(f"[PERSIST] Position saved successfully: {symbol}")
+                    except Exception as e:
+                        logger.error(f"[PERSIST] Failed to save position {symbol}: {e}")
+                else:
+                    logger.warning(f"[PERSIST] persistence is None - position {symbol} NOT saved")
 
             return True
             
         except Exception as e:
             logger.exception(f"Order placement failed for {trade.symbol}: {e}")
             return False
-    
+
+    def _recalculate_targets_for_actual_entry(
+        self, plan: Dict[str, Any], actual_entry: float, side: str
+    ) -> Dict[str, Any]:
+        """
+        Recalculate targets based on ACTUAL entry price, not planned entry.
+
+        Problem:
+        - Pipeline calculates targets from entry_ref_price (e.g., 256.43)
+        - Actual trigger may occur at different price (e.g., 261.40)
+        - If targets aren't recalculated, T2 gives wrong R-multiple
+
+        Solution:
+        - For ORB setups: Use OR range-based targets (pro standard)
+        - For other setups: Use R-multiples from actual entry
+
+        Van Tharp: Targets must be based on YOUR entry, not some theoretical entry.
+        """
+        import copy
+        adjusted_plan = copy.deepcopy(plan)
+
+        try:
+            # Check if this is an ORB setup - use OR range-based targets (pro standard)
+            # Delegate to breakout pipeline which has the config (no hardcoded values here)
+            strategy = plan.get("strategy", "") or ""
+            if "orb" in strategy.lower():
+                breakout_pipeline = BreakoutPipeline()
+                return breakout_pipeline.recalculate_orb_targets_at_trigger(adjusted_plan, actual_entry, side)
+            # Get stop data from plan - exec_item now includes full "stop" dict
+            stop_data = plan.get("stop", {})
+            hard_sl = stop_data.get("hard")
+            original_rps = stop_data.get("risk_per_share")
+
+            # Get original entry price
+            original_entry = plan.get("entry_ref_price") or plan.get("price")
+
+            # Can't recalculate without stop loss info
+            if hard_sl is None or original_rps is None or original_rps <= 0:
+                logger.info(f"TARGET_RECALC_SKIP: missing data hard_sl={hard_sl} orig_entry={original_entry} rps={original_rps}")
+                return adjusted_plan
+
+            # Calculate ACTUAL risk per share based on actual entry
+            if side.upper() == "BUY":
+                actual_rps = actual_entry - hard_sl
+            else:
+                actual_rps = hard_sl - actual_entry
+
+            # Skip if rps is invalid
+            if actual_rps <= 0:
+                logger.warning(f"Invalid actual_rps={actual_rps:.2f}, using original targets")
+                return adjusted_plan
+
+            # Get original targets
+            original_targets = plan.get("targets", [])
+            if len(original_targets) < 2:
+                logger.info(f"TARGET_RECALC_SKIP: less than 2 targets, got {len(original_targets)}")
+                return adjusted_plan
+
+            # original_entry was already calculated above when computing original_rps
+
+            # Use explicit R-multiples from plan (rr field) - NOT derived from levels
+            # The planner may cap/adjust levels for structure, but rr represents intended R
+            t1_orig = original_targets[0].get("level", 0)
+            t2_orig = original_targets[1].get("level", 0)
+
+            # Get planned R-multiples directly from targets (preferred)
+            # Fall back to deriving from levels only if rr not present
+            t1_r = original_targets[0].get("rr") or original_targets[0].get("r_multiple")
+            t2_r = original_targets[1].get("rr") or original_targets[1].get("r_multiple")
+
+            # If rr not in plan, derive from levels (legacy fallback)
+            if t1_r is None:
+                if side.upper() == "BUY":
+                    t1_r = (t1_orig - original_entry) / original_rps if original_rps > 0 else 1.5
+                else:
+                    t1_r = (original_entry - t1_orig) / original_rps if original_rps > 0 else 1.5
+
+            if t2_r is None:
+                if side.upper() == "BUY":
+                    t2_r = (t2_orig - original_entry) / original_rps if original_rps > 0 else 2.0
+                else:
+                    t2_r = (original_entry - t2_orig) / original_rps if original_rps > 0 else 2.0
+
+            # Recalculate targets from actual entry using same R-multiples
+            if side.upper() == "BUY":
+                new_t1 = actual_entry + (t1_r * actual_rps)
+                new_t2 = actual_entry + (t2_r * actual_rps)
+            else:
+                new_t1 = actual_entry - (t1_r * actual_rps)
+                new_t2 = actual_entry - (t2_r * actual_rps)
+
+            # Update targets in plan
+            adjusted_plan["targets"] = [
+                {"level": round(new_t1, 2), "r_multiple": round(t1_r, 2)},
+                {"level": round(new_t2, 2), "r_multiple": round(t2_r, 2)}
+            ]
+
+            # Update stop info with actual rps - handle both exec_item and full plan structures
+            if "stop" in adjusted_plan and isinstance(adjusted_plan["stop"], dict):
+                adjusted_plan["stop"]["risk_per_share"] = round(actual_rps, 2)
+            # Also store at top level for exec_item structure
+            adjusted_plan["risk_per_share"] = round(actual_rps, 2)
+            adjusted_plan["actual_entry"] = round(actual_entry, 2)
+
+        except Exception as e:
+            logger.warning(f"Target recalculation failed: {e}, using original targets")
+
+        return adjusted_plan
+
     def _cleanup_expired_trades(self) -> None:
-        """Clean up expired and completed trades"""
-        now = self._get_current_time()
-        
+        """Clean up expired and completed trades
+
+        Uses _last_tick_ts (bar timestamp from tick processing) for expiry checks.
+        This ensures in backtest mode we check expiry based on the bar being processed,
+        not the simulation clock which may have advanced past multiple bars.
+        """
+        # Use last tick timestamp for accurate expiry checks (critical for backtest)
+        # Fall back to _get_current_time() for live mode or initial startup
+        now = self._last_tick_ts if self._last_tick_ts else self._get_current_time()
+
         with self._lock:
             expired_ids = []
-            
+
             for trade_id, trade in self.pending_trades.items():
                 # Remove expired trades
                 if trade.expiry_time and now > trade.expiry_time:
                     if trade.state == TradeState.WAITING_TRIGGER:
                         trade.state = TradeState.EXPIRED
-                        logger.debug(f"EXPIRED: {trade.symbol} {trade.plan.get('strategy', '')}")
+                        logger.info(f"EXPIRED: {trade.symbol} {trade.plan.get('strategy', '')} at {now}")
                 
                 # Remove completed/expired trades
                 if trade.state in [TradeState.EXECUTED, TradeState.EXPIRED, TradeState.CANCELLED]:
@@ -308,12 +480,14 @@ class TriggerAwareExecutor:
         get_ltp_ts: Callable[[str], Tuple[Optional[float], Optional[pd.Timestamp]]],
         bar_builder,  # We'll hook into the BarBuilder's 1m callbacks
         trading_logger=None,  # Enhanced logging service
-        capital_manager=None  # Capital & MIS management
+        capital_manager=None,  # Capital & MIS management
+        persistence=None  # Position persistence for crash recovery
     ):
         self.broker = broker
         self.oq = order_queue
         self.trading_logger = trading_logger
         self.capital_manager = capital_manager
+        self.persistence = persistence  # For saving positions on entry
         self.risk = risk_state
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts
@@ -327,6 +501,9 @@ class TriggerAwareExecutor:
         # Threading
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+
+        # Track latest tick timestamp for accurate expiry checks in backtest
+        self._last_tick_ts: Optional[pd.Timestamp] = None
         
         # Config
         self.cfg = load_filters()
@@ -383,15 +560,85 @@ class TriggerAwareExecutor:
             new_item = self.oq.get_next(timeout=0.1)
             if new_item:
                 self._add_pending_trade(new_item)
-            
-            # 2. Execute trades that have been triggered
+
+            # 2. Poll ALL pending trades for trigger conditions (critical for backtest)
+            # In backtest mode, ticks only flow for scanned symbols, so pending symbols
+            # that drop out of the scan never get checked. This ensures all pending
+            # trades are actively polled on each cycle.
+            self._poll_all_pending_trades()
+
+            # 3. Execute trades that have been triggered
             self._execute_triggered_trades()
-            
-            # 3. Clean up expired trades
+
+            # 4. Clean up expired trades
             self._cleanup_expired_trades()
-            
+
         except Exception as e:
             logger.exception(f"TriggerAwareExecutor.run_once error: {e}")
+
+    def _poll_all_pending_trades(self) -> None:
+        """
+        Actively poll ALL pending trades to check if entry zone was touched.
+
+        This is critical for backtest mode where ticks only flow for symbols
+        currently being scanned. Without this, pending trades for symbols that
+        drop out of the scan shortlist would never be checked for triggers.
+
+        Uses broker.get_ltp() with entry_zone for polymorphic behavior:
+        - Live: Returns current LTP (real-time price)
+        - Backtest: Checks if bar OHLC touched zone, returns zone price or None
+        """
+        with self._lock:
+            pending = [t for t in self.pending_trades.values()
+                      if t.state == TradeState.WAITING_TRIGGER]
+
+        if not pending:
+            return
+
+        current_ts = self._last_tick_ts if self._last_tick_ts else self._get_current_time()
+
+        for trade in pending:
+            try:
+                entry_zone = trade.plan.get("entry_zone") or (trade.plan.get("entry") or {}).get("zone")
+                if not entry_zone or len(entry_zone) != 2:
+                    continue
+
+                side = "BUY" if trade.plan.get("bias", "long") == "long" else "SELL"
+
+                # Broker handles live vs backtest polymorphically
+                # Backtest: get_ltp checks if current bar OHLC touched entry_zone
+                try:
+                    price = self.broker.get_ltp(
+                        trade.symbol,
+                        entry_zone=entry_zone,
+                        side=side
+                    )
+                except Exception:
+                    # Skip if broker can't get price for this symbol
+                    continue
+
+                if price is None:
+                    continue
+
+                entry_min, entry_max = sorted(entry_zone)
+
+                # Check if price is in or near entry zone
+                in_strict_zone = entry_min <= price <= entry_max
+                tolerance = 0.0005 * price  # 0.05% tolerance
+                in_near_zone = (entry_min - tolerance <= price <= entry_max + tolerance)
+
+                if in_strict_zone or in_near_zone:
+                    zone_status = "IN_ZONE" if in_strict_zone else "NEAR_ZONE"
+                    logger.info(
+                        f"NEAR_ZONE_TRIGGER: {price:.2f} vs [{entry_min:.2f}, {entry_max:.2f}] "
+                        f"tolerance={tolerance:.4f} ({0.05}%)"
+                    )
+
+                    # Trigger the trade
+                    self._try_trigger_on_tick(trade, price, current_ts)
+
+            except Exception as e:
+                logger.debug(f"Poll check failed for {trade.symbol}: {e}")
 
     def _log_tick_for_pending_trades(self, symbol: str, ts: datetime) -> None:
         """
@@ -401,6 +648,9 @@ class TriggerAwareExecutor:
         - Live/paper: Returns current LTP (real tick price)
         - Backtest: Checks if bar OHLC touched zone, returns zone price or close
         """
+        # Update last tick timestamp for expiry checks (critical for backtest accuracy)
+        self._last_tick_ts = pd.Timestamp(ts) if ts else None
+
         with self._lock:
             # Check if this symbol has any pending trades
             pending_for_symbol = [
@@ -419,7 +669,8 @@ class TriggerAwareExecutor:
 
         # Process each pending trade for this symbol
         for trade in pending_for_symbol:
-            entry_zone = trade.plan.get("entry_zone")
+            # Try both key paths for entry_zone (flat and nested)
+            entry_zone = trade.plan.get("entry_zone") or (trade.plan.get("entry") or {}).get("zone")
             if not entry_zone or len(entry_zone) != 2:
                 continue
 

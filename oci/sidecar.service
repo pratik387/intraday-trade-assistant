@@ -1,0 +1,54 @@
+# /etc/systemd/system/sidecar.service
+#
+# Sidecar Data Collector Service
+# Runs from 09:00 to 15:35 IST, collecting market data for main engine bootstrap.
+#
+# Installation:
+#   sudo cp sidecar.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable sidecar
+#
+# Start manually (for testing):
+#   sudo systemctl start sidecar
+#
+# View logs:
+#   sudo journalctl -u sidecar -f
+#
+# Auto-start via cron (recommended):
+#   0 9 * * 1-5 systemctl start sidecar
+#   35 15 * * 1-5 systemctl stop sidecar
+
+[Unit]
+Description=Intraday Trading Sidecar - Data Collector
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/intraday/intraday-trade-assistant
+Environment="PATH=/home/ubuntu/intraday/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Load environment variables (Kite API credentials)
+EnvironmentFile=/home/ubuntu/intraday/intraday-trade-assistant/.env.production
+
+# Run the sidecar data collector
+ExecStart=/home/ubuntu/intraday/venv/bin/python -m sidecar.data_collector
+
+# Restart on failure (but not on clean exit)
+Restart=on-failure
+RestartSec=10
+
+# Stop gracefully
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sidecar
+
+[Install]
+WantedBy=multi-user.target

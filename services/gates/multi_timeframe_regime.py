@@ -95,7 +95,7 @@ class DailyRegimeDetector:
 
             # Calculate weekly ADX from daily bars (5-day window = 1 trading week)
             # Use centralized ADX calculation
-            from services.indicators.adx import calculate_adx
+            from services.indicators.indicators import calculate_adx
             adx = calculate_adx(df, period=14)
             current_adx = float(adx.iloc[-1]) if len(adx) > 0 and pd.notna(adx.iloc[-1]) else 15.0
 
@@ -339,10 +339,16 @@ class MultiTimeframeRegime:
       - 5m: chop (0.60 conf) → Apply chop filters from regime_gate
     """
 
-    def __init__(self, daily_detector: DailyRegimeDetector, hourly_detector: HourlyRegimeDetector, log=None):
+    def __init__(self, daily_detector: DailyRegimeDetector, hourly_detector: HourlyRegimeDetector, cfg: dict, log=None):
         self.daily_detector = daily_detector
         self.hourly_detector = hourly_detector
         self.log = log
+
+        # Load thresholds from config (no defaults - config is required)
+        rt = cfg.get("regime_thresholds", {})
+        if "long_max_ema_distance_pct" not in rt:
+            raise ValueError("[MultiTimeframeRegime] Missing regime_thresholds.long_max_ema_distance_pct in config")
+        self.long_max_ema_distance_pct = float(rt["long_max_ema_distance_pct"])
 
     def get_unified_regime(
         self,
@@ -410,57 +416,3 @@ class MultiTimeframeRegime:
             )
 
         return regime, confidence, diagnostics
-
-    def should_block_setup(
-        self,
-        setup_type: str,
-        daily_result: DailyRegimeResult,
-        min_daily_confidence: float = 0.70
-    ) -> Tuple[bool, Optional[str]]:
-        """
-        Check if setup should be blocked based on daily regime.
-
-        Evidence-based blocking rules (institutional standards):
-        1. Block counter-trend setups when daily conf ≥ 0.70 (Linda Raschke MTF filtering)
-        2. Block squeeze breakouts (audit finding: -Rs. 4,258 saved)
-        3. Use 0.80 threshold for chop regime (higher noise, need stronger signal)
-
-        Returns:
-            (should_block, reason)
-        """
-        if daily_result.confidence < min_daily_confidence:
-            # Low confidence - don't block
-            return False, None
-
-        daily_regime = daily_result.regime
-
-        # Extract bias from setup_type
-        is_long = "long" in setup_type.lower()
-        is_short = "short" in setup_type.lower()
-        is_breakout = "breakout" in setup_type.lower()
-
-        # ============ EVIDENCE-BASED BLOCKS (Phase 3) ============
-
-        # 1. Block counter-trend shorts in strong daily uptrends (conf ≥ 0.70)
-        #    Source: Linda Raschke MTF filtering - don't fight higher TF trend
-        if daily_regime == "trend_up" and is_short:
-            if "fade" not in setup_type and "reversal" not in setup_type:
-                return True, f"daily_trend_up_blocks_short (conf={daily_result.confidence:.2f})"
-
-        # 2. Block counter-trend longs in strong daily downtrends (conf ≥ 0.70)
-        #    Source: Linda Raschke MTF filtering - don't fight higher TF trend
-        if daily_regime == "trend_down" and is_long:
-            if "fade" not in setup_type and "reversal" not in setup_type:
-                return True, f"daily_trend_down_blocks_long (conf={daily_result.confidence:.2f})"
-
-        # 3. Block ALL breakouts in daily squeeze (conf ≥ 0.70)
-        #    Source: Audit finding - squeeze breakout shorts: 11 trades, 0% WR, -Rs. 4,258 loss
-        #    Extended to longs for consistency (squeeze breakouts unreliable both ways)
-        if daily_regime == "squeeze" and is_breakout:
-            return True, f"daily_squeeze_blocks_breakout (prevents_squeeze_false_breakouts)"
-
-        # 4. No specific blocks for daily chop - handled by ranking penalty instead
-        #    Rationale: Chop is noisy, blocking would eliminate too many trades
-        #    Instead: Apply ranking penalty (0.90x) to deprioritize in favor of cleaner setups
-
-        return False, None

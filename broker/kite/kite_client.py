@@ -30,7 +30,8 @@ class KiteClient:
         self._sym2inst: Dict[str, _Inst] = {}
         self._tok2sym: Dict[int, str] = {}
         self._equity_instruments: List[str] = []
-                # ---- Daily history: per-day in-memory cache + simple rate limiter (tz-naive) ----
+
+        # ---- Daily history: per-day in-memory cache ----
         self._daily_cache_day: Optional[str] = None   # "YYYY-MM-DD"
         self._daily_cache: Dict[str, pd.DataFrame] = {}
         self._daily_cache_lock = threading.RLock()
@@ -77,15 +78,21 @@ class KiteClient:
                 continue
 
             # Safe equity filter
+            tsym_upper = tsym.upper()
             if (
                 exch != "NSE" or
                 seg != "NSE" or
                 itype != "EQ" or
                 expiry or
                 not name or len(name) < 3 or
-                tsym.upper().startswith(tuple(str(i) for i in range(10))) or  # starts with digit
-                any(x in tsym.upper() for x in ["SDL", "NCD", "GSEC", "GOI", "GS", "T-BILL"]) or
-                "-" in tsym
+                tsym_upper.startswith(tuple(str(i) for i in range(10))) or  # starts with digit
+                any(x in tsym_upper for x in ["SDL", "NCD", "GSEC", "GOI", "GS", "T-BILL"]) or
+                "-" in tsym or
+                # ETF filter: exclude all ETFs by checking:
+                # 1. Symbol ends with "ETF" (e.g., TNIDETF, SBIETFPB, NIFTYETF)
+                # 2. Name contains "ETF" as a word (case-insensitive)
+                tsym_upper.endswith("ETF") or
+                "etf" in name.lower().split()
             ):
                 continue
 
@@ -163,6 +170,21 @@ class KiteClient:
             if self._daily_cache_day != today:
                 self._daily_cache.clear()
                 self._daily_cache_day = today
+
+    # ---- Daily cache getter/setter for external persistence ----
+
+    def get_daily_cache(self) -> Dict[str, pd.DataFrame]:
+        """Get the current daily cache (for persistence layer to save)."""
+        with self._daily_cache_lock:
+            return dict(self._daily_cache)
+
+    def set_daily_cache(self, cache: Dict[str, pd.DataFrame]) -> None:
+        """Set the daily cache from external source (persistence layer load)."""
+        today = datetime.now().date().isoformat()
+        with self._daily_cache_lock:
+            self._daily_cache = cache
+            self._daily_cache_day = today
+        logger.info(f"DAILY_CACHE | Injected {len(cache)} symbols from external source")
 
     def _token_for(self, symbol: str) -> int:
         inst = self._sym2inst.get(symbol.upper())
@@ -247,4 +269,123 @@ class KiteClient:
         """Optional: tune historical RPS dynamically."""
         self._rps = max(0.5, float(rps))
         self._rl_min_dt = 1.0 / self._rps
+
+    def prewarm_daily_cache(self, symbols: List[str] = None, days: int = 210) -> dict:
+        """
+        Pre-warm the daily data cache by fetching from Kite API.
+
+        Call this at server startup (e.g., 09:00) so that when ORB cache computation
+        happens at 09:40, all get_daily() calls are instant cache hits.
+
+        NOTE: Disk persistence is handled externally by DailyCachePersistence.
+        Use set_daily_cache() to inject cached data before calling this.
+
+        Args:
+            symbols: List of symbols to pre-warm. If None, uses all equity instruments.
+            days: Number of days of daily data to fetch (default 210 for regime detection)
+
+        Returns:
+            dict with 'success', 'failed', 'elapsed_seconds' counts
+        """
+        import time as time_module
+
+        if symbols is None:
+            symbols = self._equity_instruments
+
+        total = len(symbols)
+
+        # Check if cache already populated (e.g., from disk persistence)
+        if len(self._daily_cache) >= total * 0.9:  # 90% threshold
+            logger.info(f"PREWARM_DAILY | Cache already has {len(self._daily_cache)} symbols, skipping API fetch")
+            return {
+                "success": len(self._daily_cache),
+                "failed": 0,
+                "total": total,
+                "elapsed_seconds": 0.0,
+                "source": "cache"
+            }
+
+        logger.info(f"PREWARM_DAILY | Starting pre-warm for {total} symbols ({days} days each)")
+        logger.info(f"PREWARM_DAILY | Estimated time: {total / self._rps / 60:.1f} minutes at {self._rps} RPS")
+
+        start_time = time_module.perf_counter()
+        success_count = 0
+        fail_count = 0
+
+        for i, symbol in enumerate(symbols):
+            try:
+                # This populates self._daily_cache[symbol]
+                df = self.get_daily(symbol, days=days)
+                if df is not None and not df.empty:
+                    success_count += 1
+                else:
+                    fail_count += 1
+            except Exception as e:
+                fail_count += 1
+                if fail_count <= 5:  # Only log first 5 failures
+                    logger.warning(f"PREWARM_DAILY | Failed for {symbol}: {e}")
+
+            # Progress logging every 500 symbols
+            if (i + 1) % 500 == 0:
+                elapsed = time_module.perf_counter() - start_time
+                rate = (i + 1) / elapsed
+                remaining = (total - i - 1) / rate if rate > 0 else 0
+                logger.info(f"PREWARM_DAILY | Progress: {i+1}/{total} ({success_count} ok, {fail_count} fail) | "
+                           f"Elapsed: {elapsed:.0f}s | Remaining: {remaining:.0f}s")
+
+        elapsed = time_module.perf_counter() - start_time
+        logger.info(f"PREWARM_DAILY | Complete: {success_count}/{total} symbols cached | "
+                   f"Failed: {fail_count} | Time: {elapsed:.1f}s ({elapsed/60:.1f} min)")
+
+        return {
+            "success": success_count,
+            "failed": fail_count,
+            "total": total,
+            "elapsed_seconds": elapsed,
+            "source": "api"
+        }
+
+    def get_historical_1m(self, symbol: str, from_dt: datetime, to_dt: datetime) -> Optional[pd.DataFrame]:
+        """
+        Fetch historical 1-minute OHLCV data from Zerodha API.
+        Used for late-start ORB recovery when server starts after 09:30.
+
+        Args:
+            symbol: NSE symbol (e.g., "NSE:RELIANCE")
+            from_dt: Start datetime (IST)
+            to_dt: End datetime (IST)
+
+        Returns:
+            DataFrame with columns: [open, high, low, close, volume]
+            Index: datetime
+            Returns None if no data or API error.
+        """
+        token = self._token_for(symbol)
+        logger.debug("KiteClient.get_historical_1m: fetching 1m data for %s from %s to %s", symbol, from_dt, to_dt)
+        for attempt in range(3):
+            try:
+                self._rate_limit()
+                candles = self._kc.historical_data(
+                    instrument_token=token,
+                    from_date=from_dt,
+                    to_date=to_dt,
+                    interval="minute"  # 1-minute candles
+                )
+                if not candles:
+                    return None
+
+                df = pd.DataFrame(candles)
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.set_index("date")
+                df = df[["open", "high", "low", "close", "volume"]].astype(float)
+                logger.info("KiteClient.get_historical_1m: fetched %d rows for %s", len(df), symbol)
+                return df
+
+            except Exception as e:
+                if attempt == 2:
+                    logger.exception("get_historical_1m failed for %s: %s", symbol, e)
+                    return None
+                time.sleep(0.5 + 0.4 * attempt + random.random() * 0.2)
+
+        return None
 

@@ -94,8 +94,27 @@ class SupportResistanceStructure(BaseStructure):
         self.confidence_breakout = config["confidence_breakout"]
         self.confidence_bounce = config["confidence_bounce"]
 
+        # Dual-mode entry configuration (Professional S/R Trading)
+        self.entry_mode = config["entry_mode"]  # "immediate", "retest", or "conditional"
+        self.immediate_entry_distance_pct = config.get("immediate_entry_distance_pct", 0.3)  # For conditional mode
+        self.retest_entry_zone_width_atr = config["retest_entry_zone_width_atr"]
+        self.retest_timeout_minutes = config["retest_timeout_minutes"]
+
+        # Target structure type filter - each instance only detects its specific structure
+        # Valid values: "support_bounce_long", "resistance_bounce_short", "support_breakdown_short", "resistance_breakout_long", or "all"
+        # Also derive from _setup_name if target_structure_type is not explicitly set
+        self.configured_setup_type = config.get("_setup_name", None)
+        explicit_target = config.get("target_structure_type")
+        if explicit_target:
+            self.target_structure_type = explicit_target
+        elif self.configured_setup_type:
+            self.target_structure_type = self.configured_setup_type
+        else:
+            self.target_structure_type = "all"
+
         logger.debug(f"S/R: Initialized with min touches: {self.min_touches}, tolerance: {self.bounce_tolerance_pct}%")
         logger.debug(f"S/R: Volume spike required: {self.require_volume_spike}, min mult: {self.min_volume_mult}")
+        logger.debug(f"S/R: Dual-mode entry: mode={self.entry_mode}, immediate_dist={self.immediate_entry_distance_pct}%, retest_zone={self.retest_entry_zone_width_atr}ATR")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -115,29 +134,34 @@ class SupportResistanceStructure(BaseStructure):
                     rejection_reason="Support/Resistance levels not available"
                 )
 
-            # Detect different S/R strategies
+            # Detect different S/R strategies based on target_structure_type filter
             events = []
             max_quality = 0.0
+            target = self.target_structure_type
 
-            # 1. Support Bounce
-            bounce_events, bounce_quality = self._detect_support_bounce(context, sr_info)
-            events.extend(bounce_events)
-            max_quality = max(max_quality, bounce_quality)
+            # 1. Support Bounce - only if target matches or "all"
+            if target in ("all", "support_bounce_long"):
+                bounce_events, bounce_quality = self._detect_support_bounce(context, sr_info)
+                events.extend(bounce_events)
+                max_quality = max(max_quality, bounce_quality)
 
-            # 2. Resistance Rejection
-            rejection_events, rejection_quality = self._detect_resistance_rejection(context, sr_info)
-            events.extend(rejection_events)
-            max_quality = max(max_quality, rejection_quality)
+            # 2. Resistance Rejection - only if target matches or "all"
+            if target in ("all", "resistance_bounce_short"):
+                rejection_events, rejection_quality = self._detect_resistance_rejection(context, sr_info)
+                events.extend(rejection_events)
+                max_quality = max(max_quality, rejection_quality)
 
-            # 3. Support Breakdown
-            breakdown_events, breakdown_quality = self._detect_support_breakdown(context, sr_info)
-            events.extend(breakdown_events)
-            max_quality = max(max_quality, breakdown_quality)
+            # 3. Support Breakdown - only if target matches or "all"
+            if target in ("all", "support_breakdown_short"):
+                breakdown_events, breakdown_quality = self._detect_support_breakdown(context, sr_info)
+                events.extend(breakdown_events)
+                max_quality = max(max_quality, breakdown_quality)
 
-            # 4. Resistance Breakout
-            breakout_events, breakout_quality = self._detect_resistance_breakout(context, sr_info)
-            events.extend(breakout_events)
-            max_quality = max(max_quality, breakout_quality)
+            # 4. Resistance Breakout - only if target matches or "all"
+            if target in ("all", "resistance_breakout_long"):
+                breakout_events, breakout_quality = self._detect_resistance_breakout(context, sr_info)
+                events.extend(breakout_events)
+                max_quality = max(max_quality, breakout_quality)
 
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No S/R setups detected"
@@ -393,6 +417,22 @@ class SupportResistanceStructure(BaseStructure):
         except Exception:
             return 0
 
+    def _determine_entry_mode(self, distance_pct: float) -> str:
+        """Determine actual entry mode based on config and price distance from level.
+
+        For 'conditional' mode:
+        - If price is within immediate_entry_distance_pct of level → 'immediate' (price is at optimal zone)
+        - If price is further away → 'retest' (wait for pullback to level)
+
+        For 'immediate' or 'retest' modes, return as-is.
+        """
+        if self.entry_mode == "conditional":
+            if distance_pct <= self.immediate_entry_distance_pct:
+                return "immediate"
+            else:
+                return "retest"
+        return self.entry_mode
+
     def _detect_support_bounce(self, context: MarketContext, sr_info: SupportResistanceLevels) -> Tuple[List[StructureEvent], float]:
         """Detect support bounce opportunities (long bias)."""
 
@@ -423,10 +463,31 @@ class SupportResistanceStructure(BaseStructure):
             volume_ok = self._check_volume_confirmation(context)
             logger.debug(f"S/R: {context.symbol} - Volume confirmation: {volume_ok}")
 
+        # Check candlestick confirmation (close in top 30% of bar range)
+        candle_ok, candle_reason = self._check_support_bounce_candle_conviction(context.df_5m)
+        if not candle_ok:
+            logger.debug(f"SR_DETECT: {context.symbol} - Support bounce rejected: {candle_reason}")
+            return events, quality_score
+
         if volume_ok:
             confidence = self._calculate_institutional_strength(context, sr_info, "support_bounce", "long", volume_ok)
 
             quality_score = min(95.0, sr_info.support_strength + (confidence * 20))
+
+            # Determine actual entry mode (conditional logic based on distance)
+            actual_entry_mode = self._determine_entry_mode(distance_pct)
+
+            # Calculate retest zone for dual-mode entry
+            atr = self._get_atr(context)
+            retest_zone = None
+            if actual_entry_mode == "retest":
+                # For longs at support: zone is below current price, near support level
+                zone_half_width = self.retest_entry_zone_width_atr * atr
+                retest_zone = [
+                    support_level - zone_half_width,  # Lower bound
+                    support_level + zone_half_width   # Upper bound
+                ]
+                logger.debug(f"S/R: {context.symbol} - Retest zone for support_bounce_long: [{retest_zone[0]:.2f}, {retest_zone[1]:.2f}]")
 
             event = StructureEvent(
                 symbol=context.symbol,
@@ -439,13 +500,16 @@ class SupportResistanceStructure(BaseStructure):
                     "support_touches": sr_info.support_touches,
                     "support_strength": sr_info.support_strength,
                     "distance_pct": distance_pct,
-                    "volume_confirmation": volume_ok
+                    "volume_confirmation": volume_ok,
+                    "candle_conviction": True,
+                    "entry_mode": actual_entry_mode,
+                    "retest_zone": retest_zone
                 },
                 price=current_price
             )
             events.append(event)
 
-            logger.debug(f"S/R: {context.symbol} - Support bounce LONG detected: level {support_level:.2f}, touches {sr_info.support_touches}, confidence {confidence:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Support bounce LONG detected: level {support_level:.2f}, touches {sr_info.support_touches}, confidence {confidence:.2f}, entry_mode={actual_entry_mode}")
 
         return events, quality_score
 
@@ -484,6 +548,21 @@ class SupportResistanceStructure(BaseStructure):
 
             quality_score = min(95.0, sr_info.resistance_strength + (confidence * 20))
 
+            # Determine actual entry mode (conditional logic based on distance)
+            actual_entry_mode = self._determine_entry_mode(distance_pct)
+
+            # Calculate retest zone for dual-mode entry
+            atr = self._get_atr(context)
+            retest_zone = None
+            if actual_entry_mode == "retest":
+                # For shorts at resistance: zone is above current price, near resistance level
+                zone_half_width = self.retest_entry_zone_width_atr * atr
+                retest_zone = [
+                    resistance_level - zone_half_width,  # Lower bound
+                    resistance_level + zone_half_width   # Upper bound
+                ]
+                logger.debug(f"S/R: {context.symbol} - Retest zone for resistance_bounce_short: [{retest_zone[0]:.2f}, {retest_zone[1]:.2f}]")
+
             event = StructureEvent(
                 symbol=context.symbol,
                 timestamp=context.timestamp,
@@ -495,13 +574,15 @@ class SupportResistanceStructure(BaseStructure):
                     "resistance_touches": sr_info.resistance_touches,
                     "resistance_strength": sr_info.resistance_strength,
                     "distance_pct": distance_pct,
-                    "volume_confirmation": volume_ok
+                    "volume_confirmation": volume_ok,
+                    "entry_mode": actual_entry_mode,
+                    "retest_zone": retest_zone
                 },
                 price=current_price
             )
             events.append(event)
 
-            logger.debug(f"S/R: {context.symbol} - Resistance rejection SHORT detected: level {resistance_level:.2f}, touches {sr_info.resistance_touches}, confidence {confidence:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Resistance rejection SHORT detected: level {resistance_level:.2f}, touches {sr_info.resistance_touches}, confidence {confidence:.2f}, entry_mode={actual_entry_mode}")
 
         return events, quality_score
 
@@ -532,6 +613,23 @@ class SupportResistanceStructure(BaseStructure):
             confidence = self._calculate_institutional_strength(context, sr_info, "support_breakout", "long", True)
             quality_score = min(90.0, sr_info.support_strength * 0.8 + (confidence * 25))
 
+            # Distance from broken support level
+            breakdown_distance_pct = abs(current_price - support_level) / support_level * 100
+
+            # Determine actual entry mode (conditional logic based on distance from level)
+            actual_entry_mode = self._determine_entry_mode(breakdown_distance_pct)
+
+            # Calculate retest zone for retest mode
+            atr = self._get_atr(context)
+            retest_zone = None
+            if actual_entry_mode == "retest":
+                # For shorts after breakdown: wait for price to retest (bounce back to) support level
+                zone_half_width = self.retest_entry_zone_width_atr * atr
+                retest_zone = [
+                    support_level - zone_half_width,
+                    support_level + zone_half_width
+                ]
+
             event = StructureEvent(
                 symbol=context.symbol,
                 timestamp=context.timestamp,
@@ -542,14 +640,16 @@ class SupportResistanceStructure(BaseStructure):
                 context={
                     "support_touches": sr_info.support_touches,
                     "support_strength": sr_info.support_strength,
-                    "breakdown_distance_pct": abs(current_price - support_level) / support_level * 100,
-                    "volume_confirmation": volume_ok
+                    "breakdown_distance_pct": breakdown_distance_pct,
+                    "volume_confirmation": volume_ok,
+                    "entry_mode": actual_entry_mode,
+                    "retest_zone": retest_zone
                 },
                 price=current_price
             )
             events.append(event)
 
-            logger.debug(f"S/R: {context.symbol} - Support breakdown SHORT detected: level {support_level:.2f}, breakdown at {current_price:.2f}, confidence {confidence:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Support breakdown SHORT detected: level {support_level:.2f}, breakdown at {current_price:.2f}, confidence {confidence:.2f}, entry_mode={actual_entry_mode}")
 
         return events, quality_score
 
@@ -580,6 +680,23 @@ class SupportResistanceStructure(BaseStructure):
             confidence = self._calculate_institutional_strength(context, sr_info, "support_breakout", "long", True)
             quality_score = min(90.0, sr_info.resistance_strength * 0.8 + (confidence * 25))
 
+            # Distance from broken resistance level
+            breakout_distance_pct = abs(current_price - resistance_level) / resistance_level * 100
+
+            # Determine actual entry mode (conditional logic based on distance from level)
+            actual_entry_mode = self._determine_entry_mode(breakout_distance_pct)
+
+            # Calculate retest zone for retest mode
+            atr = self._get_atr(context)
+            retest_zone = None
+            if actual_entry_mode == "retest":
+                # For longs after breakout: wait for price to retest (pullback to) resistance level
+                zone_half_width = self.retest_entry_zone_width_atr * atr
+                retest_zone = [
+                    resistance_level - zone_half_width,
+                    resistance_level + zone_half_width
+                ]
+
             event = StructureEvent(
                 symbol=context.symbol,
                 timestamp=context.timestamp,
@@ -590,14 +707,16 @@ class SupportResistanceStructure(BaseStructure):
                 context={
                     "resistance_touches": sr_info.resistance_touches,
                     "resistance_strength": sr_info.resistance_strength,
-                    "breakout_distance_pct": abs(current_price - resistance_level) / resistance_level * 100,
-                    "volume_confirmation": volume_ok
+                    "breakout_distance_pct": breakout_distance_pct,
+                    "volume_confirmation": volume_ok,
+                    "entry_mode": actual_entry_mode,
+                    "retest_zone": retest_zone
                 },
                 price=current_price
             )
             events.append(event)
 
-            logger.debug(f"S/R: {context.symbol} - Resistance breakout LONG detected: level {resistance_level:.2f}, breakout at {current_price:.2f}, confidence {confidence:.2f}")
+            logger.debug(f"S/R: {context.symbol} - Resistance breakout LONG detected: level {resistance_level:.2f}, breakout at {current_price:.2f}, confidence {confidence:.2f}, entry_mode={actual_entry_mode}")
 
         return events, quality_score
 
@@ -648,7 +767,7 @@ class SupportResistanceStructure(BaseStructure):
 
         # Determine position size based on risk
         entry_price = context.current_price
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         plan = TradePlan(
             symbol=context.symbol,
@@ -684,7 +803,7 @@ class SupportResistanceStructure(BaseStructure):
 
         # Determine position size based on risk
         entry_price = context.current_price
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         plan = TradePlan(
             symbol=context.symbol,
@@ -875,13 +994,13 @@ class SupportResistanceStructure(BaseStructure):
         # Fallback: calculate simple ATR from recent data
         try:
             df = context.df_5m
-            if len(df) >= 14:
-                highs = df['high'].tail(14)
-                lows = df['low'].tail(14)
-                closes = df['close'].tail(15)  # Need one extra for previous close
+            if len(df) >= 15:
+                highs = df['high'].tail(15).reset_index(drop=True)
+                lows = df['low'].tail(15).reset_index(drop=True)
+                closes = df['close'].tail(15).reset_index(drop=True)
 
                 true_ranges = []
-                for i in range(1, 15):
+                for i in range(1, 15):  # 14 true range values using indices 1-14
                     tr = max(
                         highs.iloc[i] - lows.iloc[i],
                         abs(highs.iloc[i] - closes.iloc[i-1]),
@@ -899,27 +1018,6 @@ class SupportResistanceStructure(BaseStructure):
         fallback_atr = context.current_price * 0.01  # 1% of price
         logger.warning(f"S/R: {context.symbol} - Using emergency ATR fallback: {fallback_atr:.3f}")
         return fallback_atr
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-
-        # This should be enhanced with actual portfolio size and risk management
-        # For now, use basic calculation
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0  # Should be configurable
-
-        if risk_per_share > 0:
-            max_qty = int(max_risk_amount / risk_per_share)
-            # Ensure minimum viable position
-            qty = max(1, min(max_qty, 100))  # Min 1, max 100 shares
-        else:
-            qty = 1
-
-        notional = qty * entry_price
-
-        logger.debug(f"S/R: {context.symbol} - Position calc: risk/share {risk_per_share:.3f}, qty {qty}, notional {notional:.2f}")
-
-        return qty, notional
 
     def _calculate_institutional_strength(self, context: MarketContext, sr_info: 'SupportResistanceLevels',
                                         setup_type: str, side: str, volume_confirmed: bool) -> float:
@@ -1001,3 +1099,40 @@ class SupportResistanceStructure(BaseStructure):
         except Exception as e:
             logger.error(f"S/R: Error calculating institutional strength: {e}")
             return 1.8  # Safe fallback below regime threshold
+
+    def _check_support_bounce_candle_conviction(self, df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        Candle conviction for support bounce long.
+
+        Requirements for valid bounce:
+        - Close in TOP 30% of bar range (close_position > 0.7)
+        - Not a doji (bar_range > 0)
+        - Shows buyers taking control after testing support
+
+        Returns (is_valid, rejection_reason)
+        """
+        try:
+            if len(df) < 1:
+                return True, ""
+
+            current_bar = df.iloc[-1]
+            bar_high = float(current_bar['high'])
+            bar_low = float(current_bar['low'])
+            bar_close = float(current_bar['close'])
+
+            bar_range = bar_high - bar_low
+
+            if bar_range < 1e-9:  # Doji = no conviction
+                return False, "Doji candle at support (no conviction)"
+
+            close_position = (bar_close - bar_low) / bar_range
+
+            # Support bounce needs close in TOP 30% (position > 0.7)
+            if close_position < 0.7:
+                return False, f"Weak bounce (close at {close_position*100:.0f}% of range, need >70%)"
+
+            return True, ""
+
+        except Exception as e:
+            logger.warning(f"S/R: Error checking candle conviction: {e}")
+            return True, ""  # Be lenient on error

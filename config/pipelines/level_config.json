@@ -1,0 +1,534 @@
+{
+    "_comment": "LEVEL Pipeline Configuration - All values from configuration.json and pro Indian trading standards",
+    "_category": "LEVEL",
+    "_description": "Bounce/rejection at key price levels (support, resistance, VWAP, premium/discount zones)",
+
+    "setup_types": [
+        "support_bounce_long", "support_bounce_short",
+        "resistance_bounce_long", "resistance_bounce_short",
+        "range_bounce_long", "range_bounce_short",
+        "range_rejection_long", "range_rejection_short",
+        "vwap_reclaim_long", "vwap_reclaim_short",
+        "vwap_lose_long", "vwap_lose_short",
+        "premium_zone_long", "premium_zone_short",
+        "discount_zone_long", "discount_zone_short",
+        "orb_pullback_long", "orb_pullback_short",
+        "order_block_long", "order_block_short"
+    ],
+
+    "screening": {
+        "time_windows": {
+            "_comment": "From configuration.json time_policy - NSE trading hours with opening bell for ICT setups",
+            "morning_start": "09:15",
+            "morning_end": "12:00",
+            "lunch_block_start": "12:00",
+            "lunch_block_end": "13:00",
+            "afternoon_start": "13:00",
+            "afternoon_end": "14:45",
+            "last_entry_cutoff": "14:45",
+            "opening_bell_start": "09:15",
+            "opening_bell_end": "09:30"
+        },
+        "level_proximity": {
+            "_comment": "From configuration.json support_bounce_long - max_level_distance_pct: 2.0",
+            "max_distance_atr": 1.5,
+            "max_distance_pct": 2.0
+        },
+        "min_bars_required": 2
+    },
+
+    "quality": {
+        "_comment": "ALIGNED TO BASELINE: min_t1_rr: 1.2 from configuration.json",
+        "min_structural_rr": 1.2,
+        "acceptance": {
+            "_comment": "From configuration.json support_bounce_long - bounce_tolerance_pct: 0.8",
+            "bars": 2,
+            "retest_bpct": 0.8,
+            "need_vwap_hold": false
+        },
+        "quality_thresholds": {
+            "excellent": {
+                "retest_score": 0.9,
+                "hold_score": 0.9
+            },
+            "good": {
+                "retest_score": 0.5,
+                "hold_score": 0.5
+            },
+            "fair": {
+                "retest_score": 0.5,
+                "hold_score": 0.0
+            }
+        },
+        "proximity_bonus": {
+            "max_bonus": 1.0,
+            "decay_per_atr": 0.2,
+            "floor": 0.5
+        },
+        "quality_multiplier": 2.0
+    },
+
+    "gates": {
+        "_comment": "From configuration.json - min_volume_mult: 1.5 for support_bounce, order_block",
+        "regime_rules": {
+            "chop": {
+                "allowed": true,
+                "size_mult": 1.2
+            },
+            "trend_up": {
+                "_comment": "REVERTED: counter_trend_size_mult 0.5→0.7 as 0.5 killed resistance_bounce_short (+2,569 Rs)",
+                "allowed": true,
+                "size_mult": 1.0,
+                "min_strength_counter_trend": 2.0,
+                "counter_trend_size_mult": 0.7
+            },
+            "trend_down": {
+                "_comment": "REVERTED: counter_trend_size_mult 0.5→0.7 to restore profitable level setups",
+                "allowed": true,
+                "size_mult": 1.0,
+                "min_strength_counter_trend": 2.0,
+                "counter_trend_size_mult": 0.7
+            },
+            "squeeze": {
+                "allowed": true,
+                "size_mult": 1.1
+            }
+        },
+        "volume_confirmation": {
+            "_comment": "From configuration.json - support_bounce min_volume_mult: 1.5",
+            "threshold": 1.5,
+            "bonus_mult": 1.1
+        },
+        "adx": {
+            "_comment": "From configuration.json - vwap_min_adx: 8.0, adx_min_strength: 15",
+            "high_adx_threshold": 35,
+            "high_adx_size_mult": 0.9,
+            "min_adx_for_vwap": 8.0
+        },
+        "level_touch": {
+            "_comment": "From configuration.json - support_bounce_long",
+            "min_touches": 2,
+            "min_level_age_bars": 5,
+            "level_merge_tolerance_pct": 0.3
+        },
+        "setup_filters": {
+            "_comment": "3-YEAR OPTIMIZED FILTERS (Dec 2024): Analyzed 4,604 triggered trades, 732 trading days",
+            "_active_profile": "3YEAR_OPTIMIZED",
+            "_analysis_date": "2024-12-27",
+            "orb_pullback_long": {
+                "enabled": true,
+                "allowed_regimes": ["chop"],
+                "allowed_caps": ["mid_cap"],
+                "max_adx": 25,
+                "_filter": "chop regime only, mid_cap only, ADX < 25",
+                "_evidence": "3YR: 98 triggered trades. Filter: chop+mid_cap+ADX<25. Target: SL 1.0x, T1 2.0R -> NET Rs 29,929 (56.1% WR)."
+            },
+            "orb_pullback_short": {
+                "enabled": true,
+                "blocked_regimes": ["trend_up"],
+                "allowed_caps": ["small_cap", "micro_cap"],
+                "min_rank_score": 0,
+                "_filter": "Block trend_up, small/micro cap only, rank >= 0",
+                "_evidence": "3YR: 694 triggered trades. Filter: !trend_up+small/micro+rank>=0. Target: SL 1.5x, T1 1.75R -> NET Rs 281,102 (65.3% WR)."
+            },
+            "support_bounce_long": {
+                "enabled": true,
+                "max_adx": 15,
+                "allowed_caps": ["large_cap"],
+                "allowed_regimes": ["trend_up", "squeeze"],
+                "max_rank_score": 1.5,
+                "_filter": "ADX <= 15, large_cap, trend_up/squeeze, rank < 1.5 + candlestick confirmation",
+                "_evidence": "3YR: 185 trades, Net Rs 40,274 (Avg Rs 218). Blocked chop/trend_down, small_cap, high rank scores."
+            },
+            "range_bounce_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_filter": "DISABLED - not salvageable",
+                "_evidence": "3YR: 118 trades, Rs -32,291 net (-274 avg). ALL regimes negative. Only micro_cap (10 trades) profitable. Not enough volume to salvage."
+            },
+            "discount_zone_long": {
+                "enabled": true,
+                "min_rank_score": 1.5,
+                "allowed_regimes": ["trend_up"],
+                "_evidence": "Keep existing - not enough trades for reanalysis"
+            },
+            "vwap_lose_short": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "Keep existing - negative expectancy"
+            },
+            "resistance_bounce_short": {
+                "enabled": true,
+                "allowed_caps": ["micro_cap", "small_cap"],
+                "min_rank_score": 1.4,
+                "min_adx": 20,
+                "max_rsi": 70,
+                "allowed_hours": [11, 12, 13, 14, 15],
+                "blocked_regimes": ["trend_up"],
+                "_filter": "micro/small_cap + rank>=1.4 + ADX>=20 + RSI<=70 + Hour>=11 + block trend_up",
+                "_evidence": "3YR VERIFIED + OLD FILTERS. Hour>=11 + block trend_up adds +Rs 20,950 on top of existing filters."
+            },
+            "range_bounce_short": {
+                "enabled": true,
+                "allowed_caps": ["micro_cap", "small_cap"],
+                "min_rank_score": 1.5,
+                "min_rsi": 40,
+                "max_rsi": 70,
+                "_filter": "micro_cap + small_cap + rank >= 1.5 + RSI 40-70",
+                "_evidence": "3YR: 1,113 trades Rs 285,838 (Rs 257 avg). Keep existing filters."
+            },
+            "premium_zone_short": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_filter": "DISABLED - not salvageable",
+                "_evidence": "3YR: 183 trades, Rs -31,436 net (-172 avg). Only Hour 10 (4 trades) and Hour 13 (35 trades) marginally positive. Not enough to justify."
+            },
+            "order_block_short": {
+                "enabled": true,
+                "_evidence": "Keep existing - profitable (Rs 425 avg on 13 trades)"
+            },
+            "order_block_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "Keep existing - negative expectancy"
+            }
+        },
+        "global_filters": {
+            "_comment": "Global filters that apply to all setups in this pipeline",
+            "short_min_adx": {
+                "enabled": false,
+                "min_adx": 18,
+                "_evidence": "ADX < 15 = 0% WR. ADX 20-25 = 62% WR. Min 18 catches weak trends."
+            },
+            "long_min_volume": {
+                "enabled": false,
+                "min_volume": 150000,
+                "_evidence": "Winners have 2x volume (213k vs 107k)."
+            },
+            "rsi_dead_zone": {
+                "enabled": false,
+                "long_min": 35,
+                "long_max": 50,
+                "_comment": "Disabled for LEVEL - handled by setup-specific RSI filters"
+            }
+        },
+        "vwap_freshness": {
+            "_comment": "Parameters for fresh reclaim/lose detection",
+            "reclaim_lookback_bars": 12,
+            "max_bars_above_for_reclaim": 8,
+            "lose_lookback_bars": 12,
+            "max_bars_below_for_lose": 8
+        },
+        "vwap_volume": {
+            "_comment": "DATA-DRIVEN (Dec 2024): VWAP vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs improvement",
+            "min_volume": 50000,
+            "_evidence": "Low volume VWAP trades have poor execution and high slippage. Blocking vol<50k improves P&L by +2,675 Rs"
+        },
+        "specialized_filters": {
+            "_comment": "Specialized filters that require complex logic (BB width). These are handled separately in pipeline code.",
+            "resistance_bounce_short_bb_width": {
+                "enabled": true,
+                "max_bb_width": 0.10,
+                "_evidence": "Dec 2024 analysis: bb_width<=0.10 reduces hard_sl from 35%→28%"
+            }
+        },
+        "long_specific_filters": {
+            "_comment": "DATA-DRIVEN (Dec 2024): Filters specific to long trades based on winner/loser analysis",
+            "rsi_max": {
+                "threshold": 65,
+                "_evidence": "RSI>=70: 9.3% WR (7W/75T). RSI<60: 16.4% WR (32W/195T). High RSI = chasing exhausted moves."
+            },
+            "entry_time_cutoff": {
+                "last_entry_hour": 11,
+                "last_entry_minute": 30,
+                "_evidence": "09:15-11:00: 19% WR. 11:00-12:00: 11% WR. 13:00+: 7.7% WR. After 14:00: 0% WR."
+            },
+            "squeeze_regime_boost": {
+                "size_mult": 1.3,
+                "_evidence": "55.6% of winning longs came from squeeze regime vs only 20% from trend_up."
+            },
+            "max_hold_minutes": {
+                "enabled": true,
+                "limit": 120,
+                "_evidence": "Pro traders hold 30-90 min max. After 2 hours, momentum fades. Time-based exit if no T1 hit."
+            }
+        }
+    },
+
+    "ranking": {
+        "_comment": "LEVEL-SPECIFIC RANKING (Dec 2024) - Pro trader research: low ADX, extreme RSI, counter-VWAP acceptable for bounces",
+        "mode": "level_specific",
+        "score_scale": 5.0,
+        "_score_scale_note": "Multiplier to scale weighted sum back to usable range (~0-5). Weighted sum alone produces ~0.17 mean.",
+        "weights": {
+            "volume": {
+                "_comment": "REDUCED weight for level plays - structure matters more than volume",
+                "divisor": 3.0,
+                "cap": 1.5,
+                "weight": 0.10
+            },
+            "rsi": {
+                "_comment": "INVERTED: Extreme RSI = GOOD for bounces (oversold for long, overbought for short)",
+                "mode": "extreme_is_good",
+                "long_oversold_threshold": 40,
+                "long_very_oversold_threshold": 30,
+                "long_overbought_penalty_threshold": 65,
+                "short_overbought_threshold": 60,
+                "short_very_overbought_threshold": 70,
+                "short_oversold_penalty_threshold": 35,
+                "extreme_bonus": 0.5,
+                "good_bonus": 0.3,
+                "penalty": -0.3,
+                "weight": 0.20
+            },
+            "adx": {
+                "_comment": "INVERTED: Low ADX = GOOD for bounces (ranging market, levels respected)",
+                "mode": "low_is_good",
+                "ideal_max": 20,
+                "acceptable_max": 25,
+                "penalty_threshold": 35,
+                "ideal_bonus": 0.4,
+                "acceptable_bonus": 0.2,
+                "penalty": -0.3,
+                "weight": 0.25
+            },
+            "vwap": {
+                "_comment": "RELAXED: Counter-VWAP acceptable for reversal setups",
+                "mode": "counter_allowed",
+                "aligned_bonus": 0.2,
+                "counter_bonus": 0.1,
+                "weight": 0.10
+            },
+            "distance": {
+                "_comment": "KEEP HIGH WEIGHT: Near level = critical for bounce setups",
+                "near_bpct": 0.5,
+                "near_score": 0.4,
+                "ok_bpct": 1.5,
+                "ok_score": 0.2,
+                "far_score": -0.1,
+                "weight": 0.25
+            },
+            "squeeze": {
+                "_comment": "Low squeeze = good for level plays (ranging, levels respected)",
+                "low_bonus": 0.3,
+                "mid_bonus": 0.2,
+                "high_penalty": -0.2,
+                "weight": 0.10
+            },
+            "acceptance": {
+                "_comment": "Quality bonus for LEVEL trades - excellent/good quality get ranking boost",
+                "enabled": true,
+                "excellent_bonus": 0.4,
+                "good_bonus": 0.2,
+                "weight": 0.10
+            }
+        },
+        "daily_trend_multipliers": {
+            "aligned": 1.25,
+            "counter": 0.75,
+            "neutral": 1.0
+        },
+        "regime_multipliers": {
+            "_comment": "Default fallback multipliers",
+            "chop": 1.3,
+            "squeeze": 1.2,
+            "trend_up": 1.0,
+            "trend_down": 1.0
+        },
+        "strategy_regime_multipliers": {
+            "_comment": "From baseline ranker.py _get_regime_multiplier() - Strategy-specific overrides for LEVEL setups",
+            "support_bounce": {
+                "chop": 1.3,
+                "squeeze": 1.2,
+                "trend_up": 1.0,
+                "trend_down": 1.0,
+                "default": 1.0
+            },
+            "resistance_bounce": {
+                "chop": 1.3,
+                "squeeze": 1.2,
+                "trend_up": 1.0,
+                "trend_down": 1.0,
+                "default": 1.0
+            },
+            "vwap_reclaim": {
+                "_comment": "VWAP strategies similar to mean reversion - chop boost",
+                "chop": 1.3,
+                "squeeze": 1.2,
+                "trend_up": 1.2,
+                "trend_down": 1.2,
+                "default": 1.2
+            },
+            "vwap_lose": {
+                "chop": 1.3,
+                "squeeze": 1.2,
+                "trend_up": 1.2,
+                "trend_down": 1.2,
+                "default": 1.2
+            },
+            "premium_zone": {
+                "_comment": "From baseline: chop=1.3, trend=0.9 - premium/discount zones work best in ranging",
+                "chop": 1.3,
+                "squeeze": 1.2,
+                "trend_up": 0.9,
+                "trend_down": 0.9,
+                "default": 1.0
+            },
+            "discount_zone": {
+                "_comment": "From baseline: chop=1.3, trend=0.9 - premium/discount zones work best in ranging",
+                "chop": 1.3,
+                "squeeze": 1.2,
+                "trend_up": 0.9,
+                "trend_down": 0.9,
+                "default": 1.0
+            },
+            "orb_pullback": {
+                "chop": 1.1,
+                "squeeze": 1.0,
+                "trend_up": 1.1,
+                "trend_down": 1.1,
+                "default": 1.0
+            },
+            "order_block": {
+                "_comment": "From baseline: trend=1.2, chop=1.1 - order blocks work in all conditions",
+                "trend_up": 1.2,
+                "trend_down": 1.2,
+                "chop": 1.1,
+                "squeeze": 1.1,
+                "default": 1.0
+            }
+        }
+    },
+
+    "entry": {
+        "_comment": "WIDENED (Dec 2024): zone_mult_atr 0.3->0.5, min_zone_pct 0.25->0.30. Zero-trigger setups had 0.10-0.20% zones.",
+        "zone_mult_atr": 0.5,
+        "min_zone_pct": 0.30,
+        "mode": {
+            "pullback": "retest",
+            "retest": "retest",
+            "default": "conditional"
+        },
+        "triggers": {
+            "vwap": "vwap_level",
+            "premium_zone": "zone_entry",
+            "discount_zone": "zone_entry",
+            "default": "level_bounce"
+        },
+        "ict_zones": {
+            "_comment": "From configuration.json ict_comprehensive - premium_threshold_pct: 70, discount_threshold_pct: 30",
+            "discount_zone_frac": 0.30,
+            "premium_zone_frac": 0.70
+        },
+        "retest_timeout_minutes": 45
+    },
+
+    "targets": {
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific targets optimized via 1m backtest simulation",
+        "rr_ratios": {
+            "support_bounce_long": {
+                "_comment": "OPTIMIZED Dec 2024: T1 1.0R + SL 0.9x. Tighter targets = 79% hit rate. +Rs 9.15L improvement over 3yr",
+                "t1": 1.0,
+                "t2": 1.25,
+                "t3": 1.5
+            },
+            "resistance_bounce_short": {
+                "_comment": "OPTIMIZED Dec 2024: T1 3.0R + SL 1.5x. Wider targets = let winners run. +Rs 5.12L improvement over 3yr",
+                "t1": 3.0,
+                "t2": 3.5,
+                "t3": 4.0
+            },
+            "range_bounce_short": {
+                "_comment": "OPTIMIZED Dec 2024: T1 3.0R + SL 1.5x. Wider targets = let winners run. +Rs 4.83L improvement over 3yr",
+                "t1": 3.0,
+                "t2": 3.5,
+                "t3": 4.0
+            },
+            "orb_pullback_long": {
+                "_comment": "OPTIMIZED Dec 2024: SL 1.0x, T1 2.0R. 98 filtered trades -> NET Rs 29,929 (56.1% WR). +Rs 19K improvement.",
+                "t1": 2.0,
+                "t2": 2.5,
+                "t3": 3.0
+            },
+            "orb_pullback_short": {
+                "_comment": "OPTIMIZED Dec 2024: SL 1.5x, T1 1.75R. 694 filtered trades -> NET Rs 281,102 (65.3% WR). +Rs 215K improvement.",
+                "t1": 1.75,
+                "t2": 2.25,
+                "t3": 2.75
+            },
+            "long": {
+                "_comment": "Default for other long setups: T1 1.0R (tighter targets work better for longs)",
+                "t1": 1.0,
+                "t2": 1.5,
+                "t3": 2.0
+            },
+            "short": {
+                "_comment": "Default for other short setups: T1 1.5R",
+                "t1": 1.5,
+                "t2": 2.5,
+                "t3": 3.0
+            },
+            "t1": 1.5,
+            "t2": 2.5,
+            "t3": 3.0
+        },
+        "qty_splits": {
+            "_comment": "60-40 split to match OLD config - T3 disabled (0%)",
+            "t1": 0.60,
+            "t2": 0.40,
+            "t3": 0.0
+        },
+        "caps": {
+            "_comment": "FIXED: max_pct was 1.0 (1%) - way too restrictive! Old config uses 100%. Targets need to reach 2-3R for positive expectancy.",
+            "t1": {
+                "measured_move_frac": 2.0,
+                "max_pct": 100.0
+            },
+            "t2": {
+                "measured_move_frac": 3.0,
+                "max_pct": 100.0
+            },
+            "t3": {
+                "measured_move_frac": 4.0,
+                "max_pct": 100.0
+            }
+        },
+        "trail": {
+            "after_t1": {
+                "move_sl_to": "entry",
+                "offset_atr": 0.05
+            },
+            "after_t2": {
+                "move_sl_to": "t1",
+                "offset_atr": 0.0
+            }
+        }
+    },
+
+    "stop_loss": {
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific SL optimized via 1m backtest simulation",
+        "atr_multiplier": 2.0,
+        "min_stop_distance_pct": 0.5,
+        "setup_specific": {
+            "support_bounce_long": {
+                "atr_multiplier": 1.8,
+                "_comment": "OPTIMIZED Dec 2024: 0.9x tighter SL (2.0→1.8 ATR). Tighter SL + T1 1.0R = +Rs 9.15L over 3yr"
+            },
+            "resistance_bounce_short": {
+                "atr_multiplier": 3.0,
+                "_comment": "OPTIMIZED Dec 2024: 1.5x wider SL (2.0→3.0 ATR). More room + T1 3.0R = +Rs 5.12L over 3yr"
+            },
+            "range_bounce_short": {
+                "atr_multiplier": 3.0,
+                "_comment": "OPTIMIZED Dec 2024: 1.5x wider SL (2.0→3.0 ATR). More room + T1 3.0R = +Rs 4.83L over 3yr"
+            }
+        }
+    },
+
+    "rsi_penalty": {
+        "_comment": "LEVEL: Penalize extreme RSI (price may overshoot level)",
+        "extreme_high": 75,
+        "extreme_low": 25,
+        "penalty_mult": 0.9
+    }
+}

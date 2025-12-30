@@ -75,18 +75,17 @@ class FeatherTicker:
     # ---------------- Internals ----------------
     def _build_timeline(self):
         assert self._data is not None and len(self._data) > 0
-        # Use the first symbol's minute grid (all equities share the same 1-min grid)
-        first_sym = next(iter(self._data.keys()))
-        df0 = self._data[first_sym]
-        if "date" not in df0.columns and not isinstance(df0.index, pd.DatetimeIndex):
-            raise ValueError("FeatherTicker: expected 'date' column or DatetimeIndex")
-        # We will index each DF by 'date' for fast lookup per minute.
+        # CRITICAL FIX: Build timeline from UNION of all symbols' timestamps
+        # Using only first symbol misses early data for illiquid stocks that start trading later
+        # We need all timestamps to ensure ORB period (09:15-09:30) data is included
+        all_timestamps = set()
         for sym, df in self._data.items():
             if "date" in df.columns:
                 self._data[sym] = df.set_index("date", drop=True)
             elif not isinstance(df.index, pd.DatetimeIndex):
                 raise ValueError(f"FeatherTicker: {sym} has no time index/column")
-        self._timeline = sorted(self._data[first_sym].index.unique().tolist())
+            all_timestamps.update(self._data[sym].index.unique().tolist())
+        self._timeline = sorted(all_timestamps)
 
     def _run(self):
         try:

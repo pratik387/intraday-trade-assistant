@@ -87,14 +87,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run all 6 regimes with 50 parallel pods
-  python oci/tools/submit_regime_backtest.py --max-parallel 50
+  # Run all 6 regimes with auto node scaling
+  python oci/tools/submit_regime_backtest.py --nodes 4 --max-parallel 50
 
   # Run specific regimes only
-  python oci/tools/submit_regime_backtest.py --regimes Strong_Uptrend Shock_Down --max-parallel 50
+  python oci/tools/submit_regime_backtest.py --regimes Strong_Uptrend Shock_Down --nodes 4 --max-parallel 50
 
   # Run without waiting for completion
-  python oci/tools/submit_regime_backtest.py --max-parallel 50 --no-wait
+  python oci/tools/submit_regime_backtest.py --nodes 4 --max-parallel 50 --no-wait
+
+  # Run without node scaling (assumes nodes already running)
+  python oci/tools/submit_regime_backtest.py --max-parallel 50
 
 Available regimes:
   Strong_Uptrend (Dec 2023)
@@ -111,6 +114,9 @@ Available regimes:
     parser.add_argument('--no-wait', action='store_true', help='Submit and exit without waiting')
     parser.add_argument('--max-parallel', type=int, default=50,
                         help='Max parallel pods (default: 50 for 100 OCPU limit)')
+    parser.add_argument('--nodes', type=int, default=None,
+                        help='Number of nodes to scale node pool to before starting (e.g., 4). '
+                             'If not specified, assumes nodes are already running.')
 
     args = parser.parse_args()
 
@@ -149,6 +155,12 @@ Available regimes:
 
     # Print summary
     submitter.print_summary(run_id, dates_only[0], dates_only[-1], len(dates_only), description)
+
+    # Scale up node pool if requested
+    if args.nodes is not None:
+        if not submitter.scale_up_nodepool(args.nodes):
+            print("Warning: Node pool scaling failed, but continuing anyway...")
+            print()
 
     # Package code
     tarball_path = submitter.package_code(run_id)

@@ -51,6 +51,9 @@ class TrendStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "trend"
 
+        # Track which specific setup type this detector is for (e.g., "trend_pullback_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Trend detection parameters
@@ -64,17 +67,34 @@ class TrendStructure(BaseStructure):
         self.min_volume_mult = config["min_volume_mult"]
         self.min_momentum_score = config["min_momentum_score"]
 
+        # PRO TRADER: Volume decline during pullback (healthy consolidation)
+        # All params required from config - no defaults
+        self.require_volume_decline = config["require_volume_decline"]
+        self.max_volume_mult_during_pullback = config["max_volume_mult_during_pullback"]
+
+        # PRO TRADER: RSI oversold/overbought for pullback entry (5paisa 80% WR strategy)
+        # All params required from config - no defaults
+        self.require_rsi_oversold = config["require_rsi_oversold"]
+        self.rsi_oversold_threshold = config["rsi_oversold_threshold"]
+        self.require_rsi_overbought = config["require_rsi_overbought"]
+        self.rsi_overbought_threshold = config["rsi_overbought_threshold"]
+
         # Risk management
         self.min_stop_distance_pct = config["min_stop_distance_pct"]
         self.stop_distance_mult = config["stop_distance_mult"]
         self.target_mult_t1 = config["target_mult_t1"]
         self.target_mult_t2 = config["target_mult_t2"]
 
+        # Stop loss parameters - Pro trader: SL at swing low/high + ATR buffer
+        self.swing_sl_buffer_atr = config["swing_sl_buffer_atr"]  # ATR buffer beyond swing level
+        self.swing_lookback_bars = config["swing_lookback_bars"]  # Bars to look back for swing
+
         # Confidence levels
         self.confidence_strong_trend = config["confidence_strong_trend"]
         self.confidence_weak_trend = config["confidence_weak_trend"]
 
         logger.debug(f"TREND: Initialized with min strength: {self.min_trend_strength}, pullback range: {self.min_pullback_pct}-{self.max_pullback_pct}%")
+        logger.debug(f"TREND: SL params - swing_buffer: {self.swing_sl_buffer_atr}ATR, lookback: {self.swing_lookback_bars} bars")
 
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -102,6 +122,13 @@ class TrendStructure(BaseStructure):
             continuation_events, continuation_quality = self._detect_trend_continuation(context, trend_info)
             events.extend(continuation_events)
             max_quality = max(max_quality, continuation_quality)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"TREND: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             structure_detected = len(events) > 0
             rejection_reason = None if structure_detected else "No trend setups detected"
@@ -235,10 +262,28 @@ class TrendStructure(BaseStructure):
             logger.debug(f"TREND: {context.symbol} - Pullback {trend_info.pullback_depth_pct:.1f}% outside range {self.min_pullback_pct}-{self.max_pullback_pct}%")
             return events, quality_score
 
-        # Check volume confirmation if required
+        # PRO TRADER: Check volume DECLINE during pullback (healthy consolidation)
         volume_ok = True
-        if self.require_volume_confirmation:
+        if self.require_volume_decline:
+            volume_ok = self._check_volume_decline(context)
+            if not volume_ok:
+                logger.debug(f"TREND: {context.symbol} - Volume decline check failed (volume too high during pullback)")
+                return events, quality_score
+        elif self.require_volume_confirmation:
             volume_ok = self._check_volume_confirmation(context)
+
+        # PRO TRADER: Check RSI oversold (long) / overbought (short)
+        rsi_ok = True
+        if trend_info.trend_direction == "up" and self.require_rsi_oversold:
+            rsi_ok = self._check_rsi_oversold(context)
+            if not rsi_ok:
+                logger.debug(f"TREND: {context.symbol} - RSI not oversold enough for long pullback")
+                return events, quality_score
+        elif trend_info.trend_direction == "down" and self.require_rsi_overbought:
+            rsi_ok = self._check_rsi_overbought(context)
+            if not rsi_ok:
+                logger.debug(f"TREND: {context.symbol} - RSI not overbought enough for short pullback")
+                return events, quality_score
 
         if volume_ok and trend_info.momentum_score >= self.min_momentum_score:
             if trend_info.trend_direction == "up":
@@ -334,6 +379,100 @@ class TrendStructure(BaseStructure):
         except Exception:
             return False
 
+    def _check_volume_decline(self, context: MarketContext) -> bool:
+        """PRO TRADER: Check if volume has DECLINED during pullback (healthy consolidation).
+
+        Healthy pullbacks have LOW volume - smart money accumulating quietly.
+        High volume pullbacks often indicate distribution or capitulation.
+        """
+        try:
+            df = context.df_5m
+            if 'vol_z' in df.columns:
+                current_vol_z = float(df['vol_z'].iloc[-1])
+                # Volume should be BELOW threshold (low volume = healthy consolidation)
+                is_low_volume = current_vol_z <= self.max_volume_mult_during_pullback
+                logger.debug(f"TREND: Volume decline check - vol_z={current_vol_z:.2f}, threshold={self.max_volume_mult_during_pullback}, pass={is_low_volume}")
+                return is_low_volume
+
+            # Fallback: calculate volume ratio
+            if len(df) >= 20:
+                current_volume = df['volume'].iloc[-1]
+                avg_volume = df['volume'].tail(20).mean()
+                if avg_volume > 0:
+                    volume_ratio = current_volume / avg_volume
+                    return volume_ratio <= self.max_volume_mult_during_pullback
+
+            return True  # Default to true if can't calculate
+        except Exception as e:
+            logger.debug(f"TREND: Volume decline check error: {e}")
+            return True
+
+    def _check_rsi_oversold(self, context: MarketContext) -> bool:
+        """PRO TRADER (5paisa 80% WR): Check if RSI is oversold in uptrend context.
+
+        RSI < threshold while price is in uptrend = buying opportunity.
+        This catches dips in strong trends.
+        """
+        try:
+            df = context.df_5m
+            rsi_value = None
+
+            # Try various RSI column names
+            for col in ['rsi14', 'rsi', 'RSI', 'rsi_14']:
+                if col in df.columns:
+                    rsi_value = float(df[col].iloc[-1])
+                    break
+
+            if rsi_value is None and context.indicators:
+                for key in ['rsi14', 'rsi', 'RSI']:
+                    if key in context.indicators:
+                        rsi_value = context.indicators[key]
+                        break
+
+            if rsi_value is not None:
+                is_oversold = rsi_value <= self.rsi_oversold_threshold
+                logger.debug(f"TREND: RSI oversold check - RSI={rsi_value:.1f}, threshold={self.rsi_oversold_threshold}, pass={is_oversold}")
+                return is_oversold
+
+            logger.debug(f"TREND: RSI data not available, skipping RSI check")
+            return True  # Default to true if RSI not available
+        except Exception as e:
+            logger.debug(f"TREND: RSI oversold check error: {e}")
+            return True
+
+    def _check_rsi_overbought(self, context: MarketContext) -> bool:
+        """PRO TRADER: Check if RSI is overbought in downtrend context.
+
+        RSI > threshold while price is in downtrend = shorting opportunity.
+        This catches bounces in strong downtrends.
+        """
+        try:
+            df = context.df_5m
+            rsi_value = None
+
+            # Try various RSI column names
+            for col in ['rsi14', 'rsi', 'RSI', 'rsi_14']:
+                if col in df.columns:
+                    rsi_value = float(df[col].iloc[-1])
+                    break
+
+            if rsi_value is None and context.indicators:
+                for key in ['rsi14', 'rsi', 'RSI']:
+                    if key in context.indicators:
+                        rsi_value = context.indicators[key]
+                        break
+
+            if rsi_value is not None:
+                is_overbought = rsi_value >= self.rsi_overbought_threshold
+                logger.debug(f"TREND: RSI overbought check - RSI={rsi_value:.1f}, threshold={self.rsi_overbought_threshold}, pass={is_overbought}")
+                return is_overbought
+
+            logger.debug(f"TREND: RSI data not available, skipping RSI check")
+            return True  # Default to true if RSI not available
+        except Exception as e:
+            logger.debug(f"TREND: RSI overbought check error: {e}")
+            return True
+
     def plan_long_strategy(self, context: MarketContext, event: StructureEvent) -> TradePlan:
         """Plan long strategy for trend setups."""
         return self._plan_strategy(context, event, "long")
@@ -347,7 +486,7 @@ class TrendStructure(BaseStructure):
         entry_price = context.current_price
         risk_params = self.calculate_risk_params(context, event, side)
         exit_levels = self.get_exit_levels(context, event, side)
-        qty, notional = self._calculate_position_size(entry_price, risk_params.hard_sl, context)
+        qty, notional = 0, 0.0  # Pipeline overrides with proper sizing
 
         return TradePlan(
             symbol=context.symbol,
@@ -367,20 +506,43 @@ class TrendStructure(BaseStructure):
         )
 
     def calculate_risk_params(self, context: MarketContext, event: StructureEvent, side: str) -> RiskParams:
-        """Calculate risk parameters for trend strategies."""
+        """Calculate risk parameters for trend strategies using pro trader swing-based SL.
+
+        Pro trader approach: SL at recent swing low/high + ATR buffer.
+        For trend trades, the swing point is the logical invalidation point.
+        """
         entry_price = context.current_price
         atr = self._get_atr(context)
+        df = context.df_5m
 
-        if side == "long":
-            atr_stop = entry_price - (atr * self.stop_distance_mult)
-            min_stop = entry_price * (1 - self.min_stop_distance_pct / 100)
-            hard_sl = min(atr_stop, min_stop)
+        # Find recent swing low/high for SL placement
+        if len(df) >= self.swing_lookback_bars:
+            lookback_df = df.tail(self.swing_lookback_bars)
+
+            if side == "long":
+                # Long: SL below recent swing low + ATR buffer
+                swing_low = float(lookback_df['low'].min())
+                hard_sl = swing_low - (atr * self.swing_sl_buffer_atr)
+            else:
+                # Short: SL above recent swing high + ATR buffer
+                swing_high = float(lookback_df['high'].max())
+                hard_sl = swing_high + (atr * self.swing_sl_buffer_atr)
         else:
-            atr_stop = entry_price + (atr * self.stop_distance_mult)
-            min_stop = entry_price * (1 + self.min_stop_distance_pct / 100)
-            hard_sl = max(atr_stop, min_stop)
+            # Fallback to ATR-based stops if not enough data
+            if side == "long":
+                hard_sl = entry_price - (atr * self.stop_distance_mult)
+            else:
+                hard_sl = entry_price + (atr * self.stop_distance_mult)
 
+        # Enforce minimum stop distance
+        min_stop_distance = entry_price * (self.min_stop_distance_pct / 100.0)
         risk_per_share = abs(entry_price - hard_sl)
+        if risk_per_share < min_stop_distance:
+            if side == "long":
+                hard_sl = entry_price - min_stop_distance
+            else:
+                hard_sl = entry_price + min_stop_distance
+            risk_per_share = min_stop_distance
 
         return RiskParams(
             hard_sl=hard_sl,
@@ -463,20 +625,6 @@ class TrendStructure(BaseStructure):
             pass
 
         return context.current_price * 0.01  # 1% fallback
-
-    def _calculate_position_size(self, entry_price: float, stop_loss: float, context: MarketContext) -> Tuple[int, float]:
-        """Calculate position size based on risk management."""
-        risk_per_share = abs(entry_price - stop_loss)
-        max_risk_amount = 1000.0
-
-        if risk_per_share > 0:
-            max_qty = int(max_risk_amount / risk_per_share)
-            qty = max(1, min(max_qty, 100))
-        else:
-            qty = 1
-
-        notional = qty * entry_price
-        return qty, notional
 
     def _calculate_institutional_strength(self, context: MarketContext, trend_info: TrendInfo,
                                         setup_type: str, side: str, volume_confirmed: bool) -> float:
