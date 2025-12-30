@@ -58,3 +58,13 @@ analysis/
 aws/lambda/pure-python-layer/
 cloud_results/
 ta-lib/
+*analytics.jsonl
+*events_decisions.jsonl
+*events.jsonl
+*performance.json
+*planning.jsonl
+*ranking.jsonl
+*scanning.jsonl
+*screening.jsonl
+temp/*
+nul

@@ -32,6 +32,137 @@ from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
+# ============================================================================
+# ZERODHA INTRADAY EQUITY CHARGES
+# ============================================================================
+BROKERAGE_PER_ORDER = 20  # Rs 20 per executed order (flat)
+STT_RATE = 0.00025  # 0.025% on SELL side only
+EXCHANGE_RATE = 0.0000345  # NSE charges ~0.00345%
+SEBI_RATE = 0.000001  # 0.0001%
+STAMP_DUTY_RATE = 0.00003  # 0.003% on BUY side
+GST_RATE = 0.18  # 18% on brokerage + exchange charges
+
+# ============================================================================
+# INCOME TAX ON SPECULATIVE BUSINESS INCOME
+# ============================================================================
+TAX_RATE = 0.30  # 30% (highest slab for speculative income)
+CESS_RATE = 0.04  # 4% health and education cess on tax
+
+# ============================================================================
+# MIS LEVERAGE (Zerodha Margin Intraday Square-off)
+# ============================================================================
+NRML_MARGIN_PCT = 0.50  # NRML margin is typically 50% for most stocks
+DEFAULT_MIS_MULTIPLIER = 2.0  # Default 2x leverage if MIS data unavailable
+
+
+def estimate_trade_charges(entry_price, exit_price, qty):
+    """
+    Estimate Zerodha intraday charges for a single trade.
+
+    Args:
+        entry_price: Entry price per share
+        exit_price: Exit price per share
+        qty: Number of shares
+
+    Returns:
+        Dict with charge breakdown
+    """
+    entry_turnover = entry_price * qty
+    exit_turnover = exit_price * qty
+    total_turnover = entry_turnover + exit_turnover
+
+    # 2 orders per trade (entry + exit)
+    brokerage = BROKERAGE_PER_ORDER * 2
+
+    # STT on sell side only
+    stt = exit_turnover * STT_RATE
+
+    # Exchange + SEBI on exit
+    exchange = exit_turnover * EXCHANGE_RATE
+    sebi = exit_turnover * SEBI_RATE
+
+    # Stamp duty on buy side
+    stamp_duty = entry_turnover * STAMP_DUTY_RATE
+
+    # GST on brokerage + exchange
+    gst = (brokerage + exchange) * GST_RATE
+
+    total_charges = brokerage + stt + exchange + gst + stamp_duty + sebi
+
+    return {
+        'brokerage': brokerage,
+        'stt': stt,
+        'exchange': exchange,
+        'gst': gst,
+        'stamp_duty': stamp_duty,
+        'sebi': sebi,
+        'total_charges': total_charges,
+        'turnover': total_turnover
+    }
+
+
+def calculate_income_tax(profit_after_fees):
+    """
+    Calculate income tax on trading profits.
+
+    For intraday trading, profits are classified as "Speculative Business Income"
+    and taxed at individual's applicable slab rate.
+    Uses highest slab (30%) for conservative estimate.
+    """
+    if profit_after_fees <= 0:
+        return {
+            'taxable_income': 0,
+            'base_tax': 0,
+            'cess': 0,
+            'total_tax': 0,
+            'net_after_tax': profit_after_fees
+        }
+
+    base_tax = profit_after_fees * TAX_RATE
+    cess = base_tax * CESS_RATE
+    total_tax = base_tax + cess
+
+    return {
+        'taxable_income': round(profit_after_fees, 2),
+        'base_tax': round(base_tax, 2),
+        'cess': round(cess, 2),
+        'total_tax': round(total_tax, 2),
+        'net_after_tax': round(profit_after_fees - total_tax, 2)
+    }
+
+
+def calculate_final_net_pnl(gross_pnl, total_charges, mis_multiplier=DEFAULT_MIS_MULTIPLIER):
+    """
+    Calculate FINAL NET P&L including MIS leverage, charges, and tax.
+
+    Formula:
+    1. Apply MIS leverage to gross PnL
+    2. Subtract trading charges
+    3. Apply income tax on profit
+
+    Returns:
+        Dict with full breakdown
+    """
+    # Step 1: Apply MIS leverage
+    gross_pnl_mis = gross_pnl * mis_multiplier
+
+    # Step 2: Subtract charges
+    net_after_charges = gross_pnl_mis - total_charges
+
+    # Step 3: Apply tax
+    tax_result = calculate_income_tax(net_after_charges)
+
+    return {
+        'gross_pnl': gross_pnl,
+        'mis_multiplier': mis_multiplier,
+        'gross_pnl_mis': gross_pnl_mis,
+        'total_charges': total_charges,
+        'net_after_charges': net_after_charges,
+        'tax': tax_result['total_tax'],
+        'final_net_pnl': tax_result['net_after_tax']
+    }
+
+
 class ComprehensiveRunAnalyzer:
     def __init__(self, run_prefix: str, logs_dir: str = "logs", ohlcv_cache_dir: str = "cache/ohlcv_archive"):
         self.run_prefix = run_prefix
@@ -302,7 +433,7 @@ class ComprehensiveRunAnalyzer:
             return None
 
     def analyze_setup_performance(self):
-        """Detailed analysis of setup performance"""
+        """Detailed analysis of setup performance with FINAL NET P&L"""
         if self.combined_trades.empty:
             return {}
 
@@ -315,19 +446,47 @@ class ComprehensiveRunAnalyzer:
             for setup, group in setup_groups:
                 if 'realized_pnl' in group.columns:
                     pnls = group['realized_pnl'].dropna()
+                    gross_pnl = pnls.sum()
+                    total_trades = len(group)
+
+                    # Calculate charges for this setup
+                    setup_charges = 0
+                    if 'entry_price' in group.columns and 'exit_price' in group.columns:
+                        for _, trade in group.iterrows():
+                            entry_price = trade.get('entry_price', 0)
+                            exit_price = trade.get('exit_price', 0)
+                            qty = trade.get('qty', 1)
+                            if entry_price > 0 and exit_price > 0 and qty > 0:
+                                charges = estimate_trade_charges(entry_price, exit_price, qty)
+                                setup_charges += charges['total_charges']
+                    else:
+                        # Fallback: estimate ~Rs 140 per trade
+                        setup_charges = total_trades * 140
+
+                    # Calculate FINAL NET P&L for this setup
+                    final_net_result = calculate_final_net_pnl(gross_pnl, setup_charges, DEFAULT_MIS_MULTIPLIER)
 
                     setup_analysis[setup] = {
-                        'total_trades': len(group),
+                        'total_trades': total_trades,
                         'winning_trades': len(pnls[pnls > 0]),
                         'losing_trades': len(pnls[pnls < 0]),
                         'breakeven_trades': len(pnls[pnls == 0]),
                         'win_rate': len(pnls[pnls > 0]) / len(pnls) * 100 if len(pnls) > 0 else 0,
-                        'total_pnl': pnls.sum(),
+                        # Gross P&L (legacy field)
+                        'total_pnl': gross_pnl,
                         'avg_pnl': pnls.mean(),
+                        # FINAL NET P&L (PRIMARY METRIC)
+                        'gross_pnl_mis': final_net_result['gross_pnl_mis'],
+                        'charges': setup_charges,
+                        'tax': final_net_result['tax'],
+                        'final_net_pnl': final_net_result['final_net_pnl'],
+                        'avg_final_net': final_net_result['final_net_pnl'] / total_trades if total_trades > 0 else 0,
+                        'profitable': final_net_result['final_net_pnl'] > 0,
+                        # Other metrics
                         'median_pnl': pnls.median(),
                         'best_trade': pnls.max(),
                         'worst_trade': pnls.min(),
-                        'profit_factor': pnls[pnls > 0].sum() / abs(pnls[pnls < 0].sum()) if pnls[pnls < 0].sum() != 0 else 999.99,  # Use 999.99 instead of infinity for JSON compatibility
+                        'profit_factor': pnls[pnls > 0].sum() / abs(pnls[pnls < 0].sum()) if pnls[pnls < 0].sum() != 0 else 999.99,
                         'avg_winner': pnls[pnls > 0].mean() if len(pnls[pnls > 0]) > 0 else 0,
                         'avg_loser': pnls[pnls < 0].mean() if len(pnls[pnls < 0]) > 0 else 0,
                     }
@@ -1764,12 +1923,49 @@ class ComprehensiveRunAnalyzer:
 
         # Step 4: Skip recommendations generation (analysis only)
 
-        # Step 6: Create performance summary
+        # Step 6: Create performance summary with FINAL NET P&L
         if 'realized_pnl' in self.combined_trades.columns:
             pnls = self.combined_trades['realized_pnl'].dropna()
+            gross_pnl = pnls.sum()
+            total_trades = len(self.combined_trades)
+
+            # Estimate total charges from trade data
+            total_charges = 0
+            if 'entry_price' in self.combined_trades.columns and 'exit_price' in self.combined_trades.columns:
+                for _, trade in self.combined_trades.iterrows():
+                    entry_price = trade.get('entry_price', 0)
+                    exit_price = trade.get('exit_price', 0)
+                    qty = trade.get('qty', 1)
+                    if entry_price > 0 and exit_price > 0 and qty > 0:
+                        charges = estimate_trade_charges(entry_price, exit_price, qty)
+                        total_charges += charges['total_charges']
+            else:
+                # Fallback: estimate ~Rs 140 per trade (typical for NSE equity)
+                total_charges = total_trades * 140
+
+            # Calculate FINAL NET P&L (MIS + charges + tax)
+            final_net_result = calculate_final_net_pnl(gross_pnl, total_charges, DEFAULT_MIS_MULTIPLIER)
+
             self.performance_summary = {
-                'total_trades': len(self.combined_trades),
-                'total_pnl': pnls.sum(),
+                'total_trades': total_trades,
+                # GROSS P&L (before any deductions)
+                'gross_pnl': gross_pnl,
+                # MIS-adjusted values
+                'mis_multiplier': final_net_result['mis_multiplier'],
+                'gross_pnl_mis': final_net_result['gross_pnl_mis'],
+                # Charges
+                'total_charges': total_charges,
+                'avg_charges_per_trade': total_charges / total_trades if total_trades > 0 else 0,
+                # Net after charges (before tax)
+                'net_after_charges': final_net_result['net_after_charges'],
+                # Tax
+                'tax': final_net_result['tax'],
+                # FINAL NET P&L (PRIMARY METRIC - after MIS + charges + tax)
+                'final_net_pnl': final_net_result['final_net_pnl'],
+                'avg_final_net_per_trade': final_net_result['final_net_pnl'] / total_trades if total_trades > 0 else 0,
+                # Legacy field for backward compatibility
+                'total_pnl': gross_pnl,
+                # Other metrics
                 'win_rate': len(pnls[pnls > 0]) / len(pnls) * 100 if len(pnls) > 0 else 0,
                 'avg_pnl_per_trade': pnls.mean(),
                 'best_trade': pnls.max(),
@@ -1786,22 +1982,36 @@ class ComprehensiveRunAnalyzer:
         return report_file
 
     def print_summary(self):
-        """Print analysis summary"""
+        """Print analysis summary with FINAL NET P&L as primary metric"""
         print("\n" + "=" * 60)
         print("ANALYSIS SUMMARY")
         print("=" * 60)
 
         if self.performance_summary:
-            print(f"Total Trades: {self.performance_summary['total_trades']}")
-            print(f"Total PnL: Rs.{self.performance_summary['total_pnl']:.2f}")
-            print(f"Win Rate: {self.performance_summary['win_rate']:.1f}%")
-            print(f"Average PnL/Trade: Rs.{self.performance_summary['avg_pnl_per_trade']:.2f}")
+            ps = self.performance_summary
+            print(f"Total Trades: {ps['total_trades']}")
+            print(f"\n--- P&L BREAKDOWN ---")
+            print(f"  Gross P&L (NRML):       Rs.{ps.get('gross_pnl', ps.get('total_pnl', 0)):>12,.2f}")
+            print(f"  MIS Leverage:           {ps.get('mis_multiplier', 2.0):>12.1f}x")
+            print(f"  Gross P&L (MIS):        Rs.{ps.get('gross_pnl_mis', ps.get('total_pnl', 0) * 2):>12,.2f}")
+            print(f"  Less: Charges:          Rs.{ps.get('total_charges', 0):>12,.2f}")
+            print(f"  Less: Tax (31.2%):      Rs.{ps.get('tax', 0):>12,.2f}")
+            print(f"  --------------------------------------")
+            print(f"  FINAL NET P&L:          Rs.{ps.get('final_net_pnl', 0):>12,.2f}")
+            print(f"\n  Avg Net per Trade:      Rs.{ps.get('avg_final_net_per_trade', 0):>12,.2f}")
+            print(f"  Win Rate:               {ps['win_rate']:>12.1f}%")
 
-        print(f"\nSETUP PERFORMANCE:")
+        print(f"\nSETUP PERFORMANCE (FINAL NET):")
         if self.setup_analysis:
-            setup_sorted = sorted(self.setup_analysis.items(), key=lambda x: x[1]['total_pnl'], reverse=True)
+            # Sort by FINAL NET P&L
+            setup_sorted = sorted(self.setup_analysis.items(),
+                                  key=lambda x: x[1].get('final_net_pnl', x[1].get('total_pnl', 0)),
+                                  reverse=True)
             for setup, data in setup_sorted[:5]:  # Top 5
-                print(f"  {setup}: Rs.{data['total_pnl']:.0f} ({data['win_rate']:.1f}% WR, {data['total_trades']} trades)")
+                final_net = data.get('final_net_pnl', data.get('total_pnl', 0))
+                avg_net = data.get('avg_final_net', data.get('avg_pnl', 0))
+                status = "[OK]" if data.get('profitable', final_net > 0) else "[X]"
+                print(f"  {status} {setup}: Rs.{final_net:,.0f} (Avg: Rs.{avg_net:.0f}, {data['win_rate']:.1f}% WR, {data['total_trades']} trades)")
 
         # Display regime performance
         print(f"\nREGIME PERFORMANCE:")
