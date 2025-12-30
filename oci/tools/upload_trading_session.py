@@ -48,6 +48,12 @@ BUCKETS = {
     "live": "live-trading-logs"
 }
 
+# Separate bucket for tick/sidecar data (market data, not logs)
+TICK_DATA_BUCKET = "trading-tick-data"
+
+# Sidecar data directory
+SIDECAR_DIR = ROOT / "data" / "sidecar"
+
 
 def get_mode_from_session(session_id: str) -> str:
     """Determine mode (paper/live) from session ID."""
@@ -56,6 +62,55 @@ def get_mode_from_session(session_id: str) -> str:
     elif session_id.startswith("live_"):
         return "live"
     return "paper"  # Default to paper
+
+
+def get_date_from_session(session_id: str) -> Optional[str]:
+    """
+    Extract date (YYYYMMDD) from session ID.
+
+    Example: paper_20251230_091500 -> 20251230
+    """
+    parts = session_id.split("_")
+    if len(parts) >= 2:
+        date_part = parts[1]
+        if len(date_part) == 8 and date_part.isdigit():
+            return date_part
+    return None
+
+
+def collect_sidecar_files(date_str: str) -> List[Tuple[Path, str]]:
+    """
+    Collect sidecar data files for a given date.
+
+    Returns list of (local_path, object_name) tuples.
+    """
+    files = []
+
+    if not SIDECAR_DIR.exists():
+        return files
+
+    # Sidecar subdirectories and their file patterns
+    patterns = [
+        ("ticks", f"ticks_{date_str}.parquet"),
+        ("bars", f"bars_{date_str}.feather"),
+        ("orb", f"orb_{date_str}.json"),
+        ("levels", f"daily_{date_str}.json"),
+    ]
+
+    for subdir, filename in patterns:
+        file_path = SIDECAR_DIR / subdir / filename
+        if file_path.exists():
+            object_name = f"sidecar/{subdir}/{filename}"
+            files.append((file_path, object_name))
+
+    # Also check for tick part files (in case of crash before finalize)
+    ticks_dir = SIDECAR_DIR / "ticks"
+    if ticks_dir.exists():
+        for part_file in ticks_dir.glob(f"ticks_{date_str}.part*.parquet"):
+            object_name = f"sidecar/ticks/{part_file.name}"
+            files.append((part_file, object_name))
+
+    return files
 
 
 def find_session_dir(session_arg: Optional[str]) -> Optional[Path]:
@@ -228,6 +283,10 @@ def upload_session(session_dir: Path, mode: str) -> bool:
     """
     Upload a trading session to OCI.
 
+    Uploads to separate buckets:
+    1. Session logs → paper-trading-logs / live-trading-logs
+    2. Tick data → trading-tick-data (separate bucket for market data)
+
     Args:
         session_dir: Path to session directory
         mode: "paper" or "live"
@@ -236,30 +295,64 @@ def upload_session(session_dir: Path, mode: str) -> bool:
         True if upload successful
     """
     session_id = session_dir.name
-    bucket = BUCKETS.get(mode, BUCKETS["paper"])
+    logs_bucket = BUCKETS.get(mode, BUCKETS["paper"])
+
+    # Extract date for sidecar files
+    date_str = get_date_from_session(session_id)
+    sidecar_files = collect_sidecar_files(date_str) if date_str else []
 
     print(f"\n{'='*60}")
     print(f"UPLOAD TRADING SESSION TO OCI")
     print(f"{'='*60}")
     print(f"Session: {session_id}")
     print(f"Mode: {mode}")
-    print(f"Bucket: {bucket}")
+    print(f"Logs bucket: {logs_bucket}")
+    if sidecar_files:
+        print(f"Tick data bucket: {TICK_DATA_BUCKET}")
+        print(f"Sidecar files: {len(sidecar_files)} (ticks, bars, ORB, levels)")
     print(f"{'='*60}")
 
     # Step 1: Run analyzer
     run_analyzer(session_dir)
 
-    # Step 2: Upload files
-    print(f"\n[2/2] Uploading to OCI...")
+    # Step 2: Upload session logs
+    print(f"\n[2/3] Uploading session logs to {logs_bucket}...")
 
     try:
-        uploader = SessionUploader(bucket)
-        uploaded, failed = uploader.upload_session(session_dir)
+        logs_uploader = SessionUploader(logs_bucket)
+        uploaded, failed = logs_uploader.upload_session(session_dir)
 
-        if uploaded > 0:
-            print(f"\n[OK] Uploaded {uploaded} files to oci://{bucket}/{session_id}/")
-            if failed > 0:
-                print(f"  [WARN] {failed} files failed to upload")
+        # Step 3: Upload sidecar data to separate bucket
+        sidecar_uploaded = 0
+        sidecar_failed = 0
+
+        if sidecar_files:
+            print(f"\n[3/3] Uploading tick data to {TICK_DATA_BUCKET}...")
+
+            tick_uploader = SessionUploader(TICK_DATA_BUCKET)
+
+            for local_path, object_name in sidecar_files:
+                # Use date as prefix (e.g., 2025-12-30/ticks/ticks_20251230.parquet)
+                date_formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+                full_object_name = f"{date_formatted}/{object_name}"
+                size_mb = local_path.stat().st_size / (1024 * 1024)
+                print(f"  Uploading {object_name} ({size_mb:.1f} MB)...")
+
+                if tick_uploader.upload_file(local_path, full_object_name):
+                    sidecar_uploaded += 1
+                else:
+                    sidecar_failed += 1
+
+        total_uploaded = uploaded + sidecar_uploaded
+        total_failed = failed + sidecar_failed
+
+        if total_uploaded > 0:
+            print(f"\n[OK] Upload complete:")
+            print(f"  - Logs: {uploaded} files → oci://{logs_bucket}/{session_id}/")
+            if sidecar_uploaded > 0:
+                print(f"  - Tick data: {sidecar_uploaded} files → oci://{TICK_DATA_BUCKET}/{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}/")
+            if total_failed > 0:
+                print(f"  [WARN] {total_failed} files failed to upload")
             return True
         else:
             print(f"\n[ERROR] No files uploaded")
