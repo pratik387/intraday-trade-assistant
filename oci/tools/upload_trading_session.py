@@ -20,16 +20,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+# Import OCI SDK BEFORE adding project root to path
+# (to avoid local oci/ folder shadowing the package)
+try:
+    import oci as oci_sdk
+    HAS_OCI = True
+except ImportError:
+    oci_sdk = None
+    HAS_OCI = False
+
 # Add project root to path
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-try:
-    import oci
-    HAS_OCI = True
-except ImportError:
-    HAS_OCI = False
 
 try:
     from config.logging_config import get_agent_logger
@@ -208,8 +211,8 @@ class SessionUploader:
             raise ImportError("OCI SDK not installed. Run: pip install oci")
 
         print("Initializing OCI client...")
-        self.config = oci.config.from_file()
-        self.os_client = oci.object_storage.ObjectStorageClient(self.config)
+        self.config = oci_sdk.config.from_file()
+        self.os_client = oci_sdk.object_storage.ObjectStorageClient(self.config)
         self.namespace = self.os_client.get_namespace().data
         print(f"Connected to OCI (namespace: {self.namespace})")
 
