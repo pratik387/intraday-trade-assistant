@@ -30,13 +30,14 @@ spec:
         image: bom.ocir.io/{{TENANCY_NAMESPACE}}/backtest-worker:latest
         imagePullPolicy: Always
 
-        # Resource limits (1.5 CPU, 12 GB RAM per pod)
-        # Increased memory from 8Gi to 12Gi due to OOMKills with recent code changes
-        # (ADX filter, structural RR updates, breakout momentum strategy)
+        # Resource limits (4 nodes: 20 OCPUs, 256GB)
+        # CPU: Request 0.5, limit 1.5 (burst)
+        # Memory: Request 4Gi (scheduling), limit 12Gi (OOM protection)
+        # Max pods: 256GB / 4Gi = 64 pods (was 21 with 12Gi request)
         resources:
           requests:
-            cpu: "1.5"
-            memory: "12Gi"
+            cpu: "1"
+            memory: "6Gi"
           limits:
             cpu: "1.5"
             memory: "12Gi"

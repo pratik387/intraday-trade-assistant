@@ -34,6 +34,10 @@ from services.execution.exit_executor import ExitExecutor
 from services.ingest.tick_router import register_tick_listener
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
+from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
+from services.state.daily_cache_persistence import DailyCachePersistence
+from pipelines.base_pipeline import set_base_config_override, load_base_config
+from services.health_server import get_health_server, SessionState
 
 # Dry-run adapter (patched MockBroker with LTP cache + Feather replay)
 from broker.mock.mock_broker import MockBroker
@@ -145,6 +149,203 @@ class _DryRunBroker:
     def get_ltp_batch(self, symbols):
         return self._real.get_ltp_batch(symbols)
 
+    @property
+    def _last_bar_ohlc(self):
+        """Delegate to underlying MockBroker's OHLC cache for T1/T2 detection."""
+        return self._real._last_bar_ohlc
+
+
+# ------------------------ Startup Recovery (Phase 4) ------------------------
+
+def _merge_persisted_state_into_plan(pers_pos) -> dict:
+    """
+    Merge PersistedPosition.state into plan["_state"] for proper recovery.
+
+    The exit_executor reads state from plan["_state"], but persistence stores
+    updates in a separate 'state' field. This merges them back together.
+    """
+    plan = dict(pers_pos.plan) if pers_pos.plan else {}
+    if pers_pos.state:
+        # Merge persisted state into plan's _state
+        plan_state = plan.get("_state", {})
+        plan_state.update(pers_pos.state)
+        plan["_state"] = plan_state
+    return plan
+
+
+def startup_recovery(
+    broker,
+    is_live_mode: bool,
+    is_paper_mode: bool,
+    log_dir,
+    position_store: _PositionStore,
+    trading_logger_instance=None
+) -> Optional[PositionPersistence]:
+    """
+    Recover position state on startup.
+
+    For live mode: Reconciles with broker positions
+    For paper mode: Validates positions against current price (SL/T1/T2 checks)
+    For dry-run (backtest): Returns None (no persistence needed)
+
+    Args:
+        broker: KiteBroker instance
+        is_live_mode: True if live trading
+        is_paper_mode: True if paper trading
+        log_dir: Directory for position snapshot
+        position_store: PositionStore to populate
+        trading_logger_instance: TradingLogger for phantom exit logging
+
+    Returns:
+        PositionPersistence instance (or None for backtests)
+    """
+    from pathlib import Path
+
+    # Backtests don't need persistence
+    if not is_live_mode and not is_paper_mode:
+        logger.info("[RECOVERY] Backtest mode - persistence disabled")
+        return None
+
+    # Use a dedicated state directory for persistence (not session-specific)
+    # This allows recovery across sessions
+    state_dir = Path(__file__).resolve().parent / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    persistence = PositionPersistence(state_dir)
+    persisted = persistence.load_snapshot()
+
+    if not persisted:
+        logger.info("[RECOVERY] No persisted positions found")
+        return persistence
+
+    logger.info(f"[RECOVERY] Found {len(persisted)} persisted positions")
+
+    if is_live_mode:
+        # Live mode: Reconcile with broker
+        try:
+            reconciliation = BrokerReconciliation(broker)
+            result = reconciliation.reconcile(persisted)
+
+            # Log results
+            if result.orphaned_app:
+                logger.warning(f"[RECOVERY] Positions closed externally: {list(result.orphaned_app.keys())}")
+            if result.manual_trades:
+                logger.info(f"[RECOVERY] Manual trades detected (not managed): {list(result.manual_trades.keys())}")
+            if result.qty_mismatch:
+                logger.warning(f"[RECOVERY] QTY MISMATCH - adjusting to broker state: {list(result.qty_mismatch.keys())}")
+
+            # Restore matched positions
+            for sym, pers_pos in result.matched.items():
+                merged_plan = _merge_persisted_state_into_plan(pers_pos)
+                position_store.upsert(Position(
+                    symbol=pers_pos.symbol,
+                    side=pers_pos.side,
+                    qty=pers_pos.qty,
+                    avg_price=pers_pos.avg_price,
+                    plan=merged_plan,
+                ))
+                logger.info(f"[RECOVERY] Restored position: {sym} {pers_pos.side} {pers_pos.qty}@{pers_pos.avg_price} state={pers_pos.state}")
+
+            # Handle qty mismatches - trust broker
+            for sym, (pers_pos, broker_pos) in result.qty_mismatch.items():
+                adjusted_pos = reconciliation.adjust_for_broker(pers_pos, broker_pos)
+                merged_plan = _merge_persisted_state_into_plan(adjusted_pos)
+                position_store.upsert(Position(
+                    symbol=adjusted_pos.symbol,
+                    side=adjusted_pos.side,
+                    qty=adjusted_pos.qty,
+                    avg_price=adjusted_pos.avg_price,
+                    plan=merged_plan,
+                ))
+                # Update persistence with adjusted qty
+                persistence.update_position(sym, new_qty=adjusted_pos.qty)
+                logger.info(f"[RECOVERY] Adjusted position (broker qty): {sym} {adjusted_pos.qty} state={adjusted_pos.state}")
+
+            # Remove orphaned positions from persistence
+            for sym in result.orphaned_app:
+                persistence.remove_position(sym)
+
+            logger.info(f"[RECOVERY] Recovered {len(result.matched) + len(result.qty_mismatch)} positions")
+
+        except Exception as e:
+            logger.error(f"[RECOVERY] Broker reconciliation failed: {e}")
+            # Fall back to persisted state only
+            for sym, pers_pos in persisted.items():
+                merged_plan = _merge_persisted_state_into_plan(pers_pos)
+                position_store.upsert(Position(
+                    symbol=pers_pos.symbol,
+                    side=pers_pos.side,
+                    qty=pers_pos.qty,
+                    avg_price=pers_pos.avg_price,
+                    plan=merged_plan,
+                ))
+            logger.warning(f"[RECOVERY] Restored {len(persisted)} positions from snapshot (no broker verification)")
+
+    else:  # Paper mode
+        # Paper mode: Validate positions against current price before restoring
+        # This handles positions where SL/T1/T2 would have been hit while offline
+        restored_count = 0
+        phantom_exit_count = 0
+
+        for sym, pers_pos in persisted.items():
+            # Get current price to validate position
+            try:
+                current_price = broker.get_ltp(sym)
+                if current_price is None:
+                    logger.warning(f"[RECOVERY] Could not get LTP for {sym}, skipping validation")
+                    current_price = pers_pos.avg_price  # Fallback to entry price
+            except Exception as e:
+                logger.warning(f"[RECOVERY] LTP fetch failed for {sym}: {e}, using entry price")
+                current_price = pers_pos.avg_price
+
+            # Validate position against current price (SL/T1/T2 checks)
+            should_restore, state_updates, phantom_logged = validate_paper_position_on_recovery(
+                pers_pos=pers_pos,
+                current_price=current_price,
+                trading_logger=trading_logger_instance,
+                persistence=persistence
+            )
+
+            if phantom_logged:
+                phantom_exit_count += 1
+
+            if not should_restore:
+                continue  # Position was stopped out or T2 hit - already handled
+
+            # Apply state updates (e.g., t1_done=True if T1 was hit)
+            if state_updates:
+                if pers_pos.state is None:
+                    pers_pos.state = {}
+                pers_pos.state.update(state_updates)
+
+                # Update quantity if T1 was hit (partial exit happened)
+                if "_remaining_qty" in state_updates:
+                    pers_pos.qty = state_updates["_remaining_qty"]
+
+                # Update persistence with new state
+                persistence.update_position(sym, new_qty=pers_pos.qty, state_updates=state_updates)
+
+            merged_plan = _merge_persisted_state_into_plan(pers_pos)
+            position_store.upsert(Position(
+                symbol=pers_pos.symbol,
+                side=pers_pos.side,
+                qty=pers_pos.qty,
+                avg_price=pers_pos.avg_price,
+                plan=merged_plan,
+            ))
+            restored_count += 1
+            logger.info(
+                f"[RECOVERY] Restored position (paper): {sym} {pers_pos.side} {pers_pos.qty}@{pers_pos.avg_price} "
+                f"state={pers_pos.state} current_price={current_price:.2f}"
+            )
+
+        logger.info(
+            f"[RECOVERY] Paper mode recovery complete: restored={restored_count} "
+            f"phantom_exits={phantom_exit_count} total_persisted={len(persisted)}"
+        )
+
+    return persistence
+
 
 # ------------------------ Main orchestration ------------------------
 
@@ -176,7 +377,6 @@ def main() -> int:
     # Apply structure caching if requested (monkey-patches TradeDecisionGate.evaluate)
     # Also set flag in config so worker processes can enable caching
     if args.enable_cache:
-        import tools.cached_engine_structures  # noqa: F401
         logger.info("[CACHE] Structure detection caching enabled")
         cfg["_enable_structure_cache"] = True  # Pass flag to worker processes
 
@@ -207,11 +407,29 @@ def main() -> int:
         initial_capital=cap_mgmt_cfg.get('initial_capital', 100000),
         mis_enabled=mis_enabled,
         mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file'),
-        max_positions=cap_mgmt_cfg.get('max_concurrent_positions', 25)
+        max_positions=cap_mgmt_cfg.get('max_concurrent_positions', 25),
+        risk_pct_per_trade=cap_mgmt_cfg.get('risk_pct_per_trade', 0.01)  # 1% of capital
     )
+
+    # Set dynamic risk per trade in config (live/paper uses capital %, backtest uses fallback)
+    base_cfg = load_base_config()
+    fallback_risk = base_cfg.get('risk_per_trade_rupees', 1000.0)
+    dynamic_risk = capital_manager.get_risk_per_trade(fallback=fallback_risk)
+    set_base_config_override('risk_per_trade_rupees', dynamic_risk)
 
     # Order queue handles pacing/retries; it reads its own config internally
     oq = OrderQueue()
+
+    def _prewarm_daily_cache(sdk):
+        """Pre-warm daily cache: try disk first (2-5s), fallback to API (15min)."""
+        cache_persistence = DailyCachePersistence()
+        cached_data = cache_persistence.load_today()
+        if cached_data:
+            sdk.set_daily_cache(cached_data)
+        result = sdk.prewarm_daily_cache(days=210)
+        # Save to disk if we fetched from API (for next restart)
+        if result.get("source") == "api":
+            cache_persistence.save(sdk.get_daily_cache())
 
     # Pick mode
     if args.paper_trading:
@@ -220,8 +438,11 @@ def main() -> int:
         env.validate_for_paper_trading()  # Validate credentials before starting
 
         sdk = KiteClient()
-        broker = KiteBroker(dry_run=True)
+        broker = KiteBroker(dry_run=True, ltp_cache=ltp_cache)
         logger.warning("🧪 PAPER TRADING MODE: Live data, simulated orders (no real trades)")
+
+        if not args.skip_prewarm:
+            _prewarm_daily_cache(sdk)
     elif args.dry_run:
         # Backtesting: historical data + mock broker
         if not args.session_date:
@@ -239,11 +460,30 @@ def main() -> int:
     else:
         # Live trading: real money
         sdk = KiteClient()
-        broker = KiteBroker(dry_run=False)
+        broker = KiteBroker(dry_run=False, ltp_cache=ltp_cache)
         logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
+
+        if not args.skip_prewarm:
+            _prewarm_daily_cache(sdk)
 
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq)
+
+    # Bootstrap from sidecar data (instant startup on late start)
+    # This populates ORB cache, daily levels, and 5m bars from pre-collected sidecar data
+    # Sidecar also handles tick persistence, so main engine doesn't need to record separately
+    bootstrap_result = {"success": False, "skipped": True, "reason": "not_attempted"}
+    try:
+        from sidecar import maybe_bootstrap_from_sidecar
+        bootstrap_result = maybe_bootstrap_from_sidecar(screener)
+        if bootstrap_result.get("success"):
+            logger.info(f"SIDECAR | Bootstrapped: {bootstrap_result['orb_count']} ORB, "
+                       f"{bootstrap_result.get('daily_levels_count', 0)} daily levels, "
+                       f"{bootstrap_result['bars_count']} bars for {bootstrap_result['symbols_count']} symbols")
+        elif bootstrap_result.get("skipped"):
+            logger.debug(f"SIDECAR | Skipped: {bootstrap_result.get('reason', 'unknown')}")
+    except Exception as e:
+        logger.debug(f"SIDECAR | Bootstrap not available: {e}")
 
     # Tap the central tick router so entries & exits share the same tick clock
     def _ltp_tap(sym: str, price: float, qty: float, ts_dt):
@@ -255,7 +495,27 @@ def main() -> int:
     # Risk + shared positions
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
     positions = _PositionStore()
-    
+
+    # Initialize health server for production monitoring
+    health = get_health_server(port=8080)
+    health.set_state(SessionState.RECOVERING)
+    health.set_position_store(positions)
+    health.set_capital_manager(capital_manager)
+    health.set_ltp_cache(ltp_cache)
+    health.start()
+
+    # Startup recovery - restore positions from previous session
+    from config.logging_config import get_log_directory
+    is_live = not args.dry_run and not args.paper_trading
+    persistence = startup_recovery(
+        broker=broker,
+        is_live_mode=is_live,
+        is_paper_mode=args.paper_trading,
+        log_dir=get_log_directory(),
+        position_store=positions,
+        trading_logger_instance=trading_logger  # For phantom exit logging in paper mode
+    )
+
     trader = TriggerAwareExecutor(
         broker=broker,
         order_queue=oq,
@@ -264,7 +524,8 @@ def main() -> int:
         get_ltp_ts=ltp_cache.get_ltp_ts,
         bar_builder=screener.agg,  # Pass the BarBuilder instance
         trading_logger=trading_logger,  # Enhanced logging
-        capital_manager=capital_manager  # Capital & MIS management
+        capital_manager=capital_manager,  # Capital & MIS management
+        persistence=persistence  # Position persistence for crash recovery
     )
 
     # ExitExecutor with tick-level validation (like TriggerAwareExecutor)
@@ -274,7 +535,8 @@ def main() -> int:
         get_ltp_ts=ltp_cache.get_ltp_ts,   # <- EOD uses tick timestamps, not wall clock
         bar_builder=screener.agg,  # For tick-level exit validation
         trading_logger=trading_logger,  # Enhanced logging
-        capital_manager=capital_manager  # Capital release on exits
+        capital_manager=capital_manager,  # Capital release on exits
+        persistence=persistence  # Position persistence for crash recovery
     )
 
     # Start background threads
@@ -308,13 +570,22 @@ def main() -> int:
     t_monitor.start(); threads.append(t_monitor)
     logger.info("trigger-monitor: started")
 
+    # Set health state to trading
+    health.set_state(SessionState.TRADING)
+
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec, trader)
-    
+    _run_until_eod(screener, exit_exec, trader, health)
+
     return 0
 
 
-def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: TriggerAwareExecutor, poll_sec: float = 0.2) -> None:
+def _run_until_eod(
+    screener: ScreenerLive,
+    exit_exec: ExitExecutor,
+    trader: TriggerAwareExecutor,
+    health = None,
+    poll_sec: float = 0.2
+) -> None:
     logger.info("session start")
     stop = threading.Event()
 
@@ -322,9 +593,18 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: Trig
         logger.warning(f"signal {signum} received – shutting down")
         stop.set()
 
+    def _shutdown_via_http():
+        """Callback for HTTP shutdown endpoint."""
+        logger.info("Shutdown requested via HTTP")
+        stop.set()
+
     # Handle Ctrl+C / SIGTERM cleanly
     signal.signal(signal.SIGINT, _sig_handler)
     signal.signal(signal.SIGTERM, _sig_handler)
+
+    # Wire up HTTP shutdown
+    if health:
+        health.set_shutdown_callback(_shutdown_via_http)
 
     try:
         screener.start()
@@ -333,6 +613,10 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: Trig
     except KeyboardInterrupt:
         logger.info("keyboard interrupt – stopping")
     finally:
+        # Update health state
+        if health:
+            health.set_state(SessionState.SHUTTING_DOWN)
+
         try:
             # Cancel all pending trades before EOD
             with trader._lock:
@@ -342,22 +626,26 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: Trig
             logger.info("Cancelled all pending trades for EOD")
         except Exception as e:
             logger.warning("Failed to cancel pending trades: %s", e)
-        
+
         try:
             exit_exec.square_off_all_open_positions()
         except Exception as e:
             logger.warning("final EOD sweep failed: %s", e)
-        
+
         try:
             screener.stop()
         except Exception as e:
             logger.warning("screener.stop failed: %s", e)
-        
+
         try:
             trader.stop()
         except Exception as e:
             logger.warning("trader.stop failed: %s", e)
-            
+
+        # Stop health server
+        if health:
+            health.set_state(SessionState.STOPPED)
+            health.stop()
 
     logger.info("session end (EOD)")
 
@@ -372,6 +660,7 @@ def _parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="Use mock broker + archived ticks")
     ap.add_argument("--paper-trading", action="store_true", help="Paper trading mode: live data, simulated orders")
+    ap.add_argument("--skip-prewarm", action="store_true", help="Skip daily data pre-warming (faster startup but 11-min delay at 09:40)")
     ap.add_argument("--with-capital-limits", action="store_true", help="Enable capital management for backtests (default: disabled for fast testing)")
     ap.add_argument("--session-date", help="YYYY-MM-DD (required with --dry-run)")
     ap.add_argument("--from-hhmm", default="09:10")

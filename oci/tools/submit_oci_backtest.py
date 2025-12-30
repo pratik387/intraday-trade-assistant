@@ -26,10 +26,43 @@ from pathlib import Path
 import sys
 import oci
 from oci.object_storage import ObjectStorageClient
+import pandas as pd
 
-# Add parent directory to path to import utils
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from utils.util import is_trading_day
+# Project root
+ROOT = Path(__file__).parent.parent.parent
+HOLIDAY_FILE = ROOT / "assets" / "nse_holidays.json"
+
+
+def is_trading_day(date):
+    """
+    Returns True if the given date is a valid NSE trading day (not weekend, not holiday).
+    Self-contained version for OCI tools to avoid circular imports.
+    """
+    try:
+        dt = pd.Timestamp(date).normalize()
+
+        # Weekend check
+        if dt.weekday() >= 5:
+            return False
+
+        # Load holidays
+        if not HOLIDAY_FILE.exists():
+            print(f"Warning: Holiday file not found at {HOLIDAY_FILE}, assuming all weekdays are trading days")
+            return True
+
+        with open(HOLIDAY_FILE, "r", encoding="utf-8") as f:
+            items = json.load(f)
+            holidays = [
+                pd.to_datetime(item.get("tradingDate") or item.get("holidayDate"), format="%d-%b-%Y", errors="coerce").normalize()
+                for item in items
+            ]
+            holidays = [d for d in holidays if not pd.isna(d)]
+
+        return dt not in holidays
+
+    except Exception as e:
+        print(f"Warning: is_trading_day error: {e}, assuming trading day")
+        return True
 
 
 class OCIBacktestSubmitter:
@@ -53,19 +86,49 @@ class OCIBacktestSubmitter:
         self.root = Path(__file__).parent.parent.parent
 
     def _get_namespace(self):
-        """Get OCI Object Storage namespace"""
+        """Get OCI Object Storage namespace using OCI SDK"""
         try:
-            result = subprocess.run(
-                ['oci', 'os', 'ns', 'get', '--query', 'data', '--raw-output'],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            return result.stdout.strip()
+            config = oci.config.from_file()
+            client = ObjectStorageClient(config)
+            return client.get_namespace().data
         except Exception as e:
             print(f"❌ Error getting namespace: {e}")
             print("Make sure OCI CLI is configured: oci setup config")
             sys.exit(1)
+
+    def _get_next_retry_number(self, base_run_id):
+        """
+        Find the next retry number for a given base run ID.
+
+        Checks cloud_results directory for existing retries and returns the next number.
+
+        Args:
+            base_run_id: The original run ID (without -retry suffix)
+
+        Returns:
+            Next retry number (1 if no retries exist)
+        """
+        cloud_results = self.root / 'cloud_results'
+        if not cloud_results.exists():
+            return 1
+
+        # Find all existing retry directories for this base run
+        existing_retries = []
+        for d in cloud_results.iterdir():
+            if d.is_dir() and d.name.startswith(base_run_id):
+                if '-retry' in d.name:
+                    try:
+                        # Extract retry number from name like "20251121-084341-retry2"
+                        retry_part = d.name.split('-retry')[-1]
+                        retry_num = int(retry_part)
+                        existing_retries.append(retry_num)
+                    except ValueError:
+                        pass
+
+        if not existing_retries:
+            return 1
+
+        return max(existing_retries) + 1
 
     def generate_trading_dates(self, start_date, end_date):
         """
@@ -326,60 +389,6 @@ class OCIBacktestSubmitter:
 
         return succeeded == total_days
 
-    def download_results(self, run_id):
-        """Download results from OCI Object Storage"""
-        print(f"\n[5/5] 📥 Downloading results...")
-
-        results_dir = self.root / 'cloud_results' / run_id
-        results_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # List objects in results bucket for this run
-            list_objects_response = self.os_client.list_objects(
-                namespace_name=self.namespace,
-                bucket_name=self.results_bucket,
-                prefix=f"{run_id}/"
-            )
-
-            objects = list_objects_response.data.objects
-
-            if not objects:
-                print(f"  ⚠️  No results found in oci://{self.results_bucket}/{run_id}/")
-                return
-
-            downloaded = 0
-            for obj in objects:
-                object_name = obj.name
-
-                # Skip directory markers
-                if object_name.endswith('/'):
-                    continue
-
-                # Local file path
-                relative_path = object_name.replace(f"{run_id}/", "")
-                local_path = results_dir / relative_path
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Download object
-                get_obj = self.os_client.get_object(
-                    namespace_name=self.namespace,
-                    bucket_name=self.results_bucket,
-                    object_name=object_name
-                )
-
-                with open(local_path, 'wb') as f:
-                    for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
-                        f.write(chunk)
-
-                downloaded += 1
-                if downloaded % 10 == 0:
-                    print(f"  Downloaded {downloaded} files...", end='\r')
-
-            print(f"  ✓ Downloaded {downloaded} files to: {results_dir}")
-
-        except Exception as e:
-            print(f"  ❌ Download failed: {e}")
-
     def print_summary(self, run_id, start_date, end_date, total_days, description):
         """Print submission summary"""
         print()
@@ -395,12 +404,13 @@ class OCIBacktestSubmitter:
         print()
         print("━" * 60)
 
-    def scale_up_nodepool(self, num_nodes):
+    def scale_up_nodepool(self, num_nodes, wait_seconds=180):
         """
         Scale up the node pool to the specified number of nodes.
 
         Args:
             num_nodes: Number of nodes to scale to
+            wait_seconds: Seconds to wait after scaling (default: 180 = 3 minutes)
 
         Returns:
             True if successful, False otherwise
@@ -429,8 +439,23 @@ class OCIBacktestSubmitter:
 
             print(f"✅ Node pool scaling initiated to {num_nodes} nodes")
             print()
-            print("⏳ Nodes will take ~2-3 minutes to become ready")
-            print("   Job will start once nodes are available")
+
+            # Wait for nodes to become ready
+            if wait_seconds > 0:
+                print(f"⏳ Waiting {wait_seconds}s for nodes to become ready...")
+                print()
+
+                for remaining in range(wait_seconds, 0, -1):
+                    mins, secs = divmod(remaining, 60)
+                    print(f"   Starting job in {mins:02d}:{secs:02d}...", end='\r')
+                    time.sleep(1)
+
+                print()
+                print("✅ Wait complete, proceeding with job submission")
+            else:
+                print("⏳ Nodes will take ~2-3 minutes to become ready")
+                print("   Job will start once nodes are available")
+
             print()
             print("━" * 60)
 
@@ -445,20 +470,69 @@ class OCIBacktestSubmitter:
             print("━" * 60)
             return False
 
-    def run(self, start_date, end_date, description=None, no_wait=False, max_parallel=None, num_nodes=None):
-        """Main workflow"""
-        # Generate run ID (use hyphens for Kubernetes DNS compliance)
-        run_id = datetime.now().strftime('%Y%m%d-%H%M%S')
+    def run(self, start_date=None, end_date=None, description=None, no_wait=False,
+            max_parallel=None, num_nodes=None, wait_after_scale=180, failed_dates_file=None):
+        """Main workflow
 
-        # Generate trading dates
-        dates = self.generate_trading_dates(start_date, end_date)
+        Args:
+            start_date: Start date (YYYY-MM-DD) - required if not using failed_dates_file
+            end_date: End date (YYYY-MM-DD) - required if not using failed_dates_file
+            description: Optional description
+            no_wait: If True, submit and exit without waiting
+            max_parallel: Max parallel pods
+            num_nodes: Number of nodes to scale to
+            wait_after_scale: Seconds to wait after scaling (default: 180)
+            failed_dates_file: Path to JSON file containing failed dates to re-run
+        """
+        # Handle failed dates re-run
+        if failed_dates_file:
+            with open(failed_dates_file, 'r') as f:
+                failed_data = json.load(f)
 
-        # Print summary
-        self.print_summary(run_id, start_date, end_date, len(dates), description)
+            dates = failed_data.get('failed_dates', [])
+            original_run_id = failed_data.get('run_id', 'unknown')
+
+            if not dates:
+                print("❌ No failed dates found in the file")
+                return
+
+            # Generate run ID based on original with retry suffix
+            # Check for existing retries to increment the counter
+            base_run_id = original_run_id.split('-retry')[0]  # Strip any existing retry suffix
+            retry_num = self._get_next_retry_number(base_run_id)
+            run_id = f"{base_run_id}-retry{retry_num}"
+
+            start_date = min(dates)
+            end_date = max(dates)
+
+            print()
+            print("━" * 60)
+            print(f"RE-RUNNING FAILED DATES (Retry #{retry_num})")
+            print("━" * 60)
+            print()
+            print(f"Original Run: {original_run_id}")
+            print(f"Retry Run ID: {run_id}")
+            print(f"Failed Dates: {len(dates)}")
+            print(f"Date Range: {start_date} to {end_date}")
+            print()
+            print("━" * 60)
+        else:
+            if not start_date or not end_date:
+                print("❌ Either --start/--end or --failed-dates is required")
+                return
+
+            # Generate run ID (use hyphens for Kubernetes DNS compliance)
+            run_id = datetime.now().strftime('%Y%m%d-%H%M%S')
+
+            # Generate trading dates
+            dates = self.generate_trading_dates(start_date, end_date)
+
+            # Print summary
+            self.print_summary(run_id, start_date, end_date, len(dates), description)
 
         # Scale up node pool if requested
         if num_nodes is not None:
-            if not self.scale_up_nodepool(num_nodes):
+            if not self.scale_up_nodepool(num_nodes, wait_seconds=wait_after_scale):
                 print("⚠️  Node pool scaling failed, but continuing anyway...")
                 print()
 
@@ -477,29 +551,19 @@ class OCIBacktestSubmitter:
 
         if no_wait:
             print(f"\n✅ Job submitted (not waiting for completion)")
-            print(f"\nMonitor: python tools/monitor_oci_backtest.py {run_id}")
-            print(f"Download: python tools/download_oci_results.py {run_id}")
+            print(f"\nMonitor & cleanup: python oci/tools/monitor_and_cleanup_backtest.py {run_id}")
             return
 
-        # Monitor progress
-        success = self.monitor_job(run_id, len(dates), parallelism)
+        # Hand off to monitor_and_cleanup_backtest.py for monitoring, download, and cleanup
+        print(f"\n[4/5] 📊 Handing off to monitor_and_cleanup_backtest.py...")
+        monitor_script = self.root / 'oci' / 'tools' / 'monitor_and_cleanup_backtest.py'
 
-        if not success:
+        cmd = [sys.executable, str(monitor_script), run_id]
+        result = subprocess.run(cmd)
+
+        if result.returncode != 0:
+            print(f"\n❌ Monitor/cleanup failed with exit code {result.returncode}")
             return
-
-        # Download results
-        self.download_results(run_id)
-
-        print()
-        print("━" * 60)
-        print("✅ Backtest Complete!")
-        print("━" * 60)
-        print()
-        print(f"Results: ./cloud_results/{run_id}/")
-        print()
-        print(f"Next: python tools/analyze_6month_backtest.py cloud_results/{run_id}/")
-        print("━" * 60)
-        print()
 
 
 def main():
@@ -516,11 +580,17 @@ Examples:
 
   # With custom parallelism limit
   python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --max-parallel 50
+
+  # Skip wait after node scaling (for already-running nodes)
+  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --wait-after-scale 0
+
+  # Re-run only failed dates from a previous run
+  python oci/tools/submit_oci_backtest.py --failed-dates cloud_results/20251121-084341/failed_dates.json --nodes 4
         """
     )
 
-    parser.add_argument('--start', required=True, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end', required=True, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--start', help='Start date (YYYY-MM-DD). Required unless using --failed-dates')
+    parser.add_argument('--end', help='End date (YYYY-MM-DD). Required unless using --failed-dates')
     parser.add_argument('--description', help='Description of this backtest run')
     parser.add_argument('--no-wait', action='store_true', help='Submit and exit without waiting')
     parser.add_argument('--max-parallel', type=int, default=None,
@@ -528,8 +598,18 @@ Examples:
     parser.add_argument('--nodes', type=int, default=None,
                         help='Number of nodes to scale node pool to before starting (e.g., 4). '
                              'If not specified, assumes nodes are already running.')
+    parser.add_argument('--wait-after-scale', type=int, default=180,
+                        help='Seconds to wait after scaling up nodes (default: 180 = 3 minutes). '
+                             'Set to 0 to skip wait.')
+    parser.add_argument('--failed-dates', type=str, default=None,
+                        help='Path to failed_dates.json file to re-run only failed dates. '
+                             'If specified, --start and --end are ignored.')
 
     args = parser.parse_args()
+
+    # Validate arguments
+    if not args.failed_dates and (not args.start or not args.end):
+        parser.error("Either --start/--end or --failed-dates is required")
 
     submitter = OCIBacktestSubmitter()
     submitter.run(
@@ -538,7 +618,9 @@ Examples:
         description=args.description,
         no_wait=args.no_wait,
         max_parallel=args.max_parallel,
-        num_nodes=args.nodes
+        num_nodes=args.nodes,
+        wait_after_scale=args.wait_after_scale,
+        failed_dates_file=args.failed_dates
     )
 
 

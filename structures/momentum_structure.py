@@ -33,6 +33,10 @@ class MomentumStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "momentum"
 
+        # Track which specific setup type this detector is for (e.g., "momentum_breakout_long")
+        # This ensures we only produce signals for the configured direction
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Momentum breakout parameters
@@ -103,6 +107,13 @@ class MomentumStructure(BaseStructure):
             # Detect trend continuation patterns
             trend_events = self._detect_trend_continuations(context, df_calc, vol_z_required)
             events.extend(trend_events)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"MOMENTUM: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             quality_score = self._calculate_quality_score(events, df_calc) if events else 0.0
 

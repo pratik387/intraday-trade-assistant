@@ -36,6 +36,9 @@ from typing import Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
 
+# Import centralized is_hard_blocked from base_pipeline (single source of truth)
+from pipelines.base_pipeline import is_hard_blocked as _is_hard_blocked_base
+
 # Phase 1: Multi-timeframe regime detection (institutional approach)
 try:
     from services.gates.multi_timeframe_regime import (
@@ -58,29 +61,12 @@ class RegimeMetrics:
 
 
 # ================================================================================
-# CENTRALIZED HARD BLOCKS - Single source of truth for regime-based blocking
+# HARD BLOCKS - Now centralized in pipelines/base_pipeline.py
 # ================================================================================
-# These blocks CANNOT be bypassed by HCET or any other mechanism.
-# Based on backtest analysis showing these setups underperform in specific regimes.
-#
-# SQUEEZE REGIME ANALYSIS (backtest_20251211):
-#   - first_hour_momentum_long: 40 trades, Rs 119 total = Rs 3/trade avg (worthless)
-#   - volume_spike_reversal_short: 7 trades, Rs -632 total (negative)
-#   - premium_zone_short: Not in allowed list but was trading via HCET bypass
-#
-# Pro trader approach: AVOID trading during squeeze/consolidation. Wait for breakout.
+# HARD_BLOCKS dict has been moved to base_pipeline.py for cleaner architecture.
+# This module's is_hard_blocked() now delegates to base_pipeline's function.
+# See pipelines/base_pipeline.py for the actual block list.
 # ================================================================================
-HARD_BLOCKS = {
-    "squeeze": [
-        "first_hour_momentum_long",      # Rs 119 in 40 trades = Rs 3/trade avg
-        "volume_spike_reversal_short",   # Rs -632 in 7 trades = negative
-        "premium_zone_short",            # Not designed for squeeze regime
-    ],
-    # Add other regime hard blocks here as analysis reveals them
-    # "chop": [...],
-    # "trend_up": [...],
-    # "trend_down": [...],
-}
 
 class MarketRegimeGate:
     """
@@ -326,206 +312,20 @@ class MarketRegimeGate:
         strength: float,
         adx_5m: float,
         vol_mult_5m: float,
-        cap_segment: str = "unknown",  # NEW: Priority 2 - cap-specific filtering
+        cap_segment: str = "unknown",
     ) -> bool:
         """
-        PERMISSIVE BY DEFAULT: Returns True unless setup explicitly fails evidence thresholds.
+        SIMPLIFIED (Dec 2024): Always returns True.
 
-        Philosophy (Dec 2024): Allow all setups unless we have evidence to block them.
-        - HARD_BLOCKS in regime_gate.py: Cannot be bypassed (data-driven blocks)
-        - Explicit checks here: Evidence thresholds for known setups
-        - Unknown setups: ALLOWED (we don't want to miss opportunities)
+        All setup-specific filtering is now handled in Pipeline's apply_setup_filters().
+        HARD_BLOCKS are checked via is_hard_blocked() in base_pipeline.py.
 
-        Params:
-          setup_type   : Any registered setup type
-          regime       : 'trend_up'|'trend_down'|'chop'|'squeeze'
-          strength     : structure score (0..5 normalized)
-          adx_5m       : 5m ADX
-          vol_mult_5m  : last5m_vol / median5m_vol (~2h)
-          cap_segment  : 'large_cap'|'mid_cap'|'small_cap'|'micro_cap'|'unknown'
+        This method is kept for backwards compatibility with trade_decision_gate.py.
+        It will be removed in a future cleanup.
+
+        Philosophy: Gates are for general-purpose filtering (regime classification,
+        event policy, news spikes). Setup-specific filtering belongs in pipelines.
         """
-        # === PRIORITY 2: CAP-STRATEGY FILTERING (institutional evidence) ===
-        cap_prefs = self.cfg.get("cap_strategy_preferences", {})
-        if cap_prefs.get("enabled", False) and cap_segment != "unknown":
-            seg_cfg = cap_prefs.get(cap_segment, {})
-
-            # Check if setup is BLOCKED for this cap segment
-            blocked = seg_cfg.get("blocked", [])
-            if setup_type in blocked:
-                if self.log:
-                    self.log.debug(f"CAP_FILTER: blocked {setup_type} for {cap_segment}")
-                return False
-
-            # Check if setup is NOT in preferred or allowed lists
-            preferred = seg_cfg.get("preferred", [])
-            allowed = seg_cfg.get("allowed", [])
-            if setup_type not in (preferred + allowed):
-                if self.log:
-                    self.log.debug(f"CAP_FILTER: {setup_type} not suitable for {cap_segment}")
-                return False
-
-        # NA-safe casts
-        s = float(strength) if pd.notna(strength) else 0.0
-        a = float(adx_5m) if pd.notna(adx_5m) else 0.0
-        v = float(vol_mult_5m) if pd.notna(vol_mult_5m) else 0.0
-
-        if regime == "chop":
-            # CHOP THROTTLE: Check if this setup is allowed in chop
-            quality_filters = self.cfg.get("quality_filters", {})
-            chop_throttle = quality_filters.get("chop_throttle", {})
-
-            if chop_throttle.get("enabled", False):
-                allowed_setups = chop_throttle.get("allowed_setups", [])
-                if setup_type not in allowed_setups:
-                    if self.log:
-                        self.log.debug(f"CHOP_THROTTLE: blocked {setup_type} in chop regime")
-                    return False
-
-            # Prioritized setups for chop (proven winners)
-            if setup_type == "orb_pullback_long":
-                # Requires strong evidence as per analysis
-                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
-
-            if setup_type == "failure_fade_long":
-                # Enhanced requirements for better performance
-                return (s >= 2.0) and (v >= self.FF_MIN_VOL_MULT * 1.5)  # 1.5x volume requirement
-
-            if setup_type == "range_break_retest_short":
-                # Strong retest pattern
-                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-
-            # Standard setup requirements for chop regime (may be throttled if enabled)
-            # VWAP reclaims/loses - standard requirements
-            if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
-                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
-
-            # Failure fades - primary chop strategy
-            # INSTITUTIONAL FIX: Require ADX >= 15 to avoid weak/choppy trades
-            # Analysis: ADX > 15 filter saves Rs.2,718 (18 hard_sl avoided, 15 winners lost)
-            if setup_type in {"failure_fade_long", "failure_fade_short"}:
-                return (v >= self.FF_MIN_VOL_MULT) and (a >= 15.0)
-
-            # Mean reversion and range setups - work well in chop
-            if setup_type in {"vwap_mean_reversion_long", "vwap_mean_reversion_short"}:
-                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-            if setup_type in {"range_rejection_long", "range_rejection_short"}:
-                return v >= self.FF_MIN_VOL_MULT
-            if setup_type in {"support_bounce_long", "resistance_bounce_short"}:
-                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-
-            # Volume spike reversals - can work in chop
-            if setup_type in {"volume_spike_reversal_long", "volume_spike_reversal_short"}:
-                return v >= self.FF_MIN_VOL_MULT
-
-            # Allow selective breakouts in chop with VERY strong evidence (reduced size via size_multiplier)
-            # These get 0.6x size multiplier to manage risk while capturing exceptional setups
-            if setup_type in {"breakout_long", "breakout_short"}:
-                # Require exceptional strength + very high ADX + high volume
-                return (s >= 3.5) and (a >= 35.0) and (v >= 2.5)
-
-            # ADDED (Dec 2024 backtest): Profitable setups in chop
-            # ORB breakouts - ENABLED: 7 trades, Rs 3,134 profit in backtest
-            if setup_type in {"orb_breakout_long", "orb_breakout_short"}:
-                return v >= self.VWAP_MIN_VOL_MULT
-            if setup_type == "premium_zone_short":  # 9 trades, Rs 2,983
-                return v >= self.VWAP_MIN_VOL_MULT
-
-            # PERMISSIVE: Allow unknown setups in chop (block via HARD_BLOCKS if needed)
-            return True
-
-        if regime == "trend_up":
-            if setup_type == "breakout_long":
-                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
-            if setup_type == "vwap_reclaim_long":
-                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
-            # INSTITUTIONAL FIX: Require ADX >= 15 for fade strategies
-            if setup_type == "failure_fade_short":
-                return (v >= self.FF_MIN_VOL_MULT) and (a >= 15.0)
-            # Trend continuation setups in uptrend
-            if setup_type == "flag_continuation_long":
-                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
-            if setup_type == "trend_pullback_long":
-                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-            # Support bounce - ENABLED: 7 trades, Rs 1,784 profit in backtest
-            if setup_type == "support_bounce_long":
-                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-            if setup_type == "gap_fill_long":
-                return v >= self.VWAP_MIN_VOL_MULT
-            # Volume spike reversals can work as counter-trend in strong trends
-            if setup_type == "volume_spike_reversal_short":
-                return v >= self.FF_MIN_VOL_MULT
-            # ADDED (Dec 2024 backtest): Profitable setups in trend_up
-            if setup_type == "premium_zone_short":  # 11 trades, Rs 3,217
-                return v >= self.VWAP_MIN_VOL_MULT
-            if setup_type == "first_hour_momentum_long":  # 19 trades, Rs 1,611
-                return v >= self.VWAP_MIN_VOL_MULT
-            if setup_type == "range_bounce_short":  # 1 trade, Rs 818
-                return v >= self.FF_MIN_VOL_MULT
-            if setup_type == "momentum_breakout_long":  # 4 trades, Rs 242
-                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
-            # PERMISSIVE: Allow unknown setups in trend_up (block via HARD_BLOCKS if needed)
-            return True
-
-        if regime == "trend_down":
-            if setup_type == "breakout_short":
-                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
-            if setup_type == "vwap_lose_short":
-                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
-            # INSTITUTIONAL FIX: failure_fade_long DISABLED in trend_down
-            # Analysis showed 5/5 trades (100%) hit hard_sl in trend_down (-Rs.2,606)
-            # Mean reversion doesn't work when catching falling knives
-            # Only allow failure_fade_short (fade resistance) in downtrends
-            # INSTITUTIONAL FIX: Require ADX >= 15 to avoid weak/choppy trades
-            if setup_type == "failure_fade_short":
-                return (v >= self.FF_MIN_VOL_MULT) and (a >= 15.0)
-            # Trend continuation setups in downtrend
-            if setup_type == "flag_continuation_short":
-                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
-            if setup_type == "trend_pullback_short":
-                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-            # Resistance bounce - ENABLED: 65 trades, Rs 10,274 profit in backtest
-            if setup_type == "resistance_bounce_short":
-                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-            if setup_type == "gap_fill_short":
-                return v >= self.VWAP_MIN_VOL_MULT
-            # Volume spike reversals can work as counter-trend in strong trends
-            if setup_type == "volume_spike_reversal_long":
-                return v >= self.FF_MIN_VOL_MULT
-            # ADDED (Dec 2024 backtest): Profitable setups in trend_down
-            if setup_type == "vwap_reclaim_long":  # 3 trades, Rs 900 (counter-trend bounce)
-                return (s >= self.VWAP_MIN_STRENGTH) and (v >= self.VWAP_MIN_VOL_MULT)
-            if setup_type == "fair_value_gap_short":  # 1 trade, Rs 540
-                return v >= self.VWAP_MIN_VOL_MULT
-            if setup_type == "premium_zone_short":  # 21 trades, Rs -71 (marginal, but allow)
-                return v >= self.VWAP_MIN_VOL_MULT
-            # PERMISSIVE: Allow unknown setups in trend_down (block via HARD_BLOCKS if needed)
-            return True
-
-        if regime == "squeeze":
-            if setup_type in {"squeeze_release_long", "squeeze_release_short"}:
-                return v >= self.VWAP_MIN_VOL_MULT  # need participation on release
-            if setup_type in {"breakout_long", "breakout_short"}:
-                return (a >= self.BO_MIN_ADX) and (v >= self.BO_MIN_VOL_MULT)
-            if setup_type in {"vwap_reclaim_long", "vwap_lose_short"}:
-                return (s >= self.VWAP_MIN_STRENGTH) and (a >= self.VWAP_MIN_ADX) and (v >= self.VWAP_MIN_VOL_MULT)
-            # volume_spike_reversal_short is in HARD_BLOCKS, volume_spike_reversal_long allowed
-            if setup_type == "volume_spike_reversal_long":
-                return v >= self.VWAP_MIN_VOL_MULT
-            # Gap fills can trigger squeeze releases
-            if setup_type in {"gap_fill_long", "gap_fill_short"}:
-                return v >= self.VWAP_MIN_VOL_MULT
-            # ADDED (Dec 2024 backtest): Profitable setups in squeeze
-            # ORB breakouts - ENABLED: 9 trades, Rs 2,029 profit
-            if setup_type in {"orb_breakout_long", "orb_breakout_short"}:
-                return v >= self.VWAP_MIN_VOL_MULT
-            # Range bounce - ENABLED: 2 trades, Rs 1,926 profit
-            if setup_type in {"range_bounce_long", "range_bounce_short"}:
-                return v >= self.FF_MIN_VOL_MULT
-            # NOTE: first_hour_momentum_long, volume_spike_reversal_short, premium_zone_short are in HARD_BLOCKS
-            # PERMISSIVE: Allow unknown setups in squeeze (block via HARD_BLOCKS if needed)
-            return True
-
-        # PERMISSIVE: Allow setups in unknown regimes (block via HARD_BLOCKS if needed)
         return True
 
     # ---------------- Hard Block Check ----------------
@@ -534,7 +334,7 @@ class MarketRegimeGate:
         Check if a setup is HARD BLOCKED for a regime.
 
         Hard blocks CANNOT be bypassed by HCET or any other mechanism.
-        This is the single source of truth for regime-based blocking.
+        Delegates to centralized function in base_pipeline.py.
 
         Args:
             setup_type: The setup type to check
@@ -543,19 +343,23 @@ class MarketRegimeGate:
         Returns:
             True if the setup is hard blocked for this regime
         """
-        blocked_setups = HARD_BLOCKS.get(regime, [])
-        return setup_type in blocked_setups
+        return _is_hard_blocked_base(setup_type, regime)
 
     # ---------------- Sizing bias ----------------
     def size_multiplier(self, regime: str, *, counter_trend: bool = False, setup_type: str = None) -> float:
+        """
+        SIMPLIFIED (Dec 2024): Returns regime-based size multiplier.
+
+        Setup-specific size adjustments have been removed.
+        Van Tharp CPR approach: If setup doesn't qualify, BLOCK it (hard gate).
+        No soft penalties - size multiplier is purely regime-based.
+
+        setup_type param kept for backwards compatibility but is ignored.
+        """
         if regime in ("trend_up", "trend_down"):
             return 0.70 if counter_trend else 1.15
         if regime == "squeeze":
             return 0.90
         if regime == "chop":
-            # Aggressive size reduction for breakouts in chop (ORB breakouts disabled)
-            if setup_type in {"breakout_long", "breakout_short"}:
-                return 0.60  # More conservative for risky chop breakouts
-            # Standard chop reduction for other setups
             return 0.85
-        return 0.85  # default chop
+        return 0.85  # default

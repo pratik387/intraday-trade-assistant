@@ -33,6 +33,9 @@ class SqueezeReleaseStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "squeeze_release"
 
+        # Track which specific setup type this detector is for (e.g., "squeeze_release_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Squeeze detection parameters
@@ -167,9 +170,12 @@ class SqueezeReleaseStructure(BaseStructure):
                 price=context.current_price
             )
 
-            events.append(event)
-
-            logger.debug(f"SQUEEZE_DETECT: ✅ {context.symbol} - {structure_type} DETECTED with expansion ratio: {expansion_ratio_actual:.2f}, momentum: {momentum:.4f}, confidence: {confidence:.2f}")
+            # Only add event if it matches configured setup type
+            if self.configured_setup_type is None or structure_type == self.configured_setup_type:
+                events.append(event)
+                logger.debug(f"SQUEEZE_DETECT: ✅ {context.symbol} - {structure_type} DETECTED with expansion ratio: {expansion_ratio_actual:.2f}, momentum: {momentum:.4f}, confidence: {confidence:.2f}")
+            else:
+                logger.debug(f"SQUEEZE_DETECT: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
 
             quality_score = self._calculate_quality_score(expansion_ratio_actual, abs(momentum), df)
 

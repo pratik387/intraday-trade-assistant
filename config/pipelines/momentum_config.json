@@ -176,61 +176,127 @@
                 "limit": 120,
                 "_evidence": "Pro traders hold 30-90 min max. After 2 hours, momentum fades. Time-based exit if no T1 hit."
             }
+        },
+        "setup_filters": {
+            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Momentum setups not in MODERATE profile - disabled",
+            "_active_profile": "MODERATE",
+            "_note": "Momentum setups not included in MODERATE profile - kept disabled",
+            "momentum_breakout_long": {
+                "enabled": false,
+                "min_volume": 100000,
+                "_moderate_filter": "Not in MODERATE profile",
+                "_evidence": "R1: +848 Rs (14 trades) - Low volume momentum breakouts lack conviction"
+            },
+            "momentum_breakout_short": {
+                "enabled": false,
+                "_moderate_filter": "Not in MODERATE profile"
+            },
+            "trend_continuation_long": {
+                "enabled": false,
+                "min_volume": 150000,
+                "_moderate_filter": "Not in MODERATE profile"
+            },
+            "trend_continuation_short": {
+                "enabled": false,
+                "_moderate_filter": "Not in MODERATE profile"
+            },
+            "trend_pullback_long": {
+                "enabled": false,
+                "min_volume": 150000,
+                "_moderate_filter": "Not in MODERATE profile"
+            },
+            "trend_pullback_short": {
+                "enabled": false,
+                "_moderate_filter": "Not in MODERATE profile"
+            }
+        },
+        "global_filters": {
+            "_comment": "UNIFIED GLOBAL FILTERS - Applied to all setups before setup-specific filters",
+            "short_min_adx": {
+                "enabled": false,
+                "min_adx": 25,
+                "_rationale": "Shorts need stronger trend confirmation"
+            },
+            "long_min_volume": {
+                "enabled": false,
+                "min_volume": 150000,
+                "_rationale": "Longs need minimum institutional volume"
+            },
+            "rsi_dead_zone": {
+                "enabled": false,
+                "min_rsi": 45,
+                "max_rsi": 55,
+                "_rationale": "Disabled for momentum - trend continuation needs momentum"
+            }
         }
     },
 
     "ranking": {
-        "_comment": "ALL values from OLD filters.json rank_* settings to match baseline ranker.py _intraday_strength()",
+        "_comment": "MOMENTUM-SPECIFIC RANKING (Dec 2024) - Pro trader research: high ADX, directional RSI, VWAP aligned critical",
+        "mode": "momentum_specific",
+        "score_scale": 5.0,
+        "_score_scale_note": "Multiplier to scale weighted sum back to usable range (~0-5). Weighted sum alone produces ~0.17 mean.",
         "weights": {
             "volume": {
-                "_comment": "rank_vol_ratio_divisor=2.0, rank_vol_cap=3.0",
+                "_comment": "CRITICAL for momentum - confirms institutional participation",
                 "divisor": 2.0,
-                "cap": 3.0
+                "cap": 2.0,
+                "weight": 0.20
             },
             "rsi": {
-                "_comment": "rank_rsi_mid=50, rank_rsi_divisor=30, rank_rsi_floor=-0.5",
-                "mid": 50.0,
-                "divisor": 30.0,
-                "floor": -0.5
-            },
-            "rsi_slope": {
-                "_comment": "rank_rsi_slope_cap=0.3",
-                "cap": 0.3
+                "_comment": "DIRECTIONAL = GOOD for momentum (RSI confirms trend direction)",
+                "mode": "directional_is_good",
+                "long_bullish_threshold": 55,
+                "long_strong_bullish_threshold": 60,
+                "long_overbought_threshold": 75,
+                "short_bearish_threshold": 45,
+                "short_strong_bearish_threshold": 40,
+                "short_oversold_threshold": 25,
+                "strong_bonus": 0.5,
+                "good_bonus": 0.3,
+                "penalty": -0.3,
+                "weight": 0.15
             },
             "adx": {
-                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score",
-                "mid": 25.0,
-                "divisor": 20.0,
-                "floor": -0.3,
-                "cap": 0.4
-            },
-            "adx_slope": {
-                "_comment": "rank_adx_slope_cap=0.2",
-                "cap": 0.2
+                "_comment": "HIGH ADX = GOOD for momentum (strong trend needed)",
+                "mode": "high_is_good",
+                "strong_threshold": 35,
+                "good_threshold": 25,
+                "weak_threshold": 20,
+                "strong_bonus": 0.5,
+                "good_bonus": 0.3,
+                "weak_penalty": -0.4,
+                "weight": 0.25
             },
             "vwap": {
-                "_comment": "rank_vwap_bonus=0.3, rank_vwap_penalty=-0.2",
-                "aligned_bonus": 0.3,
-                "misaligned_penalty": -0.2
+                "_comment": "ALIGNED = CRITICAL for momentum (riding the wave)",
+                "mode": "aligned_required",
+                "aligned_bonus": 0.5,
+                "misaligned_penalty": -0.4,
+                "weight": 0.15
             },
             "distance": {
-                "_comment": "rank_dist_near_bpct=0.5, rank_dist_near_score=0.4, rank_dist_ok_bpct=1.5, rank_dist_ok_score=0.2, rank_dist_far_score=-0.1",
+                "_comment": "Less critical for momentum - already trending",
                 "near_bpct": 0.5,
-                "near_score": 0.4,
+                "near_score": 0.2,
                 "ok_bpct": 1.5,
-                "ok_score": 0.2,
-                "far_score": -0.1
+                "ok_score": 0.1,
+                "far_score": 0.0,
+                "weight": 0.05
             },
             "squeeze": {
-                "_comment": "rank_sq_score_le_50=0.3, rank_sq_score_le_70=0.2, rank_sq_score_ge_90=-0.2",
-                "low_bonus": 0.3,
-                "mid_bonus": 0.2,
-                "high_penalty": -0.2
+                "_comment": "High squeeze = good for momentum (pent-up energy)",
+                "low_bonus": 0.2,
+                "mid_bonus": 0.3,
+                "high_bonus": 0.4,
+                "weight": 0.10
             },
             "acceptance": {
-                "_comment": "rank_acceptance_bonus=0.5",
-                "excellent_bonus": 0.5,
-                "good_bonus": 0.25
+                "_comment": "KEEP for momentum - R:R matters",
+                "enabled": true,
+                "excellent_bonus": 0.4,
+                "good_bonus": 0.2,
+                "weight": 0.10
             }
         },
         "regime_multipliers": {

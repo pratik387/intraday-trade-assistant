@@ -27,6 +27,9 @@ class ICTStructure(BaseStructure):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
 
+        # Track which specific setup type this detector is for (e.g., "premium_zone_short")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # Order Blocks parameters - will crash with KeyError if missing
         self.ob_min_move_pct = config["order_block_min_move_pct"] / 100.0
         self.ob_min_volume_surge = config["order_block_min_volume_surge"]
@@ -175,6 +178,13 @@ class ICTStructure(BaseStructure):
             # Combine all events
             all_events = (order_block_events + fvg_events + sweep_events + mss_events +
                          premium_discount_events + bos_events + choch_events)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and all_events:
+                filtered_events = [e for e in all_events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(all_events):
+                    logger.debug(f"ICT: {context.symbol} - Filtered {len(all_events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                all_events = filtered_events
 
             # Calculate quality score based on multiple confirmations
             quality_score = self._calculate_ict_quality_score(all_events, d, context)

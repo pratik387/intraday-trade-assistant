@@ -15,6 +15,7 @@ from config.filters_setup import load_filters
 from services.orders.order_queue import OrderQueue
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 from diagnostics.diag_event_log import diag_event_log
+from pipelines.breakout_pipeline import BreakoutPipeline
 
 # Import from unified validator
 from services.execution.trigger_validation_engine import (
@@ -87,22 +88,31 @@ class TriggerAwareExecutor:
                 price = trade.trigger_price or plan.get("price", 0)
                 cap_segment = plan.get("cap_segment", "unknown")
 
+                # SHADOW TRADE LOGIC: If at capacity, mark as shadow instead of rejecting
+                # Shadow trades go through entire pipeline but don't consume capital
+                is_shadow = plan.get("shadow", False)  # May already be marked
+                if not is_shadow and self.capital_manager.is_at_capacity():
+                    trade.plan["shadow"] = True
+                    is_shadow = True
+                    logger.info(f"SHADOW_TRADE | {trade.symbol} | At max capacity - continuing as shadow trade")
+
                 can_enter, adjusted_qty, reason = self.capital_manager.can_enter_position(
-                    trade.symbol, qty, price, cap_segment
+                    trade.symbol, qty, price, cap_segment, shadow=is_shadow
                 )
 
                 if not can_enter:
+                    # This should only happen for capital insufficiency (not max positions, since shadow handles that)
                     logger.warning(f"Capital check failed: {trade.symbol} - {reason}")
                     return False
 
-                # Update plan with adjusted quantity if scaled down
-                if adjusted_qty != qty:
-                    logger.info(f"Capital scaling: {trade.symbol} qty {qty} → {adjusted_qty}")
+                # Update plan with adjusted quantity if scaled down (not applicable for shadow trades)
+                if adjusted_qty != qty and not is_shadow:
+                    logger.info(f"Capital scaling: {trade.symbol} qty {qty} -> {adjusted_qty}")
                     trade.plan["qty"] = adjusted_qty
                     trade.plan["_original_qty"] = qty  # Keep original for reference
 
             return True
-            
+
         except Exception as e:
             logger.exception(f"Final execution check failed: {trade.symbol}: {e}")
             return False
@@ -114,7 +124,11 @@ class TriggerAwareExecutor:
             symbol = trade.symbol
             
             # Extract order parameters
-            side = plan.get("side", "BUY")
+            # Derive side from bias if not explicitly set
+            side = plan.get("side")
+            if not side:
+                bias = plan.get("bias", "long")
+                side = "SELL" if bias.lower() == "short" else "BUY"
             qty = int(plan.get("qty", 0))
             price = trade.trigger_price or plan.get("price")
             
@@ -143,17 +157,25 @@ class TriggerAwareExecutor:
                     logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
                     return False
 
-            # Place order
-            order_args = {
-                "symbol": symbol,
-                "side": side,
-                "qty": qty,
-                "order_type": "MARKET",  # Using market orders for trigger execution
-                "product": "MIS",
-                "variety": "regular",
-            }
-            
-            order_id = self.broker.place_order(**order_args)
+            # Check if this is a shadow trade (simulated, no capital consumed)
+            is_shadow = plan.get("shadow", False)
+
+            if is_shadow:
+                # SHADOW TRADE: Don't place real broker order, generate simulated order_id
+                order_id = f"shadow-{trade.trade_id}"
+                logger.info(f"SHADOW_ORDER | {symbol} | Simulated order (no broker call) | order_id={order_id}")
+            else:
+                # Place order with trade_id for tagging (identifies app-placed orders)
+                order_args = {
+                    "symbol": symbol,
+                    "side": side,
+                    "qty": qty,
+                    "order_type": "MARKET",  # Using market orders for trigger execution
+                    "product": "MIS",
+                    "variety": "regular",
+                    "trade_id": trade.trade_id,  # For order tagging (ITDA_xxx)
+                }
+                order_id = self.broker.place_order(**order_args)
 
             # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
             # Reason: Both trade_logger.info() (removed) and trading_logger.log_trigger() (below)
@@ -182,6 +204,7 @@ class TriggerAwareExecutor:
                     'regime': plan.get('regime', ''),
                     'order_id': order_id,
                     'side': side,
+                    'shadow': plan.get('shadow', False),  # Shadow trade flag
                     'diagnostics': {
                         'confidence_score': trade.confidence_score,
                         'trigger_price': trade.trigger_price,
@@ -199,14 +222,17 @@ class TriggerAwareExecutor:
             }
 
             # Record position in capital manager (allocate margin)
+            # Shadow trades skip margin allocation
             if self.capital_manager:
                 cap_segment = plan.get("cap_segment", "unknown")
+                is_shadow = plan.get("shadow", False)
                 self.capital_manager.enter_position(
                     symbol=symbol,
                     qty=qty,
                     price=price,
                     cap_segment=cap_segment,
-                    timestamp=trade.trigger_timestamp
+                    timestamp=trade.trigger_timestamp,
+                    shadow=is_shadow
                 )
 
             # Update shared position store for exit executor
@@ -229,6 +255,29 @@ class TriggerAwareExecutor:
                 )
                 self.positions.upsert(pos)
 
+                # Persist position for crash recovery (Phase 5)
+                if self.persistence:
+                    from broker.kite.kite_broker import APP_ORDER_TAG_PREFIX
+                    order_tag = f"{APP_ORDER_TAG_PREFIX}{trade.trade_id[-12:]}"
+                    logger.info(f"[PERSIST] Saving position: {symbol} {side} {qty}@{price} trade_id={trade.trade_id}")
+                    try:
+                        self.persistence.save_position(
+                            symbol=symbol,
+                            side=side,
+                            qty=qty,
+                            avg_price=price,
+                            trade_id=trade.trade_id,
+                            order_id=order_id,
+                            order_tag=order_tag,
+                            plan=adjusted_plan,
+                            state={}  # Initial state (t1_done=False, etc.)
+                        )
+                        logger.info(f"[PERSIST] Position saved successfully: {symbol}")
+                    except Exception as e:
+                        logger.error(f"[PERSIST] Failed to save position {symbol}: {e}")
+                else:
+                    logger.warning(f"[PERSIST] persistence is None - position {symbol} NOT saved")
+
             return True
             
         except Exception as e:
@@ -247,10 +296,8 @@ class TriggerAwareExecutor:
         - If targets aren't recalculated, T2 gives wrong R-multiple
 
         Solution:
-        - Get risk_per_share (rps) from plan
-        - Calculate targets as R-multiples from actual_entry
-        - T1 = actual_entry ± 1.5R (configurable)
-        - T2 = actual_entry ± 2.0R (configurable)
+        - For ORB setups: Use OR range-based targets (pro standard)
+        - For other setups: Use R-multiples from actual entry
 
         Van Tharp: Targets must be based on YOUR entry, not some theoretical entry.
         """
@@ -258,6 +305,12 @@ class TriggerAwareExecutor:
         adjusted_plan = copy.deepcopy(plan)
 
         try:
+            # Check if this is an ORB setup - use OR range-based targets (pro standard)
+            # Delegate to breakout pipeline which has the config (no hardcoded values here)
+            strategy = plan.get("strategy", "") or ""
+            if "orb" in strategy.lower():
+                breakout_pipeline = BreakoutPipeline()
+                return breakout_pipeline.recalculate_orb_targets_at_trigger(adjusted_plan, actual_entry, side)
             # Get stop data from plan - exec_item now includes full "stop" dict
             stop_data = plan.get("stop", {})
             hard_sl = stop_data.get("hard")
@@ -427,12 +480,14 @@ class TriggerAwareExecutor:
         get_ltp_ts: Callable[[str], Tuple[Optional[float], Optional[pd.Timestamp]]],
         bar_builder,  # We'll hook into the BarBuilder's 1m callbacks
         trading_logger=None,  # Enhanced logging service
-        capital_manager=None  # Capital & MIS management
+        capital_manager=None,  # Capital & MIS management
+        persistence=None  # Position persistence for crash recovery
     ):
         self.broker = broker
         self.oq = order_queue
         self.trading_logger = trading_logger
         self.capital_manager = capital_manager
+        self.persistence = persistence  # For saving positions on entry
         self.risk = risk_state
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts

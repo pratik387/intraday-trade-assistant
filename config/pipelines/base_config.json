@@ -173,14 +173,6 @@
             "_note": "Multiplier applied to threshold, not score. Higher = harder to qualify."
         },
 
-        "blacklist": {
-            "_comment": "From ranker.py lines 513-517 - Penalty for poor-performing setups",
-            "enabled": true,
-            "strategies": [],
-            "penalty": -999.0,
-            "_note": "Add strategy names to blacklist based on backtest performance analysis"
-        },
-
         "unrealistic_rr": {
             "_comment": "From ranker.py lines 519-525 - Penalty for unrealistic R:R",
             "enabled": true,
@@ -216,6 +208,28 @@
             "weight_daily": 0.3,
             "weight_intraday": 0.7,
             "_note": "final_score = w_daily * daily_score + w_intraday * intraday_score"
+        },
+
+        "blacklist": {
+            "_comment": "From ranker.py lines 513-517 - Penalty for historically poor setups",
+            "_description": "Blacklisted setups get -999 penalty (effectively blocking them) but still get detected so other detectors can work",
+            "enabled": true,
+            "penalty": -999,
+            "strategies": [
+                "range_rejection_long",
+                "vwap_lose_short",
+                "flag_continuation_long",
+                "trend_continuation_long",
+                "trend_continuation_short",
+                "vwap_mean_reversion_short",
+                "vwap_mean_reversion_long",
+                "momentum_breakout_long",
+                "liquidity_sweep_long",
+                "flag_continuation_short",
+                "volume_spike_reversal_short",
+                "vwap_reclaim_long"
+            ],
+            "_note": "Penalty applied at ranking, not detector init - prevents spillover to other detectors"
         }
     },
 
@@ -236,6 +250,6 @@
     "sl_below_swing_ticks": 0.0,
     "_comment_sl_ticks": "Buffer below structure stop (swing low/high) - from OLD config",
 
-    "risk_per_trade_rupees": 500.0,
-    "_comment_risk": "Risk per trade in Rupees - from OLD configuration.json"
+    "risk_per_trade_rupees": 1000.0,
+    "_comment_risk": "Risk per trade in Rupees - 1% of 1L capital"
 }

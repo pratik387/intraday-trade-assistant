@@ -33,6 +33,9 @@ class FlagContinuationStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "flag_continuation"
 
+        # Track which specific setup type this detector is for (e.g., "flag_continuation_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
 
         # Flag pattern parameters
@@ -124,11 +127,14 @@ class FlagContinuationStructure(BaseStructure):
                     price=context.current_price
                 )
 
-                events.append(event)
-                logger.debug(f"FLAG_CONTINUATION: {context.symbol} - {structure_type} detected: trend {trend_strength_pct:.2f}%, consol {consol_period} bars")
-
-                # Only return the first (best) pattern found
-                break
+                # Only add event if it matches configured setup type
+                if self.configured_setup_type is None or structure_type == self.configured_setup_type:
+                    events.append(event)
+                    logger.debug(f"FLAG_CONTINUATION: {context.symbol} - {structure_type} detected: trend {trend_strength_pct:.2f}%, consol {consol_period} bars")
+                    # Only return the first (best) pattern found
+                    break
+                else:
+                    logger.debug(f"FLAG_CONTINUATION: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
 
             quality_score = self._calculate_quality_score(events, df) if events else 0.0
 

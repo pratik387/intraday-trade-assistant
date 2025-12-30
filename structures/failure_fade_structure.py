@@ -32,6 +32,9 @@ class FailureFadeStructure(BaseStructure):
         super().__init__(config)
         self.structure_type = "failure_fade"
 
+        # Track which specific setup type this detector is for (e.g., "failure_fade_long")
+        self.configured_setup_type = config.get("_setup_name", None)
+
         # KeyError if missing trading parameters
         self.min_pierce_size_pct = config["min_pierce_size_pct"]
         self.max_pierce_size_pct = config["max_pierce_size_pct"]
@@ -85,6 +88,13 @@ class FailureFadeStructure(BaseStructure):
                     fade_event = self._detect_support_failure_fade(context, df, level_name, level_value)
                     if fade_event:
                         events.append(fade_event)
+
+            # Filter events to only include those matching configured setup type
+            if self.configured_setup_type and events:
+                filtered_events = [e for e in events if e.structure_type == self.configured_setup_type]
+                if len(filtered_events) < len(events):
+                    logger.debug(f"FAILURE_FADE: {context.symbol} - Filtered {len(events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                events = filtered_events
 
             quality_score = self._calculate_quality_score(events, df) if events else 0.0
 

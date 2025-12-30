@@ -27,6 +27,70 @@ from services.indicators.indicators import (
 logger = get_agent_logger()
 
 
+# ================================================================================
+# CENTRALIZED HARD BLOCKS - Single source of truth for regime-based blocking
+# ================================================================================
+# These blocks CANNOT be bypassed by config or any mechanism.
+# Based on backtest analysis showing these setups underperform in specific regimes.
+#
+# SQUEEZE REGIME ANALYSIS (backtest_20251211):
+#   - first_hour_momentum_long: 40 trades, Rs 119 total = Rs 3/trade avg (worthless)
+#   - volume_spike_reversal_short: 7 trades, Rs -632 total (negative)
+#   - premium_zone_short: Not in allowed list but was trading via HCET bypass
+#
+# Pro trader approach: AVOID trading during squeeze/consolidation. Wait for breakout.
+# ================================================================================
+HARD_BLOCKS = {
+    "squeeze": [
+        "first_hour_momentum_long",      # Rs 119 in 40 trades = Rs 3/trade avg
+        "volume_spike_reversal_short",   # Rs -632 in 7 trades = negative
+        "premium_zone_short",            # Not designed for squeeze regime
+    ],
+    # Add other regime hard blocks here as analysis reveals them
+    # "chop": [...],
+    # "trend_up": [...],
+    # "trend_down": [...],
+}
+
+
+def is_hard_blocked(setup_type: str, regime: str) -> bool:
+    """
+    Check if a setup is HARD BLOCKED for a regime.
+
+    Hard blocks CANNOT be bypassed by config or any mechanism.
+    This is the single source of truth for regime-based blocking.
+
+    Moved from regime_gate.py to base_pipeline.py for:
+    - Single source of truth
+    - Pipeline-level access without gate dependency
+    - Cleaner architecture separation
+
+    Args:
+        setup_type: The setup type to check
+        regime: The current market regime
+
+    Returns:
+        True if the setup is hard blocked for this regime
+    """
+    blocked_setups = HARD_BLOCKS.get(regime, [])
+    return setup_type in blocked_setups
+
+
+def safe_level_get(levels: Dict, key: str, fallback: float) -> float:
+    """
+    Safely get a level value with proper NaN handling.
+
+    CRITICAL: dict.get(key, fallback) returns the value if key exists, even if value is NaN.
+    This function properly returns the fallback when the value is NaN.
+
+    This is important for late server starts when ORH/ORL are NaN.
+    """
+    val = levels.get(key)
+    if val is None or pd.isna(val):
+        return fallback
+    return val
+
+
 def calculate_structure_stop(
     entry_price: float,
     bias: str,
@@ -161,6 +225,27 @@ class TargetResult:
 
 
 _BASE_CONFIG_CACHE: Optional[Dict[str, Any]] = None
+
+
+def set_base_config_override(key: str, value: Any) -> None:
+    """
+    Override a value in the cached base config.
+
+    This allows main.py to set runtime values (like risk_per_trade_rupees from
+    capital manager) that will be picked up by all pipelines.
+
+    MUST be called AFTER load_base_config() has been called at least once.
+
+    Args:
+        key: Config key to override (e.g., "risk_per_trade_rupees")
+        value: New value to set
+    """
+    global _BASE_CONFIG_CACHE
+    if _BASE_CONFIG_CACHE is None:
+        # Force load first
+        load_base_config()
+    _BASE_CONFIG_CACHE[key] = value
+    logger.info(f"CONFIG_OVERRIDE: Set {key}={value}")
 
 
 def load_base_config() -> Dict[str, Any]:
@@ -462,6 +547,246 @@ class BasePipeline(ABC):
         # It already handles None/empty df and returns 1.0 as default
         return _volume_ratio_util(df, lookback=lookback)
 
+    # ======================== UNIFIED FILTER SYSTEM ========================
+    # All setup-specific filters are applied through this centralized method.
+    # Filters are configured in gates.setup_filters.<setup_type> with enabled flags.
+
+    def apply_setup_filters(
+        self,
+        setup_type: str,
+        symbol: str,
+        regime: str,
+        adx: float,
+        rsi: Optional[float],
+        volume: float,
+        current_hour: int,
+        cap_segment: str,
+        rank_score: Optional[float] = None,
+        structural_rr: Optional[float] = None
+    ) -> Tuple[bool, List[str], Dict[str, Any]]:
+        """
+        Apply unified setup-specific filters from config.
+
+        All filters are in gates.setup_filters.<setup_type> with:
+        - enabled: bool - master toggle for this setup's filters
+        - Individual filter params with optional enabled flags
+
+        Args:
+            setup_type: Setup type (e.g., "orb_pullback_short")
+            symbol: Stock symbol
+            regime: Current market regime
+            adx: Current ADX value
+            rsi: Current RSI value (can be None)
+            volume: Current bar volume
+            current_hour: Current hour (0-23)
+            cap_segment: Market cap segment (large_cap, mid_cap, small_cap, micro_cap)
+            rank_score: Rank score (only for post-ranking filters, None otherwise)
+            structural_rr: Structural risk-reward ratio (for min_rr/max_rr filters)
+
+        Returns:
+            Tuple of (passed, reasons, modifiers):
+            - passed: bool - True if all filters pass
+            - reasons: List[str] - Filter results for logging
+            - modifiers: Dict with sl_mult, t1_mult, t2_mult if configured
+        """
+        setup_lower = setup_type.lower()
+        reasons = []
+        modifiers = {"sl_mult": 1.0, "t1_mult": 1.0, "t2_mult": 1.0}
+
+        # Get setup-specific filter config - MUST exist in gates.setup_filters
+        setup_filters = self._get("gates", "setup_filters") or {}
+        filter_cfg = setup_filters.get(setup_lower)
+
+        # If no config for this setup, pass through (no filters defined)
+        if not filter_cfg:
+            reasons.append(f"no_setup_filter_config:{setup_lower}")
+            return True, reasons, modifiers
+
+        # Check if filters are enabled for this setup - REQUIRED field
+        if not filter_cfg.get("enabled"):
+            reasons.append(f"filters_disabled:{setup_lower}")
+            return True, reasons, modifiers
+
+        # 1. BLOCKED_ENTIRELY - setup is completely disabled (only check if key exists)
+        if filter_cfg.get("blocked_entirely"):
+            reasons.append(f"blocked_entirely:{setup_lower}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: blocked_entirely=true")
+            return False, reasons, modifiers
+
+        # 2. REGIME FILTERS
+        blocked_regimes = filter_cfg.get("blocked_regimes") or []
+        if regime in blocked_regimes:
+            reasons.append(f"regime_blocked:{setup_lower}_{regime}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: regime {regime} in blocked_regimes")
+            return False, reasons, modifiers
+
+        allowed_regimes = filter_cfg.get("allowed_regimes")
+        if allowed_regimes is not None and regime not in allowed_regimes:
+            reasons.append(f"regime_not_allowed:{setup_lower}_{regime}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: regime {regime} not in allowed_regimes {allowed_regimes}")
+            return False, reasons, modifiers
+
+        # 3. CAP SEGMENT FILTERS
+        blocked_caps = filter_cfg.get("blocked_caps") or []
+        if cap_segment in blocked_caps:
+            reasons.append(f"cap_blocked:{setup_lower}_{cap_segment}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: cap_segment {cap_segment} in blocked_caps")
+            return False, reasons, modifiers
+
+        allowed_caps = filter_cfg.get("allowed_caps")
+        if allowed_caps is not None and cap_segment not in allowed_caps:
+            reasons.append(f"cap_not_allowed:{setup_lower}_{cap_segment}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: cap_segment {cap_segment} not in allowed_caps {allowed_caps}")
+            return False, reasons, modifiers
+
+        # 4. HOUR FILTERS
+        blocked_hours = filter_cfg.get("blocked_hours") or []
+        if current_hour in blocked_hours:
+            reasons.append(f"hour_blocked:{setup_lower}_{current_hour}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: hour {current_hour} in blocked_hours {blocked_hours}")
+            return False, reasons, modifiers
+
+        allowed_hours = filter_cfg.get("allowed_hours")
+        if allowed_hours is not None and current_hour not in allowed_hours:
+            reasons.append(f"hour_not_allowed:{setup_lower}_{current_hour}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: hour {current_hour} not in allowed_hours {allowed_hours}")
+            return False, reasons, modifiers
+
+        # 5. ADX FILTERS
+        min_adx = filter_cfg.get("min_adx")
+        if min_adx is not None and adx < min_adx:
+            reasons.append(f"adx_below_min:{setup_lower}_adx{adx:.0f}<{min_adx}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: ADX {adx:.1f} < min_adx {min_adx}")
+            return False, reasons, modifiers
+
+        max_adx = filter_cfg.get("max_adx")
+        if max_adx is not None and adx >= max_adx:
+            reasons.append(f"adx_above_max:{setup_lower}_adx{adx:.0f}>={max_adx}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: ADX {adx:.1f} >= max_adx {max_adx}")
+            return False, reasons, modifiers
+
+        # 6. RSI FILTERS
+        min_rsi = filter_cfg.get("min_rsi")
+        if min_rsi is not None:
+            if rsi is None:
+                logger.debug(f"[FILTER] {symbol} {setup_lower} RSI filter skipped: RSI is None (min_rsi={min_rsi})")
+            elif rsi < min_rsi:
+                reasons.append(f"rsi_below_min:{setup_lower}_rsi{rsi:.0f}<{min_rsi}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: RSI {rsi:.1f} < min_rsi {min_rsi}")
+                return False, reasons, modifiers
+
+        max_rsi = filter_cfg.get("max_rsi")
+        if max_rsi is not None and rsi is not None and rsi > max_rsi:
+            reasons.append(f"rsi_above_max:{setup_lower}_rsi{rsi:.0f}>{max_rsi}")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: RSI {rsi:.1f} > max_rsi {max_rsi}")
+            return False, reasons, modifiers
+
+        # 7. VOLUME FILTERS
+        min_volume = filter_cfg.get("min_volume")
+        if min_volume is not None and volume < min_volume:
+            reasons.append(f"vol_below_min:{setup_lower}_vol{volume/1000:.0f}k<{min_volume/1000:.0f}k")
+            logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: volume {volume/1000:.0f}k < min_volume {min_volume/1000:.0f}k")
+            return False, reasons, modifiers
+
+        # 8. STRUCTURAL R:R FILTERS (min_rr, max_rr for quality filtering)
+        if structural_rr is not None:
+            min_rr = filter_cfg.get("min_rr")
+            if min_rr is not None and structural_rr < min_rr:
+                reasons.append(f"rr_below_min:{setup_lower}_rr{structural_rr:.2f}<{min_rr}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: structural_rr {structural_rr:.2f} < min_rr {min_rr}")
+                return False, reasons, modifiers
+
+            max_rr = filter_cfg.get("max_rr")
+            if max_rr is not None and structural_rr >= max_rr:
+                reasons.append(f"rr_above_max:{setup_lower}_rr{structural_rr:.2f}>={max_rr}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: structural_rr {structural_rr:.2f} >= max_rr {max_rr}")
+                return False, reasons, modifiers
+
+        # 9. RANK SCORE FILTERS (only if rank_score provided - post-ranking call)
+        if rank_score is not None:
+            min_rank_score = filter_cfg.get("min_rank_score")
+            if min_rank_score is not None and rank_score < min_rank_score:
+                reasons.append(f"rank_below_min:{setup_lower}_rank{rank_score:.2f}<{min_rank_score}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: rank_score {rank_score:.2f} < min_rank_score {min_rank_score}")
+                return False, reasons, modifiers
+
+            max_rank_score = filter_cfg.get("max_rank_score")
+            if max_rank_score is not None and rank_score > max_rank_score:
+                reasons.append(f"rank_above_max:{setup_lower}_rank{rank_score:.2f}>{max_rank_score}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: rank_score {rank_score:.2f} > max_rank_score {max_rank_score}")
+                return False, reasons, modifiers
+
+        # 9. COLLECT TARGET/SL MODIFIERS (these don't block, just modify)
+        if filter_cfg.get("sl_mult"):
+            modifiers["sl_mult"] = filter_cfg["sl_mult"]
+        if filter_cfg.get("t1_mult"):
+            modifiers["t1_mult"] = filter_cfg["t1_mult"]
+        if filter_cfg.get("t2_mult"):
+            modifiers["t2_mult"] = filter_cfg["t2_mult"]
+
+        reasons.append(f"setup_filters_passed:{setup_lower}")
+        return True, reasons, modifiers
+
+    def apply_global_filters(
+        self,
+        setup_type: str,
+        symbol: str,
+        bias: str,
+        adx: float,
+        rsi: Optional[float],
+        volume: float
+    ) -> Tuple[bool, List[str]]:
+        """
+        Apply global filters that apply to all setups (e.g., short min ADX, long min volume).
+
+        These are pipeline-agnostic filters configured in gates.global_filters.
+
+        Args:
+            setup_type: Setup type for logging
+            symbol: Stock symbol
+            bias: Trade direction ("long" or "short")
+            adx: Current ADX value
+            rsi: Current RSI value
+            volume: Current bar volume
+
+        Returns:
+            Tuple of (passed, reasons)
+        """
+        reasons = []
+
+        global_filters = self._get("gates", "global_filters") or {}
+
+        # 1. GLOBAL SHORT MIN ADX - MUST be configured in gates.global_filters.short_min_adx
+        short_adx_cfg = global_filters.get("short_min_adx")
+        if bias == "short" and short_adx_cfg and short_adx_cfg.get("enabled"):
+            min_adx = short_adx_cfg["min_adx"]  # REQUIRED - no default
+            if adx < min_adx:
+                reasons.append(f"global_short_adx_blocked:{adx:.0f}<{min_adx}")
+                logger.debug(f"[GLOBAL_FILTER] {symbol} {setup_type} BLOCKED: short ADX {adx:.1f} < global min {min_adx}")
+                return False, reasons
+
+        # 2. GLOBAL LONG MIN VOLUME - MUST be configured in gates.global_filters.long_min_volume
+        long_vol_cfg = global_filters.get("long_min_volume")
+        if bias == "long" and long_vol_cfg and long_vol_cfg.get("enabled"):
+            min_volume = long_vol_cfg["min_volume"]  # REQUIRED - no default
+            if volume < min_volume:
+                reasons.append(f"global_long_vol_blocked:{volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                logger.debug(f"[GLOBAL_FILTER] {symbol} {setup_type} BLOCKED: long volume {volume/1000:.0f}k < global min {min_volume/1000:.0f}k")
+                return False, reasons
+
+        # 3. RSI DEAD ZONE - MUST be configured in gates.global_filters.rsi_dead_zone
+        rsi_dead_zone_cfg = global_filters.get("rsi_dead_zone")
+        if rsi_dead_zone_cfg and rsi_dead_zone_cfg.get("enabled") and rsi is not None:
+            rsi_min = rsi_dead_zone_cfg["min_rsi"]  # REQUIRED - no default
+            rsi_max = rsi_dead_zone_cfg["max_rsi"]  # REQUIRED - no default
+            if rsi_min <= rsi <= rsi_max:
+                reasons.append(f"global_rsi_dead_zone:{rsi:.0f}_in_{rsi_min}_{rsi_max}")
+                logger.debug(f"[GLOBAL_FILTER] {symbol} {setup_type} BLOCKED: RSI {rsi:.1f} in dead zone {rsi_min}-{rsi_max}")
+                return False, reasons
+
+        reasons.append("global_filters_passed")
+        return True, reasons
+
     def _get_strategy_regime_mult(self, setup_type: str, regime: str) -> float:
         """
         Get regime multiplier - strategy-specific if available, else fallback.
@@ -550,6 +875,7 @@ class BasePipeline(ABC):
         # The actual filtering happens in the orchestrator when comparing to threshold
 
         # 2. BLACKLIST PENALTY
+        # Apply severe penalty to historically poor-performing setups (effectively blocks them)
         blacklist_penalty = self._get_blacklist_penalty(strategy_type, ranking_cfg)
         score += blacklist_penalty
         adjustments["blacklist_penalty"] = blacklist_penalty
@@ -642,6 +968,7 @@ class BasePipeline(ABC):
         From ranker.py lines 513-517:
         - Blacklisted strategies get a severe penalty (-999 by default)
         - This effectively prevents them from being selected
+        - Setups still get detected (allowing other detectors to work) but blocked at ranking
         """
         blacklist_cfg = ranking_cfg["blacklist"]
         if not blacklist_cfg["enabled"]:
@@ -1149,7 +1476,7 @@ class BasePipeline(ABC):
             daily_atr = self.calculate_atr(daily_df, period=14)
             if daily_atr is not None:
                 atr = daily_atr
-                logger.info(f"[{category}] {symbol} {setup_type}: Using daily ATR {atr:.2f} for morning ORB (intraday ATR unavailable)")
+                logger.debug(f"[{category}] {symbol} {setup_type}: Using daily ATR {atr:.2f} for morning ORB (intraday ATR unavailable)")
 
         current_close = float(df5m["close"].iloc[-1])
 
@@ -1214,7 +1541,7 @@ class BasePipeline(ABC):
         if not (opening_bell_active and self._opening_bell_bypasses("range_compression")):
             range_passed, range_reason = self._check_range_compression(df5m, atr)
             if not range_passed:
-                logger.info(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {range_reason}")
+                logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {range_reason}")
                 return {"eligible": False, "reason": "universal_gate_fail", "details": [range_reason]}
 
         # Cap-strategy blocking - block certain setups for certain market cap segments
@@ -1241,9 +1568,15 @@ class BasePipeline(ABC):
         # 2. QUALITY
         quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr)
 
-        # Log quality metrics (like QUALITY_BREAKOUT, QUALITY_LEVEL in planner_internal.py)
-        logger.info(f"QUALITY_{category}: {symbol} structural_rr={quality_result.structural_rr:.2f} "
-                   f"status={quality_result.quality_status} metrics={quality_result.metrics}")
+        # Reject if quality calculation failed (e.g., missing required levels)
+        if quality_result is None:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected at QUALITY: missing required data")
+            return {"eligible": False, "reason": "quality_fail", "details": ["missing_required_levels"]}
+
+        # Log quality metrics (DEBUG - detailed data in planning.jsonl)
+        clean_metrics = {k: round(float(v), 2) if v is not None else None for k, v in quality_result.metrics.items()}
+        logger.debug(f"QUALITY_{category}: {symbol} structural_rr={quality_result.structural_rr:.2f} "
+                    f"status={quality_result.quality_status} metrics={clean_metrics}")
 
         # NOTE: Structural R:R min check with strategy-specific overrides is done in _apply_quality_filters()
         # This allows breakouts to use relaxed thresholds while other categories use stricter defaults
@@ -1280,6 +1613,9 @@ class BasePipeline(ABC):
                     logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: RSI dead zone ({rsi_val:.1f} in {rsi_min}-{rsi_max} range)")
                     return {"eligible": False, "reason": "rsi_dead_zone", "details": [f"rsi_{rsi_val:.1f}_in_{rsi_min}_{rsi_max}_dead_zone"]}
 
+        # Add acceptance_status from quality calculation to features for ranking
+        features["acceptance_status"] = quality_result.quality_status
+
         # 4. RANKING (with HTF context for category-specific adjustments)
         rank_result = self.calculate_rank_score(symbol, features, regime, htf_context=htf_context)
 
@@ -1303,9 +1639,37 @@ class BasePipeline(ABC):
             daily_trend=daily_trend
         )
 
+        # 4c. POST-RANKING FILTERS (from setup_filters - need adjusted_score)
+        # These filters run AFTER ranking because they need the adjusted rank score.
+        # Pre-ranking filters (hours, RSI, regime, caps, etc.) are handled in validate_gates() via apply_setup_filters()
+        setup_filters = self._get("gates", "setup_filters")
+        setup_block_cfg = setup_filters.get(setup_type.lower(), {}) if setup_filters else {}
+
+        # Check if setup filter is enabled (default True for backwards compat)
+        setup_filter_enabled = setup_block_cfg.get("enabled", True)
+
+        if setup_filter_enabled:
+            # 4c.1 MAX RANK SCORE FILTER (DATA-DRIVEN Dec 2024)
+            # Some setups perform better with lower rank scores (counter-intuitive finding)
+            # e.g., orb_pullback_short: rank_score < 1.0 performs better
+            max_rank_score = setup_block_cfg.get("max_rank_score")
+            if max_rank_score is not None and adjusted_score > max_rank_score:
+                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} > max_rank_score {max_rank_score}")
+                return {"eligible": False, "reason": "max_rank_score_exceeded", "details": [f"rank_{adjusted_score:.3f}_gt_{max_rank_score}"]}
+
+            # 4c.2 MIN RANK SCORE FILTER (DATA-DRIVEN Dec 2024)
+            # Some setups require higher quality signals to be profitable
+            # e.g., resistance_bounce_short: rank_score >= 2 performs better
+            min_rank_score = setup_block_cfg.get("min_rank_score")
+            if min_rank_score is not None and adjusted_score < min_rank_score:
+                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} < min_rank_score {min_rank_score}")
+                return {"eligible": False, "reason": "min_rank_score_not_met", "details": [f"rank_{adjusted_score:.3f}_lt_{min_rank_score}"]}
+
+        # NOTE: allowed_hours, min_rsi, max_rsi filters removed - handled pre-ranking in validate_gates()
+
         # 5. ENTRY - Category pipeline handles setup-type-specific entry logic
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
+        orh = safe_level_get(levels, "ORH", current_close)
+        orl = safe_level_get(levels, "ORL", current_close)
 
         # Get entry from category pipeline (includes setup-type-specific logic)
         entry_result = self.calculate_entry(symbol, df5m, bias, levels, atr, setup_type)
@@ -1366,7 +1730,16 @@ class BasePipeline(ABC):
         # 6. STOP LOSS - Structure-based SL with RPS floor protection
         # Ported from OLD planner_internal.py lines 512-537
         # Uses: structure_stop from levels, ATR-based volatility stop, RPS floor
+
+        # Check for setup-specific SL multiplier first (DATA-DRIVEN Dec 2024)
         sl_atr_mult = self.cfg["sl_atr_mult"]
+        setup_specific_sl = self.cfg.get("stop_loss", {}).get("setup_specific")
+        if setup_specific_sl and setup_type in setup_specific_sl:
+            setup_sl_cfg = setup_specific_sl[setup_type]
+            if "atr_multiplier" in setup_sl_cfg:
+                sl_atr_mult = setup_sl_cfg["atr_multiplier"]
+                logger.debug(f"[PLAN] Using setup-specific SL for {setup_type}: atr_mult={sl_atr_mult}")
+
         adjusted_atr = atr * cap_sl_mult
         sl_below_swing_ticks = self.cfg["sl_below_swing_ticks"]
 
@@ -1388,12 +1761,16 @@ class BasePipeline(ABC):
         else:
             # Get structure stop from levels if available (swing low for long, swing high for short)
             structure_stop = levels.get("structure_stop")
-            if structure_stop is None:
+            if structure_stop is None or pd.isna(structure_stop):
                 # Fallback: use ORH/ORL as structure reference
+                # CRITICAL: Handle NaN properly - levels.get(key, fallback) returns NaN if key exists but value is NaN
+                # This happens when server starts late (after ORB window) - ORH/ORL will be NaN
                 if bias == "long":
-                    structure_stop = levels.get("ORL", entry_ref_price - adjusted_atr)
+                    orl_val = levels.get("ORL")
+                    structure_stop = orl_val if (orl_val is not None and not pd.isna(orl_val)) else (entry_ref_price - adjusted_atr)
                 else:
-                    structure_stop = levels.get("ORH", entry_ref_price + adjusted_atr)
+                    orh_val = levels.get("ORH")
+                    structure_stop = orh_val if (orh_val is not None and not pd.isna(orh_val)) else (entry_ref_price + adjusted_atr)
 
             # Calculate both structure-based and volatility-based stops
             # CRITICAL: Use entry_ref_price (the level), NOT effective_entry_price (fill price)
@@ -1413,6 +1790,11 @@ class BasePipeline(ABC):
                 hard_sl = min(structure_sl, vol_stop)  # Takes closer SL to entry
                 rps = max(hard_sl - effective_entry_price, 0.0)
 
+            # SAFETY CHECK: Reject if hard_sl or rps is NaN (bad level data)
+            if pd.isna(hard_sl) or pd.isna(rps):
+                logger.warning(f"[{category}] {symbol} REJECTED: hard_sl or rps is NaN (hard_sl={hard_sl}, rps={rps}, structure_stop={structure_stop})")
+                return {"eligible": False, "reason": "nan_stop_loss", "details": [f"hard_sl={hard_sl}", f"rps={rps}"]}
+
         # RPS FLOOR PROTECTION (from planner_internal.py lines 527-537)
         # Prevents too-tight stops that get hit easily
         planner_precision = self.cfg["planner_precision"]
@@ -1430,6 +1812,43 @@ class BasePipeline(ABC):
                 hard_sl = effective_entry_price + rps_floor
             rps = rps_floor
             logger.debug(f"RPS_FLOOR: {symbol} rps widened to floor={rps_floor:.4f}")
+
+        # 6b. SETUP-SPECIFIC SL MULTIPLIER (sl_mult from setup_filters)
+        # This WIDENS the stop loss for setups that need more room (e.g., resistance_bounce_short sl_mult=1.5)
+        # NOTE: sl_mult defaults to 1.0 (no widening) if not specified - this is a neutral modifier, not a required value
+        sl_mult = setup_block_cfg.get("sl_mult", 1.0)
+        if sl_mult != 1.0:
+            if bias == "long":
+                # For long, SL is below entry - widening moves it lower
+                risk_distance = effective_entry_price - hard_sl
+                widened_risk = risk_distance * sl_mult
+                hard_sl = effective_entry_price - widened_risk
+            else:
+                # For short, SL is above entry - widening moves it higher
+                risk_distance = hard_sl - effective_entry_price
+                widened_risk = risk_distance * sl_mult
+                hard_sl = effective_entry_price + widened_risk
+            rps = widened_risk
+            logger.debug(f"SL_MULT: {symbol} {setup_type} sl_mult={sl_mult} -> hard_sl={hard_sl:.2f}, rps={rps:.2f}")
+
+        # 6c. VALIDATE SL IS OUTSIDE ENTRY ZONE - REJECT if not
+        # For shorts: SL must be > entry_zone_high (above where we can enter)
+        # For longs: SL must be < entry_zone_low (below where we can enter)
+        #
+        # If SL is inside entry zone, the trade is structurally broken:
+        # - We could fill at edge of zone where SL is on WRONG side of entry
+        # - E.g., short fills at 228, SL at 227.75 = SL below entry = exits on profit not loss
+        #
+        # REJECT rather than auto-adjust - don't risk real money on broken setups
+        entry_zone = entry_result.entry_zone
+        if bias == "long":
+            if hard_sl >= entry_zone[0]:
+                logger.warning(f"[{category}] {symbol} {setup_type} REJECTED: SL ({hard_sl:.2f}) >= entry_zone_low ({entry_zone[0]:.2f}) - SL inside entry zone")
+                return {"eligible": False, "reason": "sl_inside_entry_zone", "details": [f"sl={hard_sl:.2f}", f"zone_low={entry_zone[0]:.2f}"]}
+        else:  # short
+            if hard_sl <= entry_zone[1]:
+                logger.warning(f"[{category}] {symbol} {setup_type} REJECTED: SL ({hard_sl:.2f}) <= entry_zone_high ({entry_zone[1]:.2f}) - SL inside entry zone")
+                return {"eligible": False, "reason": "sl_inside_entry_zone", "details": [f"sl={hard_sl:.2f}", f"zone_high={entry_zone[1]:.2f}"]}
 
         # 7. TARGETS
         # CRITICAL: Use effective_entry_price for target calculations
@@ -1481,6 +1900,9 @@ class BasePipeline(ABC):
         notional = qty * effective_entry_price
 
         # 9. BUILD PLAN
+        # CRITICAL: For immediate mode, use effective_entry_price (current_close) as the reference
+        # since targets are calculated from there. This ensures plan is consistent.
+        plan_entry_ref = effective_entry_price if entry_result.entry_mode == "immediate" else entry_ref_price
         plan = {
             "symbol": symbol,
             "eligible": True,
@@ -1489,9 +1911,9 @@ class BasePipeline(ABC):
             "regime": regime,
             "category": self.get_category_name(),
 
-            "entry_ref_price": round(entry_ref_price, 2),
+            "entry_ref_price": round(plan_entry_ref, 2),
             "entry": {
-                "reference": round(entry_ref_price, 2),
+                "reference": round(plan_entry_ref, 2),
                 "zone": [round(entry_result.entry_zone[0], 2), round(entry_result.entry_zone[1], 2)],
                 "trigger": entry_result.entry_trigger,
                 "mode": entry_result.entry_mode,
@@ -1560,7 +1982,7 @@ class BasePipeline(ABC):
         plan = self._apply_quality_filters(plan, effective_entry_price, atr, measured_move)
 
         if plan["eligible"]:
-            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (base={rank_result.score:.2f}), quality={quality_result.quality_status}, entry={entry_ref_price:.2f}")
+            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (base={rank_result.score:.2f}), quality={quality_result.quality_status}, entry={plan_entry_ref:.2f}")
         else:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected by quality filters: {plan.get('quality', {}).get('rejection_reason', 'unknown')}")
 

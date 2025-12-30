@@ -1,0 +1,8 @@
+# Sidecar Cron Schedule
+# Install: sudo crontab -e (and paste these lines)
+#
+# Start sidecar at 09:00 IST on weekdays (Mon-Fri)
+0 9 * * 1-5 /usr/bin/systemctl start sidecar
+
+# Stop sidecar at 15:35 IST on weekdays (service also self-stops at EOD)
+35 15 * * 1-5 /usr/bin/systemctl stop sidecar

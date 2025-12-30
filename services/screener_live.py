@@ -40,15 +40,15 @@ from dataclasses import dataclass
 from datetime import datetime, time as dtime
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import partial
-import multiprocessing as mp
+import threading
 
 import pandas as pd
 
 from config.filters_setup import load_filters
 from config.logging_config import get_agent_logger, get_screener_logger, get_ranking_logger, get_events_decision_logger
+from config.env_setup import env
 from utils.level_utils import get_previous_day_levels
-from utils.dataframe_utils import validate_df, has_column, safe_get_last
+from utils.dataframe_utils import validate_df, safe_get_last
 
 # ingest / streaming
 from services.ingest.stream_client import WSClient
@@ -75,6 +75,7 @@ from pipelines import process_setup_candidates
 from services.orders.order_queue import OrderQueue
 from services.scan.energy_scanner import EnergyScanner
 from diagnostics.diag_event_log import diag_event_log, mint_trade_id
+from services.state.orb_cache_persistence import ORBCachePersistence
 import uuid
 
 
@@ -101,7 +102,6 @@ def _init_worker(config_dict):
 
         # Apply structure caching in worker process (if enabled via config flag)
         if config_dict.get("_enable_structure_cache", False):
-            import tools.cached_engine_structures  # noqa: F401
             if worker_logger:
                 worker_logger.info("[CACHE] Worker process: Structure caching enabled")
             else:
@@ -211,8 +211,12 @@ class ScreenerLive:
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
         self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
         self.ws.on_message(self.router.handle_raw)
-        # Register on_close to trigger clean exit when replay ends (don't use datetime.now())
-        self.ws.on_close(lambda: self._handle_eod())  # No timestamp - just trigger shutdown
+        # Register on_close to trigger clean exit when replay ends (DRY_RUN only)
+        # In live/paper mode, WebSocket drops are handled by Kite SDK auto-reconnect
+        if env.DRY_RUN:
+            self.ws.on_close(lambda: self._handle_eod())  # Replay ended = EOD shutdown
+        else:
+            self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
         self.subs = SubscriptionManager(self.ws)
 
         # Gates - Use MainDetector directly for structure detection
@@ -256,6 +260,13 @@ class ScreenerLive:
         # ORB levels cache: computed once per day at 09:35 and reused for entire day
         # Key: date, Value: Dict[symbol, Dict[str, float]] containing PDH/PDL/PDC/ORH/ORL
         self._orb_levels_cache: Dict = {}
+        self._orb_cache_lock = threading.Lock()
+        self._orb_recovery_in_progress = False
+        self._orb_recovery_thread: Optional[threading.Thread] = None
+
+        # ORB cache persistence for restart recovery
+        self._orb_cache_persistence = ORBCachePersistence()
+        self._load_orb_cache_from_disk()
 
         # NEW: de-dupe memory (per symbol last accepted)
         # stores: {symbol: {"ts": pd.Timestamp, "setup": str|None, "score": float}}
@@ -277,12 +288,6 @@ class ScreenerLive:
         )
         logger.info("ScreenerLive: Persistent worker pool created (2 workers)")
 
-        # Pre-warm daily data cache for all symbols (avoid 6s per bar disk I/O)
-        if hasattr(self.sdk, 'prewarm_daily_cache'):
-            self.sdk.prewarm_daily_cache(self.core_symbols, days=210)
-            logger.info("ScreenerLive: Daily cache pre-warmed for all symbols")
-        else:
-            logger.info("ScreenerLive: SDK doesn't support cache pre-warming (live mode)")
 
         logger.debug(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
@@ -426,7 +431,8 @@ class ScreenerLive:
                     strength=adjusted_strength,
                     reasons=updated_reasons,
                     orh=getattr(candidate, 'orh', None),
-                    orl=getattr(candidate, 'orl', None)
+                    orl=getattr(candidate, 'orl', None),
+                    detected_level=getattr(candidate, 'detected_level', None)
                 )
 
             enhanced.append(adjusted_candidate)
@@ -692,7 +698,7 @@ class ScreenerLive:
                     )
                     continue
 
-                logger.info(
+                logger.debug(
                     "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
                     sym, decision.setup_type, decision.regime, decision.size_mult, decision.min_hold_bars,
                     ";".join(decision.reasons),
@@ -1012,7 +1018,15 @@ class ScreenerLive:
         try:
             self.symbol_map = self.sdk.get_symbol_map()
             self.token_map = self.sdk.get_token_map()
-            self.core_symbols = list(self.symbol_map.keys())
+            # Filter out ETFs - symbols ending with "ETF" (e.g., TNIDETF, SBIETFPB)
+            all_symbols = list(self.symbol_map.keys())
+            self.core_symbols = [
+                sym for sym in all_symbols
+                if not sym.replace("NSE:", "").upper().endswith("ETF")
+            ]
+            etf_count = len(all_symbols) - len(self.core_symbols)
+            if etf_count > 0:
+                logger.info(f"ETF_FILTER | Excluded {etf_count} ETF symbols from trading universe")
         except Exception as e:
             raise RuntimeError(f"ScreenerLive: sdk.list_equities() failed: {e}")
         return self.token_map
@@ -1028,6 +1042,33 @@ class ScreenerLive:
             return pd.DataFrame()
         return idx if isinstance(idx, pd.DataFrame) else pd.DataFrame()
 
+    def _load_orb_cache_from_disk(self) -> None:
+        """
+        Load ORB levels cache from disk on startup.
+
+        If the server restarts after 09:40, the opening range bars (09:15-09:30)
+        may not be available from the broker's intraday API. This loads the
+        previously computed ORB levels from disk.
+        """
+        try:
+            cached_levels = self._orb_cache_persistence.load_today()
+            if cached_levels:
+                today = datetime.now().date()
+                with self._orb_cache_lock:
+                    self._orb_levels_cache[today] = cached_levels
+                logger.info(
+                    f"ORB_CACHE | Loaded {len(cached_levels)} symbols from disk cache on startup"
+                )
+        except Exception as e:
+            logger.warning(f"ORB_CACHE | Failed to load from disk on startup: {e}")
+
+    def _save_orb_cache_to_disk(self, session_date, levels_by_symbol: Dict[str, Dict[str, float]]) -> None:
+        """Save ORB levels cache to disk for restart recovery."""
+        try:
+            self._orb_cache_persistence.save(session_date, levels_by_symbol)
+        except Exception as e:
+            logger.warning(f"ORB_CACHE | Failed to save to disk: {e}")
+
     def _compute_orb_levels_once(self, now, df5_by_symbol: Dict[str, pd.DataFrame]) -> Optional[Dict[str, Dict[str, float]]]:
         """
         Compute ORH/ORL/PDH/PDL/PDC for all symbols once at 09:35 and cache for the day.
@@ -1038,11 +1079,18 @@ class ScreenerLive:
         - Computing levels for all 1992 symbols takes ~54s in OCI (2 CPUs)
         - By computing once at 09:35 instead of on every bar, we save ~30 minutes per day
 
+        Late Start Recovery:
+        - If server starts after 09:30 (e.g., 10:00 AM), 5m bars for opening range are missing
+        - Detect this by checking if we have bars before 09:35 in df5_by_symbol
+        - Trigger recovery via _recover_orb_levels_from_historical() which fetches 1m data from broker
+
         Returns:
             Dict[symbol, Dict[str, float]] if computed/cached, None if before 09:35
         """
         if not now:
             return None
+
+        from datetime import time as dtime  # Import at function scope for time comparisons
 
         session_date = now.date()
         current_time = now.time()
@@ -1058,6 +1106,81 @@ class ScreenerLive:
 
         import time as time_module
         start_time = time_module.perf_counter()
+
+        # LATE START DETECTION: Check if we have opening range bars (09:15-09:30)
+        # If not, we likely started late and need to recover from historical data
+        has_opening_range_bars = False
+        orb_end_time = dtime(9, 30)
+
+        for sym, df5 in df5_by_symbol.items():
+            if df5 is not None and len(df5) >= 3:
+                # Check if any bar is from before 09:30 (indicating we have opening range data)
+                earliest_bar_time = df5.index[0].time() if hasattr(df5.index[0], 'time') else None
+                if earliest_bar_time and earliest_bar_time < orb_end_time:
+                    has_opening_range_bars = True
+                    break
+
+        if not has_opening_range_bars:
+            # Late start detected - check if recovery is even worth it
+            # ORB setups are disabled after 10:30 (orb_structure.py:86), so skip recovery if too late
+            ORB_CUTOFF = dtime(10, 30)
+
+            if current_time >= ORB_CUTOFF:
+                logger.info(
+                    f"ORB_CACHE | Late start at {current_time} is AFTER ORB cutoff ({ORB_CUTOFF}). "
+                    f"Computing PDH/PDL/PDC only (ORH/ORL will be NaN - ORB setups disabled anyway)."
+                )
+                # Still compute PDH/PDL/PDC from pre-warmed daily data for level-based setups
+                # Only ORH/ORL will be NaN (which is fine since ORB setups are disabled after 10:30)
+                # IMPORTANT: Iterate over ALL core_symbols, not just df5_by_symbol
+                # PDH/PDL/PDC come from daily cache, don't need 5m bars
+                levels_by_symbol = {}
+                for sym in self.core_symbols:
+                    try:
+                        df5 = df5_by_symbol.get(sym)  # May be None, that's OK for PDH/PDL/PDC
+                        lvl = self._levels_for(sym, df5, now)
+                        # Keep PDH/PDL/PDC even if ORH/ORL are NaN
+                        levels_by_symbol[sym] = lvl
+                    except Exception as e:
+                        logger.debug(f"ORB_CACHE | Late start: Failed to compute levels for {sym}: {e}")
+                        levels_by_symbol[sym] = {}
+
+                # Cache for the day
+                self._orb_levels_cache[session_date] = levels_by_symbol
+                self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+                valid_pdh = sum(1 for v in levels_by_symbol.values() if not pd.isna(v.get("PDH")))
+                logger.info(f"ORB_CACHE | Late start: Computed PDH/PDL/PDC for {valid_pdh}/{len(levels_by_symbol)} symbols")
+                return levels_by_symbol
+
+            # Still within ORB window - spawn background thread for recovery
+            # This allows the app to continue processing non-ORB setups immediately
+            with self._orb_cache_lock:
+                if self._orb_recovery_in_progress:
+                    logger.debug("ORB_CACHE | Background recovery already in progress, skipping")
+                    return {}
+
+                if session_date in self._orb_levels_cache:
+                    # Recovery completed by background thread
+                    return self._orb_levels_cache[session_date]
+
+                # Start background recovery
+                self._orb_recovery_in_progress = True
+                logger.warning(
+                    f"ORB_CACHE | Late start at {current_time} but BEFORE ORB cutoff ({ORB_CUTOFF}). "
+                    f"Starting BACKGROUND recovery (app continues running)."
+                )
+
+                self._orb_recovery_thread = threading.Thread(
+                    target=self._background_orb_recovery,
+                    args=(session_date,),
+                    name="ORB-Recovery",
+                    daemon=True
+                )
+                self._orb_recovery_thread.start()
+
+            # Return empty cache so app continues - ORB setups won't work until recovery completes
+            return {}
+
         logger.info(f"ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for all symbols once at {current_time} (session_date={session_date})")
 
         levels_by_symbol = {}
@@ -1085,6 +1208,9 @@ class ScreenerLive:
         # Cache for the entire day
         self._orb_levels_cache[session_date] = levels_by_symbol
 
+        # Persist to disk for restart recovery
+        self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+
         elapsed = time_module.perf_counter() - start_time
         logger.info(
             f"ORB_CACHE | Cached levels for {success_count} symbols (failed: {fail_count}) | "
@@ -1093,6 +1219,134 @@ class ScreenerLive:
         )
 
         return levels_by_symbol
+
+    def _recover_orb_levels_from_historical(self, session_date) -> Dict[str, Dict[str, float]]:
+        """
+        Recover ORH/ORL from historical 1-minute data when server starts late.
+
+        This handles the case when the server starts after 09:30 (e.g., 10:00 AM)
+        and misses the opening range bars. We fetch historical 1m data from the
+        broker API for the 09:15-09:30 window and compute ORH/ORL directly.
+
+        PDH/PDL/PDC are computed normally from daily data (unaffected by late start).
+
+        Returns:
+            Dict[symbol, Dict[str, float]] with ORH, ORL, PDH, PDL, PDC
+        """
+        import time as time_module
+        from datetime import datetime as dt, time as dtime
+
+        # Check if SDK supports historical 1m fetch
+        if not hasattr(self.sdk, 'get_historical_1m'):
+            logger.warning("ORB_RECOVERY | SDK doesn't support get_historical_1m. ORB levels unavailable.")
+            return {}
+
+        start_time = time_module.perf_counter()
+        logger.info(f"ORB_RECOVERY | Late start detected. Fetching historical 1m data for ORB window (09:15-09:30)")
+
+        orb_start = dt.combine(session_date, dtime(9, 15))
+        orb_end = dt.combine(session_date, dtime(9, 30))
+
+        levels_by_symbol = {}
+        success_count = 0
+        fail_count = 0
+
+        for sym in self.core_symbols:
+            try:
+                # Fetch 1m historical data for opening range window
+                df_1m = self.sdk.get_historical_1m(sym, orb_start, orb_end)
+
+                if df_1m is None or len(df_1m) < 10:  # Need at least 10 bars for reliable ORH/ORL
+                    logger.debug(f"ORB_RECOVERY | {sym}: Insufficient 1m data ({len(df_1m) if df_1m is not None else 0} bars)")
+                    orh, orl = float("nan"), float("nan")
+                else:
+                    orh = float(df_1m["high"].max())
+                    orl = float(df_1m["low"].min())
+
+                # PDH/PDL/PDC from daily data (works normally)
+                daily = self.sdk.get_daily(sym, days=210)
+                level_dict = get_previous_day_levels(
+                    daily_df=daily,
+                    session_date=session_date,
+                    fallback_df=None,
+                    enable_fallback=False
+                )
+                pdh = level_dict.get("PDH", float("nan"))
+                pdl = level_dict.get("PDL", float("nan"))
+                pdc = level_dict.get("PDC", float("nan"))
+
+                levels_by_symbol[sym] = {
+                    "ORH": orh,
+                    "ORL": orl,
+                    "PDH": pdh,
+                    "PDL": pdl,
+                    "PDC": pdc,
+                }
+
+                if not (pd.isna(orh) or pd.isna(orl)):
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+            except Exception as e:
+                logger.warning(f"ORB_RECOVERY | {sym}: Failed - {e}")
+                levels_by_symbol[sym] = {
+                    "ORH": float("nan"), "ORL": float("nan"),
+                    "PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan")
+                }
+                fail_count += 1
+
+        elapsed = time_module.perf_counter() - start_time
+        logger.info(
+            f"ORB_RECOVERY | Complete. Recovered ORH/ORL for {success_count}/{len(self.core_symbols)} symbols | "
+            f"Failed: {fail_count} | Time: {elapsed:.2f}s"
+        )
+
+        return levels_by_symbol
+
+    def _background_orb_recovery(self, session_date) -> None:
+        """
+        Background thread wrapper for ORB level recovery.
+
+        This runs in a daemon thread so the main app can continue processing
+        non-ORB setups while we fetch historical 1m data from the broker.
+
+        Based on code analysis:
+        - Only ORBStructure REQUIRES ORH/ORL (returns rejection without them)
+        - All other structures (support_bounce, resistance_bounce, failure_fade,
+          level_breakout, vwap, momentum, etc.) work fine without ORH/ORL
+
+        So this allows:
+        1. Non-ORB setups to work immediately with PDH/PDL/PDC
+        2. ORB setups to enable once recovery completes
+        """
+        try:
+            logger.info(f"ORB_BACKGROUND_RECOVERY | Starting for {session_date} | core_symbols: {len(self.core_symbols)}")
+
+            # Do the actual recovery (fetches 1m data, computes ORH/ORL)
+            levels_by_symbol = self._recover_orb_levels_from_historical(session_date)
+
+            # Update cache atomically
+            with self._orb_cache_lock:
+                self._orb_levels_cache[session_date] = levels_by_symbol
+                self._orb_recovery_in_progress = False
+
+            # Persist to disk for restart recovery
+            self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+
+            orb_count = sum(1 for v in levels_by_symbol.values()
+                           if not (pd.isna(v.get("ORH")) or pd.isna(v.get("ORL"))))
+            logger.info(
+                f"ORB_BACKGROUND_RECOVERY | Complete | {orb_count}/{len(levels_by_symbol)} symbols with valid ORH/ORL | "
+                f"ORB setups now ENABLED"
+            )
+
+        except Exception as e:
+            logger.exception(f"ORB_BACKGROUND_RECOVERY | Failed: {e}")
+            with self._orb_cache_lock:
+                self._orb_recovery_in_progress = False
+                # Cache empty dict so we don't retry
+                self._orb_levels_cache[session_date] = {}
 
     def _levels_for(self, symbol: str, df5: pd.DataFrame, now) -> Dict[str, float]:
         """Prev-day PDH/PDL/PDC and today ORH/ORL (cached per (symbol, session_date))."""
@@ -1288,23 +1542,52 @@ class ScreenerLive:
         vr_min = float(cfg.get("scanner_vol_ratio_min", 1.2))
 
         df = feats.copy()
+        initial_count = len(df)
+
         if "volume" in df.columns and vmin > 0:
             df = df[df["volume"] >= vmin]
+            if len(df) < initial_count:
+                logger.debug(f"STAGE0_DEBUG | volume filter: {initial_count}→{len(df)} (vmin={vmin})")
 
+        after_vol = len(df)
         if "dist_to_vwap" in df.columns:
             cap_bps = float(vwap_caps.get(bkt, 100))
             df = df[(df["dist_to_vwap"].abs() * 10000.0) <= cap_bps]
+            if len(df) < after_vol:
+                logger.debug(f"STAGE0_DEBUG | vwap filter: {after_vol}→{len(df)} (cap_bps={cap_bps}, bkt={bkt})")
 
+        after_vwap = len(df)
         if "ret_1" in df.columns:
             df = df[df["ret_1"].abs() <= ret1_max]
+            if len(df) < after_vwap:
+                logger.debug(f"STAGE0_DEBUG | ret_1 filter: {after_vwap}→{len(df)} (max={ret1_max})")
 
         # OPENING BELL FIX: Skip volume persistence filter during opening bell (09:20-09:30)
         # With only 1-2 bars, vol_persist_ok would reject all symbols
+        after_ret = len(df)
         if not skip_vol_persist:
             if "vol_persist_ok" in df.columns:
+                before_vp = len(df)
                 df = df[df["vol_persist_ok"] >= (1 if vp_bars >= 2 else 0)]
+                if len(df) < before_vp:
+                    logger.debug(f"STAGE0_DEBUG | vol_persist filter: {before_vp}→{len(df)} (vp_bars={vp_bars})")
             if "vol_ratio" in df.columns:
+                before_vr = len(df)
                 df = df[df["vol_ratio"] >= vr_min]
+                if len(df) < before_vr:
+                    logger.debug(f"STAGE0_DEBUG | vol_ratio filter: {before_vr}→{len(df)} (vr_min={vr_min})")
+
+        # Log if all symbols were filtered
+        if len(df) == 0 and initial_count > 0:
+            # Show which filter killed all symbols
+            sample_feats = feats.head(3)
+            sample_info = ""
+            if not sample_feats.empty:
+                for col in ["volume", "dist_to_vwap", "ret_1", "vol_persist_ok", "vol_ratio"]:
+                    if col in sample_feats.columns:
+                        vals = sample_feats[col].tolist()
+                        sample_info += f"{col}={vals[:3]} "
+            logger.warning(f"STAGE0_DEBUG | ALL symbols filtered! initial={initial_count} skip_vol_persist={skip_vol_persist} sample: {sample_info}")
 
         # ========== CAP-AWARE LIQUIDITY GATES (Priority 1) ==========
         liq_cfg = cfg.get("liquidity_gates", {})

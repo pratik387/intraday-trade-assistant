@@ -38,6 +38,176 @@ from datetime import datetime
 from pathlib import Path
 
 
+def get_failed_dates_from_pods(run_id, dates_list):
+    """
+    Get the list of dates that failed by mapping failed pod indices to dates.
+
+    Per Kubernetes docs for Indexed Jobs:
+    - Each pod gets annotation: batch.kubernetes.io/job-completion-index
+    - With restartPolicy: Never and backoffLimit > 0, multiple failed pods
+      may exist for the same index (one per retry attempt)
+    - We deduplicate to get unique failed indices
+
+    Args:
+        run_id: Backtest run ID
+        dates_list: List of dates (ordered by index)
+
+    Returns:
+        List of unique failed date strings (sorted)
+    """
+    failed_indices = set()  # Use set to deduplicate (multiple pods per index due to retries)
+
+    try:
+        # Get all failed pods for this job
+        # Note: With backoffLimit=3, each index can have up to 3 failed pods
+        result = subprocess.run(
+            ['kubectl', 'get', 'pods', '-l', f'run-id={run_id}',
+             '--field-selector=status.phase=Failed', '-o', 'json'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        pods = json.loads(result.stdout).get('items', [])
+
+        for pod in pods:
+            # Get the pod's job completion index from annotation
+            # Per K8s docs: batch.kubernetes.io/job-completion-index is set by Job controller
+            annotations = pod.get('metadata', {}).get('annotations', {})
+            index_str = annotations.get('batch.kubernetes.io/job-completion-index')
+
+            if index_str is not None:
+                try:
+                    index = int(index_str)
+                    if 0 <= index < len(dates_list):
+                        failed_indices.add(index)  # Set handles duplicates
+                except ValueError:
+                    pass
+
+    except subprocess.CalledProcessError:
+        pass
+    except json.JSONDecodeError:
+        pass
+
+    # Convert indices to dates and sort
+    failed_dates = [dates_list[i] for i in sorted(failed_indices)]
+    return failed_dates
+
+
+def get_dates_list_from_job(run_id):
+    """
+    Extract the DATES_LIST from the job spec.
+
+    Args:
+        run_id: Backtest run ID
+
+    Returns:
+        List of date strings or empty list
+    """
+    try:
+        result = subprocess.run(
+            ['kubectl', 'get', 'job', f'backtest-{run_id}', '-o', 'json'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        job = json.loads(result.stdout)
+        containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+
+        for container in containers:
+            for env in container.get('env', []):
+                if env.get('name') == 'DATES_LIST':
+                    dates_csv = env.get('value', '')
+                    return dates_csv.split(',') if dates_csv else []
+
+        return []
+
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return []
+
+
+def get_missing_dates_from_bucket(run_id, dates_list):
+    """
+    Find dates that are missing from the results bucket.
+
+    This is more reliable than checking failed pods because:
+    - Pods that never ran won't show up as 'Failed'
+    - The bucket shows what actually completed successfully
+
+    Args:
+        run_id: Backtest run ID
+        dates_list: List of expected dates (ordered by index)
+
+    Returns:
+        List of missing date strings (sorted)
+    """
+    try:
+        import oci
+        config = oci.config.from_file()
+        os_client = oci.object_storage.ObjectStorageClient(config)
+        namespace = os_client.get_namespace().data
+
+        # List ALL objects with pagination
+        all_objects = []
+        next_start = None
+        while True:
+            response = os_client.list_objects(
+                namespace_name=namespace,
+                bucket_name='backtest-results',
+                prefix=f'{run_id}/',
+                start=next_start,
+                limit=1000
+            )
+            all_objects.extend(response.data.objects)
+            next_start = response.data.next_start_with
+            if not next_start:
+                break
+
+        # Get completed dates from bucket
+        completed_dates = set()
+        for obj in all_objects:
+            parts = obj.name.split('/')
+            if len(parts) >= 2 and parts[1] and '-' in parts[1]:
+                completed_dates.add(parts[1])
+
+        # Find missing dates
+        expected_set = set(dates_list)
+        missing = sorted([d for d in expected_set if d not in completed_dates])
+
+        return missing
+
+    except Exception as e:
+        print(f"⚠️  Could not check bucket for missing dates: {e}")
+        return []
+
+
+def save_failed_dates(run_id, failed_dates, project_root):
+    """
+    Save failed dates to a file for later re-run.
+
+    Args:
+        run_id: Backtest run ID
+        failed_dates: List of failed date strings
+        project_root: Project root path
+    """
+    if not failed_dates:
+        return None
+
+    failed_dates_file = project_root / 'cloud_results' / run_id / 'failed_dates.json'
+    failed_dates_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(failed_dates_file, 'w') as f:
+        json.dump({
+            'run_id': run_id,
+            'failed_dates': failed_dates,
+            'count': len(failed_dates),
+            'saved_at': datetime.now().isoformat()
+        }, f, indent=2)
+
+    return failed_dates_file
+
+
 def monitor_job(run_id):
     """
     Monitor Kubernetes Job progress in real-time.
@@ -46,7 +216,12 @@ def monitor_job(run_id):
         run_id: Backtest run ID
 
     Returns:
-        True if job completed successfully, False otherwise
+        dict with keys:
+            - completed: True if job finished (success or failure)
+            - succeeded: Number of successful pods
+            - failed: Number of failed pods
+            - total: Total expected completions
+            - failed_dates: List of dates that failed (empty if all succeeded)
     """
     job_name = f"backtest-{run_id}"
 
@@ -66,6 +241,7 @@ def monitor_job(run_id):
 
     start_time = None
     total_days = None
+    dates_list = []
 
     while True:
         try:
@@ -86,17 +262,21 @@ def monitor_job(run_id):
                     start_timestamp = job_status.get('metadata', {}).get('creationTimestamp')
 
                 if start_timestamp:
+                    # Parse UTC timestamp from Kubernetes
                     job_start = datetime.strptime(
                         start_timestamp.replace('Z', '+00:00').split('+')[0],
                         '%Y-%m-%dT%H:%M:%S'
                     )
-                    start_time = job_start.timestamp()
+                    # Convert to Unix timestamp (UTC) - add timezone info
+                    from datetime import timezone
+                    start_time = job_start.replace(tzinfo=timezone.utc).timestamp()
                 else:
                     start_time = time.time()
 
-            # Get totals
+            # Get totals and dates list
             if total_days is None:
                 total_days = job_status.get('spec', {}).get('completions', 120)
+                dates_list = get_dates_list_from_job(run_id)
 
             succeeded = job_status.get('status', {}).get('succeeded', 0)
             failed = job_status.get('status', {}).get('failed', 0)
@@ -115,10 +295,33 @@ def monitor_job(run_id):
                 end='\r'
             )
 
-            # Check if complete
-            if succeeded + failed >= total_days:
+            # Check if complete - use job conditions, not failed pod count
+            # failed count includes retries, so succeeded + failed can exceed total_days
+            conditions = job_status.get('status', {}).get('conditions', [])
+            is_complete = any(
+                c.get('type') == 'Complete' and c.get('status') == 'True'
+                for c in conditions
+            )
+            is_failed = any(
+                c.get('type') == 'Failed' and c.get('status') == 'True'
+                for c in conditions
+            )
+
+            if is_complete or is_failed:
                 print()
                 break
+
+            # Fallback: if no active pods and all indices accounted for
+            # Note: failed count includes retries, so we need to check unique failed indices
+            if active == 0 and succeeded > 0:
+                # Get unique failed indices count
+                failed_dates = get_failed_dates_from_pods(run_id, dates_list)
+                unique_failed = len(failed_dates)
+                if succeeded + unique_failed >= total_days:
+                    # All indices are accounted for
+                    time.sleep(5)  # Wait to confirm no new pods scheduled
+                    print()
+                    break
 
             time.sleep(5)
 
@@ -126,7 +329,7 @@ def monitor_job(run_id):
             if 'NotFound' in e.stderr:
                 print(f"\n❌ Job not found: {job_name}")
                 print(f"   Check running jobs: kubectl get jobs")
-                return False
+                return {'completed': False, 'succeeded': 0, 'failed': 0, 'total': 0, 'failed_dates': []}
             else:
                 print(f"\n⚠️  Error getting job status: {e.stderr}")
                 time.sleep(10)
@@ -137,7 +340,8 @@ def monitor_job(run_id):
             print(f"  python oci/tools/monitor_and_cleanup_backtest.py {run_id}")
             print(f"\nOr download manually when job completes:")
             print(f"  python oci/tools/cleanup_and_download_backtest.py {run_id}")
-            sys.exit(0)
+            # Return partial status - important: still trigger cleanup!
+            return {'completed': False, 'interrupted': True, 'succeeded': 0, 'failed': 0, 'total': 0, 'failed_dates': []}
 
         except json.JSONDecodeError:
             print(f"\n⚠️  Invalid JSON response, retrying...")
@@ -145,36 +349,53 @@ def monitor_job(run_id):
 
     print()
 
+    # Get missing dates by checking the bucket (more reliable than pod status)
+    # This catches both failed pods AND pods that never ran
+    print("Checking bucket for missing dates...")
+    missing_dates = get_missing_dates_from_bucket(run_id, dates_list)
+
     # Final summary
-    if failed > 0:
+    elapsed_total = int(time.time() - start_time) if start_time else 0
+    minutes = elapsed_total // 60
+    seconds = elapsed_total % 60
+
+    # Calculate cost
+    ocpu_hours = (240 * elapsed_total) / 3600
+    cost = ocpu_hours * 0.0015
+
+    completed_count = total_days - len(missing_dates)
+
+    print()
+    if missing_dates:
+        print(f"⚠️  {len(missing_dates)}/{total_days} days missing/failed")
+        print(f"✅ {completed_count}/{total_days} days completed")
+
         print()
-        print(f"⚠️  {failed}/{total_days} days failed")
+        print(f"Missing dates ({len(missing_dates)}):")
+        for date in missing_dates[:10]:  # Show first 10
+            print(f"  - {date}")
+        if len(missing_dates) > 10:
+            print(f"  ... and {len(missing_dates) - 10} more")
         print()
         print("Check failed pods:")
         print(f"  kubectl get pods -l run-id={run_id} --field-selector=status.phase=Failed")
         print()
         print("View logs:")
         print(f"  kubectl logs -l run-id={run_id},status=Failed --tail=100")
-        print()
-
-    if succeeded == total_days:
-        elapsed_total = int(time.time() - start_time)
-        minutes = elapsed_total // 60
-        seconds = elapsed_total % 60
-
-        # Calculate cost
-        ocpu_hours = (240 * elapsed_total) / 3600
-        cost = ocpu_hours * 0.0015
-
-        print()
+    else:
         print(f"✅ All {total_days} days completed!")
-        print(f"⏱️  Duration: {minutes}m {seconds}s")
-        print(f"💰 Estimated cost: ${cost:.2f}")
-        print()
 
-        return True
+    print(f"⏱️  Duration: {minutes}m {seconds}s")
+    print(f"💰 Estimated cost: ${cost:.2f}")
+    print()
 
-    return False
+    return {
+        'completed': True,
+        'succeeded': completed_count,
+        'failed': len(missing_dates),
+        'total': total_days,
+        'failed_dates': missing_dates  # Now contains ALL missing dates, not just failed pods
+    }
 
 
 def run_cleanup(run_id, args):
@@ -233,6 +454,9 @@ Examples:
 
   # Only monitor (no cleanup)
   python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341 --monitor-only
+
+  # Force cleanup even on failure (default behavior now)
+  python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341 --force-cleanup
         """
     )
 
@@ -247,27 +471,96 @@ Examples:
                         help="Don't delete local extracted directory after zipping")
     parser.add_argument('--monitor-only', action='store_true',
                         help='Only monitor, do not run cleanup')
+    parser.add_argument('--force-cleanup', action='store_true', default=True,
+                        help='Run cleanup even if job has failures (default: True)')
+    parser.add_argument('--skip-download-on-failure', action='store_true',
+                        help='Skip downloading results if job has failures (still scales down nodes)')
 
     args = parser.parse_args()
 
     # Step 1: Monitor job
-    success = monitor_job(args.run_id)
+    result = monitor_job(args.run_id)
 
-    if not success:
-        # monitor_job already printed appropriate message (interrupted or failed)
-        # Just exit without additional error message
+    # Get project root for saving failed dates
+    project_root = Path(__file__).parent.parent.parent
+
+    # Handle interrupted monitoring
+    if result.get('interrupted'):
+        print()
+        print("⚠️  Monitoring was interrupted but job may still be running")
+        print("   Nodes will NOT be scaled down to avoid disrupting running job")
+        print()
         sys.exit(1)
 
-    # Step 2: Run cleanup (unless --monitor-only)
+    # Save failed dates if any
+    if result.get('failed_dates'):
+        failed_dates_file = save_failed_dates(args.run_id, result['failed_dates'], project_root)
+        if failed_dates_file:
+            print()
+            print(f"📝 Failed dates saved to: {failed_dates_file}")
+            print(f"   Re-run failed dates: python oci/tools/submit_oci_backtest.py --failed-dates {failed_dates_file}")
+            print()
+
+    # Step 2: Cleanup (ALWAYS run to avoid cost overruns)
+    # The key change: cleanup happens even on failure!
     if args.monitor_only:
         print()
         print("SKIPPED: Cleanup (--monitor-only)")
+        print()
+        print("⚠️  WARNING: Nodes are still running and incurring costs!")
+        print("   Scale down manually: oci ce node-pool update --node-pool-id <id> --size 0 --force")
         print()
         print("To download results manually:")
         print(f"  python oci/tools/cleanup_and_download_backtest.py {args.run_id}")
         print()
         sys.exit(0)
 
+    # Check if job has failures
+    has_failures = result.get('failed', 0) > 0
+
+    # If job has failures OR didn't complete properly, only scale down nodes
+    if has_failures or not result.get('completed'):
+        print()
+        if has_failures:
+            print(f"⚠️  Job has {result.get('failed', 0)} missing/failed dates")
+        else:
+            print("⚠️  Job did not complete properly")
+        print("   Scaling down nodes to save costs (skipping download)...")
+        print()
+
+        # Scale down nodes only
+        try:
+            import oci
+            config = oci.config.from_file()
+            container_engine_client = oci.container_engine.ContainerEngineClient(config)
+            node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaaqs7a4f5jyyhcy3dsmedknnzbmhpdmdj6dqkastv5cnaehilq5g3q"
+
+            update_details = oci.container_engine.models.UpdateNodePoolDetails(
+                node_config_details=oci.container_engine.models.UpdateNodePoolNodeConfigDetails(
+                    size=0
+                )
+            )
+            container_engine_client.update_node_pool(
+                node_pool_id=node_pool_id,
+                update_node_pool_details=update_details
+            )
+            print("✅ Node pool scaled down to 0")
+        except Exception as e:
+            print(f"❌ Failed to scale down: {e}")
+            print("   Please scale down manually!")
+
+        print()
+        print("=" * 80)
+        print(f"JOB INCOMPLETE - {result.get('failed', 0)} DATES MISSING")
+        print("=" * 80)
+        print()
+        print("To re-run missing dates:")
+        failed_dates_file = project_root / 'cloud_results' / args.run_id / 'failed_dates.json'
+        print(f"  python oci/tools/submit_oci_backtest.py --failed-dates {failed_dates_file}")
+        print()
+        sys.exit(1)
+
+    # Run full cleanup (includes scale down + download) - only if ALL succeeded
     run_cleanup(args.run_id, args)
 
     print()

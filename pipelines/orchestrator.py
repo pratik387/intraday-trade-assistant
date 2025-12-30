@@ -284,15 +284,10 @@ class PipelineOrchestrator:
         Returns:
             True if this setup is permanently blocked in this regime
         """
-        from services.gates.regime_gate import HARD_BLOCKS
+        from pipelines.base_pipeline import HARD_BLOCKS, is_hard_blocked
 
-        # Normalize regime key (choppy/range → chop)
-        regime_key = regime
-        if regime in {"choppy", "range"}:
-            regime_key = "chop"
-
-        blocked_setups = HARD_BLOCKS.get(regime_key, [])
-        return setup_type in blocked_setups
+        # Use centralized is_hard_blocked from base_pipeline
+        return is_hard_blocked(setup_type, regime)
 
     def _is_orb_priority_window(self, now: pd.Timestamp) -> bool:
         """
@@ -354,7 +349,7 @@ class PipelineOrchestrator:
                 if strategy in orb_setups:
                     new_score = score + score_boost
                     plan["ranking"]["orb_priority_boost"] = score_boost
-                    logger.info(f"ORB_PRIORITY: {symbol} {strategy} score boosted {score:.2f} → {new_score:.2f}")
+                    logger.debug(f"ORB_PRIORITY: {symbol} {strategy} score boosted {score:.2f} → {new_score:.2f}")
                     boosted_plans.append((plan, new_score, symbol))
                 else:
                     boosted_plans.append((plan, score, symbol))
@@ -527,7 +522,8 @@ class PipelineOrchestrator:
                         category=category.value,
                         structural_rr=plan.get("quality", {}).get("structural_rr") if plan else None,
                         regime=regime,
-                        gate_details=gate_details 
+                        gate_details=gate_details  # Add detailed gate_fail reasons
+
                     )
 
             return plan
@@ -584,13 +580,20 @@ class PipelineOrchestrator:
             setup_type = str(candidate.setup_type) if hasattr(candidate, 'setup_type') else str(candidate)
             strength = getattr(candidate, 'strength', 0.5)
             cap_segment = getattr(candidate, 'cap_segment', None)
+            detected_level = getattr(candidate, 'detected_level', None)
+
+            # Merge detected_level into levels dict for quality calculation
+            # Pro trader approach: use the actual detected level, not hardcoded PDH/PDL
+            candidate_levels = dict(levels)  # Copy to avoid mutating original
+            if detected_level is not None:
+                candidate_levels["detected_level"] = detected_level
 
             plan = self.process_single_candidate(
                 symbol=symbol,
                 setup_type=setup_type,
                 df5m=df5m,
                 df1m=df1m,
-                levels=levels,
+                levels=candidate_levels,
                 regime=regime,
                 now=now,
                 daily_df=daily_df,
@@ -749,13 +752,19 @@ class PipelineOrchestrator:
 
             for candidate in candidates:
                 setup_type = str(candidate.setup_type) if hasattr(candidate, 'setup_type') else str(candidate)
+                detected_level = getattr(candidate, 'detected_level', None)
+
+                # Merge detected_level into levels dict for quality calculation
+                candidate_levels = dict(levels)  # Copy to avoid mutating original
+                if detected_level is not None:
+                    candidate_levels["detected_level"] = detected_level
 
                 plan = self.process_single_candidate(
                     symbol=symbol,
                     setup_type=setup_type,
                     df5m=df5m,
                     df1m=df1m,
-                    levels=levels,
+                    levels=candidate_levels,
                     regime=regime,
                     now=now,
                     daily_df=daily_df,

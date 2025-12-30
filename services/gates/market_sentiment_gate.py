@@ -173,48 +173,34 @@ class MarketSentimentGate:
     
     def get_setup_bias(self, setup_type: str, sentiment: SentimentReading) -> float:
         """
-        Returns bias multiplier for a given setup based on market sentiment
+        SIMPLIFIED (Dec 2024): Always returns 1.0 (no bias).
+
+        Setup-specific sentiment bias has been moved to pipeline config.
+        This method is kept for backwards compatibility with trade_decision_gate.py.
+
+        Pipelines can access sentiment via analyze_sentiment() and apply their own
+        setup-specific logic in their config (gates.sentiment_rules.<setup>).
+
+        Returns:
+            1.0 - neutral bias (no adjustment)
         """
-        if not self.enabled:
-            return 1.0
-            
-        bias = 1.0
-        
-        # Directional biases
-        if "long" in setup_type.lower():
-            bias *= sentiment.bullish_bias
-        elif "short" in setup_type.lower():
-            bias *= sentiment.bearish_bias
-            
-        # Setup-specific biases
-        if "breakout" in setup_type or "continuation" in setup_type:
-            bias *= sentiment.momentum_bias
-        elif "reversion" in setup_type or "bounce" in setup_type or "fade" in setup_type:
-            bias *= sentiment.mean_reversion_bias
-            
-        # Fear/Greed adjustments
-        if sentiment.sentiment_level == SentimentLevel.EXTREME_FEAR:
-            if "long" in setup_type and "reversion" in setup_type:
-                bias *= 1.3  # Fear = buy opportunity
-            elif "breakout" in setup_type:
-                bias *= 0.7  # Breakouts fail in fear
-        elif sentiment.sentiment_level == SentimentLevel.EXTREME_GREED:
-            if "short" in setup_type and "reversion" in setup_type:
-                bias *= 1.3  # Greed = sell opportunity
-            elif "breakout" in setup_type and "long" in setup_type:
-                bias *= 0.7  # Long breakouts fail in greed
-                
-        return max(0.5, min(2.0, bias))  # Clamp between 0.5x and 2.0x
-    
+        return 1.0
+
     def should_trade_setup(self, setup_type: str, sentiment: SentimentReading) -> bool:
         """
-        Boolean filter: should we trade this setup type given current sentiment?
+        SIMPLIFIED (Dec 2024): Always returns True (never blocks).
+
+        Setup-specific sentiment blocking has been moved to pipeline config.
+        This method is kept for backwards compatibility with trade_decision_gate.py.
+
+        Pipelines can implement their own sentiment-based blocking using:
+        - gates.blocked_sentiment_levels: [extreme_fear, extreme_greed]
+        - Or custom logic in validate_gates()
+
+        Returns:
+            True - never blocks based on sentiment
         """
-        if not self.enabled:
-            return True
-            
-        bias = self.get_setup_bias(setup_type, sentiment)
-        return bias >= 0.8  # Only trade if bias is at least 0.8x
+        return True
     
     def _calculate_momentum(self, df: pd.DataFrame, lookback: int) -> float:
         """Calculate momentum score from -1 to +1"""

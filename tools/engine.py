@@ -21,8 +21,8 @@ from diagnostics.diagnostics_report_builder import build_csv_from_events  # noqa
 from config.filters_setup import load_filters  # noqa: E402
 
 # ====== SETTINGS ======
-START_DATE = "2024-06-07"   # YYYY-MM-DD (Changed to match offline_driver test date)
-END_DATE   = "2024-06-07"   # YYYY-MM-DD (inclusive)
+START_DATE = "2023-04-11"   # YYYY-MM-DD - Full backtest range (130 sessions like original)
+END_DATE   = "2023-04-11"  # YYYY-MM-DD (inclusive) - Same date range as backtest_20251128-154021
 MAIN_PATH  = ROOT / "main.py"
 
 # Hardcoded time windows for engine runs
@@ -176,7 +176,7 @@ def _process_run_sessions(run_prefix: str) -> int:
             import subprocess
             import sys
             print(f"[+] Starting comprehensive analysis (timeout: 300s)...")
-            analyzer_path = str(ROOT / "tools" / "comprehensive_run_analyzer.py")
+            analyzer_path = str(ROOT / "comprehensive_run_analyzer.py")
             result = subprocess.run([
                 sys.executable, analyzer_path, run_prefix
             ], capture_output=True, text=True, cwd=str(ROOT), timeout=300)

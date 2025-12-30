@@ -51,11 +51,13 @@ class CapitalManager:
     def __init__(
         self,
         enabled: bool = False,
-        initial_capital: float = 100000.0,
+        initial_capital: float = 500000.0,
         mis_enabled: bool = False,
         mis_config_path: Optional[str] = None,
-        max_positions: int = 25,
-        capital_utilization: float = 0.85
+        max_positions: int = 50,
+        capital_utilization: float = 0.85,
+        max_allocation_per_trade: float = 0.20,
+        risk_pct_per_trade: float = 0.01
     ):
         """
         Initialize CapitalManager.
@@ -66,7 +68,11 @@ class CapitalManager:
             mis_enabled: If True, use MIS leverage from config
             mis_config_path: Path to MIS margins config (default: config/mis_margins.json)
             max_positions: Maximum concurrent positions
-            capital_utilization: Max % of capital to use per trade (0.8-0.9 recommended for safety buffer)
+            capital_utilization: Safety buffer on available capital (0.85 = use 85% of available)
+            max_allocation_per_trade: Max % of total capital per trade (0.20 = 20% per trade)
+                                      Set to 0.20 for 5 concurrent trades, 0.25 for 4, etc.
+            risk_pct_per_trade: Risk per trade as % of total capital (0.01 = 1%)
+                               Used for dynamic position sizing based on capital
         """
         self.enabled = enabled
         self.total_capital = initial_capital
@@ -74,6 +80,8 @@ class CapitalManager:
         self.mis_enabled = mis_enabled
         self.max_positions = max_positions
         self.capital_utilization = max(0.5, min(1.0, capital_utilization))  # Clamp to [0.5, 1.0]
+        self.max_allocation_per_trade = max(0.05, min(1.0, max_allocation_per_trade))  # Clamp to [5%, 100%]
+        self.risk_pct_per_trade = max(0.001, min(0.05, risk_pct_per_trade))  # Clamp to [0.1%, 5%]
 
         # Position tracking
         self.positions: Dict[str, Dict] = {}  # symbol -> position info
@@ -84,6 +92,7 @@ class CapitalManager:
             'trades_accepted': 0,
             'trades_rejected_capital': 0,
             'trades_rejected_positions': 0,
+            'trades_shadow': 0,  # Shadow trades (tracked but no capital)
             'max_concurrent_positions': 0,
             'max_capital_used': 0.0,
             'total_margin_used_sum': 0.0,  # For averaging
@@ -95,12 +104,34 @@ class CapitalManager:
         self.mis_config = None
 
         # Log mode
+        risk_rupees = self.total_capital * self.risk_pct_per_trade
         if not enabled:
             logger.info("CapitalManager: DISABLED | Mode: Unlimited capital (all trades allowed)")
         elif mis_enabled:
-            logger.info(f"CapitalManager: ENABLED + MIS | Initial: Rs.{initial_capital:,} | Max positions: {max_positions}")
+            logger.info(f"CapitalManager: ENABLED + MIS | Capital: Rs.{initial_capital:,} | "
+                       f"Risk: {self.risk_pct_per_trade*100:.1f}% (Rs.{risk_rupees:,.0f}) | "
+                       f"Max positions: {max_positions}")
         else:
-            logger.info(f"CapitalManager: ENABLED (No MIS) | Initial: Rs.{initial_capital:,} | Max positions: {max_positions}")
+            logger.info(f"CapitalManager: ENABLED (No MIS) | Capital: Rs.{initial_capital:,} | "
+                       f"Risk: {self.risk_pct_per_trade*100:.1f}% (Rs.{risk_rupees:,.0f}) | "
+                       f"Max positions: {max_positions}")
+
+    def get_risk_per_trade(self, fallback: float = 1000.0) -> float:
+        """
+        Get risk per trade in Rupees.
+
+        For live/paper trading (enabled=True): Returns capital * risk_pct_per_trade
+        For backtests (enabled=False): Returns fallback value from config
+
+        Args:
+            fallback: Value to use when capital manager is disabled (backtest mode)
+
+        Returns:
+            Risk per trade in Rupees
+        """
+        if not self.enabled:
+            return fallback
+        return self.total_capital * self.risk_pct_per_trade
 
     def _load_mis_config(self, config_path: Optional[str] = None) -> Dict:
         """Load MIS margin configuration."""
@@ -153,8 +184,20 @@ class CapitalManager:
             cap_cfg = segment_cfg.get(cap_segment, {})
             return cap_cfg.get('leverage', 5.0)
 
-        # PRIORITY 3: Default fallback (no MIS)
-        return 1.0
+        # PRIORITY 3: Default fallback - use conservative 5x for MIS
+        # Professional algo traders use fixed estimates; actual Zerodha margin may vary
+        # but 5x is a safe conservative estimate for most liquid stocks
+        return 5.0 if self.mis_enabled else 1.0
+
+    def is_at_capacity(self) -> bool:
+        """
+        Check if we're at maximum position capacity.
+
+        Used for shadow trade decision - if at capacity, new trades become shadow trades.
+        """
+        if not self.enabled:
+            return False  # Unlimited capacity when disabled
+        return len(self.positions) >= self.max_positions
 
     def can_enter_position(
         self,
@@ -162,7 +205,8 @@ class CapitalManager:
         qty: int,
         price: float,
         cap_segment: str = "unknown",
-        mis_leverage: Optional[float] = None
+        mis_leverage: Optional[float] = None,
+        shadow: bool = False
     ) -> Tuple[bool, int, str]:
         """
         Check if we can enter a new position and return adjusted quantity if needed.
@@ -173,14 +217,22 @@ class CapitalManager:
             price: Entry price
             cap_segment: Market cap segment (for MIS leverage lookup)
             mis_leverage: Direct MIS leverage from stock data (from nse_all.json)
+            shadow: If True, this is a shadow trade (no capital consumed)
 
         Returns:
             (can_enter: bool, adjusted_qty: int, reason: str)
             - If capital is sufficient: (True, original_qty, reason)
             - If capital is insufficient: (True, scaled_down_qty, reason)
             - If position limit reached: (False, 0, reason)
+            - If shadow trade: (True, original_qty, "shadow_trade")
         """
         self.stats['trades_attempted'] += 1
+
+        # Shadow trades always allowed - they don't consume capital
+        if shadow:
+            self.stats['trades_shadow'] += 1
+            logger.info(f"CAP_SHADOW | {symbol} | Shadow trade (no capital) | Qty: {qty}")
+            return True, qty, "shadow_trade"
 
         # MODE 1: DISABLED - Always allow (unlimited capital)
         if not self.enabled:
@@ -202,10 +254,31 @@ class CapitalManager:
         notional = qty * price
         margin_required = notional / leverage
 
-        # Check 2: Sufficient capital?
+        # Check 2: Per-trade allocation limit (e.g., 20% of total capital per trade)
+        max_margin_per_trade = self.total_capital * self.max_allocation_per_trade
+        if margin_required > max_margin_per_trade:
+            # Scale down to fit per-trade limit
+            max_notional = max_margin_per_trade * leverage
+            adjusted_qty = int(max_notional / price)
+
+            if adjusted_qty < 1:
+                self.stats['trades_rejected_capital'] += 1
+                reason = f"per_trade_limit_exceeded_need_{margin_required:.0f}_max_{max_margin_per_trade:.0f}"
+                logger.warning(f"CAP_REJECT | {symbol} | {reason}")
+                return False, 0, reason
+
+            # Update margin for subsequent checks
+            margin_required = (adjusted_qty * price) / leverage
+            notional = adjusted_qty * price
+            qty = adjusted_qty
+            logger.info(
+                f"CAP_LIMIT | {symbol} | Per-trade limit {int(self.max_allocation_per_trade*100)}% | "
+                f"Max margin Rs.{max_margin_per_trade:,.0f} | SCALED to qty={adjusted_qty}"
+            )
+
+        # Check 3: Sufficient available capital?
         if self.available_capital < margin_required:
             # Scale down quantity to fit available capital with safety buffer
-            # Use only capital_utilization% of available capital (default 85%)
             usable_capital = self.available_capital * self.capital_utilization
             max_notional = usable_capital * leverage
             adjusted_qty = int(max_notional / price)
@@ -220,7 +293,7 @@ class CapitalManager:
             # Accept with scaled quantity
             self.stats['trades_accepted'] += 1
             adjusted_margin = (adjusted_qty * price) / leverage
-            reason = f"scaled_qty_{qty}→{adjusted_qty}_margin_{adjusted_margin:.0f}@{leverage}x_buffer_{int(self.capital_utilization*100)}%"
+            reason = f"scaled_qty_{qty}→{adjusted_qty}_margin_{adjusted_margin:.0f}@{leverage}x_avail_{int(self.capital_utilization*100)}%"
             logger.info(
                 f"CAP_SCALE | {symbol} | Requested qty={qty} margin={margin_required:.0f} | "
                 f"Available={self.available_capital:.0f} ({int(self.capital_utilization*100)}% buffer) | "
@@ -228,7 +301,7 @@ class CapitalManager:
             )
             return True, adjusted_qty, reason
 
-        # All checks passed - use original quantity
+        # All checks passed - use (possibly already scaled) quantity
         self.stats['trades_accepted'] += 1
         return True, qty, f"margin_{margin_required:.0f}@{leverage}x"
 
@@ -239,7 +312,8 @@ class CapitalManager:
         price: float,
         cap_segment: str = "unknown",
         timestamp: Optional[datetime] = None,
-        mis_leverage: Optional[float] = None
+        mis_leverage: Optional[float] = None,
+        shadow: bool = False
     ) -> None:
         """
         Record a new position and allocate capital.
@@ -251,9 +325,15 @@ class CapitalManager:
             cap_segment: Market cap segment
             timestamp: Entry timestamp
             mis_leverage: Direct MIS leverage from stock data (from nse_all.json)
+            shadow: If True, this is a shadow trade (no margin allocated)
         """
         if not self.enabled:
             # No tracking in disabled mode
+            return
+
+        # Shadow trades: skip margin allocation entirely
+        if shadow:
+            logger.info(f"CAP_SHADOW_ENTRY | {symbol} | Shadow trade - no margin allocated | Qty: {qty} @ Rs.{price:.2f}")
             return
 
         leverage = self._get_leverage(symbol, cap_segment, mis_leverage)
@@ -284,14 +364,23 @@ class CapitalManager:
                     f"Available: Rs.{self.available_capital:,.0f}/{self.total_capital:,.0f} | "
                     f"Positions: {len(self.positions)}/{self.max_positions}")
 
-    def exit_position(self, symbol: str) -> None:
+    def exit_position(self, symbol: str, shadow: bool = False) -> None:
         """
         Release capital when a position is closed.
 
         Args:
             symbol: Stock symbol
+            shadow: If True, this is a shadow trade (no margin to release)
         """
-        if not self.enabled or symbol not in self.positions:
+        if not self.enabled:
+            return
+
+        # Shadow trades: no margin was allocated, nothing to release
+        if shadow:
+            logger.info(f"CAP_SHADOW_EXIT | {symbol} | Shadow trade - no margin to release")
+            return
+
+        if symbol not in self.positions:
             return
 
         pos = self.positions[symbol]
@@ -324,6 +413,7 @@ class CapitalManager:
             'trades_accepted': self.stats['trades_accepted'],
             'trades_rejected_capital': self.stats['trades_rejected_capital'],
             'trades_rejected_positions': self.stats['trades_rejected_positions'],
+            'trades_shadow': self.stats['trades_shadow'],
             'acceptance_rate_pct': (self.stats['trades_accepted'] / self.stats['trades_attempted'] * 100) if self.stats['trades_attempted'] > 0 else 100
         }
 
@@ -346,6 +436,7 @@ class CapitalManager:
             'trade_stats': {
                 'trades_attempted': self.stats['trades_attempted'],
                 'trades_accepted': self.stats['trades_accepted'],
+                'trades_shadow': self.stats['trades_shadow'],
                 'trades_rejected': {
                     'capital': self.stats['trades_rejected_capital'],
                     'positions': self.stats['trades_rejected_positions'],

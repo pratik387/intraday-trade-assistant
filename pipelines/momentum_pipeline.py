@@ -38,7 +38,9 @@ from .base_pipeline import (
     GateResult,
     RankingResult,
     EntryResult,
-    TargetResult
+    TargetResult,
+    get_cap_segment,
+    safe_level_get
 )
 
 logger = get_agent_logger()
@@ -247,38 +249,48 @@ class MomentumPipeline(BasePipeline):
         size_mult = 1.0
         min_hold = 0
 
-        # ========== CROSS-RUN VALIDATED FILTERS (Dec 2024) ==========
-        # These filters were validated across both backtest_20251204 and backtest_20251205
-        validated_filters = self._get("gates", "validated_filters") or {}
+        # ========== UNIFIED FILTER STRUCTURE (Dec 2024) ==========
+        # Get current hour from df5m index
+        current_time = df5m.index[-1] if hasattr(df5m.index[-1], 'hour') else None
+        current_hour = current_time.hour if current_time else 0
 
         # Get volume from 5m bar for volume filters
         bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
         is_long = "_long" in setup_type
+        bias = "long" if is_long else "short"
 
-        # 1. MOMENTUM_BREAKOUT_LONG: VOLUME < 100K FILTER
-        # Evidence: R1: +848 Rs (14 trades) | R2: +998 Rs (13 trades) - Low volume lacks conviction
-        if setup_type == "momentum_breakout_long":
-            filter_cfg = validated_filters.get("momentum_breakout_long_volume")
-            min_volume = filter_cfg.get("min_volume")
-            if bar5_volume < min_volume:
-                reasons.append(f"momentum_breakout_long_blocked:vol{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
-                logger.debug(f"[MOMENTUM] {symbol} momentum_breakout_long BLOCKED: Vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            else:
-                reasons.append(f"momentum_breakout_long_vol_ok:{bar5_volume/1000:.0f}k")
+        # Get cap segment for filtering
+        cap_segment = get_cap_segment(symbol)
 
-        # 2. LONG TRADE VOLUME FILTER (MIN 150K) - for OTHER long setups
-        # Evidence: Winners have 2x volume (213k vs 107k)
-        # Use elif to skip setups that already have specific volume filters above
-        elif is_long:
-            filter_cfg = validated_filters.get("long_trade_volume")
-            min_volume = filter_cfg.get("min_volume")
-            if bar5_volume < min_volume:
-                reasons.append(f"long_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
-                logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED: Long vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
-                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-            else:
-                reasons.append(f"long_vol_ok:{bar5_volume/1000:.0f}k")
+        # Get RSI for global filters
+        rsi_val = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns and not pd.isna(df5m["rsi"].iloc[-1]) else None
+
+        # ========== 1. GLOBAL FILTERS ==========
+        global_passed, global_reasons = self.apply_global_filters(
+            setup_type=setup_type, symbol=symbol, bias=bias,
+            adx=adx, rsi=rsi_val, volume=bar5_volume
+        )
+        reasons.extend(global_reasons)
+        if not global_passed:
+            logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED by global filters: {global_reasons}")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
+
+        # ========== 2. SETUP-SPECIFIC FILTERS (use base class unified filter) ==========
+        setup_passed, setup_reasons, modifiers = self.apply_setup_filters(
+            setup_type=setup_type,
+            symbol=symbol,
+            regime=regime,
+            adx=adx,
+            rsi=rsi_val,
+            volume=bar5_volume,
+            current_hour=current_hour,
+            cap_segment=cap_segment,
+            structural_rr=strength
+        )
+        reasons.extend(setup_reasons)
+        if not setup_passed:
+            logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED by setup filters: {setup_reasons}")
+            return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
         # Regime check from config - momentum NEEDS trend - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
@@ -323,83 +335,98 @@ class MomentumPipeline(BasePipeline):
         htf_context: Optional[Dict] = None
     ) -> RankingResult:
         """
-        Momentum-specific ranking - ALL 9 COMPONENTS FROM OLD ranker.py _intraday_strength().
+        MOMENTUM-SPECIFIC RANKING (Dec 2024 Recalibration)
 
-        From ranker.py lines 95-131:
-        1. s_vol  - Volume ratio: min(vol_ratio / divisor, cap)
-        2. s_rsi  - RSI score: max((rsi - mid) / divisor, floor)
-        3. s_rsis - RSI slope: max(min(rsi_slope, cap), 0)
-        4. s_adx  - ADX score: max((adx - mid) / divisor, floor)
-        5. s_adxs - ADX slope: max(min(adx_slope, cap), 0)
-        6. s_vwap - VWAP alignment: bonus if aligned, penalty if not
-        7. s_dist - Distance from level: near/ok/far scoring
-        8. s_sq   - Squeeze percentile: <=50/<=70/>=90 scoring
-        9. s_acc  - Acceptance status: excellent/good bonus
+        Pro trader research findings for MOMENTUM/TREND plays:
+        - High ADX = GOOD (strong trend needed for momentum)
+        - Directional RSI = GOOD (RSI confirms trend direction)
+        - VWAP aligned = CRITICAL (riding the wave)
+        - Volume = CRITICAL (confirms institutional participation)
+        - High squeeze = GOOD (pent-up energy about to release)
 
-        HTF Logic for MOMENTUM:
-        - Momentum REQUIRES HTF (15m) alignment
-        - +25% bonus if HTF trend aligned (riding the wave)
-        - -30% penalty if HTF trend opposing (fighting momentum)
-        - +15% bonus if HTF momentum is strong (normalized momentum > 0.5)
+        7 weighted components:
+        1. Volume (20%): High volume confirms trend
+        2. RSI (15%): Directional RSI (bullish for long, bearish for short)
+        3. ADX (25%): High ADX = strong trend
+        4. VWAP (15%): Aligned = critical for momentum
+        5. Distance (5%): Less critical for momentum
+        6. Squeeze (10%): High squeeze = pent-up energy
+        7. Acceptance (10%): R:R matters for momentum
         """
         logger.debug(f"[MOMENTUM] Calculating rank score for {symbol} in {regime}")
 
-        # REQUIRED features (core indicators - must exist)
+        # REQUIRED features
         vol_ratio = float(intraday_features["volume_ratio"])
         rsi = float(intraday_features["rsi"])
         adx = float(intraday_features["adx"])
         above_vwap = bool(intraday_features["above_vwap"])
         bias = intraday_features["bias"]
-        # OPTIONAL features (derived/data-dependent - may not always be available)
-        rsi_slope = float(intraday_features.get("rsi_slope") or 0.0)
-        adx_slope = float(intraday_features.get("adx_slope") or 0.0)
-        dist_from_level_bpct = float(intraday_features.get("dist_from_level_bpct") or 9.99)
+
+        # OPTIONAL features (None = skip scoring, no hidden defaults)
+        dist_from_level_bpct = intraday_features.get("dist_from_level_bpct")
         squeeze_pctile = intraday_features.get("squeeze_pctile")
-        acceptance_status = intraday_features.get("acceptance_status") or "poor"
+        acceptance_status = intraday_features.get("acceptance_status")
 
-        # Component scores from config - ALL 9 COMPONENTS
         weights = self._get("ranking", "weights")
+        score_scale = self._get("ranking", "score_scale")
 
-        # 1. VOLUME SCORE (s_vol)
+        # 1. VOLUME SCORE - Critical for momentum
         vol_cfg = weights["volume"]
         s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
 
-        # 2. RSI SCORE (s_rsi) - PORTED FROM OLD ranker.py line 97
+        # 2. RSI SCORE - DIRECTIONAL = GOOD for momentum (confirms trend)
         rsi_cfg = weights["rsi"]
-        s_rsi = max((rsi - rsi_cfg["mid"]) / rsi_cfg["divisor"], rsi_cfg["floor"])
+        if bias == "long":
+            if rsi >= rsi_cfg["long_strong_bullish_threshold"]:
+                s_rsi = rsi_cfg["strong_bonus"]  # RSI > 60 = strong bullish
+            elif rsi >= rsi_cfg["long_bullish_threshold"]:
+                s_rsi = rsi_cfg["good_bonus"]  # RSI > 55 = bullish
+            elif rsi >= rsi_cfg["long_overbought_threshold"]:
+                s_rsi = rsi_cfg["penalty"]  # RSI > 75 = overbought (exhaustion risk)
+            else:
+                s_rsi = 0.0
+        else:  # short
+            if rsi <= rsi_cfg["short_strong_bearish_threshold"]:
+                s_rsi = rsi_cfg["strong_bonus"]  # RSI < 40 = strong bearish
+            elif rsi <= rsi_cfg["short_bearish_threshold"]:
+                s_rsi = rsi_cfg["good_bonus"]  # RSI < 45 = bearish
+            elif rsi <= rsi_cfg["short_oversold_threshold"]:
+                s_rsi = rsi_cfg["penalty"]  # RSI < 25 = oversold (exhaustion risk)
+            else:
+                s_rsi = 0.0
 
-        # 3. RSI SLOPE SCORE (s_rsis) - PORTED FROM OLD ranker.py line 98
-        rsi_slope_cfg = weights["rsi_slope"]
-        s_rsis = max(min(rsi_slope, rsi_slope_cfg["cap"]), 0.0)
-
-        # 4. ADX SCORE (s_adx) - ISSUE 3 FIX: Added cap to prevent high ADX dominating
+        # 3. ADX SCORE - HIGH = GOOD for momentum (strong trend needed)
         adx_cfg = weights["adx"]
-        s_adx_raw = max((adx - adx_cfg["mid"]) / adx_cfg["divisor"], adx_cfg["floor"])
-        adx_cap = adx_cfg.get("cap")  # Default to no cap if not specified
-        s_adx = min(s_adx_raw, adx_cap)
+        if adx >= adx_cfg["strong_threshold"]:
+            s_adx = adx_cfg["strong_bonus"]  # ADX > 35 = strong trend
+        elif adx >= adx_cfg["good_threshold"]:
+            s_adx = adx_cfg["good_bonus"]  # ADX > 25 = good trend
+        elif adx <= adx_cfg["weak_threshold"]:
+            s_adx = adx_cfg["weak_penalty"]  # ADX < 20 = no trend
+        else:
+            s_adx = 0.0
 
-        # 5. ADX SLOPE SCORE (s_adxs) - FROM OLD ranker.py line 100
-        adx_slope_cfg = weights["adx_slope"]
-        s_adxs = max(min(adx_slope, adx_slope_cfg["cap"]), 0.0)
-
-        # 6. VWAP ALIGNMENT SCORE (s_vwap)
+        # 4. VWAP SCORE - ALIGNED = CRITICAL for momentum
         vwap_cfg = weights["vwap"]
         if bias == "long":
             s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
         else:
             s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
 
-        # 7. DISTANCE FROM LEVEL SCORE (s_dist) - PORTED FROM OLD ranker.py lines 107-113
+        # 5. DISTANCE SCORE - Less critical for momentum
         dist_cfg = weights["distance"]
-        adist = abs(dist_from_level_bpct)
-        if adist <= dist_cfg["near_bpct"]:
-            s_dist = dist_cfg["near_score"]
-        elif adist <= dist_cfg["ok_bpct"]:
-            s_dist = dist_cfg["ok_score"]
+        if dist_from_level_bpct is not None:
+            adist = abs(dist_from_level_bpct)
+            if adist <= dist_cfg["near_bpct"]:
+                s_dist = dist_cfg["near_score"]
+            elif adist <= dist_cfg["ok_bpct"]:
+                s_dist = dist_cfg["ok_score"]
+            else:
+                s_dist = dist_cfg["far_score"]
         else:
-            s_dist = dist_cfg["far_score"]
+            s_dist = 0.0
 
-        # 8. SQUEEZE PERCENTILE SCORE (s_sq) - FROM OLD ranker.py lines 115-122
+        # 6. SQUEEZE SCORE - High squeeze = GOOD for momentum (pent-up energy)
         squeeze_cfg = weights["squeeze"]
         if squeeze_pctile is not None:
             if squeeze_pctile <= 50:
@@ -407,52 +434,60 @@ class MomentumPipeline(BasePipeline):
             elif squeeze_pctile <= 70:
                 s_sq = squeeze_cfg["mid_bonus"]
             elif squeeze_pctile >= 90:
-                s_sq = squeeze_cfg["high_penalty"]
+                s_sq = squeeze_cfg["high_bonus"]  # High squeeze = pent-up energy
             else:
                 s_sq = 0.0
         else:
             s_sq = 0.0
 
-        # 9. ACCEPTANCE STATUS SCORE (s_acc) - PORTED FROM OLD ranker.py lines 124-130
+        # 7. ACCEPTANCE SCORE - Keep for momentum
         acc_cfg = weights["acceptance"]
-        if acceptance_status == "excellent":
-            s_acc = acc_cfg["excellent_bonus"]
-        elif acceptance_status == "good":
-            s_acc = acc_cfg["good_bonus"]
+        if acc_cfg["enabled"]:
+            if acceptance_status == "excellent":
+                s_acc = acc_cfg["excellent_bonus"]
+            elif acceptance_status == "good":
+                s_acc = acc_cfg["good_bonus"]
+            else:
+                s_acc = 0.0
         else:
             s_acc = 0.0
 
-        # BASE SCORE = SUM OF ALL 9 COMPONENTS (exactly like OLD ranker.py line 132)
-        base_score = s_vol + s_rsi + s_rsis + s_adx + s_adxs + s_vwap + s_dist + s_sq + s_acc
+        # WEIGHTED SUM (not simple addition) scaled to usable range
+        weighted_sum = (
+            s_vol * vol_cfg["weight"] +
+            s_rsi * rsi_cfg["weight"] +
+            s_adx * adx_cfg["weight"] +
+            s_vwap * vwap_cfg["weight"] +
+            s_dist * dist_cfg["weight"] +
+            s_sq * squeeze_cfg["weight"] +
+            s_acc * acc_cfg["weight"]
+        )
+        base_score = weighted_sum * score_scale
 
-        # Regime multiplier from config - momentum needs trend
+        # Regime multiplier
         setup_type = intraday_features["setup_type"]
         regime_mult = self._get_strategy_regime_mult(setup_type, regime)
 
-        # NOTE: Daily trend and HTF multipliers are applied ONLY in apply_universal_ranking_adjustments()
-        # to match OLD ranker.py which applies them once in rank_candidates().
-        # DO NOT apply them here - that would cause double-application!
-        _ = daily_trend  # Unused here - applied in universal adjustments
-        _ = htf_context  # Unused here - applied in universal adjustments
+        # HTF context handled in universal adjustments
+        _ = daily_trend
+        _ = htf_context
 
         final_score = base_score * regime_mult
 
-        logger.debug(f"[MOMENTUM] {symbol} score={final_score:.3f} (vol={s_vol:.2f}, rsi={s_rsi:.2f}, rsis={s_rsis:.2f}, adx={s_adx:.2f}, adxs={s_adxs:.2f}, vwap={s_vwap:.2f}, dist={s_dist:.2f}, sq={s_sq:.2f}, acc={s_acc:.2f}) * regime={regime_mult:.2f}")
+        logger.debug(f"[MOMENTUM] {symbol} score={final_score:.3f} (weighted_sum={weighted_sum:.3f}*scale={score_scale}) * regime={regime_mult:.2f}")
 
         return RankingResult(
             score=final_score,
             components={
                 "volume": s_vol,
                 "rsi": s_rsi,
-                "rsi_slope": s_rsis,
                 "adx": s_adx,
-                "adx_slope": s_adxs,
                 "vwap": s_vwap,
                 "distance": s_dist,
                 "squeeze": s_sq,
                 "acceptance": s_acc
             },
-            multipliers={"regime": regime_mult}  # daily/htf applied in universal adjustments
+            multipliers={"regime": regime_mult, "score_scale": score_scale}
         )
 
     # ======================== ENTRY ========================
@@ -484,8 +519,8 @@ class MomentumPipeline(BasePipeline):
 
         current_close = float(df5m["close"].iloc[-1])
         ema20 = float(df5m["ema20"].iloc[-1]) if "ema20" in df5m.columns else current_close
-        orh = levels.get("ORH", current_close)
-        orl = levels.get("ORL", current_close)
+        orh = safe_level_get(levels, "ORH", current_close)
+        orl = safe_level_get(levels, "ORL", current_close)
 
         entry_cfg = self._get("entry")
         triggers = entry_cfg["triggers"]
@@ -619,7 +654,7 @@ class MomentumPipeline(BasePipeline):
         # Low-volatility instruments (ETFs, liquid funds) can't hit viable targets
         min_t1_threshold = risk_per_share * 0.8
         if cap1 < min_t1_threshold:
-            logger.info(f"[MOMENTUM] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
+            logger.debug(f"[MOMENTUM] {symbol} rejected: T1 cap ({cap1:.4f}) < 0.8R ({min_t1_threshold:.4f}) - low volatility")
             return None
 
         # Calculate target distances with caps

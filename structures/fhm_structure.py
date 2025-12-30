@@ -98,7 +98,21 @@ class FHMStructure(BaseStructure):
         # DIRECTION RESTRICTION: Each detector instance should only detect its intended direction
         # This prevents first_hour_momentum_long from detecting shorts and vice versa
         # "long" = only detect longs, "short" = only detect shorts, "both" = detect both (default)
-        self.detect_direction = config.get("detect_direction", "both")
+        # Also derive from _setup_name if not explicitly set (e.g., "first_hour_momentum_long" → "long")
+        self.configured_setup_type = config.get("_setup_name", None)
+        explicit_direction = config.get("detect_direction")
+        if explicit_direction:
+            self.detect_direction = explicit_direction
+        elif self.configured_setup_type:
+            # Derive from setup name
+            if self.configured_setup_type.endswith("_long"):
+                self.detect_direction = "long"
+            elif self.configured_setup_type.endswith("_short"):
+                self.detect_direction = "short"
+            else:
+                self.detect_direction = "both"
+        else:
+            self.detect_direction = "both"
 
         # VWAP position config - KeyError if missing (no defaults)
         vwap_cfg = config["vwap_position"]
