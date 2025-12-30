@@ -1,0 +1,17 @@
+{
+  "description": "Union Budget and related important dates",
+  "source": "Ministry of Finance",
+  "last_updated": "2025-12-22",
+  "events": {
+    "2023": [
+      {"date": "2023-02-01", "type": "union_budget", "impact": "high"}
+    ],
+    "2024": [
+      {"date": "2024-02-01", "type": "union_budget", "impact": "high"},
+      {"date": "2024-07-23", "type": "union_budget", "impact": "high", "note": "Full budget after elections"}
+    ],
+    "2025": [
+      {"date": "2025-02-01", "type": "union_budget", "impact": "high"}
+    ]
+  }
+}

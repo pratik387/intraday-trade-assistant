@@ -88,11 +88,11 @@ class KiteClient:
                 tsym_upper.startswith(tuple(str(i) for i in range(10))) or  # starts with digit
                 any(x in tsym_upper for x in ["SDL", "NCD", "GSEC", "GOI", "GS", "T-BILL"]) or
                 "-" in tsym or
-                # ETF filter: exclude all ETFs
-                # Kite API `name` field contains "ETF" as a word for all exchange-traded funds
-                # e.g., "NIPPON INDIA ETF NIFTY BEES", "KOTAK BANKING ETF"
-                # This is dynamic - works for any new ETFs without hardcoded lists
-                "etf" in name.split()
+                # ETF filter: exclude all ETFs by checking:
+                # 1. Symbol ends with "ETF" (e.g., TNIDETF, SBIETFPB, NIFTYETF)
+                # 2. Name contains "ETF" as a word (case-insensitive)
+                tsym_upper.endswith("ETF") or
+                "etf" in name.lower().split()
             ):
                 continue
 

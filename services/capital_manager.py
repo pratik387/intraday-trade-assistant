@@ -51,10 +51,10 @@ class CapitalManager:
     def __init__(
         self,
         enabled: bool = False,
-        initial_capital: float = 100000.0,
+        initial_capital: float = 500000.0,
         mis_enabled: bool = False,
         mis_config_path: Optional[str] = None,
-        max_positions: int = 25,
+        max_positions: int = 50,
         capital_utilization: float = 0.85,
         max_allocation_per_trade: float = 0.20,
         risk_pct_per_trade: float = 0.01

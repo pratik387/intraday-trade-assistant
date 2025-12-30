@@ -141,63 +141,142 @@
                 "_evidence": "vol>=10x + regime!=trend_up: 20 trades, 70% WR, +4,913 Rs, 246 Rs/trade (vs baseline 54% WR, 68 Rs/trade). Counter-trend shorts in trend_up are disasters (44% WR, -93 Rs avg)."
             }
         },
-        "setup_regime_blocks": {
-            "_comment": "Setup-specific blocks (max_rank_score, t1_mult, t2_mult supported)"
+        "setup_filters": {
+            "_comment": "3-YEAR OPTIMIZED FILTERS (Dec 2024): Analyzed 4,604 triggered trades, 732 trading days",
+            "_active_profile": "3YEAR_OPTIMIZED",
+            "_analysis_date": "2024-12-27",
+            "failure_fade_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "Keep existing - not enough trades for reanalysis"
+            },
+            "failure_fade_short": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "Keep existing - not enough trades for reanalysis"
+            },
+            "volume_spike_reversal_long": {
+                "enabled": true,
+                "blocked_caps": ["mid_cap"],
+                "_filter": "BASELINE with block mid_cap only",
+                "_evidence": "3YR VERIFIED: 161 trades, Rs 50,295 net (Rs 312 avg). Baseline 186 trades Rs 49,150 (Rs 264 avg).",
+                "_why_baseline": "All regimes profitable (squeeze Rs 26K, trend_up Rs 17K, trend_down Rs 5.5K). 59% win rate. Aggressive filtering HURTS total PnL.",
+                "_why_block_mid_cap": "mid_cap: 25 trades (11W/14L), Rs -1,146 net = only unprofitable segment. Blocking gives +Rs 1,146 improvement.",
+                "_rejected_filter": "rank>=1 + block trend_down + small_cap was WRONG: cut Rs 109K winners but only avoided Rs 68K losses = net -Rs 23K"
+            },
+            "volume_spike_reversal_short": {
+                "enabled": false,
+                "min_volume_ratio": 10,
+                "blocked_daily_regimes": ["trend_up"],
+                "_evidence": "Keep existing - not enough trades for reanalysis"
+            },
+            "vwap_mean_reversion_long": {
+                "enabled": false,
+                "min_volume": 50000,
+                "_evidence": "Keep existing - disabled"
+            },
+            "vwap_mean_reversion_short": {
+                "enabled": false,
+                "min_volume": 50000,
+                "_evidence": "Keep existing - disabled"
+            },
+            "gap_fill_long": {
+                "enabled": false,
+                "min_volume": 150000,
+                "_evidence": "Keep existing - disabled"
+            },
+            "gap_fill_short": {
+                "enabled": false,
+                "_evidence": "Keep existing - disabled"
+            }
+        },
+        "global_filters": {
+            "_comment": "UNIFIED GLOBAL FILTERS - Applied to all setups before setup-specific filters",
+            "short_min_adx": {
+                "enabled": false,
+                "min_adx": 15,
+                "_rationale": "Disabled for reversion - ADX not required for mean reversion plays"
+            },
+            "long_min_volume": {
+                "enabled": false,
+                "min_volume": 150000,
+                "_rationale": "Longs need minimum institutional volume"
+            },
+            "rsi_dead_zone": {
+                "enabled": false,
+                "min_rsi": 35,
+                "max_rsi": 65,
+                "_rationale": "Disabled - RSI extremes enforced in screening for reversion"
+            }
         }
     },
 
     "ranking": {
-        "_comment": "ALL values from OLD filters.json rank_* settings to match baseline ranker.py _intraday_strength()",
+        "_comment": "REVERSION-SPECIFIC RANKING (Dec 2024) - Pro trader research: low ADX, extreme RSI, counter-VWAP = overextension",
+        "mode": "reversion_specific",
+        "score_scale": 5.0,
+        "_score_scale_note": "Multiplier to scale weighted sum back to usable range (~0-5). Weighted sum alone produces ~0.17 mean.",
         "weights": {
             "volume": {
-                "_comment": "rank_vol_ratio_divisor=2.0, rank_vol_cap=3.0",
-                "divisor": 2.0,
-                "cap": 3.0
+                "_comment": "MODERATE for reversion - exhaustion volume (high then declining) is key",
+                "divisor": 3.0,
+                "cap": 1.5,
+                "weight": 0.10
             },
             "rsi": {
-                "_comment": "rank_rsi_mid=50, rank_rsi_divisor=30, rank_rsi_floor=-0.5",
-                "mid": 50.0,
-                "divisor": 30.0,
-                "floor": -0.5
-            },
-            "rsi_slope": {
-                "_comment": "rank_rsi_slope_cap=0.3",
-                "cap": 0.3
+                "_comment": "EXTREME = GOOD for reversion (oversold/overbought = exhaustion signal)",
+                "mode": "extreme_is_good",
+                "long_oversold_threshold": 35,
+                "long_very_oversold_threshold": 25,
+                "long_overbought_penalty_threshold": 60,
+                "short_overbought_threshold": 65,
+                "short_very_overbought_threshold": 75,
+                "short_oversold_penalty_threshold": 40,
+                "extreme_bonus": 0.6,
+                "good_bonus": 0.4,
+                "penalty": -0.4,
+                "weight": 0.25
             },
             "adx": {
-                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score",
-                "mid": 25.0,
-                "divisor": 20.0,
-                "floor": -0.3,
-                "cap": 0.4
-            },
-            "adx_slope": {
-                "_comment": "rank_adx_slope_cap=0.2",
-                "cap": 0.2
+                "_comment": "LOW ADX = GOOD for reversion (ranging market = mean reversion works)",
+                "mode": "low_is_good",
+                "ideal_max": 20,
+                "acceptable_max": 25,
+                "penalty_threshold": 35,
+                "ideal_bonus": 0.4,
+                "acceptable_bonus": 0.2,
+                "penalty": -0.4,
+                "weight": 0.20
             },
             "vwap": {
-                "_comment": "rank_vwap_bonus=0.3, rank_vwap_penalty=-0.2",
-                "aligned_bonus": 0.3,
-                "misaligned_penalty": -0.2
+                "_comment": "COUNTER = GOOD for reversion (extended from VWAP = reversion opportunity)",
+                "mode": "counter_is_good",
+                "counter_bonus": 0.4,
+                "aligned_bonus": 0.1,
+                "weight": 0.15
             },
             "distance": {
-                "_comment": "rank_dist_near_bpct=0.5, rank_dist_near_score=0.4, rank_dist_ok_bpct=1.5, rank_dist_ok_score=0.2, rank_dist_far_score=-0.1",
+                "_comment": "EXTENDED from level = reversion opportunity",
                 "near_bpct": 0.5,
-                "near_score": 0.4,
+                "near_score": 0.2,
                 "ok_bpct": 1.5,
-                "ok_score": 0.2,
-                "far_score": -0.1
+                "ok_score": 0.3,
+                "far_score": 0.4,
+                "weight": 0.10
             },
             "squeeze": {
-                "_comment": "rank_sq_score_le_50=0.3, rank_sq_score_le_70=0.2, rank_sq_score_ge_90=-0.2",
+                "_comment": "Low squeeze = good for reversion (ranging market)",
                 "low_bonus": 0.3,
                 "mid_bonus": 0.2,
-                "high_penalty": -0.2
+                "high_penalty": -0.2,
+                "weight": 0.10
             },
             "acceptance": {
-                "_comment": "rank_acceptance_bonus=0.5",
-                "excellent_bonus": 0.5,
-                "good_bonus": 0.25
+                "_comment": "DISABLE for reversion - structure less important, exhaustion is key",
+                "enabled": false,
+                "excellent_bonus": 0.0,
+                "good_bonus": 0.0,
+                "weight": 0.10
             }
         },
         "daily_trend_multipliers": {

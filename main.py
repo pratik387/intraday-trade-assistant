@@ -37,6 +37,7 @@ from services.capital_manager import CapitalManager
 from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
 from services.state.daily_cache_persistence import DailyCachePersistence
 from pipelines.base_pipeline import set_base_config_override, load_base_config
+from services.health_server import get_health_server, SessionState
 
 # Dry-run adapter (patched MockBroker with LTP cache + Feather replay)
 from broker.mock.mock_broker import MockBroker
@@ -468,6 +469,22 @@ def main() -> int:
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq)
 
+    # Bootstrap from sidecar data (instant startup on late start)
+    # This populates ORB cache, daily levels, and 5m bars from pre-collected sidecar data
+    # Sidecar also handles tick persistence, so main engine doesn't need to record separately
+    bootstrap_result = {"success": False, "skipped": True, "reason": "not_attempted"}
+    try:
+        from sidecar import maybe_bootstrap_from_sidecar
+        bootstrap_result = maybe_bootstrap_from_sidecar(screener)
+        if bootstrap_result.get("success"):
+            logger.info(f"SIDECAR | Bootstrapped: {bootstrap_result['orb_count']} ORB, "
+                       f"{bootstrap_result.get('daily_levels_count', 0)} daily levels, "
+                       f"{bootstrap_result['bars_count']} bars for {bootstrap_result['symbols_count']} symbols")
+        elif bootstrap_result.get("skipped"):
+            logger.debug(f"SIDECAR | Skipped: {bootstrap_result.get('reason', 'unknown')}")
+    except Exception as e:
+        logger.debug(f"SIDECAR | Bootstrap not available: {e}")
+
     # Tap the central tick router so entries & exits share the same tick clock
     def _ltp_tap(sym: str, price: float, qty: float, ts_dt):
         ts_pd = pd.Timestamp(ts_dt)  # ensure pandas timestamp
@@ -478,6 +495,14 @@ def main() -> int:
     # Risk + shared positions
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
     positions = _PositionStore()
+
+    # Initialize health server for production monitoring
+    health = get_health_server(port=8080)
+    health.set_state(SessionState.RECOVERING)
+    health.set_position_store(positions)
+    health.set_capital_manager(capital_manager)
+    health.set_ltp_cache(ltp_cache)
+    health.start()
 
     # Startup recovery - restore positions from previous session
     from config.logging_config import get_log_directory
@@ -545,13 +570,22 @@ def main() -> int:
     t_monitor.start(); threads.append(t_monitor)
     logger.info("trigger-monitor: started")
 
+    # Set health state to trading
+    health.set_state(SessionState.TRADING)
+
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec, trader)
-    
+    _run_until_eod(screener, exit_exec, trader, health)
+
     return 0
 
 
-def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: TriggerAwareExecutor, poll_sec: float = 0.2) -> None:
+def _run_until_eod(
+    screener: ScreenerLive,
+    exit_exec: ExitExecutor,
+    trader: TriggerAwareExecutor,
+    health = None,
+    poll_sec: float = 0.2
+) -> None:
     logger.info("session start")
     stop = threading.Event()
 
@@ -559,9 +593,18 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: Trig
         logger.warning(f"signal {signum} received – shutting down")
         stop.set()
 
+    def _shutdown_via_http():
+        """Callback for HTTP shutdown endpoint."""
+        logger.info("Shutdown requested via HTTP")
+        stop.set()
+
     # Handle Ctrl+C / SIGTERM cleanly
     signal.signal(signal.SIGINT, _sig_handler)
     signal.signal(signal.SIGTERM, _sig_handler)
+
+    # Wire up HTTP shutdown
+    if health:
+        health.set_shutdown_callback(_shutdown_via_http)
 
     try:
         screener.start()
@@ -570,6 +613,10 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: Trig
     except KeyboardInterrupt:
         logger.info("keyboard interrupt – stopping")
     finally:
+        # Update health state
+        if health:
+            health.set_state(SessionState.SHUTTING_DOWN)
+
         try:
             # Cancel all pending trades before EOD
             with trader._lock:
@@ -579,22 +626,26 @@ def _run_until_eod(screener: ScreenerLive, exit_exec: ExitExecutor, trader: Trig
             logger.info("Cancelled all pending trades for EOD")
         except Exception as e:
             logger.warning("Failed to cancel pending trades: %s", e)
-        
+
         try:
             exit_exec.square_off_all_open_positions()
         except Exception as e:
             logger.warning("final EOD sweep failed: %s", e)
-        
+
         try:
             screener.stop()
         except Exception as e:
             logger.warning("screener.stop failed: %s", e)
-        
+
         try:
             trader.stop()
         except Exception as e:
             logger.warning("trader.stop failed: %s", e)
-            
+
+        # Stop health server
+        if health:
+            health.set_state(SessionState.STOPPED)
+            health.stop()
 
     logger.info("session end (EOD)")
 

@@ -188,63 +188,161 @@
                 "_evidence": "Pro ORB traders hold 30-90 min max. After 2 hours, momentum fades. Time-based exit if no T1 hit."
             }
         },
-        "setup_regime_blocks": {
-            "_comment": "Setup-specific blocks (max_rank_score, t1_mult, t2_mult supported)"
+        "setup_filters": {
+            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Optimized for ~23K trades, 94% ROI at Rs 3L capital",
+            "_active_profile": "MODERATE",
+            "breakout_long": {
+                "enabled": true,
+                "allowed_regimes": ["trend_down"],
+                "min_rsi": 40,
+                "max_rsi": 60,
+                "_salvage_filter": "trend_down regime + RSI 40-60",
+                "_evidence": "ELIMINATION Dec 2024: 14 trades, Rs 127 net avg (was 1,211 trades, Rs -107 net)"
+            },
+            "breakout_short": {
+                "enabled": false
+            },
+            "first_hour_momentum_long": {
+                "enabled": true,
+                "max_adx": 15,
+                "_salvage_filter": "ADX < 15",
+                "_evidence": "ELIMINATION Dec 2024: 22 trades, Rs 106 net avg (was 2,234 trades, Rs -197 net)"
+            },
+            "first_hour_momentum_short": {
+                "enabled": false
+            },
+            "orb_breakout_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_moderate_filter": "BLOCKED - negative expectancy",
+                "_evidence": "MODERATE: Rs -120K loss, 1541 trades - block entirely"
+            },
+            "orb_breakout_short": {
+                "enabled": false
+            },
+            "orb_breakdown_long": {
+                "enabled": false
+            },
+            "orb_breakdown_short": {
+                "enabled": false
+            },
+            "squeeze_release_long": {
+                "enabled": true,
+                "max_rsi": 70,
+                "_moderate_filter": "RSI <= 70 - block overbought entries",
+                "_evidence": "OPTION A Dec 2024: ADX 25-30 (Rs 702 net), RSI 70+ blocked (Rs -31 net). 45 trades remain profitable."
+            },
+            "break_of_structure_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_reason": "NOT SALVAGEABLE - all filter combos negative",
+                "_evidence": "ELIMINATION Dec 2024: 64 trades, Rs -345 net - no profitable combo found"
+            }
+        },
+        "global_filters": {
+            "_comment": "UNIFIED GLOBAL FILTERS - Applied to all setups before setup-specific filters",
+            "short_min_adx": {
+                "enabled": false,
+                "min_adx": 25,
+                "_rationale": "Shorts need stronger trend confirmation"
+            },
+            "long_min_volume": {
+                "enabled": false,
+                "min_volume": 100000,
+                "_rationale": "Longs need minimum institutional volume (FHM bypasses this)"
+            },
+            "rsi_dead_zone": {
+                "enabled": false,
+                "min_rsi": 45,
+                "max_rsi": 55,
+                "_rationale": "Disabled for breakout - momentum can start from any RSI level"
+            }
+        },
+        "specialized_filters": {
+            "_comment": "Complex filters requiring specialized logic (kept in validate_gates() code)",
+            "orb_cap_filter_with_mid_cap_conditions": {
+                "_note": "mid_cap allowed if structural_rr >= 1.5 AND entry_minute >= 35",
+                "enabled": false,
+                "mid_cap_min_structural_rr": 1.5,
+                "mid_cap_min_entry_minute": 35
+            },
+            "fhm_bypass": {
+                "_note": "FHM bypasses volume, ADX, RSI checks - uses RVOL from screening",
+                "enabled": false
+            },
+            "orb_relaxed_thresholds": {
+                "_note": "ORB uses relaxed ADX (15) and RSI thresholds - market open volatility",
+                "enabled": false
+            }
         }
     },
 
     "ranking": {
-        "_comment": "ALL values from OLD filters.json rank_* settings to match baseline ranker.py _intraday_strength()",
+        "_comment": "BREAKOUT-SPECIFIC RANKING (Dec 2024) - Pro trader research: high ADX, neutral RSI, VWAP aligned critical",
+        "mode": "breakout_specific",
+        "score_scale": 5.0,
+        "_score_scale_note": "Multiplier to scale weighted sum back to usable range (~0-5). Weighted sum alone produces ~0.17 mean.",
         "weights": {
             "volume": {
-                "_comment": "rank_vol_ratio_divisor=2.0, rank_vol_cap=3.0",
+                "_comment": "CRITICAL for breakouts - volume confirms breakout validity",
                 "divisor": 2.0,
-                "cap": 3.0
+                "cap": 2.0,
+                "weight": 0.20
             },
             "rsi": {
-                "_comment": "rank_rsi_mid=50, rank_rsi_divisor=30, rank_rsi_floor=-0.5",
-                "mid": 50.0,
-                "divisor": 30.0,
-                "floor": -0.5
-            },
-            "rsi_slope": {
-                "_comment": "rank_rsi_slope_cap=0.3",
-                "cap": 0.3
+                "_comment": "NEUTRAL = GOOD for breakouts (room to run, not overbought/oversold)",
+                "mode": "neutral_is_good",
+                "neutral_min": 45,
+                "neutral_max": 55,
+                "good_min": 40,
+                "good_max": 60,
+                "long_overbought_threshold": 70,
+                "short_oversold_threshold": 30,
+                "neutral_bonus": 0.4,
+                "good_bonus": 0.2,
+                "penalty": -0.3,
+                "weight": 0.15
             },
             "adx": {
-                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score",
-                "mid": 25.0,
-                "divisor": 20.0,
-                "floor": -0.3,
-                "cap": 0.4
-            },
-            "adx_slope": {
-                "_comment": "rank_adx_slope_cap=0.2",
-                "cap": 0.2
+                "_comment": "HIGH ADX = GOOD for breakouts (strong trend confirms momentum)",
+                "mode": "high_is_good",
+                "strong_threshold": 35,
+                "good_threshold": 25,
+                "weak_threshold": 20,
+                "strong_bonus": 0.5,
+                "good_bonus": 0.3,
+                "weak_penalty": -0.3,
+                "weight": 0.20
             },
             "vwap": {
-                "_comment": "rank_vwap_bonus=0.3, rank_vwap_penalty=-0.2",
-                "aligned_bonus": 0.3,
-                "misaligned_penalty": -0.2
+                "_comment": "ALIGNED = CRITICAL for breakouts (momentum in direction of VWAP)",
+                "mode": "aligned_required",
+                "aligned_bonus": 0.5,
+                "misaligned_penalty": -0.4,
+                "weight": 0.15
             },
             "distance": {
-                "_comment": "rank_dist_near_bpct=0.5, rank_dist_near_score=0.4, rank_dist_ok_bpct=1.5, rank_dist_ok_score=0.2, rank_dist_far_score=-0.1",
+                "_comment": "Less critical for breakouts - already broken out from level",
                 "near_bpct": 0.5,
-                "near_score": 0.4,
+                "near_score": 0.3,
                 "ok_bpct": 1.5,
-                "ok_score": 0.2,
-                "far_score": -0.1
+                "ok_score": 0.1,
+                "far_score": -0.1,
+                "weight": 0.10
             },
             "squeeze": {
-                "_comment": "rank_sq_score_le_50=0.3, rank_sq_score_le_70=0.2, rank_sq_score_ge_90=-0.2",
+                "_comment": "Squeeze release = good for breakouts (pent-up energy)",
                 "low_bonus": 0.3,
                 "mid_bonus": 0.2,
-                "high_penalty": -0.2
+                "high_penalty": -0.2,
+                "weight": 0.10
             },
             "acceptance": {
-                "_comment": "rank_acceptance_bonus=0.5",
-                "excellent_bonus": 0.5,
-                "good_bonus": 0.25
+                "_comment": "KEEP for breakouts - structural R:R matters for momentum plays",
+                "enabled": true,
+                "excellent_bonus": 0.4,
+                "good_bonus": 0.2,
+                "weight": 0.10
             }
         },
         "regime_multipliers": {

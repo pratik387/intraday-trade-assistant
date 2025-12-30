@@ -32,8 +32,11 @@ except Exception:  # pragma: no cover
 logger = get_agent_logger()
 
 OnTick = Callable[[str, float, float, datetime], None]
+# Extended callback with cumulative volume: (symbol, price, qty, volume, ts)
+OnTickFull = Callable[[str, float, float, int, datetime], None]
 
 _tick_listeners: list[OnTick] = []
+_tick_listeners_full: list[OnTickFull] = []
 
 def register_tick_listener(cb: OnTick) -> None:
     """Main (or tests) can subscribe to raw normalized ticks."""
@@ -43,6 +46,17 @@ def register_tick_listener(cb: OnTick) -> None:
 def unregister_tick_listener(cb: OnTick) -> None:
     try:
         _tick_listeners.remove(cb)
+    except ValueError:
+        pass
+
+def register_tick_listener_full(cb: OnTickFull) -> None:
+    """Subscribe to ticks with cumulative volume: (symbol, price, qty, volume, ts)."""
+    if cb not in _tick_listeners_full:
+        _tick_listeners_full.append(cb)
+
+def unregister_tick_listener_full(cb: OnTickFull) -> None:
+    try:
+        _tick_listeners_full.remove(cb)
     except ValueError:
         pass
 
@@ -118,12 +132,13 @@ class TickRouter:
             if isinstance(pkt, dict):
                 self._handle_dict(pkt)
             elif isinstance(pkt, (list, tuple)) and len(pkt) >= 3:
-                # (token, ltp, qty, [ts]) — generic tuple support
+                # (token, ltp, qty, [volume], [ts]) — generic tuple support
                 token = int(pkt[0])
                 price = float(pkt[1])
                 qty = float(pkt[2]) if pkt[2] is not None else 0.0
-                ts = _to_ist_naive(pkt[3]) if len(pkt) >= 4 and isinstance(pkt[3], datetime) else datetime.now()
-                self._emit(token, price, qty, ts)
+                volume = int(pkt[3]) if len(pkt) >= 4 and isinstance(pkt[3], (int, float)) else 0
+                ts = _to_ist_naive(pkt[4]) if len(pkt) >= 5 and isinstance(pkt[4], datetime) else datetime.now()
+                self._emit(token, price, qty, volume, ts)
             else:
                 self._miss_bad_pkt += 1
                 if self._miss_bad_pkt < 5:
@@ -160,7 +175,13 @@ class TickRouter:
         except Exception:
             qty = 0.0
 
-        
+        # Cumulative day volume (for recording/analysis)
+        volume = t.get("volume_traded") or t.get("volume") or 0
+        try:
+            volume = int(volume)
+        except Exception:
+            volume = 0
+
         ts = (
             t.get("timestamp")
             or t.get("last_trade_time")
@@ -179,10 +200,10 @@ class TickRouter:
         # Make sure it's naive (IST wall time preserved if your _to_ist_naive already handles tz)
         ts = _to_ist_naive(ts)
 
-        self._emit(token, price, qty, ts)
+        self._emit(token, price, qty, volume, ts)
 
     # ----------------------------- emit -----------------------------------
-    def _emit(self, token: int, price: float, qty: float, ts: datetime) -> None:
+    def _emit(self, token: int, price: float, qty: float, volume: int, ts: datetime) -> None:
         if self._on_tick is None:
             return
         sym = self._maps.token_to_symbol.get(int(token))
@@ -193,11 +214,20 @@ class TickRouter:
             return
         try:
             self._on_tick(sym, price, qty, ts)
-            
+
         except Exception as e:  # pragma: no cover
             logger.exception("tick_router: on_tick callback failed: %s", e)
+
+        # Standard listeners (4 args: symbol, price, qty, ts)
         for cb in list(_tick_listeners):
             try:
                 cb(sym, price, qty, ts)
             except Exception as e:
                 logger.exception(f"tick_listener error: {e}")
+
+        # Full listeners with volume (5 args: symbol, price, qty, volume, ts)
+        for cb in list(_tick_listeners_full):
+            try:
+                cb(sym, price, qty, volume, ts)
+            except Exception as e:
+                logger.exception(f"tick_listener_full error: {e}")

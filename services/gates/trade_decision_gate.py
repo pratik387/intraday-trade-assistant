@@ -675,35 +675,6 @@ class TradeDecisionGate:
             # Fallback to 5m-only regime
             regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
 
-        # Phase 3: Check if setup should be blocked by daily regime (evidence-based)
-        # Linda Raschke MTF filtering: Block counter-trend setups when daily conf ≥ 0.70
-        if regime_diagnostics and "daily" in regime_diagnostics:
-            from services.gates.multi_timeframe_regime import DailyRegimeResult
-            daily_data = regime_diagnostics["daily"]
-            daily_result = DailyRegimeResult(
-                regime=daily_data.get("regime", "chop"),
-                confidence=daily_data.get("confidence", 0.0),
-                trend_strength=daily_data.get("trend_strength", 0.0),
-                metrics=daily_data.get("metrics", {})
-            )
-
-            # Check if multi-TF regime wants to block this setup
-            if hasattr(self.regime_gate, 'multi_tf_regime') and hasattr(self.regime_gate.multi_tf_regime, 'should_block_setup'):
-                should_block, block_reason = self.regime_gate.multi_tf_regime.should_block_setup(
-                    setup_type=best.setup_type,
-                    daily_result=daily_result,
-                    min_daily_confidence=0.70
-                )
-                if should_block:
-                    return GateDecision(
-                        accept=False,
-                        reasons=[f"blocked_by_daily_regime:{block_reason}"],
-                        setup_type=best.setup_type,
-                        regime=regime,
-                        regime_conf=regime_confidence,
-                        regime_diagnostics=regime_diagnostics
-                    )
-
         # Evidence for regime gate
         strength = _safe_float(best.strength, 0.0)
         if df5m_tail is not None and not df5m_tail.empty:
@@ -844,6 +815,14 @@ class TradeDecisionGate:
             strength=strength,
             lane_type=lane_type
         )
+
+        # NEW: Check for high-impact events that should BLOCK trades (Budget, Earnings, etc.)
+        # Uses EventsLoader for accurate date detection from static JSON + dynamic cache
+        event_mult, event_reason = self.event_gate.get_trading_multiplier(now.date(), symbol)
+        if event_mult == 0.0 and event_reason:
+            reasons.append(f"event_hard_block:{event_reason}")
+            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
+
         # Check policy permissions
         if _is_breakout(best.setup_type) and not policy.allow_breakout:
             reasons.append("event_block:breakout")
@@ -1059,6 +1038,12 @@ class TradeDecisionGate:
                     reasons.append("entry_validation_price_action_pass")
             except Exception as e:
                 reasons.append(f"entry_validation_price_action_error:{e.__class__.__name__}")
+
+        # ---------------- EVENT SIZE ADJUSTMENT ----------------
+        # Apply size reduction for RBI/Expiry days (blocking events already handled above)
+        if event_mult < 1.0 and event_mult > 0.0:
+            size_mult *= event_mult
+            reasons.append(f"event_size_adj:{event_reason}:{event_mult:.2f}x")
 
         # ---------------- HCET sizing/hold tweaks ----------------
         if hc_ok:

@@ -58,6 +58,13 @@ from datetime import datetime, date, time as dtime
 from typing import Dict, List, Optional, Tuple
 from enum import Enum
 
+# Import EventsLoader for accurate event detection
+try:
+    from services.events.events_loader import EventsLoader
+    EVENTS_LOADER_AVAILABLE = True
+except ImportError:
+    EVENTS_LOADER_AVAILABLE = False
+
 
 class SessionType(Enum):
     """Time-of-day trading sessions with different characteristics."""
@@ -119,6 +126,15 @@ class EventPolicyGate:
         self._session_policies = self._load_session_policies()
         self._event_policies = self._load_event_policies()
 
+        # Initialize EventsLoader for accurate event detection
+        self._events_loader: Optional["EventsLoader"] = None
+        if EVENTS_LOADER_AVAILABLE:
+            try:
+                self._events_loader = EventsLoader()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to initialize EventsLoader: {e}")
+
     # ---------------- Registration API ----------------
     def register_macro_window(self, start: datetime, end: datetime, *, name: str, severity: int = 1) -> None:
         if end <= start:
@@ -135,8 +151,11 @@ class EventPolicyGate:
         for s, e, n, _sev in self._macro:
             if s <= now <= e:
                 names.append(n)
-        # Weekly/monthly expiry heuristic (India): Thursday 13:30–15:00
-        if now.weekday() == 3:  # Monday=0 ... Thursday=3
+        # Weekly/monthly expiry heuristic (India): 13:30–15:00 on expiry day
+        # NSE moved weekly expiry from Thursday to Tuesday starting Sept 2025
+        cutoff_date = date(2025, 9, 1)
+        expiry_weekday = 1 if now.date() >= cutoff_date else 3  # Tuesday=1, Thursday=3
+        if now.weekday() == expiry_weekday:
             if dtime(13, 30) <= now.time() <= dtime(15, 0):
                 names.append("expiry_window")
         # Symbol
@@ -175,19 +194,41 @@ class EventPolicyGate:
             return SessionType.NORMAL
 
     # ---------------- Phase 4: Special Event Detection ----------------
-    def detect_special_event(self, now: datetime) -> Optional[EventType]:
+    def detect_special_event(self, now: datetime, symbol: Optional[str] = None) -> Optional[EventType]:
         """
         Detect special event days requiring threshold adjustments.
 
-        Special event days:
-        - Monthly/Quarterly expiry (last Thursday, day >= 24)
-        - RBI policy announcements (from config)
-        - Budget day (from config)
-        - Election results (from config)
-        - Earnings season (sector-wide impact)
+        Uses EventsLoader for accurate detection of:
+        - Monthly F&O expiry (last Thursday of month - calculated properly)
+        - RBI MPC policy announcements (from static JSON)
+        - Union Budget day (from static JSON)
+        - Stock-specific earnings (from dynamic cache)
+
+        Falls back to heuristic if EventsLoader unavailable.
 
         Returns EventType if special day, None otherwise.
         """
+        check_date = now.date() if isinstance(now, datetime) else now
+
+        # Use EventsLoader for accurate detection if available
+        if self._events_loader:
+            # Check stock-specific earnings (highest priority)
+            if symbol and self._events_loader.has_earnings_today(symbol, check_date):
+                return EventType.EARNINGS_SEASON
+
+            # Check macro events
+            if self._events_loader.is_budget_day(check_date):
+                return EventType.BUDGET_DAY
+
+            if self._events_loader.is_rbi_day(check_date):
+                return EventType.RBI_POLICY
+
+            if self._events_loader.is_expiry_day(check_date):
+                return EventType.MONTHLY_EXPIRY
+
+            return None
+
+        # Fallback to original heuristic-based detection
         import pandas as pd
 
         try:
@@ -257,8 +298,8 @@ class EventPolicyGate:
         session_type = self.get_session_type(now)
         ctx["session_type"] = session_type.value
 
-        # 3. Detect special event (Phase 4)
-        event_type = self.detect_special_event(now)
+        # 3. Detect special event (Phase 4) - now includes symbol for earnings
+        event_type = self.detect_special_event(now, symbol=symbol)
         if event_type:
             ctx["event_type"] = event_type.value
 
@@ -508,3 +549,67 @@ class EventPolicyGate:
 
         # Allow override from config
         return self.cfg.get('event_policies', default_policies)
+
+    # ---------------- Convenience Methods ----------------
+    def load_stock_events(self, cache_date: Optional[date] = None) -> None:
+        """
+        Load stock-specific events from dynamic cache.
+
+        Call this at market open to load earnings/corporate actions.
+        """
+        if self._events_loader:
+            self._events_loader.load_stock_events(cache_date)
+
+    def get_trading_multiplier(self, check_date: date, symbol: Optional[str] = None) -> Tuple[float, Optional[str]]:
+        """
+        Get trading size multiplier based on events.
+
+        Convenience method that wraps EventsLoader.get_trading_multiplier.
+
+        Returns:
+            (multiplier, reason): e.g., (0.5, "rbi_policy_day") or (1.0, None)
+        """
+        if self._events_loader:
+            return self._events_loader.get_trading_multiplier(check_date, symbol)
+
+        # Fallback if loader not available - use detect_special_event
+        from datetime import datetime
+        now = datetime.combine(check_date, dtime(10, 0))
+        event_type = self.detect_special_event(now, symbol)
+
+        if event_type == EventType.BUDGET_DAY:
+            return (0.0, "budget_day")
+        elif event_type == EventType.RBI_POLICY:
+            return (0.5, "rbi_policy_day")
+        elif event_type == EventType.MONTHLY_EXPIRY:
+            return (0.75, "monthly_expiry")
+        elif event_type == EventType.EARNINGS_SEASON:
+            return (0.0, "earnings_day")
+
+        return (1.0, None)
+
+    def is_high_impact_day(self, check_date: date) -> bool:
+        """Check if date has high-impact macro events (Budget or RBI)."""
+        if self._events_loader:
+            return self._events_loader.is_high_impact_day(check_date)
+
+        # Fallback
+        from datetime import datetime
+        now = datetime.combine(check_date, dtime(10, 0))
+        event_type = self.detect_special_event(now)
+        return event_type in (EventType.BUDGET_DAY, EventType.RBI_POLICY)
+
+    def is_expiry_day(self, check_date: date) -> bool:
+        """Check if date is monthly F&O expiry day."""
+        if self._events_loader:
+            return self._events_loader.is_expiry_day(check_date)
+
+        # Fallback
+        from datetime import datetime
+        now = datetime.combine(check_date, dtime(10, 0))
+        return self.detect_special_event(now) == EventType.MONTHLY_EXPIRY
+
+    @property
+    def events_loader(self) -> Optional["EventsLoader"]:
+        """Access the underlying EventsLoader if available."""
+        return self._events_loader

@@ -3,15 +3,20 @@
 OCI Backtest Processing Script
 
 This script automates the complete processing of a backtest run:
-1. Extracts the backtest zip file
+1. Extracts the backtest zip file (or uses existing directory)
 2. Generates analytics files for all sessions (postprocessing)
 3. Generates comprehensive analysis report
+4. Injects run ID and time period metadata into the report
 
 Usage:
-    python oci/process_backtest_run.py <backtest_zip_file>
+    python oci/process_backtest_run.py <backtest_zip_or_directory>
 
-Example:
+Examples:
     python oci/process_backtest_run.py backtest_20251109-125133.zip
+    python oci/process_backtest_run.py 20251228-075841_full
+
+The run ID (e.g., 20251228-075841) and time period are automatically
+extracted and added to the generated JSON report for reference.
 """
 
 import sys
@@ -22,19 +27,64 @@ from pathlib import Path
 import shutil
 import time
 import json
+import re
 
 # Add project root to path for imports
 script_dir = Path(__file__).parent
 project_root = script_dir.parent
 sys.path.insert(0, str(project_root))
 
-try:
-    from tools.calculate_net_pnl import calculate_net_pnl, find_mis_file
-    NET_PNL_AVAILABLE = True
-except ImportError:
-    NET_PNL_AVAILABLE = False
-    def find_mis_file():
+
+def _extract_run_id(input_path: str) -> str:
+    """
+    Extract the run ID from input path.
+
+    Examples:
+        - 20251228-075841_full -> 20251228-075841
+        - backtest_20251228-075841.zip -> 20251228-075841
+        - E:\path\20251228-075841_extracted\... -> 20251228-075841
+    """
+    path = Path(input_path)
+    name = path.stem if path.suffix else path.name
+
+    # Pattern: YYYYMMDD-HHMMSS (timestamp format)
+    pattern = r'(\d{8}-\d{6})'
+    match = re.search(pattern, name)
+    if match:
+        return match.group(1)
+
+    # Check parent directories
+    for parent in path.parents:
+        match = re.search(pattern, parent.name)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def _get_time_period(sessions_root: Path) -> dict:
+    """
+    Get time period from session folder dates.
+
+    Returns:
+        Dict with start_date, end_date, and total_days
+    """
+    session_dirs = [
+        d for d in sessions_root.iterdir()
+        if d.is_dir() and len(d.name) == 10
+        and d.name[4] == '-' and d.name[7] == '-'
+        and d.name.startswith('20')
+    ]
+
+    if not session_dirs:
         return None
+
+    dates = sorted([d.name for d in session_dirs])
+    return {
+        'start_date': dates[0],
+        'end_date': dates[-1],
+        'total_sessions': len(dates)
+    }
 
 
 def _find_sessions_root(extract_dir: Path):
@@ -76,27 +126,54 @@ def _find_sessions_root(extract_dir: Path):
     return None
 
 
-def extract_backtest_zip(zip_path: str) -> str:
+def extract_backtest_zip(input_path: str) -> str:
     """
-    Extract backtest zip file to a directory.
+    Extract backtest zip file to a directory, or use existing directory.
 
     Args:
-        zip_path: Path to the backtest zip file
+        input_path: Path to the backtest zip file OR existing directory
 
     Returns:
-        Path to the extracted directory containing session folders
+        Path to the directory containing session folders
     """
-    zip_path = Path(zip_path)
+    input_path = Path(input_path)
 
-    if not zip_path.exists():
-        raise FileNotFoundError(f"Zip file not found: {zip_path}")
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input path not found: {input_path}")
 
-    # Extract to <filename>_extracted/ directory
+    print(f"=" * 80)
+    print(f"STEP 1: Processing Input")
+    print(f"=" * 80)
+
+    # Check if input is a directory (already extracted or _full directory)
+    if input_path.is_dir():
+        # Try to find sessions root within this directory
+        sessions_root = _find_sessions_root(input_path)
+        if sessions_root:
+            print(f"Using existing directory: {sessions_root}")
+            session_folders = [d for d in sessions_root.iterdir() if d.is_dir() and d.name.startswith('20')]
+            print(f"OK: Found {len(session_folders)} session folder(s)")
+            print()
+            return str(sessions_root)
+
+        # Check subdirectories (e.g., 20251228-075841_full/20251228-075841/)
+        for subdir in input_path.iterdir():
+            if subdir.is_dir():
+                sessions_root = _find_sessions_root(subdir)
+                if sessions_root:
+                    print(f"Using existing directory: {sessions_root}")
+                    session_folders = [d for d in sessions_root.iterdir() if d.is_dir() and d.name.startswith('20')]
+                    print(f"OK: Found {len(session_folders)} session folder(s)")
+                    print()
+                    return str(sessions_root)
+
+        raise ValueError(f"Could not find session directories in {input_path}")
+
+    # Input is a zip file - extract it
+    zip_path = input_path
     extract_dir = zip_path.parent / f"{zip_path.stem}_extracted"
 
-    print(f"=" * 80)
-    print(f"STEP 1: Extracting {zip_path.name}")
-    print(f"=" * 80)
+    print(f"Extracting {zip_path.name}")
 
     # Check if already extracted with valid session directories
     if extract_dir.exists():
@@ -328,153 +405,120 @@ else:
     return report_file
 
 
-def calculate_and_append_net_pnl(sessions_root: str, report_file: str, mis_file: str = None) -> bool:
+def inject_report_metadata(report_file: str, run_id: str, time_period: dict) -> bool:
     """
-    Calculate net PnL with MIS leverage, fees, and taxation and append to report.
+    Inject run ID and time period metadata into the generated JSON report.
 
     Args:
-        sessions_root: Path to the directory containing session folders
-        report_file: Path to the JSON report file to update
-        mis_file: Optional path to MIS margin file
+        report_file: Path to the JSON report file
+        run_id: The backtest run ID (e.g., '20251228-075841')
+        time_period: Dict with start_date, end_date, total_sessions
 
     Returns:
         True if successful, False otherwise
     """
-    print(f"=" * 80)
-    print(f"STEP 4: Calculating Net PnL (MIS, Fees, Tax)")
-    print(f"=" * 80)
-
-    if not NET_PNL_AVAILABLE:
-        print("WARNING: Net PnL calculation not available (missing calculate_net_pnl module)")
-        return False
-
-    # Find MIS file if not provided
-    if not mis_file:
-        mis_file = find_mis_file()
-        if mis_file:
-            print(f"Using MIS file: {mis_file}")
-        else:
-            print("No MIS file found. Using default 1x leverage (NRML).")
-
     try:
-        # Calculate net PnL
-        net_pnl_result = calculate_net_pnl(
-            sessions_root,
-            mis_file=mis_file,
-            use_mis=True,
-            verbose=True
-        )
+        report_path = Path(report_file)
+        if not report_path.exists():
+            print(f"WARNING: Report file not found: {report_file}")
+            return False
 
-        # Load existing report
-        with open(report_file, 'r') as f:
-            report_data = json.load(f)
+        # Load the report
+        with open(report_path, 'r') as f:
+            report = json.load(f)
 
-        # Add net PnL analysis to report
-        report_data['net_pnl_analysis'] = {
-            'gross_pnl_nrml': net_pnl_result['gross_pnl_nrml'],
-            'mis_multiplier_avg': net_pnl_result['mis_multiplier_avg'],
-            'gross_pnl_with_mis': net_pnl_result['gross_pnl_mis'],
-            'total_fees': net_pnl_result['total_fees'],
-            'profit_after_fees': net_pnl_result['profit_after_fees'],
-            'tax_breakdown': net_pnl_result['tax'],
-            'net_pnl_final': net_pnl_result['net_pnl'],
-            'mis_file_used': mis_file or 'default_1x_leverage'
+        # Inject metadata at the top level
+        # Use OrderedDict-like insertion by creating new dict with desired order
+        metadata = {
+            'backtest_run_id': run_id,
+            'time_period': time_period
         }
 
-        # Save updated report
-        with open(report_file, 'w') as f:
-            json.dump(report_data, f, indent=2)
+        # Insert at beginning of report
+        updated_report = {**metadata, **report}
 
-        print()
-        print(f"OK: Net PnL analysis added to report")
-        print(f"    Gross PnL (NRML):     Rs {net_pnl_result['gross_pnl_nrml']:>12,.0f}")
-        print(f"    Avg MIS Multiplier:      {net_pnl_result['mis_multiplier_avg']:>10.2f}x")
-        print(f"    Gross PnL (with MIS): Rs {net_pnl_result['gross_pnl_mis']:>12,.0f}")
-        print(f"    Total Fees:           Rs {net_pnl_result['total_fees']:>12,.0f}")
-        print(f"    Tax (30% + 4% cess):  Rs {net_pnl_result['tax']['total_tax']:>12,.0f}")
-        print(f"    NET PNL FINAL:        Rs {net_pnl_result['net_pnl']:>12,.0f}")
-        print()
+        # Save back
+        with open(report_path, 'w') as f:
+            json.dump(updated_report, f, indent=2, default=str)
+
+        print(f"OK: Injected run metadata into report")
+        print(f"    Run ID: {run_id}")
+        if time_period:
+            print(f"    Time Period: {time_period['start_date']} to {time_period['end_date']} ({time_period['total_sessions']} sessions)")
 
         return True
 
     except Exception as e:
-        print(f"ERROR calculating net PnL: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"WARNING: Failed to inject metadata: {e}")
         return False
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Error: Missing backtest zip file argument")
+        print("Error: Missing backtest input argument")
         print()
         print("Usage:")
-        print(f"  python {sys.argv[0]} <backtest_zip_file> [mis_margin_file.xlsx | existing_report.json]")
+        print(f"  python {sys.argv[0]} <backtest_zip_or_directory>")
         print()
         print("Examples:")
         print(f"  python {sys.argv[0]} backtest_20251109-125133.zip")
-        print(f"  python {sys.argv[0]} backtest_20251109-125133.zip zerodha_mis_margin.xlsx")
-        print(f"  python {sys.argv[0]} backtest_20251109-125133.zip existing_report.json  # Skip steps 2-3, just add MIS data")
+        print(f"  python {sys.argv[0]} 20251228-075841_full")
+        print()
+        print("This script:")
+        print("  1. Extracts the backtest zip file (or uses existing directory)")
+        print("  2. Generates analytics.jsonl for all sessions (with fees per trade)")
+        print("  3. Generates comprehensive report via ComprehensiveRunAnalyzer")
+        print("  4. Injects run ID and time period metadata into the report")
+        print()
+        print("For detailed reports with MIS leverage and tax calculations,")
+        print("run generate_backtest_report.py after this script.")
         sys.exit(1)
 
-    zip_file = sys.argv[1]
+    input_path = sys.argv[1]
 
-    # Handle optional second argument - could be MIS file or existing report file
-    mis_file = None
-    existing_report = None
-    if len(sys.argv) > 2:
-        arg2 = sys.argv[2]
-        if arg2.endswith('.json'):
-            # User provided an existing report file to update
-            existing_report = arg2
-        elif arg2.endswith('.xlsx') or arg2.endswith('.xls'):
-            # User provided MIS margins file
-            mis_file = arg2
-        else:
-            # Assume it's MIS file
-            mis_file = arg2
+    # Extract run ID from input path
+    run_id = _extract_run_id(input_path)
 
     print()
     print("=" * 80)
     print("OCI BACKTEST PROCESSING PIPELINE")
     print("=" * 80)
-    print(f"Backtest Zip: {zip_file}")
+    print(f"Input: {input_path}")
+    if run_id:
+        print(f"Run ID: {run_id}")
     print("=" * 80)
     print()
 
     try:
-        # Step 1: Extract zip
-        sessions_root = extract_backtest_zip(zip_file)
+        # Step 1: Extract zip (or use existing directory)
+        sessions_root = extract_backtest_zip(input_path)
 
-        # If user provided an existing report file, skip steps 2-3 and just add MIS data
-        if existing_report:
+        # Step 2: Generate analytics files (includes fees per trade)
+        if not generate_analytics(sessions_root):
             print()
             print("=" * 80)
-            print("USING EXISTING REPORT FILE - Skipping Steps 2-3")
+            print("PIPELINE FAILED AT STEP 2: Analytics Generation")
             print("=" * 80)
-            print(f"Existing Report: {existing_report}")
-            report_file = existing_report
-        else:
-            # Step 2: Generate analytics files
-            if not generate_analytics(sessions_root):
-                print()
-                print("=" * 80)
-                print("PIPELINE FAILED AT STEP 2: Analytics Generation")
-                print("=" * 80)
-                sys.exit(1)
+            sys.exit(1)
 
-            # Step 3: Generate comprehensive report
-            report_file = generate_comprehensive_report(sessions_root)
+        # Step 3: Generate comprehensive report
+        report_file = generate_comprehensive_report(sessions_root)
 
-            if not report_file:
-                print()
-                print("=" * 80)
-                print("PIPELINE FAILED AT STEP 3: Report Generation")
-                print("=" * 80)
-                sys.exit(1)
+        if not report_file:
+            print()
+            print("=" * 80)
+            print("PIPELINE FAILED AT STEP 3: Report Generation")
+            print("=" * 80)
+            sys.exit(1)
 
-        # Step 4: Calculate and append net PnL (MIS, fees, tax)
-        calculate_and_append_net_pnl(sessions_root, report_file, mis_file)
+        # Step 4: Inject run metadata into report
+        time_period = _get_time_period(Path(sessions_root))
+        if run_id or time_period:
+            print("=" * 80)
+            print("STEP 4: Injecting Run Metadata")
+            print("=" * 80)
+            inject_report_metadata(report_file, run_id, time_period)
+            print()
 
         # Success!
         print()
@@ -484,8 +528,13 @@ def main():
         print()
         print(f"Extracted Directory: {sessions_root}")
         print(f"Comprehensive Report: {report_file}")
+        if run_id:
+            print(f"Backtest Run ID: {run_id}")
+        if time_period:
+            print(f"Time Period: {time_period['start_date']} to {time_period['end_date']}")
         print()
-        print("You can now analyze the report to understand backtest performance.")
+        print("Next step: Run generate_backtest_report.py for detailed analysis")
+        print("  python tools/generate_backtest_report.py")
         print("=" * 80)
         print()
 

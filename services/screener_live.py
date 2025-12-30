@@ -698,7 +698,7 @@ class ScreenerLive:
                     )
                     continue
 
-                logger.info(
+                logger.debug(
                     "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
                     sym, decision.setup_type, decision.regime, decision.size_mult, decision.min_hold_bars,
                     ";".join(decision.reasons),
@@ -1018,7 +1018,15 @@ class ScreenerLive:
         try:
             self.symbol_map = self.sdk.get_symbol_map()
             self.token_map = self.sdk.get_token_map()
-            self.core_symbols = list(self.symbol_map.keys())
+            # Filter out ETFs - symbols ending with "ETF" (e.g., TNIDETF, SBIETFPB)
+            all_symbols = list(self.symbol_map.keys())
+            self.core_symbols = [
+                sym for sym in all_symbols
+                if not sym.replace("NSE:", "").upper().endswith("ETF")
+            ]
+            etf_count = len(all_symbols) - len(self.core_symbols)
+            if etf_count > 0:
+                logger.info(f"ETF_FILTER | Excluded {etf_count} ETF symbols from trading universe")
         except Exception as e:
             raise RuntimeError(f"ScreenerLive: sdk.list_equities() failed: {e}")
         return self.token_map
@@ -1124,9 +1132,12 @@ class ScreenerLive:
                 )
                 # Still compute PDH/PDL/PDC from pre-warmed daily data for level-based setups
                 # Only ORH/ORL will be NaN (which is fine since ORB setups are disabled after 10:30)
+                # IMPORTANT: Iterate over ALL core_symbols, not just df5_by_symbol
+                # PDH/PDL/PDC come from daily cache, don't need 5m bars
                 levels_by_symbol = {}
-                for sym, df5 in df5_by_symbol.items():
+                for sym in self.core_symbols:
                     try:
+                        df5 = df5_by_symbol.get(sym)  # May be None, that's OK for PDH/PDL/PDC
                         lvl = self._levels_for(sym, df5, now)
                         # Keep PDH/PDL/PDC even if ORH/ORL are NaN
                         levels_by_symbol[sym] = lvl
@@ -1531,23 +1542,52 @@ class ScreenerLive:
         vr_min = float(cfg.get("scanner_vol_ratio_min", 1.2))
 
         df = feats.copy()
+        initial_count = len(df)
+
         if "volume" in df.columns and vmin > 0:
             df = df[df["volume"] >= vmin]
+            if len(df) < initial_count:
+                logger.debug(f"STAGE0_DEBUG | volume filter: {initial_count}→{len(df)} (vmin={vmin})")
 
+        after_vol = len(df)
         if "dist_to_vwap" in df.columns:
             cap_bps = float(vwap_caps.get(bkt, 100))
             df = df[(df["dist_to_vwap"].abs() * 10000.0) <= cap_bps]
+            if len(df) < after_vol:
+                logger.debug(f"STAGE0_DEBUG | vwap filter: {after_vol}→{len(df)} (cap_bps={cap_bps}, bkt={bkt})")
 
+        after_vwap = len(df)
         if "ret_1" in df.columns:
             df = df[df["ret_1"].abs() <= ret1_max]
+            if len(df) < after_vwap:
+                logger.debug(f"STAGE0_DEBUG | ret_1 filter: {after_vwap}→{len(df)} (max={ret1_max})")
 
         # OPENING BELL FIX: Skip volume persistence filter during opening bell (09:20-09:30)
         # With only 1-2 bars, vol_persist_ok would reject all symbols
+        after_ret = len(df)
         if not skip_vol_persist:
             if "vol_persist_ok" in df.columns:
+                before_vp = len(df)
                 df = df[df["vol_persist_ok"] >= (1 if vp_bars >= 2 else 0)]
+                if len(df) < before_vp:
+                    logger.debug(f"STAGE0_DEBUG | vol_persist filter: {before_vp}→{len(df)} (vp_bars={vp_bars})")
             if "vol_ratio" in df.columns:
+                before_vr = len(df)
                 df = df[df["vol_ratio"] >= vr_min]
+                if len(df) < before_vr:
+                    logger.debug(f"STAGE0_DEBUG | vol_ratio filter: {before_vr}→{len(df)} (vr_min={vr_min})")
+
+        # Log if all symbols were filtered
+        if len(df) == 0 and initial_count > 0:
+            # Show which filter killed all symbols
+            sample_feats = feats.head(3)
+            sample_info = ""
+            if not sample_feats.empty:
+                for col in ["volume", "dist_to_vwap", "ret_1", "vol_persist_ok", "vol_ratio"]:
+                    if col in sample_feats.columns:
+                        vals = sample_feats[col].tolist()
+                        sample_info += f"{col}={vals[:3]} "
+            logger.warning(f"STAGE0_DEBUG | ALL symbols filtered! initial={initial_count} skip_vol_persist={skip_vol_persist} sample: {sample_info}")
 
         # ========== CAP-AWARE LIQUIDITY GATES (Priority 1) ==========
         liq_cfg = cfg.get("liquidity_gates", {})

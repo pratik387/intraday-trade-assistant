@@ -111,84 +111,106 @@
             "min_level_age_bars": 5,
             "level_merge_tolerance_pct": 0.3
         },
-        "setup_regime_blocks": {
-            "_comment": "Data-driven filters from backtest analysis - block unprofitable setup+regime combinations",
+        "setup_filters": {
+            "_comment": "3-YEAR OPTIMIZED FILTERS (Dec 2024): Analyzed 4,604 triggered trades, 732 trading days",
+            "_active_profile": "3YEAR_OPTIMIZED",
+            "_analysis_date": "2024-12-27",
             "orb_pullback_long": {
-                "_comment": "DATA-DRIVEN (Dec 2024): ADX 30-35 is 75% WR. ADX 20-25 is only 25% WR. Require high ADX for trend trades.",
-                "min_adx": 30,
-                "blocked_caps": ["micro_cap"],
-                "_evidence": "33 trades total. ADX 30-35: 75% WR +Rs 463. ADX 20-25: 25% WR -Rs 1094. trend_up+ADX<30 = 33% WR, -Rs 1982."
+                "enabled": true,
+                "allowed_regimes": ["chop"],
+                "allowed_caps": ["mid_cap"],
+                "max_adx": 25,
+                "_filter": "chop regime only, mid_cap only, ADX < 25",
+                "_evidence": "3YR: 98 triggered trades. Filter: chop+mid_cap+ADX<25. Target: SL 1.0x, T1 2.0R -> NET Rs 29,929 (56.1% WR)."
             },
             "orb_pullback_short": {
-                "_comment": "DATA-DRIVEN (Dec 2024): small_cap + ADX>=25 + rank<1 + T1/T2 +50%",
-                "allowed_caps": ["small_cap"],
-                "min_adx": 25,
-                "max_rank_score": 1.0,
-                "t1_mult": 1.5,
-                "t2_mult": 1.5,
-                "_evidence": "Dec 2024: ADX>=25: 52 trades Rs 191 avg, 76.9% WR. ADX<25: Rs 131 avg. Hour 10 best (Rs 231 avg)."
+                "enabled": true,
+                "blocked_regimes": ["trend_up"],
+                "allowed_caps": ["small_cap", "micro_cap"],
+                "min_rank_score": 0,
+                "_filter": "Block trend_up, small/micro cap only, rank >= 0",
+                "_evidence": "3YR: 694 triggered trades. Filter: !trend_up+small/micro+rank>=0. Target: SL 1.5x, T1 1.75R -> NET Rs 281,102 (65.3% WR)."
             },
             "support_bounce_long": {
-                "_comment": "DATA-DRIVEN (Dec 2024): Block entirely - detected_level fix exposed poor setup quality",
-                "blocked_entirely": true,
-                "_evidence": "35 trades, -Rs 8,770, 34% WR. Only 1 trade with ADX<25 profitable (+Rs 2,063). Rest all losing."
+                "enabled": true,
+                "max_adx": 15,
+                "allowed_caps": ["large_cap"],
+                "allowed_regimes": ["trend_up", "squeeze"],
+                "max_rank_score": 1.5,
+                "_filter": "ADX <= 15, large_cap, trend_up/squeeze, rank < 1.5 + candlestick confirmation",
+                "_evidence": "3YR: 185 trades, Net Rs 40,274 (Avg Rs 218). Blocked chop/trend_down, small_cap, high rank scores."
             },
             "range_bounce_long": {
-                "_comment": "DATA-DRIVEN (Dec 2024): ADX<28 + NOT trend_down/chop. 1.5x targets improve avg PnL by 46%",
-                "blocked_regimes": ["trend_down", "chop"],
-                "max_adx": 28,
-                "t1_mult": 1.5,
-                "t2_mult": 1.5,
-                "_evidence": "ADX<28 + NOT trend_down: 9 trades, Rs 506 avg, 88.9% WR. With 1.5x T1/T2: Rs 620 avg. Baseline: 86 trades, -Rs 77 avg, 47.7% WR."
+                "enabled": true,
+                "blocked_entirely": true,
+                "_filter": "DISABLED - not salvageable",
+                "_evidence": "3YR: 118 trades, Rs -32,291 net (-274 avg). ALL regimes negative. Only micro_cap (10 trades) profitable. Not enough volume to salvage."
             },
             "discount_zone_long": {
-                "blocked_entirely": true,
-                "_evidence": "Dec 2024 analysis: 1 trade, -500 Rs, 0% WR - block entirely"
+                "enabled": true,
+                "min_rank_score": 1.5,
+                "allowed_regimes": ["trend_up"],
+                "_evidence": "Keep existing - not enough trades for reanalysis"
             },
             "vwap_lose_short": {
+                "enabled": true,
                 "blocked_entirely": true,
-                "_evidence": "Dec 2024 analysis: 16 trades, -3,282 Rs, 25% WR. 0% WR in trend_up, 27% in chop. Winners have ADX 37.5 vs losers 27.2"
+                "_evidence": "Keep existing - negative expectancy"
             },
             "resistance_bounce_short": {
-                "_comment": "DATA-DRIVEN (Dec 2024): RSI 38-48 + rank>=2 + Hour 11 + NOT large_cap + SL/T1/T2 1.5x.",
+                "enabled": true,
+                "allowed_caps": ["micro_cap", "small_cap"],
+                "min_rank_score": 1.4,
+                "min_adx": 20,
+                "max_rsi": 70,
+                "allowed_hours": [11, 12, 13, 14, 15],
                 "blocked_regimes": ["trend_up"],
-                "blocked_caps": ["large_cap"],
-                "max_adx": 30,
-                "min_rank_score": 2,
-                "allowed_hours": [11],
-                "min_rsi": 38,
-                "max_rsi": 48,
-                "sl_mult": 1.5,
-                "t1_mult": 1.5,
-                "t2_mult": 1.5,
-                "_evidence": "Dec 2024: RSI 38-48 filter. 46 trades, Rs 277 avg net, Rs 12,732 total net (+55% vs no RSI), 71.7% WR.",
-                "_review": "REVIEW after 2 years of backtesting. If RSI 38-48 underperforms, change to max_rsi: 50 only (62 trades, Rs 142 avg net)."
+                "_filter": "micro/small_cap + rank>=1.4 + ADX>=20 + RSI<=70 + Hour>=11 + block trend_up",
+                "_evidence": "3YR VERIFIED + OLD FILTERS. Hour>=11 + block trend_up adds +Rs 20,950 on top of existing filters."
             },
             "range_bounce_short": {
-                "_comment": "DATA-DRIVEN (Dec 2024): squeeze + rank>=2 + Hour 10-11 + SL/T1/T2 1.5x. Spike test validated.",
-                "blocked_regimes": ["chop", "trend_up", "trend_down"],
-                "min_adx": 25,
-                "min_rank_score": 2,
-                "allowed_hours": [10, 11],
-                "sl_mult": 1.5,
-                "t1_mult": 1.5,
-                "t2_mult": 1.5,
-                "_evidence": "Dec 2024 Spike Test: 101 trades Rs 329 avg gross, Rs 168 avg net, 50.5% WR. t2_mult 1.5x adds +Rs 8,513 gross."
+                "enabled": true,
+                "allowed_caps": ["micro_cap", "small_cap"],
+                "min_rank_score": 1.5,
+                "min_rsi": 40,
+                "max_rsi": 70,
+                "_filter": "micro_cap + small_cap + rank >= 1.5 + RSI 40-70",
+                "_evidence": "3YR: 1,113 trades Rs 285,838 (Rs 257 avg). Keep existing filters."
             },
             "premium_zone_short": {
-                "_comment": "DATA-DRIVEN (Dec 2024): NOT trend_up + block micro_cap + ADX<30 + SL/T1 +50%",
-                "blocked_regimes": ["trend_up"],
-                "blocked_caps": ["micro_cap"],
-                "max_adx": 30,
-                "sl_mult": 1.5,
-                "t1_mult": 1.5,
-                "_evidence": "Dec 2024: NOT trend_up (chop): 11 trades Rs 213 avg, 54.5% WR. mid_cap best (Rs 309). trend_up: Rs 93 avg. micro_cap: 29% WR."
+                "enabled": true,
+                "blocked_entirely": true,
+                "_filter": "DISABLED - not salvageable",
+                "_evidence": "3YR: 183 trades, Rs -31,436 net (-172 avg). Only Hour 10 (4 trades) and Hour 13 (35 trades) marginally positive. Not enough to justify."
+            },
+            "order_block_short": {
+                "enabled": true,
+                "_evidence": "Keep existing - profitable (Rs 425 avg on 13 trades)"
+            },
+            "order_block_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "Keep existing - negative expectancy"
             }
         },
-        "global_short_adx_filter": {
-            "_comment": "Dec 2024 analysis: Block all short trades when ADX < 18",
-            "min_adx": 18,
-            "_evidence": "ADX < 15 = 0% WR (-1,112 Rs). ADX 20-25 = 62% WR (+11,577 Rs). Min 18 catches weak trends."
+        "global_filters": {
+            "_comment": "Global filters that apply to all setups in this pipeline",
+            "short_min_adx": {
+                "enabled": false,
+                "min_adx": 18,
+                "_evidence": "ADX < 15 = 0% WR. ADX 20-25 = 62% WR. Min 18 catches weak trends."
+            },
+            "long_min_volume": {
+                "enabled": false,
+                "min_volume": 150000,
+                "_evidence": "Winners have 2x volume (213k vs 107k)."
+            },
+            "rsi_dead_zone": {
+                "enabled": false,
+                "long_min": 35,
+                "long_max": 50,
+                "_comment": "Disabled for LEVEL - handled by setup-specific RSI filters"
+            }
         },
         "vwap_freshness": {
             "_comment": "Parameters for fresh reclaim/lose detection",
@@ -202,65 +224,12 @@
             "min_volume": 50000,
             "_evidence": "Low volume VWAP trades have poor execution and high slippage. Blocking vol<50k improves P&L by +2,675 Rs"
         },
-        "validated_filters": {
-            "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
-            "resistance_bounce_short_adx": {
-                "min_adx": 20,
-                "_evidence": "R1: +3,671 Rs (14 trades) | R2: +2,692 Rs (15 trades) - ADX<20 = no trend, bounce fails"
-            },
+        "specialized_filters": {
+            "_comment": "Specialized filters that require complex logic (BB width). These are handled separately in pipeline code.",
             "resistance_bounce_short_bb_width": {
+                "enabled": true,
                 "max_bb_width": 0.10,
-                "_evidence": "Dec 2024 analysis: bb_width<=0.10 reduces hard_sl from 35%→28%, 46 trades 54% WR Rs 6,465 PnL"
-            },
-            "support_bounce_long_adx": {
-                "min_adx": 22,
-                "_evidence": "OPTIMIZED Dec 2024: min_adx 20->22. Big winners avg ADX=24.6 vs losers=20.7. Combined with RSI<45 = 83% WR, Rs 137/trade"
-            },
-            "premium_zone_short_adx": {
-                "min_adx": 15,
-                "_evidence": "R1: +1,244 Rs (5 trades) | R2: +1,244 Rs (5 trades) - Very low ADX = no directional movement"
-            },
-            "support_bounce_long_srr": {
-                "max_structural_rr": 3.0,
-                "_evidence": "Keep max_structural_rr at 3.0. Winners avg 1.52 vs losers 1.62 - tight stops work better"
-            },
-            "support_bounce_long_rsi": {
-                "max_rsi": 45,
-                "_evidence": "OPTIMIZED Dec 2024: RSI<45 (from 50). Big winners avg RSI=39 vs losers=47. Combined with ADX>=22 = 83% WR, Rs 137/trade"
-            },
-            "long_trade_volume": {
-                "min_volume": 150000,
-                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
-            },
-            "range_bounce_short_chop_adx": {
-                "min_adx": 20,
-                "_evidence": "Dec 2024: In chop regime, ADX>=20: 10 trades Rs +4,575 (73% WR) vs ADX<20: 19 trades Rs -800. Block low ADX."
-            },
-            "vwap_lose_short_trend_up": {
-                "block_in_trend_up": true,
-                "_evidence": "Dec 2024: ALL 4 trend_up trades hit hard_sl (Rs -2,179). Shorting in uptrend = guaranteed loss."
-            },
-            "premium_zone_short_trend_down_adx": {
-                "min_adx": 32,
-                "_evidence": "Dec 2024: In trend_down, ADX>=32: 31 trades Rs +4,884 (9 HSL) vs ADX<32: 26 trades Rs -1,865 (16 HSL). Strong trends work."
-            },
-            "range_bounce_short_adx": {
-                "max_adx": 30,
-                "_evidence": "6-month backtest Dec 2024: ADX>=30: 79 trades, 35% WR, Rs -9,121 | ADX<30: 119 trades, 53% WR, Rs +26,700"
-            },
-            "range_bounce_short_rr": {
-                "min_rr": 2.0,
-                "max_rr": 4.0,
-                "_evidence": "6-month backtest Dec 2024: R:R 2-4: 48 trades, 73% WR, Rs +26,512 | R:R<2: 39% WR | R:R>=4: 33% WR"
-            },
-            "resistance_bounce_short_max_adx": {
-                "max_adx": 30,
-                "_evidence": "6-month backtest Dec 2024: ADX<30: 149 trades, 53.7% WR, Rs +26,410 | ADX>=30: 133 trades, 48.1% WR, Rs +286"
-            },
-            "resistance_bounce_short_rr": {
-                "min_rr": 1.5,
-                "max_rr": 3.0,
-                "_evidence": "6-month backtest Dec 2024: R:R 1.5-3: 69 trades, 66.7% WR, Rs +24,945 | R:R<1.5: 40.5% WR | R:R>=3: 42.1% WR"
+                "_evidence": "Dec 2024 analysis: bb_width<=0.10 reduces hard_sl from 35%→28%"
             }
         },
         "long_specific_filters": {
@@ -287,57 +256,71 @@
     },
 
     "ranking": {
-        "_comment": "ALL values from OLD filters.json rank_* settings to match baseline ranker.py _intraday_strength()",
+        "_comment": "LEVEL-SPECIFIC RANKING (Dec 2024) - Pro trader research: low ADX, extreme RSI, counter-VWAP acceptable for bounces",
+        "mode": "level_specific",
+        "score_scale": 5.0,
+        "_score_scale_note": "Multiplier to scale weighted sum back to usable range (~0-5). Weighted sum alone produces ~0.17 mean.",
         "weights": {
             "volume": {
-                "_comment": "rank_vol_ratio_divisor=2.0, rank_vol_cap=3.0",
-                "divisor": 2.0,
-                "cap": 3.0
+                "_comment": "REDUCED weight for level plays - structure matters more than volume",
+                "divisor": 3.0,
+                "cap": 1.5,
+                "weight": 0.10
             },
             "rsi": {
-                "_comment": "rank_rsi_mid=50, rank_rsi_divisor=30, rank_rsi_floor=-0.5",
-                "mid": 50.0,
-                "divisor": 30.0,
-                "floor": -0.5
-            },
-            "rsi_slope": {
-                "_comment": "rank_rsi_slope_cap=0.3",
-                "cap": 0.3
+                "_comment": "INVERTED: Extreme RSI = GOOD for bounces (oversold for long, overbought for short)",
+                "mode": "extreme_is_good",
+                "long_oversold_threshold": 40,
+                "long_very_oversold_threshold": 30,
+                "long_overbought_penalty_threshold": 65,
+                "short_overbought_threshold": 60,
+                "short_very_overbought_threshold": 70,
+                "short_oversold_penalty_threshold": 35,
+                "extreme_bonus": 0.5,
+                "good_bonus": 0.3,
+                "penalty": -0.3,
+                "weight": 0.20
             },
             "adx": {
-                "_comment": "ISSUE 3 FIX: Added cap=0.4 to prevent high ADX from dominating score (losers had 0.615 vs winners 0.475)",
-                "mid": 25.0,
-                "divisor": 20.0,
-                "floor": -0.3,
-                "cap": 0.4
-            },
-            "adx_slope": {
-                "_comment": "rank_adx_slope_cap=0.2",
-                "cap": 0.2
+                "_comment": "INVERTED: Low ADX = GOOD for bounces (ranging market, levels respected)",
+                "mode": "low_is_good",
+                "ideal_max": 20,
+                "acceptable_max": 25,
+                "penalty_threshold": 35,
+                "ideal_bonus": 0.4,
+                "acceptable_bonus": 0.2,
+                "penalty": -0.3,
+                "weight": 0.25
             },
             "vwap": {
-                "_comment": "rank_vwap_bonus=0.3, rank_vwap_penalty=-0.2",
-                "aligned_bonus": 0.3,
-                "misaligned_penalty": -0.2
+                "_comment": "RELAXED: Counter-VWAP acceptable for reversal setups",
+                "mode": "counter_allowed",
+                "aligned_bonus": 0.2,
+                "counter_bonus": 0.1,
+                "weight": 0.10
             },
             "distance": {
-                "_comment": "rank_dist_near_bpct=0.5, rank_dist_near_score=0.4, rank_dist_ok_bpct=1.5, rank_dist_ok_score=0.2, rank_dist_far_score=-0.1",
+                "_comment": "KEEP HIGH WEIGHT: Near level = critical for bounce setups",
                 "near_bpct": 0.5,
                 "near_score": 0.4,
                 "ok_bpct": 1.5,
                 "ok_score": 0.2,
-                "far_score": -0.1
+                "far_score": -0.1,
+                "weight": 0.25
             },
             "squeeze": {
-                "_comment": "rank_sq_score_le_50=0.3, rank_sq_score_le_70=0.2, rank_sq_score_ge_90=-0.2",
+                "_comment": "Low squeeze = good for level plays (ranging, levels respected)",
                 "low_bonus": 0.3,
                 "mid_bonus": 0.2,
-                "high_penalty": -0.2
+                "high_penalty": -0.2,
+                "weight": 0.10
             },
             "acceptance": {
-                "_comment": "rank_acceptance_bonus=0.5",
-                "excellent_bonus": 0.5,
-                "good_bonus": 0.25
+                "_comment": "Quality bonus for LEVEL trades - excellent/good quality get ranking boost",
+                "enabled": true,
+                "excellent_bonus": 0.4,
+                "good_bonus": 0.2,
+                "weight": 0.10
             }
         },
         "daily_trend_multipliers": {
@@ -441,22 +424,46 @@
     },
 
     "targets": {
-        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific targets optimized via backtest analysis",
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific targets optimized via 1m backtest simulation",
         "rr_ratios": {
             "support_bounce_long": {
-                "_comment": "OPTIMIZED Dec 2024: T1 1.5R (was 1.0R). Wider targets with wider SL = +Rs 3,831 improvement",
-                "t1": 1.5,
+                "_comment": "OPTIMIZED Dec 2024: T1 1.0R + SL 0.9x. Tighter targets = 79% hit rate. +Rs 9.15L improvement over 3yr",
+                "t1": 1.0,
+                "t2": 1.25,
+                "t3": 1.5
+            },
+            "resistance_bounce_short": {
+                "_comment": "OPTIMIZED Dec 2024: T1 3.0R + SL 1.5x. Wider targets = let winners run. +Rs 5.12L improvement over 3yr",
+                "t1": 3.0,
+                "t2": 3.5,
+                "t3": 4.0
+            },
+            "range_bounce_short": {
+                "_comment": "OPTIMIZED Dec 2024: T1 3.0R + SL 1.5x. Wider targets = let winners run. +Rs 4.83L improvement over 3yr",
+                "t1": 3.0,
+                "t2": 3.5,
+                "t3": 4.0
+            },
+            "orb_pullback_long": {
+                "_comment": "OPTIMIZED Dec 2024: SL 1.0x, T1 2.0R. 98 filtered trades -> NET Rs 29,929 (56.1% WR). +Rs 19K improvement.",
+                "t1": 2.0,
                 "t2": 2.5,
                 "t3": 3.0
             },
+            "orb_pullback_short": {
+                "_comment": "OPTIMIZED Dec 2024: SL 1.5x, T1 1.75R. 694 filtered trades -> NET Rs 281,102 (65.3% WR). +Rs 215K improvement.",
+                "t1": 1.75,
+                "t2": 2.25,
+                "t3": 2.75
+            },
             "long": {
-                "_comment": "Default for other long setups: T1 1.0R",
+                "_comment": "Default for other long setups: T1 1.0R (tighter targets work better for longs)",
                 "t1": 1.0,
-                "t2": 2.0,
-                "t3": 2.5
+                "t2": 1.5,
+                "t3": 2.0
             },
             "short": {
-                "_comment": "Shorts keep 1.5R T1 - they have 1.13R avg MFE vs 0.74R for longs",
+                "_comment": "Default for other short setups: T1 1.5R",
                 "t1": 1.5,
                 "t2": 2.5,
                 "t3": 3.0
@@ -499,13 +506,21 @@
     },
 
     "stop_loss": {
-        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific SL optimized via backtest analysis",
+        "_comment": "DATA-DRIVEN (Dec 2024): Setup-specific SL optimized via 1m backtest simulation",
         "atr_multiplier": 2.0,
         "min_stop_distance_pct": 0.5,
         "setup_specific": {
             "support_bounce_long": {
-                "atr_multiplier": 2.4,
-                "_comment": "OPTIMIZED Dec 2024: 1.2x wider SL (2.0→2.4 ATR). Reduces premature stops, combined with T1 1.5R = +Rs 3,831"
+                "atr_multiplier": 1.8,
+                "_comment": "OPTIMIZED Dec 2024: 0.9x tighter SL (2.0→1.8 ATR). Tighter SL + T1 1.0R = +Rs 9.15L over 3yr"
+            },
+            "resistance_bounce_short": {
+                "atr_multiplier": 3.0,
+                "_comment": "OPTIMIZED Dec 2024: 1.5x wider SL (2.0→3.0 ATR). More room + T1 3.0R = +Rs 5.12L over 3yr"
+            },
+            "range_bounce_short": {
+                "atr_multiplier": 3.0,
+                "_comment": "OPTIMIZED Dec 2024: 1.5x wider SL (2.0→3.0 ATR). More room + T1 3.0R = +Rs 4.83L over 3yr"
             }
         }
     },
