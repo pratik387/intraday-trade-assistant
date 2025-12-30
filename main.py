@@ -31,7 +31,7 @@ from services.orders.order_queue import OrderQueue
 from services.screener_live import ScreenerLive
 from services.execution.trade_executor import RiskState, Position
 from services.execution.exit_executor import ExitExecutor
-from services.ingest.tick_router import register_tick_listener
+from services.ingest.tick_router import register_tick_listener, register_tick_listener_full
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
 from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
@@ -450,6 +450,9 @@ def main() -> int:
         if result.get("source") == "api":
             cache_persistence.save(sdk.get_daily_cache())
 
+    # Tick recorder for paper/live trading (records to sidecar format for upload)
+    tick_recorder = None
+
     # Pick mode
     if args.paper_trading:
         # Paper trading: live data + simulated orders
@@ -459,6 +462,14 @@ def main() -> int:
         sdk = KiteClient()
         broker = KiteBroker(dry_run=True, ltp_cache=ltp_cache)
         logger.warning("🧪 PAPER TRADING MODE: Live data, simulated orders (no real trades)")
+
+        # Initialize tick recorder for paper trading
+        try:
+            from sidecar.data_collector import TickRecorder as SidecarTickRecorder
+            tick_recorder = SidecarTickRecorder(buffer_size=50000)
+            logger.info("TICK_RECORDER | Initialized for paper trading session")
+        except Exception as e:
+            logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
 
         if not args.skip_prewarm:
             _prewarm_daily_cache(sdk)
@@ -482,6 +493,14 @@ def main() -> int:
         broker = KiteBroker(dry_run=False, ltp_cache=ltp_cache)
         logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
 
+        # Initialize tick recorder for live trading
+        try:
+            from sidecar.data_collector import TickRecorder as SidecarTickRecorder
+            tick_recorder = SidecarTickRecorder(buffer_size=50000)
+            logger.info("TICK_RECORDER | Initialized for live trading session")
+        except Exception as e:
+            logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
+
         if not args.skip_prewarm:
             _prewarm_daily_cache(sdk)
 
@@ -490,7 +509,6 @@ def main() -> int:
 
     # Bootstrap from sidecar data (instant startup on late start)
     # This populates ORB cache, daily levels, and 5m bars from pre-collected sidecar data
-    # Sidecar also handles tick persistence, so main engine doesn't need to record separately
     bootstrap_result = {"success": False, "skipped": True, "reason": "not_attempted"}
     try:
         from sidecar import maybe_bootstrap_from_sidecar
@@ -510,6 +528,15 @@ def main() -> int:
         ltp_cache.update(sym, price, ts_pd)
 
     register_tick_listener(_ltp_tap)
+
+    # Register tick recorder for paper/live trading (records market data for upload)
+    if tick_recorder is not None:
+        def _tick_recorder_tap(sym: str, price: float, qty: float, cumvol: int, ts_dt):
+            # Adapter: OnTickFull signature → SidecarTickRecorder.on_tick signature
+            tick_recorder.on_tick(sym, price, qty, ts_dt, cumvol)
+
+        register_tick_listener_full(_tick_recorder_tap)
+        logger.info("TICK_RECORDER | Registered with tick router")
 
     # Risk + shared positions
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
@@ -665,6 +692,15 @@ def _run_until_eod(
         if health:
             health.set_state(SessionState.STOPPED)
             health.stop()
+
+        # Finalize tick recorder (flush buffers and merge part files)
+        _tick_rec = locals().get('tick_recorder')
+        if _tick_rec is not None:
+            try:
+                _tick_rec.finalize()
+                logger.info(f"TICK_RECORDER | Finalized: {_tick_rec.tick_count:,} ticks recorded")
+            except Exception as e:
+                logger.warning(f"TICK_RECORDER | Finalization failed: {e}")
 
         # Upload current session to OCI (paper/live modes only)
         if args.paper_trading or (not args.dry_run and not args.paper_trading):
