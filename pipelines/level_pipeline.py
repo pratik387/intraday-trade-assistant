@@ -673,11 +673,22 @@ class LevelPipeline(BasePipeline):
                 entry_ref = orl + (orh - orl) * ict_cfg["premium_zone_frac"]  # 70% into range
             entry_trigger = triggers["premium_zone"]
         elif "pullback" in setup_lower or "retest" in setup_lower:
-            # Pullback/Retest - enter at support (PDL) or resistance (PDH)
-            if bias == "long":
-                entry_ref = min(orl, pdl) if pdl > 0 else orl
+            # Pullback/Retest - enter at the BROKEN level (retest entry)
+            # ORB pullback: Long retests ORH (broken resistance), Short retests ORL (broken support)
+            # Other pullbacks: Long retests PDL/ORL (support), Short retests PDH/ORH (resistance)
+            if "orb" in setup_lower:
+                # ORB pullback: retest the level that was BROKEN
+                if bias == "long":
+                    entry_ref = orh  # Long: retest broken ORH (now support)
+                else:
+                    entry_ref = orl  # Short: retest broken ORL (now resistance)
+                logger.debug(f"[LEVEL] {symbol} ORB pullback {bias} entry at {'ORH' if bias == 'long' else 'ORL'}={entry_ref:.2f}")
             else:
-                entry_ref = max(orh, pdh) if pdh > 0 else orh
+                # Non-ORB pullback: enter at support (long) or resistance (short)
+                if bias == "long":
+                    entry_ref = min(orl, pdl) if pdl > 0 else orl
+                else:
+                    entry_ref = max(orh, pdh) if pdh > 0 else orh
             entry_trigger = triggers["default"]
         elif "reversal" in setup_lower:
             # Level reversal - enter at structure

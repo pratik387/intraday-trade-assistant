@@ -20,6 +20,7 @@ Output Structure:
 import json
 import sys
 import re
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
@@ -31,6 +32,56 @@ import statistics
 
 import zipfile
 import glob
+
+
+def get_git_info() -> dict:
+    """
+    Get current git information for report traceability.
+
+    Returns:
+        Dict with commit_hash, branch, commit_date, is_dirty
+    """
+    try:
+        # Get current commit hash
+        commit_hash = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        # Get short hash
+        short_hash = subprocess.run(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        # Get branch name
+        branch = subprocess.run(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        # Get commit date
+        commit_date = subprocess.run(
+            ['git', 'log', '-1', '--format=%ci'],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        # Check if working directory is dirty
+        status = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+        is_dirty = len(status) > 0
+
+        return {
+            'commit_hash': commit_hash,
+            'short_hash': short_hash,
+            'branch': branch,
+            'commit_date': commit_date,
+            'is_dirty': is_dirty,
+        }
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 def extract_run_id_from_path(path_str: str) -> str:
@@ -446,6 +497,7 @@ def extract_order_data():
                                 'gross_pnl': ev.get('total_trade_pnl', 0) if ev.get('is_final_exit') else 0,
                                 'net_pnl': ev.get('net_pnl', 0) if ev.get('is_final_exit') else 0,
                                 'setup': setup,
+                                'symbol': ev.get('symbol', ''),  # For MIS leverage calculation
                                 # Pre-calculated fees from analytics (if available)
                                 'fees': fees,
                                 'has_precalc_fees': bool(fees),
@@ -536,12 +588,18 @@ def calculate_charges(orders):
     }
 
 
-def calculate_setup_charges(orders):
-    """Calculate charges per setup type for profitability analysis."""
+def calculate_setup_charges(orders, mis_margins=None):
+    """
+    Calculate charges per setup type for profitability analysis.
+
+    Now includes MIS leverage and tax for FINAL NET calculation.
+    All metrics use FINAL NET (after MIS + charges + tax) as the primary number.
+    """
     by_setup = defaultdict(lambda: {
         'orders': [],
         'gross_pnl': 0,
-        'trades': 0
+        'trades': 0,
+        'symbols': []
     })
 
     for order in orders:
@@ -550,22 +608,50 @@ def calculate_setup_charges(orders):
         if order['is_final']:
             by_setup[setup]['gross_pnl'] += order['gross_pnl']
             by_setup[setup]['trades'] += 1
+            # Track symbol for MIS calculation
+            symbol = order.get('symbol', '')
+            if symbol:
+                by_setup[setup]['symbols'].append(symbol)
 
     result = {}
     for setup, data in by_setup.items():
         charges = calculate_charges(data['orders'])
-        net_pnl = data['gross_pnl'] - charges['total_charges']
+
+        # Calculate MIS-adjusted gross PnL
+        if mis_margins and data['symbols']:
+            # Calculate weighted average multiplier for this setup
+            multipliers = [get_mis_multiplier(s, mis_margins) for s in data['symbols']]
+            avg_multiplier = sum(multipliers) / len(multipliers) if multipliers else 1.0
+            gross_pnl_mis = data['gross_pnl'] * avg_multiplier
+        else:
+            avg_multiplier = 1.0
+            gross_pnl_mis = data['gross_pnl']
+
+        # Net after charges (MIS-adjusted)
+        net_after_charges = gross_pnl_mis - charges['total_charges']
+
+        # Apply tax
+        tax_result = calculate_income_tax(net_after_charges)
+        final_net = tax_result['net_after_tax']
+
         result[setup] = {
             'trades': data['trades'],
             'gross_pnl': data['gross_pnl'],
+            'gross_pnl_mis': gross_pnl_mis,
+            'mis_multiplier': avg_multiplier,
             'charges': charges['total_charges'],
-            'net_pnl': net_pnl,
+            'net_after_charges': net_after_charges,
+            'tax': tax_result['total_tax'],
+            'final_net': final_net,  # PRIMARY METRIC: after MIS + charges + tax
             'avg_gross': data['gross_pnl'] / data['trades'] if data['trades'] > 0 else 0,
-            'avg_net': net_pnl / data['trades'] if data['trades'] > 0 else 0,
-            'profitable': net_pnl > 0,
+            'avg_final_net': final_net / data['trades'] if data['trades'] > 0 else 0,
+            'profitable': final_net > 0,
+            # Keep old fields for backward compatibility
+            'net_pnl': net_after_charges,
+            'avg_net': net_after_charges / data['trades'] if data['trades'] > 0 else 0,
         }
 
-    return dict(sorted(result.items(), key=lambda x: x[1]['net_pnl'], reverse=True))
+    return dict(sorted(result.items(), key=lambda x: x[1]['final_net'], reverse=True))
 
 
 def calculate_performance_summary(trades, sessions):
@@ -891,20 +977,78 @@ def generate_executive_summary(data, output_path):
 
     perf = data["performance"]
     chg = data["charges"]
-    net_after_charges = perf['total_pnl'] - chg['total_charges']
+    mis = data.get("mis_leverage", {})
+    tax = data.get("tax", {})
+    years = data["period"]["years"] or 1
+
+    # Calculate FINAL NET P&L (the PRIMARY metric)
+    final_net = tax.get('net_after_tax', 0)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # FINAL NET P&L - THE BOTTOM LINE (shown FIRST)
+    # ═══════════════════════════════════════════════════════════════════════════
+    lines.append("═" * 80)
+    lines.append("FINAL NET P&L (after MIS leverage, all charges, and 31.2% tax)")
+    lines.append("═" * 80)
+    lines.append("")
+    lines.append(f"  ╔══════════════════════════════════════════════════════════════════╗")
+    lines.append(f"  ║  FINAL NET PROFIT (unlimited capital):  Rs {final_net:>12,.0f}        ║")
+    lines.append(f"  ║  Average per Trade:                     Rs {final_net/perf['total_trades']:>12,.0f}        ║")
+    lines.append(f"  ║  Annual Profit:                         Rs {final_net/years:>12,.0f}        ║")
+    lines.append(f"  ╚══════════════════════════════════════════════════════════════════╝")
+    lines.append("")
+
+    # ROI from capital scenarios (realistic - capital constrained)
+    cap_scenarios = data.get("capital_scenarios", {})
+    if cap_scenarios:
+        lines.append("  ROI by Capital (realistic - capital constrained):")
+        for label in ["5L", "10L"]:
+            if label in cap_scenarios:
+                sim = cap_scenarios[label]
+                cap_val = int(label.replace("L", "")) * 100000
+                annual_roi = (sim["net_pnl"] / cap_val / years) * 100
+                lines.append(f"    Rs {label} capital:  {annual_roi:>6.1f}% annual ROI (takes {sim['trades_taken']} of {perf['total_trades']} trades)")
+        lines.append("")
+    status = "PROFITABLE ✓" if final_net > 0 else "UNPROFITABLE ✗"
+    lines.append(f"  Status: {status}")
+    lines.append("")
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # CALCULATION BREAKDOWN
+    # ───────────────────────────────────────────────────────────────────────────
+    lines.append("-" * 80)
+    lines.append("CALCULATION BREAKDOWN")
+    lines.append("-" * 80)
+
+    gross_pnl = perf['total_pnl']
+    gross_mis = mis.get('gross_pnl_mis', gross_pnl)
+    total_charges = chg['total_charges']
+    net_before_tax = mis.get('net_after_fees_mis', gross_pnl - total_charges)
+    total_tax = tax.get('total_tax', 0)
+
+    lines.append(f"  Gross P&L (NRML 1x):         Rs {gross_pnl:>15,.0f}")
+    if mis.get('has_mis_data'):
+        lines.append(f"  × MIS Leverage ({mis.get('avg_multiplier', 1.0):.2f}x):      Rs {gross_mis:>15,.0f}")
+    lines.append(f"  − Trading Charges:           Rs {total_charges:>15,.0f}")
+    lines.append(f"  ────────────────────────────────────────────────────────")
+    lines.append(f"  Net P&L (before tax):        Rs {net_before_tax:>15,.0f}")
+    lines.append(f"  − Income Tax (31.2%):        Rs {total_tax:>15,.0f}")
+    lines.append(f"  ════════════════════════════════════════════════════════")
+    lines.append(f"  FINAL NET P&L:               Rs {final_net:>15,.0f}")
+    lines.append("")
 
     lines.append("-" * 80)
-    lines.append("KEY PERFORMANCE METRICS (GROSS - before charges)")
+    lines.append("TRADE STATISTICS")
     lines.append("-" * 80)
-    lines.append(f"  Gross P&L:               Rs {perf['total_pnl']:>15,.2f}")
     lines.append(f"  Total Trades:            {perf['total_trades']:>15,}")
     lines.append(f"  Win Rate:                {perf['win_rate']:>14.1f}%")
     lines.append(f"  Profit Factor:           {perf['profit_factor']:>15.2f}")
     lines.append(f"  Average Trade (Gross):   Rs {perf['avg_pnl_per_trade']:>15,.2f}")
+    lines.append(f"  Average Trade (Final):   Rs {final_net/perf['total_trades']:>15,.2f}")
     lines.append("")
 
     lines.append("-" * 80)
-    lines.append("ZERODHA CHARGES BREAKDOWN")
+    lines.append("CHARGES BREAKDOWN")
     lines.append("-" * 80)
     lines.append(f"  Brokerage ({chg['total_orders']:,} orders × Rs 20): Rs {chg['brokerage']:>12,.0f}")
     lines.append(f"  STT (0.025% on sell):          Rs {chg['stt']:>12,.0f}")
@@ -914,53 +1058,6 @@ def generate_executive_summary(data, output_path):
     lines.append(f"  SEBI charges:                  Rs {chg['sebi']:>12,.0f}")
     lines.append("  " + "-" * 50)
     lines.append(f"  TOTAL CHARGES:                 Rs {chg['total_charges']:>12,.0f}")
-    lines.append("")
-
-    # MIS Leverage section
-    mis = data.get("mis_leverage", {})
-    tax = data.get("tax", {})
-
-    lines.append("-" * 80)
-    lines.append("NET P&L CALCULATION")
-    lines.append("-" * 80)
-    lines.append(f"  Gross P&L (NRML):        Rs {perf['total_pnl']:>15,.2f}")
-
-    if mis.get('has_mis_data'):
-        lines.append(f"  MIS Leverage (avg):      {mis.get('avg_multiplier', 1.0):>14.2f}x")
-        lines.append(f"  Gross P&L (with MIS):    Rs {mis.get('gross_pnl_mis', perf['total_pnl']):>15,.2f}")
-        lines.append(f"  Less: Trading Charges:   Rs {chg['total_charges']:>15,.2f}")
-        lines.append(f"  ────────────────────────────────────────────────")
-        lines.append(f"  Net P&L (after fees):    Rs {mis.get('net_after_fees_mis', net_after_charges):>15,.2f}")
-    else:
-        lines.append(f"  (MIS data not available - showing NRML 1x)")
-        lines.append(f"  Less: Trading Charges:   Rs {chg['total_charges']:>15,.2f}")
-        lines.append(f"  ────────────────────────────────────────────────")
-        lines.append(f"  Net P&L (after fees):    Rs {net_after_charges:>15,.2f}")
-    lines.append("")
-
-    # Tax section
-    lines.append("-" * 80)
-    lines.append("INCOME TAX (Speculative Business Income)")
-    lines.append("-" * 80)
-    if tax.get('taxable_income', 0) > 0:
-        lines.append(f"  Taxable Income:          Rs {tax.get('taxable_income', 0):>15,.2f}")
-        lines.append(f"  Base Tax (30%):          Rs {tax.get('base_tax', 0):>15,.2f}")
-        lines.append(f"  Health & Ed Cess (4%):   Rs {tax.get('cess', 0):>15,.2f}")
-        lines.append(f"  ────────────────────────────────────────────────")
-        lines.append(f"  Total Tax:               Rs {tax.get('total_tax', 0):>15,.2f}")
-    else:
-        lines.append(f"  No tax applicable (no profit)")
-    lines.append("")
-
-    # Final net PnL
-    final_net = tax.get('net_after_tax', net_after_charges)
-    lines.append("-" * 80)
-    lines.append("═══════════════════════════════════════════════════════════════════════════════")
-    lines.append(f"  FINAL NET P&L (after fees + tax): Rs {final_net:>15,.2f}")
-    lines.append(f"  Avg Net per Trade:                Rs {final_net/perf['total_trades']:>15,.2f}")
-    status = "PROFITABLE ✓" if final_net > 0 else "UNPROFITABLE ✗"
-    lines.append(f"  Status: {status}")
-    lines.append("═══════════════════════════════════════════════════════════════════════════════")
     lines.append("")
 
     lines.append("-" * 80)
@@ -1025,15 +1122,19 @@ def generate_executive_summary(data, output_path):
     lines.append("")
 
     lines.append("-" * 80)
-    lines.append("STRATEGY PROFITABILITY (AFTER CHARGES)")
+    lines.append("STRATEGY PROFITABILITY (FINAL NET = MIS + Charges + Tax)")
     lines.append("-" * 80)
-    lines.append(f"  {'Setup':<32} {'Trades':>7} {'Gross':>12} {'Charges':>12} {'Net':>12} {'Status':<10}")
-    lines.append("  " + "-" * 85)
+    lines.append(f"  {'Setup':<28} {'Trades':>6} {'Gross×MIS':>11} {'Charges':>10} {'Tax':>10} {'FinalNet':>11} {'Avg':>8}")
+    lines.append("  " + "-" * 90)
     setup_chg = data["setup_charges"]
     profitable_count = sum(1 for s in setup_chg.values() if s['profitable'])
-    for setup, s in list(setup_chg.items())[:10]:
+    for setup, s in list(setup_chg.items())[:12]:
         status = "✓" if s['profitable'] else "✗"
-        lines.append(f"  {setup[:32]:<32} {s['trades']:>7} Rs {s['gross_pnl']:>9,.0f} Rs {s['charges']:>9,.0f} Rs {s['net_pnl']:>9,.0f} {status}")
+        final_net = s.get('final_net', s.get('net_pnl', 0))
+        gross_mis = s.get('gross_pnl_mis', s.get('gross_pnl', 0))
+        tax = s.get('tax', 0)
+        avg_final = s.get('avg_final_net', s.get('avg_net', 0))
+        lines.append(f"  {setup[:28]:<28} {s['trades']:>6} Rs {gross_mis:>8,.0f} Rs {s['charges']:>7,.0f} Rs {tax:>7,.0f} Rs {final_net:>8,.0f} Rs {avg_final:>5,.0f} {status}")
     lines.append("")
     lines.append(f"  Profitable setups: {profitable_count}/{len(setup_chg)}")
     lines.append("")
@@ -1136,19 +1237,23 @@ def generate_detailed_report(data, output_path):
         lines.append(f"  {setup[:40]:<40} {s['trades']:>8} {s['win_rate']:>7.1f}% Rs {s['pnl']:>12,.0f} Rs {s['avg_pnl']:>9,.0f}")
     lines.append("")
 
-    # SECTION 4B - SETUP PROFITABILITY AFTER CHARGES
+    # SECTION 4B - SETUP PROFITABILITY (FINAL NET = MIS + Charges + Tax)
     lines.append("=" * 100)
-    lines.append("SECTION 4B: STRATEGY PROFITABILITY (AFTER CHARGES)")
+    lines.append("SECTION 4B: STRATEGY PROFITABILITY (FINAL NET = Gross×MIS - Charges - Tax)")
     lines.append("=" * 100)
-    lines.append(f"  {'Setup':<35} {'Trades':>7} {'Gross PnL':>12} {'Charges':>12} {'Net PnL':>12} {'Avg Net':>10} {'Status':<6}")
-    lines.append("  " + "-" * 95)
+    lines.append(f"  {'Setup':<30} {'Trades':>6} {'Gross×MIS':>11} {'Charges':>10} {'Tax':>10} {'FinalNet':>11} {'Avg':>8} {'Status':<6}")
+    lines.append("  " + "-" * 100)
     setup_chg = data["setup_charges"]
     for setup, s in setup_chg.items():
         status = "OK" if s['profitable'] else "LOSS"
-        lines.append(f"  {setup[:35]:<35} {s['trades']:>7} Rs {s['gross_pnl']:>9,.0f} Rs {s['charges']:>9,.0f} Rs {s['net_pnl']:>9,.0f} Rs {s['avg_net']:>7,.0f} {status}")
+        final_net = s.get('final_net', s.get('net_pnl', 0))
+        gross_mis = s.get('gross_pnl_mis', s.get('gross_pnl', 0))
+        tax = s.get('tax', 0)
+        avg_final = s.get('avg_final_net', s.get('avg_net', 0))
+        lines.append(f"  {setup[:30]:<30} {s['trades']:>6} Rs {gross_mis:>8,.0f} Rs {s['charges']:>7,.0f} Rs {tax:>7,.0f} Rs {final_net:>8,.0f} Rs {avg_final:>5,.0f} {status}")
     lines.append("")
     profitable_count = sum(1 for s in setup_chg.values() if s['profitable'])
-    lines.append(f"  Summary: {profitable_count}/{len(setup_chg)} setups profitable after charges")
+    lines.append(f"  Summary: {profitable_count}/{len(setup_chg)} setups profitable (final net > 0)")
     lines.append("")
 
     # SECTION 5
@@ -1283,15 +1388,16 @@ def main():
     yearly = calculate_yearly_breakdown(trades, sessions)
     monthly = calculate_monthly_breakdown(trades, sessions)
 
-    print("[4/8] Calculating Zerodha charges...")
+    print("[4/8] Loading MIS margins...")
+    mis_margins = load_mis_margins()
+
+    print("[5/8] Calculating Zerodha charges and FINAL NET P&L...")
     charges = calculate_charges(orders)
-    setup_charges = calculate_setup_charges(orders)
+    # Pass mis_margins to calculate setup-level final net (with MIS + tax)
+    setup_charges = calculate_setup_charges(orders, mis_margins)
     net_after_fees = performance['total_pnl'] - charges['total_charges']
     print(f"      Total charges: Rs {charges['total_charges']:,.0f}")
-    print(f"      Net P&L after charges: Rs {net_after_fees:,.0f}")
-
-    print("[5/8] Loading MIS margins and calculating leverage...")
-    mis_margins = load_mis_margins()
+    print(f"      Net P&L after charges (NRML): Rs {net_after_fees:,.0f}")
     if mis_margins:
         # Calculate MIS-adjusted PnL per trade
         multipliers = []

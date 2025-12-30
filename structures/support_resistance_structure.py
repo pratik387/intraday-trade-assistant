@@ -463,6 +463,12 @@ class SupportResistanceStructure(BaseStructure):
             volume_ok = self._check_volume_confirmation(context)
             logger.debug(f"S/R: {context.symbol} - Volume confirmation: {volume_ok}")
 
+        # Check candlestick confirmation (close in top 30% of bar range)
+        candle_ok, candle_reason = self._check_support_bounce_candle_conviction(context.df_5m)
+        if not candle_ok:
+            logger.debug(f"SR_DETECT: {context.symbol} - Support bounce rejected: {candle_reason}")
+            return events, quality_score
+
         if volume_ok:
             confidence = self._calculate_institutional_strength(context, sr_info, "support_bounce", "long", volume_ok)
 
@@ -495,6 +501,7 @@ class SupportResistanceStructure(BaseStructure):
                     "support_strength": sr_info.support_strength,
                     "distance_pct": distance_pct,
                     "volume_confirmation": volume_ok,
+                    "candle_conviction": True,
                     "entry_mode": actual_entry_mode,
                     "retest_zone": retest_zone
                 },
@@ -1092,3 +1099,40 @@ class SupportResistanceStructure(BaseStructure):
         except Exception as e:
             logger.error(f"S/R: Error calculating institutional strength: {e}")
             return 1.8  # Safe fallback below regime threshold
+
+    def _check_support_bounce_candle_conviction(self, df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        Candle conviction for support bounce long.
+
+        Requirements for valid bounce:
+        - Close in TOP 30% of bar range (close_position > 0.7)
+        - Not a doji (bar_range > 0)
+        - Shows buyers taking control after testing support
+
+        Returns (is_valid, rejection_reason)
+        """
+        try:
+            if len(df) < 1:
+                return True, ""
+
+            current_bar = df.iloc[-1]
+            bar_high = float(current_bar['high'])
+            bar_low = float(current_bar['low'])
+            bar_close = float(current_bar['close'])
+
+            bar_range = bar_high - bar_low
+
+            if bar_range < 1e-9:  # Doji = no conviction
+                return False, "Doji candle at support (no conviction)"
+
+            close_position = (bar_close - bar_low) / bar_range
+
+            # Support bounce needs close in TOP 30% (position > 0.7)
+            if close_position < 0.7:
+                return False, f"Weak bounce (close at {close_position*100:.0f}% of range, need >70%)"
+
+            return True, ""
+
+        except Exception as e:
+            logger.warning(f"S/R: Error checking candle conviction: {e}")
+            return True, ""  # Be lenient on error
