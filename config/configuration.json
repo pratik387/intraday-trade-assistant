@@ -2342,8 +2342,8 @@
   "_comment_capital_management": "=== CAPITAL MANAGEMENT & MIS ===",
   "capital_management": {
     "enabled": false,
-    "initial_capital": 100000,
-    "max_concurrent_positions": 25,
+    "initial_capital": 500000,
+    "max_concurrent_positions": 50,
     "mis_leverage": {
       "enabled": false,
       "_comment": "MIS leverage data is read from nse_all.json (mis_leverage field). This just enables/disables the feature."
