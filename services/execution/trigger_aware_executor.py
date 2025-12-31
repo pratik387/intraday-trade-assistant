@@ -96,20 +96,55 @@ class TriggerAwareExecutor:
                     is_shadow = True
                     logger.info(f"SHADOW_TRADE | {trade.symbol} | At max capacity - continuing as shadow trade")
 
+                # SHADOW TRADE: Min notional check
+                # Trades below min notional (e.g., 4% of capital) become shadow trades
+                # This prevents tiny positions where transaction costs eat profits
+                if not is_shadow:
+                    notional = qty * price
+                    min_notional = self.capital_manager.get_min_notional()
+                    if min_notional > 0 and notional < min_notional:
+                        trade.plan["shadow"] = True
+                        trade.plan["shadow_reason"] = "notional_below_min"
+                        is_shadow = True
+                        logger.info(
+                            f"SHADOW_TRADE | {trade.symbol} | Notional {notional:.0f} < min {min_notional:.0f}"
+                        )
+
                 can_enter, adjusted_qty, reason = self.capital_manager.can_enter_position(
                     trade.symbol, qty, price, cap_segment, shadow=is_shadow
                 )
 
                 if not can_enter:
-                    # This should only happen for capital insufficiency (not max positions, since shadow handles that)
-                    logger.warning(f"Capital check failed: {trade.symbol} - {reason}")
-                    return False
+                    # SHADOW TRADE: Convert capital rejection to shadow trade
+                    # This allows tracking theoretical performance even when out of capital
+                    if not is_shadow:
+                        trade.plan["shadow"] = True
+                        trade.plan["shadow_reason"] = f"capital_rejected:{reason}"
+                        is_shadow = True
+                        logger.info(
+                            f"SHADOW_TRADE | {trade.symbol} | Capital rejected: {reason}"
+                        )
+                    # Re-check with shadow=True to proceed (shadow trades don't need capital)
+                    can_enter, adjusted_qty, _ = self.capital_manager.can_enter_position(
+                        trade.symbol, qty, price, cap_segment, shadow=True
+                    )
 
                 # Update plan with adjusted quantity if scaled down (not applicable for shadow trades)
                 if adjusted_qty != qty and not is_shadow:
                     logger.info(f"Capital scaling: {trade.symbol} qty {qty} -> {adjusted_qty}")
                     trade.plan["qty"] = adjusted_qty
                     trade.plan["_original_qty"] = qty  # Keep original for reference
+
+                    # SHADOW TRADE: Check if SCALED notional is below min
+                    # This catches cases where original was above min but scaled is below
+                    scaled_notional = adjusted_qty * price
+                    if min_notional > 0 and scaled_notional < min_notional:
+                        trade.plan["shadow"] = True
+                        trade.plan["shadow_reason"] = "scaled_notional_below_min"
+                        is_shadow = True
+                        logger.info(
+                            f"SHADOW_TRADE | {trade.symbol} | Scaled notional {scaled_notional:.0f} < min {min_notional:.0f}"
+                        )
 
             return True
 

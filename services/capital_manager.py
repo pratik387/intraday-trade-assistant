@@ -50,14 +50,15 @@ class CapitalManager:
 
     def __init__(
         self,
-        enabled: bool = False,
-        initial_capital: float = 500000.0,
+        enabled: bool,
+        initial_capital: float,
+        max_positions: int,
+        risk_pct_per_trade: float,
+        min_notional_pct: float,
+        capital_utilization: float,
+        max_allocation_per_trade: float,
         mis_enabled: bool = False,
-        mis_config_path: Optional[str] = None,
-        max_positions: int = 50,
-        capital_utilization: float = 0.85,
-        max_allocation_per_trade: float = 0.20,
-        risk_pct_per_trade: float = 0.01
+        mis_config_path: Optional[str] = None
     ):
         """
         Initialize CapitalManager.
@@ -73,6 +74,8 @@ class CapitalManager:
                                       Set to 0.20 for 5 concurrent trades, 0.25 for 4, etc.
             risk_pct_per_trade: Risk per trade as % of total capital (0.01 = 1%)
                                Used for dynamic position sizing based on capital
+            min_notional_pct: Minimum position size as % of capital (0.04 = 4%)
+                             Trades below this become shadow trades (tracked but not executed)
         """
         self.enabled = enabled
         self.total_capital = initial_capital
@@ -82,6 +85,7 @@ class CapitalManager:
         self.capital_utilization = max(0.5, min(1.0, capital_utilization))  # Clamp to [0.5, 1.0]
         self.max_allocation_per_trade = max(0.05, min(1.0, max_allocation_per_trade))  # Clamp to [5%, 100%]
         self.risk_pct_per_trade = max(0.001, min(0.05, risk_pct_per_trade))  # Clamp to [0.1%, 5%]
+        self.min_notional_pct = max(0.0, min(0.20, min_notional_pct))  # Clamp to [0%, 20%]
 
         # Position tracking
         self.positions: Dict[str, Dict] = {}  # symbol -> position info
@@ -132,6 +136,22 @@ class CapitalManager:
         if not self.enabled:
             return fallback
         return self.total_capital * self.risk_pct_per_trade
+
+    def get_min_notional(self) -> float:
+        """
+        Get minimum notional (position size) in Rupees.
+
+        Returns 0 when capital manager is disabled (backtest mode).
+        When enabled, returns min_notional_pct * total_capital.
+
+        Trades below this threshold become shadow trades.
+
+        Returns:
+            Minimum notional in Rupees (e.g., 20000 for 4% of 5L capital)
+        """
+        if not self.enabled:
+            return 0.0  # No min notional filter when disabled
+        return self.total_capital * self.min_notional_pct
 
     def _load_mis_config(self, config_path: Optional[str] = None) -> Dict:
         """Load MIS margin configuration."""

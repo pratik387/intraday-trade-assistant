@@ -2344,6 +2344,11 @@
     "enabled": false,
     "initial_capital": 500000,
     "max_concurrent_positions": 50,
+    "risk_pct_per_trade": 0.01,
+    "min_notional_pct": 0.04,
+    "capital_utilization": 0.85,
+    "max_allocation_per_trade": 0.20,
+    "_comment_sizing": "risk_pct=1% for sizing, min_notional=4% min position, capital_util=85% safety buffer, max_alloc=20% max per trade",
     "mis_leverage": {
       "enabled": false,
       "_comment": "MIS leverage data is read from nse_all.json (mis_leverage field). This just enables/disables the feature."

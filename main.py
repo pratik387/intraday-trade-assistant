@@ -423,11 +423,14 @@ def main() -> int:
 
     capital_manager = CapitalManager(
         enabled=capital_enabled,
-        initial_capital=cap_mgmt_cfg.get('initial_capital', 100000),
+        initial_capital=cap_mgmt_cfg['initial_capital'],
+        max_positions=cap_mgmt_cfg['max_concurrent_positions'],
+        risk_pct_per_trade=cap_mgmt_cfg['risk_pct_per_trade'],
+        min_notional_pct=cap_mgmt_cfg['min_notional_pct'],
+        capital_utilization=cap_mgmt_cfg['capital_utilization'],
+        max_allocation_per_trade=cap_mgmt_cfg['max_allocation_per_trade'],
         mis_enabled=mis_enabled,
-        mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file'),
-        max_positions=cap_mgmt_cfg.get('max_concurrent_positions', 25),
-        risk_pct_per_trade=cap_mgmt_cfg.get('risk_pct_per_trade', 0.01)  # 1% of capital
+        mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file')
     )
 
     # Set dynamic risk per trade in config (live/paper uses capital %, backtest uses fallback)
