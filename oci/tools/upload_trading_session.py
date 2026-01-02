@@ -8,6 +8,7 @@ Can be run standalone or called from main.py on shutdown.
 Usage:
     python oci/tools/upload_trading_session.py paper_20251229_073712
     python oci/tools/upload_trading_session.py logs/paper_20251229_073712
+    python oci/tools/upload_trading_session.py --prefix fixed paper_20251229_073712
     python oci/tools/upload_trading_session.py  # Auto-discovers latest session
 """
 from __future__ import annotations
@@ -231,25 +232,27 @@ class SessionUploader:
             logger.warning(f"Failed to upload {local_path}: {e}")
             return False
 
-    def upload_session(self, session_dir: Path, parallel: int = 5) -> Tuple[int, int]:
+    def upload_session(self, session_dir: Path, object_prefix: str = '', parallel: int = 5) -> Tuple[int, int]:
         """
         Upload all files in session directory.
 
         Args:
             session_dir: Path to session directory
+            object_prefix: Prefix for object names in bucket (e.g., "fixed/session_id")
             parallel: Number of parallel uploads
 
         Returns:
             Tuple of (uploaded_count, failed_count)
         """
-        session_id = session_dir.name
+        # Use provided prefix or fall back to session directory name
+        prefix = object_prefix if object_prefix else session_dir.name
 
         # Collect all files
         files_to_upload = []
         for file_path in session_dir.rglob('*'):
             if file_path.is_file():
                 relative_path = file_path.relative_to(session_dir)
-                object_name = f"{session_id}/{relative_path}"
+                object_name = f"{prefix}/{relative_path}"
                 files_to_upload.append((file_path, object_name))
 
         if not files_to_upload:
@@ -282,7 +285,7 @@ class SessionUploader:
         return uploaded, failed
 
 
-def upload_session(session_dir: Path, mode: str) -> bool:
+def upload_session(session_dir: Path, mode: str, prefix: str = '') -> bool:
     """
     Upload a trading session to OCI.
 
@@ -293,12 +296,16 @@ def upload_session(session_dir: Path, mode: str) -> bool:
     Args:
         session_dir: Path to session directory
         mode: "paper" or "live"
+        prefix: Optional prefix for bucket path (e.g., "fixed" -> fixed/session_id/)
 
     Returns:
         True if upload successful
     """
     session_id = session_dir.name
     logs_bucket = BUCKETS.get(mode, BUCKETS["paper"])
+
+    # Build object path with optional prefix
+    object_prefix = f"{prefix}/{session_id}" if prefix else session_id
 
     # Extract date for sidecar files
     date_str = get_date_from_session(session_id)
@@ -310,6 +317,7 @@ def upload_session(session_dir: Path, mode: str) -> bool:
     print(f"Session: {session_id}")
     print(f"Mode: {mode}")
     print(f"Logs bucket: {logs_bucket}")
+    print(f"Object path: {object_prefix}/")
     if sidecar_files:
         print(f"Tick data bucket: {TICK_DATA_BUCKET}")
         print(f"Sidecar files: {len(sidecar_files)} (ticks, bars, ORB, levels)")
@@ -323,7 +331,7 @@ def upload_session(session_dir: Path, mode: str) -> bool:
 
     try:
         logs_uploader = SessionUploader(logs_bucket)
-        uploaded, failed = logs_uploader.upload_session(session_dir)
+        uploaded, failed = logs_uploader.upload_session(session_dir, object_prefix=object_prefix)
 
         # Step 3: Upload sidecar data to separate bucket
         sidecar_uploaded = 0
@@ -351,7 +359,7 @@ def upload_session(session_dir: Path, mode: str) -> bool:
 
         if total_uploaded > 0:
             print(f"\n[OK] Upload complete:")
-            print(f"  - Logs: {uploaded} files → oci://{logs_bucket}/{session_id}/")
+            print(f"  - Logs: {uploaded} files → oci://{logs_bucket}/{object_prefix}/")
             if sidecar_uploaded > 0:
                 print(f"  - Tick data: {sidecar_uploaded} files → oci://{TICK_DATA_BUCKET}/{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}/")
             if total_failed > 0:
@@ -428,7 +436,8 @@ def main():
         epilog="""
 Examples:
   python oci/tools/upload_trading_session.py paper_20251229_073712
-  python oci/tools/upload_trading_session.py logs/paper_20251229_073712
+  python oci/tools/upload_trading_session.py --prefix fixed paper_20251229_073712
+  python oci/tools/upload_trading_session.py --prefix relative paper_20251229_073712
   python oci/tools/upload_trading_session.py  # Auto-discover latest
         """
     )
@@ -436,6 +445,8 @@ Examples:
     parser.add_argument('session', nargs='?', help='Session folder name or path')
     parser.add_argument('--mode', choices=['paper', 'live'],
                         help='Override mode detection (default: auto-detect from session name)')
+    parser.add_argument('--prefix', type=str, default='',
+                        help='Prefix for bucket path (e.g., "fixed" -> fixed/session_id/)')
     parser.add_argument('--skip-analysis', action='store_true',
                         help='Skip running the analyzer')
 
@@ -452,8 +463,8 @@ Examples:
     # Determine mode
     mode = args.mode or get_mode_from_session(session_dir.name)
 
-    # Upload
-    success = upload_session(session_dir, mode)
+    # Upload with optional prefix
+    success = upload_session(session_dir, mode, prefix=args.prefix)
 
     return 0 if success else 1
 
