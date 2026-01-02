@@ -468,3 +468,23 @@ class CapitalManager:
                 'max_positions_limit': self.max_positions
             }
         }
+
+    def save_final_report(self, log_dir: Path) -> Optional[Path]:
+        """Save final report to JSON file in log directory.
+
+        Args:
+            log_dir: Directory to save the report
+
+        Returns:
+            Path to saved file, or None if save failed
+        """
+        try:
+            report = self.get_final_report()
+            file_path = log_dir / "capital_report.json"
+            with open(file_path, 'w') as f:
+                json.dump(report, f, indent=2)
+            logger.info(f"CAPITAL | Saved final report to {file_path}")
+            return file_path
+        except Exception as e:
+            logger.warning(f"CAPITAL | Failed to save final report: {e}")
+            return None
