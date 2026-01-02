@@ -691,6 +691,15 @@ def _run_until_eod(
         except Exception as e:
             logger.warning("trader.stop failed: %s", e)
 
+        # Save capital report for analytics
+        try:
+            from config.logging_config import get_log_directory
+            log_dir = get_log_directory()
+            if log_dir and log_dir.exists():
+                capital_manager.save_final_report(log_dir)
+        except Exception as e:
+            logger.warning("Failed to save capital report: %s", e)
+
         # Stop health server
         if health:
             health.set_state(SessionState.STOPPED)
