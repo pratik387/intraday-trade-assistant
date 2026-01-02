@@ -114,9 +114,7 @@ class TradingLogger:
             'total_pnl': 0.0,
             'wins': 0,
             'losses': 0,
-            'breakevens': 0,
-            'rank_scores_triggered': [],
-            'rank_scores_skipped': []
+            'breakevens': 0
         }
 
         # Initialize loggers
@@ -439,14 +437,10 @@ class TradingLogger:
             if self.session_stats['completed_trades'] > 0 else 0
         )
 
-        avg_rank_triggered = (
-            sum(self.session_stats['rank_scores_triggered']) / len(self.session_stats['rank_scores_triggered'])
-            if self.session_stats['rank_scores_triggered'] else 0
-        )
-
-        avg_rank_skipped = (
-            sum(self.session_stats['rank_scores_skipped']) / len(self.session_stats['rank_scores_skipped'])
-            if self.session_stats['rank_scores_skipped'] else 0
+        # Execution quality stats
+        avg_slippage = (
+            sum(self.slippage_list) / len(self.slippage_list)
+            if hasattr(self, 'slippage_list') and self.slippage_list else 0
         )
 
         summary = {
@@ -456,11 +450,25 @@ class TradingLogger:
             'summary': {
                 **self.session_stats,
                 'execution_rate': round(execution_rate, 3),
-                'win_rate': round(win_rate, 3),
-                'avg_rank_triggered': round(avg_rank_triggered, 2),
-                'avg_rank_skipped': round(avg_rank_skipped, 2)
+                'win_rate': round(win_rate, 3)
+            },
+            'trades': getattr(self, 'trades_list', []),
+            'execution': {
+                'avg_slippage_bps': round(avg_slippage, 1),
+                'total_fees': round(getattr(self, 'total_fees', 0), 2)
             }
         }
+
+        # Add capital stats if available
+        capital_report = getattr(self, 'capital_report', None)
+        if capital_report and capital_report.get('mode') != 'unlimited':
+            cap_stats = capital_report.get('capital_stats', {})
+            summary['capital'] = {
+                'mode': capital_report.get('mode', 'unknown'),
+                'initial': cap_stats.get('initial_capital', 0),
+                'max_used': round(cap_stats.get('max_capital_used', 0), 0),
+                'max_utilization_pct': round(cap_stats.get('max_utilization_pct', 0), 1)
+            }
 
         # Write to performance file with explicit flush and error handling
         performance_file = self.log_dir / 'performance.json'
@@ -498,8 +506,13 @@ class TradingLogger:
             print(f"[analytics] ERROR: Could not generate CSV report: {e}")
             return None
     
-    def populate_analytics_from_events(self):
-        """Populate analytics.jsonl and calculate comprehensive performance metrics from events.jsonl"""
+    def populate_analytics_from_events(self, capital_report: Optional[Dict[str, Any]] = None):
+        """Populate analytics.jsonl and calculate comprehensive performance metrics from events.jsonl
+
+        Args:
+            capital_report: Optional capital manager final report (from capital_manager.get_final_report())
+        """
+        self.capital_report = capital_report  # Store for _update_performance_summary
         try:
             events_file = self.log_dir / 'events.jsonl'
             if not events_file.exists():
@@ -533,10 +546,13 @@ class TradingLogger:
                 'total_pnl': 0.0,
                 'wins': 0,
                 'losses': 0,
-                'breakevens': 0,
-                'rank_scores_triggered': [],
-                'rank_scores_skipped': []
+                'breakevens': 0
             }
+
+            # Trade-by-trade list for performance.json
+            self.trades_list = []
+            self.total_fees = 0.0
+            self.slippage_list = []  # For avg calculation
 
             # Parse all events and organize by type
             decisions = {}  # trade_id -> decision_event
@@ -556,12 +572,6 @@ class TradingLogger:
                         if event_type == 'DECISION':
                             decisions[trade_id] = event
                             self.session_stats['total_decisions'] += 1
-
-                            # Track rank scores
-                            if 'features' in event and 'rank_score' in event['features']:
-                                rank_score = event['features']['rank_score']
-                                # For now, add to skipped - will move to triggered if we find TRIGGER event
-                                self.session_stats['rank_scores_skipped'].append(rank_score)
 
                         elif event_type == 'TRIGGER':
                             triggers[trade_id] = event
@@ -595,12 +605,40 @@ class TradingLogger:
                     else:
                         self.session_stats['breakevens'] += 1
 
-                    # Move rank score from skipped to triggered if we have trigger
-                    if trigger_event and 'features' in decision_event and 'rank_score' in decision_event['features']:
-                        rank_score = decision_event['features']['rank_score']
-                        if rank_score in self.session_stats['rank_scores_skipped']:
-                            self.session_stats['rank_scores_skipped'].remove(rank_score)
-                            self.session_stats['rank_scores_triggered'].append(rank_score)
+                    # Build trade summary for performance.json
+                    symbol = decision_event.get('symbol', '').replace('NSE:', '')
+                    setup_type = decision_event.get('decision', {}).get('setup_type', '')
+
+                    # Entry price from trigger or decision
+                    if trigger_event and 'trigger' in trigger_event:
+                        entry_price = trigger_event['trigger'].get('actual_price', 0)
+                        ref_price = decision_event['plan']['entry'].get('reference', entry_price)
+                        if ref_price > 0:
+                            slippage_bps = abs(entry_price - ref_price) / ref_price * 10000
+                            self.slippage_list.append(slippage_bps)
+                    else:
+                        entry_price = decision_event['plan']['entry'].get('reference', 0)
+
+                    # Final exit price (last exit)
+                    final_exit = exit_events[-1]
+                    exit_price = final_exit['exit'].get('price', 0)
+                    exit_reason = final_exit['exit'].get('reason', '')
+
+                    # Calculate fees for this trade
+                    total_qty = sum(e['exit'].get('qty', 0) for e in exit_events)
+                    if entry_price > 0 and exit_price > 0 and total_qty > 0:
+                        fees = self.calculate_trade_fees(entry_price, exit_price, total_qty)
+                        self.total_fees += fees['total_fees']
+
+                    # Add to trades list
+                    self.trades_list.append({
+                        'symbol': symbol,
+                        'setup': setup_type,
+                        'entry': round(entry_price, 2),
+                        'exit': round(exit_price, 2),
+                        'pnl': round(pnl, 2),
+                        'exit_reason': exit_reason
+                    })
 
                     # FIX: Log analytics for EACH exit event (captures partial exits)
                     # Each exit gets its own analytics record with its specific qty/price/pnl
