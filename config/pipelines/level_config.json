@@ -17,6 +17,8 @@
     ],
 
     "screening": {
+        "_comment": "Category-specific screening filters - DISABLED for A/B baseline",
+        "enabled": false,
         "time_windows": {
             "_comment": "From configuration.json time_policy - NSE trading hours with opening bell for ICT setups",
             "morning_start": "09:15",
@@ -70,7 +72,9 @@
 
     "gates": {
         "_comment": "From configuration.json - min_volume_mult: 1.5 for support_bounce, order_block",
+        "_ab_baseline_comment": "DISABLED regime gates for A/B baseline",
         "regime_rules": {
+            "enabled": false,
             "chop": {
                 "allowed": true,
                 "size_mult": 1.2
@@ -112,85 +116,135 @@
             "level_merge_tolerance_pct": 0.3
         },
         "setup_filters": {
-            "_comment": "3-YEAR OPTIMIZED FILTERS (Dec 2024): Analyzed 4,604 triggered trades, 732 trading days",
-            "_active_profile": "3YEAR_OPTIMIZED",
-            "_analysis_date": "2024-12-27",
-            "orb_pullback_long": {
+            "_comment": "DEEP DIVE FILTERS - 1-Year Backtest Analysis (72,042 trades, 231 sessions)",
+            "_active_profile": "HOUR_OPTIMIZED_FILTERS",
+            "_analysis_date": "2026-01-02",
+            "_analysis_source": "Deep dive analysis with ALL parameters: cap, regime, hour, 2D/3D combinations",
+            "range_bounce_short": {
                 "enabled": true,
-                "allowed_regimes": ["chop"],
-                "allowed_caps": ["mid_cap"],
-                "max_adx": 25,
-                "_filter": "chop regime only, mid_cap only, ADX < 25",
-                "_evidence": "3YR: 98 triggered trades. Filter: chop+mid_cap+ADX<25. Target: SL 1.0x, T1 2.0R -> NET Rs 29,929 (56.1% WR)."
+                "allowed_caps": ["micro_cap", "small_cap", "mid_cap"],
+                "allowed_regimes": ["chop", "squeeze", "trend_down", "trend_up"],
+                "allowed_hours": [12, 13, 14, 15],
+                "blocked_hours": [10, 11],
+                "rsi_filter": {
+                    "enabled": true,
+                    "max_rsi": 60,
+                    "_comment": "PARAM ANALYSIS: Block RSI 60-70 and >=70 | NET save Rs 89,150"
+                },
+                "min_adx": 20,
+                "max_adx": 40,
+                "_evidence": "DEEP DIVE: mid_cap+15: Rs 495, 70.9% WR | 10/11 LOSE Rs 700k | PARAM: block RSI>=60, ADX<20, ADX>=40 (NEW: ADX 15-20 saves Rs 10,010)"
             },
-            "orb_pullback_short": {
+            "resistance_bounce_short": {
                 "enabled": true,
-                "blocked_regimes": ["trend_up"],
-                "allowed_caps": ["small_cap", "micro_cap"],
+                "allowed_caps": ["micro_cap", "small_cap", "mid_cap", "large_cap"],
+                "allowed_regimes": ["chop", "squeeze"],
+                "blocked_regimes": ["trend_down", "trend_up"],
+                "allowed_hours": [15],
+                "blocked_hours": [11, 12, 13, 14],
                 "min_rank_score": 0,
-                "_filter": "Block trend_up, small/micro cap only, rank >= 0",
-                "_evidence": "3YR: 694 triggered trades. Filter: !trend_up+small/micro+rank>=0. Target: SL 1.5x, T1 1.75R -> NET Rs 281,102 (65.3% WR)."
+                "_evidence": "DEEP DIVE: small_cap+15: Rs 364, 64.8% WR | chop+15: Rs 362, 66.3% WR | 11-14 LOSE Rs 1.46 MILLION!"
             },
-            "support_bounce_long": {
+            "vwap_lose_short": {
                 "enabled": true,
-                "max_adx": 15,
-                "allowed_caps": ["large_cap"],
-                "allowed_regimes": ["trend_up", "squeeze"],
-                "max_rank_score": 1.5,
-                "_filter": "ADX <= 15, large_cap, trend_up/squeeze, rank < 1.5 + candlestick confirmation",
-                "_evidence": "3YR: 185 trades, Net Rs 40,274 (Avg Rs 218). Blocked chop/trend_down, small_cap, high rank scores."
+                "allowed_caps": ["large_cap", "mid_cap", "small_cap"],
+                "allowed_regimes": ["trend_down", "chop", "squeeze"],
+                "blocked_regimes": ["trend_up"],
+                "allowed_hours": [12, 13, 14, 15],
+                "blocked_hours": [10, 11],
+                "rsi_filter": {
+                    "enabled": true,
+                    "min_rsi": 40,
+                    "_comment": "PARAM ANALYSIS: Block RSI 30-40 | NET save Rs 4,983"
+                },
+                "_evidence": "DEEP DIVE: large_cap+13: Rs 751, 95.2% WR | mid_cap+14: Rs 409, 78.6% WR | 10 LOSES Rs 41k | PARAM: block RSI 30-40"
             },
             "range_bounce_long": {
                 "enabled": true,
                 "blocked_entirely": true,
-                "_filter": "DISABLED - not salvageable",
-                "_evidence": "3YR: 118 trades, Rs -32,291 net (-274 avg). ALL regimes negative. Only micro_cap (10 trades) profitable. Not enough volume to salvage."
+                "_evidence": "DEEP DIVE: -Rs 754,000 total PnL | WORST SETUP | NO winning hour combinations"
+            },
+            "support_bounce_long": {
+                "enabled": true,
+                "blocked_entirely": false,
+                "allowed_caps": ["micro_cap"],
+                "allowed_regimes": ["chop", "trend_down", "squeeze"],
+                "blocked_regimes": ["trend_up"],
+                "allowed_hours": [11, 14, 15],
+                "blocked_hours": [12, 13],
+                "rsi_filter": {
+                    "enabled": true,
+                    "min_rsi": 50,
+                    "max_rsi": 60,
+                    "_comment": "PARAM ANALYSIS: Block RSI 40-50 and RSI 60-70 | NET save Rs 21,211"
+                },
+                "max_adx": 30,
+                "_evidence": "DEEP DIVE: micro_cap+11: Rs 561, 76.8% WR | 12/13 LOSE Rs 162k | PARAM: block RSI 40-50, 60-70, ADX>=30 (NEW: saves Rs 6,253)"
             },
             "discount_zone_long": {
                 "enabled": true,
-                "min_rank_score": 1.5,
+                "blocked_entirely": false,
+                "allowed_caps": ["large_cap", "mid_cap"],
                 "allowed_regimes": ["trend_up"],
-                "_evidence": "Keep existing - not enough trades for reanalysis"
+                "allowed_hours": [12, 15],
+                "blocked_hours": [11, 13, 14],
+                "_evidence": "DEEP DIVE: trend_up+12: Rs 210, 79.1% WR | large_cap+trend_up+12: Rs 402, 92.3% WR | 13 LOSES Rs 64k"
             },
-            "vwap_lose_short": {
+            "vwap_reclaim_long": {
                 "enabled": true,
                 "blocked_entirely": true,
-                "_evidence": "Keep existing - negative expectancy"
+                "_evidence": "DEEP DIVE: -Rs 60k total | Only large_cap+12 wins (Rs 216 avg) - not enough volume"
             },
-            "resistance_bounce_short": {
+            "orb_pullback_long": {
                 "enabled": true,
-                "allowed_caps": ["micro_cap", "small_cap"],
-                "min_rank_score": 1.4,
+                "blocked_entirely": false,
+                "allowed_caps": ["mid_cap", "large_cap"],
+                "blocked_caps": ["small_cap"],
+                "allowed_regimes": ["chop", "squeeze"],
+                "allowed_hours": [9, 10, 11],
+                "blocked_hours": [12, 13, 14, 15],
                 "min_adx": 20,
-                "max_rsi": 70,
-                "allowed_hours": [11, 12, 13, 14, 15],
-                "blocked_regimes": ["trend_up"],
-                "_filter": "micro/small_cap + rank>=1.4 + ADX>=20 + RSI<=70 + Hour>=11 + block trend_up",
-                "_evidence": "3YR VERIFIED + OLD FILTERS. Hour>=11 + block trend_up adds +Rs 20,950 on top of existing filters."
+                "max_adx": 25,
+                "rsi_filter": {
+                    "enabled": true,
+                    "max_rsi": 50,
+                    "_comment": "PARAM ANALYSIS: Block RSI 50-60 | NET save Rs 2,232"
+                },
+                "_evidence": "DEEP DIVE: mid_cap+10: Rs 534, 96.9% WR | 15 LOSES Rs 73k | PARAM: block small_cap, ADX 15-20, RSI 50-60 (NET save Rs 19,277)"
             },
-            "range_bounce_short": {
+            "orb_pullback_short": {
                 "enabled": true,
-                "allowed_caps": ["micro_cap", "small_cap"],
-                "min_rank_score": 1.5,
-                "min_rsi": 40,
-                "max_rsi": 70,
-                "_filter": "micro_cap + small_cap + rank >= 1.5 + RSI 40-70",
-                "_evidence": "3YR: 1,113 trades Rs 285,838 (Rs 257 avg). Keep existing filters."
+                "blocked_entirely": false,
+                "allowed_caps": ["micro_cap", "large_cap"],
+                "allowed_regimes": ["chop", "squeeze"],
+                "blocked_regimes": ["trend_up"],
+                "allowed_hours": [11, 12, 13],
+                "blocked_hours": [10, 14, 15],
+                "min_rank_score": 0,
+                "_evidence": "DEEP DIVE: 11: Rs 291, 83.3% WR | chop+11: Rs 476, 86.7% WR | 10/15 LOSE"
             },
             "premium_zone_short": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_filter": "DISABLED - not salvageable",
-                "_evidence": "3YR: 183 trades, Rs -31,436 net (-172 avg). Only Hour 10 (4 trades) and Hour 13 (35 trades) marginally positive. Not enough to justify."
+                "blocked_entirely": false,
+                "allowed_caps": ["micro_cap"],
+                "allowed_regimes": ["trend_up", "trend_down"],
+                "allowed_hours": [14],
+                "blocked_hours": [15],
+                "rsi_filter": {
+                    "enabled": true,
+                    "max_rsi": 50,
+                    "_comment": "PARAM ANALYSIS: Block RSI 50-60 | NET save Rs 3,928"
+                },
+                "_evidence": "DEEP DIVE: micro_cap+14: Rs 424, 71.8% WR | Overall -Rs 26k but micro_cap+14 profitable | PARAM: block RSI 50-60"
             },
             "order_block_short": {
-                "enabled": true,
-                "_evidence": "Keep existing - profitable (Rs 425 avg on 13 trades)"
+                "enabled": false,
+                "_evidence": "Needs further analysis - keep disabled"
             },
             "order_block_long": {
                 "enabled": true,
                 "blocked_entirely": true,
-                "_evidence": "Keep existing - negative expectancy"
+                "_evidence": "BLOCKED: Long setups consistently losing"
             }
         },
         "global_filters": {
@@ -221,15 +275,16 @@
         },
         "vwap_volume": {
             "_comment": "DATA-DRIVEN (Dec 2024): VWAP vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs improvement",
+            "enabled": false,
             "min_volume": 50000,
-            "_evidence": "Low volume VWAP trades have poor execution and high slippage. Blocking vol<50k improves P&L by +2,675 Rs"
+            "_evidence": "DISABLED for A/B baseline"
         },
         "specialized_filters": {
-            "_comment": "Specialized filters that require complex logic (BB width). These are handled separately in pipeline code.",
+            "_comment": "DISABLED - 1-Year A/B Testing Baseline",
             "resistance_bounce_short_bb_width": {
-                "enabled": true,
+                "enabled": false,
                 "max_bb_width": 0.10,
-                "_evidence": "Dec 2024 analysis: bb_width<=0.10 reduces hard_sl from 35%→28%"
+                "_evidence": "DISABLED for A/B baseline"
             }
         },
         "long_specific_filters": {

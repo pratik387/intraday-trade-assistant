@@ -298,7 +298,7 @@ class ReversionPipeline(BasePipeline):
         setup_filter_cfg = setup_filters.get(setup_type, {})
 
         # 3a. Min volume ratio filter (for volume_spike_reversal_short - needs vol spike)
-        if setup_filter_cfg.get("enabled", True):
+        if setup_filter_cfg.get("enabled", False):
             min_vol_ratio = setup_filter_cfg.get("min_volume_ratio")
             if min_vol_ratio:
                 if vol_mult < min_vol_ratio:
@@ -325,24 +325,27 @@ class ReversionPipeline(BasePipeline):
         # From spike test: VWAP_RECLAIM vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs
         # Low volume VWAP reclaim trades have poor execution and high slippage
         if "vwap" in setup_lower or "mean_reversion" in setup_lower:
-            # Get threshold from config (with default from spike test)
+            # Get threshold from config
             # bar5_volume already calculated above for long trade filter
             vwap_reclaim_cfg = self._get("gates", "vwap_reclaim_volume")
-            min_volume = vwap_reclaim_cfg.get("min_volume")
 
-            if bar5_volume < min_volume:
-                reasons.append(f"vwap_reclaim_blocked:vol{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
-                passed = False
-            else:
-                reasons.append(f"vwap_reclaim_vol_ok:{bar5_volume/1000:.0f}k")
+            if vwap_reclaim_cfg["enabled"]:
+                min_volume = vwap_reclaim_cfg["min_volume"]
+
+                if bar5_volume < min_volume:
+                    reasons.append(f"vwap_reclaim_blocked:vol{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
+                    passed = False
+                else:
+                    reasons.append(f"vwap_reclaim_vol_ok:{bar5_volume/1000:.0f}k")
 
         # Min hold bars from config - reversion plays need patience
         min_hold = self._get("gates", "min_hold_bars")
 
-        # Regime rules from config - HARD GATES only
+        # Regime rules from config - HARD GATES only (can be disabled for A/B baseline)
         regime_cfg = self._get("gates", "regime_rules")
+        regime_gates_enabled = regime_cfg["enabled"]
 
-        if regime in regime_cfg:
+        if regime_gates_enabled and regime in regime_cfg:
             rule = regime_cfg[regime]
             if not rule["allowed"]:
                 reasons.append(f"regime_blocked:{regime}")
@@ -363,6 +366,8 @@ class ReversionPipeline(BasePipeline):
                         reasons.append(f"counter_trend_ok:strength={strength:.2f}")
                     else:
                         reasons.append("trend_aligned")
+        else:
+            reasons.append(f"regime_gates_bypassed:{regime}")
 
         # Failure fade specific check - info only, no penalty
         if "failure_fade" in setup_type:

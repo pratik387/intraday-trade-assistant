@@ -28,42 +28,38 @@ logger = get_agent_logger()
 
 
 # ================================================================================
-# CENTRALIZED HARD BLOCKS - Single source of truth for regime-based blocking
+# HARD BLOCKS - Loaded from config/pipelines/base_config.json
 # ================================================================================
-# These blocks CANNOT be bypassed by config or any mechanism.
-# Based on backtest analysis showing these setups underperform in specific regimes.
-#
-# SQUEEZE REGIME ANALYSIS (backtest_20251211):
-#   - first_hour_momentum_long: 40 trades, Rs 119 total = Rs 3/trade avg (worthless)
-#   - volume_spike_reversal_short: 7 trades, Rs -632 total (negative)
-#   - premium_zone_short: Not in allowed list but was trading via HCET bypass
-#
-# Pro trader approach: AVOID trading during squeeze/consolidation. Wait for breakout.
+# Regime-based blocking configured via hard_blocks section in base_config.json.
+# Set hard_blocks.enabled = false to disable all hard blocks for A/B testing.
 # ================================================================================
-HARD_BLOCKS = {
-    "squeeze": [
-        "first_hour_momentum_long",      # Rs 119 in 40 trades = Rs 3/trade avg
-        "volume_spike_reversal_short",   # Rs -632 in 7 trades = negative
-        "premium_zone_short",            # Not designed for squeeze regime
-    ],
-    # Add other regime hard blocks here as analysis reveals them
-    # "chop": [...],
-    # "trend_up": [...],
-    # "trend_down": [...],
-}
+
+# Cache for hard blocks config (loaded once)
+_HARD_BLOCKS_CACHE = None
+
+
+def _load_hard_blocks() -> dict:
+    """Load hard blocks configuration from base_config.json."""
+    global _HARD_BLOCKS_CACHE
+    if _HARD_BLOCKS_CACHE is not None:
+        return _HARD_BLOCKS_CACHE
+
+    config_dir = Path(__file__).parent.parent / "config" / "pipelines"
+    config_file = config_dir / "base_config.json"
+
+    with open(config_file, 'r') as f:
+        base_config = json.load(f)
+
+    _HARD_BLOCKS_CACHE = base_config["hard_blocks"]
+    return _HARD_BLOCKS_CACHE
 
 
 def is_hard_blocked(setup_type: str, regime: str) -> bool:
     """
     Check if a setup is HARD BLOCKED for a regime.
 
-    Hard blocks CANNOT be bypassed by config or any mechanism.
-    This is the single source of truth for regime-based blocking.
-
-    Moved from regime_gate.py to base_pipeline.py for:
-    - Single source of truth
-    - Pipeline-level access without gate dependency
-    - Cleaner architecture separation
+    Configuration loaded from base_config.json hard_blocks section.
+    Set hard_blocks.enabled = false to disable all hard blocks.
 
     Args:
         setup_type: The setup type to check
@@ -72,7 +68,19 @@ def is_hard_blocked(setup_type: str, regime: str) -> bool:
     Returns:
         True if the setup is hard blocked for this regime
     """
-    blocked_setups = HARD_BLOCKS.get(regime, [])
+    hard_blocks = _load_hard_blocks()
+
+    # Check if hard blocks are enabled
+    if not hard_blocks["enabled"]:
+        return False
+
+    # Get regime-specific config - regime must exist in config
+    if regime not in hard_blocks:
+        raise ConfigurationError(f"Regime '{regime}' not defined in hard_blocks config")
+
+    regime_config = hard_blocks[regime]
+    blocked_setups = regime_config["blocked_setups"]
+
     return setup_type in blocked_setups
 
 
@@ -680,6 +688,20 @@ class BasePipeline(ABC):
             reasons.append(f"rsi_above_max:{setup_lower}_rsi{rsi:.0f}>{max_rsi}")
             logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: RSI {rsi:.1f} > max_rsi {max_rsi}")
             return False, reasons, modifiers
+
+        # 6b. NESTED RSI_FILTER (for setups with rsi_filter: {enabled, min_rsi, max_rsi})
+        rsi_filter = filter_cfg.get("rsi_filter")
+        if rsi_filter and rsi_filter.get("enabled") and rsi is not None:
+            rsi_min = rsi_filter.get("min_rsi")
+            rsi_max = rsi_filter.get("max_rsi")
+            if rsi_min is not None and rsi < rsi_min:
+                reasons.append(f"rsi_filter_below:{setup_lower}_rsi{rsi:.0f}<{rsi_min}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: RSI {rsi:.1f} < rsi_filter.min_rsi {rsi_min}")
+                return False, reasons, modifiers
+            if rsi_max is not None and rsi > rsi_max:
+                reasons.append(f"rsi_filter_above:{setup_lower}_rsi{rsi:.0f}>{rsi_max}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: RSI {rsi:.1f} > rsi_filter.max_rsi {rsi_max}")
+                return False, reasons, modifiers
 
         # 7. VOLUME FILTERS
         min_volume = filter_cfg.get("min_volume")
@@ -1344,6 +1366,34 @@ class BasePipeline(ABC):
 
         return True, ""
 
+    def _check_global_setup_blocks(
+        self,
+        symbol: str,
+        setup_type: str
+    ) -> Tuple[bool, str]:
+        """
+        Global setup blocking - block setups that are entirely disabled across all regimes.
+
+        DATA-DRIVEN (1-year backtest): Some setups consistently lose money regardless
+        of regime, cap segment, or other filters. These are blocked globally.
+
+        Returns:
+            Tuple of (passed: bool, reason: str)
+        """
+        blocking_cfg = self.cfg.get("global_setup_blocks", {})
+        if not blocking_cfg.get("enabled", False):
+            return True, ""
+
+        blocked_setups = blocking_cfg.get("blocked_setups", [])
+
+        # Check for exact match
+        if setup_type in blocked_setups:
+            reason = f"global_setup_blocked: {setup_type} in blocked_setups"
+            logger.debug(f"GLOBAL_SETUP_BLOCKING: {symbol} {reason}")
+            return False, reason
+
+        return True, ""
+
     def _is_opening_bell_window(self, now: pd.Timestamp) -> bool:
         """
         Check if we're in the opening bell window (9:15-9:30 AM).
@@ -1544,6 +1594,12 @@ class BasePipeline(ABC):
                 logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {range_reason}")
                 return {"eligible": False, "reason": "universal_gate_fail", "details": [range_reason]}
 
+        # Global setup blocks - block setups that consistently lose money
+        global_passed, global_reason = self._check_global_setup_blocks(symbol, setup_type)
+        if not global_passed:
+            logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {global_reason}")
+            return {"eligible": False, "reason": "universal_gate_fail", "details": [global_reason]}
+
         # Cap-strategy blocking - block certain setups for certain market cap segments
         # Use passed cap_segment or fetch if not provided
         if cap_segment is None:
@@ -1559,11 +1615,19 @@ class BasePipeline(ABC):
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {pa_reason}")
             return {"eligible": False, "reason": "universal_gate_fail", "details": [pa_reason]}
 
-        # 1. SCREENING
-        screen_result = self.screen(symbol, df5m, features, levels, now)
-        if not screen_result.passed:
-            logger.debug(f"[{category}] {symbol} {setup_type} rejected at SCREENING: {screen_result.reasons}")
-            return {"eligible": False, "reason": "screening_fail", "details": screen_result.reasons}
+        # 1. SCREENING (can be disabled via config for A/B baseline)
+        screening_cfg = self._get("screening")
+        screening_enabled = screening_cfg["enabled"]
+
+        if screening_enabled:
+            screen_result = self.screen(symbol, df5m, features, levels, now)
+            if not screen_result.passed:
+                logger.debug(f"[{category}] {symbol} {setup_type} rejected at SCREENING: {screen_result.reasons}")
+                return {"eligible": False, "reason": "screening_fail", "details": screen_result.reasons}
+        else:
+            # Bypass screening - still call screen() to populate features but ignore pass/fail
+            screen_result = self.screen(symbol, df5m, features, levels, now)
+            logger.debug(f"[{category}] {symbol} {setup_type} SCREENING BYPASSED (enabled=false)")
 
         # 2. QUALITY
         quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr)
@@ -1645,8 +1709,8 @@ class BasePipeline(ABC):
         setup_filters = self._get("gates", "setup_filters")
         setup_block_cfg = setup_filters.get(setup_type.lower(), {}) if setup_filters else {}
 
-        # Check if setup filter is enabled (default True for backwards compat)
-        setup_filter_enabled = setup_block_cfg.get("enabled", True)
+        # Check if setup filter is enabled (default False for A/B baseline)
+        setup_filter_enabled = setup_block_cfg.get("enabled", False)
 
         if setup_filter_enabled:
             # 4c.1 MAX RANK SCORE FILTER (DATA-DRIVEN Dec 2024)

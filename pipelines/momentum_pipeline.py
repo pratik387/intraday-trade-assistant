@@ -294,8 +294,9 @@ class MomentumPipeline(BasePipeline):
 
         # Regime check from config - momentum NEEDS trend - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
+        regime_gates_enabled = regime_cfg["enabled"]
 
-        if regime in regime_cfg:
+        if regime_gates_enabled and regime in regime_cfg:
             rule = regime_cfg[regime]
             if not rule["allowed"]:
                 reasons.append(f"regime_blocked:{regime}")
@@ -304,7 +305,10 @@ class MomentumPipeline(BasePipeline):
                 reasons.append(f"regime_ok:{regime}")
 
                 # Check trend alignment for trending regimes - HARD GATE for counter-trend
-                if regime in ("trend_up", "trend_down"):
+                trend_alignment_cfg = self._get("gates", "trend_alignment")
+                trend_alignment_enabled = trend_alignment_cfg["enabled"]
+
+                if trend_alignment_enabled and regime in ("trend_up", "trend_down"):
                     is_long_trade = "_long" in setup_type
                     if (regime == "trend_up" and is_long_trade) or (regime == "trend_down" and not is_long_trade):
                         reasons.append("trend_aligned")
@@ -312,11 +316,15 @@ class MomentumPipeline(BasePipeline):
                         # Counter-trend momentum is blocked (don't fight the trend)
                         reasons.append("counter_trend_blocked")
                         passed = False
+        else:
+            reasons.append(f"regime_gates_bypassed:{regime}")
 
         # ADX gate from config - strict for momentum - HARD GATE
         # Note: ADX is also checked in screening, this is additional validation
         adx_cfg = self._get("gates", "adx")
-        if adx < adx_cfg["min_value"]:
+        adx_gates_enabled = adx_cfg["enabled"]
+
+        if adx_gates_enabled and adx < adx_cfg["min_value"]:
             reasons.append(f"adx_weak:{adx:.1f}<{adx_cfg['min_value']}")
             passed = False
         else:

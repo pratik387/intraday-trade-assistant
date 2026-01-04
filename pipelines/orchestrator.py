@@ -284,7 +284,7 @@ class PipelineOrchestrator:
         Returns:
             True if this setup is permanently blocked in this regime
         """
-        from pipelines.base_pipeline import HARD_BLOCKS, is_hard_blocked
+        from pipelines.base_pipeline import is_hard_blocked
 
         # Use centralized is_hard_blocked from base_pipeline
         return is_hard_blocked(setup_type, regime)

@@ -9,11 +9,13 @@
         "trend_reversal_long", "trend_reversal_short",
         "momentum_trend_long", "momentum_trend_short",
         "momentum_breakout_long", "momentum_breakout_short",
-        "flag_continuation_long", "flag_continuation_short",
-        "squeeze_release_long", "squeeze_release_short"
+        "flag_continuation_long", "flag_continuation_short"
     ],
+    "_note_squeeze_release": "squeeze_release belongs to BREAKOUT category (see setup_categories.py)",
 
     "screening": {
+        "_comment": "Category-specific screening filters - DISABLED for A/B baseline",
+        "enabled": false,
         "time_windows": {
             "_comment": "From configuration.json time_policy + research: best momentum 09:15-10:15, golden hour 14:30-15:30",
             "morning_start": "09:15",
@@ -84,10 +86,12 @@
 
     "gates": {
         "_comment": "From configuration.json trend_continuation - min_trend_strength: 1.2, min_volume_mult: 1.3",
+        "_ab_baseline_comment": "DISABLED regime blocking and ADX gates for A/B baseline",
         "regime_rules": {
+            "enabled": false,
             "chop": {
-                "allowed": false,
-                "reason": "no_trend_to_follow"
+                "allowed": true,
+                "reason": "DISABLED for A/B baseline"
             },
             "trend_up": {
                 "allowed": true,
@@ -106,14 +110,16 @@
             }
         },
         "adx": {
-            "_comment": "From configuration.json - adx_min_trend: 20",
+            "_comment": "From configuration.json - adx_min_trend: 20 - DISABLED for A/B baseline",
+            "enabled": false,
             "min_value": 20,
-            "block_below": true,
+            "block_below": false,
             "strong_threshold": 30,
             "strong_bonus_mult": 1.1
         },
         "trend_alignment": {
-            "_comment": "From configuration.json - aligned trading",
+            "_comment": "From configuration.json - aligned trading - DISABLED for A/B baseline",
+            "enabled": false,
             "aligned_size_mult": 1.2,
             "counter_trend_size_mult": 0.7
         },
@@ -146,14 +152,16 @@
             "recent_width_bars": 5
         },
         "validated_filters": {
-            "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
+            "_comment": "DISABLED - 1-Year A/B Testing Baseline (NOTE: This section is legacy/unused in code)",
             "momentum_breakout_long_volume": {
+                "enabled": false,
                 "min_volume": 100000,
-                "_evidence": "R1: +848 Rs (14 trades) | R2: +998 Rs (13 trades) - Low volume momentum breakouts lack conviction"
+                "_evidence": "DISABLED for A/B baseline"
             },
             "long_trade_volume": {
+                "enabled": false,
                 "min_volume": 150000,
-                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+                "_evidence": "DISABLED for A/B baseline"
             }
         },
         "long_specific_filters": {
@@ -178,37 +186,43 @@
             }
         },
         "setup_filters": {
-            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Momentum setups not in MODERATE profile - disabled",
-            "_active_profile": "MODERATE",
-            "_note": "Momentum setups not included in MODERATE profile - kept disabled",
-            "momentum_breakout_long": {
-                "enabled": false,
-                "min_volume": 100000,
-                "_moderate_filter": "Not in MODERATE profile",
-                "_evidence": "R1: +848 Rs (14 trades) - Low volume momentum breakouts lack conviction"
-            },
-            "momentum_breakout_short": {
-                "enabled": false,
-                "_moderate_filter": "Not in MODERATE profile"
-            },
+            "_comment": "DEEP DIVE FILTERS - 1-Year Backtest Analysis (72,042 trades, 231 sessions)",
+            "_active_profile": "HOUR_OPTIMIZED_FILTERS",
+            "_analysis_date": "2026-01-02",
+            "_analysis_source": "Deep dive analysis with ALL parameters: cap, regime, hour, 2D/3D combinations",
+            "_note_squeeze_release": "squeeze_release filters are in breakout_config.json (correct category)",
+            "_note_momentum_breakout": "MOVED TO breakout_config.json - momentum_breakout belongs to BREAKOUT pipeline",
+            "_note_flag_continuation": "MOVED TO breakout_config.json - flag_continuation belongs to BREAKOUT pipeline",
             "trend_continuation_long": {
-                "enabled": false,
-                "min_volume": 150000,
-                "_moderate_filter": "Not in MODERATE profile"
+                "enabled": true,
+                "blocked_entirely": false,
+                "allowed_caps": ["large_cap"],
+                "allowed_regimes": ["squeeze"],
+                "blocked_regimes": ["chop", "trend_up", "trend_down"],
+                "allowed_hours": [14, 15],
+                "blocked_hours": [10, 11, 12, 13],
+                "_evidence": "DEEP DIVE: large_cap+14: Rs 438, 90% WR | large_cap+15: Rs 295, 87.5% WR | squeeze+14: Rs 264, 80% WR | 10-13 ALL LOSE"
             },
             "trend_continuation_short": {
-                "enabled": false,
-                "_moderate_filter": "Not in MODERATE profile"
+                "enabled": true,
+                "blocked_entirely": false,
+                "allowed_caps": ["large_cap", "mid_cap"],
+                "allowed_regimes": ["trend_down", "squeeze"],
+                "blocked_regimes": ["chop", "trend_up"],
+                "allowed_hours": [13, 14, 15],
+                "blocked_hours": [10, 11, 12],
+                "_evidence": "DEEP DIVE: large_cap+trend_down: Rs 213, 83.3% WR | mid_cap+13: Rs 290, 84.6% WR | 10-12 LOSE Rs 93k"
             },
             "trend_pullback_long": {
-                "enabled": false,
-                "min_volume": 150000,
-                "_moderate_filter": "Not in MODERATE profile"
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "BLOCKED: -Rs 65,000 total PnL - globally blocked in base_config"
             },
             "trend_pullback_short": {
                 "enabled": false,
-                "_moderate_filter": "Not in MODERATE profile"
-            }
+                "_evidence": "Needs further analysis - keep disabled"
+            },
+            "_flag_continuation_REMOVED": "Moved to breakout_config.json - flag_continuation belongs to BREAKOUT pipeline"
         },
         "global_filters": {
             "_comment": "UNIFIED GLOBAL FILTERS - Applied to all setups before setup-specific filters",

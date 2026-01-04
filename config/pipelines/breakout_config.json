@@ -24,6 +24,8 @@
     ],
 
     "screening": {
+        "_comment": "Category-specific screening filters - DISABLED for A/B baseline",
+        "enabled": false,
         "time_windows": {
             "_comment": "From configuration.json time_policy - NSE trading hours",
             "morning_start": "09:15",
@@ -88,6 +90,8 @@
     "gates": {
         "_comment": "From configuration.json - breakout_volume_surge_min: 1.5 (long), 2.0 (short), breakout_momentum_candle_min_ratio: 2.0 (long), 2.5 (short)",
         "volume_surge": {
+            "enabled": false,
+            "_ab_baseline_comment": "DISABLED for A/B baseline",
             "long": {
                 "min_ratio": 1.5,
                 "lookback_bars": 20
@@ -98,6 +102,8 @@
             }
         },
         "momentum_candle": {
+            "enabled": false,
+            "_ab_baseline_comment": "DISABLED for A/B baseline",
             "long": {
                 "min_ratio": 2.0
             },
@@ -106,6 +112,8 @@
             }
         },
         "adx": {
+            "enabled": false,
+            "_ab_baseline_comment": "DISABLED for A/B baseline",
             "_comment": "From configuration.json - breakout_min_adx: 20.0, adx_min_strength: 15, adx_min_trend: 20",
             "min_value": 20,
             "orb_early_min_value": 15,
@@ -115,6 +123,8 @@
             "low_adx_size_mult": 0.8
         },
         "regime_rules": {
+            "enabled": false,
+            "_ab_baseline_comment": "DISABLED regime gates for A/B baseline",
             "chop": {
                 "_comment": "DATA-DRIVEN (Dec 2024): ORB CHOP winners have 283k volume vs losers 107k (+164%), winners have srr 1.28 vs losers 2.28 (-44%)",
                 "allowed": true,
@@ -139,32 +149,34 @@
             }
         },
         "validated_filters": {
-            "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
+            "_comment": "DISABLED - 1-Year A/B Testing Baseline (NOTE: This section is legacy/unused in code)",
             "first_hour_momentum_long": {
-                "_comment": "DATA-DRIVEN (Dec 2024): Block large_cap (25% WR, -Rs 3608). Max ADX 25 (ADX<25: 67% WR, +Rs 2091)",
-                "blocked_caps": ["large_cap"],
+                "_comment": "DISABLED for A/B baseline",
+                "enabled": false,
+                "blocked_caps": [],
                 "max_adx": 25,
-                "_evidence": "26 trades total. large_cap: 25% WR -Rs 3608. mid_cap: 62% WR +Rs 3000. ADX<25: 67% WR +Rs 2091. ADX>=35: 33% WR -Rs 2166."
+                "_evidence": "DISABLED for A/B baseline"
             },
             "breakout_long_hour_11": {
-                "blocked_hours": [11],
-                "_evidence": "R1: +1,695 Rs (91 trades) | R2: +1,554 Rs (92 trades) - 11AM breakouts have low WR, momentum fades"
+                "enabled": false,
+                "blocked_hours": [],
+                "_evidence": "DISABLED for A/B baseline"
             },
             "long_trade_volume": {
+                "enabled": false,
                 "min_volume": 150000,
-                "_evidence": "Winners have 2x volume (213k vs 107k). Min 150k improves long trade quality"
+                "_evidence": "DISABLED for A/B baseline"
             },
             "orb_breakout_long_cap_filter": {
-                "_comment": "DATA-DRIVEN (Dec 2024): Large cap 92% WR vs mid/small 43% WR",
-                "enabled": true,
-                "allowed_caps": ["large_cap"],
+                "_comment": "DISABLED for A/B baseline",
+                "enabled": false,
+                "allowed_caps": [],
                 "mid_cap_with_filters": {
-                    "enabled": true,
+                    "enabled": false,
                     "min_structural_rr": 1.5,
-                    "min_entry_minute": 35,
-                    "_note": "structural_rr = vol_ratio * breakout_strength / normalized_risk. Winners avg 1.62, losers avg 1.84. Use 1.5 as min to filter weakest setups."
+                    "min_entry_minute": 35
                 },
-                "_evidence": "Large cap: 13 trades, 92% WR, +4,898 Rs. Mid+small: 32 trades, 43% WR, -563 Rs. Mid cap salvageable with strength>=0.7 + entry>=35min (80% WR, 5 trades, +1,046 Rs)"
+                "_evidence": "DISABLED for A/B baseline"
             }
         },
         "long_specific_filters": {
@@ -189,54 +201,136 @@
             }
         },
         "setup_filters": {
-            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Optimized for ~23K trades, 94% ROI at Rs 3L capital",
-            "_active_profile": "MODERATE",
+            "_comment": "DEEP DIVE FILTERS - 1-Year Backtest Analysis (72,042 trades, 231 sessions)",
+            "_active_profile": "HOUR_OPTIMIZED_FILTERS",
+            "_analysis_date": "2026-01-02",
+            "_analysis_source": "Deep dive analysis with ALL parameters: cap, regime, hour, 2D/3D combinations",
             "breakout_long": {
                 "enabled": true,
-                "allowed_regimes": ["trend_down"],
-                "min_rsi": 40,
-                "max_rsi": 60,
-                "_salvage_filter": "trend_down regime + RSI 40-60",
-                "_evidence": "ELIMINATION Dec 2024: 14 trades, Rs 127 net avg (was 1,211 trades, Rs -107 net)"
+                "blocked_entirely": true,
+                "_evidence": "DEEP DIVE: -Rs 75k total | NO winning hour combinations | 15 only marginally positive"
             },
             "breakout_short": {
-                "enabled": false
+                "enabled": false,
+                "_evidence": "Needs further analysis - keep disabled"
             },
             "first_hour_momentum_long": {
                 "enabled": true,
-                "max_adx": 15,
-                "_salvage_filter": "ADX < 15",
-                "_evidence": "ELIMINATION Dec 2024: 22 trades, Rs 106 net avg (was 2,234 trades, Rs -197 net)"
+                "blocked_entirely": true,
+                "_evidence": "DEEP DIVE: -Rs 44k total | Only small_cap+11 wins (Rs 319) - insufficient volume"
             },
             "first_hour_momentum_short": {
-                "enabled": false
+                "enabled": false,
+                "_evidence": "Needs further analysis - keep disabled"
             },
             "orb_breakout_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_moderate_filter": "BLOCKED - negative expectancy",
-                "_evidence": "MODERATE: Rs -120K loss, 1541 trades - block entirely"
+                "blocked_entirely": false,
+                "allowed_caps": ["mid_cap", "large_cap", "small_cap"],
+                "allowed_regimes": ["chop", "trend_down"],
+                "allowed_hours": [9, 10, 11],
+                "blocked_hours": [12, 13, 14, 15],
+                "max_rsi": 60,
+                "min_rr": 1.5,
+                "_evidence": "DEEP DIVE: 9: Rs 246, 94.7% WR | 10: Rs 200, 92.5% WR | 15 LOSES Rs 234k | PARAM: block RSI>=60 (NEW: tightened from 70, saves Rs 2,948)"
             },
             "orb_breakout_short": {
-                "enabled": false
+                "enabled": false,
+                "_evidence": "Needs further analysis - keep disabled"
             },
             "orb_breakdown_long": {
-                "enabled": false
+                "enabled": false,
+                "_evidence": "No data in backtest - keep disabled"
             },
             "orb_breakdown_short": {
-                "enabled": false
-            },
-            "squeeze_release_long": {
                 "enabled": true,
-                "max_rsi": 70,
-                "_moderate_filter": "RSI <= 70 - block overbought entries",
-                "_evidence": "OPTION A Dec 2024: ADX 25-30 (Rs 702 net), RSI 70+ blocked (Rs -31 net). 45 trades remain profitable."
+                "blocked_entirely": false,
+                "allowed_caps": ["micro_cap"],
+                "allowed_regimes": ["trend_down", "squeeze", "chop"],
+                "allowed_hours": [9, 10, 11, 12, 13, 14],
+                "blocked_hours": [15],
+                "_evidence": "DEEP DIVE: micro_cap+11: Rs 221, 86.1% WR | 15 LOSES Rs 176k | Overall only Rs 20 avg but micro_cap+morning is profitable"
+            },
+            "change_of_character_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "DEEP DIVE: -Rs 7k total | Only squeeze+11 wins (Rs 479) - very low volume"
+            },
+            "change_of_character_short": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "DEEP DIVE: -Rs 2k total | Only 15 positive (Rs 218) but low volume, not reliable"
             },
             "break_of_structure_long": {
                 "enabled": true,
+                "_comment": "PRO ICT 2025: Detection logic overhauled - retest entry, HH/HL structure validation. Filters reset for fresh backtest.",
+                "_old_filters": "blocked_caps: micro_cap/small_cap, blocked_regimes: trend_down/trend_up, max_adx: 40, max_rr: 3.0"
+            },
+            "break_of_structure_short": {
+                "enabled": true,
+                "_comment": "PRO ICT 2025: Detection logic overhauled - retest entry, HH/HL structure validation. Filters reset for fresh backtest.",
+                "_old_filters": "blocked_caps: micro_cap, blocked_regimes: trend_up, allowed_hours: 13/15"
+            },
+            "squeeze_release_long": {
+                "enabled": true,
+                "blocked_entirely": false,
+                "allowed_caps": ["mid_cap"],
+                "blocked_caps": ["micro_cap"],
+                "allowed_regimes": ["trend_up", "trend_down"],
+                "blocked_regimes": ["chop", "squeeze"],
+                "allowed_hours": [15],
+                "blocked_hours": [12, 13, 14],
+                "rsi_filter": {
+                    "enabled": true,
+                    "max_rsi": 50,
+                    "_comment": "PARAM ANALYSIS: Block RSI 50-60 | NET save Rs 28,037"
+                },
+                "_evidence": "DEEP DIVE: mid_cap+trend_up: Rs 222, 68.1% WR | 12-14 LOSE Rs 29k | PARAM: block RSI 50-60, micro_cap (NET save Rs 36,480)"
+            },
+            "squeeze_release_short": {
+                "enabled": true,
+                "blocked_entirely": false,
+                "allowed_caps": ["small_cap"],
+                "allowed_regimes": ["trend_down", "trend_up"],
+                "blocked_regimes": ["chop", "squeeze"],
+                "allowed_hours": [14, 15],
+                "blocked_hours": [12, 13],
+                "min_adx": 20,
+                "rsi_filter": {
+                    "enabled": true,
+                    "max_rsi": 50,
+                    "_comment": "PARAM ANALYSIS: Block RSI 50-60, ADX 15-20 | NET save Rs 16,281"
+                },
+                "_evidence": "DEEP DIVE: small_cap+trend_down+14: Rs 537, 76.5% WR | 12/13 LOSE Rs 11k | PARAM: block RSI 50-60, ADX 15-20"
+            },
+            "momentum_breakout_long": {
+                "enabled": true,
                 "blocked_entirely": true,
-                "_reason": "NOT SALVAGEABLE - all filter combos negative",
-                "_evidence": "ELIMINATION Dec 2024: 64 trades, Rs -345 net - no profitable combo found"
+                "_evidence": "DEEP DIVE: -Rs 226k total | ONLY mid_cap+chop+12 wins (Rs 439) - not enough volume to justify",
+                "_moved_from": "momentum_config.json (WRONG - belongs to BREAKOUT pipeline)"
+            },
+            "momentum_breakout_short": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "DEEP DIVE: -Rs 49k total | No winning combinations found",
+                "_moved_from": "momentum_config.json (WRONG - belongs to BREAKOUT pipeline)"
+            },
+            "flag_continuation_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "DEEP DIVE: -Rs 1k total | Only large_cap profitable but low volume",
+                "_moved_from": "momentum_config.json (WRONG - belongs to BREAKOUT pipeline)"
+            },
+            "flag_continuation_short": {
+                "enabled": true,
+                "blocked_entirely": false,
+                "allowed_caps": ["mid_cap", "small_cap"],
+                "blocked_caps": ["large_cap", "micro_cap"],
+                "allowed_regimes": ["chop"],
+                "allowed_hours": [15],
+                "blocked_hours": [13, 14],
+                "_evidence": "DEEP DIVE: mid_cap+chop: Rs 463, 63.6% WR | 13/14 LOSE | PARAM: block large_cap (Rs 2,364), micro_cap (Rs 2,624)",
+                "_moved_from": "momentum_config.json (WRONG - belongs to BREAKOUT pipeline)"
             }
         },
         "global_filters": {
@@ -514,6 +608,8 @@
     },
 
     "rsi_penalty": {
+        "enabled": false,
+        "_ab_baseline_comment": "DISABLED for A/B baseline",
         "_comment": "BREAKOUT: Penalize weak momentum (low RSI for longs, high RSI for shorts)",
         "long_weak_threshold": 40,
         "short_weak_threshold": 60,

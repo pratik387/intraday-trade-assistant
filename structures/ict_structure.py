@@ -59,6 +59,11 @@ class ICTStructure(BaseStructure):
         self.bos_min_structure_bars = config["bos_min_structure_bars"]
         self.bos_min_break_pct = config["bos_min_break_pct"] / 100.0
         self.bos_volume_confirmation = config["bos_volume_confirmation"]
+        # PRO ICT: Retest-based entry parameters - will crash with KeyError if missing
+        self.bos_entry_mode = config["bos_entry_mode"]  # "retest" or "immediate"
+        self.bos_retest_zone_pct = config["bos_retest_zone_pct"] / 100.0
+        self.bos_retest_timeout_bars = config["bos_retest_timeout_bars"]
+        self.bos_require_htf_structure = config["bos_require_htf_structure"]
 
         # Change of Character parameters - will crash with KeyError if missing
         self.choch_momentum_periods = config["choch_momentum_periods"]
@@ -984,38 +989,71 @@ class ICTStructure(BaseStructure):
     def _detect_break_of_structure(self, df: pd.DataFrame, context: MarketContext) -> List[StructureEvent]:
         """Detect Break of Structure - trend continuation pattern.
 
-        PROFESSIONAL ICT REQUIREMENT:
+        PROFESSIONAL ICT REQUIREMENT (2025 Update):
         BOS is a CONTINUATION pattern that requires established HTF trend.
         - Bullish BOS: Break of swing high in UPTREND (continuation)
         - Bearish BOS: Break of swing low in DOWNTREND (continuation)
-        - NOT valid in chop/range (no trend to continue)
+        - Entry on RETEST of broken level, not immediate chase
+        - Requires HH/HL or LL/LH structure pattern (not just indicator trend)
         """
         events = []
 
         try:
+            # BOS DIAGNOSTIC: Log bar count check (throttled)
+            if not hasattr(self, '_bos_bar_check_count'):
+                self._bos_bar_check_count = 0
+            if self._bos_bar_check_count < 5:
+                self._bos_bar_check_count += 1
+                logger.info(f"BOS_BAR_CHECK | {context.symbol} | bars={len(df)} | required={self.bos_min_structure_bars + 5}")
+
             if len(df) < self.bos_min_structure_bars + 5:
                 return events
 
             current_price = context.current_price
+            atr = context.indicators.get('atr', current_price * 0.01)
 
-            # Find recent swing highs and lows
-            swing_highs = self._find_swing_points(df, 'high')
-            swing_lows = self._find_swing_points(df, 'low')
+            # Find recent swing highs and lows with significance
+            swing_highs = self._find_swing_points_with_significance(df, 'high')
+            swing_lows = self._find_swing_points_with_significance(df, 'low')
+
+            # BOS DIAGNOSTIC: Log swing point discovery (throttled to first 10 symbols)
+            if not hasattr(self, '_bos_diag_count'):
+                self._bos_diag_count = 0
+            if self._bos_diag_count < 10:
+                self._bos_diag_count += 1
+                logger.info(f"BOS_DIAG | {context.symbol} | bars={len(df)} | swing_highs={len(swing_highs)} swing_lows={len(swing_lows)} | price={current_price:.2f}")
 
             # Check for bullish BOS (break above recent swing high)
             if swing_highs:
-                recent_high = max(swing_highs[-3:]) if len(swing_highs) >= 3 else swing_highs[-1]
+                # PRO ICT: Use most significant swing high, not just max of last 3
+                significant_high = self._get_most_significant_swing(swing_highs)
+                recent_high = significant_high['price']
                 break_distance = current_price - recent_high
                 break_pct = break_distance / recent_high
 
                 if break_pct >= self.bos_min_break_pct:
-                    # PROFESSIONAL ICT FIX: Validate HTF uptrend exists
-                    # BOS long requires established uptrend (continuation)
-                    htf_trend_valid = self._validate_htf_trend(df, context, 'long')
+                    # BOS DIAGNOSTIC: Log candidate that passes break threshold
+                    if self._bos_diag_count <= 10:
+                        logger.info(f"BOS_LONG_CANDIDATE | {context.symbol} | break_pct={break_pct*100:.2f}% >= {self.bos_min_break_pct*100:.2f}% | recent_high={recent_high:.2f}")
 
-                    if not htf_trend_valid:
+                    # PRO ICT: Validate HTF structure pattern (HH/HL)
+                    if self.bos_require_htf_structure:
+                        htf_structure_valid = self._validate_htf_structure_pattern(swing_highs, swing_lows, 'long')
+                        if not htf_structure_valid:
+                            if self._bos_diag_count <= 10:
+                                # Show swing high prices to understand why HH pattern failed
+                                high_prices = [sh['price'] for sh in swing_highs[-3:]] if len(swing_highs) >= 3 else [sh['price'] for sh in swing_highs]
+                                logger.info(f"BOS_LONG_REJECT | {context.symbol} | no HH pattern | swing_highs={high_prices}")
+                        else:
+                            htf_trend_valid = True
+                    else:
+                        # Fallback to indicator-based trend validation
+                        htf_trend_valid = self._validate_htf_trend(df, context, 'long')
+
+                    if self.bos_require_htf_structure and not htf_structure_valid:
+                        pass  # Skip - no valid structure
+                    elif not self.bos_require_htf_structure and not htf_trend_valid:
                         logger.debug(f"BOS long rejected: no HTF uptrend (BOS requires trend continuation)")
-                        # Don't create BOS event - not valid without trend
                         pass  # Skip to next check
                     else:
                         # Check volume confirmation if required
@@ -1024,42 +1062,74 @@ class ICTStructure(BaseStructure):
                             recent_vol_z = df['vol_z'].tail(3).max()
                             volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
-                        if volume_confirmed:
-                            # PROFESSIONAL ICT FIX: Validate premium/discount zone
-                            # Longs ONLY in discount, shorts ONLY in premium
+                        if not volume_confirmed:
+                            if self._bos_diag_count <= 10:
+                                logger.info(f"BOS_LONG_REJECT | {context.symbol} | vol_z={recent_vol_z:.2f} < 1.5")
+                        else:
+                            # Validate premium/discount zone
                             if not self._validate_premium_discount_zone('long', current_price, context):
-                                logger.debug(f"BOS long rejected: not in discount zone")
+                                if self._bos_diag_count <= 10:
+                                    logger.info(f"BOS_LONG_REJECT | {context.symbol} | not in discount zone")
                             else:
+                                # PRO ICT: Calculate retest zone for entry
+                                zone_half_width = recent_high * self.bos_retest_zone_pct
+                                retest_zone = [recent_high - zone_half_width, recent_high + zone_half_width]
+
+                                # Determine entry mode
+                                entry_mode = self.bos_entry_mode
+
                                 events.append(StructureEvent(
                                     symbol=context.symbol,
                                     timestamp=context.timestamp,
                                     structure_type='break_of_structure_long',
                                     side='long',
                                     confidence=self._calculate_institutional_strength(context, break_pct * 200, "break_of_structure", "long", break_pct, 0),
-                                    levels={'entry': current_price, 'broken_level': recent_high},
+                                    levels={'entry': current_price, 'broken_level': recent_high, 'support': recent_high},
                                     context={
                                         'broken_level': recent_high,
                                         'break_distance_pct': break_pct * 100,
                                         'structure_type': 'swing_high',
-                                        'pattern_type': 'bullish_break_of_structure'
+                                        'pattern_type': 'bullish_break_of_structure',
+                                        'entry_mode': entry_mode,
+                                        'retest_zone': retest_zone if entry_mode == 'retest' else None,
+                                        'swing_significance': significant_high.get('significance', 1.0)
                                     },
                                     price=recent_high
                                 ))
+                                logger.debug(f"BOS long detected: broken_level={recent_high:.2f}, entry_mode={entry_mode}, "
+                                           f"retest_zone={retest_zone if entry_mode == 'retest' else 'N/A'}")
 
             # Check for bearish BOS (break below recent swing low)
             if swing_lows:
-                recent_low = min(swing_lows[-3:]) if len(swing_lows) >= 3 else swing_lows[-1]
+                # PRO ICT: Use most significant swing low, not just min of last 3
+                significant_low = self._get_most_significant_swing(swing_lows)
+                recent_low = significant_low['price']
                 break_distance = recent_low - current_price
                 break_pct = break_distance / recent_low
 
                 if break_pct >= self.bos_min_break_pct:
-                    # PROFESSIONAL ICT FIX: Validate HTF downtrend exists
-                    # BOS short requires established downtrend (continuation)
-                    htf_trend_valid = self._validate_htf_trend(df, context, 'short')
+                    # BOS DIAGNOSTIC: Log candidate that passes break threshold
+                    if self._bos_diag_count <= 10:
+                        logger.info(f"BOS_SHORT_CANDIDATE | {context.symbol} | break_pct={break_pct*100:.2f}% >= {self.bos_min_break_pct*100:.2f}% | recent_low={recent_low:.2f}")
 
-                    if not htf_trend_valid:
+                    # PRO ICT: Validate HTF structure pattern (LL/LH)
+                    if self.bos_require_htf_structure:
+                        htf_structure_valid = self._validate_htf_structure_pattern(swing_highs, swing_lows, 'short')
+                        if not htf_structure_valid:
+                            if self._bos_diag_count <= 10:
+                                # Show swing low prices to understand why LL pattern failed
+                                low_prices = [sl['price'] for sl in swing_lows[-3:]] if len(swing_lows) >= 3 else [sl['price'] for sl in swing_lows]
+                                logger.info(f"BOS_SHORT_REJECT | {context.symbol} | no LL pattern | swing_lows={low_prices}")
+                        else:
+                            htf_trend_valid = True
+                    else:
+                        # Fallback to indicator-based trend validation
+                        htf_trend_valid = self._validate_htf_trend(df, context, 'short')
+
+                    if self.bos_require_htf_structure and not htf_structure_valid:
+                        pass  # Skip - no valid structure
+                    elif not self.bos_require_htf_structure and not htf_trend_valid:
                         logger.debug(f"BOS short rejected: no HTF downtrend (BOS requires trend continuation)")
-                        # Don't create BOS event - not valid without trend
                         pass  # Skip
                     else:
                         # Check volume confirmation if required
@@ -1068,34 +1138,49 @@ class ICTStructure(BaseStructure):
                             recent_vol_z = df['vol_z'].tail(3).max()
                             volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
-                        if volume_confirmed:
-                            # PROFESSIONAL ICT FIX: Validate premium/discount zone
-                            # Longs ONLY in discount, shorts ONLY in premium
+                        if not volume_confirmed:
+                            if self._bos_diag_count <= 10:
+                                logger.info(f"BOS_SHORT_REJECT | {context.symbol} | vol_z={recent_vol_z:.2f} < 1.5")
+                        else:
+                            # Validate premium/discount zone
                             if not self._validate_premium_discount_zone('short', current_price, context):
-                                logger.debug(f"BOS short rejected: not in premium zone")
+                                if self._bos_diag_count <= 10:
+                                    logger.info(f"BOS_SHORT_REJECT | {context.symbol} | not in premium zone")
                             else:
+                                # PRO ICT: Calculate retest zone for entry
+                                zone_half_width = recent_low * self.bos_retest_zone_pct
+                                retest_zone = [recent_low - zone_half_width, recent_low + zone_half_width]
+
+                                # Determine entry mode
+                                entry_mode = self.bos_entry_mode
+
                                 events.append(StructureEvent(
                                     symbol=context.symbol,
                                     timestamp=context.timestamp,
                                     structure_type='break_of_structure_short',
                                     side='short',
                                     confidence=self._calculate_institutional_strength(context, break_pct * 200, "break_of_structure", "short", break_pct, 0),
-                                    levels={'entry': current_price, 'broken_level': recent_low},
+                                    levels={'entry': current_price, 'broken_level': recent_low, 'resistance': recent_low},
                                     context={
                                         'broken_level': recent_low,
                                         'break_distance_pct': break_pct * 100,
                                         'structure_type': 'swing_low',
-                                        'pattern_type': 'bearish_break_of_structure'
+                                        'pattern_type': 'bearish_break_of_structure',
+                                        'entry_mode': entry_mode,
+                                        'retest_zone': retest_zone if entry_mode == 'retest' else None,
+                                        'swing_significance': significant_low.get('significance', 1.0)
                                     },
                                     price=recent_low
                                 ))
+                                logger.debug(f"BOS short detected: broken_level={recent_low:.2f}, entry_mode={entry_mode}, "
+                                           f"retest_zone={retest_zone if entry_mode == 'retest' else 'N/A'}")
 
         except Exception as e:
             logger.exception(f"Break of Structure detection error: {e}")
         return events
 
     def _find_swing_points(self, df: pd.DataFrame, price_type: str) -> List[float]:
-        """Find swing highs or lows in the data."""
+        """Find swing highs or lows in the data (legacy - returns prices only)."""
         swing_points = []
         lookback = min(self.bos_min_structure_bars, len(df) - 2)
 
@@ -1116,6 +1201,106 @@ class ICTStructure(BaseStructure):
                     swing_points.append(center_value)
 
         return swing_points
+
+    def _find_swing_points_with_significance(self, df: pd.DataFrame, price_type: str) -> List[Dict]:
+        """Find swing highs or lows with significance scoring.
+
+        PRO ICT: Returns swing points with bar index and significance score.
+        Significance is based on:
+        - How many bars the level held before being broken
+        - Distance from other swing points (more isolated = more significant)
+        """
+        swing_points = []
+        # Look for swings starting from bar 2 (need 2 bars before and 2 after for 5-bar window)
+        # No need to skip early bars - we want ALL swings in the available data
+        for i in range(2, len(df) - 2):
+
+            window = df.iloc[i-2:i+3]
+            center_value = window[price_type].iloc[2]
+
+            is_swing = False
+            if price_type == 'high':
+                # Swing high: center is highest in window
+                if center_value == window[price_type].max():
+                    is_swing = True
+            else:
+                # Swing low: center is lowest in window
+                if center_value == window[price_type].min():
+                    is_swing = True
+
+            if is_swing:
+                # Calculate significance: how many bars after this point respected the level
+                bars_held = 0
+                for j in range(i + 3, len(df)):
+                    if price_type == 'high':
+                        if df[price_type].iloc[j] > center_value:
+                            break  # Level broken
+                    else:
+                        if df[price_type].iloc[j] < center_value:
+                            break  # Level broken
+                    bars_held += 1
+
+                # Normalize significance: more bars held = higher significance
+                significance = min(1.0, bars_held / 20.0)  # Cap at 20 bars
+
+                swing_points.append({
+                    'price': center_value,
+                    'bar_idx': i,
+                    'bars_held': bars_held,
+                    'significance': significance
+                })
+
+        return swing_points
+
+    def _get_most_significant_swing(self, swing_points: List[Dict]) -> Dict:
+        """Get the most significant swing point from the list.
+
+        PRO ICT: Prioritize significance over just being the most recent.
+        """
+        if not swing_points:
+            return {'price': 0, 'bar_idx': 0, 'significance': 0}
+
+        # Consider only recent swings (last 5) to avoid stale levels
+        recent_swings = swing_points[-5:] if len(swing_points) >= 5 else swing_points
+
+        # Sort by significance (descending), then by recency (more recent = higher priority)
+        sorted_swings = sorted(recent_swings,
+                               key=lambda x: (x.get('significance', 0), x.get('bar_idx', 0)),
+                               reverse=True)
+
+        return sorted_swings[0]
+
+    def _validate_htf_structure_pattern(self, swing_highs: List[Dict], swing_lows: List[Dict], direction: str) -> bool:
+        """Validate HTF trend using actual structure pattern (HH/HL or LL/LH).
+
+        PRO ICT: BOS requires established trend structure, not just indicator readings.
+        - Long BOS: Need HH (Higher High) pattern - swing highs ascending
+        - Short BOS: Need LL (Lower Low) pattern - swing lows descending
+        """
+        if direction == 'long':
+            # Need at least 2 swing highs to check for HH pattern
+            if len(swing_highs) >= 2:
+                # Check if recent swing highs are ascending (HH pattern)
+                recent_highs = [sh['price'] for sh in swing_highs[-3:]] if len(swing_highs) >= 3 else [sh['price'] for sh in swing_highs]
+                if len(recent_highs) >= 2:
+                    # At least the last swing high should be higher than previous
+                    is_hh = recent_highs[-1] > recent_highs[-2]
+                    if is_hh:
+                        logger.debug(f"HTF structure valid for long: HH pattern confirmed ({recent_highs[-2]:.2f} -> {recent_highs[-1]:.2f})")
+                        return True
+            return False
+        else:
+            # Need at least 2 swing lows to check for LL pattern
+            if len(swing_lows) >= 2:
+                # Check if recent swing lows are descending (LL pattern)
+                recent_lows = [sl['price'] for sl in swing_lows[-3:]] if len(swing_lows) >= 3 else [sl['price'] for sl in swing_lows]
+                if len(recent_lows) >= 2:
+                    # At least the last swing low should be lower than previous
+                    is_ll = recent_lows[-1] < recent_lows[-2]
+                    if is_ll:
+                        logger.debug(f"HTF structure valid for short: LL pattern confirmed ({recent_lows[-2]:.2f} -> {recent_lows[-1]:.2f})")
+                        return True
+            return False
 
     def _detect_market_structure_shift(self, df: pd.DataFrame, context: MarketContext,
                                        swing_highs: List[float], swing_lows: List[float]) -> List[StructureEvent]:

@@ -303,16 +303,18 @@ class LevelPipeline(BasePipeline):
             # Low volume VWAP trades have poor execution and high slippage
             bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
             vwap_vol_cfg = self._get("gates", "vwap_volume")
-            min_volume = vwap_vol_cfg.get("min_volume")
 
-            if bar5_volume < min_volume:
-                logger.debug(f"[LEVEL] {symbol} vwap BLOCKED: vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
-                return GateResult(
-                    passed=False,
-                    reasons=[f"vwap_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k"],
-                    size_mult=1.0,
-                    min_hold_bars=0
-                )
+            if vwap_vol_cfg["enabled"]:
+                min_volume = vwap_vol_cfg["min_volume"]
+
+                if bar5_volume < min_volume:
+                    logger.debug(f"[LEVEL] {symbol} vwap BLOCKED: vol {bar5_volume/1000:.0f}k < {min_volume/1000:.0f}k")
+                    return GateResult(
+                        passed=False,
+                        reasons=[f"vwap_vol_blocked:{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k"],
+                        size_mult=1.0,
+                        min_hold_bars=0
+                    )
 
         reasons = []
         passed = True
@@ -398,10 +400,11 @@ class LevelPipeline(BasePipeline):
                             return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
                         reasons.append(f"bb_width_ok:{bb_width:.3f}")
 
-        # Regime rules from config - HARD GATES only
+        # Regime rules from config - HARD GATES only (can be disabled for A/B baseline)
         regime_cfg = self._get("gates", "regime_rules")
+        regime_gates_enabled = regime_cfg["enabled"]
 
-        if regime in regime_cfg:
+        if regime_gates_enabled and regime in regime_cfg:
             rule = regime_cfg[regime]
             if not rule["allowed"]:
                 reasons.append(f"regime_blocked:{regime}")
@@ -422,6 +425,8 @@ class LevelPipeline(BasePipeline):
                         reasons.append(f"counter_trend_ok:strength={strength:.2f}")
                     else:
                         reasons.append("trend_aligned")
+        else:
+            reasons.append(f"regime_gates_bypassed:{regime}")
 
         # Volume confirmation - info only, no penalty
         vol_cfg = self._get("gates", "volume_confirmation")

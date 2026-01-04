@@ -442,7 +442,7 @@ class BreakoutPipeline(BasePipeline):
         # Allow: large_cap always, mid_cap with strength>=0.7 and entry>=35min
         if setup_type == "orb_breakout_long":
             orb_cap_cfg = specialized_filters.get("orb_cap_filter_with_mid_cap_conditions", {})
-            if orb_cap_cfg.get("enabled", True):
+            if orb_cap_cfg.get("enabled", False):
                 # Use allowed_caps from setup_filters, specialized logic from specialized_filters
                 allowed_caps = setup_filter_cfg.get("allowed_caps", ["large_cap"])
                 entry_minute = current_time.minute if current_time else 30
@@ -516,8 +516,11 @@ class BreakoutPipeline(BasePipeline):
 
         # Regime rules from config - HARD GATE for chop (ORB allowed with volume+srr filter, others blocked)
         # Exception: FHM regime override bypasses this check when RVOL >= 3x
+        # Can be disabled for A/B baseline
         regime_cfg = self._get("gates", "regime_rules")
-        if regime in regime_cfg:
+        regime_gates_enabled = regime_cfg["enabled"]
+
+        if regime_gates_enabled and regime in regime_cfg:
             if regime == "chop":
                 # FHM OVERRIDE: Skip chop blocking when RVOL >= 3x (institutional flow trumps regime)
                 if fhm_regime_override or is_fhm:
@@ -561,6 +564,8 @@ class BreakoutPipeline(BasePipeline):
                     passed = False
             else:
                 reasons.append(f"regime_ok:{regime}")
+        else:
+            reasons.append(f"regime_gates_bypassed:{regime}")
 
         # Determine if short (stricter filters)
         is_short = "_short" in setup_type
@@ -568,6 +573,9 @@ class BreakoutPipeline(BasePipeline):
         # Volume surge filter from config
         vol_cfg = self._get("gates", "volume_surge")
         mom_cfg = self._get("gates", "momentum_candle")
+
+        volume_surge_enabled = vol_cfg["enabled"]
+        momentum_candle_enabled = mom_cfg["enabled"]
 
         if is_short:
             volume_surge_min = vol_cfg["short"]["min_ratio"]
@@ -579,7 +587,9 @@ class BreakoutPipeline(BasePipeline):
         # Check 1m volume surge
         # FHM BYPASS: FHM already validated RVOL in screening, skip 1m volume surge check
         lookback = vol_cfg["long"]["lookback_bars"]
-        if is_fhm:
+        if not volume_surge_enabled:
+            reasons.append(f"volume_surge_disabled")
+        elif is_fhm:
             reasons.append(f"fhm_volume_surge_bypass:uses_rvol_from_screening")
         elif df1m is not None and len(df1m) >= 5:
             lookback = min(lookback, len(df1m) - 1)
@@ -598,7 +608,9 @@ class BreakoutPipeline(BasePipeline):
 
         # Momentum candle filter
         # FHM BYPASS: FHM uses RVOL-based momentum, not candle analysis
-        if is_fhm:
+        if not momentum_candle_enabled:
+            reasons.append(f"momentum_candle_disabled")
+        elif is_fhm:
             reasons.append(f"fhm_momentum_candle_bypass:uses_rvol")
         elif df1m is not None and len(df1m) >= 5:
             last_5 = df1m.tail(5)
@@ -619,7 +631,10 @@ class BreakoutPipeline(BasePipeline):
         # ORB uses relaxed threshold (15) - ADX takes 14+ bars to stabilize, structure detector enforces time
         # FHM BYPASS: FHM uses RVOL-based momentum instead of ADX (RVOL >= 2x is the signal)
         adx_cfg = self._get("gates", "adx")
-        if is_fhm:
+        adx_gate_enabled = adx_cfg["enabled"]
+        if not adx_gate_enabled:
+            reasons.append(f"adx_gate_disabled")
+        elif is_fhm:
             reasons.append(f"fhm_adx_bypass:{adx:.1f}:uses_rvol_instead")
         else:
             base_min_adx = adx_cfg["min_value"]  # 20 for non-ORB
@@ -635,8 +650,11 @@ class BreakoutPipeline(BasePipeline):
         # FHM BYPASS: FHM uses RVOL-based momentum instead of RSI
         # ORB uses relaxed thresholds - RSI erratic at market open
         rsi_cfg = self.cfg["rsi_penalty"]
+        rsi_gate_enabled = rsi_cfg["enabled"]
         rsi = float(df5m["rsi"].iloc[-1]) if "rsi" in df5m.columns else 50.0
-        if is_fhm:
+        if not rsi_gate_enabled:
+            reasons.append(f"rsi_gate_disabled")
+        elif is_fhm:
             # FHM validates momentum via RVOL in screening, RSI check not applicable
             reasons.append(f"fhm_rsi_bypass:{rsi:.0f}:uses_rvol_instead")
         elif is_short:

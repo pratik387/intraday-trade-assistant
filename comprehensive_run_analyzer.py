@@ -216,6 +216,10 @@ class ComprehensiveRunAnalyzer:
                                 try:
                                     trade_data = json.loads(line)
                                     if trade_data.get('stage') == 'EXIT' and 'pnl' in trade_data:
+                                        # Extract fees from trade data (pre-calculated in analytics.jsonl)
+                                        fees_data = trade_data.get('fees', {})
+                                        total_fees = fees_data.get('total_fees', 0) if isinstance(fees_data, dict) else 0
+
                                         # Convert to DataFrame-compatible format
                                         executed_trade = {
                                             'session': session_name,
@@ -226,10 +230,13 @@ class ComprehensiveRunAnalyzer:
                                             'bias': trade_data.get('bias', ''),
                                             'strategy': trade_data.get('strategy', ''),
                                             'entry_reference': trade_data.get('entry_reference', 0),
-                                            'entry_price': trade_data.get('entry_price', 0),
+                                            # Use actual_entry_price if available, fallback to entry_price
+                                            'entry_price': trade_data.get('actual_entry_price', trade_data.get('entry_price', 0)),
                                             'qty': trade_data.get('qty', 0),
                                             'exit_price': trade_data.get('exit_price', 0),
                                             'realized_pnl': trade_data.get('pnl', 0),
+                                            'net_pnl': trade_data.get('net_pnl', 0),
+                                            'total_fees': total_fees,
                                             'exit_reason': trade_data.get('reason', ''),
                                             'exit_ts': trade_data.get('timestamp', ''),
                                             'elapsed_from_decision': trade_data.get('elapsed_from_decision', 0),
@@ -1929,9 +1936,15 @@ class ComprehensiveRunAnalyzer:
             gross_pnl = pnls.sum()
             total_trades = len(self.combined_trades)
 
-            # Estimate total charges from trade data
+            # Calculate total charges from trade data
             total_charges = 0
-            if 'entry_price' in self.combined_trades.columns and 'exit_price' in self.combined_trades.columns:
+
+            # Priority 1: Use pre-calculated fees from analytics.jsonl
+            if 'total_fees' in self.combined_trades.columns:
+                total_charges = self.combined_trades['total_fees'].sum()
+
+            # Priority 2: Calculate from entry/exit prices if fees not available
+            if total_charges == 0 and 'entry_price' in self.combined_trades.columns and 'exit_price' in self.combined_trades.columns:
                 for _, trade in self.combined_trades.iterrows():
                     entry_price = trade.get('entry_price', 0)
                     exit_price = trade.get('exit_price', 0)
@@ -1939,8 +1952,10 @@ class ComprehensiveRunAnalyzer:
                     if entry_price > 0 and exit_price > 0 and qty > 0:
                         charges = estimate_trade_charges(entry_price, exit_price, qty)
                         total_charges += charges['total_charges']
-            else:
-                # Fallback: estimate ~Rs 140 per trade (typical for NSE equity)
+
+            # Priority 3: Fallback estimate if no data available
+            if total_charges == 0:
+                # Estimate ~Rs 140 per trade (typical for NSE equity)
                 total_charges = total_trades * 140
 
             # Calculate FINAL NET P&L (MIS + charges + tax)

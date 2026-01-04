@@ -2,6 +2,83 @@
     "_comment": "BASE Pipeline Configuration - Universal settings applied to ALL categories",
     "_description": "Risk management, sizing, and quality filter settings shared across all pipelines",
 
+    "hard_blocks": {
+        "_comment": "Regime-based hard blocks - setups that are blocked in specific market regimes",
+        "_description": "These blocks prevent setups from trading in regimes where they historically underperform",
+        "enabled": true,
+        "_analysis_date": "2026-01-02",
+        "_analysis_source": "1-year backtest (45,209 trades, 231 sessions)",
+        "squeeze": {
+            "_comment": "SQUEEZE REGIME ANALYSIS (1-year backtest): Avoid trading during consolidation",
+            "blocked_setups": [
+                "first_hour_momentum_long",
+                "premium_zone_short"
+            ],
+            "_evidence": {
+                "first_hour_momentum_long": "40 trades, Rs 119 total = Rs 3/trade avg (worthless)",
+                "premium_zone_short": "Not designed for squeeze regime"
+            }
+        },
+        "chop": {
+            "_comment": "CHOP regime blocks - losing setups in chop",
+            "blocked_setups": []
+        },
+        "trend_up": {
+            "_comment": "TREND_UP regime blocks - counter-trend shorts struggle",
+            "blocked_setups": []
+        },
+        "trend_down": {
+            "_comment": "TREND_DOWN regime blocks - counter-trend longs struggle",
+            "blocked_setups": []
+        }
+    },
+
+    "global_setup_blocks": {
+        "_comment": "DEEP DIVE ANALYSIS (1-year backtest): These setups are blocked entirely across all regimes - NO profitable combinations found",
+        "_analysis_date": "2026-01-02",
+        "_analysis_source": "Deep dive analysis (72,042 trades, 231 sessions) - ALL parameters analyzed: cap, regime, hour, 2D/3D combinations",
+        "_note": "Some setups have profitable combinations and are NOT blocked here - they have pipeline-specific hour+cap+regime filters",
+        "enabled": true,
+        "blocked_setups": [
+            "range_bounce_long",
+            "momentum_breakout_long",
+            "momentum_breakout_short",
+            "vwap_reclaim_long",
+            "vwap_mean_reversion_long",
+            "discount_zone_long",
+            "first_hour_momentum_long",
+            "breakout_long",
+            "flag_continuation_long",
+            "change_of_character_long",
+            "change_of_character_short",
+            "trend_pullback_long"
+        ],
+        "_evidence": {
+            "range_bounce_long": "-Rs 754k total | WORST SETUP | NO winning hour combinations",
+            "momentum_breakout_long": "-Rs 226k total | ONLY mid_cap+chop+h12 wins (Rs 439) - not enough volume",
+            "momentum_breakout_short": "-Rs 49k total | No winning combinations found",
+            "vwap_reclaim_long": "-Rs 60k total | Only large_cap+h12 wins (Rs 216) - not enough volume",
+            "vwap_mean_reversion_long": "-Rs 58k total | Only squeeze+h10 wins (Rs 289) - not enough volume",
+            "discount_zone_long": "-Rs 202k total | Only trend_up+h12 wins (Rs 210) - not reliable",
+            "first_hour_momentum_long": "-Rs 44k total | Only small_cap+h11 wins (Rs 319) - insufficient volume",
+            "breakout_long": "-Rs 75k total | NO winning hour combinations",
+            "flag_continuation_long": "-Rs 1k total | Only large_cap profitable but low volume",
+            "change_of_character_long": "-Rs 7k total | Only squeeze+h11 wins (Rs 479) - very low volume",
+            "change_of_character_short": "-Rs 2k total | Only h15 positive but unreliable",
+            "trend_pullback_long": "-Rs 65k total | NO winning combinations"
+        },
+        "_unblocked_with_hour_filters": {
+            "support_bounce_long": "micro_cap + h11 → Rs 561 avg, 76.8% WR (in level_config.json)",
+            "trend_continuation_long": "large_cap + squeeze + h14/h15 → Rs 295-438 avg (in momentum_config.json)",
+            "volume_spike_reversal_long": "micro_cap + h12 → Rs 541 avg, 75% WR (in reversion_config.json)",
+            "fair_value_gap_long": "small_cap + trend_up + h13 → Rs 577 avg, 93.8% WR (in reversion_config.json)",
+            "squeeze_release_long": "mid_cap + h15 → Rs 222-243 avg (in momentum_config.json)",
+            "orb_pullback_long": "all caps + h9/h10/h11 → Rs 490-539 avg, 90%+ WR (in level_config.json)",
+            "orb_breakout_long": "mid_cap + h9/h10 → Rs 200-300 avg, 94%+ WR (in breakout_config.json)",
+            "failure_fade_long": "micro_cap + h13 → Rs 514 avg, 81.8% WR (in reversion_config.json)"
+        }
+    },
+
     "range_compression": {
         "_comment": "From trade_decision_gate.py - Reject during volatility expansion",
         "_evidence": "Volatility expansion invalidates support/resistance levels",
@@ -12,16 +89,35 @@
     },
 
     "cap_strategy_blocking": {
-        "_comment": "From trade_decision_gate.py - Block certain setups for certain market cap segments",
-        "_evidence": "DATA-DRIVEN (Dec 2024): FHM LONG only profitable in mid_cap (+1,342 Rs). large_cap=-8,934 Rs, small_cap=-18,011 Rs, micro_cap=-4,260 Rs",
+        "_comment": "DATA-DRIVEN (1-year backtest): Block setups for specific cap segments",
+        "_analysis_date": "2026-01-02",
+        "_analysis_source": "1-year backtest (45,209 trades, 231 sessions)",
         "enabled": true,
         "blocked_setups": {
-            "micro_cap": ["momentum_breakout", "squeeze_release"],
+            "micro_cap": [],
             "small_cap": [],
-            "mid_cap": [],
-            "large_cap": ["mean_reversion", "rsi_divergence"]
+            "mid_cap": [
+                "volume_spike_reversal_short",
+                "failure_fade_short"
+            ],
+            "large_cap": [
+                "range_bounce_short",
+                "resistance_bounce_short",
+                "failure_fade_short",
+                "volume_spike_reversal_short",
+                "vwap_lose_short"
+            ]
         },
-        "_note": "DISABLED FHM_LONG CAP BLOCKING (Dec 2024): Testing research-based filters (multi-bar confirmation + volume continuation). If FHM still negative after backtest, RE-ENABLE first_hour_momentum_long blocking for micro_cap, small_cap, large_cap."
+        "_evidence": {
+            "mid_cap_volume_spike_reversal_short": "61 trades, -Rs 209 avg (BLOCK)",
+            "mid_cap_failure_fade_short": "276 trades, Rs 74 avg (below target)",
+            "large_cap_range_bounce_short": "0 trades in micro_cap bucket (no data)",
+            "large_cap_resistance_bounce_short": "1,923 trades, Rs 1 avg (worthless)",
+            "large_cap_failure_fade_short": "245 trades, Rs 19 avg (worthless)",
+            "large_cap_volume_spike_reversal_short": "25 trades, -Rs 347 avg (BLOCK)",
+            "large_cap_vwap_lose_short": "145 trades, Rs 53 avg (below target)"
+        },
+        "_note": "MICRO_CAP is the BEST performer for SHORT reversions (Rs 387-559 avg). SMALL_CAP is second best (Rs 132-243 avg). MID/LARGE_CAP shorts are blocked due to poor performance."
     },
 
     "opening_bell_override": {
@@ -90,7 +186,7 @@
 
     "quality_filters": {
         "_comment": "From planner_internal.py lines 1358-1451 - Professional quality enforcement",
-        "enabled": true,
+        "enabled": false,
 
         "min_structural_rr": 1.2,
         "strategy_structural_rr_overrides": {
@@ -213,7 +309,7 @@
         "blacklist": {
             "_comment": "From ranker.py lines 513-517 - Penalty for historically poor setups",
             "_description": "Blacklisted setups get -999 penalty (effectively blocking them) but still get detected so other detectors can work",
-            "enabled": true,
+            "enabled": false,
             "penalty": -999,
             "strategies": [
                 "range_rejection_long",
@@ -235,10 +331,10 @@
 
     "rsi_dead_zone": {
         "_comment": "Data-driven filter: RSI 35-50 causes 43% of ALL hard_sl losses for LONG trades",
-        "enabled": true,
+        "enabled": false,
         "long_min": 35,
         "long_max": 50,
-        "_evidence": "101 hard_sl trades in RSI 40-50 = -54,687 loss (43% of ALL hard_sl loss)"
+        "_evidence": "DISABLED for A/B baseline"
     },
 
     "sl_atr_mult": 1.6,
