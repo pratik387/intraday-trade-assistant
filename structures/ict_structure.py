@@ -1016,13 +1016,6 @@ class ICTStructure(BaseStructure):
             swing_highs = self._find_swing_points_with_significance(df, 'high')
             swing_lows = self._find_swing_points_with_significance(df, 'low')
 
-            # BOS DIAGNOSTIC: Log swing point discovery (throttled to first 10 symbols)
-            if not hasattr(self, '_bos_diag_count'):
-                self._bos_diag_count = 0
-            if self._bos_diag_count < 10:
-                self._bos_diag_count += 1
-                logger.info(f"BOS_DIAG | {context.symbol} | bars={len(df)} | swing_highs={len(swing_highs)} swing_lows={len(swing_lows)} | price={current_price:.2f}")
-
             # Check for bullish BOS (break above recent swing high)
             if swing_highs:
                 # PRO ICT: Use most significant swing high, not just max of last 3
@@ -1032,18 +1025,11 @@ class ICTStructure(BaseStructure):
                 break_pct = break_distance / recent_high
 
                 if break_pct >= self.bos_min_break_pct:
-                    # BOS DIAGNOSTIC: Log candidate that passes break threshold
-                    if self._bos_diag_count <= 10:
-                        logger.info(f"BOS_LONG_CANDIDATE | {context.symbol} | break_pct={break_pct*100:.2f}% >= {self.bos_min_break_pct*100:.2f}% | recent_high={recent_high:.2f}")
-
                     # PRO ICT: Validate HTF structure pattern (HH/HL)
                     if self.bos_require_htf_structure:
                         htf_structure_valid = self._validate_htf_structure_pattern(swing_highs, swing_lows, 'long')
                         if not htf_structure_valid:
-                            if self._bos_diag_count <= 10:
-                                # Show swing high prices to understand why HH pattern failed
-                                high_prices = [sh['price'] for sh in swing_highs[-3:]] if len(swing_highs) >= 3 else [sh['price'] for sh in swing_highs]
-                                logger.info(f"BOS_LONG_REJECT | {context.symbol} | no HH pattern | swing_highs={high_prices}")
+                            pass  # No HH pattern - skip
                         else:
                             htf_trend_valid = True
                     else:
@@ -1063,13 +1049,11 @@ class ICTStructure(BaseStructure):
                             volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
                         if not volume_confirmed:
-                            if self._bos_diag_count <= 10:
-                                logger.info(f"BOS_LONG_REJECT | {context.symbol} | vol_z={recent_vol_z:.2f} < 1.5")
+                            pass  # Volume not confirmed - skip
                         else:
                             # Validate premium/discount zone
                             if not self._validate_premium_discount_zone('long', current_price, context):
-                                if self._bos_diag_count <= 10:
-                                    logger.info(f"BOS_LONG_REJECT | {context.symbol} | not in discount zone")
+                                pass  # Not in discount zone - skip
                             else:
                                 # PRO ICT: Calculate retest zone for entry
                                 zone_half_width = recent_high * self.bos_retest_zone_pct
@@ -1108,18 +1092,11 @@ class ICTStructure(BaseStructure):
                 break_pct = break_distance / recent_low
 
                 if break_pct >= self.bos_min_break_pct:
-                    # BOS DIAGNOSTIC: Log candidate that passes break threshold
-                    if self._bos_diag_count <= 10:
-                        logger.info(f"BOS_SHORT_CANDIDATE | {context.symbol} | break_pct={break_pct*100:.2f}% >= {self.bos_min_break_pct*100:.2f}% | recent_low={recent_low:.2f}")
-
                     # PRO ICT: Validate HTF structure pattern (LL/LH)
                     if self.bos_require_htf_structure:
                         htf_structure_valid = self._validate_htf_structure_pattern(swing_highs, swing_lows, 'short')
                         if not htf_structure_valid:
-                            if self._bos_diag_count <= 10:
-                                # Show swing low prices to understand why LL pattern failed
-                                low_prices = [sl['price'] for sl in swing_lows[-3:]] if len(swing_lows) >= 3 else [sl['price'] for sl in swing_lows]
-                                logger.info(f"BOS_SHORT_REJECT | {context.symbol} | no LL pattern | swing_lows={low_prices}")
+                            pass  # No LL pattern - skip
                         else:
                             htf_trend_valid = True
                     else:
@@ -1139,13 +1116,11 @@ class ICTStructure(BaseStructure):
                             volume_confirmed = (pd.notna(recent_vol_z) and recent_vol_z >= 1.5)
 
                         if not volume_confirmed:
-                            if self._bos_diag_count <= 10:
-                                logger.info(f"BOS_SHORT_REJECT | {context.symbol} | vol_z={recent_vol_z:.2f} < 1.5")
+                            pass  # Volume not confirmed - skip
                         else:
                             # Validate premium/discount zone
                             if not self._validate_premium_discount_zone('short', current_price, context):
-                                if self._bos_diag_count <= 10:
-                                    logger.info(f"BOS_SHORT_REJECT | {context.symbol} | not in premium zone")
+                                pass  # Not in premium zone - skip
                             else:
                                 # PRO ICT: Calculate retest zone for entry
                                 zone_half_width = recent_low * self.bos_retest_zone_pct

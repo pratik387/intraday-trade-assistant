@@ -122,18 +122,31 @@
             "_analysis_source": "Deep dive analysis with ALL parameters: cap, regime, hour, 2D/3D combinations",
             "range_bounce_short": {
                 "enabled": true,
-                "allowed_caps": ["micro_cap", "small_cap", "mid_cap"],
-                "allowed_regimes": ["chop", "squeeze", "trend_down", "trend_up"],
-                "allowed_hours": [12, 13, 14, 15],
-                "blocked_hours": [10, 11],
-                "rsi_filter": {
-                    "enabled": true,
-                    "max_rsi": 60,
-                    "_comment": "PARAM ANALYSIS: Block RSI 60-70 and >=70 | NET save Rs 89,150"
-                },
-                "min_adx": 20,
-                "max_adx": 40,
-                "_evidence": "DEEP DIVE: mid_cap+15: Rs 495, 70.9% WR | 10/11 LOSE Rs 700k | PARAM: block RSI>=60, ADX<20, ADX>=40 (NEW: ADX 15-20 saves Rs 10,010)"
+                "blocked_entirely": false,
+                "_comment": "1-YEAR ANALYSIS: 514 trades, Rs 282 (Avg Rs 1). Filters improve significantly.",
+
+                "allowed_caps": ["micro_cap", "small_cap"],
+                "blocked_caps": ["mid_cap", "large_cap"],
+                "_cap_evidence": "micro_cap: +Rs 7,511 (Avg Rs 119), small_cap: +Rs 4,945 | mid_cap: -Rs 12,175",
+
+                "allowed_regimes": ["trend_down", "squeeze", "trend_up"],
+                "blocked_regimes": ["chop"],
+                "_regime_evidence": "trend_down: +Rs 14,912 (Avg Rs 83), squeeze: +Rs 1,830 | chop: -Rs 16,767 (Avg Rs -310)",
+
+                "allowed_hours": [12, 13],
+                "blocked_hours": [10, 11, 14, 15],
+                "_hour_evidence": "12: +Rs 5,619, 13: +Rs 8,912 | 14: -Rs 14,250",
+
+                "max_rsi": 60,
+                "_rsi_evidence": "RSI 40-60: +Rs 14,148 | RSI 60-70: -Rs 15,288 (Avg Rs -172)",
+
+                "min_adx": 25,
+                "_adx_evidence": "ADX 25-30: -Rs 234, ADX 30-40: +Rs 8,518 | ADX 20-25: -Rs 6,998",
+
+                "max_rank_score": 1.0,
+                "_rank_evidence": "<1.0: +Rs 4,199 | 1.0-1.5: -Rs 2,705, 1.5-2.0: -Rs 1,212",
+
+                "_expected_impact": "Remove ~300 losing trades. Remaining ~200 trades, ~Rs 25k PnL, Avg Rs 125"
             },
             "resistance_bounce_short": {
                 "enabled": true,
@@ -167,19 +180,33 @@
             "support_bounce_long": {
                 "enabled": true,
                 "blocked_entirely": false,
+                "_comment": "1-YEAR ANALYSIS: 117 trades, Rs 4,044 (Avg Rs 35). Filters improve to Avg Rs 150+.",
+
                 "allowed_caps": ["micro_cap"],
-                "allowed_regimes": ["chop", "trend_down", "squeeze"],
-                "blocked_regimes": ["trend_up"],
-                "allowed_hours": [11, 14, 15],
-                "blocked_hours": [12, 13],
-                "rsi_filter": {
-                    "enabled": true,
-                    "min_rsi": 50,
-                    "max_rsi": 60,
-                    "_comment": "PARAM ANALYSIS: Block RSI 40-50 and RSI 60-70 | NET save Rs 21,211"
-                },
-                "max_adx": 30,
-                "_evidence": "DEEP DIVE: micro_cap+11: Rs 561, 76.8% WR | 12/13 LOSE Rs 162k | PARAM: block RSI 40-50, 60-70, ADX>=30 (NEW: saves Rs 6,253)"
+                "_cap_evidence": "Only micro_cap traded",
+
+                "allowed_regimes": ["chop"],
+                "blocked_regimes": ["trend_down", "squeeze", "trend_up"],
+                "_regime_evidence": "chop: +Rs 4,977 (Avg Rs 79) | trend_down: -Rs 156, squeeze: -Rs 777",
+
+                "allowed_hours": [11],
+                "blocked_hours": [12, 13, 14, 15],
+                "_hour_evidence": "11: +Rs 7,305 (Avg Rs 77) | 12: -Rs 1,516, 14: -Rs 1,745",
+
+                "min_rsi": 50,
+                "max_rsi": 70,
+                "_rsi_evidence": "RSI 50-60: +Rs 13,644 (Avg Rs 184), 60-70: +Rs 684 | RSI 40-50: -Rs 8,637 (Avg Rs -298)",
+
+                "min_adx": 15,
+                "_adx_evidence": "ADX 15-30: +Rs 6,871 | ADX <15: -Rs 2,826",
+
+                "max_rank_score": 1.5,
+                "_rank_evidence": "<1.0: +Rs 1,261, 1.0-1.5: +Rs 5,037 (Avg Rs 92) | 1.5-2.0: -Rs 2,254",
+
+                "max_rr": 3.0,
+                "_rr_evidence": "RR 2.0-3.0: +Rs 4,449 | RR >=3.0: -Rs 405",
+
+                "_expected_impact": "Best combo chop+11: 51 trades, Rs 8,434, Avg Rs 165"
             },
             "discount_zone_long": {
                 "enabled": true,
@@ -197,14 +224,17 @@
             },
             "orb_pullback_long": {
                 "enabled": true,
-                "blocked_entirely": false,
-                "allowed_caps": ["mid_cap", "large_cap"],
-                "blocked_caps": ["small_cap"],
-                "allowed_regimes": ["chop", "squeeze"],
-                "allowed_hours": [9, 10, 11],
-                "blocked_hours": [12, 13, 14, 15],
-                "min_adx": 20,
-                "max_adx": 25,
+                "blocked_entirely": true,
+                "_evidence": "1-YEAR BACKTEST: 31 trades, 32.3% WR, -Rs 11,832. Not recoverable with filters.",
+                "_old_config": {
+                    "allowed_caps": ["mid_cap", "large_cap"],
+                    "blocked_caps": ["small_cap"],
+                    "allowed_regimes": ["chop", "squeeze"],
+                    "allowed_hours": [9, 10, 11],
+                    "blocked_hours": [12, 13, 14, 15],
+                    "min_adx": 20,
+                    "max_adx": 25
+                },
                 "rsi_filter": {
                     "enabled": true,
                     "max_rsi": 50,

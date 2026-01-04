@@ -226,13 +226,26 @@
             "orb_breakout_long": {
                 "enabled": true,
                 "blocked_entirely": false,
-                "allowed_caps": ["mid_cap", "large_cap", "small_cap"],
+                "_comment": "1-YEAR ANALYSIS: 159 trades, Rs 1,625 (67.3% WR). Filters improve profitability.",
+
+                "allowed_caps": ["small_cap", "large_cap"],
+                "blocked_caps": ["micro_cap", "mid_cap"],
+                "_cap_evidence": "small_cap: +Rs 956 (67.0% WR), large_cap: +Rs 700 | mid_cap: -Rs 30",
+
                 "allowed_regimes": ["chop", "trend_down"],
-                "allowed_hours": [9, 10, 11],
-                "blocked_hours": [12, 13, 14, 15],
-                "max_rsi": 60,
-                "min_rr": 1.5,
-                "_evidence": "DEEP DIVE: 9: Rs 246, 94.7% WR | 10: Rs 200, 92.5% WR | 15 LOSES Rs 234k | PARAM: block RSI>=60 (NEW: tightened from 70, saves Rs 2,948)"
+                "_regime_evidence": "chop: +Rs 1,004 (68.9% WR), trend_down: +Rs 621 (64.2% WR)",
+
+                "allowed_hours": [9, 10],
+                "blocked_hours": [11, 12, 13, 14, 15],
+                "_hour_evidence": "9: +Rs 1,589 (69.1% WR), 10: +Rs 36 (65.4% WR)",
+
+                "min_adx": 25,
+                "_adx_evidence": "ADX 25+: +Rs 4,167 | ADX 15-25: -Rs 2,542",
+
+                "min_rank_score": 2.0,
+                "_rank_evidence": ">=2.0: +Rs 2,778 (127 trades, 67.7% WR) | <2.0: -Rs 1,153",
+
+                "_expected_impact": "Remove ~27 losing trades, remaining ~132 trades with +Rs 4k-6k"
             },
             "orb_breakout_short": {
                 "enabled": false,
@@ -245,11 +258,39 @@
             "orb_breakdown_short": {
                 "enabled": true,
                 "blocked_entirely": false,
+                "_comment": "1-YEAR DEEP ANALYSIS: 1645 trades, Rs 97,879, Avg Rs 60. OPTIMIZED: 240 trades, Avg Rs 149 (+148%)",
+
                 "allowed_caps": ["micro_cap"],
-                "allowed_regimes": ["trend_down", "squeeze", "chop"],
-                "allowed_hours": [9, 10, 11, 12, 13, 14],
-                "blocked_hours": [15],
-                "_evidence": "DEEP DIVE: micro_cap+11: Rs 221, 86.1% WR | 15 LOSES Rs 176k | Overall only Rs 20 avg but micro_cap+morning is profitable"
+                "_cap_evidence": "Only micro_cap traded in backtest",
+
+                "allowed_regimes": ["trend_down"],
+                "blocked_regimes": ["chop", "squeeze", "trend_up"],
+                "_regime_evidence": "trend_down: Avg Rs 92 (570 trades, 64% WR) | chop: Avg Rs 42 (1075 trades) - BLOCKED",
+
+                "min_rank_score": 1.0,
+                "max_rank_score": 2.0,
+                "_rank_evidence": "rank 1.0-2.0: +Rs 35,789 (240 trades, Avg Rs 149, 68.3% WR) | rank>=2.0: Avg Rs 43 | rank<1.0: Avg Rs 77 but low volume",
+
+                "vol_ratio_filter": {
+                    "enabled": true,
+                    "min_vol": 1.0,
+                    "max_vol": 2.0,
+                    "_comment": "vol 1.0-2.0: +Rs 67,641 (803 trades, Avg Rs 84) | vol>=3.0: Avg Rs 22 - BLOCKED"
+                },
+
+                "adx_filter": {
+                    "enabled": true,
+                    "max_adx": 25,
+                    "_comment": "adx<25: +Rs 30,238 (215 trades in trend_down, Avg Rs 141, 68.8% WR) | adx 25-30: Avg Rs 15"
+                },
+
+                "_alternative_filters": {
+                    "_option_A": "trend_down + adx<25 + vol 1.0-2.0: 121 trades, Avg Rs 156, 72.7% WR - HIGHEST AVG but fewer trades",
+                    "_option_B": "trend_down + rank 1.0-2.0: 240 trades, Avg Rs 149, 68.3% WR - SELECTED (balance of trades + avg)",
+                    "_option_C": "trend_down + hour 9 + vol 1.0-1.5: 126 trades, Avg Rs 134, 71.4% WR"
+                },
+
+                "_expected_impact": "From 1645 trades Avg Rs 60 -> ~120-240 trades Avg Rs 140-156 (+133-160% improvement)"
             },
             "change_of_character_long": {
                 "enabled": true,
@@ -263,13 +304,79 @@
             },
             "break_of_structure_long": {
                 "enabled": true,
-                "_comment": "PRO ICT 2025: Detection logic overhauled - retest entry, HH/HL structure validation. Filters reset for fresh backtest.",
-                "_old_filters": "blocked_caps: micro_cap/small_cap, blocked_regimes: trend_down/trend_up, max_adx: 40, max_rr: 3.0"
+                "blocked_entirely": false,
+                "_comment": "1-YEAR DEEP ANALYSIS: 667 trades, gross +Rs 12,966, net -Rs 24,425. Filters restore profitability.",
+
+                "allowed_regimes": ["trend_up", "squeeze"],
+                "blocked_regimes": ["trend_down", "chop"],
+                "_regime_evidence": "trend_up: +Rs 11,886, squeeze: +Rs 17,567 | trend_down: -Rs 11,327, chop: -Rs 5,160",
+
+                "allowed_caps": ["mid_cap", "large_cap"],
+                "blocked_caps": ["micro_cap", "small_cap"],
+                "_cap_evidence": "mid_cap: +Rs 17,737, large_cap: +Rs 28,471 | micro_cap: -Rs 16,445, small_cap: -Rs 16,797",
+
+                "allowed_hours": [11, 12, 14],
+                "blocked_hours": [13],
+                "_hour_evidence": "14: +Rs 10,779 (65% WR) | 13: -Rs 677",
+
+                "adx_filter": {
+                    "enabled": true,
+                    "min_adx": 20,
+                    "max_adx": 40,
+                    "_comment": "ADX 20-40 optimal | <15: -Rs 2,184 (0% WR), 15-20: -Rs 2,183, >=40: -Rs 13,909 (38.7% WR)"
+                },
+
+                "vol_ratio_filter": {
+                    "enabled": true,
+                    "min_vol": 1.5,
+                    "max_vol": 5.0,
+                    "_comment": "Vol 2.0-3.0: +Rs 27,643 (61.3% WR) | >=5.0: -Rs 21,690 (45.2% WR)"
+                },
+
+                "max_rank_score": 2.0,
+                "_rank_evidence": "1.0-1.5: +Rs 13,956 (60.6% WR), 1.5-2.0: +Rs 10,874 | >=2.0: -Rs 11,955 (48% WR)",
+
+                "_expected_impact": "Regime filter saves Rs 16,486 | Cap filter saves Rs 33,242 | Remaining ~150-200 trades, projected +Rs 40k-50k"
             },
             "break_of_structure_short": {
                 "enabled": true,
-                "_comment": "PRO ICT 2025: Detection logic overhauled - retest entry, HH/HL structure validation. Filters reset for fresh backtest.",
-                "_old_filters": "blocked_caps: micro_cap, blocked_regimes: trend_up, allowed_hours: 13/15"
+                "blocked_entirely": false,
+                "_comment": "1-YEAR DEEP ANALYSIS: 407 trades, gross -Rs 15,241, net -Rs 61,171. ONLY trend_down profitable.",
+
+                "allowed_regimes": ["trend_down"],
+                "blocked_regimes": ["trend_up", "chop", "squeeze"],
+                "_regime_evidence": "trend_down: +Rs 8,273 (57.3% WR) | trend_up: -Rs 11,956, chop: -Rs 5,707, squeeze: -Rs 5,851",
+
+                "allowed_caps": ["small_cap", "mid_cap"],
+                "blocked_caps": ["micro_cap", "large_cap"],
+                "_cap_evidence": "small_cap: +Rs 5,573, mid_cap: +Rs 3,111 | micro_cap: -Rs 11,462 (23.9% WR), large_cap: -Rs 12,463",
+
+                "allowed_hours": [11, 13],
+                "blocked_hours": [12, 14],
+                "_hour_evidence": "13: +Rs 1,179 (55.3% WR) | 12: -Rs 3,956, 14: -Rs 8,102 (37% WR)",
+
+                "rsi_filter": {
+                    "enabled": true,
+                    "max_rsi": 30,
+                    "_comment": "ONLY RSI <30 profitable: +Rs 4,863 | RSI 30-40: -Rs 8,102, RSI 40-50: -Rs 10,958"
+                },
+
+                "adx_filter": {
+                    "enabled": true,
+                    "min_adx": 30,
+                    "_comment": "ADX 30-40: +Rs 2,235 (59.8% WR), >=40: +Rs 3,002 | ADX 20-25: -Rs 18,754 (WORST)"
+                },
+
+                "min_rr": 1.5,
+                "_rr_evidence": "RR <0.5: -Rs 16,365 | RR 1.5-2.0: +Rs 130 (70% WR), >=3.0: +Rs 4,416",
+
+                "max_rank": 2.0,
+                "_rank_evidence": "1.0-1.5: +Rs 1,306, 1.5-2.0: +Rs 3,682 | >=2.0: -Rs 16,307",
+
+                "block_quality_poor": true,
+                "_quality_evidence": "excellent: +Rs 3,465, good: +Rs 660 | poor: -Rs 18,398 (50% WR)",
+
+                "_expected_impact": "Regime filter saves Rs 23,514 | Remaining ~50-80 trades, projected +Rs 5k-10k"
             },
             "squeeze_release_long": {
                 "enabled": true,

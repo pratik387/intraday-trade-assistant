@@ -224,7 +224,8 @@ class ReversionPipeline(BasePipeline):
         strength: float,
         adx: float,
         vol_mult: float,
-        regime_diagnostics: Optional[Dict[str, Any]] = None
+        regime_diagnostics: Optional[Dict[str, Any]] = None,
+        quality_status: Optional[str] = None
     ) -> GateResult:
         """
         Reversion-specific gate validations - HARD GATES ONLY, NO PENALTIES.
@@ -287,7 +288,9 @@ class ReversionPipeline(BasePipeline):
             volume=bar5_volume,
             current_hour=current_hour,
             cap_segment=cap_segment,
-            structural_rr=strength
+            structural_rr=strength,
+            quality_status=quality_status,
+            vol_ratio=vol_mult
         )
         reasons.extend(setup_reasons)
         if not setup_passed:

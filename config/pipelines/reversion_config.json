@@ -232,17 +232,34 @@
             "liquidity_sweep_long": {
                 "enabled": true,
                 "blocked_entirely": false,
-                "allowed_caps": ["large_cap", "small_cap"],
-                "allowed_regimes": ["chop", "trend_down"],
-                "blocked_regimes": ["squeeze"],
-                "allowed_hours": [11, 12, 14, 15],
-                "blocked_hours": [13],
-                "rsi_filter": {
+                "_comment": "1-YEAR ANALYSIS: 72 trades, Rs 337. Major filters applied.",
+
+                "allowed_caps": ["large_cap"],
+                "blocked_caps": ["micro_cap", "small_cap", "mid_cap"],
+                "_cap_evidence": "large_cap: +Rs 684 (27 trades, 59.3% WR) | small_cap: -Rs 348",
+
+                "allowed_regimes": ["trend_down"],
+                "blocked_regimes": ["chop", "squeeze", "trend_up"],
+                "_regime_evidence": "trend_down: +Rs 652 (47.8% WR) | chop: -Rs 315",
+
+                "allowed_hours": [11, 12],
+                "blocked_hours": [13, 14, 15],
+                "_hour_evidence": "11: +Rs 1,627 (61.1% WR), 12: +Rs 1,135 (71.4% WR) | 14: -Rs 2,425 (36.4% WR)",
+
+                "max_adx": 25,
+                "_adx_evidence": "ADX 15-20: +Rs 6,162 (66.7% WR) | ADX 25-30: -Rs 3,547, >=40: -Rs 2,887",
+
+                "min_rank_score": 1.0,
+                "max_rank_score": 2.0,
+                "_rank_evidence": "<1.0: -Rs 6,599 (39.4% WR) | 1.0-2.0: +Rs 7,939 (78.9% WR)",
+
+                "vol_ratio_filter": {
                     "enabled": true,
-                    "min_rsi": 50,
-                    "_comment": "PARAM ANALYSIS: Block RSI 40-50 | NET save Rs 4,842"
+                    "min_vol": 1.0,
+                    "max_vol": 2.0,
+                    "_comment": "1.0-2.0: +Rs 4,355 | 2.0-3.0: -Rs 5,584 (0% WR)"
                 },
-                "_evidence": "DEEP DIVE: large_cap+chop: Rs 313, 72.7% WR | small_cap+11: Rs 386, 80% WR | 13 LOSES Rs 3k | PARAM: block RSI 40-50"
+                "_expected_impact": "Remove ~45 losing trades, remaining ~27 trades with +Rs 10k-15k"
             },
             "liquidity_sweep_short": {
                 "enabled": true,

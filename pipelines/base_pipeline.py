@@ -440,7 +440,8 @@ class BasePipeline(ABC):
         strength: float,
         adx: float,
         vol_mult: float,
-        regime_diagnostics: Optional[Dict[str, Any]] = None
+        regime_diagnostics: Optional[Dict[str, Any]] = None,
+        quality_status: Optional[str] = None
     ) -> GateResult:
         """Apply category-specific gate validations."""
         pass
@@ -570,7 +571,9 @@ class BasePipeline(ABC):
         current_hour: int,
         cap_segment: str,
         rank_score: Optional[float] = None,
-        structural_rr: Optional[float] = None
+        structural_rr: Optional[float] = None,
+        quality_status: Optional[str] = None,
+        vol_ratio: Optional[float] = None
     ) -> Tuple[bool, List[str], Dict[str, Any]]:
         """
         Apply unified setup-specific filters from config.
@@ -590,6 +593,8 @@ class BasePipeline(ABC):
             cap_segment: Market cap segment (large_cap, mid_cap, small_cap, micro_cap)
             rank_score: Rank score (only for post-ranking filters, None otherwise)
             structural_rr: Structural risk-reward ratio (for min_rr/max_rr filters)
+            quality_status: Quality status (excellent, good, fair, poor) for quality blocking
+            vol_ratio: Volume ratio for vol_ratio_filter
 
         Returns:
             Tuple of (passed, reasons, modifiers):
@@ -673,6 +678,20 @@ class BasePipeline(ABC):
             logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: ADX {adx:.1f} >= max_adx {max_adx}")
             return False, reasons, modifiers
 
+        # 5b. NESTED ADX_FILTER (for setups with adx_filter: {enabled, min_adx, max_adx})
+        adx_filter = filter_cfg.get("adx_filter")
+        if adx_filter and adx_filter.get("enabled"):
+            adx_min = adx_filter.get("min_adx")
+            adx_max = adx_filter.get("max_adx")
+            if adx_min is not None and adx < adx_min:
+                reasons.append(f"adx_filter_below:{setup_lower}_adx{adx:.0f}<{adx_min}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: ADX {adx:.1f} < adx_filter.min_adx {adx_min}")
+                return False, reasons, modifiers
+            if adx_max is not None and adx >= adx_max:
+                reasons.append(f"adx_filter_above:{setup_lower}_adx{adx:.0f}>={adx_max}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: ADX {adx:.1f} >= adx_filter.max_adx {adx_max}")
+                return False, reasons, modifiers
+
         # 6. RSI FILTERS
         min_rsi = filter_cfg.get("min_rsi")
         if min_rsi is not None:
@@ -738,7 +757,52 @@ class BasePipeline(ABC):
                 logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: rank_score {rank_score:.2f} > max_rank_score {max_rank_score}")
                 return False, reasons, modifiers
 
-        # 9. COLLECT TARGET/SL MODIFIERS (these don't block, just modify)
+        # 10. QUALITY STATUS BLOCKING (block_quality_poor, block_quality_fair, block_quality_good, block_quality_excellent)
+        if quality_status is not None:
+            quality_lower = quality_status.lower()
+            if filter_cfg.get("block_quality_poor") and quality_lower == "poor":
+                reasons.append(f"quality_blocked:{setup_lower}_poor")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: quality_status 'poor' blocked")
+                return False, reasons, modifiers
+            if filter_cfg.get("block_quality_fair") and quality_lower == "fair":
+                reasons.append(f"quality_blocked:{setup_lower}_fair")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: quality_status 'fair' blocked")
+                return False, reasons, modifiers
+            if filter_cfg.get("block_quality_good") and quality_lower == "good":
+                reasons.append(f"quality_blocked:{setup_lower}_good")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: quality_status 'good' blocked")
+                return False, reasons, modifiers
+            if filter_cfg.get("block_quality_excellent") and quality_lower == "excellent":
+                reasons.append(f"quality_blocked:{setup_lower}_excellent")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: quality_status 'excellent' blocked")
+                return False, reasons, modifiers
+
+        # 11. BLOCKED RR RANGE (block trades with RR in a specific range)
+        blocked_rr_range = filter_cfg.get("blocked_rr_range")
+        if blocked_rr_range and blocked_rr_range.get("enabled") and structural_rr is not None:
+            range_min = blocked_rr_range.get("min_rr")
+            range_max = blocked_rr_range.get("max_rr")
+            if range_min is not None and range_max is not None:
+                if range_min <= structural_rr < range_max:
+                    reasons.append(f"rr_range_blocked:{setup_lower}_rr{structural_rr:.2f}_in_{range_min}_{range_max}")
+                    logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: structural_rr {structural_rr:.2f} in blocked range [{range_min}, {range_max})")
+                    return False, reasons, modifiers
+
+        # 12. VOLUME RATIO FILTER (vol_ratio_filter with min_vol, max_vol)
+        vol_ratio_filter = filter_cfg.get("vol_ratio_filter")
+        if vol_ratio_filter and vol_ratio_filter.get("enabled") and vol_ratio is not None:
+            min_vol = vol_ratio_filter.get("min_vol")
+            max_vol = vol_ratio_filter.get("max_vol")
+            if min_vol is not None and vol_ratio < min_vol:
+                reasons.append(f"vol_ratio_below:{setup_lower}_vol{vol_ratio:.2f}<{min_vol}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: vol_ratio {vol_ratio:.2f} < min_vol {min_vol}")
+                return False, reasons, modifiers
+            if max_vol is not None and vol_ratio >= max_vol:
+                reasons.append(f"vol_ratio_above:{setup_lower}_vol{vol_ratio:.2f}>={max_vol}")
+                logger.debug(f"[FILTER] {symbol} {setup_lower} BLOCKED: vol_ratio {vol_ratio:.2f} >= max_vol {max_vol}")
+                return False, reasons, modifiers
+
+        # 13. COLLECT TARGET/SL MODIFIERS (these don't block, just modify)
         if filter_cfg.get("sl_mult"):
             modifiers["sl_mult"] = filter_cfg["sl_mult"]
         if filter_cfg.get("t1_mult"):
@@ -1651,7 +1715,8 @@ class BasePipeline(ABC):
             strength=quality_result.structural_rr,
             adx=features.get("adx") or 0.0,
             vol_mult=features["volume_ratio"],
-            regime_diagnostics=regime_diagnostics
+            regime_diagnostics=regime_diagnostics,
+            quality_status=quality_result.quality_status
         )
         if not gate_result.passed:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at GATES: {gate_result.reasons}")
