@@ -285,7 +285,7 @@ class SessionUploader:
         return uploaded, failed
 
 
-def upload_session(session_dir: Path, mode: str, prefix: str = '') -> bool:
+def upload_session(session_dir: Path, mode: str, prefix: str = '', skip_tick_data: bool = False) -> bool:
     """
     Upload a trading session to OCI.
 
@@ -307,9 +307,11 @@ def upload_session(session_dir: Path, mode: str, prefix: str = '') -> bool:
     # Build object path with optional prefix
     object_prefix = f"{prefix}/{session_id}" if prefix else session_id
 
-    # Extract date for sidecar files
+    # Extract date for sidecar files (skip if requested)
     date_str = get_date_from_session(session_id)
-    sidecar_files = collect_sidecar_files(date_str) if date_str else []
+    sidecar_files = []
+    if not skip_tick_data and date_str:
+        sidecar_files = collect_sidecar_files(date_str)
 
     print(f"\n{'='*60}")
     print(f"UPLOAD TRADING SESSION TO OCI")
@@ -318,7 +320,9 @@ def upload_session(session_dir: Path, mode: str, prefix: str = '') -> bool:
     print(f"Mode: {mode}")
     print(f"Logs bucket: {logs_bucket}")
     print(f"Object path: {object_prefix}/")
-    if sidecar_files:
+    if skip_tick_data:
+        print(f"Tick data: SKIPPED (--skip-tick-data)")
+    elif sidecar_files:
         print(f"Tick data bucket: {TICK_DATA_BUCKET}")
         print(f"Sidecar files: {len(sidecar_files)} (ticks, bars, ORB, levels)")
     print(f"{'='*60}")
@@ -449,6 +453,8 @@ Examples:
                         help='Prefix for bucket path (e.g., "fixed" -> fixed/session_id/)')
     parser.add_argument('--skip-analysis', action='store_true',
                         help='Skip running the analyzer')
+    parser.add_argument('--skip-tick-data', action='store_true',
+                        help='Skip uploading tick/sidecar data (use when uploading multiple sessions from same day)')
 
     args = parser.parse_args()
 
@@ -463,8 +469,8 @@ Examples:
     # Determine mode
     mode = args.mode or get_mode_from_session(session_dir.name)
 
-    # Upload with optional prefix
-    success = upload_session(session_dir, mode, prefix=args.prefix)
+    # Upload with optional prefix and tick data skip
+    success = upload_session(session_dir, mode, prefix=args.prefix, skip_tick_data=args.skip_tick_data)
 
     return 0 if success else 1
 

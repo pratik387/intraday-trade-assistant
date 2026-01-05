@@ -372,25 +372,6 @@ def main() -> int:
 
     logger.info(f"Session started | Mode: {'Paper' if args.paper_trading else 'Dry-run' if args.dry_run else 'Live'}")
 
-    # Upload any pending sessions from previous runs (paper/live only)
-    if args.paper_trading or (not args.dry_run and not args.paper_trading):
-        try:
-            from pathlib import Path
-            from services.state.session_upload_persistence import SessionUploadTracker
-            from oci.tools.upload_trading_session import upload_pending_sessions
-
-            state_dir = Path(__file__).resolve().parent / "state"
-            state_dir.mkdir(parents=True, exist_ok=True)
-            logs_dir = Path(__file__).resolve().parent / "logs"
-
-            tracker = SessionUploadTracker(state_dir)
-            tracker.cleanup_old_entries(keep_days=30)  # Prevent unbounded growth
-            uploaded = upload_pending_sessions(tracker, logs_dir)
-            if uploaded > 0:
-                logger.info(f"[STARTUP] Uploaded {uploaded} pending session(s) from previous runs")
-        except Exception as e:
-            logger.warning(f"[STARTUP] Failed to upload pending sessions: {e}")
-
     cfg = load_filters()  # validate early; raises if required keys are missing
 
     # Apply structure caching if requested (monkey-patches TradeDecisionGate.evaluate)
@@ -713,31 +694,6 @@ def _run_until_eod(
                 logger.info(f"TICK_RECORDER | Finalized: {_tick_rec.tick_count:,} ticks recorded")
             except Exception as e:
                 logger.warning(f"TICK_RECORDER | Finalization failed: {e}")
-
-        # Upload current session to OCI (paper/live modes only)
-        if args.paper_trading or (not args.dry_run and not args.paper_trading):
-            try:
-                from pathlib import Path
-                from config.logging_config import get_log_directory, get_session_id
-                from services.state.session_upload_persistence import SessionUploadTracker
-                from oci.tools.upload_trading_session import upload_session
-
-                log_dir = get_log_directory()
-                session_id = get_session_id()
-                mode = "paper" if args.paper_trading else "live"
-
-                if log_dir and log_dir.exists():
-                    logger.info(f"[SHUTDOWN] Uploading session {session_id} to OCI...")
-                    state_dir = Path(__file__).resolve().parent / "state"
-                    tracker = SessionUploadTracker(state_dir)
-
-                    if upload_session(log_dir, mode):
-                        tracker.mark_uploaded(session_id, f"{mode}-trading-logs")
-                        logger.info(f"[SHUTDOWN] Session uploaded successfully to {mode}-trading-logs")
-                    else:
-                        logger.warning(f"[SHUTDOWN] Failed to upload session {session_id}")
-            except Exception as e:
-                logger.warning(f"[SHUTDOWN] Session upload failed: {e}")
 
     logger.info("session end (EOD)")
 
