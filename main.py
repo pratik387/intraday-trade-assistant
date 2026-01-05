@@ -623,7 +623,7 @@ def main() -> int:
     health.set_state(SessionState.TRADING)
 
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec, trader, health)
+    _run_until_eod(screener, exit_exec, trader, health, capital_manager)
 
     return 0
 
@@ -633,6 +633,7 @@ def _run_until_eod(
     exit_exec: ExitExecutor,
     trader: TriggerAwareExecutor,
     health = None,
+    capital_manager = None,
     poll_sec: float = 0.2
 ) -> None:
     logger.info("session start")
@@ -692,13 +693,14 @@ def _run_until_eod(
             logger.warning("trader.stop failed: %s", e)
 
         # Save capital report for analytics
-        try:
-            from config.logging_config import get_log_directory
-            log_dir = get_log_directory()
-            if log_dir and log_dir.exists():
-                capital_manager.save_final_report(log_dir)
-        except Exception as e:
-            logger.warning("Failed to save capital report: %s", e)
+        if capital_manager:
+            try:
+                from config.logging_config import get_log_directory
+                log_dir = get_log_directory()
+                if log_dir and log_dir.exists():
+                    capital_manager.save_final_report(log_dir)
+            except Exception as e:
+                logger.warning("Failed to save capital report: %s", e)
 
         # Stop health server
         if health:
