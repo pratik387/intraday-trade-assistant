@@ -199,6 +199,10 @@ class ExitExecutor:
         self.or_kill_late_buffer_mult = float(cfg.get("or_kill_late_buffer_mult", 0.25))
         self.or_kill_major_break_mult = float(cfg.get("or_kill_major_break_mult", 2.0))
 
+        # Paper trading slippage model (professional Indian market standards)
+        # Default 10 bps = 0.1% slippage per side, matches industry recommendations
+        self.paper_sl_slippage_bps = float(cfg.get("paper_sl_slippage_bps", 10))
+
     def _enhanced_on_tick(self, symbol: str, price: float, volume: float, ts) -> None:
         """
         Enhanced tick handler that checks exits for open positions.
@@ -230,8 +234,9 @@ class ExitExecutor:
             ts: Tick timestamp
         """
         try:
-            open_pos = self.positions.list_open()
-            pos = open_pos.get(symbol)
+            # Direct lookup instead of snapshot - avoids race condition where position
+            # is added but tick handler gets stale snapshot from before position existed
+            pos = self.positions.get(symbol) if hasattr(self.positions, 'get') else self.positions.list_open().get(symbol)
             if not pos:
                 return  # No open position for this symbol
 
@@ -266,7 +271,8 @@ class ExitExecutor:
                     return
 
         except Exception as e:
-            logger.exception(f"Tick exit check failed for {symbol}: {e}")
+            logger.error(f"TICK_EXIT_CRITICAL | {symbol} | price={tick_price:.2f} | "
+                        f"SL check failed - position may be unprotected! Error: {e}")
 
     def run_once(self) -> None:
         open_pos = self.positions.list_open()
@@ -410,9 +416,20 @@ class ExitExecutor:
                 if not math.isnan(plan_sl):
                     sl_px = self.broker.get_ltp_with_level(sym, check_level=plan_sl)
                     if sl_px is not None and self._breach_sl(pos.side, sl_px, plan_sl):
-                        sl_ltp = sl_px
-                        # Enhanced SL exit logging with T1/T2 awareness
-                        slippage = abs(sl_ltp - plan_sl)
+                        # Paper trading: simulate realistic fill at SL level + slippage
+                        # Real stops convert to market orders at SL level, with slippage
+                        # Using current market price (sl_px) would be unrealistic if polling
+                        # loop catches breach late (e.g., 119 when SL was 117)
+                        slippage_mult = self.paper_sl_slippage_bps / 10000  # 10 bps = 0.001
+
+                        if pos.side.upper() == "BUY":
+                            sl_fill = plan_sl * (1 - slippage_mult)  # Slightly worse for longs
+                        else:
+                            sl_fill = plan_sl * (1 + slippage_mult)  # Slightly worse for shorts
+
+                        sl_ltp = sl_fill
+                        observed_gap = abs(sl_px - plan_sl)  # Track how far market moved past SL
+
                         # Differentiate SL hit: after T2 partial > after T1 partial > initial SL
                         if t2_done:
                             exit_reason = "sl_post_t2"
@@ -423,8 +440,9 @@ class ExitExecutor:
 
                         logger.info(
                             f"SL_BREACH | {sym} | {pos.side} | "
-                            f"Exit_Price: {sl_ltp:.2f} | Final_SL: {plan_sl:.2f} | "
-                            f"Original_SL: {original_sl:.2f} | Slippage: {slippage:.2f} | "
+                            f"Exit_Price: {sl_ltp:.2f} | SL_Level: {plan_sl:.2f} | "
+                            f"Market_Now: {sl_px:.2f} | Gap_Observed: {observed_gap:.2f} | "
+                            f"Original_SL: {original_sl:.2f} | Slippage_Applied: {slippage_mult*100:.2f}% | "
                             f"Entry: {pos.avg_price:.2f} | T1_Done: {t1_done} | T2_Done: {t2_done}"
                         )
                         self._exit(sym, pos, sl_ltp, ts, exit_reason)
@@ -1464,9 +1482,15 @@ class ExitExecutor:
                 pos.plan["hard_sl"] = be_buffer
                 st["sl_moved_to_be"] = True
                 st["be_price"] = be_buffer
-                logger.debug(f"exit_executor: {sym} T1 hit — moved SL to BE+ @{be_buffer:.2f} (buffer: {be_buffer-be:.3f})")
-            except Exception:
-                pass
+
+                # Verify BE was correctly applied (critical for paper trading protection)
+                actual_sl = self._get_plan_sl(pos.plan)
+                if abs(actual_sl - be_buffer) > 0.01:
+                    logger.error(f"BE_VERIFY_FAIL | {sym} | Expected: {be_buffer:.2f} Got: {actual_sl:.2f}")
+                else:
+                    logger.info(f"BE_CONFIRMED | {sym} | SL updated to {actual_sl:.2f} (entry was {be:.2f})")
+            except Exception as e:
+                logger.error(f"BE_UPDATE_ERROR | {sym} | Failed to move SL to breakeven: {e}")
         pos.plan["_state"] = st
 
         # Update persistence with new qty and state (crash recovery)
