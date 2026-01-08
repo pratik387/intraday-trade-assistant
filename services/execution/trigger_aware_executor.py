@@ -332,11 +332,14 @@ class TriggerAwareExecutor:
 
         Solution:
         - For ORB setups: Use OR range-based targets (pro standard)
+        - For LEVEL setups: Keep original structural targets (price respects levels, not math)
         - For other setups: Use R-multiples from actual entry
 
-        Van Tharp: Targets must be based on YOUR entry, not some theoretical entry.
+        Pro trader insight: Level-based trades target STRUCTURAL levels (PDL, support, etc.),
+        not arbitrary distances from entry. A better entry = better R:R naturally.
         """
         import copy
+        from config.setup_categories import is_level_category
         adjusted_plan = copy.deepcopy(plan)
 
         try:
@@ -346,6 +349,36 @@ class TriggerAwareExecutor:
             if "orb" in strategy.lower():
                 breakout_pipeline = BreakoutPipeline()
                 return breakout_pipeline.recalculate_orb_targets_at_trigger(adjusted_plan, actual_entry, side)
+
+            # LEVEL category setups: Keep original structural targets
+            # Price respects LEVELS (PDL, support, resistance), not arbitrary R-multiple distances
+            # A better entry improves R:R naturally without pushing targets further away
+            if is_level_category(strategy):
+                original_entry = plan.get("entry_ref_price") or plan.get("price")
+                stop_data = plan.get("stop", {})
+                hard_sl = stop_data.get("hard")
+
+                if hard_sl is not None and original_entry is not None:
+                    # Calculate actual rps for R-multiple tracking
+                    if side.upper() == "BUY":
+                        actual_rps = actual_entry - hard_sl
+                    else:
+                        actual_rps = hard_sl - actual_entry
+
+                    # Only update rps for tracking, keep original targets
+                    if actual_rps > 0:
+                        if "stop" in adjusted_plan and isinstance(adjusted_plan["stop"], dict):
+                            adjusted_plan["stop"]["risk_per_share"] = round(actual_rps, 2)
+                        adjusted_plan["risk_per_share"] = round(actual_rps, 2)
+                        adjusted_plan["actual_entry"] = round(actual_entry, 2)
+
+                        logger.info(
+                            f"LEVEL_TARGET_PRESERVED: {plan.get('symbol')} {strategy} "
+                            f"entry {original_entry}→{actual_entry}, targets unchanged, "
+                            f"rps {stop_data.get('risk_per_share', 0):.2f}→{actual_rps:.2f}"
+                        )
+
+                return adjusted_plan
             # Get stop data from plan - exec_item now includes full "stop" dict
             stop_data = plan.get("stop", {})
             hard_sl = stop_data.get("hard")
