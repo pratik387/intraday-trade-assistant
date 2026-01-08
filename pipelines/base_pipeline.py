@@ -1735,12 +1735,14 @@ class BasePipeline(ABC):
             else:
                 rsi_val = features.get("rsi") or features.get("rsi14")
                 if rsi_val is None:
-                    raise KeyError(f"RSI indicator missing from features for {symbol}")
-                rsi_min = rsi_dead_zone_cfg["long_min"]
-                rsi_max = rsi_dead_zone_cfg["long_max"]
-                if bias == "long" and rsi_min <= rsi_val <= rsi_max:
-                    logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: RSI dead zone ({rsi_val:.1f} in {rsi_min}-{rsi_max} range)")
-                    return {"eligible": False, "reason": "rsi_dead_zone", "details": [f"rsi_{rsi_val:.1f}_in_{rsi_min}_{rsi_max}_dead_zone"]}
+                    # RSI not available - skip dead zone check (can happen with insufficient data)
+                    logger.debug(f"[{category}] {symbol} {setup_type} RSI dead zone SKIPPED: RSI indicator not available")
+                else:
+                    rsi_min = rsi_dead_zone_cfg["long_min"]
+                    rsi_max = rsi_dead_zone_cfg["long_max"]
+                    if bias == "long" and rsi_min <= rsi_val <= rsi_max:
+                        logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: RSI dead zone ({rsi_val:.1f} in {rsi_min}-{rsi_max} range)")
+                        return {"eligible": False, "reason": "rsi_dead_zone", "details": [f"rsi_{rsi_val:.1f}_in_{rsi_min}_{rsi_max}_dead_zone"]}
 
         # Add acceptance_status from quality calculation to features for ranking
         features["acceptance_status"] = quality_result.quality_status
