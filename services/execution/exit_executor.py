@@ -91,6 +91,7 @@ class ExitExecutor:
         trading_logger=None,  # Enhanced logging service
         capital_manager=None,  # Capital release on exits
         persistence=None,  # Position persistence for crash recovery
+        api_server=None,  # For processing exit requests from API
     ) -> None:
         self.broker = broker
         self.positions = positions
@@ -99,6 +100,7 @@ class ExitExecutor:
         self.trading_logger = trading_logger
         self.capital_manager = capital_manager
         self.persistence = persistence  # For updating/removing positions on exit
+        self.api_server = api_server  # For exit request queue
 
         # Hook into tick stream for live/paper mode instant exits
         if bar_builder is not None:
@@ -269,6 +271,9 @@ class ExitExecutor:
             logger.exception(f"Tick exit check failed for {symbol}: {e}")
 
     def run_once(self) -> None:
+        # Process any pending API exit requests first
+        self._process_api_exits()
+
         open_pos = self.positions.list_open()
         if not open_pos:
             return
@@ -507,6 +512,70 @@ class ExitExecutor:
 
             except Exception as e:
                 logger.exception(f"exit_executor: run_once error sym={sym}: {e}")
+
+    def _process_api_exits(self) -> None:
+        """
+        Process pending exit requests from API server queue.
+
+        API exits go through proper channels:
+        - Logging via trading_logger
+        - Persistence updates
+        - Capital release
+        """
+        if not self.api_server:
+            return
+
+        try:
+            requests = self.api_server.get_pending_exits()
+            if not requests:
+                return
+
+            for req in requests:
+                symbol = req.get("symbol")
+                qty = req.get("qty")  # None means full exit
+                reason = req.get("reason", "manual_exit")
+
+                # Get position
+                open_pos = self.positions.list_open()
+                pos = open_pos.get(symbol)
+                if not pos:
+                    logger.warning(f"[API_EXIT] Position not found: {symbol}")
+                    continue
+
+                # Get current price
+                px, ts = self._get_px_ts(symbol)
+                if px is None:
+                    # Try broker LTP as fallback
+                    try:
+                        px = self.broker.get_ltp(symbol)
+                        ts = pd.Timestamp.now()
+                    except Exception:
+                        logger.error(f"[API_EXIT] Cannot get price for {symbol}")
+                        continue
+
+                # Execute exit through normal channels
+                if qty is None or qty >= pos.qty:
+                    # Full exit
+                    logger.info(f"[API_EXIT] Full exit: {symbol} qty={pos.qty} reason={reason}")
+                    self._exit(symbol, pos, float(px), ts, reason)
+                else:
+                    # Partial exit
+                    logger.info(f"[API_EXIT] Partial exit: {symbol} qty={qty}/{pos.qty} reason={reason}")
+                    self._partial_exit_api(symbol, pos, float(px), ts, qty, reason)
+
+        except Exception as e:
+            logger.exception(f"[API_EXIT] Error processing API exits: {e}")
+
+    def _partial_exit_api(self, sym: str, pos, px: float, ts, qty: int, reason: str) -> None:
+        """Handle partial exit from API request."""
+        # Use the existing _place_and_log_exit for proper logging
+        self._place_and_log_exit(sym, pos, px, qty, ts, reason)
+        self.positions.reduce(sym, qty)
+
+        # Update persistence
+        if self.persistence:
+            remaining = pos.qty - qty
+            self.persistence.update_position(sym, new_qty=remaining)
 
     def run_forever(self, sleep_ms: int = 200) -> None:
         try:
