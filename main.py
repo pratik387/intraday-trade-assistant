@@ -37,7 +37,7 @@ from services.capital_manager import CapitalManager
 from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
 from services.state.daily_cache_persistence import DailyCachePersistence
 from pipelines.base_pipeline import set_base_config_override, load_base_config
-from services.health_server import get_health_server, SessionState
+from api import get_api_server, SessionState
 
 # Dry-run adapter (patched MockBroker with LTP cache + Feather replay)
 from broker.mock.mock_broker import MockBroker
@@ -526,13 +526,15 @@ def main() -> int:
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
     positions = _PositionStore()
 
-    # Initialize health server for production monitoring
-    health = get_health_server(port=8080)
-    health.set_state(SessionState.RECOVERING)
-    health.set_position_store(positions)
-    health.set_capital_manager(capital_manager)
-    health.set_ltp_cache(ltp_cache)
-    health.start()
+    # Initialize API server for production monitoring
+    api = get_api_server(port=args.health_port)
+    api.set_state(SessionState.RECOVERING)
+    api.set_position_store(positions)
+    api.set_capital_manager(capital_manager)
+    api.set_ltp_cache(ltp_cache)
+    api.set_kite_client(sdk)  # For broker API calls (funds, etc.)
+    api.set_auth_token(args.admin_token)  # For protected endpoints
+    api.start()
 
     # Startup recovery - restore positions from previous session
     from config.logging_config import get_log_directory
@@ -555,7 +557,8 @@ def main() -> int:
         bar_builder=screener.agg,  # Pass the BarBuilder instance
         trading_logger=trading_logger,  # Enhanced logging
         capital_manager=capital_manager,  # Capital & MIS management
-        persistence=persistence  # Position persistence for crash recovery
+        persistence=persistence,  # Position persistence for crash recovery
+        api_server=api  # For checking pause state
     )
 
     # ExitExecutor with tick-level validation (like TriggerAwareExecutor)
@@ -566,7 +569,8 @@ def main() -> int:
         bar_builder=screener.agg,  # For tick-level exit validation
         trading_logger=trading_logger,  # Enhanced logging
         capital_manager=capital_manager,  # Capital release on exits
-        persistence=persistence  # Position persistence for crash recovery
+        persistence=persistence,  # Position persistence for crash recovery
+        api_server=api  # For processing exit requests
     )
 
     # Start background threads
@@ -600,11 +604,11 @@ def main() -> int:
     t_monitor.start(); threads.append(t_monitor)
     logger.info("trigger-monitor: started")
 
-    # Set health state to trading
-    health.set_state(SessionState.TRADING)
+    # Set state to trading
+    api.set_state(SessionState.TRADING)
 
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec, trader, health, capital_manager)
+    _run_until_eod(screener, exit_exec, trader, api, capital_manager)
 
     return 0
 
@@ -613,7 +617,7 @@ def _run_until_eod(
     screener: ScreenerLive,
     exit_exec: ExitExecutor,
     trader: TriggerAwareExecutor,
-    health = None,
+    api_server = None,
     capital_manager = None,
     poll_sec: float = 0.2
 ) -> None:
@@ -634,8 +638,8 @@ def _run_until_eod(
     signal.signal(signal.SIGTERM, _sig_handler)
 
     # Wire up HTTP shutdown
-    if health:
-        health.set_shutdown_callback(_shutdown_via_http)
+    if api_server:
+        api_server.set_shutdown_callback(_shutdown_via_http)
 
     try:
         screener.start()
@@ -644,9 +648,9 @@ def _run_until_eod(
     except KeyboardInterrupt:
         logger.info("keyboard interrupt – stopping")
     finally:
-        # Update health state
-        if health:
-            health.set_state(SessionState.SHUTTING_DOWN)
+        # Update API state
+        if api_server:
+            api_server.set_state(SessionState.SHUTTING_DOWN)
 
         try:
             # Cancel all pending trades before EOD
@@ -683,10 +687,10 @@ def _run_until_eod(
             except Exception as e:
                 logger.warning("Failed to save capital report: %s", e)
 
-        # Stop health server
-        if health:
-            health.set_state(SessionState.STOPPED)
-            health.stop()
+        # Stop API server
+        if api_server:
+            api_server.set_state(SessionState.STOPPED)
+            api_server.stop()
 
         # Finalize tick recorder (flush buffers and merge part files)
         _tick_rec = locals().get('tick_recorder')
@@ -717,6 +721,8 @@ def _parse_args():
     ap.add_argument("--to-hhmm",   default="15:30")
     ap.add_argument("--run-prefix", default="", help="Prefix for session folder names (used by engine.py)")
     ap.add_argument("--enable-cache", action="store_true", help="Enable structure detection caching")
+    ap.add_argument("--health-port", type=int, default=8080, help="Port for health server (default: 8080)")
+    ap.add_argument("--admin-token", default=None, help="Admin token for protected endpoints (default: from ADMIN_TOKEN env var)")
     return ap.parse_args()
 
 

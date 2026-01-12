@@ -17,3 +17,6 @@ pytest
 pytest-asyncio
 pyarrow
 portalocker
+nse
+oci
+
