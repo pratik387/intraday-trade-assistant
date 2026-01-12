@@ -75,6 +75,7 @@ class APIServer:
         self._position_store = None
         self._capital_manager = None
         self._ltp_cache = None
+        self._kite_client = None  # For broker API calls (funds, etc.)
         self._shutdown_callback: Optional[Callable] = None
 
         # Auth token (from env var or explicit set)
@@ -145,6 +146,10 @@ class APIServer:
 
     def set_ltp_cache(self, cache):
         self._ltp_cache = cache
+
+    def set_kite_client(self, client):
+        """Set Kite client for broker API calls (funds, etc.)."""
+        self._kite_client = client
 
     def set_auth_token(self, token: Optional[str]):
         """Set auth token for protected endpoints."""

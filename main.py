@@ -551,6 +551,7 @@ def main() -> int:
     api.set_position_store(positions)
     api.set_capital_manager(capital_manager)
     api.set_ltp_cache(ltp_cache)
+    api.set_kite_client(sdk)  # For broker API calls (funds, etc.)
     api.set_auth_token(args.admin_token)  # For protected endpoints
     api.start()
 

@@ -1,6 +1,7 @@
 """
 Capital management endpoints.
 
+GET  /funds         - Get broker account funds (from Kite DMAT)
 POST /admin/capital - Update capital allocation
 POST /admin/mis     - Toggle MIS (margin intraday) mode
 
@@ -14,6 +15,23 @@ logger = get_agent_logger()
 
 def register_capital_routes(server):
     """Register capital management routes."""
+
+    @server.get("/funds")
+    def get_funds(ctx):
+        """
+        Get broker account funds from Kite DMAT.
+        Returns available cash, margin, etc.
+        No auth required - read-only.
+        """
+        if not ctx.server._kite_client:
+            return {"error": "Kite client not configured", "funds": None}, 200
+
+        try:
+            funds = ctx.server._kite_client.get_funds()
+            return {"status": "ok", "funds": funds}, 200
+        except Exception as e:
+            logger.error(f"[API] Failed to get funds: {e}")
+            return {"error": str(e), "funds": None}, 200
 
     @server.post("/admin/capital", auth_required=True)
     def set_capital(ctx, body):
