@@ -455,6 +455,14 @@ class TriggerAwareExecutor:
             adjusted_plan["risk_per_share"] = round(actual_rps, 2)
             adjusted_plan["actual_entry"] = round(actual_entry, 2)
 
+            # Log recalculation for non-LEVEL strategies (REVERSION, MOMENTUM, etc.)
+            logger.info(
+                f"TARGET_RECALCULATED: {plan.get('symbol')} {strategy} "
+                f"entry {original_entry}->{actual_entry}, "
+                f"T1 {t1_orig}->{new_t1:.2f}, T2 {t2_orig}->{new_t2:.2f}, "
+                f"rps {original_rps:.2f}->{actual_rps:.2f}"
+            )
+
         except Exception as e:
             logger.warning(f"Target recalculation failed: {e}, using original targets")
 
