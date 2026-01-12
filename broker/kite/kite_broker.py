@@ -265,20 +265,20 @@ class KiteBroker:
             params["price"] = float(price)
 
         try:
-            resp = self.kc.place_order(variety=self.kc.VARIETY_REGULAR, **params)
-            order_id = str(resp.get("order_id") or resp["data"]["order_id"])  # type: ignore[index]
+            # kite.place_order() returns order_id string directly (not a dict)
+            # See: https://kite.trade/docs/pykiteconnect/v4/
+            order_id = self.kc.place_order(variety=self.kc.VARIETY_REGULAR, **params)
             logger.info(f"Order placed: {symbol} | {side} {qty} @ {product} | Order ID: {order_id}")
-            return order_id
+            return str(order_id)
         except Exception as e:
             # If MIS order failed and auto-fallback is enabled, try CNC
             if actual_product == "MIS" and auto_fallback_cnc and "MIS" in str(e):
                 logger.warning(f"MIS order failed for {symbol}, retrying with CNC | Error: {e}")
                 params["product"] = self.kc.PRODUCT_CNC
                 try:
-                    resp = self.kc.place_order(variety=self.kc.VARIETY_REGULAR, **params)
-                    order_id = str(resp.get("order_id") or resp["data"]["order_id"])  # type: ignore[index]
+                    order_id = self.kc.place_order(variety=self.kc.VARIETY_REGULAR, **params)
                     logger.info(f"Order placed with CNC fallback: {symbol} | Order ID: {order_id}")
-                    return order_id
+                    return str(order_id)
                 except Exception as e2:
                     logger.error(f"CNC fallback also failed for {symbol}: {e2}")
                     raise RuntimeError(f"Order placement failed (MIS and CNC): {e2}")
