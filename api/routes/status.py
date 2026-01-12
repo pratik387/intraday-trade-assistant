@@ -33,6 +33,25 @@ def register_status_routes(server):
             "unrealized_pnl": status["unrealized_pnl"]
         }, 200
 
+    @server.get("/closed")
+    def get_closed_trades(ctx):
+        """
+        Get closed trades for this session.
+        Returns list of trades that have been exited.
+        """
+        closed = ctx.server.get_closed_trades()
+        total_pnl = sum(t.get("pnl", 0) for t in closed)
+        winners = sum(1 for t in closed if t.get("pnl", 0) > 0)
+        losers = sum(1 for t in closed if t.get("pnl", 0) < 0)
+        return {
+            "trades": closed,
+            "count": len(closed),
+            "total_pnl": round(total_pnl, 2),
+            "winners": winners,
+            "losers": losers,
+            "win_rate": round(winners / len(closed) * 100, 1) if closed else 0
+        }, 200
+
 
 def _build_status(server) -> dict:
     """Build full status response."""

@@ -91,6 +91,10 @@ class APIServer:
             "errors": 0,
             "user_actions": 0,
         }
+
+        # Closed trades log (in-memory for current session)
+        self._closed_trades: List[Dict[str, Any]] = []
+
         self._lock = threading.RLock()
 
     # ==================== Route Registration ====================
@@ -135,6 +139,16 @@ class APIServer:
         """Increment a metric counter."""
         with self._lock:
             self._metrics[name] = self._metrics.get(name, 0) + value
+
+    def log_closed_trade(self, trade: Dict[str, Any]):
+        """Log a closed trade for the session."""
+        with self._lock:
+            self._closed_trades.append(trade)
+
+    def get_closed_trades(self) -> List[Dict[str, Any]]:
+        """Get all closed trades for this session."""
+        with self._lock:
+            return list(self._closed_trades)
 
     # ==================== External References ====================
 

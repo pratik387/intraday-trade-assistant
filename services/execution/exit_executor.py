@@ -1431,6 +1431,22 @@ class ExitExecutor:
             is_shadow = pos.plan.get("shadow", False)
             self.capital_manager.exit_position(sym, shadow=is_shadow)
 
+        # Log closed trade to API server for dashboard display
+        if self.api_server:
+            closed_trade = {
+                "symbol": sym,
+                "side": pos.side.upper(),
+                "qty": qty_now,
+                "entry_price": round(pos.avg_price, 2),
+                "exit_price": round(exit_px, 2),
+                "pnl": round(pnl, 2),
+                "exit_reason": reason,
+                "setup": pos.plan.get("setup_type", "unknown"),
+                "exit_time": ts.isoformat() if ts else None,
+                "entry_time": pos.plan.get("entry_ts"),
+            }
+            self.api_server.log_closed_trade(closed_trade)
+
         try:
             st = pos.plan.get("_state") or {}
             st.pop("t1_done", None); st.pop("sl_moved_to_be", None)
