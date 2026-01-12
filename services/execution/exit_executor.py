@@ -1433,6 +1433,13 @@ class ExitExecutor:
 
         # Log closed trade to API server for dashboard display
         if self.api_server:
+            # Extract SL and targets from plan
+            stop_data = pos.plan.get("stop", {})
+            sl = stop_data.get("hard") if isinstance(stop_data, dict) else pos.plan.get("sl")
+            targets = pos.plan.get("targets", [])
+            t1 = targets[0].get("level") if targets and len(targets) > 0 else pos.plan.get("t1")
+            t2 = targets[1].get("level") if targets and len(targets) > 1 else pos.plan.get("t2")
+
             closed_trade = {
                 "symbol": sym,
                 "side": pos.side.upper(),
@@ -1444,6 +1451,9 @@ class ExitExecutor:
                 "setup": pos.plan.get("setup_type", "unknown"),
                 "exit_time": ts.isoformat() if ts else None,
                 "entry_time": pos.plan.get("entry_ts"),
+                "sl": round(sl, 2) if sl else None,
+                "t1": round(t1, 2) if t1 else None,
+                "t2": round(t2, 2) if t2 else None,
             }
             self.api_server.log_closed_trade(closed_trade)
 
@@ -1533,6 +1543,7 @@ class ExitExecutor:
         st["t1_booked_qty"] = qty_exit
         st["t1_booked_price"] = px
         st["t1_profit"] = profit_booked
+        st["t1_exit_time"] = ts.isoformat() if ts else None
         
         # Enhanced breakeven logic - always move to BE after T1
         if not st.get("sl_moved_to_be"):

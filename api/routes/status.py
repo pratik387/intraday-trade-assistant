@@ -87,12 +87,41 @@ def _build_status(server) -> dict:
 
             # Add targets/stops from plan
             if hasattr(pos, 'plan') and pos.plan:
-                pos_dict["sl"] = pos.plan.get("sl")
-                pos_dict["t1"] = pos.plan.get("t1")
-                pos_dict["t2"] = pos.plan.get("t2")
-                state = pos.plan.get("_state", {})
+                plan = pos.plan
+                # SL is stored under stop.hard
+                stop_data = plan.get("stop", {})
+                if isinstance(stop_data, dict):
+                    pos_dict["sl"] = stop_data.get("hard")
+                else:
+                    pos_dict["sl"] = plan.get("sl")
+
+                # Targets are stored in targets array
+                targets = plan.get("targets", [])
+                if targets and len(targets) > 0:
+                    pos_dict["t1"] = targets[0].get("level")
+                else:
+                    pos_dict["t1"] = plan.get("t1")
+
+                if targets and len(targets) > 1:
+                    pos_dict["t2"] = targets[1].get("level")
+                else:
+                    pos_dict["t2"] = plan.get("t2")
+
+                state = plan.get("_state", {})
                 if state.get("t1_done"):
                     pos_dict["t1_done"] = True
+                    # Only full exit available after T1 taken
+                    pos_dict["exit_options"] = ["full"]
+                    # Add booked PnL and T1 exit time if available
+                    pos_dict["booked_pnl"] = state.get("t1_profit", 0)
+                    pos_dict["t1_exit_time"] = state.get("t1_exit_time")
+                else:
+                    # Both 50% and full exit available
+                    pos_dict["exit_options"] = ["partial", "full"]
+                    pos_dict["booked_pnl"] = 0
+
+                # Entry time from plan
+                pos_dict["entry_time"] = plan.get("entry_ts") or plan.get("trigger_ts")
 
             positions.append(pos_dict)
 

@@ -271,20 +271,28 @@ class KiteBroker:
             logger.info(f"Order placed: {symbol} | {side} {qty} @ {product} | Order ID: {order_id}")
             return str(order_id)
         except Exception as e:
-            # If MIS order failed and auto-fallback is enabled, try CNC
-            if actual_product == "MIS" and auto_fallback_cnc and "MIS" in str(e):
-                logger.warning(f"MIS order failed for {symbol}, retrying with CNC | Error: {e}")
-                params["product"] = self.kc.PRODUCT_CNC
-                try:
-                    order_id = self.kc.place_order(variety=self.kc.VARIETY_REGULAR, **params)
-                    logger.info(f"Order placed with CNC fallback: {symbol} | Order ID: {order_id}")
-                    return str(order_id)
-                except Exception as e2:
-                    logger.error(f"CNC fallback also failed for {symbol}: {e2}")
-                    raise RuntimeError(f"Order placement failed (MIS and CNC): {e2}")
-            else:
-                logger.error(f"Order placement failed for {symbol}: {e}")
-                raise RuntimeError(f"Order placement failed: {e}")
+            # If MIS order failed, check if we can fallback
+            if actual_product == "MIS" and "MIS" in str(e):
+                # CNC fallback only works for BUY orders
+                # For SELL (short) orders, CNC requires holdings which we don't have
+                if side.upper() == "SELL":
+                    logger.error(f"Cannot short {symbol}: MIS blocked and CNC not available for shorting")
+                    raise RuntimeError(f"Cannot short {symbol}: MIS blocked for this stock (no intraday shorting allowed)")
+
+                # For BUY orders, try CNC fallback if enabled
+                if auto_fallback_cnc:
+                    logger.warning(f"MIS order failed for {symbol}, retrying with CNC | Error: {e}")
+                    params["product"] = self.kc.PRODUCT_CNC
+                    try:
+                        order_id = self.kc.place_order(variety=self.kc.VARIETY_REGULAR, **params)
+                        logger.info(f"Order placed with CNC fallback: {symbol} | Order ID: {order_id}")
+                        return str(order_id)
+                    except Exception as e2:
+                        logger.error(f"CNC fallback also failed for {symbol}: {e2}")
+                        raise RuntimeError(f"Order placement failed (MIS and CNC): {e2}")
+
+            logger.error(f"Order placement failed for {symbol}: {e}")
+            raise RuntimeError(f"Order placement failed: {e}")
 
     # ------------------------------ Rate limiting -------------------------
     def _rate_limit_ltp(self) -> None:
