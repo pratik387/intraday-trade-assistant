@@ -81,15 +81,24 @@ def _set_capital(server, capital: float) -> dict:
     if not server._capital_manager:
         return {"error": "Capital manager not configured"}
 
-    old_capital = server._capital_manager.total_capital
-    server._capital_manager.total_capital = capital
+    cm = server._capital_manager
+    old_capital = cm.total_capital
+
+    # Calculate margin currently in use
+    margin_used = sum(p['margin_used'] for p in cm.positions.values())
+
+    # Update total capital and recalculate available
+    cm.total_capital = capital
+    cm.available_capital = capital - margin_used
+
     server.increment("user_actions")
 
-    logger.info(f"[API] Capital changed: {old_capital} -> {capital}")
+    logger.info(f"[API] Capital changed: {old_capital} -> {capital} (available: {cm.available_capital})")
     return {
         "status": "ok",
         "old_capital": old_capital,
-        "new_capital": capital
+        "new_capital": capital,
+        "available_capital": cm.available_capital
     }
 
 
