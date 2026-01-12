@@ -557,13 +557,15 @@ class TriggerAwareExecutor:
         bar_builder,  # We'll hook into the BarBuilder's 1m callbacks
         trading_logger=None,  # Enhanced logging service
         capital_manager=None,  # Capital & MIS management
-        persistence=None  # Position persistence for crash recovery
+        persistence=None,  # Position persistence for crash recovery
+        api_server=None  # For checking pause state
     ):
         self.broker = broker
         self.oq = order_queue
         self.trading_logger = trading_logger
         self.capital_manager = capital_manager
         self.persistence = persistence  # For saving positions on entry
+        self.api_server = api_server  # For checking pause state
         self.risk = risk_state
         self.positions = positions
         self.get_ltp_ts = get_ltp_ts
@@ -1115,14 +1117,27 @@ class TriggerAwareExecutor:
         
         return context
     
+    def _is_trading_paused(self) -> bool:
+        """Check if trading is paused via API server."""
+        if not self.api_server:
+            return False
+        # Import here to avoid circular imports
+        from api.state import SessionState
+        return self.api_server.state == SessionState.PAUSED
+
     def _execute_triggered_trades(self) -> None:
         """Execute trades that have been triggered"""
+        # Check if trading is paused - skip new entries but keep processing
+        if self._is_trading_paused():
+            logger.debug("Trading paused - skipping new entries")
+            return
+
         with self._lock:
-            triggered_trades = [t for t in self.pending_trades.values() 
+            triggered_trades = [t for t in self.pending_trades.values()
                               if t.state == TradeState.TRIGGERED]
-        
+
         expired_trade_ids = []
-        
+
         for trade in triggered_trades:
             try:
                 # Final pre-execution validation
