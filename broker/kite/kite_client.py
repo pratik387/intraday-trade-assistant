@@ -345,6 +345,33 @@ class KiteClient:
             "source": "api"
         }
 
+    def get_funds(self) -> dict:
+        """
+        Fetch account funds/margins from Kite.
+        Returns dict with available cash, used margin, etc.
+        """
+        try:
+            margins = self._kc.margins()
+            # Kite returns {'equity': {...}, 'commodity': {...}}
+            # We only care about equity segment for intraday
+            equity = margins.get("equity", {})
+            return {
+                "available_cash": float(equity.get("available", {}).get("cash", 0)),
+                "available_margin": float(equity.get("available", {}).get("live_balance", 0)),
+                "used_margin": float(equity.get("utilised", {}).get("debits", 0)),
+                "net": float(equity.get("net", 0)),
+                "raw": equity  # Full response for debugging
+            }
+        except Exception as e:
+            logger.error(f"KiteClient.get_funds failed: {e}")
+            return {
+                "available_cash": 0,
+                "available_margin": 0,
+                "used_margin": 0,
+                "net": 0,
+                "error": str(e)
+            }
+
     def get_historical_1m(self, symbol: str, from_dt: datetime, to_dt: datetime) -> Optional[pd.DataFrame]:
         """
         Fetch historical 1-minute OHLCV data from Zerodha API.
