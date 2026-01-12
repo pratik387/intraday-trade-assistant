@@ -1110,7 +1110,14 @@ class BreakoutPipeline(BasePipeline):
         orb_cfg = self.cfg["orb_target_recalculation"]
 
         if not orb_cfg["enabled"]:
-            logger.debug("ORB target recalculation disabled in config")
+            # Log that we're preserving original targets
+            targets = plan.get("targets", [])
+            t1 = targets[0].get("level") if len(targets) > 0 else None
+            t2 = targets[1].get("level") if len(targets) > 1 else None
+            logger.info(
+                f"ORB_TARGET_PRESERVED: {plan.get('symbol')} {plan.get('strategy')} "
+                f"entry {actual_entry}, targets unchanged T1={t1} T2={t2} (recalc disabled)"
+            )
             return plan
 
         # Get OR levels from plan
