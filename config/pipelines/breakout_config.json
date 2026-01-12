@@ -500,8 +500,8 @@
     },
 
     "orb_target_recalculation": {
-        "_comment": "Pro ORB traders (Toby Crabel, Mark Fisher) use OR range for targets. Recalculated at trigger time based on actual entry.",
-        "enabled": true,
+        "_comment": "DISABLED: Keep original plan targets which are based on structure (ORH/ORL levels). Recalculation was pushing targets too far (e.g., JGCHEM T1: 309.62 -> 303.55). Pro Indian traders use structural targets, not arbitrary OR-range multiples.",
+        "enabled": false,
         "t1_or_range_mult": 1.0,
         "t2_or_range_mult": 1.5,
         "sl_buffer_or_range_mult": 0.1,
@@ -510,7 +510,7 @@
             "t2": 0.40,
             "t3": 0.0
         },
-        "_evidence": "OR-based targets are achievable within normal ORB price action. R-multiples can push targets too far when actual entry differs from planned entry."
+        "_evidence": "Original structural targets (T1=309.62) are realistic. OR-range recalculation (T1=303.55) expects 3%+ moves which are rare intraday in NSE."
     },
 
     "rsi_penalty": {
