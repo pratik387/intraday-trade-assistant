@@ -75,7 +75,14 @@ def _build_status(server) -> dict:
 
             # Get current LTP for P&L calculation
             if server._ltp_cache:
+                # Try both with and without NSE: prefix since tick router may use different format
                 ltp = server._ltp_cache.get_ltp(pos.symbol)
+                if ltp is None and pos.symbol.startswith("NSE:"):
+                    # Try without prefix
+                    ltp = server._ltp_cache.get_ltp(pos.symbol.replace("NSE:", ""))
+                if ltp is None and not pos.symbol.startswith("NSE:"):
+                    # Try with prefix
+                    ltp = server._ltp_cache.get_ltp(f"NSE:{pos.symbol}")
                 if ltp:
                     pos_dict["ltp"] = round(ltp, 2)
                     if pos.side == "BUY":
@@ -122,6 +129,9 @@ def _build_status(server) -> dict:
 
                 # Entry time from plan
                 pos_dict["entry_time"] = plan.get("entry_ts") or plan.get("trigger_ts")
+
+                # Setup type for display
+                pos_dict["setup"] = plan.get("setup_type", "unknown")
 
             positions.append(pos_dict)
 
