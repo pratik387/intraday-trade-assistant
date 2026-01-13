@@ -386,11 +386,29 @@ def main() -> int:
     # Auto-enable capital management for paper trading and live trading
     # For backtests, only enable if --with-capital-limits flag is set
     capital_enabled = cap_mgmt_cfg.get('enabled', False)
+    mis_fetcher = None  # MIS validation fetcher (paper trading only)
+
     if args.paper_trading or (not args.dry_run and not args.paper_trading):
         # Paper trading or live trading: always enable
         capital_enabled = True
         mis_enabled = True
         logger.info("[CAPITAL] Auto-enabled capital management (paper/live mode)")
+
+        # Fetch MIS-allowed stocks from Zerodha (paper trading only)
+        # Live trading doesn't need this - Zerodha broker will reject non-MIS orders anyway
+        if args.paper_trading:
+            try:
+                from services.state.zerodha_mis_fetcher import ZerodhaMISFetcher
+                mis_fetcher = ZerodhaMISFetcher()
+                if mis_fetcher.load_from_zerodha(timeout_sec=30):
+                    logger.info(f"MIS_FETCHER | Loaded {mis_fetcher.count()} MIS-allowed symbols from Zerodha")
+                else:
+                    logger.warning("MIS_FETCHER | Failed to fetch MIS list - trades on non-MIS stocks may occur")
+                    mis_fetcher = None
+            except Exception as e:
+                logger.warning(f"MIS_FETCHER | Error initializing: {e}")
+                mis_fetcher = None
+
     elif args.dry_run and args.with_capital_limits:
         # Backtest with capital limits: enable if flag set
         capital_enabled = True
@@ -411,7 +429,8 @@ def main() -> int:
         capital_utilization=cap_mgmt_cfg['capital_utilization'],
         max_allocation_per_trade=cap_mgmt_cfg['max_allocation_per_trade'],
         mis_enabled=mis_enabled,
-        mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file')
+        mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file'),
+        mis_fetcher=mis_fetcher  # Paper trading: validates against Zerodha MIS list
     )
 
     # Set dynamic risk per trade in config (live/paper uses capital %, backtest uses fallback)

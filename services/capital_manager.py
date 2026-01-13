@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, TYPE_CHECKING
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from services.state.zerodha_mis_fetcher import ZerodhaMISFetcher
 
 try:
     from config.logging_config import get_agent_logger
@@ -58,7 +61,8 @@ class CapitalManager:
         capital_utilization: float,
         max_allocation_per_trade: float,
         mis_enabled: bool = False,
-        mis_config_path: Optional[str] = None
+        mis_config_path: Optional[str] = None,
+        mis_fetcher: Optional["ZerodhaMISFetcher"] = None
     ):
         """
         Initialize CapitalManager.
@@ -96,6 +100,7 @@ class CapitalManager:
             'trades_accepted': 0,
             'trades_rejected_capital': 0,
             'trades_rejected_positions': 0,
+            'trades_rejected_mis': 0,  # Rejected: stock not MIS-eligible
             'trades_shadow': 0,  # Shadow trades (tracked but no capital)
             'max_concurrent_positions': 0,
             'max_capital_used': 0.0,
@@ -106,6 +111,10 @@ class CapitalManager:
         # MIS data now comes from nse_all.json (mis_leverage field)
         # No separate config file needed
         self.mis_config = None
+
+        # MIS fetcher for paper trading validation (optional)
+        # When set, validates stocks against Zerodha's live MIS list
+        self.mis_fetcher = mis_fetcher
 
         # Log mode
         if not enabled:
@@ -218,6 +227,38 @@ class CapitalManager:
             return False  # Unlimited capacity when disabled
         return len(self.positions) >= self.max_positions
 
+    def is_mis_allowed(self, symbol: str, side: str = "BUY") -> Tuple[bool, str]:
+        """
+        Check if a symbol is allowed for MIS trading.
+
+        Only validates when mis_fetcher is set (paper trading mode).
+        Live trading doesn't use this - Zerodha broker handles rejection.
+
+        Matching live behavior:
+        - LONG (BUY) on non-MIS stock: ALLOWED (falls back to CNC in live)
+        - SHORT (SELL) on non-MIS stock: BLOCKED (no CNC fallback for shorting)
+
+        Args:
+            symbol: Stock symbol (any format: RELIANCE, RELIANCE.NS, NSE:RELIANCE)
+            side: "BUY" or "SELL" - SHORT trades blocked on non-MIS stocks
+
+        Returns:
+            (is_allowed: bool, reason: str)
+        """
+        # No validation if MIS disabled or fetcher not set
+        if not self.mis_enabled or self.mis_fetcher is None:
+            return True, "ok"
+
+        # Check against Zerodha's MIS list
+        if not self.mis_fetcher.is_mis_allowed(symbol):
+            # LONG trades can fallback to CNC, so allow them
+            if side.upper() == "BUY":
+                return True, "cnc_fallback"
+            # SHORT trades cannot use CNC (requires holdings), so block them
+            return False, f"mis_not_allowed_short:{symbol}"
+
+        return True, "ok"
+
     def can_enter_position(
         self,
         symbol: str,
@@ -225,7 +266,8 @@ class CapitalManager:
         price: float,
         cap_segment: str = "unknown",
         mis_leverage: Optional[float] = None,
-        shadow: bool = False
+        shadow: bool = False,
+        side: str = "BUY"
     ) -> Tuple[bool, int, str]:
         """
         Check if we can enter a new position and return adjusted quantity if needed.
@@ -237,6 +279,7 @@ class CapitalManager:
             cap_segment: Market cap segment (for MIS leverage lookup)
             mis_leverage: Direct MIS leverage from stock data (from nse_all.json)
             shadow: If True, this is a shadow trade (no capital consumed)
+            side: "BUY" or "SELL" - used for MIS validation (SHORT blocked on non-MIS stocks)
 
         Returns:
             (can_enter: bool, adjusted_qty: int, reason: str)
@@ -253,10 +296,23 @@ class CapitalManager:
             logger.info(f"CAP_SHADOW | {symbol} | Shadow trade (no capital) | Qty: {qty}")
             return True, qty, "shadow_trade"
 
+        # MIS eligibility check (paper trading only - mis_fetcher only set for paper mode)
+        # LONG trades allowed on non-MIS stocks (CNC fallback in live)
+        # SHORT trades blocked on non-MIS stocks (no CNC fallback for shorting)
+        is_allowed, mis_reason = self.is_mis_allowed(symbol, side)
+        if not is_allowed:
+            self.stats['trades_rejected_mis'] += 1
+            logger.warning(f"MIS_REJECT | {symbol} | {mis_reason} | SHORT not allowed on non-MIS stock")
+            return False, 0, mis_reason
+
+        # CNC fallback: use 1x leverage instead of MIS leverage
+        # This matches live trading behavior where non-MIS stocks use full capital
+        is_cnc_fallback = (mis_reason == "cnc_fallback")
+
         # MODE 1: DISABLED - Always allow (unlimited capital)
         if not self.enabled:
             self.stats['trades_accepted'] += 1
-            leverage = self._get_leverage(symbol, cap_segment, mis_leverage) if self.mis_enabled else 1.0
+            leverage = 1.0 if is_cnc_fallback else (self._get_leverage(symbol, cap_segment, mis_leverage) if self.mis_enabled else 1.0)
             margin = (qty * price) / leverage
             logger.debug(f"CAP_DISABLED | {symbol} | Would need Rs.{margin:,.0f} @ {leverage}x | ALLOWED (unlimited)")
             return True, qty, "unlimited_capital"
@@ -269,7 +325,10 @@ class CapitalManager:
             return False, 0, reason
 
         # MODE 2 & 3: ENABLED - Check capital constraints and scale if needed
-        leverage = self._get_leverage(symbol, cap_segment, mis_leverage)
+        # CNC fallback uses 1x leverage (full capital required)
+        leverage = 1.0 if is_cnc_fallback else self._get_leverage(symbol, cap_segment, mis_leverage)
+        if is_cnc_fallback:
+            logger.info(f"CNC_FALLBACK | {symbol} | Non-MIS stock, using 1x leverage (full capital)")
         notional = qty * price
         margin_required = notional / leverage
 

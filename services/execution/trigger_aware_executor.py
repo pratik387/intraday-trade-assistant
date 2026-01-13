@@ -110,8 +110,9 @@ class TriggerAwareExecutor:
                             f"SHADOW_TRADE | {trade.symbol} | Notional {notional:.0f} < min {min_notional:.0f}"
                         )
 
+                side = plan.get("side", "BUY")
                 can_enter, adjusted_qty, reason = self.capital_manager.can_enter_position(
-                    trade.symbol, qty, price, cap_segment, shadow=is_shadow
+                    trade.symbol, qty, price, cap_segment, shadow=is_shadow, side=side
                 )
 
                 if not can_enter:
@@ -126,7 +127,7 @@ class TriggerAwareExecutor:
                         )
                     # Re-check with shadow=True to proceed (shadow trades don't need capital)
                     can_enter, adjusted_qty, _ = self.capital_manager.can_enter_position(
-                        trade.symbol, qty, price, cap_segment, shadow=True
+                        trade.symbol, qty, price, cap_segment, shadow=True, side=side
                     )
 
                 # Update plan with adjusted quantity if scaled down (not applicable for shadow trades)
@@ -314,8 +315,18 @@ class TriggerAwareExecutor:
                     logger.warning(f"[PERSIST] persistence is None - position {symbol} NOT saved")
 
             return True
-            
+
+        except RuntimeError as e:
+            # RuntimeError is raised for known rejection reasons (MIS blocked, etc.)
+            # Log as warning without traceback - this is expected behavior, not a bug
+            error_msg = str(e)
+            if "MIS blocked" in error_msg or "MIS orders" in error_msg:
+                logger.warning(f"MIS_BLOCKED | {trade.symbol} | {error_msg}")
+            else:
+                logger.warning(f"Order rejected for {trade.symbol}: {error_msg}")
+            return False
         except Exception as e:
+            # Unexpected errors get full traceback for debugging
             logger.exception(f"Order placement failed for {trade.symbol}: {e}")
             return False
 
