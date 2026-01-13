@@ -68,3 +68,4 @@ ta-lib/
 *screening.jsonl
 temp/*
 nul
+.venv/*

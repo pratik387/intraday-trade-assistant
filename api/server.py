@@ -77,6 +77,7 @@ class APIServer:
         self._ltp_cache = None
         self._kite_client = None  # For broker API calls (funds, etc.)
         self._shutdown_callback: Optional[Callable] = None
+        self._ws_server = None  # WebSocket server for real-time updates
 
         # Auth token (from env var or explicit set)
         self._auth_token: Optional[str] = os.getenv("API_AUTH_TOKEN") or os.getenv("ADMIN_TOKEN")
@@ -129,6 +130,8 @@ class APIServer:
             self._state = state
             self._state_since = datetime.now()
         logger.info(f"[API] State: {state}")
+        # Broadcast state change to WebSocket clients
+        self.broadcast_ws("status", {"state": state})
 
     def heartbeat(self):
         """Called periodically to signal process is alive."""
@@ -172,6 +175,21 @@ class APIServer:
 
     def set_shutdown_callback(self, callback: Callable):
         self._shutdown_callback = callback
+
+    def set_websocket_server(self, ws_server):
+        """Set WebSocket server for real-time updates."""
+        self._ws_server = ws_server
+
+    def broadcast_ws(self, event_type: str, data: dict):
+        """
+        Broadcast event to all connected WebSocket clients.
+
+        Args:
+            event_type: Message type (e.g., "positions", "ltp", "status", "closed_trade")
+            data: Data payload to broadcast
+        """
+        if self._ws_server:
+            self._ws_server.broadcast(event_type, data)
 
     # ==================== Auth ====================
 
