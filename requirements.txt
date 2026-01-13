@@ -17,3 +17,4 @@ pytest
 pytest-asyncio
 pyarrow
 portalocker
+websockets>=12.0

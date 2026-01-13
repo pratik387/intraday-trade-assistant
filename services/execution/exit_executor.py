@@ -1492,6 +1492,8 @@ class ExitExecutor:
                 "t1_exit_time": state.get("t1_exit_time"),  # When T1 was taken
             }
             self.api_server.log_closed_trade(closed_trade)
+            # Broadcast closed trade to WebSocket clients for real-time dashboard
+            self.api_server.broadcast_ws("closed_trade", closed_trade)
 
         try:
             st = pos.plan.get("_state") or {}
