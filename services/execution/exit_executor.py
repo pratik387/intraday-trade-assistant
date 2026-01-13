@@ -1440,20 +1440,38 @@ class ExitExecutor:
             t1 = targets[0].get("level") if targets and len(targets) > 0 else pos.plan.get("t1")
             t2 = targets[1].get("level") if targets and len(targets) > 1 else pos.plan.get("t2")
 
+            # Calculate TOTAL trade PnL including any T1 partial exit profit
+            state = pos.plan.get("_state", {})
+            t1_profit = state.get("t1_profit", 0) or 0
+            t1_booked_qty = state.get("t1_booked_qty", 0) or 0
+            total_pnl = t1_profit + pnl  # T1 partial profit + final exit PnL
+
+            # Use original entry qty (T1 booked + remaining), not just final exit qty
+            original_qty = t1_booked_qty + qty_now
+
+            # Get entry time - try multiple sources
+            entry_time = (
+                pos.plan.get("entry_ts") or
+                pos.plan.get("trigger_ts") or
+                state.get("entry_time")
+            )
+
             closed_trade = {
                 "symbol": sym,
                 "side": pos.side.upper(),
-                "qty": qty_now,
+                "qty": original_qty,  # Total trade qty, not just final exit qty
                 "entry_price": round(pos.avg_price, 2),
                 "exit_price": round(exit_px, 2),
-                "pnl": round(pnl, 2),
+                "pnl": round(total_pnl, 2),  # Total trade PnL including T1 profit
                 "exit_reason": reason,
                 "setup": pos.plan.get("setup_type", "unknown"),
                 "exit_time": ts.isoformat() if ts else None,
-                "entry_time": pos.plan.get("entry_ts"),
+                "entry_time": entry_time,
                 "sl": round(sl, 2) if sl else None,
                 "t1": round(t1, 2) if t1 else None,
                 "t2": round(t2, 2) if t2 else None,
+                "t1_profit": round(t1_profit, 2) if t1_profit else None,  # Breakdown for debugging
+                "t1_exit_time": state.get("t1_exit_time"),  # When T1 was taken
             }
             self.api_server.log_closed_trade(closed_trade)
 
@@ -1533,7 +1551,11 @@ class ExitExecutor:
                 return
 
         # Log enhanced partial exit info
-        profit_booked = qty_exit * (px - pos.avg_price)
+        # Calculate profit based on position direction
+        if pos.side.upper() == "BUY":
+            profit_booked = qty_exit * (px - pos.avg_price)
+        else:
+            profit_booked = qty_exit * (pos.avg_price - px)  # SHORT: profit when price goes down
         logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{original_qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{self.t2_book_pct:.0f}%-0% split]")
 
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
