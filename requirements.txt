@@ -19,4 +19,4 @@ pyarrow
 portalocker
 nse
 oci
-
+websockets>=12.0

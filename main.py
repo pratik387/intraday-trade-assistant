@@ -62,14 +62,21 @@ trading_logger = get_trading_logger()
 class _PositionStore:
     """
     Thread-safe in-memory store shared by TriggerAwareExecutor (writer) and ExitExecutor (reader/updater).
+    Broadcasts position changes to WebSocket clients for real-time dashboard updates.
     """
-    def __init__(self) -> None:
+    def __init__(self, api_server=None) -> None:
         self._by_sym: dict[str, Position] = {}
         self._lock = threading.RLock()
+        self._api_server = api_server
+
+    def set_api_server(self, api_server):
+        """Set API server for WebSocket broadcasts."""
+        self._api_server = api_server
 
     def upsert(self, p: Position) -> None:
         with self._lock:
             self._by_sym[p.symbol] = p
+        self._broadcast_positions()
 
     def get(self, sym: str) -> Optional[Position]:
         with self._lock:
@@ -87,6 +94,7 @@ class _PositionStore:
     def close(self, sym: str) -> None:
         with self._lock:
             self._by_sym.pop(sym, None)
+        self._broadcast_positions()
 
     def reduce(self, sym: str, qty_exit: int) -> None:
         """Reduce qty for partial exits; remove if goes to zero."""
@@ -100,18 +108,61 @@ class _PositionStore:
             else:
                 p.qty = new_qty
                 self._by_sym[sym] = p
+        self._broadcast_positions()
+
+    def _broadcast_positions(self):
+        """Broadcast current positions to WebSocket clients."""
+        if not self._api_server:
+            return
+        positions = []
+        with self._lock:
+            for p in self._by_sym.values():
+                pos_dict = {
+                    "symbol": p.symbol,
+                    "side": p.side,
+                    "qty": p.qty,
+                    "entry": p.avg_price,
+                }
+                # Include plan data if available
+                if hasattr(p, 'plan') and p.plan:
+                    plan = p.plan
+                    stop_data = plan.get("stop", {})
+                    pos_dict["sl"] = stop_data.get("hard") if isinstance(stop_data, dict) else plan.get("sl")
+                    targets = plan.get("targets", [])
+                    if targets and len(targets) > 0:
+                        pos_dict["t1"] = targets[0].get("level")
+                    if targets and len(targets) > 1:
+                        pos_dict["t2"] = targets[1].get("level")
+                    pos_dict["setup"] = plan.get("setup_type", "unknown")
+                    state = plan.get("_state", {})
+                    pos_dict["t1_done"] = state.get("t1_done", False)
+                    pos_dict["booked_pnl"] = state.get("t1_profit", 0)
+                positions.append(pos_dict)
+        self._api_server.broadcast_ws("positions", {"positions": positions})
 
 
 # ------------------------ LTP cache (tick clock) ------------------------
 
 class LTPCache:
-    def __init__(self):
+    """
+    Thread-safe LTP cache with optional WebSocket broadcasting.
+    Uses LTPBatcher for throttled broadcasts to prevent flooding clients.
+    """
+    def __init__(self, ltp_batcher=None):
         self._d = {}
         self._lock = Lock()
+        self._ltp_batcher = ltp_batcher  # For throttled WS broadcasts
+
+    def set_ltp_batcher(self, batcher):
+        """Set LTP batcher for WebSocket broadcasts."""
+        self._ltp_batcher = batcher
 
     def update(self, symbol: str, ltp: float, ts: pd.Timestamp):
         with self._lock:
             self._d[symbol] = (float(ltp), pd.Timestamp(ts))
+        # Queue LTP update for batched broadcast
+        if self._ltp_batcher:
+            self._ltp_batcher.update(symbol, float(ltp), str(ts))
 
     def get_ltp(self, symbol: str):
         with self._lock:
@@ -573,6 +624,18 @@ def main() -> int:
     api.set_kite_client(sdk)  # For broker API calls (funds, etc.)
     api.set_auth_token(args.admin_token)  # For protected endpoints
     api.start()
+
+    # Initialize WebSocket server for real-time dashboard updates
+    from api.websocket_server import WebSocketServer, LTPBatcher
+    ws_port = args.health_port + 1  # WS on next port (e.g., 8081 if API on 8080)
+    ws_server = WebSocketServer(port=ws_port)
+    ws_server.start()
+    api.set_websocket_server(ws_server)
+
+    # Wire up position store and LTP cache for WebSocket broadcasts
+    positions.set_api_server(api)
+    ltp_batcher = LTPBatcher(api.broadcast_ws, interval_ms=500)  # Throttled LTP updates
+    ltp_cache.set_ltp_batcher(ltp_batcher)
 
     # Startup recovery - restore positions from previous session
     from config.logging_config import get_log_directory
