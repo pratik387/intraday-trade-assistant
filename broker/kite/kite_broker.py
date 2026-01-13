@@ -276,8 +276,8 @@ class KiteBroker:
                 # CNC fallback only works for BUY orders
                 # For SELL (short) orders, CNC requires holdings which we don't have
                 if side.upper() == "SELL":
-                    logger.error(f"Cannot short {symbol}: MIS blocked and CNC not available for shorting")
-                    raise RuntimeError(f"Cannot short {symbol}: MIS blocked for this stock (no intraday shorting allowed)")
+                    # Don't log here - caller handles logging appropriately
+                    raise RuntimeError(f"MIS blocked for {symbol} - shorting not allowed (no CNC fallback for shorts)")
 
                 # For BUY orders, try CNC fallback if enabled
                 if auto_fallback_cnc:

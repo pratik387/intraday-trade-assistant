@@ -71,8 +71,12 @@ def _queue_exit_request(server, symbol: str, qty=None, reason: str = "manual_exi
     if not position:
         return {"error": f"No position found for {symbol}"}
 
-    if qty and qty > position.qty:
-        return {"error": f"Exit qty {qty} exceeds position qty {position.qty}"}
+    # Validate qty: must be None (full exit) or positive integer
+    if qty is not None:
+        if qty <= 0:
+            return {"error": f"Exit qty must be positive, got {qty}"}
+        if qty > position.qty:
+            return {"error": f"Exit qty {qty} exceeds position qty {position.qty}"}
 
     request = {
         "symbol": symbol,
