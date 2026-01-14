@@ -49,6 +49,10 @@ class CapitalManager:
     - DISABLED: No capital tracking (unlimited capital)
     - ENABLED (No MIS): Capital tracking with 1x leverage
     - ENABLED (MIS): Capital tracking with MIS leverage (5-20x)
+
+    Two risk modes:
+    - PERCENTAGE: Risk per trade = capital * percentage (e.g., 1% of 5L = Rs.5000)
+    - FIXED: Risk per trade = fixed amount in Rs. (e.g., Rs.1000 regardless of capital)
     """
 
     def __init__(
@@ -56,13 +60,18 @@ class CapitalManager:
         enabled: bool,
         initial_capital: float,
         max_positions: int,
-        risk_pct_per_trade: float,
         min_notional_pct: float,
         capital_utilization: float,
         max_allocation_per_trade: float,
         mis_enabled: bool = False,
         mis_config_path: Optional[str] = None,
-        mis_fetcher: Optional["ZerodhaMISFetcher"] = None
+        mis_fetcher: Optional["ZerodhaMISFetcher"] = None,
+        # Risk mode parameters
+        risk_mode: str = "percentage",
+        risk_fixed_amount: float = 1000.0,
+        risk_percentage: float = 0.01,
+        # Legacy parameter for backwards compatibility
+        risk_pct_per_trade: Optional[float] = None,
     ):
         """
         Initialize CapitalManager.
@@ -76,8 +85,10 @@ class CapitalManager:
             capital_utilization: Safety buffer on available capital (0.85 = use 85% of available)
             max_allocation_per_trade: Max % of total capital per trade (0.20 = 20% per trade)
                                       Set to 0.20 for 5 concurrent trades, 0.25 for 4, etc.
-            risk_pct_per_trade: Risk per trade as % of total capital (0.01 = 1%)
-                               Used for dynamic position sizing based on capital
+            risk_mode: "percentage" or "fixed" - determines how risk per trade is calculated
+            risk_fixed_amount: Risk per trade in Rs. when mode="fixed"
+            risk_percentage: Risk per trade as % of capital when mode="percentage" (0.01 = 1%)
+            risk_pct_per_trade: DEPRECATED - use risk_percentage instead (kept for backwards compatibility)
             min_notional_pct: Minimum position size as % of capital (0.04 = 4%)
                              Trades below this become shadow trades (tracked but not executed)
         """
@@ -88,8 +99,16 @@ class CapitalManager:
         self.max_positions = max_positions
         self.capital_utilization = max(0.5, min(1.0, capital_utilization))  # Clamp to [0.5, 1.0]
         self.max_allocation_per_trade = max(0.05, min(1.0, max_allocation_per_trade))  # Clamp to [5%, 100%]
-        self.risk_pct_per_trade = max(0.001, min(0.05, risk_pct_per_trade))  # Clamp to [0.1%, 5%]
         self.min_notional_pct = max(0.0, min(0.20, min_notional_pct))  # Clamp to [0%, 20%]
+
+        # Risk mode configuration
+        self.risk_mode = risk_mode.lower() if risk_mode else "percentage"
+        self.risk_fixed_amount = max(100.0, risk_fixed_amount)  # Min Rs.100
+        # Handle legacy parameter
+        if risk_pct_per_trade is not None:
+            self.risk_percentage = max(0.001, min(0.05, risk_pct_per_trade))
+        else:
+            self.risk_percentage = max(0.001, min(0.05, risk_percentage))
 
         # Position tracking
         self.positions: Dict[str, Dict] = {}  # symbol -> position info
@@ -116,24 +135,41 @@ class CapitalManager:
         # When set, validates stocks against Zerodha's live MIS list
         self.mis_fetcher = mis_fetcher
 
-        # Log mode
-        risk_rupees = self.total_capital * self.risk_pct_per_trade
+        # Log mode with risk configuration
+        risk_rupees = self._calculate_risk_amount()
+        risk_desc = self._get_risk_description()
         if not enabled:
             logger.info("CapitalManager: DISABLED | Mode: Unlimited capital (all trades allowed)")
         elif mis_enabled:
             logger.info(f"CapitalManager: ENABLED + MIS | Capital: Rs.{initial_capital:,} | "
-                       f"Risk: {self.risk_pct_per_trade*100:.1f}% (Rs.{risk_rupees:,.0f}) | "
+                       f"Risk: {risk_desc} (Rs.{risk_rupees:,.0f}) | "
                        f"Max positions: {max_positions}")
         else:
             logger.info(f"CapitalManager: ENABLED (No MIS) | Capital: Rs.{initial_capital:,} | "
-                       f"Risk: {self.risk_pct_per_trade*100:.1f}% (Rs.{risk_rupees:,.0f}) | "
+                       f"Risk: {risk_desc} (Rs.{risk_rupees:,.0f}) | "
                        f"Max positions: {max_positions}")
+
+    def _calculate_risk_amount(self) -> float:
+        """Calculate risk per trade based on current mode."""
+        if self.risk_mode == "fixed":
+            return self.risk_fixed_amount
+        else:  # percentage mode
+            return self.total_capital * self.risk_percentage
+
+    def _get_risk_description(self) -> str:
+        """Get human-readable description of current risk mode."""
+        if self.risk_mode == "fixed":
+            return f"Fixed Rs.{self.risk_fixed_amount:,.0f}"
+        else:
+            return f"{self.risk_percentage*100:.1f}%"
 
     def get_risk_per_trade(self, fallback: float = 1000.0) -> float:
         """
         Get risk per trade in Rupees.
 
-        For live/paper trading (enabled=True): Returns capital * risk_pct_per_trade
+        For live/paper trading (enabled=True):
+          - If risk_mode="percentage": Returns capital * risk_percentage
+          - If risk_mode="fixed": Returns risk_fixed_amount
         For backtests (enabled=False): Returns fallback value from config
 
         Args:
@@ -144,7 +180,7 @@ class CapitalManager:
         """
         if not self.enabled:
             return fallback
-        return self.total_capital * self.risk_pct_per_trade
+        return self._calculate_risk_amount()
 
     def get_min_notional(self) -> float:
         """

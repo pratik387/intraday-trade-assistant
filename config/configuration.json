@@ -32,7 +32,7 @@
       "_volume_comment": "PROFESSIONAL: 2.0x = institutional standard (hardcoded in detection, not configurable anymore)",
       "swing_tolerance_pct": 0.15,
       "_swing_comment": "At swing structure (15% tolerance for NSE volatility)",
-      "min_rejection_wick_pct": 0.10,
+      "min_rejection_wick_pct": 0.1,
       "_wick_comment": "Rejection confirmation (10% minimum)"
     },
     "fair_value_gap": {
@@ -40,7 +40,7 @@
       "_gap_comment": "Clean gap matters, not size",
       "min_volume_ratio": 1.2,
       "_fvg_volume_comment": "RELAXED (Dec 2024): 1.5->1.2 - only 1 detection in 6 months with 1.5x",
-      "max_wick_penetration_pct": 0.30,
+      "max_wick_penetration_pct": 0.3,
       "_penetration_comment": "RELAXED: Allow wick penetration (30% max, was 25%)",
       "vwap_distance_tolerance_pct": 0.25,
       "_vwap_comment": "RELAXED (Dec 2024): 0.15->0.25 - allow FVG further from VWAP",
@@ -320,20 +320,15 @@
   "planner_entry_zone_default_mult": 0.15,
   "_comment_default_mult": "Other strategies: 0.15 ATR (reverted from 0.25 - wider zones caused T1+ rate drop from 26% to 21% and avg T1+ PnL crash from Rs.684 to Rs.136)",
   "planner_vwap_reclaim_min_bars_above": 3,
-
   "_comment_breakout_execution": "PHASE 1 FIX: Breakout immediate execution (professional standard)",
   "breakout_immediate_execution": true,
   "_comment_immediate": "True = Execute immediately on decision (no entry zone wait). Fixes 8-minute delay issue.",
-
   "breakout_volume_surge_min": 1.5,
   "_comment_volume_surge": "PHASE 4 REVERT: Back to 1.5x (TypeError fix resolved the 3.2% trigger issue, not filter strictness). Professional standard for volume confirmation.",
-
   "breakout_momentum_candle_min_ratio": 2.0,
   "_comment_momentum_candle": "PHASE 4 REVERT: Back to 2.0x - stricter filter for candle size ensures quality breakouts. TypeError was the real blocker, not this threshold.",
-
   "breakout_volume_surge_min_short": 2.0,
   "_comment_volume_short": "PHASE 4 REVERT: Back to 2.0x for shorts - short breakouts need stronger volume confirmation (institutional standard).",
-
   "breakout_momentum_candle_min_ratio_short": 2.5,
   "_comment_momentum_short": "PHASE 4 REVERT: Back to 2.5x for shorts - short breakouts require larger candles to avoid false breakdowns.",
   "risk_per_trade_rupees": 1000.0,
@@ -346,7 +341,7 @@
       "enabled": true,
       "_comment": "Generic breakout_long - uses same params as level_breakout_long",
       "k_atr": 0.15,
-      "min_breakout_atr_mult": 0.20,
+      "min_breakout_atr_mult": 0.2,
       "hold_bars": 1,
       "vol_z_required": 1.0,
       "require_breakout_bar_volume_surge": true,
@@ -370,7 +365,7 @@
       "enabled": false,
       "_comment": "PHASE 1 UPDATE: Disabled per 6-month baseline analysis. 22 trades, 36.4% WR, -Rs.1,299 cumulative loss.",
       "k_atr": 0.15,
-      "min_breakout_atr_mult": 0.20,
+      "min_breakout_atr_mult": 0.2,
       "hold_bars": 1,
       "vol_z_required": 1.0,
       "require_breakout_bar_volume_surge": true,
@@ -393,16 +388,16 @@
     "vwap_reclaim_long": {
       "enabled": true,
       "min_distance_bps": 30,
-      "_comment_min": "VWAP OPTIMIZATION: 50 → 30 bps (0.30%) - Trend continuation needs tighter entry, allow early momentum capture. Professional standard for reclaim setups.",
+      "_comment_min": "VWAP OPTIMIZATION: 50 \u2192 30 bps (0.30%) - Trend continuation needs tighter entry, allow early momentum capture. Professional standard for reclaim setups.",
       "max_distance_bps": 200,
-      "_comment_max": "VWAP OPTIMIZATION: 300 → 200 bps (2.00%) - Beyond 2% = exhaustion/reversal risk. Tighter than mean reversion (150) as trend continuation needs more runway, but cap excessive stretch.",
+      "_comment_max": "VWAP OPTIMIZATION: 300 \u2192 200 bps (2.00%) - Beyond 2% = exhaustion/reversal risk. Tighter than mean reversion (150) as trend continuation needs more runway, but cap excessive stretch.",
       "require_oversold_rsi": false,
       "oversold_rsi_threshold": 30,
       "overbought_rsi_threshold": 70,
       "min_bars_above_vwap": 3,
       "reclaim_volume_confirmation": true,
       "min_volume_mult": 1.5,
-      "_comment_volume": "VWAP OPTIMIZATION: 1.3 → 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter). Entry timing, not pre-filter.",
+      "_comment_volume": "VWAP OPTIMIZATION: 1.3 \u2192 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter). Entry timing, not pre-filter.",
       "reclaim_lookback_bars": 12,
       "max_bars_above_for_reclaim": 8,
       "_comment_freshness": "Fresh reclaim detection: must have been below VWAP in last 12 bars, above for max 8 bars",
@@ -417,16 +412,16 @@
     "vwap_lose_short": {
       "enabled": true,
       "min_distance_bps": 30,
-      "_comment_min": "VWAP OPTIMIZATION: 50 → 30 bps (0.30%) - Trend reversal needs tight entry at VWAP loss. Symmetrical to vwap_reclaim_long.",
+      "_comment_min": "VWAP OPTIMIZATION: 50 \u2192 30 bps (0.30%) - Trend reversal needs tight entry at VWAP loss. Symmetrical to vwap_reclaim_long.",
       "max_distance_bps": 200,
-      "_comment_max": "VWAP OPTIMIZATION: 300 → 200 bps (2.00%) - Beyond 2% = excessive stretch, may reverse back up. Cap downside exhaustion.",
+      "_comment_max": "VWAP OPTIMIZATION: 300 \u2192 200 bps (2.00%) - Beyond 2% = excessive stretch, may reverse back up. Cap downside exhaustion.",
       "require_oversold_rsi": false,
       "oversold_rsi_threshold": 30,
       "overbought_rsi_threshold": 70,
       "min_bars_above_vwap": 2,
       "reclaim_volume_confirmation": true,
       "min_volume_mult": 1.5,
-      "_comment_volume": "VWAP OPTIMIZATION: 1.3 → 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter). Entry confirmation, not pre-filter.",
+      "_comment_volume": "VWAP OPTIMIZATION: 1.3 \u2192 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter). Entry confirmation, not pre-filter.",
       "lose_lookback_bars": 12,
       "max_bars_below_for_lose": 8,
       "_comment_freshness": "Fresh lose detection: must have been above VWAP in last 12 bars, below for max 8 bars",
@@ -461,9 +456,9 @@
     "trend_pullback_long": {
       "enabled": true,
       "min_pullback_pct": 0.5,
-      "_comment_min": "FIXED: 1.0 → 0.5% - Capture shallow pullbacks in strong trends",
+      "_comment_min": "FIXED: 1.0 \u2192 0.5% - Capture shallow pullbacks in strong trends",
       "max_pullback_pct": 8.0,
-      "_comment_max": "FIXED: 5.0 → 8.0% - Professional Fibonacci 23.6%-38.2% retracements on 5-min can be 5-10%",
+      "_comment_max": "FIXED: 5.0 \u2192 8.0% - Professional Fibonacci 23.6%-38.2% retracements on 5-min can be 5-10%",
       "trend_confirmation_bars": 10,
       "min_trend_bars": 10,
       "pullback_depth_pct": 38.2,
@@ -497,9 +492,9 @@
     "trend_pullback_short": {
       "enabled": true,
       "min_pullback_pct": 0.5,
-      "_comment_min": "FIXED: 1.0 → 0.5% - Capture shallow pullbacks in strong trends",
+      "_comment_min": "FIXED: 1.0 \u2192 0.5% - Capture shallow pullbacks in strong trends",
       "max_pullback_pct": 8.0,
-      "_comment_max": "FIXED: 5.0 → 8.0% - Professional Fibonacci 23.6%-38.2% retracements on 5-min can be 5-10%",
+      "_comment_max": "FIXED: 5.0 \u2192 8.0% - Professional Fibonacci 23.6%-38.2% retracements on 5-min can be 5-10%",
       "trend_confirmation_bars": 10,
       "min_trend_bars": 10,
       "pullback_depth_pct": 38.2,
@@ -535,9 +530,9 @@
       "min_trend_strength": 1.2,
       "min_trend_bars": 8,
       "min_pullback_pct": 0.3,
-      "_comment_min": "FIXED: 0.5 → 0.3% - Capture micro-pullbacks in momentum continuation",
+      "_comment_min": "FIXED: 0.5 \u2192 0.3% - Capture micro-pullbacks in momentum continuation",
       "max_pullback_pct": 5.0,
-      "_comment_max": "FIXED: 2.0 → 5.0% - Professional continuation patterns allow 3-5% consolidation, hardcoded 15% removed from code",
+      "_comment_max": "FIXED: 2.0 \u2192 5.0% - Professional continuation patterns allow 3-5% consolidation, hardcoded 15% removed from code",
       "require_volume_confirmation": true,
       "require_volume_decline": false,
       "_comment_vol_decline": "Continuation wants HIGH volume (momentum), not low volume like pullbacks",
@@ -565,9 +560,9 @@
       "min_trend_strength": 1.2,
       "min_trend_bars": 8,
       "min_pullback_pct": 0.3,
-      "_comment_min": "FIXED: 0.5 → 0.3% - Capture micro-pullbacks in momentum continuation",
+      "_comment_min": "FIXED: 0.5 \u2192 0.3% - Capture micro-pullbacks in momentum continuation",
       "max_pullback_pct": 5.0,
-      "_comment_max": "FIXED: 2.0 → 5.0% - Professional continuation patterns allow 3-5% consolidation, hardcoded 15% removed from code",
+      "_comment_max": "FIXED: 2.0 \u2192 5.0% - Professional continuation patterns allow 3-5% consolidation, hardcoded 15% removed from code",
       "require_volume_confirmation": true,
       "require_volume_decline": false,
       "_comment_vol_decline": "Continuation wants HIGH volume (momentum), not low volume like pullbacks",
@@ -593,9 +588,9 @@
     "volume_spike_reversal_long": {
       "enabled": true,
       "min_volume_spike_mult": 1.2,
-      "_comment_vol_z": "FIXED: 3.0 → 1.2 - Professional NSE standard: 1.2-1.5x volume surge = institutional participation. 3.0σ vol_z was 99.7th percentile (only major news/capitulation events). Aligns with ORB/support strategies using 1.5x volume mult",
+      "_comment_vol_z": "FIXED: 3.0 \u2192 1.2 - Professional NSE standard: 1.2-1.5x volume surge = institutional participation. 3.0\u03c3 vol_z was 99.7th percentile (only major news/capitulation events). Aligns with ORB/support strategies using 1.5x volume mult",
       "min_body_size_pct": 0.8,
-      "_comment_body": "FIXED: 1.0 → 0.8% - Realistic 5-min reversal candles. NSE 5-min range typically 0.3-1.5%, 0.8% captures meaningful reversals without being extreme",
+      "_comment_body": "FIXED: 1.0 \u2192 0.8% - Realistic 5-min reversal candles. NSE 5-min range typically 0.3-1.5%, 0.8% captures meaningful reversals without being extreme",
       "reversal_threshold_pct": 2.0,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
@@ -608,9 +603,9 @@
     "volume_spike_reversal_short": {
       "enabled": true,
       "min_volume_spike_mult": 1.5,
-      "_comment_vol_z": "FIXED: 3.0 → 1.5 - Stricter than longs (1.5 vs 1.2), aligns with system's short-bias caution (breakout_volume_surge_min_short: 2.0). Still captures strong distribution volume",
+      "_comment_vol_z": "FIXED: 3.0 \u2192 1.5 - Stricter than longs (1.5 vs 1.2), aligns with system's short-bias caution (breakout_volume_surge_min_short: 2.0). Still captures strong distribution volume",
       "min_body_size_pct": 0.8,
-      "_comment_body": "FIXED: 1.0 → 0.8% - Same as longs, realistic 5-min reversal candles",
+      "_comment_body": "FIXED: 1.0 \u2192 0.8% - Same as longs, realistic 5-min reversal candles",
       "reversal_threshold_pct": 2.0,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
@@ -691,7 +686,9 @@
       "_comment_breakout_sl": "ATR buffer inside range for breakout SL",
       "min_stop_distance_pct": 0.3,
       "_comment_min_stop": "Minimum stop loss distance as percentage of price",
-      "blocked_cap_segments": ["large_cap"],
+      "blocked_cap_segments": [
+        "large_cap"
+      ],
       "_comment_blocked_cap": "DATA-DRIVEN: 6-month backtest shows large_cap range_bounce_short: 92 trades, 9.8% WR, Rs -10,197 PnL, 52.2% hard_sl. Blocking adds Rs +10,197 to PnL."
     },
     "range_breakout_long": {
@@ -721,18 +718,18 @@
     "level_breakout_long": {
       "enabled": true,
       "k_atr": 0.15,
-      "_comment_k_atr": "FIXED: 0.25 → 0.15 - Professional NSE standard for early breakout entry. 0.25 ATR was missing 60-70% of valid breakouts",
-      "min_breakout_atr_mult": 0.20,
-      "_comment_min_breakout": "FIXED: 0.3 → 0.20 - Allow smaller but valid breakouts. NSE 5-min breakouts often 0.2-0.25 ATR (was rejecting professional-size moves)",
+      "_comment_k_atr": "FIXED: 0.25 \u2192 0.15 - Professional NSE standard for early breakout entry. 0.25 ATR was missing 60-70% of valid breakouts",
+      "min_breakout_atr_mult": 0.2,
+      "_comment_min_breakout": "FIXED: 0.3 \u2192 0.20 - Allow smaller but valid breakouts. NSE 5-min breakouts often 0.2-0.25 ATR (was rejecting professional-size moves)",
       "hold_bars": 1,
       "vol_z_required": 1.0,
-      "_comment_vol_z": "FIXED: 1.5 → 1.0 - Institutional participation threshold (68th %ile vs 84th). 1.5σ was only capturing extreme volume events",
+      "_comment_vol_z": "FIXED: 1.5 \u2192 1.0 - Institutional participation threshold (68th %ile vs 84th). 1.5\u03c3 was only capturing extreme volume events",
       "require_breakout_bar_volume_surge": true,
       "breakout_volume_min_ratio": 1.3,
-      "_comment_volume_ratio": "FIXED: 1.4 → 1.3 - NSE professional standard per research (ORB strategies use 1.3x). 1.4x was too strict, missing valid institutional breakouts",
+      "_comment_volume_ratio": "FIXED: 1.4 \u2192 1.3 - NSE professional standard per research (ORB strategies use 1.3x). 1.4x was too strict, missing valid institutional breakouts",
       "enable_smc_filtering": true,
       "liquidity_grab_tolerance_pct": 0.3,
-      "_comment_liquidity": "FIXED: 0.2 → 0.3% - Normal NSE 5-min volatility. 0.2% was rejecting normal wick patterns (0.3-0.5% wicks are standard)",
+      "_comment_liquidity": "FIXED: 0.2 \u2192 0.3% - Normal NSE 5-min volatility. 0.2% was rejecting normal wick patterns (0.3-0.5% wicks are standard)",
       "sl_atr_multiplier": 2.0,
       "_sl_rationale": "PHASE 1 UPDATE: Set to 2.0x ATR based on 6-month MFE/MAE analysis (1.41x ratio proves stops too tight)",
       "min_stop_distance_pct": 0.3,
@@ -749,7 +746,7 @@
       "aggressive_min_conviction": 0.7,
       "_comment_aggressive_conviction": "Minimum confidence score for immediate entry (institutional-grade breakouts)",
       "retest_entry_zone_width_atr": 0.5,
-      "_comment_retest_zone": "Entry zone width around level for retest mode (0.5 ATR ≈ 0.5% for NSE stocks)",
+      "_comment_retest_zone": "Entry zone width around level for retest mode (0.5 ATR \u2248 0.5% for NSE stocks)",
       "retest_timeout_minutes": 30,
       "_comment_retest_timeout": "How long to wait for retest entry before expiring (30 minutes default)",
       "allow_both_modes": true,
@@ -776,7 +773,7 @@
       "enabled": true,
       "_comment": "ORB-related level breakouts (at ORH/ORL) - uses same params as level_breakout_long",
       "k_atr": 0.15,
-      "min_breakout_atr_mult": 0.20,
+      "min_breakout_atr_mult": 0.2,
       "hold_bars": 1,
       "vol_z_required": 1.0,
       "require_breakout_bar_volume_surge": true,
@@ -854,9 +851,9 @@
     "squeeze_release_long": {
       "enabled": true,
       "width_window": 12,
-      "_comment_width_window": "AGGRESSIVE FIX: 40 → 12 bars (60min). Professional traders use hourly reference for 5min squeeze detection. Can revert to 24 (120min) if too many bad trades.",
+      "_comment_width_window": "AGGRESSIVE FIX: 40 \u2192 12 bars (60min). Professional traders use hourly reference for 5min squeeze detection. Can revert to 24 (120min) if too many bad trades.",
       "expansion_ratio": 1.25,
-      "_comment_expansion": "PRO TRADER FIX: 1.5 → 1.25 - Chartink/Kite screeners use 1.2-1.3x expansion. 1.5x too strict.",
+      "_comment_expansion": "PRO TRADER FIX: 1.5 \u2192 1.25 - Chartink/Kite screeners use 1.2-1.3x expansion. 1.5x too strict.",
       "enable_nr7_pattern": true,
       "nr7_lookback": 7,
       "_comment_nr7": "NR7 Pattern: Range smallest of last 7 periods - volatility contraction signal per Chartink screeners",
@@ -876,9 +873,9 @@
     "squeeze_release_short": {
       "enabled": true,
       "width_window": 12,
-      "_comment_width_window": "AGGRESSIVE FIX: 40 → 12 bars (60min). Professional traders use hourly reference for 5min squeeze detection. Can revert to 24 (120min) if too many bad trades.",
+      "_comment_width_window": "AGGRESSIVE FIX: 40 \u2192 12 bars (60min). Professional traders use hourly reference for 5min squeeze detection. Can revert to 24 (120min) if too many bad trades.",
       "expansion_ratio": 1.25,
-      "_comment_expansion": "PRO TRADER FIX: 1.5 → 1.25 - Chartink/Kite screeners use 1.2-1.3x expansion. 1.5x too strict.",
+      "_comment_expansion": "PRO TRADER FIX: 1.5 \u2192 1.25 - Chartink/Kite screeners use 1.2-1.3x expansion. 1.5x too strict.",
       "enable_nr7_pattern": true,
       "nr7_lookback": 7,
       "_comment_nr7": "NR7 Pattern: Range smallest of last 7 periods - volatility contraction signal per Chartink screeners",
@@ -930,18 +927,18 @@
     "momentum_breakout_long": {
       "enabled": true,
       "min_momentum_3bar_pct": 0.8,
-      "_comment_3bar": "FIXED: 1.5 → 0.8% - Professional NSE intraday momentum range is 0.5-1.5%, was rejecting most valid setups at upper end only",
+      "_comment_3bar": "FIXED: 1.5 \u2192 0.8% - Professional NSE intraday momentum range is 0.5-1.5%, was rejecting most valid setups at upper end only",
       "min_momentum_1bar_pct": 0.3,
-      "_comment_1bar": "FIXED: 0.5 → 0.3% - Slightly more lenient for 5-min bar momentum, aligns with scalping targets of 0.5-1%",
+      "_comment_1bar": "FIXED: 0.5 \u2192 0.3% - Slightly more lenient for 5-min bar momentum, aligns with scalping targets of 0.5-1%",
       "min_momentum_2bar_pct": 0.6,
-      "_comment_2bar": "FIXED: 1.0 → 0.6% - Proportional reduction to match 3-bar adjustment",
+      "_comment_2bar": "FIXED: 1.0 \u2192 0.6% - Proportional reduction to match 3-bar adjustment",
       "min_trend_5bar_pct": 2.0,
       "min_trend_3bar_pct": 1.0,
       "min_positive_bars": 2,
       "vol_z_breakout_mult": 0.8,
       "vol_z_continuation_mult": 0.6,
       "min_volume_surge_ratio": 1.2,
-      "_comment_volume": "FIXED: 1.3 → 1.2 - Slightly more lenient while still requiring institutional participation",
+      "_comment_volume": "FIXED: 1.3 \u2192 1.2 - Slightly more lenient while still requiring institutional participation",
       "target_mult_t1": 1.5,
       "target_mult_t2": 2.5,
       "stop_mult": 1.5,
@@ -957,18 +954,18 @@
     "momentum_breakout_short": {
       "enabled": true,
       "min_momentum_3bar_pct": 0.8,
-      "_comment_3bar": "FIXED: 1.5 → 0.8% - Professional NSE intraday momentum range is 0.5-1.5%, was rejecting most valid setups at upper end only",
+      "_comment_3bar": "FIXED: 1.5 \u2192 0.8% - Professional NSE intraday momentum range is 0.5-1.5%, was rejecting most valid setups at upper end only",
       "min_momentum_1bar_pct": 0.3,
-      "_comment_1bar": "FIXED: 0.5 → 0.3% - Slightly more lenient for 5-min bar momentum, aligns with scalping targets of 0.5-1%",
+      "_comment_1bar": "FIXED: 0.5 \u2192 0.3% - Slightly more lenient for 5-min bar momentum, aligns with scalping targets of 0.5-1%",
       "min_momentum_2bar_pct": 0.6,
-      "_comment_2bar": "FIXED: 1.0 → 0.6% - Proportional reduction to match 3-bar adjustment",
+      "_comment_2bar": "FIXED: 1.0 \u2192 0.6% - Proportional reduction to match 3-bar adjustment",
       "min_trend_5bar_pct": 2.0,
       "min_trend_3bar_pct": 1.0,
       "min_positive_bars": 2,
       "vol_z_breakout_mult": 0.8,
       "vol_z_continuation_mult": 0.6,
       "min_volume_surge_ratio": 1.2,
-      "_comment_volume": "FIXED: 1.3 → 1.2 - Slightly more lenient while still requiring institutional participation",
+      "_comment_volume": "FIXED: 1.3 \u2192 1.2 - Slightly more lenient while still requiring institutional participation",
       "target_mult_t1": 1.5,
       "target_mult_t2": 2.5,
       "stop_mult": 1.5,
@@ -986,7 +983,7 @@
       "target_structure_type": "support_bounce_long",
       "min_touches": 2,
       "bounce_tolerance_pct": 0.8,
-      "_comment_tolerance": "FIXED: 0.3 → 0.8% - Professional standard for S/R zones (0.7-1.0%). Aligns with 'support as zone' industry practice.",
+      "_comment_tolerance": "FIXED: 0.3 \u2192 0.8% - Professional standard for S/R zones (0.7-1.0%). Aligns with 'support as zone' industry practice.",
       "require_volume_spike": true,
       "min_volume_mult": 1.5,
       "min_level_age_bars": 5,
@@ -1007,18 +1004,18 @@
       "entry_mode": "conditional",
       "_comment_entry_mode": "Entry mode: 'immediate', 'retest', or 'conditional'. Conditional = immediate if within immediate_entry_distance_pct, else retest.",
       "immediate_entry_distance_pct": 0.6,
-      "_comment_immediate_dist": "OPTIMIZED: 0.3 → 0.6% - Same as resistance_bounce_short. Higher trigger rate while maintaining R:R.",
+      "_comment_immediate_dist": "OPTIMIZED: 0.3 \u2192 0.6% - Same as resistance_bounce_short. Higher trigger rate while maintaining R:R.",
       "retest_entry_zone_width_atr": 0.5,
-      "_comment_retest_zone": "OPTIMIZED: 0.3 → 0.5 ATR - Wider zone to increase trigger rate.",
+      "_comment_retest_zone": "OPTIMIZED: 0.3 \u2192 0.5 ATR - Wider zone to increase trigger rate.",
       "retest_timeout_minutes": 60,
-      "_comment_retest_timeout": "OPTIMIZED: 45 → 60 min - More time for retest entries."
+      "_comment_retest_timeout": "OPTIMIZED: 45 \u2192 60 min - More time for retest entries."
     },
     "resistance_bounce_short": {
       "enabled": true,
       "target_structure_type": "resistance_bounce_short",
       "min_touches": 2,
       "bounce_tolerance_pct": 0.8,
-      "_comment_tolerance": "FIXED: 0.3 → 0.8% - Professional standard for S/R zones (0.7-1.0%). Aligns with 'support as zone' industry practice.",
+      "_comment_tolerance": "FIXED: 0.3 \u2192 0.8% - Professional standard for S/R zones (0.7-1.0%). Aligns with 'support as zone' industry practice.",
       "require_volume_spike": true,
       "min_volume_mult": 1.5,
       "min_level_age_bars": 5,
@@ -1028,12 +1025,12 @@
       "min_breakout_volume_mult": 1.8,
       "min_stop_distance_pct": 0.5,
       "stop_distance_mult": 0.8,
-      "_comment_stop": "FIXED: 0.5 → 0.8 ATR - Spike test (1m bar timing analysis) showed 40% of trades hit SL before T1. Stops too tight for normal price noise. Widening to give breathing room.",
+      "_comment_stop": "FIXED: 0.5 \u2192 0.8 ATR - Spike test (1m bar timing analysis) showed 40% of trades hit SL before T1. Stops too tight for normal price noise. Widening to give breathing room.",
       "level_buffer_mult": 0.1,
       "target_mult_t1": 1.5,
-      "_comment_t1": "REVERTED: 2.0 → 1.5 - Spike test showed issue is tight stops, not tight targets. Keeping original T1.",
+      "_comment_t1": "REVERTED: 2.0 \u2192 1.5 - Spike test showed issue is tight stops, not tight targets. Keeping original T1.",
       "target_mult_t2": 2.5,
-      "_comment_t2": "REVERTED: 3.5 → 2.5 - Keeping original T2 after confirming stops are the issue.",
+      "_comment_t2": "REVERTED: 3.5 \u2192 2.5 - Keeping original T2 after confirming stops are the issue.",
       "confidence_strong_level": 0.85,
       "confidence_weak_level": 0.65,
       "confidence_breakout": 0.8,
@@ -1042,11 +1039,11 @@
       "entry_mode": "conditional",
       "_comment_entry_mode": "Entry mode: 'immediate', 'retest', or 'conditional'. Conditional = immediate if within immediate_entry_distance_pct, else retest.",
       "immediate_entry_distance_pct": 0.6,
-      "_comment_immediate_dist": "OPTIMIZED: 0.3 → 0.6% - Backtest showed 8.3% trigger rate too low. Widening allows more immediate entries while maintaining good R:R.",
+      "_comment_immediate_dist": "OPTIMIZED: 0.3 \u2192 0.6% - Backtest showed 8.3% trigger rate too low. Widening allows more immediate entries while maintaining good R:R.",
       "retest_entry_zone_width_atr": 0.5,
-      "_comment_retest_zone": "OPTIMIZED: 0.3 → 0.5 ATR - Wider zone to increase trigger rate from 8.3% to ~15-20%.",
+      "_comment_retest_zone": "OPTIMIZED: 0.3 \u2192 0.5 ATR - Wider zone to increase trigger rate from 8.3% to ~15-20%.",
       "retest_timeout_minutes": 60,
-      "_comment_retest_timeout": "OPTIMIZED: 45 → 60 min - More time for retest entries. Regime won't change significantly in extra 15 min."
+      "_comment_retest_timeout": "OPTIMIZED: 45 \u2192 60 min - More time for retest entries. Regime won't change significantly in extra 15 min."
     },
     "support_breakdown_short": {
       "enabled": true,
@@ -1291,7 +1288,9 @@
         "_comment": "First hour momentum window - full window, filtered by multi-bar confirmation"
       },
       "regime_filter": {
-        "allowed_regimes": ["trend_up"],
+        "allowed_regimes": [
+          "trend_up"
+        ],
         "_comment": "UPDATED (Dec 2024): FHM Long ONLY in trend_up. Squeeze was -646 Rs (38% WR), trend_up +545 Rs (58% WR)"
       },
       "triggers": {
@@ -1308,7 +1307,7 @@
         "small_cap": 3.5,
         "mid_cap": 2.0,
         "large_cap": 1.5,
-        "_rationale": "INCREASED: micro 3.5→4.0, small 3.0→3.5 - backtest showed small/micro caps still losing despite 3.x RVOL"
+        "_rationale": "INCREASED: micro 3.5\u21924.0, small 3.0\u21923.5 - backtest showed small/micro caps still losing despite 3.x RVOL"
       },
       "multi_bar_confirmation": {
         "enabled": true,
@@ -1331,8 +1330,8 @@
         "_comment": "Wait for pullback to VWAP AND hold for 1 candle",
         "mode": "pullback",
         "reference": "vwap",
-        "zone_atr_mult": 0.10,
-        "_zone_comment": "TIGHTENED: 0.15→0.10 ATR - Backtest showed high slippage (100-400bps); tighter zone = better entries"
+        "zone_atr_mult": 0.1,
+        "_zone_comment": "TIGHTENED: 0.15\u21920.10 ATR - Backtest showed high slippage (100-400bps); tighter zone = better entries"
       },
       "stop_loss": {
         "_comment": "DATA-DRIVEN (Dec 2024): 1m simulation showed 1.2% SL + 1.5R T1 = +348% improvement",
@@ -1347,7 +1346,11 @@
         "t1_rr": 1.5,
         "t2_rr": 2.5,
         "t3_rr": 3.5,
-        "qty_split": [70, 30, 0],
+        "qty_split": [
+          70,
+          30,
+          0
+        ],
         "_t1_comment": "RAISED: 1.0R -> 1.5R - t1->t1 trades gained +Rs 9,972 with higher target"
       },
       "confidence_high_rvol": 2.0,
@@ -1366,12 +1369,17 @@
       "stop_at_prev_close": true,
       "blocked_cap_segments": {
         "_comment": "SALVAGE FIX: Block small_cap and micro_cap - 0% win rate in backtest analysis",
-        "segments": ["small_cap", "micro_cap"],
+        "segments": [
+          "small_cap",
+          "micro_cap"
+        ],
         "_rationale": "small_cap: 0% WR, -1,767 Rs | micro_cap: 0% WR, -2,608 Rs | mid_cap: 45% WR, +958 Rs (ONLY profitable)"
       },
       "regime_filter": {
         "_comment": "DATA-DRIVEN: chop = +121 Rs/trade, trend_down = +52, squeeze = +25. Chop only!",
-        "short_allowed_regimes": ["chop"]
+        "short_allowed_regimes": [
+          "chop"
+        ]
       },
       "time_window": {
         "start": "09:20",
@@ -1416,8 +1424,8 @@
         "_comment": "Wait for pullback to VWAP AND hold for 1 candle",
         "mode": "pullback",
         "reference": "vwap",
-        "zone_atr_mult": 0.10,
-        "_zone_comment": "TIGHTENED: 0.15→0.10 ATR - Backtest showed winners have lower slippage (146 vs 204 bps)"
+        "zone_atr_mult": 0.1,
+        "_zone_comment": "TIGHTENED: 0.15\u21920.10 ATR - Backtest showed winners have lower slippage (146 vs 204 bps)"
       },
       "stop_loss": {
         "_comment": "PRO TRADER: Stop at previous day close (natural resistance for gap down)",
@@ -1431,7 +1439,11 @@
         "t1_rr": 1.0,
         "t2_rr": 2.0,
         "t3_rr": 3.0,
-        "qty_split": [70, 30, 0]
+        "qty_split": [
+          70,
+          30,
+          0
+        ]
       },
       "confidence_high_rvol": 2.0,
       "confidence_base": 1.5,
@@ -1441,15 +1453,15 @@
       "enabled": true,
       "min_distance_bps": 50,
       "max_distance_bps": 150,
-      "_comment_max": "VWAP OPTIMIZATION: 250 → 150 bps (1.50%) - Beyond 1.5% = reversal risk, not mean reversion to VWAP",
+      "_comment_max": "VWAP OPTIMIZATION: 250 \u2192 150 bps (1.50%) - Beyond 1.5% = reversal risk, not mean reversion to VWAP",
       "require_oversold_rsi": false,
-      "_comment_rsi": "VWAP OPTIMIZATION: true → false - CRITICAL FIX - RSI blocking 100% of trades. VWAP edge independent of RSI (Tier 3 optional, not Tier 1 must-have)",
+      "_comment_rsi": "VWAP OPTIMIZATION: true \u2192 false - CRITICAL FIX - RSI blocking 100% of trades. VWAP edge independent of RSI (Tier 3 optional, not Tier 1 must-have)",
       "oversold_rsi_threshold": 30,
       "overbought_rsi_threshold": 70,
       "min_bars_above_vwap": 2,
       "reclaim_volume_confirmation": true,
       "min_volume_mult": 1.5,
-      "_comment_volume": "VWAP OPTIMIZATION: 1.2 → 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter priority)",
+      "_comment_volume": "VWAP OPTIMIZATION: 1.2 \u2192 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter priority)",
       "min_stop_distance_pct": 0.5,
       "stop_distance_mult": 0.75,
       "vwap_buffer_mult": 0.2,
@@ -1462,15 +1474,15 @@
       "enabled": true,
       "min_distance_bps": 50,
       "max_distance_bps": 150,
-      "_comment_max": "VWAP OPTIMIZATION: 250 → 150 bps (1.50%) - Beyond 1.5% distance = reversal risk, not mean reversion to VWAP. Same threshold as long side.",
+      "_comment_max": "VWAP OPTIMIZATION: 250 \u2192 150 bps (1.50%) - Beyond 1.5% distance = reversal risk, not mean reversion to VWAP. Same threshold as long side.",
       "require_oversold_rsi": false,
-      "_comment_rsi": "VWAP OPTIMIZATION: true → false - CRITICAL FIX - RSI requirement blocking 100% of mean reversion trades. VWAP edge independent of RSI (Tier 3 optional, not Tier 1 must-have).",
+      "_comment_rsi": "VWAP OPTIMIZATION: true \u2192 false - CRITICAL FIX - RSI requirement blocking 100% of mean reversion trades. VWAP edge independent of RSI (Tier 3 optional, not Tier 1 must-have).",
       "overbought_rsi_threshold": 70,
       "oversold_rsi_threshold": 30,
       "min_bars_above_vwap": 2,
       "reclaim_volume_confirmation": true,
       "min_volume_mult": 1.5,
-      "_comment_volume": "VWAP OPTIMIZATION: 1.2 → 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter priority). Matches industry standard for conviction signals.",
+      "_comment_volume": "VWAP OPTIMIZATION: 1.2 \u2192 1.5x - Professional institutional volume confirmation threshold (Tier 1 filter priority). Matches industry standard for conviction signals.",
       "min_stop_distance_pct": 0.5,
       "stop_distance_mult": 0.75,
       "vwap_buffer_mult": 0.2,
@@ -1558,13 +1570,13 @@
         "order_block": {
           "min_block_size_pct": 0.001,
           "min_volume_ratio": 1.1,
-          "swing_tolerance_pct": 0.10,
+          "swing_tolerance_pct": 0.1,
           "min_rejection_wick_pct": 0.15
         },
         "fair_value_gap": {
           "min_gap_size_pct": 0.0005,
           "min_volume_ratio": 1.2,
-          "max_wick_penetration_pct": 0.30,
+          "max_wick_penetration_pct": 0.3,
           "vwap_distance_tolerance_pct": 0.25,
           "swing_tolerance_pct": 0.25,
           "_comment": "RELAXED (Dec 2024): Aligned with ict_quality_filters values"
@@ -1767,7 +1779,6 @@
   "sl_atr_mult": 1.6,
   "_comment_sl_atr_mult": "REVERTED from 2.0 to 1.6 - wider stops were causing 800+ Rs losses instead of 600-700 Rs max",
   "sl_below_swing_ticks": 0.0,
-
   "_comment_time_based_sl": "=== TIME-BASED SL WIDENING (Pro Trader Standard) ===",
   "_comment_time_sl_rationale": "Research: Morning volatility (10-11 AM) causes 35% hard_sl rate. Pro traders widen stops after time-in-trade to avoid whipsaw. Based on LuxAlgo/TrendSpider ATR strategies.",
   "sl_time_widening_enabled": true,
@@ -2344,20 +2355,25 @@
     "enabled": false,
     "initial_capital": 500000,
     "max_concurrent_positions": 50,
-    "risk_pct_per_trade": 0.01,
+    "risk": {
+      "mode": "percentage",
+      "fixed_amount": 1000,
+      "percentage": 0.01,
+      "_comment": "mode=percentage uses capital*percentage, mode=fixed uses fixed_amount in Rs."
+    },
     "min_notional_pct": 0.04,
     "capital_utilization": 0.85,
-    "max_allocation_per_trade": 0.20,
-    "_comment_sizing": "risk_pct=1% for sizing, min_notional=4% min position, capital_util=85% safety buffer, max_alloc=20% max per trade",
+    "max_allocation_per_trade": 0.2,
+    "_comment_sizing": "min_notional=4% min position, capital_util=85% safety buffer, max_alloc=20% max per trade",
     "mis_leverage": {
       "enabled": false,
       "_comment": "MIS leverage data is read from nse_all.json (mis_leverage field). This just enables/disables the feature."
     },
     "_modes": {
       "_comment": "Three operational modes",
-      "mode_1": "capital_management.enabled=false \u00e2\u2020\u2019 Unlimited capital (current, for strategy dev)",
-      "mode_2": "capital_management.enabled=true + mis_leverage.enabled=false \u00e2\u2020\u2019 Rs.1L, 1x leverage (delivery)",
-      "mode_3": "capital_management.enabled=true + mis_leverage.enabled=true \u00e2\u2020\u2019 Rs.1L + MIS 5-20x leverage (intraday)"
+      "mode_1": "capital_management.enabled=false -> Unlimited capital (for strategy dev)",
+      "mode_2": "capital_management.enabled=true + mis_leverage.enabled=false -> 1x leverage (delivery)",
+      "mode_3": "capital_management.enabled=true + mis_leverage.enabled=true -> MIS 5-20x leverage (intraday)"
     }
   },
   "planner_precision": {

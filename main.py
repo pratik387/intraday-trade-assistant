@@ -495,17 +495,37 @@ def main() -> int:
         mis_enabled = False
         logger.info("[CAPITAL] Disabled capital management for fast backtest")
 
+    # Extract risk config (new format with mode, or legacy risk_pct_per_trade)
+    risk_cfg = cap_mgmt_cfg.get('risk', {})
+    risk_mode = risk_cfg.get('mode', 'percentage')
+    risk_fixed_amount = risk_cfg.get('fixed_amount', 1000.0)
+    risk_percentage = risk_cfg.get('percentage', 0.01)
+
+    # CLI override for risk mode (--risk-mode fixed|percentage, --risk-value <amount>)
+    if hasattr(args, 'risk_mode') and args.risk_mode:
+        risk_mode = args.risk_mode
+        logger.info(f"[CAPITAL] Risk mode overridden via CLI: {risk_mode}")
+    if hasattr(args, 'risk_value') and args.risk_value is not None:
+        if risk_mode == 'fixed':
+            risk_fixed_amount = args.risk_value
+        else:
+            risk_percentage = args.risk_value
+        logger.info(f"[CAPITAL] Risk value overridden via CLI: {args.risk_value}")
+
     capital_manager = CapitalManager(
         enabled=capital_enabled,
         initial_capital=cap_mgmt_cfg['initial_capital'],
         max_positions=cap_mgmt_cfg['max_concurrent_positions'],
-        risk_pct_per_trade=cap_mgmt_cfg['risk_pct_per_trade'],
         min_notional_pct=cap_mgmt_cfg['min_notional_pct'],
         capital_utilization=cap_mgmt_cfg['capital_utilization'],
         max_allocation_per_trade=cap_mgmt_cfg['max_allocation_per_trade'],
         mis_enabled=mis_enabled,
         mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file'),
-        mis_fetcher=mis_fetcher  # Paper trading: validates against Zerodha MIS list
+        mis_fetcher=mis_fetcher,  # Paper trading: validates against Zerodha MIS list
+        # Risk mode parameters
+        risk_mode=risk_mode,
+        risk_fixed_amount=risk_fixed_amount,
+        risk_percentage=risk_percentage,
     )
 
     # Set dynamic risk per trade in config (live/paper uses capital %, backtest uses fallback)
@@ -855,6 +875,11 @@ def _parse_args():
     ap.add_argument("--health-port", type=int, default=8080, help="Port for health server (default: 8080)")
     ap.add_argument("--ws-port", type=int, default=None, help="Port for WebSocket server (default: health-port + 1)")
     ap.add_argument("--admin-token", default=None, help="Admin token for protected endpoints (default: from ADMIN_TOKEN env var)")
+    # Risk mode configuration (overrides config file)
+    ap.add_argument("--risk-mode", choices=["fixed", "percentage"], default=None,
+                    help="Risk calculation mode: 'fixed' for fixed Rs. amount, 'percentage' for %% of capital")
+    ap.add_argument("--risk-value", type=float, default=None,
+                    help="Risk value: Rs. amount if mode=fixed (e.g., 1000), or decimal %% if mode=percentage (e.g., 0.01 for 1%%)")
     return ap.parse_args()
 
 
