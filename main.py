@@ -627,7 +627,7 @@ def main() -> int:
 
     # Initialize WebSocket server for real-time dashboard updates
     from api.websocket_server import WebSocketServer, LTPBatcher
-    ws_port = args.health_port + 1  # WS on next port (e.g., 8081 if API on 8080)
+    ws_port = args.ws_port if args.ws_port else args.health_port + 1
     ws_server = WebSocketServer(port=ws_port)
     ws_server.start()
     api.set_websocket_server(ws_server)
@@ -848,6 +848,7 @@ def _parse_args():
     ap.add_argument("--run-prefix", default="", help="Prefix for session folder names (used by engine.py)")
     ap.add_argument("--enable-cache", action="store_true", help="Enable structure detection caching")
     ap.add_argument("--health-port", type=int, default=8080, help="Port for health server (default: 8080)")
+    ap.add_argument("--ws-port", type=int, default=None, help="Port for WebSocket server (default: health-port + 1)")
     ap.add_argument("--admin-token", default=None, help="Admin token for protected endpoints (default: from ADMIN_TOKEN env var)")
     return ap.parse_args()
 
