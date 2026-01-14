@@ -38,8 +38,11 @@ def register_status_routes(server):
         """
         Get closed trades for this session.
         Returns list of trades that have been exited.
+        Excludes shadow trades (simulated trades for analysis only).
         """
-        closed = ctx.server.get_closed_trades()
+        all_closed = ctx.server.get_closed_trades()
+        # Filter out shadow trades - they're for internal analysis only
+        closed = [t for t in all_closed if not t.get("shadow", False)]
         total_pnl = sum(t.get("pnl", 0) for t in closed)
         winners = sum(1 for t in closed if t.get("pnl", 0) > 0)
         losers = sum(1 for t in closed if t.get("pnl", 0) < 0)
@@ -54,18 +57,22 @@ def register_status_routes(server):
 
 
 def _build_status(server) -> dict:
-    """Build full status response."""
+    """Build full status response. Excludes shadow trades from dashboard."""
     now = datetime.now()
     uptime = (now - server._start_time).total_seconds()
     state_duration = (now - server._state_since).total_seconds()
     heartbeat_age = (now - server._last_heartbeat).total_seconds()
 
     # Position info with current P&L
+    # Filter out shadow trades - they're for internal analysis only
     positions = []
     total_unrealized_pnl = 0.0
 
     if server._position_store:
         for pos in server._position_store.all():
+            # Skip shadow trades - simulated positions that don't consume capital
+            if hasattr(pos, 'plan') and pos.plan and pos.plan.get("shadow", False):
+                continue
             pos_dict = {
                 "symbol": pos.symbol,
                 "side": pos.side,
