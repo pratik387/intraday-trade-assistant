@@ -61,6 +61,20 @@ class ZerodhaMISFetcher:
         self._loaded: bool = False
         self._load_timestamp: Optional[datetime] = None
 
+    def _find_column(self, df: pd.DataFrame, pattern: str) -> Optional[str]:
+        """
+        Find a column that starts with the given pattern.
+
+        Zerodha's sheet sometimes has extra text appended to column names
+        (e.g., "Symbol Symbol" instead of "Symbol", "MIS Margin(%) #N/A").
+        This finds the first column that starts with the expected pattern.
+        """
+        pattern_lower = pattern.lower()
+        for col in df.columns:
+            if col.lower().startswith(pattern_lower):
+                return col
+        return None
+
     def load_from_zerodha(self, timeout_sec: int = 30) -> bool:
         """
         Fetch MIS list from Zerodha's Google Sheets CSV export.
@@ -76,25 +90,39 @@ class ZerodhaMISFetcher:
             # Parse CSV
             df = pd.read_csv(io.StringIO(response.text))
 
-            # Expected columns (may vary slightly):
-            # ISIN, Symbol, BSE Symbol, MIS Var+ELM+Adhoc margin, MIS Margin(%), CO MIS Multiplier, ...
-            required_cols = ["Symbol", "MIS Margin(%)", "CO MIS Multiplier"]
-            missing = [c for c in required_cols if c not in df.columns]
+            # Find columns with flexible matching (Zerodha sometimes appends extra text)
+            # Expected patterns: Symbol, MIS Margin(%), CO MIS Multiplier, ISIN
+            col_symbol = self._find_column(df, "Symbol")
+            col_margin = self._find_column(df, "MIS Margin(%)")
+            col_multiplier = self._find_column(df, "CO MIS Multiplier")
+            col_isin = self._find_column(df, "ISIN")
+
+            # Check required columns
+            missing = []
+            if not col_symbol:
+                missing.append("Symbol")
+            if not col_margin:
+                missing.append("MIS Margin(%)")
+            if not col_multiplier:
+                missing.append("CO MIS Multiplier")
+
             if missing:
                 logger.error(f"MIS_FETCHER | Missing columns: {missing}. Available: {list(df.columns)}")
                 return False
 
+            logger.debug(f"MIS_FETCHER | Column mapping: Symbol='{col_symbol}', Margin='{col_margin}', Multiplier='{col_multiplier}'")
+
             # Parse each row
             self._mis_symbols.clear()
             for _, row in df.iterrows():
-                symbol = str(row.get("Symbol", "")).strip()
+                symbol = str(row.get(col_symbol, "")).strip()
                 if not symbol or symbol == "nan":
                     continue
 
                 try:
-                    margin_pct = float(row.get("MIS Margin(%)", 0))
-                    multiplier = float(row.get("CO MIS Multiplier", 5))
-                    isin = str(row.get("ISIN", "")) if "ISIN" in df.columns else None
+                    margin_pct = float(row.get(col_margin, 0))
+                    multiplier = float(row.get(col_multiplier, 5))
+                    isin = str(row.get(col_isin, "")) if col_isin else None
                 except (ValueError, TypeError):
                     continue
 
