@@ -111,12 +111,17 @@ class _PositionStore:
         self._broadcast_positions()
 
     def _broadcast_positions(self):
-        """Broadcast current positions to WebSocket clients."""
+        """Broadcast current positions to WebSocket clients.
+        Excludes shadow trades - they're for internal analysis only.
+        """
         if not self._api_server:
             return
         positions = []
         with self._lock:
             for p in self._by_sym.values():
+                # Skip shadow trades - simulated positions that don't consume capital
+                if hasattr(p, 'plan') and p.plan and p.plan.get("shadow", False):
+                    continue
                 pos_dict = {
                     "symbol": p.symbol,
                     "side": p.side,

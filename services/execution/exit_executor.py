@@ -1456,6 +1456,7 @@ class ExitExecutor:
                 state.get("entry_time")
             )
 
+            is_shadow = pos.plan.get("shadow", False)
             closed_trade = {
                 "symbol": sym,
                 "side": pos.side.upper(),
@@ -1472,10 +1473,13 @@ class ExitExecutor:
                 "t2": round(t2, 2) if t2 else None,
                 "t1_profit": round(t1_profit, 2) if t1_profit else None,  # Breakdown for debugging
                 "t1_exit_time": state.get("t1_exit_time"),  # When T1 was taken
+                "shadow": is_shadow,  # Shadow trade flag (for filtering in dashboard)
             }
             self.api_server.log_closed_trade(closed_trade)
             # Broadcast closed trade to WebSocket clients for real-time dashboard
-            self.api_server.broadcast_ws("closed_trade", closed_trade)
+            # Skip shadow trades - they're for internal analysis only
+            if not is_shadow:
+                self.api_server.broadcast_ws("closed_trade", closed_trade)
 
         try:
             st = pos.plan.get("_state") or {}

@@ -116,6 +116,14 @@ class TriggerAwareExecutor:
                 )
 
                 if not can_enter:
+                    # MIS rejection is a HARD rejection - cannot short non-MIS stocks
+                    # Do NOT convert to shadow trade
+                    if "mis_not_allowed" in reason:
+                        logger.warning(
+                            f"TRADE_REJECTED | {trade.symbol} | MIS not allowed for short: {reason}"
+                        )
+                        return False  # Reject this trade entirely
+
                     # SHADOW TRADE: Convert capital rejection to shadow trade
                     # This allows tracking theoretical performance even when out of capital
                     if not is_shadow:
