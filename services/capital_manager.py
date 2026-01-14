@@ -63,13 +63,12 @@ class CapitalManager:
         min_notional_pct: float,
         capital_utilization: float,
         max_allocation_per_trade: float,
+        risk_mode: str,
+        risk_fixed_amount: float,
+        risk_percentage: float,
         mis_enabled: bool = False,
         mis_config_path: Optional[str] = None,
         mis_fetcher: Optional["ZerodhaMISFetcher"] = None,
-        # Risk mode parameters
-        risk_mode: str = "percentage",
-        risk_fixed_amount: float = 1000.0,
-        risk_percentage: float = 0.01,
         # Legacy parameter for backwards compatibility
         risk_pct_per_trade: Optional[float] = None,
     ):

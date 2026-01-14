@@ -497,9 +497,9 @@ def main() -> int:
 
     # Extract risk config (new format with mode, or legacy risk_pct_per_trade)
     risk_cfg = cap_mgmt_cfg.get('risk', {})
-    risk_mode = risk_cfg.get('mode', 'percentage')
-    risk_fixed_amount = risk_cfg.get('fixed_amount', 1000.0)
-    risk_percentage = risk_cfg.get('percentage', 0.01)
+    risk_mode = risk_cfg.get('mode')
+    risk_fixed_amount = risk_cfg.get('fixed_amount')
+    risk_percentage = risk_cfg.get('percentage')
 
     # CLI override for risk mode (--risk-mode fixed|percentage, --risk-value <amount>)
     if hasattr(args, 'risk_mode') and args.risk_mode:
@@ -519,13 +519,12 @@ def main() -> int:
         min_notional_pct=cap_mgmt_cfg['min_notional_pct'],
         capital_utilization=cap_mgmt_cfg['capital_utilization'],
         max_allocation_per_trade=cap_mgmt_cfg['max_allocation_per_trade'],
-        mis_enabled=mis_enabled,
-        mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file'),
-        mis_fetcher=mis_fetcher,  # Paper trading: validates against Zerodha MIS list
-        # Risk mode parameters
         risk_mode=risk_mode,
         risk_fixed_amount=risk_fixed_amount,
         risk_percentage=risk_percentage,
+        mis_enabled=mis_enabled,
+        mis_config_path=cap_mgmt_cfg.get('mis_leverage', {}).get('config_file'),
+        mis_fetcher=mis_fetcher,  # Paper trading: validates against Zerodha MIS list
     )
 
     # Set dynamic risk per trade in config (live/paper uses capital %, backtest uses fallback)
