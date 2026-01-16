@@ -442,6 +442,41 @@ class CapitalManager:
                     f"Available: Rs.{self.available_capital:,.0f}/{self.total_capital:,.0f} | "
                     f"Positions: {len(self.positions)}/{self.max_positions}")
 
+    def reduce_position(self, symbol: str, qty_exited: int, new_qty: int) -> None:
+        """
+        Release partial margin when position is reduced (T1 partial exit).
+
+        Args:
+            symbol: Stock symbol
+            qty_exited: Quantity being exited
+            new_qty: Remaining quantity after exit
+        """
+        if not self.enabled:
+            return
+
+        if symbol not in self.positions:
+            return
+
+        pos = self.positions[symbol]
+        original_qty = pos.get('qty', 0)
+        if original_qty <= 0:
+            return
+
+        # Calculate proportional margin release
+        exit_fraction = qty_exited / original_qty
+        margin_freed = pos['margin_used'] * exit_fraction
+
+        # Update position tracking
+        pos['margin_used'] -= margin_freed
+        pos['qty'] = new_qty
+        pos['notional'] = pos['notional'] * (new_qty / original_qty)
+
+        self.available_capital += margin_freed
+
+        logger.info(f"CAP_REDUCE | {symbol} | Qty: {original_qty} -> {new_qty} ({qty_exited} exited) | "
+                    f"Margin freed: Rs.{margin_freed:,.0f} | "
+                    f"Available: Rs.{self.available_capital:,.0f}/{self.total_capital:,.0f}")
+
     def exit_position(self, symbol: str, shadow: bool = False) -> None:
         """
         Release capital when a position is closed.

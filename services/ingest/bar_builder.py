@@ -136,10 +136,29 @@ class BarBuilder:
         self._additional_5m_handlers: List[Callable[[str, Bar], None]] = []
         self._additional_15m_handlers: List[Callable[[str, Bar], None]] = []
 
+        # Flag to clear pre-market data once at 9:15
+        self._market_open_cleared = False
+
+    def _clear_pre_market(self) -> None:
+        """Clear all pre-market bar data at 9:15. Called once per session."""
+        self._cur_1m.clear()
+        self._bars_1m.clear()
+        self._bars_5m.clear()
+        self._bars_15m.clear()
+        self._adx_state.clear()
+        self._rsi_state.clear()
+        # Keep _ltp - we want last traded price
+        logger.info("BAR_BUILDER | Cleared pre-market data at market open")
+
     # ----------------------------- Public API -----------------------------
     def on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
         """Push a realtime tick for aggregation. Thread-safe."""
         with self._lock:
+            # Clear pre-market data on first tick at/after 9:15
+            if not self._market_open_cleared and ts.hour == 9 and ts.minute >= 15:
+                self._clear_pre_market()
+                self._market_open_cleared = True
+
             self._ltp[symbol] = _LastTick(price=float(price), volume=float(volume), ts=ts)
             self._update_1m(symbol, float(price), float(volume), ts)
 
