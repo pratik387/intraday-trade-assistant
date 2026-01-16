@@ -67,6 +67,7 @@ def _build_status(server) -> dict:
     # Filter out shadow trades - they're for internal analysis only
     positions = []
     total_unrealized_pnl = 0.0
+    total_booked_pnl = 0.0  # T1 partial profits from open positions
 
     if server._position_store:
         for pos in server._position_store.all():
@@ -127,8 +128,10 @@ def _build_status(server) -> dict:
                     # Only full exit available after T1 taken
                     pos_dict["exit_options"] = ["full"]
                     # Add booked PnL and T1 exit time if available
-                    pos_dict["booked_pnl"] = state.get("t1_profit", 0)
+                    booked = state.get("t1_profit", 0)
+                    pos_dict["booked_pnl"] = booked
                     pos_dict["t1_exit_time"] = state.get("t1_exit_time")
+                    total_booked_pnl += booked  # Add to session total
                 else:
                     # Both 50% and full exit available
                     pos_dict["exit_options"] = ["partial", "full"]
@@ -169,6 +172,7 @@ def _build_status(server) -> dict:
         "positions": positions,
         "positions_count": len(positions),
         "unrealized_pnl": round(total_unrealized_pnl, 2),
+        "booked_pnl": round(total_booked_pnl, 2),  # T1 partial profits from open positions
         "capital": capital,
         "metrics": dict(server._metrics),
         "pending_exit_requests": server._exit_queue.qsize(),

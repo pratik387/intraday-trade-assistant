@@ -1567,6 +1567,11 @@ class ExitExecutor:
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
         self.positions.reduce(sym, int(qty_exit))
 
+        # Release partial margin for the exited quantity
+        new_qty = current_qty - int(qty_exit)
+        if self.capital_manager:
+            self.capital_manager.reduce_position(sym, int(qty_exit), new_qty)
+
         st["t1_done"] = True
         st["t1_booked_qty"] = qty_exit
         st["t1_booked_price"] = px
@@ -1663,6 +1668,10 @@ class ExitExecutor:
 
         self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
         self.positions.reduce(sym, int(qty_exit))
+
+        # Release partial margin for the exited quantity
+        if self.capital_manager:
+            self.capital_manager.reduce_position(sym, int(qty_exit), remaining_qty)
 
         # Mark T2 as done
         st["t2_done"] = True
