@@ -394,6 +394,52 @@ class KiteBroker:
         orders = self.get_orders()
         return [o for o in orders if o.get("tag", "").startswith(APP_ORDER_TAG_PREFIX)]
 
+    def get_order_fill_price(self, order_id: str, max_retries: int = 3, retry_delay: float = 0.5) -> Optional[float]:
+        """
+        Get actual fill price for an order from broker.
+
+        Polls order status until COMPLETE or max retries reached.
+        Returns average_price from broker, or None if order not found/not filled.
+
+        In paper/dry_run mode: Returns immediately from simulated orders (no delay).
+        In live mode: Polls with retry delay for async order processing.
+
+        Args:
+            order_id: Order ID returned from place_order()
+            max_retries: Number of times to poll for fill (default 3)
+            retry_delay: Seconds between retries (default 0.5s)
+
+        Returns:
+            Actual fill price from broker, or None if unavailable
+        """
+        import time
+
+        # Paper mode: single lookup, no retries needed (orders are instant)
+        if self.dry_run:
+            max_retries = 1
+
+        for attempt in range(max_retries):
+            orders = self.get_orders()
+            for o in orders:
+                if str(o.get("order_id")) == str(order_id):
+                    status = o.get("status", "").upper()
+                    if status == "COMPLETE":
+                        avg_price = o.get("average_price")
+                        filled_qty = o.get("filled_quantity", 0)
+                        if avg_price is not None and avg_price > 0 and filled_qty > 0:
+                            return float(avg_price)
+                    elif status in ("REJECTED", "CANCELLED"):
+                        logger.warning(f"Order {order_id} status: {status}")
+                        return None
+
+            # Order not complete yet, wait and retry (live mode only)
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+
+        if not self.dry_run:
+            logger.warning(f"Could not get fill price for order {order_id} after {max_retries} attempts")
+        return None
+
     # ------------------------------ Paper Trading ---------------------------
     def _simulate_order(
         self,
@@ -424,18 +470,20 @@ class KiteBroker:
         # Simulate realistic fill price with slippage
         fill_price = self._calculate_paper_fill_price(symbol, side, current_ltp)
 
-        # Log the simulated order
+        # Log the simulated order (format matches Zerodha's orders() response)
         paper_order = {
             'order_id': order_id,
             'timestamp': pd.Timestamp.now(),
             'symbol': symbol,
             'side': side,
             'qty': qty,
+            'filled_quantity': qty,
             'order_type': order_type,
             'order_price': price,
             'fill_price': fill_price,
+            'average_price': fill_price,  # Match Zerodha format for get_order_fill_price()
             'product': product,
-            'status': 'FILLED'
+            'status': 'COMPLETE'  # Match Zerodha status (not 'FILLED')
         }
         self._paper_orders.append(paper_order)
 
