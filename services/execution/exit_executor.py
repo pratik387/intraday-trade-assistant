@@ -1241,6 +1241,7 @@ class ExitExecutor:
         if qty_exit <= 0:
             return
 
+        actual_exit_px = exit_px  # Default to assumed price
         try:
             # Check if this is a shadow trade (simulated, no real orders)
             is_shadow = pos.plan.get("shadow", False) if pos.plan else False
@@ -1261,12 +1262,24 @@ class ExitExecutor:
                     "variety": self.exec_variety,
                     "trade_id": trade_id,  # For order tagging (ITDA_xxx) - identifies app orders
                 }
-                self.broker.place_order(**args)
+                order_id = self.broker.place_order(**args)
+
+                # Try to get actual fill price from broker
+                if order_id and hasattr(self.broker, 'get_order_fill_price'):
+                    try:
+                        broker_fill = self.broker.get_order_fill_price(order_id)
+                        if broker_fill is not None:
+                            slippage = broker_fill - exit_px
+                            slippage_bps = (slippage / exit_px) * 10000 if exit_px > 0 else 0
+                            logger.info(f"EXIT_FILL | {sym} | Broker: {broker_fill:.2f} | Assumed: {exit_px:.2f} | Slippage: {slippage:+.2f} ({slippage_bps:+.1f} bps)")
+                            actual_exit_px = broker_fill
+                    except Exception as e:
+                        logger.warning(f"Failed to get broker exit fill for {sym}: {e}")
         except Exception as e:
             logger.warning("exit.place_order failed sym=%s qty=%s reason=%s err=%s", sym, qty_exit, reason, e)
 
         entry_price = float(pos.avg_price)
-        pnl = ((exit_px - entry_price) if pos.side.upper() == "BUY" else (entry_price - exit_px)) * int(qty_exit)
+        pnl = ((actual_exit_px - entry_price) if pos.side.upper() == "BUY" else (entry_price - actual_exit_px)) * int(qty_exit)
 
         # REMOVED duplicate trade_logger.info() call for EXIT
         # Reason: Both trade_logger.info() (removed) and trading_logger.log_exit() (below)
@@ -1317,7 +1330,7 @@ class ExitExecutor:
                 'trade_id': pos.plan.get('trade_id', ''),
                 'qty': qty_exit,
                 'entry_price': entry_price,
-                'exit_price': exit_px,
+                'exit_price': actual_exit_px,  # Use actual broker fill price
                 'pnl': round(pnl, 2),
                 'reason': reason,
                 'timestamp': str(ts) if ts else str(pd.Timestamp.now()),

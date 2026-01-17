@@ -241,15 +241,17 @@ class TradeExecutor:
     # -------- Order placement (no upsert here) -------- #
     def _place_order(
         self, sym: str, side: str, qty: int, price_hint: Optional[float]
-    ) -> Tuple[Optional[float], Optional[pd.Timestamp]]:
+    ) -> Tuple[Optional[float], Optional[pd.Timestamp], Optional[str]]:
         """
-        Place the order and return (fill_price, entry_ts).
-        MARKET fill prefers get_ltp_ts() for consistency with exit tick-clock.
+        Place the order and return (fill_price, entry_ts, order_id).
+
+        For live/paper trading: fetches actual fill price from broker after order.
+        Falls back to LTP if broker fill unavailable.
         """
         # LIMIT requires a price; no silent fallback
         if self.order_mode == "LIMIT" and price_hint is None:
             logger.debug(f"executor.block {sym} reason=limit_without_price_hint")
-            return None, None
+            return None, None, None
 
         args = {
             "symbol": sym,
@@ -268,24 +270,44 @@ class TradeExecutor:
         # Fill price & ts
         ts: Optional[pd.Timestamp] = None
         px: Optional[float] = None
+        assumed_px: Optional[float] = None
 
+        # Get timestamp from tick clock
         get_ts = getattr(self, "get_ltp_ts", None)
         if callable(get_ts):
             try:
-                px, ts = get_ts(sym)  # (ltp, ts)
+                assumed_px, ts = get_ts(sym)  # (ltp, ts)
             except Exception:
-                px, ts = None, None
+                assumed_px, ts = None, None
 
-        if self.order_mode == "MARKET":
+        # Try to get actual fill price from broker
+        broker_fill = None
+        if order_id and hasattr(self.broker, 'get_order_fill_price'):
+            try:
+                broker_fill = self.broker.get_order_fill_price(order_id)
+                if broker_fill is not None:
+                    # Log slippage for analysis
+                    if assumed_px is not None:
+                        slippage = broker_fill - assumed_px
+                        slippage_bps = (slippage / assumed_px) * 10000 if assumed_px > 0 else 0
+                        logger.info(f"FILL_PRICE | {sym} | Broker: {broker_fill:.2f} | Assumed: {assumed_px:.2f} | Slippage: {slippage:+.2f} ({slippage_bps:+.1f} bps)")
+            except Exception as e:
+                logger.warning(f"Failed to get broker fill price for {sym}: {e}")
+
+        # Use broker fill if available, otherwise fall back to assumed price
+        if broker_fill is not None:
+            px = broker_fill
+        elif self.order_mode == "MARKET":
+            px = assumed_px
             if px is None:
                 try:
-                    px = float(self.broker.get_ltp(sym, ltp=price_hint))  # MockBroker honors hint
+                    px = float(self.broker.get_ltp(sym, ltp=price_hint))
                 except Exception:
                     px = float(price_hint) if price_hint is not None else None
         else:  # LIMIT
-            px = float(price_hint) if price_hint is not None else px
+            px = float(price_hint) if price_hint is not None else assumed_px
 
-        return px, ts
+        return px, ts, order_id
 
     def _update_risk_on_fill(self, sym: str, side: str, qty: int, price: float) -> None:
         try:
@@ -335,8 +357,8 @@ class TradeExecutor:
                 logger.debug(f"executor.block {sym} reason=after_eod_{self.eod_hhmm}")
                 return
 
-            # --- Place order (fill price + tick ts) ---
-            fill_price, entry_ts = self._place_order(sym, side, qty, price_hint)
+            # --- Place order (fill price + tick ts + order_id) ---
+            fill_price, entry_ts, order_id = self._place_order(sym, side, qty, price_hint)
             
             # Check slippage after getting fill price
             ref = float(plan.get("reference") or plan.get("entry", {}).get("reference") or 0.0)
@@ -376,7 +398,7 @@ class TradeExecutor:
                     'strategy': plan.get('strategy', ''),
                     'setup_type': plan.get('setup_type', ''),
                     'regime': plan.get('regime', ''),
-                    'order_id': f"dryrun-order-id",
+                    'order_id': order_id or "unknown",
                     'risk_amount': 500.0,
                     # Edge diagnostic fields
                     'diagnostics': {
