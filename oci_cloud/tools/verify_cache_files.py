@@ -176,7 +176,7 @@ def main():
         if need_upload > 0 or mismatch > 0:
             print("Action Required:")
             print("  1. Files that need upload or have mismatches should be re-uploaded")
-            print("  2. Use oci/tools/upload_regime_caches.py to upload missing files")
+            print("  2. Use oci_cloud/tools/upload_regime_caches.py to upload missing files")
             print("  3. Or manually upload via OCI Console:")
             print(f"     Bucket: {bucket}")
             print(f"     Prefix: monthly/")

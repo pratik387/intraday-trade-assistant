@@ -11,9 +11,9 @@ This is a convenience wrapper that combines:
 2. cleanup_and_download_backtest.py - Download and cleanup
 
 Usage:
-    python oci/tools/monitor_and_cleanup_backtest.py <run_id>
-    python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341 --parallel 20
-    python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341 --skip-nodepool
+    python oci_cloud/tools/monitor_and_cleanup_backtest.py <run_id>
+    python oci_cloud/tools/monitor_and_cleanup_backtest.py 20251121-084341 --parallel 20
+    python oci_cloud/tools/monitor_and_cleanup_backtest.py 20251121-084341 --skip-nodepool
 
 Arguments:
     run_id: The backtest run ID (e.g., 20251121-084341)
@@ -26,7 +26,7 @@ Options:
     --monitor-only: Only monitor, don't run cleanup
 
 Example:
-    python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341
+    python oci_cloud/tools/monitor_and_cleanup_backtest.py 20251121-084341
 """
 
 import argparse
@@ -234,7 +234,7 @@ def monitor_job(run_id):
     print("=" * 80)
     print()
     print("Note: kubectl connection may timeout after ~1 hour")
-    print(f"   For long jobs, use: python oci/tools/check_job_status.py {run_id} --watch")
+    print(f"   For long jobs, use: python oci_cloud/tools/check_job_status.py {run_id} --watch")
     print()
     print(" Time    Running  Complete  Failed  Progress")
     print("━" * 60)
@@ -337,9 +337,9 @@ def monitor_job(run_id):
         except KeyboardInterrupt:
             print("\n\n⚠️  Monitoring interrupted (job still running)")
             print(f"\nResume monitoring:")
-            print(f"  python oci/tools/monitor_and_cleanup_backtest.py {run_id}")
+            print(f"  python oci_cloud/tools/monitor_and_cleanup_backtest.py {run_id}")
             print(f"\nOr download manually when job completes:")
-            print(f"  python oci/tools/cleanup_and_download_backtest.py {run_id}")
+            print(f"  python oci_cloud/tools/cleanup_and_download_backtest.py {run_id}")
             # Return partial status - important: still trigger cleanup!
             return {'completed': False, 'interrupted': True, 'succeeded': 0, 'failed': 0, 'total': 0, 'failed_dates': []}
 
@@ -444,19 +444,19 @@ def main():
         epilog="""
 Examples:
   # Monitor and auto-cleanup
-  python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341
+  python oci_cloud/tools/monitor_and_cleanup_backtest.py 20251121-084341
 
   # With custom parallel downloads
-  python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341 --parallel 20
+  python oci_cloud/tools/monitor_and_cleanup_backtest.py 20251121-084341 --parallel 20
 
   # Skip node pool scaling
-  python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341 --skip-nodepool
+  python oci_cloud/tools/monitor_and_cleanup_backtest.py 20251121-084341 --skip-nodepool
 
   # Only monitor (no cleanup)
-  python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341 --monitor-only
+  python oci_cloud/tools/monitor_and_cleanup_backtest.py 20251121-084341 --monitor-only
 
   # Force cleanup even on failure (default behavior now)
-  python oci/tools/monitor_and_cleanup_backtest.py 20251121-084341 --force-cleanup
+  python oci_cloud/tools/monitor_and_cleanup_backtest.py 20251121-084341 --force-cleanup
         """
     )
 
@@ -498,7 +498,7 @@ Examples:
         if failed_dates_file:
             print()
             print(f"📝 Failed dates saved to: {failed_dates_file}")
-            print(f"   Re-run failed dates: python oci/tools/submit_oci_backtest.py --failed-dates {failed_dates_file}")
+            print(f"   Re-run failed dates: python oci_cloud/tools/submit_oci_backtest.py --failed-dates {failed_dates_file}")
             print()
 
     # Step 2: Cleanup (ALWAYS run to avoid cost overruns)
@@ -511,7 +511,7 @@ Examples:
         print("   Scale down manually: oci ce node-pool update --node-pool-id <id> --size 0 --force")
         print()
         print("To download results manually:")
-        print(f"  python oci/tools/cleanup_and_download_backtest.py {args.run_id}")
+        print(f"  python oci_cloud/tools/cleanup_and_download_backtest.py {args.run_id}")
         print()
         sys.exit(0)
 
@@ -556,7 +556,7 @@ Examples:
         print()
         print("To re-run missing dates:")
         failed_dates_file = project_root / 'cloud_results' / args.run_id / 'failed_dates.json'
-        print(f"  python oci/tools/submit_oci_backtest.py --failed-dates {failed_dates_file}")
+        print(f"  python oci_cloud/tools/submit_oci_backtest.py --failed-dates {failed_dates_file}")
         print()
         sys.exit(1)
 

@@ -201,14 +201,16 @@ class ScreenerLive:
         self._last_logged_timestamp = None
 
         # Core ingest / aggregation
+        index_syms = self._index_symbols()
         self.agg = BarBuilder(
             bar_5m_span_minutes=5,
             on_1m_close=self._on_1m_close,
             on_5m_close=self._on_5m_close,
             on_15m_close=self._on_15m_close,
-            index_symbols=self._index_symbols(),
+            index_symbols=index_syms,
         )
-        self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
+        # Pass index_symbols so MockBroker loads index data in backtest mode
+        self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick, index_symbols=index_syms)
         self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
         self.ws.on_message(self.router.handle_raw)
         # Register on_close to trigger clean exit when replay ends (DRY_RUN only)
@@ -299,14 +301,29 @@ class ScreenerLive:
     # Public API
     # ---------------------------------------------------------------------
     def start(self) -> None:
-        """Connect WS and subscribe the core universe."""
-        self.subs.set_core(self.token_map)
+        """Connect WS and subscribe the core universe + index symbols."""
+        # Start with equity tokens
+        all_tokens = set(self.token_map.keys())
+
+        # Add index tokens if index risk modulation is enabled
+        index_syms = self._index_symbols()
+        if index_syms and hasattr(self.sdk, 'get_index_tokens'):
+            index_tokens = self.sdk.get_index_tokens(index_syms)
+            if index_tokens:
+                all_tokens.update(index_tokens)
+                # Also add index tokens to the TickRouter's token map
+                index_token_map = self.sdk.get_index_token_map()
+                self.router.add_tokens(index_token_map)
+                logger.info(f"INDEX_SUBSCRIPTION | Added {len(index_tokens)} index tokens: {index_syms}")
+
+        self.subs.set_core(all_tokens)
         self.subs.start()
         self.ws.start()
 
         # Trigger executor is managed by main.py
 
-        logger.info("WS connected; core subscriptions scheduled: %d symbols", len(self.core_symbols))
+        logger.info("WS connected; core subscriptions scheduled: %d symbols + %d indices",
+                   len(self.core_symbols), len(index_syms))
 
     def stop(self) -> None:
         try: self.subs.stop()
@@ -1032,6 +1049,11 @@ class ScreenerLive:
         return self.token_map
 
     def _index_symbols(self) -> List[str]:
+        """Return index symbols for risk modulation (from config if enabled)."""
+        mod_cfg = self.raw_cfg.get("risk_modulator", {})
+        if mod_cfg.get("enabled", False):
+            # primary_indices is required in config - no fallback
+            return mod_cfg["primary_indices"]
         return []
 
     def _index_df5(self) -> pd.DataFrame:

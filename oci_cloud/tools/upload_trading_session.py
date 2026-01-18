@@ -6,10 +6,10 @@ Uploads a trading session folder (paper/live) to OCI bucket.
 Can be run standalone or called from main.py on shutdown.
 
 Usage:
-    python oci/tools/upload_trading_session.py paper_20251229_073712
-    python oci/tools/upload_trading_session.py logs/paper_20251229_073712
-    python oci/tools/upload_trading_session.py --prefix fixed paper_20251229_073712
-    python oci/tools/upload_trading_session.py  # Auto-discovers latest session
+    python oci_cloud/tools/upload_trading_session.py paper_20251229_073712
+    python oci_cloud/tools/upload_trading_session.py logs/paper_20251229_073712
+    python oci_cloud/tools/upload_trading_session.py --prefix fixed paper_20251229_073712
+    python oci_cloud/tools/upload_trading_session.py  # Auto-discovers latest session
 """
 from __future__ import annotations
 
@@ -435,10 +435,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python oci/tools/upload_trading_session.py paper_20251229_073712
-  python oci/tools/upload_trading_session.py --prefix fixed paper_20251229_073712
-  python oci/tools/upload_trading_session.py --prefix relative paper_20251229_073712
-  python oci/tools/upload_trading_session.py  # Auto-discover latest
+  python oci_cloud/tools/upload_trading_session.py paper_20251229_073712
+  python oci_cloud/tools/upload_trading_session.py --prefix fixed paper_20251229_073712
+  python oci_cloud/tools/upload_trading_session.py --prefix relative paper_20251229_073712
+  python oci_cloud/tools/upload_trading_session.py  # Auto-discover latest
         """
     )
 
@@ -456,8 +456,8 @@ Examples:
     session_dir = find_session_dir(args.session)
     if not session_dir:
         print("\nUsage:")
-        print("  python oci/tools/upload_trading_session.py paper_20251229_073712")
-        print("  python oci/tools/upload_trading_session.py  # Auto-discover latest")
+        print("  python oci_cloud/tools/upload_trading_session.py paper_20251229_073712")
+        print("  python oci_cloud/tools/upload_trading_session.py  # Auto-discover latest")
         return 1
 
     # Determine mode

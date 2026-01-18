@@ -3,7 +3,7 @@
 Auto-scale node pool to 0 after Kubernetes job completes.
 
 Usage:
-    python oci/tools/auto_scale_after_job.py <job-name> <node-pool-id>
+    python oci_cloud/tools/auto_scale_after_job.py <job-name> <node-pool-id>
 """
 import subprocess
 import time

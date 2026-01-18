@@ -9,11 +9,11 @@ This script automates the complete processing of a backtest run:
 4. Injects run ID and time period metadata into the report
 
 Usage:
-    python oci/process_backtest_run.py <backtest_zip_or_directory>
+    python oci_cloud/process_backtest_run.py <backtest_zip_or_directory>
 
 Examples:
-    python oci/process_backtest_run.py backtest_20251109-125133.zip
-    python oci/process_backtest_run.py 20251228-075841_full
+    python oci_cloud/process_backtest_run.py backtest_20251109-125133.zip
+    python oci_cloud/process_backtest_run.py 20251228-075841_full
 
 The run ID (e.g., 20251228-075841) and time period are automatically
 extracted and added to the generated JSON report for reference.

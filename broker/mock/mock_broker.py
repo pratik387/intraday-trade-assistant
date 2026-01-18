@@ -119,18 +119,28 @@ class MockBroker:
         return out
 
     # -------------------- ticker (with last-price proxy) --------------------
-    def make_ticker(self):
+    def make_ticker(self, index_symbols: List[str] = None):
         """
         Returns a FeatherTicker proxy that updates the broker's last-price cache
         and forwards ticks/connect/close to the client's callbacks.
+
+        Args:
+            index_symbols: Optional list of index symbols to include in backtest
+                          (e.g., ["NSE:NIFTY 50", "NSE:NIFTY BANK"])
         """
         if not self._from_date or not self._to_date:
             raise ValueError("MockBroker: from_date and to_date must be set")
 
+        # Include index symbols if provided (for index risk modulation backtest)
+        all_symbols = list(self._equity_instruments)
+        if index_symbols:
+            all_symbols.extend(index_symbols)
+            logger.info(f"MockBroker: Including {len(index_symbols)} index symbols for backtest")
+
         loader = FeatherTickLoader(
             from_date=self._from_date,
             to_date=self._to_date,
-            symbols=self._equity_instruments,
+            symbols=all_symbols,
         )
 
         tok2sym = self.get_token_map()

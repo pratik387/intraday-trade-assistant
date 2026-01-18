@@ -38,14 +38,52 @@ class FeatherTickLoader:
         self.base_path = base_path
 
         # Pre-aggregated cache directory
-        self.preagg_dir = Path(base_path).parent / "preaggregate"
+        # Check multiple locations for pre-aggregated files
+        self.preagg_dir = None
+        possible_preagg_dirs = [
+            Path(base_path).parent / "preaggregate",  # Original: cache/preaggregate
+            Path("backtest-cache-download/monthly"),   # Local backtest cache
+            Path("E:/Codebase/intraday-trade-assistant/backtest-cache-download/monthly"),  # Absolute path
+        ]
+        for pdir in possible_preagg_dirs:
+            if pdir.exists():
+                self.preagg_dir = pdir
+                break
+        if self.preagg_dir is None:
+            self.preagg_dir = Path(base_path).parent / "preaggregate"  # Fallback
+
+        # Index OHLCV cache directory (for index symbols like NSE:NIFTY 50)
+        self.index_ohlcv_dir = None
+        possible_index_dirs = [
+            Path("backtest-cache-download/index_ohlcv"),
+            Path("E:/Codebase/intraday-trade-assistant/backtest-cache-download/index_ohlcv"),
+        ]
+        for idir in possible_index_dirs:
+            if idir.exists():
+                self.index_ohlcv_dir = idir
+                break
 
         # Cache loaded data to avoid reloading (fixes OCI hang when ticker thread calls load_all())
         self._cached_data: Optional[Dict[str, pd.DataFrame]] = None
 
     # ---------- FS ----------
+    def _is_index_symbol(self, symbol: str) -> bool:
+        """Check if symbol is an index (e.g., NSE:NIFTY 50, NSE:NIFTY BANK)."""
+        index_keywords = ["NIFTY 50", "NIFTY BANK", "NIFTY IT", "NIFTY AUTO",
+                         "NIFTY PHARMA", "NIFTY METAL", "NIFTY FMCG",
+                         "NIFTY FIN SERVICE", "NIFTY REALTY"]
+        tsym = symbol.split(":", 1)[-1].strip().upper()
+        return tsym in index_keywords
+
     def _sym_dirs(self, symbol: str) -> List[str]:
         tsym = symbol.split(":", 1)[-1].strip().upper()
+
+        # For index symbols, look in index_ohlcv directory
+        if self._is_index_symbol(symbol) and self.index_ohlcv_dir:
+            # Convert "NIFTY 50" -> "NSE_NIFTY_50" for directory name
+            index_dir_name = "NSE_" + tsym.replace(" ", "_")
+            return [str(self.index_ohlcv_dir / index_dir_name)]
+
         return [
             os.path.join(self.base_path, f"{tsym}.NS"),
             os.path.join(self.base_path, tsym),
@@ -95,6 +133,9 @@ class FeatherTickLoader:
         # inputs are naive; df['date'] is naive → direct compare
         if lo is None: lo = df["date"].iloc[0]
         if hi is None: hi = df["date"].iloc[-1]
+        # If hi is midnight (date-only input), extend to end of day to include intraday bars
+        if hi is not None and hi.hour == 0 and hi.minute == 0 and hi.second == 0:
+            hi = hi + pd.Timedelta(hours=23, minutes=59, seconds=59)
         return df[(df["date"] >= lo) & (df["date"] <= hi)]
 
     # ---------- Pre-aggregated Cache (50x speedup) ----------
@@ -225,6 +266,17 @@ class FeatherTickLoader:
         # Try pre-aggregated cache first (FAST PATH - 50x speedup!)
         preagg_result = self._try_load_preaggregate()
         if preagg_result is not None:
+            # Check for missing symbols (e.g., index symbols not in pre-aggregated cache)
+            missing_symbols = [s for s in self.symbols if s not in preagg_result]
+            if missing_symbols:
+                logger.info(f"[HYBRID MODE] Loading {len(missing_symbols)} missing symbols from individual files")
+                for sym in missing_symbols:
+                    res = self._load_one(sym)
+                    if res:
+                        sym_key, df = res
+                        preagg_result[sym_key] = df
+                        logger.info(f"[HYBRID MODE] Loaded missing symbol: {sym_key}")
+
             self._cached_data = preagg_result  # Cache the result
             logger.info(f"[CACHE STORED] Cached {len(preagg_result)} symbols from pre-aggregated file")
             return preagg_result

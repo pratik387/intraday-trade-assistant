@@ -2384,5 +2384,42 @@
     "rr_clip_max": 6.0,
     "t1_min_rr": 1.0,
     "_comment": "Option B: Increase measured move caps to 2x and 3x to allow configured 1.5R and 3.0R targets while maintaining structure-based safety"
+  },
+  "risk_modulator": {
+    "_comment": "Index & Sector Crossover Risk Modulation - adjusts stop loss based on index/sector VWAP crossovers",
+    "enabled": true,
+    "crossover_confirmation_bars": 2,
+    "_crossover_comment": "Number of consecutive 5m closes above/below VWAP to confirm crossover",
+    "chop_threshold_crossovers": 4,
+    "_chop_comment": "Number of crossovers/session to classify as CHOP (whipsaw market)",
+    "or_period_minutes": 15,
+    "_or_comment": "First N minutes for Opening Range calculation (from 9:15 AM)",
+    "multipliers": {
+      "_multiplier_comment": "Risk multipliers applied to stop loss distance. <1.0 = tighter SL (cut fast), >1.0 = wider SL (let run)",
+      "strong_bull_long": 1.15,
+      "strong_bull_short": 0.80,
+      "weak_bull_long": 1.10,
+      "weak_bull_short": 0.90,
+      "neutral_long": 1.0,
+      "neutral_short": 1.0,
+      "weak_bear_long": 0.90,
+      "weak_bear_short": 1.10,
+      "strong_bear_long": 0.80,
+      "strong_bear_short": 1.15,
+      "chop_long": 0.90,
+      "chop_short": 0.90
+    },
+    "primary_indices": [
+      "NSE:NIFTY 50",
+      "NSE:NIFTY BANK",
+      "NSE:NIFTY IT",
+      "NSE:NIFTY AUTO",
+      "NSE:NIFTY PHARMA",
+      "NSE:NIFTY METAL",
+      "NSE:NIFTY FMCG",
+      "NSE:NIFTY FIN SERVICE",
+      "NSE:NIFTY REALTY"
+    ],
+    "_indices_comment": "Sector indices to track for risk modulation. Symbols map to sectors via symbol_sector_map.json"
   }
 }

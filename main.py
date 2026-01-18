@@ -20,6 +20,7 @@ import time
 import signal
 import argparse
 import threading
+from datetime import datetime
 from typing import Optional
 from threading import Lock
 import pandas as pd
@@ -31,6 +32,7 @@ from services.orders.order_queue import OrderQueue
 from services.screener_live import ScreenerLive
 from services.execution.trade_executor import RiskState, Position
 from services.execution.exit_executor import ExitExecutor
+from services.execution.index_sector_risk_modulator import IndexSectorRiskModulator, RiskModulatorConfig
 from services.ingest.tick_router import register_tick_listener, register_tick_listener_full
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
@@ -433,7 +435,7 @@ def main() -> int:
         try:
             from pathlib import Path
             from services.state.session_upload_persistence import SessionUploadTracker
-            from oci.tools.upload_trading_session import upload_pending_sessions
+            from oci_cloud.tools.upload_trading_session import upload_pending_sessions
 
             state_dir = Path(__file__).resolve().parent / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
@@ -686,6 +688,24 @@ def main() -> int:
         api_server=api  # For checking pause state
     )
 
+    # Index/Sector Risk Modulator for dynamic SL adjustment based on market state
+    risk_modulator = None
+    mod_cfg = cfg.get("risk_modulator", {})
+    if mod_cfg.get("enabled", False):
+        risk_modulator = IndexSectorRiskModulator(
+            config=RiskModulatorConfig(
+                enabled=True,
+                crossover_confirmation_bars=mod_cfg["crossover_confirmation_bars"],
+                chop_threshold_crossovers=mod_cfg["chop_threshold_crossovers"],
+                or_period_minutes=mod_cfg["or_period_minutes"],
+                primary_indices=mod_cfg["primary_indices"],
+                multipliers=mod_cfg["multipliers"],
+            )
+        )
+        logger.info(f"INDEX_RISK_MOD | Enabled with indices: {mod_cfg['primary_indices']}")
+    else:
+        logger.info("INDEX_RISK_MOD | Disabled")
+
     # ExitExecutor with tick-level validation (like TriggerAwareExecutor)
     exit_exec = ExitExecutor(
         broker=broker,
@@ -695,8 +715,40 @@ def main() -> int:
         trading_logger=trading_logger,  # Enhanced logging
         capital_manager=capital_manager,  # Capital release on exits
         persistence=persistence,  # Position persistence for crash recovery
-        api_server=api  # For processing exit requests
+        api_server=api,  # For processing exit requests
+        risk_modulator=risk_modulator  # Index/sector-based SL adjustment
     )
+
+    # Register risk modulator to receive index bar updates
+    if risk_modulator is not None:
+        # Cache the primary indices set for O(1) lookup
+        _primary_indices_set = set(mod_cfg["primary_indices"])
+
+        def _on_index_5m_bar(symbol: str, bar_5m: pd.Series) -> None:
+            """Callback to update risk modulator with index bar data."""
+            # Only process index symbols
+            if symbol in _primary_indices_set:
+                try:
+                    # Get the 5m DataFrame for this index
+                    df_5m = screener.agg.get_df_5m_tail(symbol, 50)
+                    if df_5m is not None and len(df_5m) > 0:
+                        bar_ts = bar_5m.name if hasattr(bar_5m, "name") else datetime.now()
+                        risk_modulator.update_bars(symbol, df_5m, bar_ts)
+                        # Log state update at INFO level for backtest visibility
+                        cs = risk_modulator.get_crossover_state(symbol)
+                        if cs:
+                            logger.info(
+                                f"INDEX_RISK_MOD | {symbol} | State: {cs.state.value} | "
+                                f"VWAP: {cs.vwap:.2f} | Close: {bar_5m.get('close', 0):.2f}"
+                            )
+                except Exception as e:
+                    logger.warning(f"INDEX_RISK_MOD | Failed to update {symbol}: {e}")
+
+        screener.agg.register_5m_handler(_on_index_5m_bar)
+        logger.info(f"INDEX_RISK_MOD | Registered 5m bar handler for {len(_primary_indices_set)} indices: {list(_primary_indices_set)}")
+
+        # Initialize session state (loads sector mapping, resets index states)
+        risk_modulator.reset_session(datetime.now())
 
     # Start background threads
     threads: list[threading.Thread] = []
@@ -832,7 +884,7 @@ def _run_until_eod(
                 from pathlib import Path
                 from config.logging_config import get_log_directory, get_session_id
                 from services.state.session_upload_persistence import SessionUploadTracker
-                from oci.tools.upload_trading_session import upload_session
+                from oci_cloud.tools.upload_trading_session import upload_session
 
                 log_dir = get_log_directory()
                 session_id = get_session_id()

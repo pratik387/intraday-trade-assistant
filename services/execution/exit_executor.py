@@ -92,6 +92,7 @@ class ExitExecutor:
         capital_manager=None,  # Capital release on exits
         persistence=None,  # Position persistence for crash recovery
         api_server=None,  # For processing exit requests from API
+        risk_modulator=None,  # Index/Sector crossover risk modulation
     ) -> None:
         self.broker = broker
         self.positions = positions
@@ -101,6 +102,7 @@ class ExitExecutor:
         self.capital_manager = capital_manager
         self.persistence = persistence  # For updating/removing positions on exit
         self.api_server = api_server  # For exit request queue
+        self.risk_modulator = risk_modulator  # For index/sector-based SL adjustment
 
         # Hook into tick stream for live/paper mode instant exits
         if bar_builder is not None:
@@ -391,6 +393,9 @@ class ExitExecutor:
 
                 # Apply time-based SL widening (Pro Trader Standard - reduces morning whipsaw)
                 plan_sl = self._apply_time_based_sl_widening(sym, pos, plan_sl, float(px), ts)
+
+                # Apply index/sector crossover risk modulation (adjusts SL based on market state)
+                plan_sl = self._apply_index_risk_modulation(sym, pos, plan_sl, float(px), ts)
 
                 # Get state early to check if T1/T2 were already hit (for better exit reason labeling)
                 st = pos.plan.get("_state") or {}
@@ -730,6 +735,95 @@ class ExitExecutor:
                 return widened_sl
 
         return plan_sl
+
+    def _apply_index_risk_modulation(self, sym: str, pos: Position, plan_sl: float, current_price: float, ts: pd.Timestamp) -> float:
+        """
+        Apply index/sector crossover risk modulation to stop loss.
+
+        This adjusts the SL distance based on the current index/sector state:
+        - Trend-aligned trades: Wider SL (let winners run)
+        - Counter-trend trades: Tighter SL (cut losers fast)
+        - Chop markets: Tighter SL (reduce noise damage)
+
+        The multiplier is applied to the SL DISTANCE from entry, not the absolute level.
+
+        Args:
+            sym: Trading symbol
+            pos: Position object
+            plan_sl: Current stop loss level
+            current_price: Current market price (for Tier 2 RS calculation)
+            ts: Current timestamp
+
+        Returns:
+            Modified stop loss level
+        """
+        if self.risk_modulator is None:
+            return plan_sl
+
+        if math.isnan(plan_sl):
+            return plan_sl
+
+        try:
+            # For Tier 2 (unmapped stocks): get day_open from ORL as proxy
+            # ORL = low of first 15 mins, reasonably close to day open
+            levels = pos.plan.get("levels", {})
+            day_open = levels.get("ORL") or levels.get("orl")
+
+            # Get risk multiplier from modulator
+            multiplier, reason = self.risk_modulator.get_risk_multiplier(
+                sym, pos.side,
+                stock_day_open=day_open,
+                stock_current_price=current_price
+            )
+
+            # If multiplier is 1.0, no change needed
+            if abs(multiplier - 1.0) < 0.001:
+                return plan_sl
+
+            entry_price = float(pos.avg_price)
+            side = pos.side.upper()
+
+            # Calculate current SL distance
+            sl_distance = abs(entry_price - plan_sl)
+
+            # Apply multiplier to distance
+            new_sl_distance = sl_distance * multiplier
+
+            # Calculate new SL level
+            if side == "BUY":
+                new_sl = entry_price - new_sl_distance
+            else:
+                new_sl = entry_price + new_sl_distance
+
+            # Log the adjustment and track in position state for exit diagnostics
+            if abs(new_sl - plan_sl) > 0.01:
+                adjustment_type = "tightened" if multiplier < 1.0 else "widened"
+
+                # Log at INFO level for visibility in backtest analysis
+                logger.info(
+                    f"INDEX_RISK_MOD | {sym} | {side} | "
+                    f"Original_SL: {plan_sl:.2f} | New_SL: {new_sl:.2f} | "
+                    f"Multiplier: {multiplier:.2f} | Reason: {reason} | "
+                    f"Adjustment: {adjustment_type}"
+                )
+
+                # Track in position state for exit diagnostics
+                # This allows us to analyze risk modulation impact post-backtest
+                state = pos.plan.setdefault('_state', {})
+                risk_mod = state.setdefault('risk_modulation', {})
+                risk_mod['last_multiplier'] = multiplier
+                risk_mod['last_reason'] = reason
+                risk_mod['last_adjustment'] = adjustment_type
+                risk_mod['original_sl'] = plan_sl
+                risk_mod['adjusted_sl'] = new_sl
+                # Track count of adjustments
+                risk_mod['adjustment_count'] = risk_mod.get('adjustment_count', 0) + 1
+
+            return new_sl
+
+        except Exception as e:
+            logger.warning(f"INDEX_RISK_MOD | {sym} | Error applying modulation: {e}")
+            return plan_sl
 
     def _breach_sl(self, side: str, price: float, sl: float) -> bool:
         if math.isnan(sl) or math.isnan(price):
@@ -1325,6 +1419,9 @@ class ExitExecutor:
             # Determine remaining quantity after this exit
             remaining_qty = max(0, pos.qty - qty_exit)
 
+            # Get risk modulation data if applied
+            risk_mod_data = state.get('risk_modulation', {})
+
             exit_data = {
                 'symbol': sym,
                 'trade_id': pos.plan.get('trade_id', ''),
@@ -1345,7 +1442,15 @@ class ExitExecutor:
                     'time_since_entry_mins': round(time_since_entry_mins, 1) if time_since_entry_mins is not None else None,
                     'regime': pos.plan.get('regime'),
                     'setup_type': pos.plan.get('setup_type'),
-                    'acceptance_status': pos.plan.get('quality', {}).get('acceptance_status')
+                    'acceptance_status': pos.plan.get('quality', {}).get('acceptance_status'),
+                    # Risk modulation tracking for backtest analysis
+                    'risk_modulation': {
+                        'applied': bool(risk_mod_data),
+                        'last_multiplier': risk_mod_data.get('last_multiplier'),
+                        'last_reason': risk_mod_data.get('last_reason'),
+                        'last_adjustment': risk_mod_data.get('last_adjustment'),
+                        'adjustment_count': risk_mod_data.get('adjustment_count', 0)
+                    } if risk_mod_data else None
                 }
             }
             self.trading_logger.log_exit(exit_data)

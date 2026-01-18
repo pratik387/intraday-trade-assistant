@@ -103,11 +103,15 @@ class FeatherTicker:
                 if not self._running: break
 
                 batch: List[dict] = []
+
+                # Process symbols with tokens (equities)
                 tokens: Iterable[int] = (self._subs or self._sym2tok.values())
+                processed_symbols: set[str] = set()
 
                 for tok in tokens:
                     sym = self._tok2sym.get(int(tok))
                     if not sym: continue
+                    processed_symbols.add(sym)
                     df = self._data.get(sym)
                     if df is None or df.empty: continue
                     # O(1) lookup since we indexed by 'date'
@@ -126,6 +130,38 @@ class FeatherTicker:
                         "last_price": price,
                         "last_quantity": qty,
                         "timestamp": ts,   # naive datetime
+                        "ohlc": {
+                            "open": float(r.get("open", price)),
+                            "high": float(r.get("high", price)),
+                            "low": float(r.get("low", price)),
+                            "close": price
+                        }
+                    })
+
+                # Process symbols without tokens (e.g., index symbols like NSE:NIFTY 50)
+                # These don't have instrument tokens but are loaded in self._data
+                for sym, df in self._data.items():
+                    if sym in processed_symbols:
+                        continue  # Already processed via token
+                    if df is None or df.empty:
+                        continue
+                    try:
+                        r = df.loc[ts]
+                    except KeyError:
+                        continue
+                    if not isinstance(r, pd.Series):
+                        r = r.iloc[0]
+                    price = float(r["close"]) if self._use_close else float(r.get("last_price", r["close"]))
+                    qty = int(r.get("volume", 0))
+
+                    # Use a synthetic negative token for index symbols (won't conflict with real tokens)
+                    # The symbol is passed via the 'symbol' key for TickRouter to handle
+                    batch.append({
+                        "instrument_token": -1,  # Synthetic token for symbols without real tokens
+                        "symbol": sym,           # Pass symbol directly for TickRouter
+                        "last_price": price,
+                        "last_quantity": qty,
+                        "timestamp": ts,
                         "ohlc": {
                             "open": float(r.get("open", price)),
                             "high": float(r.get("high", price)),

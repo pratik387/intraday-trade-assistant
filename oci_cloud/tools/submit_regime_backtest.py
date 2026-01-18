@@ -6,8 +6,8 @@ Submit Regime-Based Backtest to Oracle Cloud Kubernetes
 Runs backtests for specific regime periods (non-sequential months).
 
 Usage:
-    python oci/tools/submit_regime_backtest.py --max-parallel 50
-    python oci/tools/submit_regime_backtest.py --regimes Strong_Uptrend Shock_Down --max-parallel 50
+    python oci_cloud/tools/submit_regime_backtest.py --max-parallel 50
+    python oci_cloud/tools/submit_regime_backtest.py --regimes Strong_Uptrend Shock_Down --max-parallel 50
 """
 
 import argparse
@@ -88,16 +88,16 @@ def main():
         epilog="""
 Examples:
   # Run all 6 regimes with auto node scaling
-  python oci/tools/submit_regime_backtest.py --nodes 4 --max-parallel 50
+  python oci_cloud/tools/submit_regime_backtest.py --nodes 4 --max-parallel 50
 
   # Run specific regimes only
-  python oci/tools/submit_regime_backtest.py --regimes Strong_Uptrend Shock_Down --nodes 4 --max-parallel 50
+  python oci_cloud/tools/submit_regime_backtest.py --regimes Strong_Uptrend Shock_Down --nodes 4 --max-parallel 50
 
   # Run without waiting for completion
-  python oci/tools/submit_regime_backtest.py --nodes 4 --max-parallel 50 --no-wait
+  python oci_cloud/tools/submit_regime_backtest.py --nodes 4 --max-parallel 50 --no-wait
 
   # Run without node scaling (assumes nodes already running)
-  python oci/tools/submit_regime_backtest.py --max-parallel 50
+  python oci_cloud/tools/submit_regime_backtest.py --max-parallel 50
 
 Available regimes:
   Strong_Uptrend (Dec 2023)
@@ -177,8 +177,8 @@ Available regimes:
 
     if args.no_wait:
         print(f"\n✅ Job submitted (not waiting for completion)")
-        print(f"\nMonitor: python oci/tools/monitor_oci_backtest.py {run_id}")
-        print(f"Download: python oci/tools/download_oci_results.py {run_id}")
+        print(f"\nMonitor: python oci_cloud/tools/monitor_oci_backtest.py {run_id}")
+        print(f"Download: python oci_cloud/tools/download_oci_results.py {run_id}")
         return
 
     # Monitor progress

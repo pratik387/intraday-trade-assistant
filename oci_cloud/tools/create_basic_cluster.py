@@ -7,10 +7,10 @@ Creates a new Basic cluster alongside your existing Enhanced cluster.
 Once validated, you can delete the old Enhanced cluster to save $72/month.
 
 Usage:
-    python oci/tools/create_basic_cluster.py --create-cluster
-    python oci/tools/create_basic_cluster.py --create-nodepool
-    python oci/tools/create_basic_cluster.py --create-secrets
-    python oci/tools/create_basic_cluster.py --status
+    python oci_cloud/tools/create_basic_cluster.py --create-cluster
+    python oci_cloud/tools/create_basic_cluster.py --create-nodepool
+    python oci_cloud/tools/create_basic_cluster.py --create-secrets
+    python oci_cloud/tools/create_basic_cluster.py --status
 
 Steps:
     1. Run with --create-cluster (wait ~10 mins for cluster to be ACTIVE)
@@ -195,7 +195,7 @@ def print_existing_config(config):
     print("=" * 70)
     print()
     print("Copy these values to update the configuration section above,")
-    print("then run: python oci/tools/create_basic_cluster.py --create-cluster")
+    print("then run: python oci_cloud/tools/create_basic_cluster.py --create-cluster")
     print()
 
 
@@ -318,10 +318,10 @@ def create_basic_cluster():
         print("⏳ Cluster will take ~10 minutes to become ACTIVE")
         print()
         print("Check status with:")
-        print("  python oci/tools/create_basic_cluster.py --status")
+        print("  python oci_cloud/tools/create_basic_cluster.py --status")
         print()
         print("Once ACTIVE, create node pool with:")
-        print("  python oci/tools/create_basic_cluster.py --create-nodepool")
+        print("  python oci_cloud/tools/create_basic_cluster.py --create-nodepool")
     else:
         print("❌ Cluster creation failed")
 
@@ -339,7 +339,7 @@ def create_node_pool():
 
     if not clusters or not clusters.get('data'):
         print(f"ERROR: Basic cluster '{NEW_CLUSTER_NAME}' not found or not ACTIVE")
-        print("Create it first with: python oci/tools/create_basic_cluster.py --create-cluster")
+        print("Create it first with: python oci_cloud/tools/create_basic_cluster.py --create-cluster")
         return
 
     basic_cluster = clusters['data'][0]
@@ -441,14 +441,14 @@ def create_node_pool():
         print("⏳ Node pool will take ~5 minutes to be ready")
         print()
         print("IMPORTANT: Update this ID in your submit scripts:")
-        print(f"  oci/tools/submit_oci_backtest.py")
-        print(f"  oci/tools/cleanup_and_download_backtest.py")
+        print(f"  oci_cloud/tools/submit_oci_backtest.py")
+        print(f"  oci_cloud/tools/cleanup_and_download_backtest.py")
         print()
         print("Look for: self.node_pool_id = \"...\"")
         print(f"Replace with: self.node_pool_id = \"{node_pool_id}\"")
         print()
         print("Then create secrets with:")
-        print("  python oci/tools/create_basic_cluster.py --create-secrets")
+        print("  python oci_cloud/tools/create_basic_cluster.py --create-secrets")
     else:
         print("❌ Node pool creation failed")
 
@@ -528,19 +528,19 @@ def main():
         epilog="""
 Examples:
   # Check existing cluster config
-  python oci/tools/create_basic_cluster.py --show-config
+  python oci_cloud/tools/create_basic_cluster.py --show-config
 
   # Check status of all clusters
-  python oci/tools/create_basic_cluster.py --status
+  python oci_cloud/tools/create_basic_cluster.py --status
 
   # Step 1: Create Basic cluster
-  python oci/tools/create_basic_cluster.py --create-cluster
+  python oci_cloud/tools/create_basic_cluster.py --create-cluster
 
   # Step 2: Create node pool (after cluster is ACTIVE)
-  python oci/tools/create_basic_cluster.py --create-nodepool
+  python oci_cloud/tools/create_basic_cluster.py --create-nodepool
 
   # Step 3: Create secrets
-  python oci/tools/create_basic_cluster.py --create-secrets
+  python oci_cloud/tools/create_basic_cluster.py --create-secrets
 """
     )
 

@@ -82,7 +82,7 @@ class OCIBacktestSubmitter:
         # Node pool configuration (Basic cluster - free control plane)
         self.node_pool_id = "ocid1.nodepool.oc1.ap-mumbai-1.aaaaaaaaqs7a4f5jyyhcy3dsmedknnzbmhpdmdj6dqkastv5cnaehilq5g3q"
 
-        # Project root (oci/tools/submit.py -> parent.parent.parent = project root)
+        # Project root (oci_cloud/tools/submit.py -> parent.parent.parent = project root)
         self.root = Path(__file__).parent.parent.parent
 
     def _get_namespace(self):
@@ -243,11 +243,11 @@ class OCIBacktestSubmitter:
         print("\n[3/5] 🚀 Submitting Kubernetes Job...")
 
         # Read template
-        template_path = self.root / 'oci' / 'k8s' / 'backtest-job-template.yaml'
+        template_path = self.root / 'oci_cloud' / 'k8s' / 'backtest-job-template.yaml'
 
         if not template_path.exists():
             print(f"  ❌ Template not found: {template_path}")
-            print("  Please ensure oci/k8s/backtest-job-template.yaml exists")
+            print("  Please ensure oci_cloud/k8s/backtest-job-template.yaml exists")
             sys.exit(1)
 
         with open(template_path) as f:
@@ -440,18 +440,50 @@ class OCIBacktestSubmitter:
             print(f"✅ Node pool scaling initiated to {num_nodes} nodes")
             print()
 
-            # Wait for nodes to become ready
+            # Wait for nodes to become ready (smart polling)
             if wait_seconds > 0:
-                print(f"⏳ Waiting {wait_seconds}s for nodes to become ready...")
+                print(f"⏳ Waiting for {num_nodes} nodes to become Ready (max {wait_seconds}s)...")
                 print()
 
-                for remaining in range(wait_seconds, 0, -1):
-                    mins, secs = divmod(remaining, 60)
-                    print(f"   Starting job in {mins:02d}:{secs:02d}...", end='\r')
+                start_time = time.time()
+                check_interval = 10  # Check every 10 seconds
+                last_check = 0
+
+                while True:
+                    elapsed = time.time() - start_time
+                    remaining = int(wait_seconds - elapsed)
+
+                    if remaining <= 0:
+                        print()
+                        print("⚠️  Timeout waiting for nodes, proceeding anyway...")
+                        break
+
+                    # Check node status periodically
+                    if elapsed - last_check >= check_interval or last_check == 0:
+                        last_check = elapsed
+                        try:
+                            result = subprocess.run(
+                                ['kubectl', 'get', 'nodes', '--no-headers'],
+                                capture_output=True, text=True, timeout=15
+                            )
+                            if result.returncode == 0:
+                                lines = [l for l in result.stdout.strip().split('\n') if l]
+                                ready_count = sum(1 for l in lines if 'Ready' in l and 'NotReady' not in l)
+
+                                if ready_count >= num_nodes:
+                                    print()
+                                    print(f"✅ All {ready_count} nodes are Ready!")
+                                    break
+                                else:
+                                    mins, secs = divmod(remaining, 60)
+                                    print(f"   {ready_count}/{num_nodes} nodes Ready, waiting... ({mins:02d}:{secs:02d} remaining)", end='\r')
+                        except Exception:
+                            pass  # Ignore kubectl errors, keep waiting
+
                     time.sleep(1)
 
                 print()
-                print("✅ Wait complete, proceeding with job submission")
+                print("✅ Proceeding with job submission")
             else:
                 print("⏳ Nodes will take ~2-3 minutes to become ready")
                 print("   Job will start once nodes are available")
@@ -551,12 +583,12 @@ class OCIBacktestSubmitter:
 
         if no_wait:
             print(f"\n✅ Job submitted (not waiting for completion)")
-            print(f"\nMonitor & cleanup: python oci/tools/monitor_and_cleanup_backtest.py {run_id}")
+            print(f"\nMonitor & cleanup: python oci_cloud/tools/monitor_and_cleanup_backtest.py {run_id}")
             return
 
         # Hand off to monitor_and_cleanup_backtest.py for monitoring, download, and cleanup
         print(f"\n[4/5] 📊 Handing off to monitor_and_cleanup_backtest.py...")
-        monitor_script = self.root / 'oci' / 'tools' / 'monitor_and_cleanup_backtest.py'
+        monitor_script = self.root / 'oci_cloud' / 'tools' / 'monitor_and_cleanup_backtest.py'
 
         cmd = [sys.executable, str(monitor_script), run_id]
         result = subprocess.run(cmd)
@@ -573,19 +605,19 @@ def main():
         epilog="""
 Examples:
   # Basic submission with auto node scaling
-  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4
+  python oci_cloud/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4
 
   # Without node scaling (assumes nodes already running)
-  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30
+  python oci_cloud/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30
 
   # With custom parallelism limit
-  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --max-parallel 50
+  python oci_cloud/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --max-parallel 50
 
   # Skip wait after node scaling (for already-running nodes)
-  python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --wait-after-scale 0
+  python oci_cloud/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --wait-after-scale 0
 
   # Re-run only failed dates from a previous run
-  python oci/tools/submit_oci_backtest.py --failed-dates cloud_results/20251121-084341/failed_dates.json --nodes 4
+  python oci_cloud/tools/submit_oci_backtest.py --failed-dates cloud_results/20251121-084341/failed_dates.json --nodes 4
         """
     )
 

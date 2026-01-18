@@ -234,6 +234,93 @@ def download_monthly_cache(date_str):
         sys.exit(1)
 
 
+def download_index_data(date_str):
+    """
+    Download index OHLCV data for risk modulation (if enabled in config).
+
+    Downloads full 1-minute data files for NIFTY indices used by IndexSectorRiskModulator.
+    Only downloads if risk_modulator.enabled is True in config.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format (unused - downloads full file)
+    """
+    # Check if risk modulator is enabled in config
+    config_path = Path('/app/config/default.toml')
+    if not config_path.exists():
+        log("No config file found, skipping index data download")
+        return
+
+    try:
+        import tomllib
+        with open(config_path, 'rb') as f:
+            config = tomllib.load(f)
+
+        risk_mod_cfg = config.get('risk_modulator', {})
+        if not risk_mod_cfg.get('enabled', False):
+            log("Risk modulator disabled, skipping index data download")
+            return
+
+        primary_indices = risk_mod_cfg.get('primary_indices', [])
+        if not primary_indices:
+            log("No primary indices configured, skipping index data download")
+            return
+
+    except Exception as e:
+        log(f"Could not read config for risk modulator check: {e}")
+        return
+
+    log(f"Downloading index data for risk modulation ({len(primary_indices)} indices)...")
+
+    oci_config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(oci_config)
+
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    # Create output directory
+    index_dir = Path('/app/backtest-cache-download/index_ohlcv')
+    index_dir.mkdir(parents=True, exist_ok=True)
+
+    downloaded = 0
+    for index_symbol in primary_indices:
+        # Convert symbol to safe filename: "NSE:NIFTY 50" -> "NSE_NIFTY_50"
+        safe_symbol = index_symbol.replace(":", "_").replace(" ", "_")
+
+        # Object path in OCI: index_ohlcv/{symbol}/{symbol}_1minutes.feather (full file)
+        object_name = f"index_ohlcv/{safe_symbol}/{safe_symbol}_1minutes.feather"
+
+        # Local path
+        symbol_dir = index_dir / safe_symbol
+        symbol_dir.mkdir(parents=True, exist_ok=True)
+        local_file = symbol_dir / f"{safe_symbol}_1minutes.feather"
+
+        try:
+            get_obj = os_client.get_object(
+                namespace_name=namespace,
+                bucket_name=bucket,
+                object_name=object_name
+            )
+
+            with open(local_file, 'wb') as f:
+                for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                    f.write(chunk)
+
+            size_mb = local_file.stat().st_size / (1024 * 1024)
+            log(f"  Downloaded {index_symbol}: {size_mb:.1f} MB")
+            downloaded += 1
+
+        except oci.exceptions.ServiceError as e:
+            if e.status == 404:
+                log(f"  WARNING: Index data not found for {index_symbol}")
+            else:
+                log(f"  ERROR downloading {index_symbol}: {e}")
+
+        except Exception as e:
+            log(f"  ERROR downloading {index_symbol}: {e}")
+
+    log(f"Downloaded {downloaded}/{len(primary_indices)} index data files")
+
+
 def run_backtest(date_str):
     """
     Run backtest for the given date.
@@ -386,6 +473,9 @@ def main():
 
     # Download monthly cache for this specific date
     download_monthly_cache(date_str)
+
+    # Download index data for risk modulation (if enabled)
+    download_index_data(date_str)
 
     # Run backtest
     result = run_backtest(date_str)

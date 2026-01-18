@@ -18,10 +18,10 @@ This script bypasses the manual confirmation issue with bulk-download
 by using the OCI Python SDK directly.
 
 Usage:
-    python oci/tools/cleanup_and_download_backtest.py <run_id>
-    python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --parallel 20
-    python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --skip-nodepool
-    python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --keep-oci-files
+    python oci_cloud/tools/cleanup_and_download_backtest.py <run_id>
+    python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --parallel 20
+    python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --skip-nodepool
+    python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --keep-oci-files
 
 Arguments:
     run_id: The backtest run ID (e.g., 20251121-084341)
@@ -37,13 +37,13 @@ Options:
 
 Example:
     # Download all runs (original + retries) for this backtest
-    python oci/tools/cleanup_and_download_backtest.py 20251121-084341
+    python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341
 
     # Download only a specific retry
-    python oci/tools/cleanup_and_download_backtest.py 20251121-084341-retry2
+    python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341-retry2
 
     # Just download, no zip (for local machine)
-    python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --no-zip
+    python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --no-zip
 """
 
 import argparse
@@ -528,7 +528,7 @@ class BacktestCleanupAutomation:
                 print(f"Downloaded to: {self.download_dir}")
                 print()
                 print("Next steps:")
-                print(f"  1. Process the backtest: python oci/process_backtest_run.py {self.download_dir}")
+                print(f"  1. Process the backtest: python oci_cloud/process_backtest_run.py {self.download_dir}")
                 print()
                 print("=" * 80)
                 print()
@@ -552,7 +552,7 @@ class BacktestCleanupAutomation:
                 print(f"Size: {self.zip_file.stat().st_size / (1024 * 1024):.1f} MB")
                 print()
                 print("Next steps:")
-                print(f"  1. Process the backtest: python oci/process_backtest_run.py {self.zip_file}")
+                print(f"  1. Process the backtest: python oci_cloud/process_backtest_run.py {self.zip_file}")
                 print()
                 print("=" * 80)
                 print()
@@ -588,22 +588,22 @@ def main():
         epilog="""
 Examples:
   # Basic usage
-  python oci/tools/cleanup_and_download_backtest.py 20251121-084341
+  python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341
 
   # With custom parallel downloads
-  python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --parallel 20
+  python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --parallel 20
 
   # Skip node pool scaling
-  python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --skip-nodepool
+  python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --skip-nodepool
 
   # Keep OCI files after download
-  python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --keep-oci-files
+  python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --keep-oci-files
 
   # Keep local extracted directory
-  python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --keep-extracted
+  python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --keep-extracted
 
   # Just download, no zip (for local machine)
-  python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --no-zip
+  python oci_cloud/tools/cleanup_and_download_backtest.py 20251121-084341 --no-zip
         """
     )
 

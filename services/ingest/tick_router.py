@@ -103,6 +103,10 @@ class TickRouter:
     def update_token_map(self, mapping: Mapping[int, str]) -> None:
         self._maps.token_to_symbol = dict(mapping)
 
+    def add_tokens(self, mapping: Mapping[int, str]) -> None:
+        """Add tokens to the existing map (for adding index symbols at runtime)."""
+        self._maps.token_to_symbol.update(mapping)
+
     # ----------------------------- routing --------------------------------
     def handle_raw(self, raw: Any) -> None:
         """Entry from WSClient.on_message(raw). Accepts list[dict] | dict | tuple.
@@ -149,16 +153,21 @@ class TickRouter:
                 logger.debug("tick_router: _handle_one error: %s", e)
 
     def _handle_dict(self, t: Dict[str, Any]) -> None:
+        # Check for direct symbol (used by FeatherTicker for index symbols without tokens)
+        direct_symbol = t.get("symbol")
+
         # Zerodha Kite style
         token = t.get("instrument_token") or t.get("token") or t.get("tradable")
-        if token is None:
+        if token is None and direct_symbol is None:
             self._miss_bad_pkt += 1
             return
         try:
-            token = int(token)
+            token = int(token) if token is not None else -1
         except Exception:
-            self._miss_bad_pkt += 1
-            return
+            if direct_symbol is None:
+                self._miss_bad_pkt += 1
+                return
+            token = -1
 
         price = t.get("last_price") or t.get("ltp") or t.get("last_traded_price")
         if price is None:
@@ -200,13 +209,15 @@ class TickRouter:
         # Make sure it's naive (IST wall time preserved if your _to_ist_naive already handles tz)
         ts = _to_ist_naive(ts)
 
-        self._emit(token, price, qty, volume, ts)
+        self._emit(token, price, qty, volume, ts, direct_symbol)
 
     # ----------------------------- emit -----------------------------------
-    def _emit(self, token: int, price: float, qty: float, volume: int, ts: datetime) -> None:
+    def _emit(self, token: int, price: float, qty: float, volume: int, ts: datetime, direct_symbol: Optional[str] = None) -> None:
         if self._on_tick is None:
             return
-        sym = self._maps.token_to_symbol.get(int(token))
+
+        # Use direct_symbol if provided (for index symbols without tokens)
+        sym = direct_symbol or self._maps.token_to_symbol.get(int(token))
         if not sym:
             self._miss_no_map += 1
             if self._miss_no_map <= 3:

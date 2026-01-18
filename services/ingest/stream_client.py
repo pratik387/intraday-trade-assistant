@@ -47,7 +47,12 @@ class WSClient:
         - .set_mode(mode: str, tokens: list[int])
     """
 
-    def __init__(self, sdk: Any, on_tick: Callable[[dict], None]) -> None:
+    def __init__(
+        self,
+        sdk: Any,
+        on_tick: Callable[[dict], None],
+        index_symbols: Optional[List[str]] = None
+    ) -> None:
         self._sdk = sdk
         self._ticker: Any = None
         self._on_message: Optional[Callable[[Any], None]] = None
@@ -55,6 +60,7 @@ class WSClient:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self.on_tick = on_tick
+        self._index_symbols = index_symbols  # For backtest index data loading
 
         # Buffer for subscriptions before WebSocket connects
         self._connected = threading.Event()
@@ -136,7 +142,17 @@ class WSClient:
     def _run(self) -> None:
         """Thread target: obtain ticker, wire callbacks, connect, loop."""
         try:
-            self._ticker = self._sdk.make_ticker()
+            # Pass index_symbols for backtest (MockBroker supports this param)
+            if self._index_symbols and hasattr(self._sdk, 'make_ticker'):
+                # Try to pass index_symbols (MockBroker supports this)
+                import inspect
+                sig = inspect.signature(self._sdk.make_ticker)
+                if 'index_symbols' in sig.parameters:
+                    self._ticker = self._sdk.make_ticker(index_symbols=self._index_symbols)
+                else:
+                    self._ticker = self._sdk.make_ticker()
+            else:
+                self._ticker = self._sdk.make_ticker()
             self._wire_callbacks(self._ticker)
             self._connect(self._ticker)
             # Passive loop to keep the thread alive as long as SDK runs

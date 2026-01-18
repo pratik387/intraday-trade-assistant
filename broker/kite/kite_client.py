@@ -20,6 +20,25 @@ class _Inst:
     tsym: str            # e.g. 'RELIANCE'
 
 class KiteClient:
+    # Known NSE index instrument tokens (hardcoded for reliability)
+    # These rarely change and Kite API sometimes has inconsistent naming
+    INDEX_TOKENS: Dict[str, int] = {
+        "NSE:NIFTY 50": 256265,
+        "NSE:NIFTY BANK": 260105,
+        "NSE:NIFTY IT": 259849,
+        "NSE:NIFTY FIN SERVICE": 257801,
+        "NSE:NIFTY AUTO": 257537,
+        "NSE:NIFTY PHARMA": 261889,
+        "NSE:NIFTY METAL": 261633,
+        "NSE:NIFTY FMCG": 258305,
+        "NSE:NIFTY REALTY": 262401,
+        "NSE:NIFTY ENERGY": 262145,
+        "NSE:NIFTY INFRA": 259089,
+        "NSE:NIFTY PSE": 262657,
+        "NSE:NIFTY MEDIA": 261377,
+        "NSE:NIFTY MIDCAP 50": 260873,
+    }
+
     def __init__(self):
         self.api_key = env.KITE_API_KEY
         self.access_token = env.KITE_ACCESS_TOKEN
@@ -30,6 +49,10 @@ class KiteClient:
         self._sym2inst: Dict[str, _Inst] = {}
         self._tok2sym: Dict[int, str] = {}
         self._equity_instruments: List[str] = []
+
+        # Index instruments (separate from equities)
+        self._index_sym2tok: Dict[str, int] = {}
+        self._index_tok2sym: Dict[int, str] = {}
 
         # ---- Daily history: per-day in-memory cache ----
         self._daily_cache_day: Optional[str] = None   # "YYYY-MM-DD"
@@ -135,6 +158,55 @@ class KiteClient:
 
         logger.info(f"KiteClient: loaded {len(self._sym2inst)} total; NSE EQ = {len(self._equity_instruments)}")
 
+        # Load index instruments from hardcoded tokens (more reliable than API parsing)
+        self._load_index_instruments()
+
+
+    def _load_index_instruments(self) -> None:
+        """Load index instruments from hardcoded tokens."""
+        self._index_sym2tok.clear()
+        self._index_tok2sym.clear()
+
+        for sym, token in self.INDEX_TOKENS.items():
+            self._index_sym2tok[sym] = token
+            self._index_tok2sym[token] = sym
+
+        logger.info(f"KiteClient: loaded {len(self._index_sym2tok)} index instruments")
+
+    def list_indices(self) -> List[str]:
+        """All NSE index symbols as ['NSE:NIFTY 50', 'NSE:NIFTY BANK', ...]."""
+        return list(self._index_sym2tok.keys())
+
+    def get_index_tokens(self, symbols: Optional[List[str]] = None) -> List[int]:
+        """
+        Get instrument tokens for index symbols.
+
+        Args:
+            symbols: List of index symbols (e.g., ["NSE:NIFTY 50", "NSE:NIFTY BANK"])
+                    If None, returns tokens for all known indices.
+
+        Returns:
+            List of instrument tokens
+        """
+        if symbols is None:
+            return list(self._index_tok2sym.keys())
+
+        tokens = []
+        for sym in symbols:
+            token = self._index_sym2tok.get(sym)
+            if token:
+                tokens.append(token)
+            else:
+                logger.warning(f"KiteClient: unknown index symbol {sym}")
+        return tokens
+
+    def get_index_token_map(self) -> Dict[int, str]:
+        """Get token -> symbol map for indices."""
+        return dict(self._index_tok2sym)
+
+    def resolve_index_token(self, token: int) -> Optional[str]:
+        """Resolve an index token to its symbol."""
+        return self._index_tok2sym.get(token)
 
     def list_equities(self) -> List[str]:
         """All NSE:EQ symbols as ['NSE:RELIANCE', ...]."""

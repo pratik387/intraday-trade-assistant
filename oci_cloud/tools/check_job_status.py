@@ -7,8 +7,8 @@ Quick status check for a backtest job without continuous monitoring.
 Useful when kubectl connection might timeout.
 
 Usage:
-    python oci/tools/check_job_status.py <run_id>
-    python oci/tools/check_job_status.py 20251124-023241 --watch
+    python oci_cloud/tools/check_job_status.py <run_id>
+    python oci_cloud/tools/check_job_status.py 20251124-023241 --watch
 
 Options:
     --watch: Continuously check status (like monitor, but reconnects)
@@ -125,14 +125,14 @@ def check_once(run_id):
             print("OK: Job completed successfully!")
             print()
             print("Download results:")
-            print(f"  python oci/tools/cleanup_and_download_backtest.py {run_id}")
+            print(f"  python oci_cloud/tools/cleanup_and_download_backtest.py {run_id}")
         print()
     else:
         remaining = status['total'] - status['succeeded'] - status['failed']
         print(f"Job still running ({remaining} days remaining)")
         print()
         print("Continue monitoring:")
-        print(f"  python oci/tools/check_job_status.py {run_id} --watch")
+        print(f"  python oci_cloud/tools/check_job_status.py {run_id} --watch")
         print()
 
 
@@ -168,7 +168,7 @@ def watch_status(run_id, interval=30):
                         print("OK: Job completed successfully!")
                         print()
                         print("Download results:")
-                        print(f"  python oci/tools/cleanup_and_download_backtest.py {run_id}")
+                        print(f"  python oci_cloud/tools/cleanup_and_download_backtest.py {run_id}")
 
                     break
                 else:
@@ -193,7 +193,7 @@ def watch_status(run_id, interval=30):
                     print("Try reconnecting:")
                     print("  1. Check kubectl config: kubectl get jobs")
                     print("  2. Reconnect to OCI if needed")
-                    print(f"  3. Resume watching: python oci/tools/check_job_status.py {run_id} --watch")
+                    print(f"  3. Resume watching: python oci_cloud/tools/check_job_status.py {run_id} --watch")
                     sys.exit(1)
 
             # Wait before next check
@@ -205,10 +205,10 @@ def watch_status(run_id, interval=30):
         print("Warning: Monitoring stopped")
         print()
         print("Resume watching:")
-        print(f"  python oci/tools/check_job_status.py {run_id} --watch")
+        print(f"  python oci_cloud/tools/check_job_status.py {run_id} --watch")
         print()
         print("Or check status once:")
-        print(f"  python oci/tools/check_job_status.py {run_id}")
+        print(f"  python oci_cloud/tools/check_job_status.py {run_id}")
         print()
         sys.exit(0)
 
@@ -220,13 +220,13 @@ def main():
         epilog="""
 Examples:
   # Check status once
-  python oci/tools/check_job_status.py 20251124-023241
+  python oci_cloud/tools/check_job_status.py 20251124-023241
 
   # Watch continuously (reconnects on timeout)
-  python oci/tools/check_job_status.py 20251124-023241 --watch
+  python oci_cloud/tools/check_job_status.py 20251124-023241 --watch
 
   # Watch with custom interval
-  python oci/tools/check_job_status.py 20251124-023241 --watch --interval 60
+  python oci_cloud/tools/check_job_status.py 20251124-023241 --watch --interval 60
         """
     )
 
