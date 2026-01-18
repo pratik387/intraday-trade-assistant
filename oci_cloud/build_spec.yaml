@@ -8,7 +8,7 @@ steps:
     name: "Build Container Image"
     command: |
       export DOCKER_BUILDKIT=1
-      docker build -f oci/docker/Dockerfile -t backtest-worker:${OCI_BUILD_RUN_ID} .
+      docker build -f oci_cloud/docker/Dockerfile -t backtest-worker:${OCI_BUILD_RUN_ID} .
 
   - type: Command
     name: "Tag Image"

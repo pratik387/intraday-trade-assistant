@@ -7,7 +7,7 @@
 # Run this on a laptop with Docker installed (not Windows machine).
 #
 # Usage:
-#   bash oci/tools/setup_oci.sh
+#   bash oci_cloud/tools/setup_oci.sh
 #
 
 set -e
@@ -199,7 +199,7 @@ docker login bom.ocir.io
 # Build image
 echo "  Building Docker image..."
 cd $(dirname $0)/../..
-docker build -f oci/docker/Dockerfile -t backtest-worker:latest .
+docker build -f oci_cloud/docker/Dockerfile -t backtest-worker:latest .
 
 # Tag for OCIR
 docker tag backtest-worker:latest \

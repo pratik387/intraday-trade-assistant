@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir oci
 
 # Copy entrypoint script
-COPY oci/docker/entrypoint.py /app/entrypoint.py
+COPY oci_cloud/docker/entrypoint.py /app/entrypoint.py
 RUN chmod +x /app/entrypoint.py
 
 # Create OCI config directory
