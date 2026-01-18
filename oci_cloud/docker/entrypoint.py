@@ -245,15 +245,36 @@ def download_index_data(date_str):
         date_str: Date in YYYY-MM-DD format (unused - downloads full file)
     """
     # Check if risk modulator is enabled in config
-    config_path = Path('/app/config/default.toml')
+    # Try JSON config first (configuration.json), then fallback to TOML
+    config_path = Path('/app/config/configuration.json')
+    log(f"Checking for config at: {config_path} (exists: {config_path.exists()})")
+
     if not config_path.exists():
+        config_path = Path('/app/config/default.toml')
+        log(f"Fallback to TOML: {config_path} (exists: {config_path.exists()})")
+
+    if not config_path.exists():
+        # List what's actually in /app/config for debugging
+        config_dir = Path('/app/config')
+        if config_dir.exists():
+            files = list(config_dir.rglob('*'))
+            log(f"Config dir exists but target file missing. Contents: {[str(f.relative_to(config_dir)) for f in files[:20]]}")
+        else:
+            log(f"Config directory does not exist: {config_dir}")
         log("No config file found, skipping index data download")
         return
 
+    log(f"Using config file: {config_path}")
+
     try:
-        import tomllib
-        with open(config_path, 'rb') as f:
-            config = tomllib.load(f)
+        if config_path.suffix == '.json':
+            import json
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+        else:
+            import tomllib
+            with open(config_path, 'rb') as f:
+                config = tomllib.load(f)
 
         risk_mod_cfg = config.get('risk_modulator', {})
         if not risk_mod_cfg.get('enabled', False):

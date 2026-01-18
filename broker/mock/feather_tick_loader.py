@@ -55,8 +55,9 @@ class FeatherTickLoader:
         # Index OHLCV cache directory (for index symbols like NSE:NIFTY 50)
         self.index_ohlcv_dir = None
         possible_index_dirs = [
-            Path("backtest-cache-download/index_ohlcv"),
-            Path("E:/Codebase/intraday-trade-assistant/backtest-cache-download/index_ohlcv"),
+            Path("/app/backtest-cache-download/index_ohlcv"),  # OCI container path
+            Path("backtest-cache-download/index_ohlcv"),       # Relative path (local)
+            Path("E:/Codebase/intraday-trade-assistant/backtest-cache-download/index_ohlcv"),  # Windows absolute
         ]
         for idir in possible_index_dirs:
             if idir.exists():
