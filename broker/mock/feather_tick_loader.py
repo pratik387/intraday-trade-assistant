@@ -72,7 +72,8 @@ class FeatherTickLoader:
         """Check if symbol is an index (e.g., NSE:NIFTY 50, NSE:NIFTY BANK)."""
         index_keywords = ["NIFTY 50", "NIFTY BANK", "NIFTY IT", "NIFTY AUTO",
                          "NIFTY PHARMA", "NIFTY METAL", "NIFTY FMCG",
-                         "NIFTY FIN SERVICE", "NIFTY REALTY"]
+                         "NIFTY FIN SERVICE", "NIFTY REALTY",
+                         "NIFTY ENERGY", "NIFTY PSU BANK"]
         tsym = symbol.split(":", 1)[-1].strip().upper()
         return tsym in index_keywords
 

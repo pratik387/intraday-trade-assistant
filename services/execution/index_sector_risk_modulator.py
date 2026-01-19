@@ -467,7 +467,7 @@ class IndexSectorRiskModulator:
         """Get full crossover state for an index (for debugging)."""
         return self._states.get(index_symbol)
 
-    def _get_sector_index(self, symbol: str) -> Optional[str]:
+    def _get_sector_index(self, symbol: str) -> Tuple[str, bool]:
         """
         Get the sector index for a stock symbol.
 
@@ -475,8 +475,9 @@ class IndexSectorRiskModulator:
             symbol: Trading symbol (e.g., "NSE:RELIANCE" or "RELIANCE.NS")
 
         Returns:
-            Sector index symbol (e.g., "NSE:NIFTY FIN SERVICE") or None if not mapped.
-            We do NOT default to NIFTY 50 as it may not be relevant for unmapped stocks.
+            Tuple of (index_symbol, is_fallback)
+            - index_symbol: Sector index (e.g., "NSE:NIFTY FIN SERVICE") or "NSE:NIFTY 50" fallback
+            - is_fallback: True if using NIFTY 50 fallback, False if using sector mapping
         """
         # Extract base symbol (remove NSE: prefix and .NS suffix)
         base_symbol = symbol
@@ -488,60 +489,55 @@ class IndexSectorRiskModulator:
         # Look up in mapping
         sector = self._symbol_sector_map.get(base_symbol)
         if sector:
-            return f"NSE:{sector}"
+            return f"NSE:{sector}", False
 
-        return None  # No sector mapping - caller should return neutral multiplier
+        # Fallback to NIFTY 50 for unmapped stocks
+        return "NSE:NIFTY 50", True
 
     def get_risk_multiplier(
         self,
         symbol: str,
         position_side: str,
         index_symbol: Optional[str] = None,
-        stock_day_open: Optional[float] = None,
-        stock_current_price: Optional[float] = None
-    ) -> Tuple[float, str]:
+        _stock_day_open: Optional[float] = None,
+        _stock_current_price: Optional[float] = None
+    ) -> Tuple[float, str, str]:
         """
         Get risk multiplier for a position based on index/sector state.
 
-        Uses tiered fallback:
-        - Tier 1: Sector index state (if symbol is mapped to a sector)
-        - Tier 2: Stock vs NIFTY relative strength (for unmapped symbols)
-        - Tier 3: Neutral (1.0) if no data available
+        Uses sector index mapping with NIFTY 50 as fallback for unmapped stocks.
 
         Args:
             symbol: Trading symbol (e.g., "NSE:RELIANCE")
             position_side: "BUY" or "SELL"
             index_symbol: Override index to use (default: auto-detect from sector)
-            stock_day_open: Stock's day open price (for Tier 2 RS calculation)
-            stock_current_price: Stock's current price (for Tier 2 RS calculation)
 
         Returns:
-            Tuple of (multiplier, reason_string)
+            Tuple of (multiplier, reason_string, tier)
+            - multiplier: Risk multiplier to apply to stop loss distance
+            - reason_string: e.g., "NSE:NIFTY METAL:chop"
+            - tier: "sector" if using sector index, "nifty50_fallback" if using NIFTY 50 fallback
         """
         if not self.config.enabled:
-            return 1.0, "disabled"
+            return 1.0, "disabled", "disabled"
 
-        # Tier 1: Try sector mapping first
+        # Get sector index (falls back to NIFTY 50 for unmapped stocks)
+        is_fallback = False
         if index_symbol is None:
-            index_symbol = self._get_sector_index(symbol)
+            index_symbol, is_fallback = self._get_sector_index(symbol)
 
-        if index_symbol is not None:
-            # We have a sector mapping - use sector index state
-            state = self.get_index_state(index_symbol)
+        # Use sector/index state for risk modulation
+        state = self.get_index_state(index_symbol)
 
-            # Determine multiplier key
-            side_key = "long" if position_side.upper() == "BUY" else "short"
-            multiplier_key = f"{state.value}_{side_key}"
+        # Determine multiplier key
+        side_key = "long" if position_side.upper() == "BUY" else "short"
+        multiplier_key = f"{state.value}_{side_key}"
 
-            multiplier = self.config.multipliers[multiplier_key]
-            reason = f"{index_symbol}:{state.value}"
+        multiplier = self.config.multipliers[multiplier_key]
+        reason = f"{index_symbol}:{state.value}"
+        tier = "nifty50_fallback" if is_fallback else "sector"
 
-            return multiplier, reason
-
-        # Tier 2: No sector mapping - use relative strength vs NIFTY
-        return self._calculate_relative_strength_state(
-            symbol, position_side, stock_day_open, stock_current_price
-        )
+        return multiplier, reason, tier
 
     def get_all_states(self) -> Dict[str, Dict]:
         """Get all index states for logging/debugging."""

@@ -2398,7 +2398,7 @@
       "_multiplier_comment": "Risk multipliers applied to stop loss distance. <1.0 = tighter SL (cut fast), >1.0 = wider SL (let run)",
       "strong_bull_long": 1.15,
       "strong_bull_short": 0.80,
-      "weak_bull_long": 1.10,
+      "weak_bull_long": 0.90,
       "weak_bull_short": 0.90,
       "neutral_long": 1.0,
       "neutral_short": 1.0,
@@ -2418,7 +2418,9 @@
       "NSE:NIFTY METAL",
       "NSE:NIFTY FMCG",
       "NSE:NIFTY FIN SERVICE",
-      "NSE:NIFTY REALTY"
+      "NSE:NIFTY REALTY",
+      "NSE:NIFTY ENERGY",
+      "NSE:NIFTY PSU BANK"
     ],
     "_indices_comment": "Sector indices to track for risk modulation. Symbols map to sectors via symbol_sector_map.json"
   }

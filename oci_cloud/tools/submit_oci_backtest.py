@@ -551,6 +551,13 @@ class OCIBacktestSubmitter:
             print(f"Date Range: {start_date} to {end_date}")
             print()
             print("━" * 60)
+
+            # Warn if no nodes specified for retry
+            if num_nodes is None:
+                print()
+                print("⚠️  WARNING: --nodes not specified. Nodes may not be running!")
+                print("   If job fails immediately, re-run with: --nodes 4")
+                print()
         else:
             if not start_date or not end_date:
                 print("❌ Either --start/--end or --failed-dates is required")

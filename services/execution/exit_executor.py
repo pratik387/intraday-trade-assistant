@@ -736,7 +736,7 @@ class ExitExecutor:
 
         return plan_sl
 
-    def _apply_index_risk_modulation(self, sym: str, pos: Position, plan_sl: float, current_price: float, ts: pd.Timestamp) -> float:
+    def _apply_index_risk_modulation(self, sym: str, pos: Position, plan_sl: float, _current_price: float, _ts: pd.Timestamp) -> float:
         """
         Apply index/sector crossover risk modulation to stop loss.
 
@@ -751,8 +751,6 @@ class ExitExecutor:
             sym: Trading symbol
             pos: Position object
             plan_sl: Current stop loss level
-            current_price: Current market price (for Tier 2 RS calculation)
-            ts: Current timestamp
 
         Returns:
             Modified stop loss level
@@ -764,16 +762,11 @@ class ExitExecutor:
             return plan_sl
 
         try:
-            # For Tier 2 (unmapped stocks): get day_open from ORL as proxy
-            # ORL = low of first 15 mins, reasonably close to day open
-            levels = pos.plan.get("levels", {})
-            day_open = levels.get("ORL") or levels.get("orl")
-
             # Get risk multiplier from modulator
-            multiplier, reason = self.risk_modulator.get_risk_multiplier(
-                sym, pos.side,
-                stock_day_open=day_open,
-                stock_current_price=current_price
+            # Returns: (multiplier, reason, tier)
+            # tier is "sector" for mapped stocks, "nifty50_fallback" for unmapped
+            multiplier, reason, tier = self.risk_modulator.get_risk_multiplier(
+                sym, pos.side
             )
 
             # If multiplier is 1.0, no change needed
@@ -804,7 +797,7 @@ class ExitExecutor:
                     f"INDEX_RISK_MOD | {sym} | {side} | "
                     f"Original_SL: {plan_sl:.2f} | New_SL: {new_sl:.2f} | "
                     f"Multiplier: {multiplier:.2f} | Reason: {reason} | "
-                    f"Adjustment: {adjustment_type}"
+                    f"Tier: {tier} | Adjustment: {adjustment_type}"
                 )
 
                 # Track in position state for exit diagnostics
@@ -814,6 +807,7 @@ class ExitExecutor:
                 risk_mod['last_multiplier'] = multiplier
                 risk_mod['last_reason'] = reason
                 risk_mod['last_adjustment'] = adjustment_type
+                risk_mod['tier'] = tier
                 risk_mod['original_sl'] = plan_sl
                 risk_mod['adjusted_sl'] = new_sl
                 # Track count of adjustments
@@ -1449,6 +1443,7 @@ class ExitExecutor:
                         'last_multiplier': risk_mod_data.get('last_multiplier'),
                         'last_reason': risk_mod_data.get('last_reason'),
                         'last_adjustment': risk_mod_data.get('last_adjustment'),
+                        'tier': risk_mod_data.get('tier'),  # "sector" or "nifty50_fallback"
                         'adjustment_count': risk_mod_data.get('adjustment_count', 0)
                     } if risk_mod_data else None
                 }
