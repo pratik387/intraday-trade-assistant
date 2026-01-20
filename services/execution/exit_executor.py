@@ -395,7 +395,7 @@ class ExitExecutor:
                 plan_sl = self._apply_time_based_sl_widening(sym, pos, plan_sl, float(px), ts)
 
                 # Apply index/sector crossover risk modulation (adjusts SL based on market state)
-                plan_sl = self._apply_index_risk_modulation(sym, pos, plan_sl, float(px), ts)
+                plan_sl = self._apply_index_risk_modulation(sym, pos, plan_sl)
 
                 # Get state early to check if T1/T2 were already hit (for better exit reason labeling)
                 st = pos.plan.get("_state") or {}
@@ -736,14 +736,13 @@ class ExitExecutor:
 
         return plan_sl
 
-    def _apply_index_risk_modulation(self, sym: str, pos: Position, plan_sl: float, _current_price: float, _ts: pd.Timestamp) -> float:
+    def _apply_index_risk_modulation(self, sym: str, pos: Position, plan_sl: float) -> float:
         """
         Apply index/sector crossover risk modulation to stop loss.
 
         This adjusts the SL distance based on the current index/sector state:
-        - Trend-aligned trades: Wider SL (let winners run)
-        - Counter-trend trades: Tighter SL (cut losers fast)
-        - Chop markets: Tighter SL (reduce noise damage)
+        - Tighten counter-trend trades (shorts in bull, longs in bear)
+        - Leave profitable states alone (shorts in CHOP)
 
         The multiplier is applied to the SL DISTANCE from entry, not the absolute level.
 
@@ -762,6 +761,8 @@ class ExitExecutor:
             return plan_sl
 
         try:
+            state = pos.plan.setdefault('_state', {})
+
             # Get risk multiplier from modulator
             # Returns: (multiplier, reason, tier)
             # tier is "sector" for mapped stocks, "nifty50_fallback" for unmapped
@@ -776,8 +777,11 @@ class ExitExecutor:
             entry_price = float(pos.avg_price)
             side = pos.side.upper()
 
-            # Calculate current SL distance
-            sl_distance = abs(entry_price - plan_sl)
+            # Calculate current SL distance (original, before any adjustment)
+            original_sl = pos.plan.get('stop', {}).get('hard', plan_sl)
+            if math.isnan(original_sl):
+                original_sl = plan_sl
+            sl_distance = abs(entry_price - original_sl)
 
             # Apply multiplier to distance
             new_sl_distance = sl_distance * multiplier
@@ -802,7 +806,6 @@ class ExitExecutor:
 
                 # Track in position state for exit diagnostics
                 # This allows us to analyze risk modulation impact post-backtest
-                state = pos.plan.setdefault('_state', {})
                 risk_mod = state.setdefault('risk_modulation', {})
                 risk_mod['last_multiplier'] = multiplier
                 risk_mod['last_reason'] = reason

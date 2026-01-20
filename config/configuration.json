@@ -2386,7 +2386,7 @@
     "_comment": "Option B: Increase measured move caps to 2x and 3x to allow configured 1.5R and 3.0R targets while maintaining structure-based safety"
   },
   "risk_modulator": {
-    "_comment": "Index & Sector Crossover Risk Modulation - adjusts stop loss based on index/sector VWAP crossovers",
+    "_comment": "DATA-DRIVEN RULES from 3-year backtest analysis (Jan 2026). Focus: Tighten COUNTER-TREND trades only.",
     "enabled": true,
     "crossover_confirmation_bars": 2,
     "_crossover_comment": "Number of consecutive 5m closes above/below VWAP to confirm crossover",
@@ -2395,19 +2395,32 @@
     "or_period_minutes": 15,
     "_or_comment": "First N minutes for Opening Range calculation (from 9:15 AM)",
     "multipliers": {
-      "_multiplier_comment": "Risk multipliers applied to stop loss distance. <1.0 = tighter SL (cut fast), >1.0 = wider SL (let run)",
-      "strong_bull_long": 1.15,
-      "strong_bull_short": 0.80,
-      "weak_bull_long": 0.90,
-      "weak_bull_short": 0.90,
+      "_multiplier_comment": "DATA-DRIVEN: Tighten COUNTER-TREND only. CHOP=neutral (profitable). Based on 3315 trades analysis.",
+      "_evidence": {
+        "shorts_weak_bull": "75 trades, -Rs51,621, 17.3% WR - WORST",
+        "shorts_strong_bull": "522 trades, -Rs57,295, 38.9% WR - BAD",
+        "longs_strong_bear": "93 trades, -Rs15,242, 28% WR - BAD",
+        "longs_chop": "341 trades, -Rs35,751, 42.8% WR - mediocre",
+        "shorts_chop": "1711 trades, +Rs145,902, 50.7% WR - BEST"
+      },
+      "strong_bull_long": 1.0,
+      "strong_bull_short": 0.75,
+      "_strong_bull_short_comment": "TIGHTEN: 522 trades lost Rs57k at 38.9% WR - counter-trend",
+      "weak_bull_long": 1.0,
+      "weak_bull_short": 0.65,
+      "_weak_bull_short_comment": "AGGRESSIVE TIGHTEN: 75 trades lost Rs52k at 17.3% WR - disaster",
       "neutral_long": 1.0,
       "neutral_short": 1.0,
-      "weak_bear_long": 0.90,
-      "weak_bear_short": 1.10,
-      "strong_bear_long": 0.80,
-      "strong_bear_short": 1.15,
+      "weak_bear_long": 0.85,
+      "_weak_bear_long_comment": "TIGHTEN: counter-trend longs in bearish market",
+      "weak_bear_short": 1.0,
+      "strong_bear_long": 0.75,
+      "_strong_bear_long_comment": "AGGRESSIVE TIGHTEN: 93 trades lost Rs15k at 28% WR - counter-trend",
+      "strong_bear_short": 1.0,
       "chop_long": 0.90,
-      "chop_short": 0.90
+      "_chop_long_comment": "SLIGHT TIGHTEN: longs in chop lose Rs36k at 42.8% WR",
+      "chop_short": 1.0,
+      "_chop_short_comment": "NO CHANGE: shorts in chop are +Rs146k at 50.7% WR - our best trades!"
     },
     "primary_indices": [
       "NSE:NIFTY 50",
