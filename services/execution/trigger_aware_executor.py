@@ -221,17 +221,32 @@ class TriggerAwareExecutor:
                 }
                 order_id = self.broker.place_order(**order_args)
 
-                # Get actual fill price from broker (fixes tick divergence for entries)
-                if order_id and hasattr(self.broker, 'get_order_fill_price'):
+                # Reconcile with broker - verify position actually exists
+                if order_id and hasattr(self.broker, 'reconcile_position'):
                     try:
-                        broker_fill = self.broker.get_order_fill_price(order_id)
-                        if broker_fill is not None:
+                        reconciled = self.broker.reconcile_position(
+                            symbol=symbol,
+                            order_id=order_id,
+                            expected_qty=qty,
+                            expected_side=side,
+                            timeout=0.5
+                        )
+                        if reconciled is None:
+                            # Position not found at broker - order was likely rejected async
+                            raise RuntimeError(f"Position not found at broker after order {order_id} - likely rejected")
+
+                        # Use actual fill price from broker
+                        broker_fill = reconciled.get("avg_price", price)
+                        if broker_fill and broker_fill > 0:
                             slippage = broker_fill - price
                             slippage_bps = (slippage / price) * 10000 if price > 0 else 0
                             logger.info(f"ENTRY_FILL | {symbol} | Broker: {broker_fill:.2f} | Assumed: {price:.2f} | Slippage: {slippage:+.2f} ({slippage_bps:+.1f} bps)")
                             price = broker_fill  # Use actual fill price for all downstream
+                            qty = reconciled.get("qty", qty)  # Use actual qty if different
+                    except RuntimeError:
+                        raise  # Re-raise position not found
                     except Exception as e:
-                        logger.warning(f"Failed to get broker entry fill for {symbol}: {e}")
+                        logger.warning(f"Failed to reconcile position for {symbol}: {e}")
 
             # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
             # Reason: Both trade_logger.info() (removed) and trading_logger.log_trigger() (below)

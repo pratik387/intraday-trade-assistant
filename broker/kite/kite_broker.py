@@ -16,15 +16,16 @@ API (minimal):
                   variety: Literal['regular'] = 'regular',
                   validity: Literal['DAY'] = 'DAY',
                   tag: str | None = None,
-                  check_margins: bool = True,
-                  auto_fallback_cnc: bool = True) -> str
+                  check_margins: bool = True) -> str
     - check_mis_availability(symbol: str, side: str, qty: int, price: float = None) -> Tuple[bool, str]
+    - reconcile_position(symbol, order_id, expected_qty, expected_side, timeout) -> Dict | None
     - get_ltp(symbol: str) -> float
     - get_ltp_batch(symbols: list[str]) -> dict[str, float]
 
 Features:
   - MIS margin pre-check using order_margins API
-  - Auto-fallback to CNC if MIS rejected
+  - MIS-blocked stocks rejected entirely (no CNC fallback) for backtest/live consistency
+  - Position reconciliation with broker after order placement
   - Comprehensive error handling
 
 Requires env OR explicit params: KITE_API_KEY, KITE_ACCESS_TOKEN
@@ -183,14 +184,12 @@ class KiteBroker:
         tag: Optional[str] = None,
         trade_id: Optional[str] = None,
         check_margins: bool = True,
-        auto_fallback_cnc: bool = True,
     ) -> str:
         """
         Place order with MIS/CNC product type.
 
         Args:
             check_margins: If True, check MIS availability before placing MIS order
-            auto_fallback_cnc: If True and MIS not available, fallback to CNC automatically
             trade_id: Optional trade ID for tagging (generates ITDA_<12chars> tag)
 
         Returns:
@@ -198,7 +197,7 @@ class KiteBroker:
 
         Raises:
             ValueError: Invalid parameters
-            RuntimeError: Order placement failed
+            RuntimeError: Order placement failed (including MIS blocked)
         """
         # Generate order tag from trade_id for trade identification
         if trade_id and not tag:
@@ -220,15 +219,13 @@ class KiteBroker:
             raise ValueError("Only DAY validity supported")
 
         # Check MIS availability if requested and product is MIS
+        # No CNC fallback - MIS-blocked stocks are skipped entirely
         actual_product = product.upper()
         if check_margins and actual_product == "MIS":
             is_available, reason = self.check_mis_availability(symbol, side, qty, price)
             if not is_available:
-                if auto_fallback_cnc:
-                    logger.warning(f"MIS not available for {symbol}, falling back to CNC | Reason: {reason}")
-                    actual_product = "CNC"
-                else:
-                    raise RuntimeError(f"MIS not available for {symbol}: {reason}")
+                logger.warning(f"MIS blocked for {symbol} - skipping trade | Reason: {reason}")
+                raise RuntimeError(f"MIS blocked for {symbol}: {reason}")
 
         # PAPER TRADING MODE - Simulate order
         if self.dry_run:
@@ -271,25 +268,11 @@ class KiteBroker:
             logger.info(f"Order placed: {symbol} | {side} {qty} @ {product} | Order ID: {order_id}")
             return str(order_id)
         except Exception as e:
-            # If MIS order failed, check if we can fallback
+            # If MIS order failed due to stock being blocked, reject entirely
+            # No CNC fallback - keeps backtest/live consistency and avoids overnight exposure
             if actual_product == "MIS" and "MIS" in str(e):
-                # CNC fallback only works for BUY orders
-                # For SELL (short) orders, CNC requires holdings which we don't have
-                if side.upper() == "SELL":
-                    # Don't log here - caller handles logging appropriately
-                    raise RuntimeError(f"MIS blocked for {symbol} - shorting not allowed (no CNC fallback for shorts)")
-
-                # For BUY orders, try CNC fallback if enabled
-                if auto_fallback_cnc:
-                    logger.warning(f"MIS order failed for {symbol}, retrying with CNC | Error: {e}")
-                    params["product"] = self.kc.PRODUCT_CNC
-                    try:
-                        order_id = self.kc.place_order(variety=self.kc.VARIETY_REGULAR, **params)
-                        logger.info(f"Order placed with CNC fallback: {symbol} | Order ID: {order_id}")
-                        return str(order_id)
-                    except Exception as e2:
-                        logger.error(f"CNC fallback also failed for {symbol}: {e2}")
-                        raise RuntimeError(f"Order placement failed (MIS and CNC): {e2}")
+                logger.warning(f"MIS blocked for {symbol} - skipping trade (no CNC fallback) | Error: {e}")
+                raise RuntimeError(f"MIS blocked for {symbol} - stock not allowed for intraday trading")
 
             logger.error(f"Order placement failed for {symbol}: {e}")
             raise RuntimeError(f"Order placement failed: {e}")
@@ -525,3 +508,90 @@ class KiteBroker:
             'orders': self._paper_orders,
             'mode': 'paper_trading'
         }
+
+    # ------------------------------ Position Reconciliation ------------------
+    def reconcile_position(self, symbol: str, order_id: str, expected_qty: int, expected_side: str,
+                          timeout: float = 1.0) -> Optional[Dict]:
+        """
+        Reconcile a position with broker after order placement.
+
+        Fetches broker positions and verifies the order actually filled.
+        Returns position info if found, None if position doesn't exist at broker.
+
+        Args:
+            symbol: Symbol in EXCH:TRADINGSYMBOL format
+            order_id: Order ID to verify
+            expected_qty: Expected quantity (for validation)
+            expected_side: Expected side BUY/SELL (for validation)
+            timeout: Time to wait before checking (default 1.0s)
+
+        Returns:
+            Dict with position info if found: {qty, avg_price, product, pnl}
+            None if position not found or order rejected
+        """
+        import time
+
+        # Paper trading - positions are virtual, trust our internal state
+        if self.dry_run:
+            # Check if order exists in paper orders
+            for o in self._paper_orders:
+                if str(o.get("order_id")) == str(order_id) and o.get("status") == "COMPLETE":
+                    return {
+                        "qty": o.get("quantity", expected_qty),
+                        "avg_price": o.get("average_price", 0),
+                        "product": o.get("product", "MIS"),
+                        "pnl": 0,
+                        "verified": True
+                    }
+            return None
+
+        # Live trading - wait and fetch from broker
+        time.sleep(timeout)
+
+        # First verify order status
+        fill_price = self.get_order_fill_price(order_id, max_retries=3, retry_delay=0.3)
+        if fill_price is None:
+            logger.warning(f"RECONCILE | {symbol} | Order {order_id} not filled - position rejected")
+            return None
+
+        # Fetch positions from broker
+        try:
+            positions = self.get_positions()
+            _, tsym = _split_symbol(symbol)
+
+            # Check day positions first (for intraday)
+            for pos in positions.get("day", []):
+                if pos.get("tradingsymbol") == tsym:
+                    broker_qty = pos.get("quantity", 0)
+                    # Verify direction matches
+                    if (expected_side == "BUY" and broker_qty > 0) or \
+                       (expected_side == "SELL" and broker_qty < 0):
+                        logger.info(f"RECONCILE | {symbol} | Position verified | Qty: {broker_qty} @ {fill_price}")
+                        return {
+                            "qty": abs(broker_qty),
+                            "avg_price": fill_price,
+                            "product": pos.get("product", "MIS"),
+                            "pnl": pos.get("pnl", 0),
+                            "verified": True
+                        }
+
+            # Position not found in day positions - check net
+            for pos in positions.get("net", []):
+                if pos.get("tradingsymbol") == tsym:
+                    broker_qty = pos.get("quantity", 0)
+                    if broker_qty != 0:
+                        logger.info(f"RECONCILE | {symbol} | Position in net | Qty: {broker_qty} @ {fill_price}")
+                        return {
+                            "qty": abs(broker_qty),
+                            "avg_price": fill_price,
+                            "product": pos.get("product", "MIS"),
+                            "pnl": pos.get("pnl", 0),
+                            "verified": True
+                        }
+
+            logger.warning(f"RECONCILE | {symbol} | Position NOT found at broker despite order {order_id} filled")
+            return None
+
+        except Exception as e:
+            logger.error(f"RECONCILE | {symbol} | Failed to fetch positions: {e}")
+            return None
