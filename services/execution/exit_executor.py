@@ -11,6 +11,7 @@ from config.logging_config import get_execution_loggers
 from config.filters_setup import load_filters
 from utils.time_util import _to_naive_ist, _now_naive_ist, _minute_of_day, _parse_hhmm_to_md
 from diagnostics.diag_event_log import diag_event_log
+from services.execution.position_thesis_monitor import PositionThesisMonitor
 import uuid
 
 # Both loggers (as requested)
@@ -200,6 +201,10 @@ class ExitExecutor:
         self.or_kill_mid_buffer_mult = float(cfg.get("or_kill_mid_buffer_mult", 0.75))
         self.or_kill_late_buffer_mult = float(cfg.get("or_kill_late_buffer_mult", 0.25))
         self.or_kill_major_break_mult = float(cfg.get("or_kill_major_break_mult", 2.0))
+
+        # Position Thesis Monitor - tracks thesis validity during position lifetime
+        self.thesis_monitor = PositionThesisMonitor(cfg, log=logger)
+        self.thesis_monitor_enabled = bool(cfg.get("thesis_monitoring", {}).get("enabled", True))
 
     def _enhanced_on_tick(self, symbol: str, price: float, volume: float, ts) -> None:
         """
@@ -509,6 +514,13 @@ class ExitExecutor:
                 if self.time_stop_min > 0 and self._time_stop_triggered(pos, float(px), plan_sl, ts):
                     self._exit(sym, pos, float(px), ts, f"time_stop_{self.time_stop_min}m_rr<{self.time_stop_req_rr}")
                     continue
+
+                # 9) Position Thesis Monitor - check if trade thesis remains valid
+                if self.thesis_monitor_enabled:
+                    thesis_health = self._check_thesis_health(sym, pos, float(px))
+                    if thesis_health and thesis_health.should_exit:
+                        self._exit(sym, pos, float(px), ts, thesis_health.exit_reason)
+                        continue
 
             except Exception as e:
                 logger.exception(f"exit_executor: run_once error sym={sym}: {e}")
@@ -1215,6 +1227,45 @@ class ExitExecutor:
 
         rr = ((px - float(pos.avg_price)) / r_ps) if side == "BUY" else ((float(pos.avg_price) - px) / r_ps)
         return rr < float(self.time_stop_req_rr)
+
+    # ---------- Position Thesis Monitor ----------
+
+    def _check_thesis_health(self, sym: str, pos: Position, px: float):
+        """
+        Check if the trade thesis remains valid using the PositionThesisMonitor.
+
+        Returns ThesisHealth if check performed, None if skipped.
+        Integrates with bar_builder to get current 5m data for live indicator calculation.
+        """
+        try:
+            # Get 5m data from bar_builder if available
+            df_5m = None
+            if self.bar_builder is not None:
+                df_5m = self.bar_builder.get_df_5m_tail(sym, 50)
+                if df_5m is not None and df_5m.empty:
+                    df_5m = None
+
+            # Check thesis using the monitor
+            thesis_health = self.thesis_monitor.check_thesis(
+                symbol=sym,
+                side=pos.side,
+                current_price=px,
+                plan=pos.plan,
+                df_5m=df_5m,
+            )
+
+            # Update position state with thesis health for diagnostics
+            if thesis_health is not None:
+                st = pos.plan.get("_state", {})
+                st["thesis_score"] = thesis_health.combined_score
+                st["thesis_category"] = thesis_health.category
+                pos.plan["_state"] = st
+
+            return thesis_health
+
+        except Exception as e:
+            logger.debug(f"Thesis health check failed for {sym}: {e}")
+            return None
 
     # ---------- Place exits + logging ----------
 

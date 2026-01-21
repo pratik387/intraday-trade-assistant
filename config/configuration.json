@@ -1809,6 +1809,57 @@
   "exit_time_stop_req_rr": 0.4,
   "exit_score_drop_enabled": true,
   "exit_score_drop_bpct": 30.0,
+  "_comment_thesis_monitoring": "=== POSITION THESIS MONITORING ===",
+  "thesis_monitoring": {
+    "_comment": "Automated system to monitor if original trade thesis remains valid during position lifetime",
+    "enabled": true,
+    "check_interval_seconds": 30,
+    "_comment_interval": "30s check interval - ORB trades show strength early, need quick thesis validation (pro standard)",
+    "momentum_health": {
+      "_comment": "ADX thresholds aligned with Indian market standards (Zerodha Varsity, NSE algo research)",
+      "_reference": "ADX 20-25 = trend confirmation, <20 = weak/no trend (industry standard)",
+      "breakout_min_adx": 20,
+      "breakout_adx_decline_pct": 25,
+      "_comment_adx_decline": "25% decline from entry ADX signals momentum fading - pro traders exit early",
+      "reversion_rsi_bounce_threshold": 40,
+      "_comment_rsi": "RSI 40 for longs (recovering from <30), 60 for shorts (declining from >70)"
+    },
+    "volume_health": {
+      "_comment": "Volume thresholds from NSE ORB research and professional breakout confirmation standards",
+      "_reference": "1.5x-2x avg volume = institutional confirmation (GWC India, NSE research papers)",
+      "breakout_min_volume_ratio": 1.5,
+      "_comment_volume_ratio": "1.5x minimum for sustained breakouts - lower = retail noise, higher = institutional",
+      "volume_decline_pct": 50,
+      "_comment_decline": "50% volume decline from entry signals drying institutional interest"
+    },
+    "structure_integrity": {
+      "_comment": "ORB structure rules from Crabel/professional ORB methodology",
+      "_reference": "If candle closes back inside OR = failed breakout (Crabel, pro traders exit immediately)",
+      "orb_back_inside_or_auto_exit": true,
+      "breakout_reversal_atr_mult": 2.0,
+      "_comment_atr": "2x ATR adverse move = thesis invalidated (standard intraday trailing stop multiplier)"
+    },
+    "target_reachability": {
+      "_comment": "ATR-based target probability assessment",
+      "_reference": "ATR contraction during trade reduces target probability significantly",
+      "atr_expansion_factor": 1.5,
+      "_comment_expansion": "If current ATR < entry ATR / 1.5, volatility has contracted - targets less reachable",
+      "min_time_to_target_minutes": 10,
+      "_comment_time": "ORB trades should hit T1 within first 2 hours (pro standard: exit if stalled)"
+    },
+    "breakout_exit_threshold": 0.45,
+    "_comment_breakout_threshold": "0.45 = exit when thesis is <45% healthy. Conservative for breakouts (need momentum)",
+    "reversion_exit_threshold": 0.40,
+    "_comment_reversion_threshold": "0.40 = exit when thesis is <40% healthy. Slightly more tolerant (reversions take time)",
+    "weights": {
+      "_comment": "Weights based on what matters most per category (institutional research)",
+      "_reference": "Breakouts: momentum+structure critical. Reversions: structure+target critical.",
+      "momentum": 0.30,
+      "volume": 0.20,
+      "structure": 0.30,
+      "target": 0.20
+    }
+  },
   "breakout_short_risk_control": true,
   "eod_scale_out": true,
   "entry_cutoff_hhmm": "14:45",
