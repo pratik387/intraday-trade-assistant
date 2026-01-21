@@ -341,6 +341,14 @@ def download_index_data(date_str):
 
     log(f"Downloaded {downloaded}/{len(primary_indices)} index data files")
 
+    # Verify the directory exists and list contents
+    if index_dir.exists():
+        files = list(index_dir.rglob('*.feather'))
+        log(f"INDEX_DATA | Verified directory exists: {index_dir}")
+        log(f"INDEX_DATA | Found {len(files)} feather files: {[str(f.relative_to(index_dir)) for f in files[:5]]}")
+    else:
+        log(f"INDEX_DATA | ERROR: Directory does not exist after download: {index_dir}")
+
 
 def run_backtest(date_str):
     """

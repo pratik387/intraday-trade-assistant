@@ -398,12 +398,29 @@ def monitor_job(run_id):
     }
 
 
+def get_base_run_id(run_id):
+    """
+    Extract base run ID from a potentially retry-suffixed run ID.
+
+    Args:
+        run_id: Run ID (e.g., '20260120-194012' or '20260120-194012-retry1')
+
+    Returns:
+        Base run ID without -retry suffix (e.g., '20260120-194012')
+    """
+    if '-retry' in run_id:
+        return run_id.split('-retry')[0]
+    return run_id
+
+
 def run_cleanup(run_id, args):
     """
     Run cleanup and download automation.
 
+    Always uses base run ID to download ALL related runs (original + retries).
+
     Args:
-        run_id: Backtest run ID
+        run_id: Backtest run ID (can include -retry suffix)
         args: Command-line arguments
     """
     print()
@@ -412,9 +429,15 @@ def run_cleanup(run_id, args):
     print("=" * 80)
     print()
 
+    # Always use base run ID to download all related runs (original + retries)
+    base_run_id = get_base_run_id(run_id)
+    if base_run_id != run_id:
+        print(f"Note: Using base run ID '{base_run_id}' to download all related runs")
+        print()
+
     # Build command
     script_path = Path(__file__).parent / "cleanup_and_download_backtest.py"
-    cmd = [sys.executable, str(script_path), run_id]
+    cmd = [sys.executable, str(script_path), base_run_id]
 
     if args.parallel:
         cmd.extend(['--parallel', str(args.parallel)])
@@ -492,9 +515,12 @@ Examples:
         print()
         sys.exit(1)
 
+    # Extract base run ID for file paths and related-run operations
+    base_run_id = get_base_run_id(args.run_id)
+
     # Save failed dates if any
     if result.get('failed_dates'):
-        failed_dates_file = save_failed_dates(args.run_id, result['failed_dates'], project_root)
+        failed_dates_file = save_failed_dates(base_run_id, result['failed_dates'], project_root)
         if failed_dates_file:
             print()
             print(f"📝 Failed dates saved to: {failed_dates_file}")
@@ -510,8 +536,8 @@ Examples:
         print("⚠️  WARNING: Nodes are still running and incurring costs!")
         print("   Scale down manually: oci ce node-pool update --node-pool-id <id> --size 0 --force")
         print()
-        print("To download results manually:")
-        print(f"  python oci_cloud/tools/cleanup_and_download_backtest.py {args.run_id}")
+        print("To download results manually (includes original + retries):")
+        print(f"  python oci_cloud/tools/cleanup_and_download_backtest.py {base_run_id}")
         print()
         sys.exit(0)
 
@@ -554,8 +580,11 @@ Examples:
         print(f"JOB INCOMPLETE - {result.get('failed', 0)} DATES MISSING")
         print("=" * 80)
         print()
+        print("To download completed results (original + retries):")
+        print(f"  python oci_cloud/tools/cleanup_and_download_backtest.py {base_run_id} --skip-nodepool")
+        print()
         print("To re-run missing dates:")
-        failed_dates_file = project_root / 'cloud_results' / args.run_id / 'failed_dates.json'
+        failed_dates_file = project_root / 'cloud_results' / base_run_id / 'failed_dates.json'
         print(f"  python oci_cloud/tools/submit_oci_backtest.py --failed-dates {failed_dates_file}")
         print()
         sys.exit(1)

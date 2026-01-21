@@ -724,10 +724,15 @@ def main() -> int:
         # Cache the primary indices set for O(1) lookup
         _primary_indices_set = set(mod_cfg["primary_indices"])
 
+        _index_bar_count = [0]  # Use list to allow mutation in closure
+
         def _on_index_5m_bar(symbol: str, bar_5m: pd.Series) -> None:
             """Callback to update risk modulator with index bar data."""
             # Only process index symbols
             if symbol in _primary_indices_set:
+                _index_bar_count[0] += 1
+                if _index_bar_count[0] <= 3:  # Log first few to confirm handler is called
+                    logger.info(f"INDEX_RISK_MOD | 5m handler called for {symbol} (call #{_index_bar_count[0]})")
                 try:
                     # Get the 5m DataFrame for this index
                     df_5m = screener.agg.get_df_5m_tail(symbol, 50)

@@ -266,7 +266,8 @@ class HourlyRegimeDetector:
 
             # Calculate hourly VWAP (approximation from close)
             typical_price = (df_1h['high'] + df_1h['low'] + df_1h['close']) / 3
-            hourly_vwap = (typical_price * df_1h['volume']).sum() / df_1h['volume'].sum()
+            vol_sum = df_1h['volume'].sum()
+            hourly_vwap = (typical_price * df_1h['volume']).sum() / vol_sum if vol_sum > 0 else typical_price.iloc[-1]
             current_price = float(close.iloc[-1])
 
             # Session bias from VWAP position

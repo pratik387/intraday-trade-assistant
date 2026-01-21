@@ -770,6 +770,16 @@ class ExitExecutor:
                 sym, pos.side
             )
 
+            # Debug log: always log first few calls per symbol to verify multipliers
+            state = pos.plan.setdefault('_state', {})
+            _risk_mod_calls = state.setdefault('_risk_mod_log_count', 0)
+            if _risk_mod_calls < 2:
+                state['_risk_mod_log_count'] = _risk_mod_calls + 1
+                logger.info(
+                    f"INDEX_RISK_MOD_DEBUG | {sym} | {pos.side} | "
+                    f"Multiplier: {multiplier:.2f} | Reason: {reason} | Tier: {tier}"
+                )
+
             # If multiplier is 1.0, no change needed
             if abs(multiplier - 1.0) < 0.001:
                 return plan_sl

@@ -62,7 +62,10 @@ class FeatherTickLoader:
         for idir in possible_index_dirs:
             if idir.exists():
                 self.index_ohlcv_dir = idir
+                logger.info(f"INDEX_DATA | Found index_ohlcv dir: {idir}")
                 break
+        if self.index_ohlcv_dir is None:
+            logger.warning(f"INDEX_DATA | No index_ohlcv directory found! Checked: {possible_index_dirs}")
 
         # Cache loaded data to avoid reloading (fixes OCI hang when ticker thread calls load_all())
         self._cached_data: Optional[Dict[str, pd.DataFrame]] = None
@@ -243,18 +246,25 @@ class FeatherTickLoader:
     # ---------- Public ----------
     def _load_one(self, sym: str):
         try:
-            path = self._pick_feather(self._sym_dirs(sym))
+            dirs = self._sym_dirs(sym)
+            path = self._pick_feather(dirs)
             if not path:
+                # Log failure for index symbols
+                if self._is_index_symbol(sym):
+                    logger.warning(f"INDEX_DATA | No feather file found for {sym} in dirs: {dirs}")
                 return None
             df = pd.read_feather(path)
             df = self._normalize(df)   # parses 'date' (naive), sorts
             df = self._slice(df)       # trims to from_date..to_date inclusive
             if df.empty:
+                if self._is_index_symbol(sym):
+                    logger.warning(f"INDEX_DATA | Empty DataFrame after slice for {sym} (date range: {self.from_raw} to {self.to_raw})")
                 return None
             # logger.info(f"FeatherTickLoader: loaded {len(df)} rows for {sym} from {path}")
             return sym, df
         except Exception as e:
-            # keep it quiet; the main loop will count successes
+            if self._is_index_symbol(sym):
+                logger.warning(f"INDEX_DATA | Exception loading {sym}: {e}")
             return None
 
     def load_all(self) -> Dict[str, pd.DataFrame]:
@@ -271,13 +281,20 @@ class FeatherTickLoader:
             # Check for missing symbols (e.g., index symbols not in pre-aggregated cache)
             missing_symbols = [s for s in self.symbols if s not in preagg_result]
             if missing_symbols:
-                logger.info(f"[HYBRID MODE] Loading {len(missing_symbols)} missing symbols from individual files")
+                logger.info(f"[HYBRID MODE] Loading {len(missing_symbols)} missing symbols from individual files: {missing_symbols[:5]}...")
                 for sym in missing_symbols:
+                    # Log index symbol lookup details
+                    if self._is_index_symbol(sym):
+                        dirs = self._sym_dirs(sym)
+                        logger.info(f"[HYBRID MODE] Index symbol {sym} -> dirs: {dirs}")
                     res = self._load_one(sym)
                     if res:
                         sym_key, df = res
                         preagg_result[sym_key] = df
-                        logger.info(f"[HYBRID MODE] Loaded missing symbol: {sym_key}")
+                        logger.info(f"[HYBRID MODE] Loaded missing symbol: {sym_key} ({len(df)} rows)")
+                    else:
+                        if self._is_index_symbol(sym):
+                            logger.warning(f"[HYBRID MODE] FAILED to load index symbol: {sym}")
 
             self._cached_data = preagg_result  # Cache the result
             logger.info(f"[CACHE STORED] Cached {len(preagg_result)} symbols from pre-aggregated file")
