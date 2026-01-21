@@ -1264,17 +1264,35 @@ class ExitExecutor:
                 }
                 order_id = self.broker.place_order(**args)
 
-                # Try to get actual fill price from broker
-                if order_id and hasattr(self.broker, 'get_order_fill_price'):
+                # Reconcile exit with broker - verify order filled and get actual price
+                if order_id and hasattr(self.broker, 'reconcile_exit'):
                     try:
-                        broker_fill = self.broker.get_order_fill_price(order_id)
-                        if broker_fill is not None:
+                        reconciled = self.broker.reconcile_exit(
+                            symbol=sym,
+                            order_id=order_id,
+                            expected_qty=qty_exit,
+                            position_qty_before=cur_qty,
+                            timeout=0.5
+                        )
+
+                        if reconciled is None:
+                            # Exit order not filled - position unchanged at broker
+                            logger.error(f"EXIT_RECONCILE | {sym} | Order {order_id} not filled - exit failed, position still open at broker")
+                            raise RuntimeError(f"Exit order {order_id} not filled - position still open at broker")
+
+                        # Use actual fill price from broker
+                        broker_fill = reconciled.get("avg_price", exit_px)
+                        if broker_fill and broker_fill > 0:
                             slippage = broker_fill - exit_px
                             slippage_bps = (slippage / exit_px) * 10000 if exit_px > 0 else 0
                             logger.info(f"EXIT_FILL | {sym} | Broker: {broker_fill:.2f} | Assumed: {exit_px:.2f} | Slippage: {slippage:+.2f} ({slippage_bps:+.1f} bps)")
                             actual_exit_px = broker_fill
+
+                        logger.info(f"EXIT_RECONCILE | {sym} | Exit verified | Order: {order_id} | Remaining: {reconciled.get('remaining_qty', 'unknown')}")
+                    except RuntimeError:
+                        raise  # Re-raise exit failed
                     except Exception as e:
-                        logger.warning(f"Failed to get broker exit fill for {sym}: {e}")
+                        logger.warning(f"Failed to reconcile exit for {sym}: {e}")
         except Exception as e:
             logger.warning("exit.place_order failed sym=%s qty=%s reason=%s err=%s", sym, qty_exit, reason, e)
 

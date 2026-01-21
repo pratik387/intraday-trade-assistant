@@ -19,6 +19,7 @@ API (minimal):
                   check_margins: bool = True) -> str
     - check_mis_availability(symbol: str, side: str, qty: int, price: float = None) -> Tuple[bool, str]
     - reconcile_position(symbol, order_id, expected_qty, expected_side, timeout) -> Dict | None
+    - reconcile_exit(symbol, order_id, expected_qty, position_qty_before, timeout) -> Dict | None
     - get_ltp(symbol: str) -> float
     - get_ltp_batch(symbols: list[str]) -> dict[str, float]
 
@@ -595,3 +596,99 @@ class KiteBroker:
         except Exception as e:
             logger.error(f"RECONCILE | {symbol} | Failed to fetch positions: {e}")
             return None
+
+    def reconcile_exit(self, symbol: str, order_id: str, expected_qty: int, position_qty_before: int,
+                       timeout: float = 1.0) -> Optional[Dict]:
+        """
+        Reconcile an exit order with broker - verify exit filled and position reduced.
+
+        Unlike reconcile_position (for entries), this verifies:
+        1. The exit order actually filled
+        2. The position at broker is reduced (or closed)
+
+        Args:
+            symbol: Symbol in EXCH:TRADINGSYMBOL format
+            order_id: Exit order ID to verify
+            expected_qty: Quantity we tried to exit
+            position_qty_before: Position quantity before this exit
+            timeout: Time to wait before checking (default 1.0s)
+
+        Returns:
+            Dict with exit info if verified: {avg_price, qty_exited, remaining_qty, verified}
+            None if exit order not filled
+        """
+        import time
+
+        # Paper trading - trust our internal state
+        if self.dry_run:
+            for o in self._paper_orders:
+                if str(o.get("order_id")) == str(order_id) and o.get("status") == "COMPLETE":
+                    return {
+                        "avg_price": o.get("average_price", 0),
+                        "qty_exited": o.get("quantity", expected_qty),
+                        "remaining_qty": max(0, position_qty_before - expected_qty),
+                        "verified": True
+                    }
+            return None
+
+        # Live trading - wait and verify
+        time.sleep(timeout)
+
+        # Verify exit order filled
+        fill_price = self.get_order_fill_price(order_id, max_retries=3, retry_delay=0.3)
+        if fill_price is None:
+            logger.warning(f"RECONCILE_EXIT | {symbol} | Order {order_id} not filled - exit failed")
+            return None
+
+        # Fetch positions to verify reduction
+        try:
+            positions = self.get_positions()
+            _, tsym = _split_symbol(symbol)
+
+            # Find current position qty at broker (day positions take priority for intraday)
+            broker_qty = 0
+            found_in_day = False
+            for pos in positions.get("day", []):
+                if pos.get("tradingsymbol") == tsym:
+                    broker_qty = abs(pos.get("quantity", 0))
+                    found_in_day = True
+                    break
+
+            # If not found in day positions, check net (for CNC or carried positions)
+            if not found_in_day:
+                for pos in positions.get("net", []):
+                    if pos.get("tradingsymbol") == tsym:
+                        broker_qty = abs(pos.get("quantity", 0))
+                        break
+
+            expected_remaining = max(0, position_qty_before - expected_qty)
+
+            # Verify position was reduced
+            if broker_qty <= expected_remaining:
+                logger.info(f"RECONCILE_EXIT | {symbol} | Exit verified | Exited: {expected_qty} @ {fill_price} | Remaining at broker: {broker_qty}")
+                return {
+                    "avg_price": fill_price,
+                    "qty_exited": expected_qty,
+                    "remaining_qty": broker_qty,
+                    "verified": True
+                }
+            else:
+                # Position not reduced as expected - exit may have partially filled
+                actual_exited = position_qty_before - broker_qty
+                logger.warning(f"RECONCILE_EXIT | {symbol} | Partial exit? | Expected exit: {expected_qty}, Actual: {actual_exited} | Broker qty: {broker_qty}")
+                return {
+                    "avg_price": fill_price,
+                    "qty_exited": max(0, actual_exited),
+                    "remaining_qty": broker_qty,
+                    "verified": actual_exited > 0
+                }
+
+        except Exception as e:
+            logger.error(f"RECONCILE_EXIT | {symbol} | Failed to fetch positions: {e}")
+            # Order filled but couldn't verify position - return fill info anyway
+            return {
+                "avg_price": fill_price,
+                "qty_exited": expected_qty,
+                "remaining_qty": None,  # Unknown
+                "verified": False
+            }
