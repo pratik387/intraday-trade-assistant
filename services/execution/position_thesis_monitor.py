@@ -240,6 +240,7 @@ class PositionThesisMonitor:
         current_price: float,
         plan: Dict[str, Any],
         df_5m: Optional[pd.DataFrame] = None,
+        tick_ts: Optional[pd.Timestamp] = None,
     ) -> Optional[ThesisHealth]:
         """
         Check if trade thesis remains valid.
@@ -250,6 +251,7 @@ class PositionThesisMonitor:
             current_price: Current market price
             plan: Trade plan dict with entry indicators, targets, etc.
             df_5m: Optional 5-minute OHLCV DataFrame for live indicator calculation
+            tick_ts: Optional tick timestamp for rate limiting (uses simulated time in backtest)
 
         Returns:
             ThesisHealth if check performed, None if skipped (disabled/cached)
@@ -257,9 +259,13 @@ class PositionThesisMonitor:
         if not self.enabled:
             return None
 
-        # Rate limit checks
-        import time
-        current_time = time.time()
+        # Rate limit checks using tick timestamp (works correctly in backtest mode)
+        # Fall back to wall-clock time if tick_ts not provided
+        if tick_ts is not None:
+            current_time = tick_ts.timestamp()
+        else:
+            import time
+            current_time = time.time()
         last_check = self._last_check.get(symbol, 0)
         if current_time - last_check < self.check_interval_seconds:
             return None

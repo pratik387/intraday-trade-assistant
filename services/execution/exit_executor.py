@@ -517,7 +517,7 @@ class ExitExecutor:
 
                 # 9) Position Thesis Monitor - check if trade thesis remains valid
                 if self.thesis_monitor_enabled:
-                    thesis_health = self._check_thesis_health(sym, pos, float(px))
+                    thesis_health = self._check_thesis_health(sym, pos, float(px), ts)
                     if thesis_health and thesis_health.should_exit:
                         self._exit(sym, pos, float(px), ts, thesis_health.exit_reason)
                         continue
@@ -1230,7 +1230,7 @@ class ExitExecutor:
 
     # ---------- Position Thesis Monitor ----------
 
-    def _check_thesis_health(self, sym: str, pos: Position, px: float):
+    def _check_thesis_health(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp] = None):
         """
         Check if the trade thesis remains valid using the PositionThesisMonitor.
 
@@ -1246,12 +1246,14 @@ class ExitExecutor:
                     df_5m = None
 
             # Check thesis using the monitor
+            # Pass tick_ts for correct rate limiting in backtest mode
             thesis_health = self.thesis_monitor.check_thesis(
                 symbol=sym,
                 side=pos.side,
                 current_price=px,
                 plan=pos.plan,
                 df_5m=df_5m,
+                tick_ts=ts,
             )
 
             # Update position state with thesis health for diagnostics
