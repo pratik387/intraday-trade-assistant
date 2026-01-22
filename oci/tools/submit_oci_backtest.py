@@ -474,7 +474,8 @@ class OCIBacktestSubmitter:
             return False
 
     def run(self, start_date=None, end_date=None, description=None, no_wait=False,
-            max_parallel=None, num_nodes=None, wait_after_scale=180, failed_dates_file=None):
+            max_parallel=None, num_nodes=None, wait_after_scale=180, failed_dates_file=None,
+            local=False):
         """Main workflow
 
         Args:
@@ -562,6 +563,8 @@ class OCIBacktestSubmitter:
         monitor_script = self.root / 'oci' / 'tools' / 'monitor_and_cleanup_backtest.py'
 
         cmd = [sys.executable, str(monitor_script), run_id]
+        if local:
+            cmd.append('--local')
         result = subprocess.run(cmd)
 
         if result.returncode != 0:
@@ -607,6 +610,9 @@ Examples:
     parser.add_argument('--failed-dates', type=str, default=None,
                         help='Path to failed_dates.json file to re-run only failed dates. '
                              'If specified, --start and --end are ignored.')
+    parser.add_argument('--local', action='store_true',
+                        help='Process results locally after download (runs process_backtest_run.py '
+                             'and generate_backtest_report.py, skips zip creation)')
 
     args = parser.parse_args()
 
@@ -623,7 +629,8 @@ Examples:
         max_parallel=args.max_parallel,
         num_nodes=args.nodes,
         wait_after_scale=args.wait_after_scale,
-        failed_dates_file=args.failed_dates
+        failed_dates_file=args.failed_dates,
+        local=args.local
     )
 
 

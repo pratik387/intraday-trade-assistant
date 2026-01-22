@@ -447,6 +447,8 @@ def run_cleanup(run_id, args):
         cmd.append('--keep-oci-files')
     if args.keep_extracted:
         cmd.append('--keep-extracted')
+    if hasattr(args, 'local') and args.local:
+        cmd.append('--local')
 
     print(f"Running: {' '.join(cmd)}")
     print()
@@ -498,6 +500,8 @@ Examples:
                         help='Run cleanup even if job has failures (default: True)')
     parser.add_argument('--skip-download-on-failure', action='store_true',
                         help='Skip downloading results if job has failures (still scales down nodes)')
+    parser.add_argument('--local', action='store_true',
+                        help='Local workflow: download all (original + retries), process, generate report (no zip)')
 
     args = parser.parse_args()
 

@@ -545,12 +545,12 @@ class BacktestCleanupAutomation:
                 if process_result.returncode != 0:
                     print(f"WARNING: Process script returned code {process_result.returncode}")
 
-                # Step 5: Run generate_backtest_report.py on extracted folder
-                extracted_dir = self.project_root / f"backtest_{self.base_run_id}_extracted"
+                # Step 5: Run generate_backtest_report.py on downloaded folder
+                # (process_backtest_run.py works in-place on the _full directory)
                 print()
                 print("STEP 5: Generating backtest report...")
                 report_script = self.project_root / "tools" / "generate_backtest_report.py"
-                report_cmd = [sys.executable, str(report_script), str(extracted_dir)]
+                report_cmd = [sys.executable, str(report_script), str(self.download_dir)]
                 print(f"Running: {' '.join(report_cmd)}")
                 print()
 
@@ -564,8 +564,7 @@ class BacktestCleanupAutomation:
                 print("LOCAL WORKFLOW COMPLETED")
                 print("=" * 80)
                 print()
-                print(f"Downloaded to: {self.download_dir}")
-                print(f"Extracted to: {extracted_dir}")
+                print(f"Results in: {self.download_dir}")
                 print()
                 print("=" * 80)
                 print()
