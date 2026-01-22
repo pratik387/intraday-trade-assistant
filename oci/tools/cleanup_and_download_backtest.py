@@ -34,6 +34,7 @@ Options:
     --keep-oci-files: Don't delete files from OCI bucket after download
     --keep-extracted: Don't delete local extracted directory after zipping
     --no-zip: Skip creating zip archive (just download files)
+    --local: Local workflow - download, process, and generate report (no zip)
 
 Example:
     # Download all runs (original + retries) for this backtest
@@ -44,6 +45,9 @@ Example:
 
     # Just download, no zip (for local machine)
     python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --no-zip
+
+    # Local workflow: download, process, generate report automatically
+    python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --local
 """
 
 import argparse
@@ -57,7 +61,7 @@ import time
 
 
 class BacktestCleanupAutomation:
-    def __init__(self, run_id, parallel=10, skip_nodepool=False, keep_oci_files=False, keep_extracted=False, no_zip=False):
+    def __init__(self, run_id, parallel=10, skip_nodepool=False, keep_oci_files=False, keep_extracted=False, no_zip=False, local=False):
         """
         Initialize automation.
 
@@ -70,12 +74,16 @@ class BacktestCleanupAutomation:
             keep_oci_files: Don't delete OCI files
             keep_extracted: Don't delete local extracted directory
             no_zip: Skip creating zip archive (just download)
+            local: Local workflow - no zip, process + generate report automatically
         """
         self.run_id = run_id
+        self.local = local
         # Extract base run ID (strip -retryN suffix if present)
         if '-retry' in run_id:
             self.base_run_id = run_id.split('-retry')[0]
-            self.download_all_related = False  # Specific retry requested
+            # For --local, always download all related runs (original + retries)
+            # Otherwise, only download the specific retry requested
+            self.download_all_related = local
         else:
             self.base_run_id = run_id
             self.download_all_related = True  # Download all related runs
@@ -518,7 +526,51 @@ class BacktestCleanupAutomation:
                 print("ERROR: No files were downloaded successfully")
                 sys.exit(1)
 
-            if self.no_zip:
+            if self.local:
+                # Local workflow: no zip, process + generate report
+                print()
+                print("=" * 80)
+                print("LOCAL WORKFLOW: Processing and Generating Report")
+                print("=" * 80)
+                print()
+
+                # Step 4: Run process_backtest_run.py
+                print("STEP 4: Processing backtest run...")
+                process_script = self.project_root / "oci" / "process_backtest_run.py"
+                process_cmd = [sys.executable, str(process_script), str(self.download_dir)]
+                print(f"Running: {' '.join(process_cmd)}")
+                print()
+
+                process_result = subprocess.run(process_cmd, cwd=str(self.project_root))
+                if process_result.returncode != 0:
+                    print(f"WARNING: Process script returned code {process_result.returncode}")
+
+                # Step 5: Run generate_backtest_report.py on extracted folder
+                extracted_dir = self.project_root / f"backtest_{self.base_run_id}_extracted"
+                print()
+                print("STEP 5: Generating backtest report...")
+                report_script = self.project_root / "tools" / "generate_backtest_report.py"
+                report_cmd = [sys.executable, str(report_script), str(extracted_dir)]
+                print(f"Running: {' '.join(report_cmd)}")
+                print()
+
+                report_result = subprocess.run(report_cmd, cwd=str(self.project_root))
+                if report_result.returncode != 0:
+                    print(f"WARNING: Report script returned code {report_result.returncode}")
+
+                # Success!
+                print()
+                print("=" * 80)
+                print("LOCAL WORKFLOW COMPLETED")
+                print("=" * 80)
+                print()
+                print(f"Downloaded to: {self.download_dir}")
+                print(f"Extracted to: {extracted_dir}")
+                print()
+                print("=" * 80)
+                print()
+
+            elif self.no_zip:
                 # Skip zip and cleanup - just download
                 print()
                 print("=" * 80)
@@ -604,6 +656,9 @@ Examples:
 
   # Just download, no zip (for local machine)
   python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --no-zip
+
+  # Local workflow: download, process, and generate report (no zip)
+  python oci/tools/cleanup_and_download_backtest.py 20251121-084341 --local
         """
     )
 
@@ -620,6 +675,8 @@ Examples:
                         help="Don't delete local extracted directory after zipping")
     parser.add_argument('--no-zip', action='store_true',
                         help="Skip creating zip archive (just download files to local directory)")
+    parser.add_argument('--local', action='store_true',
+                        help="Local workflow: download, process, and generate report automatically (no zip)")
 
     args = parser.parse_args()
 
@@ -632,7 +689,8 @@ Examples:
         skip_nodepool=args.skip_nodepool,
         keep_oci_files=keep_oci,
         keep_extracted=args.keep_extracted,
-        no_zip=args.no_zip
+        no_zip=args.no_zip,
+        local=args.local
     )
 
     automation.run()
