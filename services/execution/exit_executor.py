@@ -1218,7 +1218,7 @@ class ExitExecutor:
 
     # ---------- Place exits + logging ----------
 
-    def _place_and_log_exit(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> None:
+    def _place_and_log_exit(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> float:
         try:
             cur = self.positions.list_open().get(sym)
             if cur is not None:
@@ -1239,7 +1239,7 @@ class ExitExecutor:
             cur_qty = int(pos.qty)
         qty_exit = int(max(0, min(int(qty_exit), cur_qty)))
         if qty_exit <= 0:
-            return
+            return exit_px  # No exit, return assumed price
 
         actual_exit_px = exit_px  # Default to assumed price
         try:
@@ -1386,6 +1386,8 @@ class ExitExecutor:
 
         logger.debug(f"exit_executor: {sym} qty={qty_exit} reason={reason}")
 
+        return actual_exit_px  # Return actual broker fill price for API logging
+
     def _exit(self, sym: str, pos: Position, exit_px: float, ts: Optional[pd.Timestamp], reason: str) -> None:
         # re-read current qty from store just before the full exit
         try:
@@ -1449,7 +1451,8 @@ class ExitExecutor:
         # We don't call it here to avoid duplicate EXIT events in events.jsonl
         # _place_and_log_exit() has all the necessary logging logic
 
-        self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
+        # Capture actual broker fill price for API server logging
+        actual_exit_px = self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
         self.positions.close(sym)
 
         # Remove from persistence (crash recovery)
@@ -1471,11 +1474,14 @@ class ExitExecutor:
             t1 = targets[0].get("level") if targets and len(targets) > 0 else pos.plan.get("t1")
             t2 = targets[1].get("level") if targets and len(targets) > 1 else pos.plan.get("t2")
 
+            # Recalculate PnL using actual broker fill price (not assumed price)
+            actual_pnl = qty_now * (actual_exit_px - pos.avg_price) if pos.side.upper() == "BUY" else qty_now * (pos.avg_price - actual_exit_px)
+
             # Calculate TOTAL trade PnL including any T1 partial exit profit
             state = pos.plan.get("_state", {})
             t1_profit = state.get("t1_profit", 0) or 0
             t1_booked_qty = state.get("t1_booked_qty", 0) or 0
-            total_pnl = t1_profit + pnl  # T1 partial profit + final exit PnL
+            total_pnl = t1_profit + actual_pnl  # T1 partial profit + final exit PnL (using actual broker price)
 
             # Use original entry qty (T1 booked + remaining), not just final exit qty
             original_qty = t1_booked_qty + qty_now
@@ -1493,8 +1499,8 @@ class ExitExecutor:
                 "side": pos.side.upper(),
                 "qty": original_qty,  # Total trade qty, not just final exit qty
                 "entry_price": round(pos.avg_price, 2),
-                "exit_price": round(exit_px, 2),
-                "pnl": round(total_pnl, 2),  # Total trade PnL including T1 profit
+                "exit_price": round(actual_exit_px, 2),  # Use actual broker fill price
+                "pnl": round(total_pnl, 2),  # Total trade PnL using actual broker price
                 "exit_reason": reason,
                 "setup": pos.plan.get("setup_type", "unknown"),
                 "exit_time": ts.isoformat() if ts else None,
