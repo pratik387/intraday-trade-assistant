@@ -558,6 +558,7 @@ class TradingLogger:
             decisions = {}  # trade_id -> decision_event
             triggers = {}   # trade_id -> trigger_event
             exits = {}      # trade_id -> list of exit_events (to handle partial exits)
+            shadow_trade_ids = set()  # Track shadow trades to exclude from performance
 
             with open(events_file, 'r') as f:
                 for line in f:
@@ -575,6 +576,12 @@ class TradingLogger:
 
                         elif event_type == 'TRIGGER':
                             triggers[trade_id] = event
+                            # Check if this is a shadow trade
+                            trigger_data = event.get('trigger', {})
+                            order_id = trigger_data.get('order_id', '')
+                            is_shadow = trigger_data.get('shadow', False) or order_id.startswith('shadow-')
+                            if is_shadow:
+                                shadow_trade_ids.add(trade_id)
 
                         elif event_type == 'EXIT':
                             # Support multiple exits per trade (partial exits)
@@ -586,7 +593,12 @@ class TradingLogger:
                         continue
 
             # Calculate performance metrics by pairing DECISION + EXIT events
+            # IMPORTANT: Exclude shadow trades from performance calculations
             for trade_id, exit_events in exits.items():
+                # Skip shadow trades - they're simulated and don't reflect real performance
+                if trade_id in shadow_trade_ids:
+                    continue
+
                 decision_event = decisions.get(trade_id)
                 trigger_event = triggers.get(trade_id)
 
@@ -658,8 +670,8 @@ class TradingLogger:
                             analytics_data['total_trade_pnl'] = pnl  # Include total PnL on final exit
                         self.analytics_logger.info(json.dumps(analytics_data))
 
-            # Count triggered trades
-            self.session_stats['triggered_trades'] = len(triggers)
+            # Count triggered trades (exclude shadow trades)
+            self.session_stats['triggered_trades'] = len(triggers) - len(shadow_trade_ids)
 
             # Update performance summary with calculated metrics
             self._update_performance_summary()
