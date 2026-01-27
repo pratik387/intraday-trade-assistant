@@ -118,6 +118,8 @@ class MarketDataBus:
             "5m": [],
             "15m": [],
         }
+        # Tick callbacks for real-time execution (symbol, price, volume, ts)
+        self._tick_callbacks: list[Callable[[str, float, float, datetime], None]] = []
 
         if mode != "standalone":
             self._init_redis()
@@ -169,7 +171,8 @@ class MarketDataBus:
 
     def update_ltp(self, symbol: str, price: float, ts: datetime) -> None:
         """
-        Update shared LTP in Redis (called on every tick).
+        Update shared LTP in Redis hash (called on every tick).
+        This is for point-in-time LTP lookups.
 
         Args:
             symbol: Trading symbol
@@ -184,7 +187,30 @@ class MarketDataBus:
             ts_ns = int(ts.timestamp() * 1_000_000) if hasattr(ts, 'timestamp') else 0
             value = f"{price}:{ts_ns}"
             self._redis.hset("ltp:current", symbol, value)
-        except Exception as e:
+        except Exception:
+            # Don't log every tick failure - too noisy
+            pass
+
+    def publish_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
+        """
+        Publish tick to Redis pub/sub for real-time execution.
+        Subscribers receive every tick for trigger validation.
+
+        Args:
+            symbol: Trading symbol
+            price: Last traded price
+            volume: Tick volume
+            ts: Tick timestamp
+        """
+        if self._mode != "publisher":
+            return
+
+        try:
+            ts_ns = int(ts.timestamp() * 1_000_000) if hasattr(ts, 'timestamp') else 0
+            # Compact format: "symbol|price|volume|ts_ns"
+            tick_data = f"{symbol}|{price}|{volume}|{ts_ns}"
+            self._redis.publish("ticks:stream", tick_data)
+        except Exception:
             # Don't log every tick failure - too noisy
             pass
 
@@ -214,6 +240,26 @@ class MarketDataBus:
         if not self._running:
             self._start_subscriber(symbols)
 
+    def subscribe_ticks(
+        self,
+        callback: Callable[[str, float, float, datetime], None],
+    ) -> None:
+        """
+        Subscribe to real-time tick events for execution layer.
+
+        Args:
+            callback: Function(symbol, price, volume, ts) called on each tick
+        """
+        if self._mode != "subscriber":
+            logger.warning("MKT_DATA_BUS | subscribe_ticks called but mode is not 'subscriber'")
+            return
+
+        self._tick_callbacks.append(callback)
+
+        # Start subscriber thread if not running
+        if not self._running:
+            self._start_subscriber(None)
+
     def _start_subscriber(self, symbols: Optional[list[str]] = None) -> None:
         """Start background thread for Redis subscription."""
         if self._running:
@@ -231,10 +277,14 @@ class MarketDataBus:
             else:
                 patterns.append(f"bars:{tf}:*")
 
+        # Always subscribe to tick stream for real-time execution
+        direct_channels = ["ticks:stream"]
+
         if symbols:
-            self._pubsub.subscribe(*patterns)
+            self._pubsub.subscribe(*patterns, *direct_channels)
         else:
             self._pubsub.psubscribe(*patterns)
+            self._pubsub.subscribe(*direct_channels)
 
         self._subscriber_thread = threading.Thread(
             target=self._subscriber_loop,
@@ -248,35 +298,61 @@ class MarketDataBus:
         """Background loop processing Redis pub/sub messages."""
         while self._running:
             try:
-                message = self._pubsub.get_message(timeout=1.0)
+                message = self._pubsub.get_message(timeout=0.01)  # 10ms for low latency
                 if message is None:
                     continue
 
                 if message["type"] not in ("message", "pmessage"):
                     continue
 
-                # Parse channel: "bars:5m:RELIANCE" -> timeframe="5m"
                 channel = message.get("channel", "") or message.get("pattern", "")
-                parts = channel.split(":")
-                if len(parts) < 2:
-                    continue
-
-                timeframe = parts[1]
                 data = message["data"]
 
-                try:
-                    event = BarEvent.from_json(data)
-                    for callback in self._bar_callbacks.get(timeframe, []):
-                        try:
-                            callback(event)
-                        except Exception as e:
-                            logger.exception(f"MKT_DATA_BUS | Callback error: {e}")
-                except Exception as e:
-                    logger.warning(f"MKT_DATA_BUS | Failed to parse bar event: {e}")
+                # Handle tick stream messages
+                if channel == "ticks:stream":
+                    self._handle_tick_message(data)
+                    continue
+
+                # Handle bar messages: "bars:5m:RELIANCE" -> timeframe="5m"
+                parts = channel.split(":")
+                if len(parts) >= 2 and parts[0] == "bars":
+                    timeframe = parts[1]
+                    try:
+                        event = BarEvent.from_json(data)
+                        for callback in self._bar_callbacks.get(timeframe, []):
+                            try:
+                                callback(event)
+                            except Exception as e:
+                                logger.exception(f"MKT_DATA_BUS | Bar callback error: {e}")
+                    except Exception as e:
+                        logger.warning(f"MKT_DATA_BUS | Failed to parse bar event: {e}")
 
             except Exception as e:
                 logger.warning(f"MKT_DATA_BUS | Subscriber error: {e}")
-                time.sleep(1.0)
+                time.sleep(0.1)
+
+    def _handle_tick_message(self, data: str) -> None:
+        """Parse and dispatch tick message to callbacks."""
+        try:
+            # Format: "symbol|price|volume|ts_ns"
+            parts = data.split("|")
+            if len(parts) != 4:
+                return
+
+            symbol = parts[0]
+            price = float(parts[1])
+            volume = float(parts[2])
+            ts_ns = int(parts[3])
+            ts = datetime.fromtimestamp(ts_ns / 1_000_000)
+
+            for callback in self._tick_callbacks:
+                try:
+                    callback(symbol, price, volume, ts)
+                except Exception as e:
+                    logger.exception(f"MKT_DATA_BUS | Tick callback error: {e}")
+        except Exception as e:
+            # Don't log every parse failure - too noisy
+            pass
 
     def get_ltp(self, symbol: str) -> Optional[tuple[float, int]]:
         """

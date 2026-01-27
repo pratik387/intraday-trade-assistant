@@ -22,6 +22,7 @@ tick aggregation (LIVE) or Redis subscription (PAPER).
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional, List, Dict
 
@@ -31,6 +32,14 @@ from config.logging_config import get_agent_logger
 from .market_data_bus import MarketDataBus, BarEvent
 
 logger = get_agent_logger()
+
+
+@dataclass
+class _LastTick:
+    """Mirrors BarBuilder's _LastTick for interface compatibility."""
+    price: float
+    volume: float
+    ts: datetime
 
 
 class BarSubscriber:
@@ -78,6 +87,10 @@ class BarSubscriber:
         self._bars_15m: Dict[str, pd.DataFrame] = {}
         self._lock = threading.RLock()
 
+        # LTP tracking (mirrors BarBuilder._ltp for interface compatibility)
+        # Updated when bars arrive from Redis - uses bar close as proxy for LTP
+        self._ltp: Dict[str, _LastTick] = {}
+
         # Market data bus for subscription
         self._bus: Optional[MarketDataBus] = None
         self._started = False
@@ -109,7 +122,7 @@ class BarSubscriber:
             self._additional_15m_handlers.append(handler)
 
     def start(self) -> None:
-        """Start receiving bars from Redis."""
+        """Start receiving bars and ticks from Redis."""
         if self._started:
             return
 
@@ -118,10 +131,14 @@ class BarSubscriber:
             redis_url=self._redis_url,
         )
 
-        # Subscribe to all timeframes
+        # Subscribe to all timeframes for bar events
         self._bus.subscribe_bars("1m", self._on_bar_event, self._symbols)
         self._bus.subscribe_bars("5m", self._on_bar_event, self._symbols)
         self._bus.subscribe_bars("15m", self._on_bar_event, self._symbols)
+
+        # Subscribe to real-time ticks for execution layer
+        # Ticks flow through self.on_tick which can be replaced by TriggerAwareExecutor
+        self._bus.subscribe_ticks(self._on_tick_from_redis)
 
         self._started = True
         logger.info(f"BAR_SUBSCRIBER | Started, symbols={self._symbols or 'all'}")
@@ -149,6 +166,17 @@ class BarSubscriber:
 
         symbol = event.symbol
         timeframe = event.timeframe
+
+        # Update LTP tracking (bar close as proxy for last tick price)
+        # This provides timestamp info for TriggerAwareExecutor
+        # pd.Timestamp is a subclass of datetime, so this works for both
+        bar_ts = bar.name.to_pydatetime() if hasattr(bar.name, 'to_pydatetime') else bar.name
+        with self._lock:
+            self._ltp[symbol] = _LastTick(
+                price=float(event.close),
+                volume=float(event.volume),
+                ts=bar_ts,
+            )
 
         # Store bar in local cache
         self._store_bar(symbol, timeframe, bar)
@@ -251,6 +279,38 @@ class BarSubscriber:
         Returns empty DataFrame as ScreenerLive._index_symbols() returns [].
         """
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "vwap"])
+
+    def get_current_vwap(self, symbol: str) -> float:
+        """Get current VWAP for a symbol (BarBuilder compatibility)."""
+        with self._lock:
+            df = self._bars_1m.get(symbol)
+            if df is None or df.empty:
+                return 0.0
+            return float(df.iloc[-1].get("vwap", 0.0))
+
+    def _on_tick_from_redis(self, symbol: str, price: float, volume: float, ts) -> None:
+        """
+        Handle tick received from Redis pub/sub.
+
+        This is the entry point for ticks from the Market Data Service.
+        Calls self.on_tick which may be replaced by TriggerAwareExecutor.
+        """
+        self.on_tick(symbol, price, volume, ts)
+
+    def on_tick(self, symbol: str, price: float, volume: float, ts) -> None:
+        """
+        Process incoming tick - updates LTP tracking.
+
+        This method can be replaced by TriggerAwareExecutor for trigger validation.
+        In subscriber mode, ticks come from Redis via Market Data Service.
+        """
+        # Update LTP tracking
+        with self._lock:
+            self._ltp[symbol] = _LastTick(
+                price=float(price),
+                volume=float(volume),
+                ts=ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts)),
+            )
 
     def shutdown(self) -> None:
         """Clean shutdown."""

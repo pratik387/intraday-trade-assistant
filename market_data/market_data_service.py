@@ -107,15 +107,18 @@ class MarketDataService:
         return token_map
 
     def _on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
-        """Handle incoming tick - forward to bar builder and publish LTP."""
+        """Handle incoming tick - forward to bar builder and publish to Redis."""
         self._tick_count += 1
         self._last_tick_time = ts
 
         # Forward to bar builder
         self._bar_builder.on_tick(symbol, price, volume, ts)
 
-        # Publish LTP to Redis
+        # Publish LTP to Redis hash (for point-in-time lookups)
         self._bus.update_ltp(symbol, price, ts)
+
+        # Publish tick to Redis pub/sub (for real-time execution)
+        self._bus.publish_tick(symbol, price, volume, ts)
 
     def _on_1m_close(self, symbol: str, bar) -> None:
         """Publish 1m bar to Redis."""
