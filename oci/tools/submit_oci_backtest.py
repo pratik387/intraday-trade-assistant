@@ -407,13 +407,72 @@ class OCIBacktestSubmitter:
         print()
         print("━" * 60)
 
-    def scale_up_nodepool(self, num_nodes, wait_seconds=180):
+    def _poll_nodes_ready(self, expected_nodes, timeout_seconds=300, poll_interval=10):
+        """
+        Poll kubectl until expected number of nodes are Ready.
+
+        Args:
+            expected_nodes: Number of nodes expected to be Ready
+            timeout_seconds: Maximum time to wait (default: 5 minutes)
+            poll_interval: Seconds between polls (default: 10)
+
+        Returns:
+            True if all nodes ready, False on timeout
+        """
+        start_time = time.time()
+
+        while True:
+            elapsed = int(time.time() - start_time)
+
+            if elapsed >= timeout_seconds:
+                print()
+                print(f"⚠️  Timeout after {timeout_seconds}s waiting for nodes")
+                return False
+
+            try:
+                # Get node status using kubectl
+                result = subprocess.run(
+                    ['kubectl', 'get', 'nodes', '-o', 'json'],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+
+                nodes_data = json.loads(result.stdout)
+                nodes = nodes_data.get('items', [])
+
+                # Count Ready nodes
+                ready_count = 0
+                for node in nodes:
+                    conditions = node.get('status', {}).get('conditions', [])
+                    for condition in conditions:
+                        if condition.get('type') == 'Ready' and condition.get('status') == 'True':
+                            ready_count += 1
+                            break
+
+                mins, secs = divmod(elapsed, 60)
+                print(f"   [{mins:02d}:{secs:02d}] Nodes ready: {ready_count}/{expected_nodes}", end='\r')
+
+                if ready_count >= expected_nodes:
+                    print()
+                    return True
+
+            except subprocess.CalledProcessError as e:
+                mins, secs = divmod(elapsed, 60)
+                print(f"   [{mins:02d}:{secs:02d}] Waiting for kubectl access...", end='\r')
+            except json.JSONDecodeError:
+                pass
+
+            time.sleep(poll_interval)
+
+    def scale_up_nodepool(self, num_nodes, wait_seconds=300):
         """
         Scale up the node pool to the specified number of nodes.
 
         Args:
             num_nodes: Number of nodes to scale to
-            wait_seconds: Seconds to wait after scaling (default: 180 = 3 minutes)
+            wait_seconds: Max seconds to wait for nodes to become ready (default: 300 = 5 minutes)
+                          Set to 0 to skip waiting.
 
         Returns:
             True if successful, False otherwise
@@ -443,20 +502,17 @@ class OCIBacktestSubmitter:
             print(f"✅ Node pool scaling initiated to {num_nodes} nodes")
             print()
 
-            # Wait for nodes to become ready
+            # Poll for nodes to become ready
             if wait_seconds > 0:
-                print(f"⏳ Waiting {wait_seconds}s for nodes to become ready...")
+                print(f"⏳ Polling for {num_nodes} nodes to become Ready (timeout: {wait_seconds}s)...")
                 print()
 
-                for remaining in range(wait_seconds, 0, -1):
-                    mins, secs = divmod(remaining, 60)
-                    print(f"   Starting job in {mins:02d}:{secs:02d}...", end='\r')
-                    time.sleep(1)
-
-                print()
-                print("✅ Wait complete, proceeding with job submission")
+                if self._poll_nodes_ready(num_nodes, timeout_seconds=wait_seconds):
+                    print("✅ All nodes ready, proceeding with job submission")
+                else:
+                    print("⚠️  Not all nodes ready, proceeding anyway (pods will wait for nodes)")
             else:
-                print("⏳ Nodes will take ~2-3 minutes to become ready")
+                print("⏳ Skipping wait - nodes will take ~2-3 minutes to become ready")
                 print("   Job will start once nodes are available")
 
             print()
@@ -587,7 +643,7 @@ Examples:
   # With custom parallelism limit
   python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --max-parallel 50
 
-  # Skip wait after node scaling (for already-running nodes)
+  # Skip node readiness polling (pods will wait for nodes)
   python oci/tools/submit_oci_backtest.py --start 2024-01-01 --end 2024-06-30 --nodes 4 --wait-after-scale 0
 
   # Re-run only failed dates from a previous run
@@ -604,9 +660,9 @@ Examples:
     parser.add_argument('--nodes', type=int, default=None,
                         help='Number of nodes to scale node pool to before starting (e.g., 4). '
                              'If not specified, assumes nodes are already running.')
-    parser.add_argument('--wait-after-scale', type=int, default=180,
-                        help='Seconds to wait after scaling up nodes (default: 180 = 3 minutes). '
-                             'Set to 0 to skip wait.')
+    parser.add_argument('--wait-after-scale', type=int, default=300,
+                        help='Max seconds to poll for nodes to become Ready (default: 300 = 5 minutes). '
+                             'Set to 0 to skip waiting (pods will wait for nodes).')
     parser.add_argument('--failed-dates', type=str, default=None,
                         help='Path to failed_dates.json file to re-run only failed dates. '
                              'If specified, --start and --end are ignored.')
