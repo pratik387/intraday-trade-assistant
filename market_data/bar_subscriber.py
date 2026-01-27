@@ -244,6 +244,14 @@ class BarSubscriber:
 
             return None
 
+    def index_df_5m(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Get index symbol 5m bars (BarBuilder compatibility).
+
+        Note: BarSubscriber doesn't track index symbols separately.
+        Returns empty DataFrame as ScreenerLive._index_symbols() returns [].
+        """
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "vwap"])
+
     def shutdown(self) -> None:
         """Clean shutdown."""
         self._started = False

@@ -102,7 +102,7 @@ class MarketDataService:
         if self._sdk is None:
             logger.error("MDS | KiteClient not initialized")
             return {}
-        token_map = self._sdk.tok2sym  # {token: "NSE:SYMBOL"}
+        token_map = self._sdk._tok2sym  # {token: "NSE:SYMBOL"}
         logger.info(f"MDS | Loaded {len(token_map)} instruments from KiteClient")
         return token_map
 
@@ -167,7 +167,7 @@ class MarketDataService:
         # Subscribe to all symbols
         from services.ingest.subscription_manager import SubscriptionManager
         subs = SubscriptionManager(self._ws)
-        subs.set_core(token_map)
+        subs.set_core(set(token_map.keys()))  # Pass token integers, not dict
         subs.start()
 
         # Start WebSocket
