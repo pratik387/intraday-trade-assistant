@@ -96,20 +96,15 @@ class MarketDataService:
         return self._config.get("index_symbols", ["NSE:NIFTY 50", "NSE:NIFTY BANK"])
 
     def _load_universe(self) -> dict:
-        """Load trading universe (token -> symbol mapping)."""
-        try:
-            from utils.instrument_utils import load_instrument_cache
-            instruments = load_instrument_cache()
-            # Filter to equity segment
-            token_map = {}
-            for inst in instruments:
-                if inst.get("segment") == "NSE" and inst.get("instrument_type") == "EQ":
-                    token_map[inst["instrument_token"]] = f"NSE:{inst['tradingsymbol']}"
-            logger.info(f"MDS | Loaded {len(token_map)} instruments")
-            return token_map
-        except Exception as e:
-            logger.error(f"MDS | Failed to load instruments: {e}")
+        """Load trading universe (token -> symbol mapping) from KiteClient."""
+        # KiteClient loads and filters instruments from Kite API
+        # Use its tok2sym mapping directly
+        if self._sdk is None:
+            logger.error("MDS | KiteClient not initialized")
             return {}
+        token_map = self._sdk.tok2sym  # {token: "NSE:SYMBOL"}
+        logger.info(f"MDS | Loaded {len(token_map)} instruments from KiteClient")
+        return token_map
 
     def _on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
         """Handle incoming tick - forward to bar builder and publish LTP."""
