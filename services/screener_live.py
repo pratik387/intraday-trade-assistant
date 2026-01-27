@@ -223,6 +223,8 @@ class ScreenerLive:
             self.ws = None
             self.router = None
             self.subs = None
+            # Still need symbol mapping for filtering and logging, just no WebSocket
+            self._load_core_universe()
         else:
             self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
             self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
