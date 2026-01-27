@@ -120,8 +120,6 @@ class ExitExecutor:
         # Enhanced exit configuration - KeyError if missing trading parameters
         exits_config = cfg.get("exits", {})
 
-        self.score_drop_enabled = bool(exits_config.get("score_drop_enabled", cfg["exit_score_drop_enabled"]))
-        self.score_drop_bpct = float(exits_config.get("score_drop_bpct", cfg["exit_score_drop_bpct"]))
         self.time_stop_min = float(exits_config.get("time_stop_min", cfg["exit_time_stop_min"]))
         self.time_stop_req_rr = float(exits_config.get("time_stop_req_rr", cfg["exit_time_stop_req_rr"]))
 
@@ -172,14 +170,11 @@ class ExitExecutor:
 
         logger.info(
             f"exit_executor: init eod={self.eod_hhmm} "
-            f"score_drop={self.score_drop_enabled}:{self.score_drop_bpct}% "
             f"time_stop={self.time_stop_min}m@RR<{self.time_stop_req_rr} "
             f"t1_pct={self.t1_book_pct}% t2_pct={self.t2_book_pct}% "
             f"trail={self.trail_atr_mult}x->{self.trail_atr_mult_late}x@{self.trail_time_tighten} "
             f"sl2be={self.t1_move_sl_to_be}"
         )
-
-        self._peak_price: Dict[str, float] = {}
         self._trail_price: Dict[str, float] = {}
         self._closing_state = {}
 
@@ -416,6 +411,96 @@ class ExitExecutor:
                             self._partial_exit_t1(sym, pos, t1_ltp, ts)
                             continue  # T1 partial done, SL will be BE now
 
+                # Position Thesis Monitor - check if trade thesis remains valid BEFORE SL
+                # This allows early exit on failing thesis to reduce losses before hitting hard SL
+                if self.thesis_monitor_enabled:
+                    thesis_health = self._check_thesis_health(sym, pos, float(px), ts)
+                    if thesis_health and thesis_health.should_exit:
+                        # FILTER 2: Only exit if trade is currently losing (PnL < 0)
+                        # Winners should run, only cut losers early
+                        entry_price = pos.avg_price
+                        current_pnl = (float(px) - entry_price) if pos.side.upper() == "BUY" else (entry_price - float(px))
+                        if current_pnl >= 0:
+                            logger.info(f"THESIS_SKIP_WINNING | {sym} | PnL: {current_pnl:.2f} >= 0 | Letting winner run")
+                            pass  # Skip thesis exit, continue to other checks
+                        else:
+                            # FILTER 3: Minimum hold time (10 mins)
+                            # Avoid cutting trades too early - give thesis time to play out
+                            entry_ts_str = pos.plan.get("entry_ts") or pos.plan.get("decision_ts")
+                            min_hold_passed = True  # Default if no timestamp
+                            if entry_ts_str:
+                                try:
+                                    entry_ts_thesis = pd.Timestamp(entry_ts_str)
+                                    time_held_mins = (ts - entry_ts_thesis).total_seconds() / 60.0
+                                    if time_held_mins < 10:  # 10 minute minimum
+                                        logger.info(f"THESIS_SKIP_TOO_NEW | {sym} | Held: {time_held_mins:.1f}m < 10m | Waiting")
+                                        min_hold_passed = False
+                                except Exception:
+                                    pass  # Keep default True
+
+                            # FILTER 4: Skip if T1 already hit
+                            # Trade already achieved first target, let it run to T2 or BE-SL
+                            if min_hold_passed and t1_done:
+                                logger.info(f"THESIS_SKIP_T1_DONE | {sym} | T1 already hit | Letting trade run")
+                                min_hold_passed = False  # Reuse flag to skip exit
+
+                            # FILTER 5: Skip if trade showed significant favorable movement (MFE >= 0.3R)
+                            # If trade went 0.3R+ in right direction, thesis WAS working - let it run
+                            if min_hold_passed:
+                                mfe_price = st.get('mfe', 0.0)  # MFE in price units
+                                plan_sl = self._get_plan_sl(pos.plan)
+                                if plan_sl is not None:
+                                    risk_per_share = abs(entry_price - plan_sl)
+                                    if risk_per_share > 0:
+                                        mfe_r = mfe_price / risk_per_share
+                                        if mfe_r >= 0.3:
+                                            logger.info(f"THESIS_SKIP_HAD_FAVORABLE | {sym} | MFE: {mfe_r:.2f}R >= 0.3R | Thesis was working, letting run")
+                                            min_hold_passed = False
+
+                            if not min_hold_passed:
+                                pass  # Skip thesis exit, continue to other checks
+                            else:
+                                # All filters passed - proceed with thesis exit
+                                # Log thesis exit event for analysis
+                                plan = pos.plan or {}
+                                entry_indicators = plan.get("indicators", {})
+                                # Get current indicators from thesis health
+                                current_indicators = {
+                                    "adx": thesis_health.momentum.adx_current,
+                                    "volume_ratio": thesis_health.volume.volume_ratio_current,
+                                }
+                                # Determine primary failing factors
+                                failing = []
+                                if thesis_health.momentum.score < 0.5:
+                                    failing.append(f"momentum({thesis_health.momentum.score:.2f})")
+                                if thesis_health.volume.score < 0.5:
+                                    failing.append(f"volume({thesis_health.volume.score:.2f})")
+                                if thesis_health.structure.score < 0.5:
+                                    failing.append(f"structure({thesis_health.structure.score:.2f})")
+                                if thesis_health.target.score < 0.5:
+                                    failing.append(f"target({thesis_health.target.score:.2f})")
+
+                                diag_event_log.log_thesis_exit(
+                                    symbol=sym,
+                                    trade_id=plan.get("trade_id", ""),
+                                    ts=ts,
+                                    setup_type=plan.get("setup_type", "unknown"),
+                                    category=thesis_health.category,
+                                    combined_score=thesis_health.combined_score,
+                                    threshold=self.thesis_monitor.breakout_exit_threshold if thesis_health.category == "breakout" else self.thesis_monitor.reversion_exit_threshold,
+                                    momentum_score=thesis_health.momentum.score,
+                                    volume_score=thesis_health.volume.score,
+                                    structure_score=thesis_health.structure.score,
+                                    target_score=thesis_health.target.score,
+                                    entry_indicators=entry_indicators,
+                                    current_indicators=current_indicators,
+                                    primary_factors=failing,
+                                    exit_reason=thesis_health.exit_reason,
+                                )
+
+                                self._exit(sym, pos, float(px), ts, thesis_health.exit_reason)
+                                continue
+
                 # Check SL with intrabar accuracy - broker handles live vs backtest polymorphically
                 if not math.isnan(plan_sl):
                     sl_px = self.broker.get_ltp_with_level(sym, check_level=plan_sl)
@@ -496,13 +581,7 @@ class ExitExecutor:
                     self._exit(sym, pos, float(px), ts, reason)
                     continue
 
-                # 5) Score-drop (% from peak since entry)
-                sdrop = self._score_drop_price(sym, pos.side, float(px))
-                if sdrop:
-                    self._exit(sym, pos, float(px), ts, sdrop)
-                    continue
-
-                # 6) Breakout short risk control
+                # 5) Breakout short risk control
                 if self._breakout_short_risk_control_triggered(sym, pos, float(px), ts):
                     continue  # Handled internally
 
@@ -514,13 +593,6 @@ class ExitExecutor:
                 if self.time_stop_min > 0 and self._time_stop_triggered(pos, float(px), plan_sl, ts):
                     self._exit(sym, pos, float(px), ts, f"time_stop_{self.time_stop_min}m_rr<{self.time_stop_req_rr}")
                     continue
-
-                # 9) Position Thesis Monitor - check if trade thesis remains valid
-                if self.thesis_monitor_enabled:
-                    thesis_health = self._check_thesis_health(sym, pos, float(px), ts)
-                    if thesis_health and thesis_health.should_exit:
-                        self._exit(sym, pos, float(px), ts, thesis_health.exit_reason)
-                        continue
 
             except Exception as e:
                 logger.exception(f"exit_executor: run_once error sym={sym}: {e}")
@@ -1170,34 +1242,6 @@ class ExitExecutor:
                 continue
         return None
 
-    # ---------- Score drop ----------
-
-    def _score_drop_price(self, sym: str, side: str, px: float) -> Optional[str]:
-        if not self.score_drop_enabled or self.score_drop_bpct <= 0 or math.isnan(px):
-            return None
-
-        cur = self._peak_price.get(sym)
-        if cur is None:
-            self._peak_price[sym] = px
-            return None
-
-        side = side.upper()
-        if side == "BUY":
-            if px > cur:
-                self._peak_price[sym] = px
-                return None
-            dd = (cur - px) / cur * 100.0
-            if dd >= self.score_drop_bpct:
-                return f"score_drop_dd{dd:.1f}%>= {self.score_drop_bpct:.1f}%"
-        else:
-            if px < cur:
-                self._peak_price[sym] = px
-                return None
-            dd = (px - cur) / cur * 100.0
-            if dd >= self.score_drop_bpct:
-                return f"score_drop_rally{dd:.1f}%>= {self.score_drop_bpct:.1f}%"
-        return None
-
     # ---------- Time stop (tick timestamp) ----------
 
     def _time_stop_triggered(self, pos: Position, px: float, sl: float, ts: Optional[pd.Timestamp]) -> bool:
@@ -1266,7 +1310,9 @@ class ExitExecutor:
             return thesis_health
 
         except Exception as e:
-            logger.debug(f"Thesis health check failed for {sym}: {e}")
+            logger.warning(f"Thesis health check failed for {sym}: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
             return None
 
     # ---------- Place exits + logging ----------
@@ -1553,7 +1599,11 @@ class ExitExecutor:
             pos.plan["_state"] = st
         except Exception:
             pass
-        self._peak_price.pop(sym, None); self._trail_price.pop(sym, None)
+        self._trail_price.pop(sym, None)
+
+        # Clean up thesis monitor cache for this symbol
+        if self.thesis_monitor:
+            self.thesis_monitor.clear_cache(sym)
 
         # Clean up OR_kill observation states for this symbol
         obs_keys_to_remove = [k for k in self._or_kill_observation.keys() if k.startswith(f"{sym}_")]

@@ -123,46 +123,26 @@ class ThesisHealth:
 
 # ---------- Trade Category Classification ----------
 
-# Breakout setups: Need momentum continuation
-BREAKOUT_SETUPS = frozenset([
-    "orb_breakout_long", "orb_breakout_short",
-    "orb_breakdown_long", "orb_breakdown_short",
-    "breakout_long", "breakout_short",
-    "level_breakout_long", "level_breakout_short",
-    "flag_continuation_long", "flag_continuation_short",
-    "squeeze_release_long", "squeeze_release_short",
-    "momentum_breakout_long", "momentum_breakout_short",
-    "range_breakout_long", "range_breakout_short",
-    "gap_breakout_long", "gap_breakout_short",
-    "resistance_breakout_long", "support_breakdown_short",
-    "break_of_structure_long", "break_of_structure_short",
-    "change_of_character_long", "change_of_character_short",
-    "equilibrium_breakout_long", "equilibrium_breakout_short",
-])
-
-# Reversion setups: Benefit from counter-moves
-REVERSION_SETUPS = frozenset([
-    "failure_fade_long", "failure_fade_short",
-    "volume_spike_reversal_long", "volume_spike_reversal_short",
-    "gap_fill_long", "gap_fill_short",
-    "vwap_mean_reversion_long", "vwap_mean_reversion_short",
-    "liquidity_sweep_long", "liquidity_sweep_short",
-    "fair_value_gap_long", "fair_value_gap_short",
-    "premium_zone_short", "discount_zone_long",
-    "order_block_long", "order_block_short",
-])
-
-
 def classify_setup_category(setup_type: str) -> str:
-    """Classify setup into category for thesis monitoring."""
-    setup_lower = setup_type.lower()
-    if setup_lower in BREAKOUT_SETUPS or any(k in setup_lower for k in ["breakout", "breakdown", "break_of", "squeeze", "flag_cont"]):
+    """
+    Classify setup into thesis monitoring category using central registry.
+
+    Uses config/setup_categories.py as single source of truth.
+    Maps pipeline categories to thesis monitoring behavior:
+      - BREAKOUT, MOMENTUM → "breakout" (need momentum continuation, stricter threshold)
+      - LEVEL, REVERSION → "reversion" (more patient, allow temporary weakness)
+    """
+    from config.setup_categories import get_category, SetupCategory
+
+    category = get_category(setup_type)
+
+    if category in (SetupCategory.BREAKOUT, SetupCategory.MOMENTUM):
         return "breakout"
-    elif setup_lower in REVERSION_SETUPS or any(k in setup_lower for k in ["fade", "reversal", "fill", "reversion", "sweep", "premium", "discount", "order_block"]):
+    elif category in (SetupCategory.LEVEL, SetupCategory.REVERSION):
         return "reversion"
     else:
-        # Default to breakout logic (more conservative)
-        return "breakout"
+        # Unknown setup - default to reversion (more patient/conservative)
+        return "reversion"
 
 
 # ---------- Position Thesis Monitor ----------
@@ -207,30 +187,72 @@ class PositionThesisMonitor:
         struct_cfg = tm_cfg["structure_integrity"]
         self.orb_back_inside_exit = bool(struct_cfg["orb_back_inside_or_auto_exit"])
         self.breakout_reversal_atr_mult = float(struct_cfg["breakout_reversal_atr_mult"])
+        self.reversion_vwap_breach_atr_mult = float(struct_cfg["reversion_vwap_breach_atr_mult"])
 
         # Target reachability thresholds
         target_cfg = tm_cfg["target_reachability"]
         self.atr_expansion_factor = float(target_cfg["atr_expansion_factor"])
         self.min_time_to_target_minutes = float(target_cfg["min_time_to_target_minutes"])
+        self.expected_atr_per_bar = float(target_cfg["expected_atr_per_bar"])
 
         # Combined threshold for exit
         self.breakout_exit_threshold = float(tm_cfg["breakout_exit_threshold"])
         self.reversion_exit_threshold = float(tm_cfg["reversion_exit_threshold"])
+        self.breakout_structure_breach_cap = float(tm_cfg["breakout_structure_breach_cap"])
+        self.reversion_structure_breach_cap = float(tm_cfg["reversion_structure_breach_cap"])
 
-        # Weight configuration for combined score
-        weights_cfg = tm_cfg["weights"]
-        self.weight_momentum = float(weights_cfg["momentum"])
-        self.weight_volume = float(weights_cfg["volume"])
-        self.weight_structure = float(weights_cfg["structure"])
-        self.weight_target = float(weights_cfg["target"])
+        # Time-based invalidation for mean reversion (research: Alvarez Quant Trading)
+        # Progressive time checks - stricter thresholds as time passes
+        self.reversion_max_hold_minutes = float(tm_cfg["reversion_max_hold_minutes"])
+        self.reversion_min_progress_pct = float(tm_cfg["reversion_min_progress_pct"])
+        self.reversion_time_check_interval = float(tm_cfg["reversion_time_check_interval"])
+        self.reversion_progress_increment = float(tm_cfg["reversion_progress_increment"])
+        self.reversion_score_increment = float(tm_cfg["reversion_score_increment"])
+        self.reversion_force_exit_minutes = float(tm_cfg["reversion_force_exit_minutes"])
+
+        # Category-specific weight configuration for combined score
+        breakout_weights = tm_cfg["weights_breakout"]
+        self.breakout_weights = {
+            "momentum": float(breakout_weights["momentum"]),
+            "volume": float(breakout_weights["volume"]),
+            "structure": float(breakout_weights["structure"]),
+            "target": float(breakout_weights["target"]),
+        }
+        reversion_weights = tm_cfg["weights_reversion"]
+        self.reversion_weights = {
+            "momentum": float(reversion_weights["momentum"]),
+            "volume": float(reversion_weights["volume"]),
+            "structure": float(reversion_weights["structure"]),
+            "target": float(reversion_weights["target"]),
+        }
 
         # Cache for last check timestamps (avoid excessive computation)
         self._last_check: Dict[str, float] = {}
+        # Cache for last thesis health result (return when rate limited to allow exit on subsequent ticks)
+        self._last_health: Dict[str, ThesisHealth] = {}
+        # Consecutive failure counter - require multiple failures before exit
+        self._consecutive_failures: Dict[str, int] = {}
+        self.consecutive_failures_required = int(tm_cfg["consecutive_failures_required"])
 
         self.log.info(
             f"[ThesisMonitor] Initialized: enabled={self.enabled}, "
             f"breakout_threshold={self.breakout_exit_threshold}, "
-            f"reversion_threshold={self.reversion_exit_threshold}"
+            f"reversion_threshold={self.reversion_exit_threshold}, "
+            f"breakout_breach_cap={self.breakout_structure_breach_cap}, "
+            f"reversion_breach_cap={self.reversion_structure_breach_cap}"
+        )
+        self.log.info(
+            f"[ThesisMonitor] Progressive time: base={self.reversion_max_hold_minutes}min, "
+            f"interval={self.reversion_time_check_interval}min, "
+            f"progress_incr={self.reversion_progress_increment}%, "
+            f"score_incr={self.reversion_score_increment}, "
+            f"force_exit={self.reversion_force_exit_minutes}min"
+        )
+        self.log.info(
+            f"[ThesisMonitor] Breakout weights: {self.breakout_weights}"
+        )
+        self.log.info(
+            f"[ThesisMonitor] Reversion weights: {self.reversion_weights}"
         )
 
     def check_thesis(
@@ -266,18 +288,45 @@ class PositionThesisMonitor:
         else:
             import time
             current_time = time.time()
+        # STICKY BREACH: Once thesis fails (should_exit=True), keep signaling exit
+        # Don't allow recovery - the breach indicates trade thesis is compromised
+        cached = self._last_health.get(symbol)
+        if cached and cached.should_exit:
+            if self.log:
+                self.log.info(f"[ThesisMonitor] {symbol} STICKY_BREACH active")
+            return cached  # Keep returning failed thesis until position closes
+
         last_check = self._last_check.get(symbol, 0)
         if current_time - last_check < self.check_interval_seconds:
-            return None
+            # Rate limited - return cached result to allow exit on subsequent ticks
+            return cached
         self._last_check[symbol] = current_time
 
-        # Get setup type and category
-        setup_type = plan.get("setup_type", "unknown")
+        # Get setup type and category (plan may have "setup_type" or "strategy")
+        setup_type = plan.get("setup_type") or plan.get("strategy", "unknown")
         category = classify_setup_category(setup_type)
 
         # Get entry-time indicators from plan
         entry_indicators = plan.get("indicators", {})
-        entry_price = float(plan.get("entry", plan.get("entry_price", current_price)))
+        # Get entry price: prefer actual_entry (fill price), then entry_ref_price (planned entry),
+        # then entry.reference (from entry dict), finally fall back to current_price
+        entry_dict = plan.get("entry", {})
+
+        # Track which source provided entry price for debugging
+        entry_price = float(current_price)  # Default fallback
+        entry_price_source = "current_price_FALLBACK"
+        try:
+            if plan.get("actual_entry"):
+                entry_price = float(plan.get("actual_entry"))
+                entry_price_source = "actual_entry"
+            elif plan.get("entry_ref_price"):
+                entry_price = float(plan.get("entry_ref_price"))
+                entry_price_source = "entry_ref_price"
+            elif isinstance(entry_dict, dict) and entry_dict.get("reference"):
+                entry_price = float(entry_dict.get("reference"))
+                entry_price_source = "entry.reference"
+        except (ValueError, TypeError):
+            pass  # Keep default fallback
 
         # Calculate current indicators if df_5m provided
         current_indicators = self._calculate_current_indicators(df_5m) if df_5m is not None else {}
@@ -306,19 +355,161 @@ class PositionThesisMonitor:
             self.breakout_exit_threshold if category == "breakout"
             else self.reversion_exit_threshold
         )
-        should_exit = combined_score < threshold
+
+        # Check if score is below threshold
+        score_below_threshold = combined_score < threshold
+
+        # Track consecutive failures - require multiple before triggering exit
+        if score_below_threshold:
+            self._consecutive_failures[symbol] = self._consecutive_failures.get(symbol, 0) + 1
+        else:
+            self._consecutive_failures[symbol] = 0  # Reset on healthy check
+
+        consecutive_count = self._consecutive_failures.get(symbol, 0)
+
+        # Filter 1: Require consecutive failures
+        should_exit = (score_below_threshold and
+                       consecutive_count >= self.consecutive_failures_required)
+
+        # Filter 5: Reversion progressing - if price closer to target, don't exit
+        if should_exit and category == "reversion":
+            # Get T1 using standard format: plan["targets"][0]["level"]
+            targets = plan.get("targets") or []
+            t1_price = None
+            if len(targets) > 0:
+                try:
+                    t1_price = float(targets[0].get("level"))
+                except (KeyError, TypeError, ValueError):
+                    pass
+            if t1_price is not None:
+                entry_to_target = abs(entry_price - t1_price)
+                current_to_target = abs(current_price - t1_price)
+                if current_to_target < entry_to_target * 0.9:  # 10% closer to target
+                    should_exit = False  # Trade progressing, let it run
+                    if self.log:
+                        self.log.info(
+                            f"[ThesisMonitor] {symbol} SKIP_EXIT reversion progressing "
+                            f"(entry_dist={entry_to_target:.2f} > curr_dist={current_to_target:.2f})"
+                        )
+
+        # TIME-BASED INVALIDATION for reversion trades (research: Alvarez Quant Trading)
+        # Progressive time checks - stricter thresholds as time passes
+        time_based_exit = False
+        if category == "reversion" and tick_ts is not None:
+            # Get entry time - try multiple sources (matching exit_executor field names)
+            entry_time_str = (
+                plan.get("entry_ts") or
+                plan.get("trigger_ts") or
+                plan.get("entry_time") or
+                plan.get("fill_time") or
+                plan.get("_state", {}).get("entry_time")
+            )
+            if not entry_time_str:
+                # Log once per symbol when entry time not found
+                if self.log and symbol not in getattr(self, '_time_warn_logged', set()):
+                    if not hasattr(self, '_time_warn_logged'):
+                        self._time_warn_logged = set()
+                    self._time_warn_logged.add(symbol)
+                    self.log.info(
+                        f"[ThesisMonitor] {symbol} NO_ENTRY_TIME | "
+                        f"plan_keys={list(plan.keys())[:10]}"
+                    )
+            if entry_time_str:
+                try:
+                    # Parse entry time
+                    if isinstance(entry_time_str, str):
+                        entry_ts = pd.Timestamp(entry_time_str)
+                    else:
+                        entry_ts = pd.Timestamp(entry_time_str)
+
+                    # Calculate time in trade (minutes)
+                    time_in_trade_mins = (tick_ts - entry_ts).total_seconds() / 60
+
+                    # Calculate progress toward target
+                    targets = plan.get("targets") or []
+                    t1_price = None
+                    if len(targets) > 0:
+                        try:
+                            t1_price = float(targets[0].get("level"))
+                        except (KeyError, TypeError, ValueError):
+                            pass
+
+                    progress_pct = 0.0
+                    if t1_price is not None:
+                        entry_to_target = abs(entry_price - t1_price)
+                        current_to_target = abs(current_price - t1_price)
+                        if entry_to_target > 0:
+                            progress_pct = (entry_to_target - current_to_target) / entry_to_target * 100
+
+                    # PROGRESSIVE TIME CHECKS - stricter thresholds as time passes
+                    # Calculate how many intervals past the base time
+                    if time_in_trade_mins > self.reversion_max_hold_minutes:
+                        time_past_base = time_in_trade_mins - self.reversion_max_hold_minutes
+                        intervals_past = int(time_past_base / self.reversion_time_check_interval)
+
+                        # Progressive thresholds: base + (intervals × increment)
+                        required_progress = min(
+                            self.reversion_min_progress_pct + (intervals_past * self.reversion_progress_increment),
+                            70.0  # Cap at 70%
+                        )
+                        required_score = min(
+                            threshold + (intervals_past * self.reversion_score_increment),
+                            0.80  # Cap score threshold at 0.80
+                        )
+
+                        # Force exit after reversion_force_exit_minutes regardless of score
+                        force_exit = time_in_trade_mins >= self.reversion_force_exit_minutes
+
+                        # Log time in trade at each interval boundary
+                        if self.log and int(time_past_base) % int(self.reversion_time_check_interval) < 1:
+                            self.log.info(
+                                f"[ThesisMonitor] {symbol} TIME_CHECK | "
+                                f"time={time_in_trade_mins:.0f}min | intervals={intervals_past} | "
+                                f"progress={progress_pct:.1f}% (need {required_progress:.0f}%) | "
+                                f"score={combined_score:.2f} (need <{required_score:.2f})"
+                            )
+
+                        # Exit conditions:
+                        # 1. Force exit after max time
+                        # 2. Progress below threshold AND score below threshold
+                        if force_exit and progress_pct < 70.0:
+                            time_based_exit = True
+                            should_exit = True
+                            if self.log:
+                                self.log.warning(
+                                    f"[ThesisMonitor] {symbol} TIME_FORCE_EXIT | "
+                                    f"time={time_in_trade_mins:.0f}min >= {self.reversion_force_exit_minutes}min | "
+                                    f"progress={progress_pct:.1f}% < 70%"
+                                )
+                        elif progress_pct < required_progress and combined_score < required_score:
+                            time_based_exit = True
+                            should_exit = True
+                            if self.log:
+                                self.log.warning(
+                                    f"[ThesisMonitor] {symbol} TIME_BASED_EXIT | "
+                                    f"time={time_in_trade_mins:.0f}min (interval {intervals_past}) | "
+                                    f"progress={progress_pct:.1f}% < {required_progress:.0f}% | "
+                                    f"score={combined_score:.2f} < {required_score:.2f}"
+                                )
+                except Exception as e:
+                    if self.log:
+                        self.log.info(f"[ThesisMonitor] {symbol} TIME_CHECK_ERROR | {e}")
 
         exit_reason = None
         if should_exit:
-            # Determine primary reason for exit
-            scores = [
-                (momentum.score, "momentum_degraded"),
-                (volume.score, "volume_dried_up"),
-                (structure.score, "structure_breached"),
-                (target.score, "target_unreachable"),
-            ]
-            worst = min(scores, key=lambda x: x[0])
-            exit_reason = f"thesis_failed_{worst[1]}_score{combined_score:.2f}"
+            if time_based_exit:
+                # Time-based exit takes precedence
+                exit_reason = f"thesis_failed_time_exceeded_score{combined_score:.2f}"
+            else:
+                # Determine primary reason for exit based on lowest score
+                scores = [
+                    (momentum.score, "momentum_degraded"),
+                    (volume.score, "volume_dried_up"),
+                    (structure.score, "structure_breached"),
+                    (target.score, "target_unreachable"),
+                ]
+                worst = min(scores, key=lambda x: x[0])
+                exit_reason = f"thesis_failed_{worst[1]}_score{combined_score:.2f}"
 
         health = ThesisHealth(
             combined_score=combined_score,
@@ -376,19 +567,30 @@ class PositionThesisMonitor:
                     f"  PRIMARY_FACTORS: {', '.join(failing_components) if failing_components else 'combined_degradation'}"
                 )
             else:
-                # Brief log for healthy positions
-                self.log.debug(
+                # Brief log for healthy positions (INFO for analysis, can revert to DEBUG later)
+                has_current = bool(current_indicators)
+                self.log.info(
                     f"[ThesisMonitor] {symbol} | {setup_type} ({category}) | "
                     f"Score: {combined_score:.2f} (threshold={threshold}) | "
                     f"M={momentum.score:.2f} V={volume.score:.2f} "
-                    f"S={structure.score:.2f} T={target.score:.2f} | OK"
+                    f"S={structure.score:.2f} T={target.score:.2f} | "
+                    f"entry={entry_price:.2f} current={current_price:.2f} ({entry_price_source}) | "
+                    f"{'LIVE' if has_current else 'DEFAULTS'}"
                 )
 
+        # Cache health result for rate-limited checks
+        self._last_health[symbol] = health
         return health
 
     def _calculate_current_indicators(self, df_5m: pd.DataFrame) -> Dict[str, float]:
         """Calculate current indicators from 5m bars."""
-        if df_5m is None or len(df_5m) < 14:
+        if df_5m is None:
+            if self.log:
+                self.log.debug("[ThesisMonitor] df_5m is None - using defaults")
+            return {}
+        if len(df_5m) < 14:
+            if self.log:
+                self.log.debug(f"[ThesisMonitor] df_5m has {len(df_5m)} bars (<14) - using defaults")
             return {}
 
         try:
@@ -469,27 +671,40 @@ class PositionThesisMonitor:
             notes = "; ".join(notes_parts) if notes_parts else "momentum_healthy"
 
         else:  # reversion
-            # Reversions benefit from exhaustion fading
+            # Reversions: RSI should move TOWARD neutral from entry extreme
+            # Thesis fails if RSI moves AWAY from neutral (wrong direction)
+            rsi_entry = float(entry_indicators.get("rsi", 50))
             score = 1.0
             notes_parts = []
 
-            # RSI should be moving toward neutral (away from extremes)
             if side_upper == "BUY":
-                # Long reversion: RSI should be recovering from oversold
-                if rsi_current < 30:
-                    score -= 0.1  # Still oversold - might continue
-                    notes_parts.append("RSI_still_oversold")
-                elif rsi_current > 70:
-                    score -= 0.4  # Overbought - reversal thesis failing
-                    notes_parts.append("RSI_overbought_thesis_failed")
+                # Long reversion from oversold: RSI should RISE toward neutral
+                # Thesis fails if RSI drops further (more oversold = wrong direction)
+                if rsi_current < rsi_entry - 10:
+                    # RSI dropped 10+ points from entry = going wrong direction
+                    score -= 0.4
+                    notes_parts.append(f"RSI_dropping({rsi_entry:.0f}->{rsi_current:.0f})")
+                elif rsi_current < 30 and rsi_entry < 35:
+                    # Still deeply oversold with no progress
+                    score -= 0.2
+                    notes_parts.append("RSI_stuck_oversold")
+                elif rsi_current > rsi_entry + 15:
+                    # RSI rose 15+ points = reversion working well
+                    notes_parts.append(f"RSI_recovering({rsi_entry:.0f}->{rsi_current:.0f})")
             else:
-                # Short reversion: RSI should be declining from overbought
-                if rsi_current > 70:
-                    score -= 0.1  # Still overbought - might continue
-                    notes_parts.append("RSI_still_overbought")
-                elif rsi_current < 30:
-                    score -= 0.4  # Oversold - reversal thesis failing
-                    notes_parts.append("RSI_oversold_thesis_failed")
+                # Short reversion from overbought: RSI should FALL toward neutral
+                # Thesis fails if RSI rises further (more overbought = wrong direction)
+                if rsi_current > rsi_entry + 10:
+                    # RSI rose 10+ points from entry = going wrong direction
+                    score -= 0.4
+                    notes_parts.append(f"RSI_rising({rsi_entry:.0f}->{rsi_current:.0f})")
+                elif rsi_current > 70 and rsi_entry > 65:
+                    # Still deeply overbought with no progress
+                    score -= 0.2
+                    notes_parts.append("RSI_stuck_overbought")
+                elif rsi_current < rsi_entry - 15:
+                    # RSI fell 15+ points = reversion working well
+                    notes_parts.append(f"RSI_declining({rsi_entry:.0f}->{rsi_current:.0f})")
 
             notes = "; ".join(notes_parts) if notes_parts else "reversion_progressing"
 
@@ -540,16 +755,20 @@ class PositionThesisMonitor:
             notes = "; ".join(notes_parts) if notes_parts else "volume_healthy"
 
         else:  # reversion
-            # Volume exhaustion is expected for reversions
-            score = 0.8  # Start with good score (volume decline is OK)
+            # Volume exhaustion is expected for reversions - don't penalize decline
+            # Only penalize if volume SURGES against the thesis (institutional push against you)
+            score = 1.0
             notes_parts = []
 
-            # Only penalize if volume surges AGAINST the reversion
             if vol_ratio_current > vol_ratio_entry * 1.5:
-                score -= 0.3
-                notes_parts.append("volume_surge_against_thesis")
+                # 50%+ volume increase = someone pushing against your reversion thesis
+                score -= 0.4
+                notes_parts.append(f"volume_surge_against({vol_ratio_entry:.1f}->{vol_ratio_current:.1f})")
+            elif vol_ratio_current < vol_ratio_entry * 0.3:
+                # Volume dried up significantly - neutral, reversion may stall
+                notes_parts.append("volume_exhausted")
 
-            notes = "; ".join(notes_parts) if notes_parts else "volume_exhaustion_expected"
+            notes = "; ".join(notes_parts) if notes_parts else "volume_ok_for_reversion"
 
         return VolumeHealth(
             score=max(0, min(1, score)),
@@ -575,7 +794,7 @@ class PositionThesisMonitor:
         Breakout trades: Check if breakout level is holding
         Reversion trades: Check if reversal structure is intact
         """
-        setup_type = plan.get("setup_type", "")
+        setup_type = plan.get("setup_type") or plan.get("strategy", "")
         levels = plan.get("levels", {})
         atr_entry = float(plan.get("indicators", {}).get("atr", 1.0))
         side_upper = side.upper()
@@ -638,22 +857,54 @@ class PositionThesisMonitor:
         else:  # reversion
             # Reversion: Check if counter-move is progressing
             # Price should be moving toward VWAP/mean, not away
-            vwap = levels.get("vwap") or levels.get("VWAP")
+            # Get VWAP - prefer current VWAP from df_5m, fallback to entry-time VWAP
+            indicators = plan.get("indicators", {})
+            entry_vwap = levels.get("vwap") or levels.get("VWAP") or indicators.get("vwap") or indicators.get("VWAP")
+
+            # Try to get current VWAP from df_5m
+            current_vwap = None
+            if df_5m is not None and len(df_5m) > 0 and "vwap" in df_5m.columns:
+                current_vwap = float(df_5m["vwap"].iloc[-1])
+
+            # Use current VWAP for comparison, fallback to entry VWAP
+            vwap = current_vwap if current_vwap is not None else entry_vwap
 
             if vwap is not None:
-                # Check if moving toward VWAP
+                # Check if moving toward VWAP using ATR-based breach threshold
                 entry_to_vwap = abs(entry_price - vwap)
                 current_to_vwap = abs(current_price - vwap)
 
-                if current_to_vwap > entry_to_vwap * 1.2:
-                    # Moving away from VWAP - thesis failing
+                # ATR-based breach: price moved X ATR further from VWAP than at entry
+                breach_threshold = atr_entry * self.reversion_vwap_breach_atr_mult
+                distance_increase = current_to_vwap - entry_to_vwap
+
+                # Log VWAP comparison for reversion trades
+                if self.log:
+                    self.log.info(
+                        f"[ThesisMonitor] {symbol} VWAP_CHECK | "
+                        f"entry={entry_price:.2f} current={current_price:.2f} vwap={vwap:.2f} | "
+                        f"entry_dist={entry_to_vwap:.2f} curr_dist={current_to_vwap:.2f} | "
+                        f"increase={distance_increase:.2f} threshold={breach_threshold:.2f} ({self.reversion_vwap_breach_atr_mult}xATR)"
+                    )
+
+                if distance_increase > breach_threshold:
+                    # Moving away from VWAP by more than threshold ATR - thesis failing
                     score -= 0.4
                     breach_detected = True
-                    breach_reason = "moving_away_from_vwap"
+                    breach_reason = f"moving_away_from_vwap_{distance_increase/atr_entry:.1f}xATR"
                     notes_parts.append("reversion_failing_away_from_mean")
                 elif current_to_vwap < entry_to_vwap * 0.5:
-                    # Good progress toward VWAP
+                    # Good progress toward VWAP (50%+ closer)
                     notes_parts.append("reversion_progressing_well")
+            else:
+                # No VWAP available - can't assess reversion structure
+                notes_parts.append("no_vwap_available")
+                if self.log:
+                    self.log.info(
+                        f"[ThesisMonitor] {symbol} NO_VWAP | "
+                        f"levels_keys={list(levels.keys())} indicators_keys={list(indicators.keys())} | "
+                        f"entry_vwap={entry_vwap} current_vwap={current_vwap}"
+                    )
 
         notes = "; ".join(notes_parts) if notes_parts else "structure_intact"
 
@@ -722,7 +973,7 @@ class PositionThesisMonitor:
             )
 
         # Estimate bars to reach target at current ATR pace
-        bars_at_current_pace = distance_to_target / max(atr_current * 0.5, 0.01)  # Assume 0.5 ATR per bar average
+        bars_at_current_pace = distance_to_target / max(atr_current * self.expected_atr_per_bar, 0.01)
 
         # Calculate score
         score = 1.0
@@ -771,22 +1022,11 @@ class PositionThesisMonitor:
         Breakouts: Higher weight on momentum and structure
         Reversions: Higher weight on structure and target
         """
+        # Use category-specific weights from config
         if category == "breakout":
-            # Breakouts: momentum and structure are critical
-            weights = {
-                "momentum": 0.35,
-                "volume": 0.20,
-                "structure": 0.30,
-                "target": 0.15,
-            }
-        else:  # reversion
-            # Reversions: structure (mean reversion progress) is critical
-            weights = {
-                "momentum": 0.20,
-                "volume": 0.15,
-                "structure": 0.40,
-                "target": 0.25,
-            }
+            weights = self.breakout_weights
+        else:  # reversion (includes LEVEL and REVERSION categories)
+            weights = self.reversion_weights
 
         combined = (
             momentum.score * weights["momentum"] +
@@ -795,9 +1035,13 @@ class PositionThesisMonitor:
             target.score * weights["target"]
         )
 
-        # Penalty for any critical failure (structure breach)
+        # Penalty for critical failure (structure breach)
+        # Apply different caps per category - breakout needs hard exit, reversion softer
         if structure.breach_detected:
-            combined = min(combined, 0.35)
+            if category == "breakout":
+                combined = min(combined, self.breakout_structure_breach_cap)  # Hard cap at 0.35
+            elif category == "reversion":
+                combined = min(combined, self.reversion_structure_breach_cap)  # Softer cap at 0.50
 
         return max(0, min(1, combined))
 
@@ -805,5 +1049,9 @@ class PositionThesisMonitor:
         """Clear check cache for a symbol or all symbols."""
         if symbol:
             self._last_check.pop(symbol, None)
+            self._last_health.pop(symbol, None)
+            self._consecutive_failures.pop(symbol, None)
         else:
             self._last_check.clear()
+            self._consecutive_failures.clear()
+            self._last_health.clear()

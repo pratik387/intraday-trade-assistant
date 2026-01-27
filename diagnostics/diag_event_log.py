@@ -375,6 +375,56 @@ class _EventWriter:
         self._emit(ev)
         return tid
 
+    def log_thesis_exit(
+        self,
+        *,
+        symbol: str,
+        trade_id: str,
+        ts: Any = None,
+        setup_type: str,
+        category: str,
+        combined_score: float,
+        threshold: float,
+        momentum_score: float,
+        volume_score: float,
+        structure_score: float,
+        target_score: float,
+        entry_indicators: Dict[str, Any],
+        current_indicators: Dict[str, Any],
+        primary_factors: list,
+        exit_reason: str,
+    ) -> str:
+        """
+        THESIS_EXIT event - logged when position thesis monitoring triggers an exit.
+        Captures all indicator comparisons for analysis.
+        """
+        ev = {
+            "schema_version": SCHEMA_VERSION,
+            "type": "THESIS_EXIT",
+            "run_id": self.run_id,
+            "trade_id": trade_id,
+            "symbol": symbol,
+            "ts": _iso(ts),
+            "thesis": {
+                "setup_type": setup_type,
+                "category": category,
+                "combined_score": round(combined_score, 3),
+                "threshold": threshold,
+                "scores": {
+                    "momentum": round(momentum_score, 3),
+                    "volume": round(volume_score, 3),
+                    "structure": round(structure_score, 3),
+                    "target": round(target_score, 3),
+                },
+                "entry_indicators": _json_coerce(entry_indicators),
+                "current_indicators": _json_coerce(current_indicators),
+                "primary_factors": primary_factors,
+                "exit_reason": exit_reason,
+            },
+        }
+        self._emit(ev)
+        return trade_id
+
 
 # ---------------------- thread-local proxy ----------------------
 _tls = threading.local()

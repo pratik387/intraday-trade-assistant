@@ -949,6 +949,8 @@ class ScreenerLive:
                     "orl": (plan.get("levels") or {}).get("ORL"),
                     "decision_ts": plan["decision_ts"],
                     "strategy": plan.get("strategy", ""),
+                    "setup_type": plan.get("setup_type", ""),  # For thesis monitor category classification
+                    "indicators": plan.get("indicators", {}),  # For thesis monitor entry indicators (adx, atr, rsi, vwap)
                 },
                 "meta": plan,
             }

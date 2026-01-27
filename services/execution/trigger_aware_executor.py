@@ -317,6 +317,10 @@ class TriggerAwareExecutor:
                     trade.plan, price, side
                 )
 
+                # Add entry timestamp for thesis monitoring time-based exit
+                if trade.trigger_timestamp:
+                    adjusted_plan["entry_ts"] = str(trade.trigger_timestamp)
+
                 pos = Position(
                     symbol=symbol,
                     side=side,

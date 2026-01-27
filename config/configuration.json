@@ -1805,10 +1805,8 @@
   "_comment_trail_time": "PHASE 3: Tighten trail after 2:30 PM when NSE liquidity drops",
   "exit_trail_atr_mult_late": 1.5,
   "_comment_trail_late": "PHASE 3: Tighter 1.5\u00c3\u2014 ATR trail after 14:30",
-  "exit_time_stop_min": 30.0,
+  "exit_time_stop_min": 0,
   "exit_time_stop_req_rr": 0.4,
-  "exit_score_drop_enabled": true,
-  "exit_score_drop_bpct": 30.0,
   "_comment_thesis_monitoring": "=== POSITION THESIS MONITORING ===",
   "thesis_monitoring": {
     "_comment": "Automated system to monitor if original trade thesis remains valid during position lifetime",
@@ -1837,7 +1835,9 @@
       "_reference": "If candle closes back inside OR = failed breakout (Crabel, pro traders exit immediately)",
       "orb_back_inside_or_auto_exit": true,
       "breakout_reversal_atr_mult": 2.0,
-      "_comment_atr": "2x ATR adverse move = thesis invalidated (standard intraday trailing stop multiplier)"
+      "_comment_atr": "2x ATR adverse move = thesis invalidated (standard intraday trailing stop multiplier)",
+      "reversion_vwap_breach_atr_mult": 0.5,
+      "_comment_vwap": "Reversion thesis fails if price moves 0.5 ATR further from VWAP than at entry"
     },
     "target_reachability": {
       "_comment": "ATR-based target probability assessment",
@@ -1845,19 +1845,45 @@
       "atr_expansion_factor": 1.5,
       "_comment_expansion": "If current ATR < entry ATR / 1.5, volatility has contracted - targets less reachable",
       "min_time_to_target_minutes": 10,
-      "_comment_time": "ORB trades should hit T1 within first 2 hours (pro standard: exit if stalled)"
+      "_comment_time": "ORB trades should hit T1 within first 2 hours (pro standard: exit if stalled)",
+      "expected_atr_per_bar": 0.5,
+      "_comment_atr_per_bar": "Expected price movement per 5-min bar as fraction of ATR. 0.5 = half ATR per bar on average."
     },
     "breakout_exit_threshold": 0.45,
     "_comment_breakout_threshold": "0.45 = exit when thesis is <45% healthy. Conservative for breakouts (need momentum)",
-    "reversion_exit_threshold": 0.40,
-    "_comment_reversion_threshold": "0.40 = exit when thesis is <40% healthy. Slightly more tolerant (reversions take time)",
-    "weights": {
-      "_comment": "Weights based on what matters most per category (institutional research)",
-      "_reference": "Breakouts: momentum+structure critical. Reversions: structure+target critical.",
+    "breakout_structure_breach_cap": 0.35,
+    "_comment_breakout_breach_cap": "Cap score to 0.35 when breakout structure breached (forces exit).",
+    "reversion_structure_breach_cap": 0.50,
+    "_comment_reversion_breach_cap": "Cap score to 0.50 when reversion structure breached. Below 0.55 threshold = exit after 3 failures.",
+    "reversion_exit_threshold": 0.55,
+    "_comment_reversion_threshold": "0.55 = exit when thesis is <55% healthy. More aggressive to reduce SL hits.",
+    "reversion_max_hold_minutes": 45,
+    "_comment_reversion_time": "RESEARCH: Time-based exit for mean reversion. Exit after 45 min if no progress.",
+    "reversion_min_progress_pct": 30,
+    "_comment_progress": "Base minimum % progress toward target at first check (45 min)",
+    "reversion_time_check_interval": 15,
+    "_comment_interval": "Check every 15 min after base time with stricter thresholds",
+    "reversion_progress_increment": 10,
+    "_comment_progress_incr": "Increase progress requirement by 10% each interval (30->40->50->60->70)",
+    "reversion_score_increment": 0.05,
+    "_comment_score_incr": "Increase score threshold by 0.05 each interval (0.55->0.60->0.65->0.70)",
+    "reversion_force_exit_minutes": 120,
+    "_comment_force": "Force exit after 120 min if progress < 70% regardless of score",
+    "consecutive_failures_required": 3,
+    "_comment_consecutive": "Require N consecutive failed checks before triggering exit (avoids noise)",
+    "weights_breakout": {
+      "_comment": "Breakout: momentum+structure critical, need momentum continuation",
       "momentum": 0.30,
-      "volume": 0.20,
+      "volume": 0.25,
       "structure": 0.30,
-      "target": 0.20
+      "target": 0.15
+    },
+    "weights_reversion": {
+      "_comment": "Reversion: target progress matters, structure dips expected (Sutherland Research)",
+      "momentum": 0.15,
+      "volume": 0.20,
+      "structure": 0.20,
+      "target": 0.45
     }
   },
   "breakout_short_risk_control": true,
@@ -2357,9 +2383,7 @@
     "generic_long_from_support_bounce_long": "range_bound"
   },
   "exits": {
-    "score_drop_enabled": true,
-    "score_drop_bpct": 30.0,
-    "time_stop_min": 45.0,
+    "time_stop_min": 0,
     "time_stop_req_rr": 0.5,
     "breakout_short_risk_control": true,
     "breakout_short_initial_stop_mult": 0.7,

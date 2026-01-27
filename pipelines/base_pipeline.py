@@ -1962,6 +1962,7 @@ class BasePipeline(ABC):
                 "adx": round(adx_val, 1) if adx_val else None,
                 "rsi": round(rsi_val, 1) if rsi_val else None,
                 "vwap": round(vwap_val, 2) if vwap_val else None,
+                "volume_ratio": round(volume_ratio, 2),  # For thesis monitor volume health
             },
 
             "levels": levels,
