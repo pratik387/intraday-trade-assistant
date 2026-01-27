@@ -21,7 +21,6 @@ import signal
 import argparse
 import threading
 from typing import Optional
-from threading import Lock
 import pandas as pd
 
 from config.logging_config import get_agent_logger, get_trading_logger
@@ -38,6 +37,9 @@ from services.state import PositionPersistence, BrokerReconciliation, validate_p
 from services.state.daily_cache_persistence import DailyCachePersistence
 from pipelines.base_pipeline import set_base_config_override, load_base_config
 from api import get_api_server, SessionState
+
+# Shared LTP cache (supports multi-instance trading via Redis)
+from market_data import SharedLTPCache
 
 # Dry-run adapter (patched MockBroker with LTP cache + Feather replay)
 from broker.mock.mock_broker import MockBroker
@@ -147,39 +149,25 @@ class _PositionStore:
 
 
 # ------------------------ LTP cache (tick clock) ------------------------
+# Uses SharedLTPCache which supports multi-instance trading via Redis.
+# Mode is determined by market_data_bus.ltp_mode in configuration.json:
+#   - standalone: local-only cache (default, backward compatible)
+#   - publisher: writes to local AND Redis (LIVE mode)
+#   - subscriber: reads from Redis only (PAPER mode with shared data)
 
-class LTPCache:
-    """
-    Thread-safe LTP cache with optional WebSocket broadcasting.
-    Uses LTPBatcher for throttled broadcasts to prevent flooding clients.
-    """
-    def __init__(self, ltp_batcher=None):
-        self._d = {}
-        self._lock = Lock()
-        self._ltp_batcher = ltp_batcher  # For throttled WS broadcasts
+def _create_ltp_cache() -> SharedLTPCache:
+    """Create LTP cache based on market_data_bus config."""
+    try:
+        cfg = load_filters()
+        mdb_config = cfg.get("market_data_bus", {})
+        mode = mdb_config.get("ltp_mode", "standalone")
+        redis_url = mdb_config.get("redis_url", "redis://localhost:6379/0")
+        return SharedLTPCache(mode=mode, redis_url=redis_url)
+    except Exception:
+        # Fallback to standalone mode if config loading fails
+        return SharedLTPCache(mode="standalone")
 
-    def set_ltp_batcher(self, batcher):
-        """Set LTP batcher for WebSocket broadcasts."""
-        self._ltp_batcher = batcher
-
-    def update(self, symbol: str, ltp: float, ts: pd.Timestamp):
-        with self._lock:
-            self._d[symbol] = (float(ltp), pd.Timestamp(ts))
-        # Queue LTP update for batched broadcast
-        if self._ltp_batcher:
-            self._ltp_batcher.update(symbol, float(ltp), str(ts))
-
-    def get_ltp(self, symbol: str):
-        with self._lock:
-            tup = self._d.get(symbol)
-            return float(tup[0]) if tup else None
-
-    def get_ltp_ts(self, symbol: str):
-        with self._lock:
-            tup = self._d.get(symbol)
-            return tup if tup else (None, None)
-
-ltp_cache = LTPCache()
+ltp_cache = _create_ltp_cache()
 
 
 # ------------------------ Dry-run broker wrapper ------------------------
@@ -448,6 +436,20 @@ def main() -> int:
             logger.warning(f"[STARTUP] Failed to upload pending sessions: {e}")
 
     cfg = load_filters()  # validate early; raises if required keys are missing
+
+    # Enable shared market data (subscribe to Market Data Service via Redis)
+    if args.shared_market_data:
+        if "market_data_bus" not in cfg:
+            cfg["market_data_bus"] = {}
+        cfg["market_data_bus"]["mode"] = "subscriber"
+        cfg["market_data_bus"]["ltp_mode"] = "subscriber"
+        logger.info("[MARKET_DATA] Shared mode: subscribing to Market Data Service via Redis")
+
+        # Reinitialize global ltp_cache in subscriber mode
+        global ltp_cache
+        redis_url = cfg["market_data_bus"].get("redis_url", "redis://localhost:6379/0")
+        ltp_cache = SharedLTPCache(mode="subscriber", redis_url=redis_url)
+        logger.info("[MARKET_DATA] LTP cache in subscriber mode")
 
     # Apply structure caching if requested (monkey-patches TradeDecisionGate.evaluate)
     # Also set flag in config so worker processes can enable caching
@@ -879,6 +881,9 @@ def _parse_args():
                     help="Risk calculation mode: 'fixed' for fixed Rs. amount, 'percentage' for %% of capital")
     ap.add_argument("--risk-value", type=float, default=None,
                     help="Risk value: Rs. amount if mode=fixed (e.g., 1000), or decimal %% if mode=percentage (e.g., 0.01 for 1%%)")
+    # Shared market data (subscribe to standalone Market Data Service)
+    ap.add_argument("--shared-market-data", action="store_true",
+                    help="Subscribe to Market Data Service via Redis (requires: python -m market_data.market_data_service)")
     return ap.parse_args()
 
 

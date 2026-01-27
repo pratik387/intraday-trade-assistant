@@ -56,6 +56,9 @@ from services.ingest.subscription_manager import SubscriptionManager
 from services.ingest.bar_builder import BarBuilder
 from services.ingest.tick_router import TickRouter
 
+# market data bus (shared tick/bar distribution for multi-instance trading)
+from market_data.factory import create_market_data_components
+
 # gates
 from services.gates.regime_gate import MarketRegimeGate
 from services.gates.event_policy_gate import EventPolicyGate
@@ -200,24 +203,37 @@ class ScreenerLive:
         # Timestamp tracking for logging throttle
         self._last_logged_timestamp = None
 
-        # Core ingest / aggregation
-        self.agg = BarBuilder(
-            bar_5m_span_minutes=5,
+        # Market data bus mode (standalone/publisher/subscriber)
+        mdb_config = raw.get("market_data_bus", {})
+        self._market_data_mode = mdb_config.get("mode", "standalone")
+
+        # Core ingest / aggregation - use factory for mode-aware component creation
+        self.agg, self._shared_ltp_cache, self._market_data_bus = create_market_data_components(
+            config=raw,
             on_1m_close=self._on_1m_close,
             on_5m_close=self._on_5m_close,
             on_15m_close=self._on_15m_close,
             index_symbols=self._index_symbols(),
         )
-        self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
-        self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
-        self.ws.on_message(self.router.handle_raw)
-        # Register on_close to trigger clean exit when replay ends (DRY_RUN only)
-        # In live/paper mode, WebSocket drops are handled by Kite SDK auto-reconnect
-        if env.DRY_RUN:
-            self.ws.on_close(lambda: self._handle_eod())  # Replay ended = EOD shutdown
+
+        # WebSocket and tick routing (only needed in standalone/publisher mode)
+        # In subscriber mode, bars come from Redis - no direct WebSocket connection
+        if self._market_data_mode == "subscriber":
+            logger.info("SCREENER | Subscriber mode: bars will come from Redis, no WebSocket")
+            self.ws = None
+            self.router = None
+            self.subs = None
         else:
-            self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
-        self.subs = SubscriptionManager(self.ws)
+            self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
+            self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
+            self.ws.on_message(self.router.handle_raw)
+            # Register on_close to trigger clean exit when replay ends (DRY_RUN only)
+            # In live/paper mode, WebSocket drops are handled by Kite SDK auto-reconnect
+            if env.DRY_RUN:
+                self.ws.on_close(lambda: self._handle_eod())  # Replay ended = EOD shutdown
+            else:
+                self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
+            self.subs = SubscriptionManager(self.ws)
 
         # Gates - Use MainDetector directly for structure detection
         self.detector = MainDetector(raw)
@@ -299,7 +315,13 @@ class ScreenerLive:
     # Public API
     # ---------------------------------------------------------------------
     def start(self) -> None:
-        """Connect WS and subscribe the core universe."""
+        """Connect WS and subscribe the core universe (or start subscriber for shared data mode)."""
+        if self._market_data_mode == "subscriber":
+            # Subscriber mode: bars come from Redis via BarSubscriber (already started in factory)
+            logger.info("SCREENER | Subscriber mode started - receiving bars from Redis")
+            return
+
+        # Publisher/standalone mode: connect WebSocket
         self.subs.set_core(self.token_map)
         self.subs.start()
         self.ws.start()
@@ -309,10 +331,26 @@ class ScreenerLive:
         logger.info("WS connected; core subscriptions scheduled: %d symbols", len(self.core_symbols))
 
     def stop(self) -> None:
-        try: self.subs.stop()
-        except Exception: pass
-        try: self.ws.stop()
-        except Exception: pass
+        # Stop WebSocket/subscriptions (if in publisher/standalone mode)
+        if self.subs:
+            try: self.subs.stop()
+            except Exception: pass
+        if self.ws:
+            try: self.ws.stop()
+            except Exception: pass
+
+        # Shutdown market data bus (if active)
+        if self._market_data_bus:
+            try: self._market_data_bus.shutdown()
+            except Exception: pass
+        if self._shared_ltp_cache:
+            try: self._shared_ltp_cache.shutdown()
+            except Exception: pass
+
+        # Shutdown BarSubscriber (if in subscriber mode)
+        if self._market_data_mode == "subscriber" and hasattr(self.agg, 'shutdown'):
+            try: self.agg.shutdown()
+            except Exception: pass
 
         # Shutdown persistent worker pool
         try:

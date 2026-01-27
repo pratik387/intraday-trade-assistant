@@ -2384,5 +2384,16 @@
     "rr_clip_max": 6.0,
     "t1_min_rr": 1.0,
     "_comment": "Option B: Increase measured move caps to 2x and 3x to allow configured 1.5R and 3.0R targets while maintaining structure-based safety"
+  },
+  "_comment_market_data_bus": "=== MARKET DATA BUS (Multi-Instance Trading) ===",
+  "market_data_bus": {
+    "mode": "standalone",
+    "_comment_mode": "standalone=local only (default), subscriber=receive from Market Data Service. Use --shared-market-data flag to enable subscriber mode.",
+    "redis_url": "redis://localhost:6379/0",
+    "publish_1m_bars": false,
+    "_comment_1m": "Only used by Market Data Service (python -m market_data.market_data_service --publish-1m)",
+    "ltp_mode": "standalone",
+    "_comment_ltp_mode": "standalone=local cache, subscriber=read from Redis. Follows 'mode' setting.",
+    "_usage": "1) redis-server  2) python -m market_data.market_data_service  3) python main.py --shared-market-data"
   }
 }
