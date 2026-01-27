@@ -567,15 +567,72 @@ class ExitExecutor:
             logger.exception(f"[API_EXIT] Error processing API exits: {e}")
 
     def _partial_exit_api(self, sym: str, pos, px: float, ts, qty: int, reason: str) -> None:
-        """Handle partial exit from API request."""
-        # Use the existing _place_and_log_exit for proper logging
-        self._place_and_log_exit(sym, pos, px, qty, ts, reason)
-        self.positions.reduce(sym, qty)
+        """Handle partial exit from API request.
 
-        # Update persistence
+        Stores partial exit profit in position state so it's included in total P&L
+        when the remaining position is closed.
+        """
+        current_qty = int(pos.qty)
+        qty_exit = int(min(qty, current_qty))
+
+        if qty_exit <= 0:
+            return
+
+        # Place exit order and get actual fill price
+        actual_exit_px = self._place_and_log_exit(sym, pos, px, qty_exit, ts, reason)
+
+        # Calculate profit for this partial exit
+        entry_price = float(pos.avg_price)
+        if pos.side.upper() == "BUY":
+            partial_profit = qty_exit * (actual_exit_px - entry_price)
+        else:
+            partial_profit = qty_exit * (entry_price - actual_exit_px)
+
+        # Store partial exit profit in position state (like T1 does)
+        # This ensures it's included in total P&L when remaining position closes
+        st = pos.plan.get("_state") or {}
+        existing_partial_profit = st.get("manual_partial_profit", 0) or 0
+        existing_partial_qty = st.get("manual_partial_qty", 0) or 0
+        st["manual_partial_profit"] = existing_partial_profit + partial_profit
+        st["manual_partial_qty"] = existing_partial_qty + qty_exit
+        st["manual_partial_time"] = ts.isoformat() if ts else None
+        pos.plan["_state"] = st
+
+        logger.info(f"[API_EXIT] Partial profit stored: {sym} qty={qty_exit} profit=Rs.{partial_profit:.2f} (cumulative: Rs.{st['manual_partial_profit']:.2f})")
+
+        # Reduce position qty
+        self.positions.reduce(sym, qty_exit)
+
+        # Release partial margin
+        new_qty = current_qty - qty_exit
+        if self.capital_manager:
+            self.capital_manager.reduce_position(sym, qty_exit, new_qty)
+
+        # Update persistence with new qty and state
         if self.persistence:
-            remaining = pos.qty - qty
-            self.persistence.update_position(sym, new_qty=remaining)
+            self.persistence.update_position(sym, new_qty=new_qty, state_updates={"manual_partial_profit": st["manual_partial_profit"]})
+
+        # Log partial closed trade to API server for real-time dashboard
+        if self.api_server:
+            is_shadow = pos.plan.get("shadow", False)
+            partial_trade = {
+                "symbol": sym,
+                "side": pos.side.upper(),
+                "qty": qty_exit,
+                "entry_price": round(entry_price, 2),
+                "exit_price": round(actual_exit_px, 2),
+                "pnl": round(partial_profit, 2),
+                "exit_reason": reason,
+                "setup": pos.plan.get("setup_type", "unknown"),
+                "exit_time": ts.isoformat() if ts else None,
+                "entry_time": pos.plan.get("entry_ts") or pos.plan.get("trigger_ts"),
+                "is_partial": True,  # Flag to identify partial exits
+                "remaining_qty": new_qty,
+                "shadow": is_shadow,
+            }
+            self.api_server.log_closed_trade(partial_trade)
+            if not is_shadow:
+                self.api_server.broadcast_ws("closed_trade", partial_trade)
 
     def run_forever(self, sleep_ms: int = 200) -> None:
         try:
@@ -1477,14 +1534,16 @@ class ExitExecutor:
             # Recalculate PnL using actual broker fill price (not assumed price)
             actual_pnl = qty_now * (actual_exit_px - pos.avg_price) if pos.side.upper() == "BUY" else qty_now * (pos.avg_price - actual_exit_px)
 
-            # Calculate TOTAL trade PnL including any T1 partial exit profit
+            # Calculate TOTAL trade PnL including any partial exit profits (T1 and manual)
             state = pos.plan.get("_state", {})
             t1_profit = state.get("t1_profit", 0) or 0
             t1_booked_qty = state.get("t1_booked_qty", 0) or 0
-            total_pnl = t1_profit + actual_pnl  # T1 partial profit + final exit PnL (using actual broker price)
+            manual_partial_profit = state.get("manual_partial_profit", 0) or 0
+            manual_partial_qty = state.get("manual_partial_qty", 0) or 0
+            total_pnl = t1_profit + manual_partial_profit + actual_pnl  # All partial profits + final exit PnL
 
-            # Use original entry qty (T1 booked + remaining), not just final exit qty
-            original_qty = t1_booked_qty + qty_now
+            # Use original entry qty (all partials + remaining), not just final exit qty
+            original_qty = t1_booked_qty + manual_partial_qty + qty_now
 
             # Get entry time - try multiple sources
             entry_time = (
@@ -1510,6 +1569,7 @@ class ExitExecutor:
                 "t2": round(t2, 2) if t2 else None,
                 "t1_profit": round(t1_profit, 2) if t1_profit else None,  # Breakdown for debugging
                 "t1_exit_time": state.get("t1_exit_time"),  # When T1 was taken
+                "manual_partial_profit": round(manual_partial_profit, 2) if manual_partial_profit else None,  # Manual partial exits
                 "shadow": is_shadow,  # Shadow trade flag (for filtering in dashboard)
             }
             self.api_server.log_closed_trade(closed_trade)
