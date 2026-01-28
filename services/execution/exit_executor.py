@@ -240,22 +240,35 @@ class ExitExecutor:
             # Convert timestamp
             ts_pd = pd.Timestamp(ts) if not isinstance(ts, pd.Timestamp) else ts
 
+            # RACE CONDITION FIX: Check if full exit already in progress
+            st = pos.plan.get("_state") or {}
+            if st.get("exit_pending", False):
+                logger.debug(f"EXIT_SKIP | {symbol} | Exit already pending, skipping tick check")
+                return
+
             # Check SL using tick price directly
             plan_sl = self._get_plan_sl(pos.plan)
             if not math.isnan(plan_sl):
                 if self._breach_sl(pos.side, tick_price, plan_sl):
+                    # Set exit_pending BEFORE placing order to prevent race
+                    st["exit_pending"] = True
+                    pos.plan["_state"] = st
                     logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f}")
                     self._exit(symbol, pos, tick_price, ts_pd, "tick_sl")
                     return
 
             # Check targets using tick price directly
             t1, t2 = self._get_targets(pos.plan)
+            # Re-read state (may have been updated by SL check above)
             st = pos.plan.get("_state") or {}
             t1_done = bool(st.get("t1_done", False))
 
             # T2 (full exit)
             if not math.isnan(t2):
                 if self._target_hit(pos.side, tick_price, t2):
+                    # Set exit_pending BEFORE placing order to prevent race
+                    st["exit_pending"] = True
+                    pos.plan["_state"] = st
                     logger.info(f"TICK_T2_HIT: {symbol} {pos.side} price={tick_price:.2f} t2={t2:.2f}")
                     self._exit(symbol, pos, tick_price, ts_pd, "tick_target_t2")
                     return
@@ -286,6 +299,12 @@ class ExitExecutor:
 
                 # Track MAE/MFE (Maximum Adverse/Favorable Excursion) for exit diagnostics
                 st = pos.plan.get('_state', {})
+
+                # RACE CONDITION FIX: Skip entire bar processing if exit already pending
+                if st.get("exit_pending", False):
+                    logger.info(f"EXIT_SKIP | {sym} | Exit already pending, skipping bar check")
+                    continue
+
                 entry_price = pos.avg_price
                 side = pos.side.upper()
 
@@ -413,6 +432,11 @@ class ExitExecutor:
 
                 # Check SL with intrabar accuracy - broker handles live vs backtest polymorphically
                 if not math.isnan(plan_sl):
+                    # RACE CONDITION FIX: Check if exit already pending from tick-level check
+                    if st.get("exit_pending", False):
+                        logger.info(f"EXIT_SKIP | {sym} | Exit already pending, skipping bar SL check")
+                        continue
+
                     sl_px = self.broker.get_ltp_with_level(sym, check_level=plan_sl)
                     if sl_px is not None and self._breach_sl(pos.side, sl_px, plan_sl):
                         sl_ltp = sl_px
@@ -425,6 +449,10 @@ class ExitExecutor:
                             exit_reason = "sl_post_t1"
                         else:
                             exit_reason = "hard_sl"
+
+                        # Set exit_pending BEFORE placing order to prevent race
+                        st["exit_pending"] = True
+                        pos.plan["_state"] = st
 
                         logger.info(
                             f"SL_BREACH | {sym} | {pos.side} | "
@@ -1446,6 +1474,12 @@ class ExitExecutor:
         return actual_exit_px  # Return actual broker fill price for API logging
 
     def _exit(self, sym: str, pos: Position, exit_px: float, ts: Optional[pd.Timestamp], reason: str) -> None:
+        # EARLY GUARD: Check if position has quantity to exit before any processing
+        # This prevents double exits when multiple threads/paths call _exit() concurrently
+        if pos.qty <= 0:
+            logger.info(f"EXIT_SKIP | {sym} | No qty to exit (pos.qty={pos.qty})")
+            return
+
         # re-read current qty from store just before the full exit
         try:
             cur = self.positions.list_open().get(sym)
