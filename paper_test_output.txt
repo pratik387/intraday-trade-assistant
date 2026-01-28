@@ -1,0 +1,2099 @@
+<frozen runpy>:128: RuntimeWarning: 'testing.paper_test_runner' found in sys.modules after import of package 'testing', but prior to execution of 'testing.paper_test_runner'; this may result in unpredictable behaviour
+2025-12-21 10:29:35,193 [INFO] CheckpointManager initialized: dir=C:\Users\pratikhegde\OneDrive - Nagarro\Desktop\Pratik\intraday-trade-assistant\testing\checkpoints
+2025-12-21 10:29:35,193 [INFO] PaperTestRunner initialized: session_date=2023-12-04, ticks_per_bar=10
+2025-12-21 10:29:35,193 [INFO] Starting paper test run for session_date=2023-12-04
+2025-12-21 10:29:42,535 [INFO] Auto-loading symbols from backtest_20251218-123555_extracted
+2025-12-21 10:29:42,562 [INFO] Loaded 5 symbols from backtest: ['NSE:GALLANTT', 'NSE:JASH', 'NSE:EPL', 'NSE:BLS', 'NSE:MSTCLTD']
+2025-12-21 10:29:42,562 [INFO] Creating MockSDK with 5 symbols for session 2023-12-04...
+2025-12-21 10:29:46,000 [INFO] Initializing ScreenerLive...
+2025-12-21 10:29:46,014 [INFO] ScreenerLive: Persistent worker pool created (2 workers)
+2025-12-21 10:29:46,015 [INFO] Initializing TriggerAwareExecutor...
+2025-12-21 10:29:46,015 [INFO] FastConditionValidator initialized for production trading
+2025-12-21 10:29:46,015 [INFO] TriggerAwareExecutor initialized with unified validation and tick logging
+2025-12-21 10:29:46,015 [INFO] Initializing ExitExecutor...
+2025-12-21 10:29:46,015 [INFO] ExitExecutor initialized with tick-level validation
+2025-12-21 10:29:46,016 [INFO] exit_executor: init eod=15:15 score_drop=True:30.0% time_stop=45.0m@RR<0.5 t1_pct=60.0% t2_pct=40.0% trail=2.0x->1.5x@14:30 sl2be=True
+2025-12-21 10:29:46,016 [INFO] Starting screener (wires WSClient -> MockTicker)...
+2025-12-21 10:29:46,019 [INFO] Subscribed to 5 tokens (total: 5)
+2025-12-21 10:29:46,019 [INFO] subscription-manager: started
+2025-12-21 10:29:46,020 [INFO] WebSocket connected
+2025-12-21 10:29:46,021 [INFO] WS connected; core subscriptions scheduled: 5 symbols
+2025-12-21 10:29:46,021 [INFO] Flushing 5 buffered subscription tokens...
+2025-12-21 10:29:46,021 [INFO] All buffered subscriptions sent
+2025-12-21 10:29:46,522 [INFO] Generating ticks from 1m data...
+2025-12-21 10:29:47,593 [INFO] Generated 17650 ticks from 5 symbols
+2025-12-21 10:29:47,593 [INFO] Injecting 17650 ticks...
+2025-12-21 10:29:47,669 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:15:00 | Stage-0 starting
+2025-12-21 10:29:47,672 [INFO] SCANNER_COMPLETE | Processed 0 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.00s
+2025-12-21 10:29:47,747 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:20:00 | Stage-0 starting
+2025-12-21 10:29:47,800 [INFO] CAP_MAPPING | Loaded market cap data for 1992 symbols
+2025-12-21 10:29:47,824 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 8 shortlisted (160.0%) | Stage-0\u2192Gates | TIME: 0.08s
+2025-12-21 10:29:47,928 [INFO] DATA_PREP_COMPLETE | Prepared 4 symbols | TIME: 0.10s
+<frozen runpy>:128: RuntimeWarning: 'testing.paper_test_runner' found in sys.modules after import of package 'testing', but prior to execution of 'testing.paper_test_runner'; this may result in unpredictable behaviour
+<frozen runpy>:128: RuntimeWarning: 'testing.paper_test_runner' found in sys.modules after import of package 'testing', but prior to execution of 'testing.paper_test_runner'; this may result in unpredictable behaviour
+2025-12-21 10:29:50,935 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 4 symbols, 0 accepted | TIME: 3.01s
+2025-12-21 10:29:50,935 [INFO] GATES_COMPLETE | 8\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:51,018 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:25:00 | Stage-0 starting
+2025-12-21 10:29:51,050 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 10 shortlisted (200.0%) | Stage-0\u2192Gates | TIME: 0.04s
+2025-12-21 10:29:51,130 [INFO] DATA_PREP_COMPLETE | Prepared 5 symbols | TIME: 0.09s
+2025-12-21 10:29:51,147 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 5 symbols, 0 accepted | TIME: 0.01s
+2025-12-21 10:29:51,147 [INFO] GATES_COMPLETE | 10\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:51,238 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:30:00 | Stage-0 starting
+2025-12-21 10:29:51,251 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[51621.0, 20798.0, 1868.0] dist_to_vwap=[0.0012427793518970196, 0.0002757150769601689, -0.0039509296564851975] ret_1=[0.0009276437847867136, -0.00025354969574031827, -0.009620253164556947] vol_persist_ok=[0, 0, 0] vol_ratio=[1.0, 1.0, 1.0] 
+2025-12-21 10:29:51,253 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:51,333 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:35:00 | Stage-0 starting
+2025-12-21 10:29:51,337 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[205833.0, 28677.0, 497.0] dist_to_vwap=[-0.000103550566614926, 0.0010863376268433146, -0.0002798264993644442] ret_1=[-0.005746061167748007, 0.001268069997463872, 0.0005102040816327147] vol_persist_ok=[0, 0, 0] vol_ratio=[1.0, 1.0, 1.0] 
+2025-12-21 10:29:51,337 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:51,419 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:40:00 | Stage-0 starting
+2025-12-21 10:29:51,419 [INFO] ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for all symbols once at 09:40:00 (session_date=2023-12-04)
+2025-12-21 10:29:51,480 [INFO] ORB_CACHE_PERSIST | Saved 5 symbols to disk (5 with valid ORH/ORL, 0.5 KB) in 0.00s
+2025-12-21 10:29:51,483 [INFO] ORB_CACHE | Cached levels for 5 symbols (failed: 0) | Session: 2023-12-04 | Time: 0.05s | This is a ONE-TIME cost - all subsequent bars will use cached values
+2025-12-21 10:29:51,524 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.09s
+2025-12-21 10:29:51,540 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.02s
+2025-12-21 10:29:51,579 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.05s
+2025-12-21 10:29:51,579 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:51,702 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:45:00 | Stage-0 starting
+2025-12-21 10:29:51,722 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[631415.0, 8657.0, 716.0] dist_to_vwap=[0.0028089437225049755, 0.0019009621035543545, 0.0018408453476287424] ret_1=[0.007927927927927847, 0.001266784899923934, 0.0020397756246812726] vol_persist_ok=[0, 0, 0] vol_ratio=[1.5960449733252542, 0.4132614092037426, 0.13083998294450874] 
+2025-12-21 10:29:51,723 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:51,802 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:50:00 | Stage-0 starting
+2025-12-21 10:29:51,820 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[624046.0, 5284.0, 220.0] dist_to_vwap=[0.0018540225784389622, 0.001458080403868722, -0.00041629983241260116] ret_1=[0.005720414730068013, 0.0015182186234818928, -0.003562340966921096] vol_persist_ok=[0, 0, 0] vol_ratio=[1.4712288688522077, 0.2824115078031946, 0.046590427784836935] 
+2025-12-21 10:29:51,822 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:51,891 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 09:55:00 | Stage-0 starting
+2025-12-21 10:29:51,907 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[232994.0, 12799.0, 609.0] dist_to_vwap=[-0.0016437663638191257, -0.001192565545466208, -3.9708888608538314e-05] ret_1=[-0.002310700319943293, -0.000757958564931771, 0.0010214504596526286] vol_persist_ok=[0, 0, 0] vol_ratio=[0.5782563398878093, 0.7121881325162933, 0.14472863381160325] 
+2025-12-21 10:29:51,907 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:52,009 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:00:00 | Stage-0 starting
+2025-12-21 10:29:52,018 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[232994.0, 13564.0, 550.0] dist_to_vwap=[-0.0016437663638191257, -0.00041316784149867097, -0.0013501227561178366] ret_1=[-0.002310700319943293, -0.00025284450063212116, 0.0] vol_persist_ok=[0, 1, 1] vol_ratio=[0.5782563398878093, 0.7758985603966059, 0.14468184608189869] 
+2025-12-21 10:29:52,018 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:52,101 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:05:00 | Stage-0 starting
+2025-12-21 10:29:52,134 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.03s
+2025-12-21 10:29:52,142 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:52,184 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.04s
+2025-12-21 10:29:52,184 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:52,278 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:10:00 | Stage-0 starting
+2025-12-21 10:29:52,301 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.03s
+2025-12-21 10:29:52,326 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.02s
+2025-12-21 10:29:52,369 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.04s
+2025-12-21 10:29:52,370 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:52,452 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:15:00 | Stage-0 starting
+2025-12-21 10:29:52,477 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.03s
+2025-12-21 10:29:52,486 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:52,566 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.08s
+2025-12-21 10:29:52,566 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:52,631 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:20:00 | Stage-0 starting
+2025-12-21 10:29:52,646 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:52,663 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:52,710 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.05s
+2025-12-21 10:29:52,710 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:52,783 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:25:00 | Stage-0 starting
+2025-12-21 10:29:52,804 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:52,816 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:52,867 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.06s
+2025-12-21 10:29:52,867 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:52,938 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:30:00 | Stage-0 starting
+2025-12-21 10:29:52,956 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[78488.0, 3827.0, 716.0] dist_to_vwap=[-0.0017421687634639048, 9.813793504704175e-05, -1.1116054746809711e-05] ret_1=[-0.002143622722400762, 0.0005056890012642423, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.22623726657833176, 0.28009543884302357, 0.27326853595236883] 
+2025-12-21 10:29:52,956 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:53,013 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:35:00 | Stage-0 starting
+2025-12-21 10:29:53,037 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:53,047 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:53,095 [INFO] DECISION:ACCEPT sym=NSE:EPL setup=range_bounce_short regime=squeeze size_mult=1.00 hold_bars=0 | momentum_consolidation_pass:0.33%<=1.0%;structure:detector:range_bounce_short;regime:squeeze;event_ctx:active,session_type;sentiment:neutral_neutral;sentiment_bias_info:1.00
+2025-12-21 10:29:53,095 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 1 accepted | TIME: 0.05s
+2025-12-21 10:29:53,095 [INFO] GATES_COMPLETE | 2\u21921 symbols (50.0%) | Gates\u2192Ranking
+2025-12-21 10:29:53,095 [INFO] ORCHESTRATOR | Processing 1 symbols via pipeline orchestrator
+2025-12-21 10:29:53,145 [INFO] [ORCHESTRATOR] Initialized LEVEL pipeline
+2025-12-21 10:29:53,148 [INFO] QUALITY_LEVEL: NSE:EPL structural_rr=3.95 status=excellent metrics={'retest_ok': 1.0, 'hold_ok': 1.0, 'distance_to_level': 0.06, 'proximity_bonus': 0.99}
+2025-12-21 10:29:53,149 [INFO] ORCHESTRATOR_COMPLETE | 0 eligible plans from 1 decisions
+2025-12-21 10:29:53,149 [INFO] BAR_COMPLETE | Total bar processing time: 0.13s (Scanner: 0.02s, DataPrep: 0.01s, Structure: 0.05s, Ranking+Planning: 0.05s)
+2025-12-21 10:29:53,213 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:40:00 | Stage-0 starting
+2025-12-21 10:29:53,213 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[168679.0, 8508.0, 101.0] dist_to_vwap=[0.0005952332357490745, -0.00014763927173821114, 1.4508274339154676e-16] ret_1=[0.00017901897601158012, 0.0, -0.003560528992878842] vol_persist_ok=[0, 0, 0] vol_ratio=[0.501360427895748, 0.5649173155877547, 0.03790035979957177] 
+2025-12-21 10:29:53,213 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:53,287 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:45:00 | Stage-0 starting
+2025-12-21 10:29:53,300 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:53,323 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:53,332 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.02s
+2025-12-21 10:29:53,332 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:53,400 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:50:00 | Stage-0 starting
+2025-12-21 10:29:53,414 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[85893.0, 8897.0, 512.0] dist_to_vwap=[0.0022260800245313688, -0.0005035422854241413, 0.0011523388819188424] ret_1=[0.0035714285714285587, -0.0020161290322581182, 0.004085801838610736] vol_persist_ok=[0, 0, 1] vol_ratio=[0.27662647195972967, 0.6037508750375016, 0.2100399438626795] 
+2025-12-21 10:29:53,414 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:53,459 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 10:55:00 | Stage-0 starting
+2025-12-21 10:29:53,482 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[98703.0, 10828.0, 90.0] dist_to_vwap=[-7.529956668184098e-05, 0.0007858009370054075, 0.0] ret_1=[-0.00017793594306059202, 0.0002528445006322322, -0.0005086469989826758] vol_persist_ok=[0, 0, 0] vol_ratio=[0.32910675738667167, 0.8612242300839908, 0.03878892360736989] 
+2025-12-21 10:29:53,482 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:53,542 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:00:00 | Stage-0 starting
+2025-12-21 10:29:53,557 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[38630.0, 10828.0, 346.0] dist_to_vwap=[-0.0011757385595023344, 0.0007858009370054075, -0.0003218434723824421] ret_1=[-0.0023135789286349295, 0.0002528445006322322, 0.0005089058524172518] vol_persist_ok=[0, 0, 0] vol_ratio=[0.13348069306990562, 0.8612242300839908, 0.23600027283268538] 
+2025-12-21 10:29:53,557 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:53,592 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:05:00 | Stage-0 starting
+2025-12-21 10:29:53,622 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[109248.0, 2426.0, 346.0] dist_to_vwap=[-3.637583221826877e-05, -0.00018570609769196644, -0.0003218434723824421] ret_1=[0.0012486621476988091, 0.0, 0.0005089058524172518] vol_persist_ok=[0, 0, 0] vol_ratio=[0.3764574857141676, 0.2063872866792575, 0.23600027283268538] 
+2025-12-21 10:29:53,622 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:53,682 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:10:00 | Stage-0 starting
+2025-12-21 10:29:53,699 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[378139.0, 6477.0, 362.0] dist_to_vwap=[0.001123115030797705, -0.0003625481750750375, -0.00020731470231516813] ret_1=[0.0014252627828257314, -0.0012639029322547568, 0.0015259409969481386] vol_persist_ok=[0, 0, 1] vol_ratio=[1.233627816237448, 0.5867618482499967, 0.3751684112343248] 
+2025-12-21 10:29:53,699 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:53,768 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:15:00 | Stage-0 starting
+2025-12-21 10:29:53,782 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[90350.0, 2188.0, 234.0] dist_to_vwap=[4.957709100460876e-05, -0.0006965269851019208, -1.443459087374505e-16] ret_1=[0.0003558085749866269, -0.0002531004808909998, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.30041377966586075, 0.22523960016882674, 0.264945652173913] 
+2025-12-21 10:29:53,782 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:53,825 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:20:00 | Stage-0 starting
+2025-12-21 10:29:53,841 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:53,857 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:54,123 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.26s
+2025-12-21 10:29:54,123 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:54,176 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:25:00 | Stage-0 starting
+2025-12-21 10:29:54,196 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:54,199 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:54,504 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.30s
+2025-12-21 10:29:54,504 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:54,582 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:30:00 | Stage-0 starting
+2025-12-21 10:29:54,603 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:54,614 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:54,994 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.38s
+2025-12-21 10:29:54,994 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:55,064 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:35:00 | Stage-0 starting
+2025-12-21 10:29:55,078 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[107833.0, 4275.0, 1288.0] dist_to_vwap=[0.001817606150694189, -0.0003486967976137883, -0.0014319157307710198] ret_1=[0.003732669747600559, 0.0007593014426725553, -0.0010065425264217387] vol_persist_ok=[0, 0, 0] vol_ratio=[0.5569636075238354, 0.4711496602762976, 0.41463453892832425] 
+2025-12-21 10:29:55,078 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:55,144 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:40:00 | Stage-0 starting
+2025-12-21 10:29:55,161 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[65680.0, 2631.0, 3337.0] dist_to_vwap=[-0.0017396335123925724, -0.0008213134195740068, -0.0012706203729149594] ret_1=[-0.003364618381441642, -0.0005058168942841945, -0.0025188916876573986] vol_persist_ok=[0, 0, 0] vol_ratio=[0.3545613059602792, 0.30855293248425575, 1.0281295252179807] 
+2025-12-21 10:29:55,163 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:55,238 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:45:00 | Stage-0 starting
+2025-12-21 10:29:55,269 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.03s
+2025-12-21 10:29:55,283 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:55,612 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.34s
+2025-12-21 10:29:55,612 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:55,684 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:50:00 | Stage-0 starting
+2025-12-21 10:29:55,706 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:55,716 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:56,031 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.32s
+2025-12-21 10:29:56,031 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:56,099 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 11:55:00 | Stage-0 starting
+2025-12-21 10:29:56,113 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:56,134 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:56,488 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.36s
+2025-12-21 10:29:56,488 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:56,563 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:00:00 | Stage-0 starting
+2025-12-21 10:29:56,576 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[48312.0, 2310.0, 1599.0] dist_to_vwap=[0.0005830798499816565, -0.0008612645402069773, -0.0016905471899285598] ret_1=[-0.0010642071656614682, -0.001264862130027855, -0.0005070993914807476] vol_persist_ok=[0, 0, 0] vol_ratio=[0.38051386541897525, 0.33156784222538005, 0.4748188620976363] 
+2025-12-21 10:29:56,576 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:56,628 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:05:00 | Stage-0 starting
+2025-12-21 10:29:56,640 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[34960.0, 1739.0, 2287.0] dist_to_vwap=[-0.0006404702084766571, -5.912031648474487e-06, -0.0013917963385897856] ret_1=[-0.0008876264867743178, 0.0002532928064842288, -0.003551496702181578] vol_persist_ok=[0, 0, 0] vol_ratio=[0.3297130289460877, 0.2504879401364072, 0.6568158646735307] 
+2025-12-21 10:29:56,640 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:56,694 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:10:00 | Stage-0 starting
+2025-12-21 10:29:56,711 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[21749.0, 10338.0, 1023.0] dist_to_vwap=[-0.00041115036791481525, -1.815742455785415e-05, 0.0001450559082506077] ret_1=[-0.0003553660270076975, 0.0017726006583946852, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.21075704990520344, 1.422399559713814, 0.2900852107583899] 
+2025-12-21 10:29:56,711 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:56,789 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:15:00 | Stage-0 starting
+2025-12-21 10:29:56,798 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[70040.0, 66956.0, 1023.0] dist_to_vwap=[0.0026945767794705954, 0.0004465432398224856, 0.0001450559082506077] ret_1=[0.0030216850337716483, 0.0010111223458038054, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.7127831822247913, 7.613914190518428, 0.2900852107583899] 
+2025-12-21 10:29:56,798 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:56,863 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:20:00 | Stage-0 starting
+2025-12-21 10:29:56,880 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[70040.0, 6514.0, 1455.0] dist_to_vwap=[0.0026945767794705954, 0.00035792566530110234, 0.0] ret_1=[0.0030216850337716483, 0.0012626262626262985, 0.0] vol_persist_ok=[0, 0, 1] vol_ratio=[0.7127831822247913, 0.8082136542696734, 0.43559613801362174] 
+2025-12-21 10:29:56,880 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:56,946 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:25:00 | Stage-0 starting
+2025-12-21 10:29:56,963 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[97663.0, 7439.0, 1455.0] dist_to_vwap=[0.0019254775480607037, -0.0005292936858901128, 0.0] ret_1=[0.0023037391458444745, 0.0005044136191676429, 0.0] vol_persist_ok=[1, 0, 1] vol_ratio=[0.9921063632129402, 0.9291432996515244, 0.43559613801362174] 
+2025-12-21 10:29:56,963 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:57,039 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:30:00 | Stage-0 starting
+2025-12-21 10:29:57,050 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[222668.0, 8930.0, 425.0] dist_to_vwap=[-0.001858211316419369, -0.0007558954379267063, -0.0005368065219233069] ret_1=[-0.0014144271570015743, -0.001764557600201666, -0.0020366598778004397] vol_persist_ok=[0, 0, 0] vol_ratio=[2.1150317062884456, 1.1151418278086151, 0.1266218772810559] 
+2025-12-21 10:29:57,050 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:57,118 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:35:00 | Stage-0 starting
+2025-12-21 10:29:57,136 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[27488.0, 6039.0, 830.0] dist_to_vwap=[0.00040364225061173873, -0.0002875928299541195, 0.0] ret_1=[-0.0005311614730877379, 0.0, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.27023718995792784, 0.7467309654085134, 0.2460753939429876] 
+2025-12-21 10:29:57,136 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:57,189 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:40:00 | Stage-0 starting
+2025-12-21 10:29:57,214 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[324944.0, 3859.0, 830.0] dist_to_vwap=[-0.0022743064119281936, -0.00016537123900433543, 0.0] ret_1=[-0.0010557803976771751, 0.00025252525252539293, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[2.8086977454371325, 0.49865612239623713, 0.2460753939429876] 
+2025-12-21 10:29:57,214 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:57,286 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:45:00 | Stage-0 starting
+2025-12-21 10:29:57,298 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[324944.0, 1117.0, 10.0] dist_to_vwap=[-0.0022743064119281936, 0.00037649674972128254, -1.4471338813851326e-16] ret_1=[-0.0010557803976771751, 0.0005049229992426518, 0.0020408163265306367] vol_persist_ok=[0, 0, 0] vol_ratio=[2.8086977454371325, 0.14556875419471285, 0.0029869916513583345] 
+2025-12-21 10:29:57,298 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:57,350 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:50:00 | Stage-0 starting
+2025-12-21 10:29:57,376 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[176935.0, 2349.0, 1100.0] dist_to_vwap=[-0.0007339154542628774, 0.0003713880337614822, 1.4471338813851328e-16] ret_1=[-0.0010544815465729496, 0.0, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[1.62644037664548, 0.3145862768600299, 0.32368649491665075] 
+2025-12-21 10:29:57,376 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:57,437 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 12:55:00 | Stage-0 starting
+2025-12-21 10:29:57,446 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[67084.0, 8024.0, 690.0] dist_to_vwap=[-2.5090889073948006e-05, 0.0006350820964621532, 0.000854322855889205] ret_1=[-0.0007037297677691123, 0.0010093363613423723, -0.0020366598778004397] vol_persist_ok=[0, 0, 1] vol_ratio=[0.6671629315030211, 1.034187207990978, 0.20201724466044998] 
+2025-12-21 10:29:57,446 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:57,524 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:00:00 | Stage-0 starting
+2025-12-21 10:29:57,526 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[67084.0, 47074.0, 1000.0] dist_to_vwap=[-2.5090889073948006e-05, -1.411898458838015e-05, 0.0] ret_1=[-0.0007037297677691123, -0.001764557600201666, 0.0020408163265306367] vol_persist_ok=[0, 0, 0] vol_ratio=[0.6671629315030211, 4.72561725451616, 0.2900694716384574] 
+2025-12-21 10:29:57,526 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:57,595 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:05:00 | Stage-0 starting
+2025-12-21 10:29:57,595 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[273163.0, 1812.0, 8234.0] dist_to_vwap=[-0.000819374229462648, -0.00023931212755163407, -0.0012181717466676549] ret_1=[0.0, 0.0, -0.0045824847250509615] vol_persist_ok=[0, 0, 0] vol_ratio=[2.540191042288937, 0.18715431451633727, 2.1401187799711496] 
+2025-12-21 10:29:57,595 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:57,642 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:10:00 | Stage-0 starting
+2025-12-21 10:29:57,670 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[168523.0, 1812.0, 0.0] dist_to_vwap=[-0.0025743383417607102, -0.00023931212755163407, 0.0] ret_1=[-0.005985915492957683, 0.0, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[1.5739273654604184, 0.18715431451633727, 0.0] 
+2025-12-21 10:29:57,670 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:57,782 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:15:00 | Stage-0 starting
+2025-12-21 10:29:57,798 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[105921.0, 8661.0, 915.0] dist_to_vwap=[-0.0009510367762454836, 1.5975391537265716e-05, -0.0005206889891075976] ret_1=[-0.0017711654268508514, 0.0012626262626262985, -0.003575076608784533] vol_persist_ok=[0, 0, 0] vol_ratio=[0.9901375120879861, 0.8747468728380037, 0.33570589961843267] 
+2025-12-21 10:29:57,798 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:57,886 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:20:00 | Stage-0 starting
+2025-12-21 10:29:57,927 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.04s
+2025-12-21 10:29:57,930 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.02s
+2025-12-21 10:29:57,946 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.01s
+2025-12-21 10:29:57,946 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:58,039 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:25:00 | Stage-0 starting
+2025-12-21 10:29:58,056 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[63672.0, 13036.0, 434.0] dist_to_vwap=[0.0009000693331211444, -0.0033747490467312155, 0.0] ret_1=[0.0010626992561104665, -0.00479797979797969, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.6160148179465883, 1.2077751218337132, 0.2773694637949767] 
+2025-12-21 10:29:58,056 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:58,145 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:30:00 | Stage-0 starting
+2025-12-21 10:29:58,161 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[21974.0, 7752.0, 434.0] dist_to_vwap=[-0.0006162932458012526, 0.0003149614221383893, 0.0] ret_1=[-0.0007077140835104467, -0.00025374270489730844, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.21425245889651306, 0.7005431197303379, 0.2773694637949767] 
+2025-12-21 10:29:58,161 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:58,245 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:35:00 | Stage-0 starting
+2025-12-21 10:29:58,269 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[20409.0, 477.0, 440.0] dist_to_vwap=[0.0011309176409841414, -9.563642583999101e-05, 0.0] ret_1=[0.001770538243626163, 0.0002538071065989467, 0.0005125576627369455] vol_persist_ok=[0, 0, 0] vol_ratio=[0.2002998265324399, 0.04347093052397508, 0.28903632661104905] 
+2025-12-21 10:29:58,269 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:58,332 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:40:00 | Stage-0 starting
+2025-12-21 10:29:58,348 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[21067.0, 6724.0, 440.0] dist_to_vwap=[-0.0007238727512498323, 0.001220170878206355, 0.0] ret_1=[-0.001237186284906211, 0.0022836843440749988, 0.0005125576627369455] vol_persist_ok=[0, 0, 0] vol_ratio=[0.2095593355217348, 0.6007030834721783, 0.28903632661104905] 
+2025-12-21 10:29:58,348 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:58,432 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:45:00 | Stage-0 starting
+2025-12-21 10:29:58,476 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[23318.0, 21316.0, 743.0] dist_to_vwap=[-0.0001465868323511865, 0.00030371248428242783, -1.4560301962297134e-16] ret_1=[0.00017695983011867256, 0.0025316455696202667, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.2312979287537309, 1.7511747888666163, 0.5335343960936378] 
+2025-12-21 10:29:58,477 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.04s
+2025-12-21 10:29:58,647 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:50:00 | Stage-0 starting
+2025-12-21 10:29:58,692 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[119915.0, 4333.0, 58.0] dist_to_vwap=[0.004522903649804243, 0.0004109370106254126, 0.0013469214107545851] ret_1=[0.009226401703335663, 0.0005050505050505638, 0.002049180327868827] vol_persist_ok=[0, 0, 0] vol_ratio=[1.1290469126689298, 0.364971803759218, 0.047975515943587406] 
+2025-12-21 10:29:58,693 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.04s
+2025-12-21 10:29:58,787 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 13:55:00 | Stage-0 starting
+2025-12-21 10:29:58,809 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[119915.0, 24576.0, 1000.0] dist_to_vwap=[0.004522903649804243, -0.0001827761274996422, -0.00303889271942578] ret_1=[0.009226401703335663, -0.0005047955577990315, -0.002044989775051187] vol_persist_ok=[0, 0, 0] vol_ratio=[1.1290469126689298, 2.519801294966242, 0.8393134416047673] 
+2025-12-21 10:29:58,809 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:58,892 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:00:00 | Stage-0 starting
+2025-12-21 10:29:58,928 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:58,941 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:58,946 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.01s
+2025-12-21 10:29:58,946 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:59,013 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:05:00 | Stage-0 starting
+2025-12-21 10:29:59,040 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:59,049 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:59,049 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.00s
+2025-12-21 10:29:59,049 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:59,113 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:10:00 | Stage-0 starting
+2025-12-21 10:29:59,130 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:59,148 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:29:59,148 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.00s
+2025-12-21 10:29:59,148 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:29:59,226 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:15:00 | Stage-0 starting
+2025-12-21 10:29:59,232 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[33168.0, 1946.0, 2629.0] dist_to_vwap=[-0.0006218400609269264, 0.0007473126691225911, -0.002422772639872866] ret_1=[-0.0010570824524313016, 0.002034070683956335, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.27721767663871894, 0.17219562697436533, 2.3563681993367394] 
+2025-12-21 10:29:59,232 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:59,302 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:20:00 | Stage-0 starting
+2025-12-21 10:29:59,317 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[32207.0, 767.0, 840.0] dist_to_vwap=[-0.00020543584875919236, -0.00030285628983121784, -0.0005026502211578046] ret_1=[-0.0008819897689187339, 0.0005074854097943948, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.31854718666269727, 0.06881083748261786, 0.774229227153325] 
+2025-12-21 10:29:59,317 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:59,378 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:25:00 | Stage-0 starting
+2025-12-21 10:29:59,395 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[32207.0, 390.0, 102.0] dist_to_vwap=[-0.00020543584875919236, 0.001121507972854857, 1.5044607260513781e-05] ret_1=[-0.0008819897689187339, 0.001522842639593902, 0.0015368852459016757] vol_persist_ok=[0, 0, 0] vol_ratio=[0.31854718666269727, 0.034998294954861175, 0.09543413173652696] 
+2025-12-21 10:29:59,395 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:59,470 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:30:00 | Stage-0 starting
+2025-12-21 10:29:59,485 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[42086.0, 2837.0, 340.0] dist_to_vwap=[-2.8357807460582582e-05, -0.00041913828138284037, 0.0] ret_1=[-0.0003531073446326749, -0.001520527116066983, 0.0] vol_persist_ok=[0, 0, 0] vol_ratio=[0.44051627678648997, 0.26065664894960977, 0.32557694149190847] 
+2025-12-21 10:29:59,485 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.01s
+2025-12-21 10:29:59,539 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:35:00 | Stage-0 starting
+2025-12-21 10:29:59,557 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[31973.0, 2837.0, 25.0] dist_to_vwap=[-0.00024331267836591843, -0.00041913828138284037, 0.001331012593426799] ret_1=[-0.0010596962204169058, -0.001520527116066983, 0.000511508951406725] vol_persist_ok=[0, 0, 0] vol_ratio=[0.3741858242872616, 0.26065664894960977, 0.023922300368403426] 
+2025-12-21 10:29:59,557 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:59,630 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:40:00 | Stage-0 starting
+2025-12-21 10:29:59,650 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[31973.0, 6064.0, 2507.0] dist_to_vwap=[-0.00024331267836591843, -0.0006462126656628273, -0.0010180813280017272] ret_1=[-0.0010596962204169058, -0.00025374270489730844, 0.0005112474437627412] vol_persist_ok=[0, 0, 0] vol_ratio=[0.3741858242872616, 0.6878910082980255, 2.2476241707010938] 
+2025-12-21 10:29:59,650 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:59,745 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:45:00 | Stage-0 starting
+2025-12-21 10:29:59,762 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[48268.0, 6064.0, 638.0] dist_to_vwap=[-0.00017503413216896261, -0.0006462126656628273, 0.0009957227271285226] ret_1=[-0.0005304101838756736, -0.00025374270489730844, 0.0025839793281654533] vol_persist_ok=[1, 0, 0] vol_ratio=[0.6504937191804544, 0.6878910082980255, 0.4798796540052651] 
+2025-12-21 10:29:59,762 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:29:59,824 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:50:00 | Stage-0 starting
+2025-12-21 10:29:59,849 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[47242.0, 5596.0, 638.0] dist_to_vwap=[6.9268105614218995e-06, 0.0017153859510696666, 0.0009957227271285226] ret_1=[-0.00035379444542704697, 0.004060913705583813, 0.0025839793281654533] vol_persist_ok=[1, 1, 0] vol_ratio=[0.6933277368518764, 0.6214635934055561, 0.4798796540052651] 
+2025-12-21 10:29:59,850 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.03s
+2025-12-21 10:29:59,928 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 14:55:00 | Stage-0 starting
+2025-12-21 10:29:59,943 [WARNING] STAGE0_DEBUG | ALL symbols filtered! initial=5 skip_vol_persist=False sample: volume=[40537.0, 5597.0, 3263.0] dist_to_vwap=[0.00011635215004642761, 0.00043692770075428065, -0.0017000830919959371] ret_1=[0.0008847991505929187, 0.0010139416983523386, -0.0020618556701030855] vol_persist_ok=[0, 0, 0] vol_ratio=[0.6249070239413833, 0.6643954322072125, 3.018641010222489] 
+2025-12-21 10:29:59,943 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 0 shortlisted (0.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:30:00,019 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 15:00:00 | Stage-0 starting
+2025-12-21 10:30:00,049 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 4 shortlisted (80.0%) | Stage-0\u2192Gates | TIME: 0.03s
+2025-12-21 10:30:00,078 [INFO] DATA_PREP_COMPLETE | Prepared 2 symbols | TIME: 0.03s
+2025-12-21 10:30:00,088 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 2 symbols, 0 accepted | TIME: 0.01s
+2025-12-21 10:30:00,088 [INFO] GATES_COMPLETE | 4\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:30:00,167 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 15:05:00 | Stage-0 starting
+2025-12-21 10:30:00,187 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 2 shortlisted (40.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:30:00,205 [INFO] DATA_PREP_COMPLETE | Prepared 1 symbols | TIME: 0.01s
+2025-12-21 10:30:00,213 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 1 symbols, 0 accepted | TIME: 0.01s
+2025-12-21 10:30:00,213 [INFO] GATES_COMPLETE | 2\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:30:00,301 [INFO] SCANNER_PROGRESS | Bar: 2023-12-04 15:10:00 | Stage-0 starting
+2025-12-21 10:30:00,311 [INFO] SCANNER_COMPLETE | Processed 5 eligible of 5 total symbols \u2192 4 shortlisted (80.0%) | Stage-0\u2192Gates | TIME: 0.02s
+2025-12-21 10:30:00,350 [INFO] DATA_PREP_COMPLETE | Prepared 2 symbols | TIME: 0.02s
+2025-12-21 10:30:00,358 [INFO] PARALLEL_STRUCTURE_COMPLETE | Processed 2 symbols, 0 accepted | TIME: 0.01s
+2025-12-21 10:30:00,358 [INFO] GATES_COMPLETE | 4\u21920 symbols (0.0%) | Gates\u2192Ranking
+2025-12-21 10:30:00,398 [INFO] Tick injection complete, signaling EOD...
+2025-12-21 10:30:00,398 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,398 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,399 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,399 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,399 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,399 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,399 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,399 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,399 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,399 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,399 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,399 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,399 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,399 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,399 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,399 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,399 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,399 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,399 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,399 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,399 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,400 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,400 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,400 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,401 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,401 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,401 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,401 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,401 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,401 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,401 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,401 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,401 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,401 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,401 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,401 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,401 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,401 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,401 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,401 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,401 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,401 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,401 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,401 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,401 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,401 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,401 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,401 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,402 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,402 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,402 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,403 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,403 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,403 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,404 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,404 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,404 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,404 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,404 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,404 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,404 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,404 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,404 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,404 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,404 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,404 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,404 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,404 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,404 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,404 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,404 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,404 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,404 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,404 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,404 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,404 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,404 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,404 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,405 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,405 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,405 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,406 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,406 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,406 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,407 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,407 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,407 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,407 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,407 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,407 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,407 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,407 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,407 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,407 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,407 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,407 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,407 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,407 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,407 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,407 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,407 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,407 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,407 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,407 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,407 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,407 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,407 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,407 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,408 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,408 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,408 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,409 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,409 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,409 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,410 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,410 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,410 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,410 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,410 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,410 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,410 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,410 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,410 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,410 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,410 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,410 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,410 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,410 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,410 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,410 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,410 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,410 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,410 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,410 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,410 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,410 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,410 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,410 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,411 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,411 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,411 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,412 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,412 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,412 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,412 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,412 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,412 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,412 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,412 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,412 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,412 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,413 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,413 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,413 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,413 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,413 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,413 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,413 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,414 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,414 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,414 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,414 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,414 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,414 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,414 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,414 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,414 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,414 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,414 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,414 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,414 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,414 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,414 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,414 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,414 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,414 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,414 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,415 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,415 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,415 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,415 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,415 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,415 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,415 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,415 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,415 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,415 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,415 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,415 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,415 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,415 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,415 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,415 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,415 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,415 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,415 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,415 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,415 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,415 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,415 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,416 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,416 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,416 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,417 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,417 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,417 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,419 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,419 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,419 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,419 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,419 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,419 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,419 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,419 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,419 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,419 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,419 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,419 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,419 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,419 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,419 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,419 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,419 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,419 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,420 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,420 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,420 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,420 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,420 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,420 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,420 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,421 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,420 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,421 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,421 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,421 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,421 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,421 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,421 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,421 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,422 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,422 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,422 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,422 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,422 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,422 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,422 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,422 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,422 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,423 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,423 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,423 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,423 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,423 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,423 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,423 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,423 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,423 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,424 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,424 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,424 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,424 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,424 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,424 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,424 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,424 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,424 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,425 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,425 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,425 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,425 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,425 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,425 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,425 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,426 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,426 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,426 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,426 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,426 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,426 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,426 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,427 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,427 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,427 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,427 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,427 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,428 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,427 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,428 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,428 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,428 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,428 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,428 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,428 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,430 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,430 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,430 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,430 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,430 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,431 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,431 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,431 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,431 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,431 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,431 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,432 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,432 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,432 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,432 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,432 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,432 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,432 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,432 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,433 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,433 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,433 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,433 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,433 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,433 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,433 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,433 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,433 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,434 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,434 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,434 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,434 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,434 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,434 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,434 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,434 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,434 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,435 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,435 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,435 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,435 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,435 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,435 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,435 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,435 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,436 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,436 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,436 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,436 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,436 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,436 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,436 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,436 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,437 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,437 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,437 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,437 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,438 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,438 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,438 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,438 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,438 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,438 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,438 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,438 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,438 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,438 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,438 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,438 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,438 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,438 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,438 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,438 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,438 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,441 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,441 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,441 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,446 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,446 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,446 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,446 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,446 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,446 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,446 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,446 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,446 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,446 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,446 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,446 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,447 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,447 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,447 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,447 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,447 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,447 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,447 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,447 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,447 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,447 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,447 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,447 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,447 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,447 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,447 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,447 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,448 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,448 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,448 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,448 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,448 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,448 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,448 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,448 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,448 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,448 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,448 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,448 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,448 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,448 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,448 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,448 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,448 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,448 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,449 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,449 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,449 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,449 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,449 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,449 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,449 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,449 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,449 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,449 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,449 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,449 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,449 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,449 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,449 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,449 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,449 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,449 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,449 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,449 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,449 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,450 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,450 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,450 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,453 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,453 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,453 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,455 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,455 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,455 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,457 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,457 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,457 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,459 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,459 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,459 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,461 [WARNING] WebSocket disconnected
+2025-12-21 10:30:00,461 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:00,461 [INFO] subscription-manager: stopped
+2025-12-21 10:30:00,463 [WARNING] WSClient.stop: close failed: maximum recursion depth exceeded
+2025-12-21 10:30:01,465 [INFO] Shutting down pipeline...
+2025-12-21 10:30:01,465 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,465 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,465 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,465 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,465 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,465 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,465 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,465 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,465 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,465 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,465 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,465 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,465 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,465 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,465 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,465 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,465 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,466 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,466 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,466 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,467 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,467 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,467 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,468 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,468 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,468 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,469 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,469 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,469 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,470 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,470 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,470 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,471 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,471 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,471 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,472 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,472 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,472 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,473 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,473 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,473 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,474 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,474 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,474 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,475 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,475 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,475 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,476 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,476 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,476 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,477 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,477 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,477 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,478 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,478 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,478 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,478 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,478 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,478 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,478 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WebSocket disconnected
+2025-12-21 10:30:01,478 [WARNING] EOD: replay ended — stopping for the day
+2025-12-21 10:30:01,478 [INFO] subscription-manager: stopped
+2025-12-21 10:30:01,478 [WARNING] WSClient.stop: close failed: maximum recursion depth exceeded while calling a Python object
+2025-12-21 10:30:01,614 [INFO] ScreenerLive: Worker pool shut down
+2025-12-21 10:30:01,614 [INFO] ScreenerLive stopped
+2025-12-21 10:30:01,616 [INFO] ==================================================
+2025-12-21 10:30:01,616 [INFO] PAPER TEST COMPLETE
+2025-12-21 10:30:01,616 [INFO]   Session: 2023-12-04
+2025-12-21 10:30:01,616 [INFO]   Ticks injected: 17650
+2025-12-21 10:30:01,616 [INFO]   Ticks processed: 17650
+2025-12-21 10:30:01,616 [INFO]   1m bars: 1760
+2025-12-21 10:30:01,616 [INFO]   5m bars: 354
+2025-12-21 10:30:01,616 [INFO]   Decisions: 0
+2025-12-21 10:30:01,616 [INFO]   Triggers: 0
+2025-12-21 10:30:01,616 [INFO]   Exits: 0
+2025-12-21 10:30:01,616 [INFO]   Elapsed: 26.42s
+2025-12-21 10:30:01,618 [INFO]   Results saved to: C:\Users\pratikhegde\OneDrive - Nagarro\Desktop\Pratik\intraday-trade-assistant\testing\results\paper_test_2023-12-04_103001.json
+2025-12-21 10:30:01,618 [INFO] ==================================================
+
+=== Paper Test Results ===
+{
+  "total_decisions": 0,
+  "total_triggers": 0,
+  "total_exits": 0,
+  "unique_trades": 0,
+  "total_pnl": 0,
+  "winners": 0,
+  "losers": 0,
+  "win_rate": 0.0,
+  "tick_rate": 668.0240469457807
+}

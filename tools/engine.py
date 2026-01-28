@@ -110,6 +110,8 @@ def _register_session_with_run(session_id: str) -> None:
 def _generate_analytics_for_session(session_id: str, log_dir: str) -> None:
     """Generate analytics for the specified session"""
     try:
+        import json
+        from pathlib import Path
         from services.logging.trading_logger import TradingLogger
 
         if not log_dir or not session_id:
@@ -119,10 +121,21 @@ def _generate_analytics_for_session(session_id: str, log_dir: str) -> None:
         print(f"[analytics] Generating analytics for session {session_id}")
         print(f"[analytics] Processing {log_dir}")
 
+        # Load capital report if available
+        capital_report = None
+        capital_report_path = Path(log_dir) / "capital_report.json"
+        if capital_report_path.exists():
+            try:
+                with open(capital_report_path) as f:
+                    capital_report = json.load(f)
+                print(f"[analytics] Loaded capital report")
+            except Exception as e:
+                print(f"[analytics] Failed to load capital report: {e}")
+
         # Populate analytics.jsonl and performance.json from events.jsonl
         try:
             logger = TradingLogger(session_id, log_dir)
-            logger.populate_analytics_from_events()
+            logger.populate_analytics_from_events(capital_report=capital_report)
             print(f"[analytics] Enhanced analytics populated")
         except Exception as e:
             print(f"[analytics] Failed to populate enhanced analytics: {e}")

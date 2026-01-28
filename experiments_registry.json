@@ -1,0 +1,185 @@
+{
+  "schema_version": "2.1",
+  "project": "intraday-trade-assistant",
+  "description": "Experiment tracking registry for backtest runs and configuration changes",
+  "baseline": {
+    "experiment_id": "baseline-pre-filter-relaxation-001",
+    "run_id": "20251212-020235",
+    "date": "2025-12-12",
+    "type": "baseline",
+    "description": "Baseline before filter relaxation - 124 sessions over 20 months (Dec 2023 - Jul 2025)",
+    "status": "completed",
+    "git_branch": "pipeline_changes",
+    "backtest_archive": "backtest_20251212-020235_extracted",
+    "logs_location": "backtest_20251212-020235_extracted",
+    "report_file": "analysis/reports/misc/analysis_report_20_20251212_140314.json",
+    "config_snapshot": "config/configuration.json (pre-filter-relaxation)",
+    "duration": {
+      "date_range": "2023-12-01 to 2025-07-31",
+      "sessions": 124,
+      "trading_days": 124
+    },
+    "results": {
+      "total_trades": 271,
+      "total_pnl_gross": 67568,
+      "avg_pnl_per_trade": 249,
+      "win_rate": 61.6,
+      "wins": 167,
+      "losses": 104,
+      "best_setup": "resistance_bounce_short (Rs 26,962)",
+      "worst_setup": "support_bounce_long (Rs -615)"
+    },
+    "mis_calculation": {
+      "method": "NRML_MARGIN (50%) / MIS_MARGIN (per stock) = leverage multiplier",
+      "avg_mis_multiplier": 2.23,
+      "gross_pnl_with_mis": 150218,
+      "total_turnover": 52069533,
+      "total_fees": 21961,
+      "net_pnl_after_fees_and_tax": 88241,
+      "fees_breakdown": {
+        "brokerage": "Rs 20/order (Rs 40 per round-trip)",
+        "stt": "0.025% on sell side",
+        "exchange_txn": "0.00297% (NSE)",
+        "sebi_charges": "0.0001% (Rs 10/crore)",
+        "stamp_duty": "0.003% on buy side",
+        "gst": "18% on brokerage + exchange + SEBI"
+      },
+      "taxation": {
+        "type": "Speculative Business Income",
+        "rate": "30% + 4% cess = 31.2%"
+      }
+    },
+    "regime_analysis": {
+      "squeeze": {"trades": 107, "win_rate": 67.3, "total_pnl": 34097},
+      "trend_down": {"trades": 59, "win_rate": 57.6, "total_pnl": 16888},
+      "trend_up": {"trades": 95, "win_rate": 57.9, "total_pnl": 12068},
+      "chop": {"trades": 10, "win_rate": 60.0, "total_pnl": 4516}
+    },
+    "setup_analysis": {
+      "resistance_bounce_short": {"trades": 71, "win_rate": 67.6, "total_pnl": 26962},
+      "range_bounce_short": {"trades": 47, "win_rate": 74.5, "total_pnl": 26829},
+      "premium_zone_short": {"trades": 61, "win_rate": 50.8, "total_pnl": 6734},
+      "first_hour_momentum_long": {"trades": 21, "win_rate": 52.4, "total_pnl": 2384},
+      "range_bounce_long": {"trades": 4, "win_rate": 100.0, "total_pnl": 1935},
+      "orb_breakout_long": {"trades": 17, "win_rate": 64.7, "total_pnl": 1550},
+      "failure_fade_short": {"trades": 1, "win_rate": 100.0, "total_pnl": 1107},
+      "breakout_long": {"trades": 2, "win_rate": 100.0, "total_pnl": 708},
+      "vwap_reclaim_long": {"trades": 6, "win_rate": 66.7, "total_pnl": 179},
+      "momentum_breakout_long": {"trades": 4, "win_rate": 50.0, "total_pnl": -23},
+      "volume_spike_reversal_short": {"trades": 19, "win_rate": 47.4, "total_pnl": -81},
+      "vwap_mean_reversion_short": {"trades": 2, "win_rate": 50.0, "total_pnl": -101},
+      "support_bounce_long": {"trades": 16, "win_rate": 50.0, "total_pnl": -615}
+    },
+    "low_trade_count_setups": [
+      "support_bounce_long (16 trades, -Rs 615)",
+      "vwap_mean_reversion_short (2 trades, -Rs 101)",
+      "volume_spike_reversal_short (19 trades, -Rs 81)",
+      "momentum_breakout_long (4 trades, -Rs 23)",
+      "failure_fade_short (1 trade)",
+      "breakout_long (2 trades)",
+      "range_bounce_long (4 trades)",
+      "vwap_reclaim_long (6 trades)"
+    ]
+  },
+  "filter_relaxations_applied": {
+    "date": "2025-12-12",
+    "purpose": "Increase trade count for underperforming setups to enable proper winner/loser analysis",
+    "changes": [
+      {
+        "setup": "volume_spike_reversal_short",
+        "file": "config/pipelines/reversion_config.json",
+        "change": "min_volume_ratio: 10 -> 3, block_regimes: ['trend_up'] -> []",
+        "reason": "98% of trades had vol_ratio < 10x, 89% were in blocked trend_up regime"
+      },
+      {
+        "setup": "vwap_mean_reversion_short/long",
+        "file": "config/configuration.json",
+        "change": "Removed from blacklist_setups",
+        "reason": "Was completely blacklisted, blocking all trades"
+      },
+      {
+        "setup": "failure_fade_short",
+        "file": "config/configuration.json + config/pipelines/reversion_config.json",
+        "change": "min_fade_strength: 0.6 -> 0.3, min_pierce_size_pct: 0.1 -> 0.05, removed from small_cap blocked list",
+        "reason": "99% screening_fail due to strict fade strength requirement"
+      },
+      {
+        "setup": "breakout_long",
+        "file": "config/pipelines/breakout_config.json",
+        "change": "long_trade_volume: 150k -> 50k, entry_time_cutoff: 11:30 -> 14:30, adx.min_value: 20 -> 15",
+        "reason": "93% gate_fail due to strict volume and time filters"
+      },
+      {
+        "setup": "range_bounce_long",
+        "file": "config/pipelines/level_config.json",
+        "change": "blocked_regimes: ['chop'] -> []",
+        "reason": "92% gate_fail, chop regime was completely blocked"
+      },
+      {
+        "setup": "vwap_reclaim_long",
+        "file": "config/pipelines/level_config.json",
+        "change": "vwap_volume.min_volume: 50k -> 25k",
+        "reason": "87% gate_fail due to volume filter"
+      },
+      {
+        "setup": "support_bounce_long",
+        "file": "config/configuration.json + config/pipelines/level_config.json",
+        "change": "min_touches: 2 -> 1, bounce_tolerance_pct: 0.8 -> 1.5, min_adx: 20 -> 10, max_structural_rr: 3.0 -> 10.0",
+        "reason": "83% rejected by gates, strict ADX and R:R requirements"
+      },
+      {
+        "setup": "momentum_breakout_long",
+        "file": "config/configuration.json + config/pipelines/momentum_config.json",
+        "change": "Removed from blacklist, removed from large_cap blocked list, volume: 100k -> 25k",
+        "reason": "97% rejection rate, was blacklisted and blocked for large_cap"
+      },
+      {
+        "setup": "small_cap segment",
+        "file": "config/configuration.json",
+        "change": "blocked: [...] -> [] (removed all blocks)",
+        "reason": "Allow all setups in small_cap for data collection"
+      }
+    ],
+    "expected_outcome": "Significantly increased trade counts for these setups in next backtest run, enabling winner/loser parameter analysis"
+  },
+  "experiments": [
+    {
+      "experiment_id": "top-k-increase-001",
+      "date": "2025-12-13",
+      "type": "failed",
+      "description": "Increase energy_scanner top_k from 200 to 250 to get more MR coverage",
+      "status": "reverted",
+      "hypothesis": "Increasing top_k would give 25% more MR candidates (60->75) without sacrificing momentum",
+      "changes": {
+        "file": "config/configuration.json",
+        "parameter": "energy_scanner.top_k_long/short",
+        "before": 200,
+        "after": 250
+      },
+      "results": {
+        "run_id": "20251213-141649",
+        "sessions": 124,
+        "total_trades": 253,
+        "total_pnl": 58150,
+        "win_rate": 67.3,
+        "comparison_to_baseline": {
+          "pnl_delta": -9418,
+          "pnl_delta_pct": -14,
+          "trade_delta": -18,
+          "vwap_mean_reversion_trades": "2 -> 1 (worse)",
+          "momentum_breakout_trades": "4 -> 4 (same)"
+        }
+      },
+      "conclusion": "FAILED - No MR improvement, overall P&L dropped 14%. Root cause: MR setups are genuinely rare due to market conditions, not scanner limits.",
+      "action": "Reverted to top_k=200"
+    }
+  ],
+  "metadata": {
+    "created_date": "2025-11-25",
+    "baseline_updated": "2025-12-12",
+    "version": "2.1",
+    "maintainer": "Claude + User",
+    "repository": "intraday-trade-assistant",
+    "notes": "Updated with pre-filter-relaxation baseline. Filter relaxations documented for next backtest comparison."
+  }
+}
