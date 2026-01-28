@@ -191,13 +191,13 @@ def _create_subscriber_components(
     """Create subscriber components (PAPER mode reading from Redis)."""
 
     # Create bar subscriber (receives bars from LIVE instance)
+    # Note: Don't start here - ScreenerLive.start() will start after late-start backfill
     subscriber = BarSubscriber(redis_url=redis_url)
     subscriber.set_callbacks(
         on_1m_close=on_1m_close,
         on_5m_close=on_5m_close,
         on_15m_close=on_15m_close,
     )
-    subscriber.start()
 
     # Create LTP cache in subscriber mode (reads from Redis)
     ltp_cache = SharedLTPCache(

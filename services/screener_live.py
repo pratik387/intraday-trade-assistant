@@ -319,12 +319,18 @@ class ScreenerLive:
     def start(self) -> None:
         """Connect WS and subscribe the core universe (or start subscriber for shared data mode)."""
         if self._market_data_mode == "subscriber":
-            # Subscriber mode: bars come from Redis via BarSubscriber (already started in factory)
+            # Subscriber mode: bars come from Redis via BarSubscriber
             logger.info("SCREENER | Subscriber mode started - receiving bars from Redis")
 
             # Late start backfill: if starting after market has been open for a while,
             # load bar history from Redis to pre-warm indicators immediately
+            # IMPORTANT: Do backfill BEFORE starting subscriber to avoid race condition
             self._late_start_backfill()
+
+            # Now start the subscriber to receive real-time bars
+            # (Backfill is complete, so first scan will have historical data)
+            if hasattr(self.agg, 'start'):
+                self.agg.start()
             return
 
         # Publisher/standalone mode: connect WebSocket
