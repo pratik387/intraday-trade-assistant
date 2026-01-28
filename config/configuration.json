@@ -1805,6 +1805,8 @@
   "exit_t2_book_pct": 40.0,
   "_comment_t2": "FALLBACK ONLY - Pipeline configs should override via trade plan. OLD config was 60-40.",
   "exit_t1_move_sl_to_be": true,
+  "exit_be_buffer_pct": 0.1,
+  "_comment_be_buffer": "Buffer above/below breakeven for SL after T1 (0.1% = 10 bps)",
   "exit_trail_atr_mult": 2.0,
   "_comment_trail_mult": "PHASE 2: Trail at 2.0\u00c3\u2014 ATR distance",
   "exit_trail_time_tighten": "14:30",

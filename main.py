@@ -141,9 +141,14 @@ class _PositionStore:
                     if targets and len(targets) > 1:
                         pos_dict["t2"] = targets[1].get("level")
                     pos_dict["setup"] = plan.get("setup_type", "unknown")
+                    pos_dict["entry_time"] = plan.get("entry_ts") or plan.get("trigger_ts")
                     state = plan.get("_state", {})
                     pos_dict["t1_done"] = state.get("t1_done", False)
-                    pos_dict["booked_pnl"] = state.get("t1_profit", 0)
+                    # Include all partial profits: T1 + T2 + manual API partials
+                    t1_profit = state.get("t1_profit", 0) or 0
+                    t2_profit = state.get("t2_profit", 0) or 0
+                    manual_profit = state.get("manual_partial_profit", 0) or 0
+                    pos_dict["booked_pnl"] = t1_profit + t2_profit + manual_profit
                 positions.append(pos_dict)
         self._api_server.broadcast_ws("positions", {"positions": positions})
 

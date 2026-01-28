@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, Callable, Optional, Tuple, List
 import math
 import time
+import threading
 import pandas as pd  # for Timestamp typing only
 
 from config.logging_config import get_execution_loggers
@@ -29,29 +30,44 @@ class Position:
 
 
 class PositionStore:
-    """Minimal store interface used by ExitExecutor."""
+    """
+    Minimal store interface used by ExitExecutor.
+
+    Thread-safe: Uses RLock to protect concurrent access from tick/bar handlers.
+    RLock allows same thread to acquire lock multiple times (reentrant).
+    """
     def __init__(self) -> None:
         self._pos: Dict[str, Position] = {}
+        self._lock = threading.RLock()
 
     def list_open(self) -> Dict[str, Position]:
-        return dict(self._pos)
+        with self._lock:
+            return dict(self._pos)
+
+    def get(self, sym: str) -> Optional[Position]:
+        """Get a single position by symbol (thread-safe)."""
+        with self._lock:
+            return self._pos.get(sym)
 
     def upsert(self, p: Position) -> None:
-        self._pos[p.symbol] = p
+        with self._lock:
+            self._pos[p.symbol] = p
 
     def close(self, sym: str) -> None:
-        self._pos.pop(sym, None)
+        with self._lock:
+            self._pos.pop(sym, None)
 
     def reduce(self, sym: str, qty_exit: int) -> None:
-        p = self._pos.get(sym)
-        if not p:
-            return
-        nq = int(p.qty) - int(qty_exit)
-        if nq <= 0:
-            self._pos.pop(sym, None)
-        else:
-            p.qty = nq
-            self._pos[sym] = p
+        with self._lock:
+            p = self._pos.get(sym)
+            if not p:
+                return
+            nq = int(p.qty) - int(qty_exit)
+            if nq <= 0:
+                self._pos.pop(sym, None)
+            else:
+                p.qty = nq
+                self._pos[sym] = p
 
 
 # ---------- Helpers ----------
@@ -143,6 +159,7 @@ class ExitExecutor:
         # T1 behavior - PHASE 2.5: No defaults, must be in config
         self.t1_book_pct = float(cfg["exit_t1_book_pct"])
         self.t1_move_sl_to_be = bool(cfg.get("exit_t1_move_sl_to_be", True))
+        self.be_buffer_pct = float(cfg["exit_be_buffer_pct"]) / 100.0  # Convert 0.1 -> 0.001
 
         # PHASE 2.5: T2 and trailing stop behavior - No defaults, must be in config
         self.t2_book_pct = float(cfg["exit_t2_book_pct"])
@@ -1704,30 +1721,27 @@ class ExitExecutor:
             profit_booked = qty_exit * (pos.avg_price - px)  # SHORT: profit when price goes down
         logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{original_qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{self.t2_book_pct:.0f}%-0% split]")
 
-        self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
-        self.positions.reduce(sym, int(qty_exit))
-
-        # Release partial margin for the exited quantity
+        # Calculate new qty for capital manager
         new_qty = current_qty - int(qty_exit)
-        if self.capital_manager:
-            self.capital_manager.reduce_position(sym, int(qty_exit), new_qty)
 
+        # UPDATE STATE BEFORE reduce() - so WebSocket broadcast has correct t1_profit/t1_done
+        # (positions.reduce triggers _broadcast_positions which reads from pos.plan["_state"])
         st["t1_done"] = True
         st["t1_booked_qty"] = qty_exit
         st["t1_booked_price"] = px
         st["t1_profit"] = profit_booked
         st["t1_exit_time"] = ts.isoformat() if ts else None
-        
+
         # Enhanced breakeven logic - always move to BE after T1
         if not st.get("sl_moved_to_be"):
             try:
                 be = float(pos.avg_price)
                 # Add small buffer above BE for long positions, below for short
                 if pos.side.upper() == "BUY":
-                    be_buffer = be + (be * 0.001)  # 0.1% above BE
+                    be_buffer = be + (be * self.be_buffer_pct)
                 else:
-                    be_buffer = be - (be * 0.001)  # 0.1% below BE
-                
+                    be_buffer = be - (be * self.be_buffer_pct)
+
                 if isinstance(pos.plan.get("stop"), dict):
                     pos.plan["stop"]["hard"] = be_buffer
                 pos.plan["hard_sl"] = be_buffer
@@ -1738,9 +1752,18 @@ class ExitExecutor:
                 pass
         pos.plan["_state"] = st
 
+        # Place exit order AFTER state update
+        self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
+
+        # Reduce position qty (triggers WebSocket broadcast with updated state)
+        self.positions.reduce(sym, int(qty_exit))
+
+        # Release partial margin for the exited quantity
+        if self.capital_manager:
+            self.capital_manager.reduce_position(sym, int(qty_exit), new_qty)
+
         # Update persistence with new qty and state (crash recovery)
         if self.persistence:
-            new_qty = current_qty - int(qty_exit)
             self.persistence.update_position(sym, new_qty=new_qty, state_updates={"t1_done": True})
 
         if self.eod_md is not None and ts is not None:
@@ -1809,25 +1832,34 @@ class ExitExecutor:
             return
 
         # Log T2 partial exit with original qty context
-        profit_booked = qty_exit * (px - pos.avg_price)
+        # FIX: Calculate profit based on position direction (same as T1)
+        if pos.side.upper() == "BUY":
+            profit_booked = qty_exit * (px - pos.avg_price)
+        else:
+            profit_booked = qty_exit * (pos.avg_price - px)  # SHORT: profit when price goes down
+
         t2_pct_of_original = (qty_exit / original_entry_qty * 100) if original_entry_qty > 0 else 0
         remaining_qty = qty - qty_exit
         trail_pct = 100.0 - self.t1_book_pct - self.t2_book_pct
         logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-{trail_pct:.0f}%, leaving {remaining_qty} for trail]")
 
-        self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
-        self.positions.reduce(sym, int(qty_exit))
-
-        # Release partial margin for the exited quantity
-        if self.capital_manager:
-            self.capital_manager.reduce_position(sym, int(qty_exit), remaining_qty)
-
-        # Mark T2 as done
+        # UPDATE STATE BEFORE reduce() - so WebSocket broadcast has correct t2_profit/t2_done
+        # (positions.reduce triggers _broadcast_positions which reads from pos.plan["_state"])
         st["t2_done"] = True
         st["t2_booked_qty"] = qty_exit
         st["t2_booked_price"] = px
         st["t2_profit"] = profit_booked
         pos.plan["_state"] = st
+
+        # Place exit order AFTER state update
+        self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
+
+        # Reduce position qty (triggers WebSocket broadcast with updated state)
+        self.positions.reduce(sym, int(qty_exit))
+
+        # Release partial margin for the exited quantity
+        if self.capital_manager:
+            self.capital_manager.reduce_position(sym, int(qty_exit), remaining_qty)
 
         # Update persistence with new qty and state (crash recovery)
         if self.persistence:

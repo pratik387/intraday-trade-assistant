@@ -251,7 +251,7 @@ class TriggerAwareExecutor:
                 # Fill Quality Gate: Exit immediately if fill degrades R:R below threshold
                 can_proceed, fq_reason = self._check_fill_quality(plan, price, side)
                 if not can_proceed:
-                    self._immediate_exit_bad_fill(symbol, side, qty, price, order_id, fq_reason)
+                    self._immediate_exit_bad_fill(symbol, side, qty, price, order_id, fq_reason, plan)
                     return False
 
             # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
@@ -322,6 +322,13 @@ class TriggerAwareExecutor:
                 adjusted_plan = self._recalculate_targets_for_actual_entry(
                     trade.plan, price, side
                 )
+
+                # Ensure entry_ts is always set for dashboard display
+                # Use trigger timestamp from execution, fallback to plan timestamps
+                if trade.trigger_timestamp:
+                    adjusted_plan["entry_ts"] = trade.trigger_timestamp.isoformat() if hasattr(trade.trigger_timestamp, 'isoformat') else str(trade.trigger_timestamp)
+                elif not adjusted_plan.get("entry_ts"):
+                    adjusted_plan["entry_ts"] = adjusted_plan.get("trigger_ts") or pd.Timestamp.now().isoformat()
 
                 pos = Position(
                     symbol=symbol,
@@ -583,7 +590,8 @@ class TriggerAwareExecutor:
         qty: int,
         fill_price: float,
         order_id: str,
-        reason: str
+        reason: str,
+        plan: Dict[str, Any] = None
     ) -> None:
         """
         Exit position immediately due to poor fill quality.
@@ -623,6 +631,36 @@ class TriggerAwareExecutor:
                     "pnl": 0,  # Will be small loss due to bid-ask
                     "diagnostics": {"fill_quality_reason": reason}
                 })
+
+            # Log closed trade to API server for dashboard display
+            if self.api_server:
+                plan = plan or {}
+                stop_data = plan.get("stop", {})
+                sl = stop_data.get("hard") if isinstance(stop_data, dict) else plan.get("sl")
+                targets = plan.get("targets", [])
+                t1 = targets[0].get("level") if targets and len(targets) > 0 else plan.get("t1")
+
+                closed_trade = {
+                    "symbol": symbol,
+                    "side": side.upper(),
+                    "qty": qty,
+                    "entry_price": round(fill_price, 2),
+                    "exit_price": round(fill_price, 2),  # Market exit ~ entry price
+                    "pnl": 0,  # Small bid-ask loss
+                    "exit_reason": f"fill_quality_rejected:{reason}",
+                    "setup": plan.get("setup_type", "unknown"),
+                    "exit_time": pd.Timestamp.now().isoformat(),
+                    "entry_time": plan.get("entry_ts") or plan.get("trigger_ts"),
+                    "sl": round(sl, 2) if sl else None,
+                    "t1": round(t1, 2) if t1 else None,
+                    "t2": None,
+                    "shadow": plan.get("shadow", False),
+                }
+                self.api_server.log_closed_trade(closed_trade)
+
+                # Broadcast to WebSocket for real-time dashboard (skip shadow trades)
+                if not plan.get("shadow", False):
+                    self.api_server.broadcast_ws("closed_trade", closed_trade)
 
         except Exception as e:
             logger.error(f"FILL_QUALITY_EXIT_FAILED | {symbol} | {e}")
