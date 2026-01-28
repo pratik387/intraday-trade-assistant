@@ -38,7 +38,12 @@ class FeatherTickLoader:
         self.base_path = base_path
 
         # Pre-aggregated cache directory
-        self.preagg_dir = Path(base_path).parent / "preaggregate"
+        # Priority: 1) backtest-cache-download/monthly (primary location)
+        #           2) cache/preaggregate (legacy location)
+        project_root = Path(base_path).resolve().parents[1] if "cache" in base_path else Path(base_path).resolve().parent
+        primary_preagg = project_root / "backtest-cache-download" / "monthly"
+        legacy_preagg = Path(base_path).parent / "preaggregate"
+        self.preagg_dir = primary_preagg if primary_preagg.exists() else legacy_preagg
 
         # Cache loaded data to avoid reloading (fixes OCI hang when ticker thread calls load_all())
         self._cached_data: Optional[Dict[str, pd.DataFrame]] = None

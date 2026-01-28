@@ -69,3 +69,9 @@ ta-lib/
 temp/*
 nul
 .venv/*
+backtest-cache-download/*
+backtest_20*
+2026*_full
+docs/*
+.claude/
+.claude/settings.local.json

@@ -333,6 +333,12 @@
   "_comment_momentum_short": "PHASE 4 REVERT: Back to 2.5x for shorts - short breakouts require larger candles to avoid false breakdowns.",
   "risk_per_trade_rupees": 1000.0,
   "fees_slippage_bps": 5.0,
+  "fill_quality": {
+    "enabled": true,
+    "min_rr_to_t1": 0.5,
+    "max_slippage_pct": 0.5,
+    "_comment": "Reject fills that compress R:R below 0.5 or slip > 0.5%. Exit immediately on rejection."
+  },
   "enable_lunch_pause": true,
   "lunch_start": "12:15",
   "lunch_end": "13:15",

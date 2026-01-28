@@ -248,6 +248,12 @@ class TriggerAwareExecutor:
                     except Exception as e:
                         logger.warning(f"Failed to reconcile position for {symbol}: {e}")
 
+                # Fill Quality Gate: Exit immediately if fill degrades R:R below threshold
+                can_proceed, fq_reason = self._check_fill_quality(plan, price, side)
+                if not can_proceed:
+                    self._immediate_exit_bad_fill(symbol, side, qty, price, order_id, fq_reason)
+                    return False
+
             # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
             # Reason: Both trade_logger.info() (removed) and trading_logger.log_trigger() (below)
             #         write to the SAME trade_logs.log file, creating duplicate TRIGGER_EXEC entries
@@ -513,6 +519,113 @@ class TriggerAwareExecutor:
             logger.warning(f"Target recalculation failed: {e}, using original targets")
 
         return adjusted_plan
+
+    def _check_fill_quality(
+        self, plan: Dict[str, Any], actual_fill: float, side: str
+    ) -> Tuple[bool, str]:
+        """
+        Validate that actual fill doesn't degrade R:R below acceptable threshold.
+
+        Pro trader insight: A trade that looked good at decision time may become
+        unacceptable after fill slippage compresses the R:R. Better to exit
+        immediately and take a small loss than hold a negative expectancy trade.
+
+        Returns:
+            (can_proceed, reason_string)
+        """
+        # Get config thresholds
+        fq_cfg = self.cfg.get("fill_quality", {})
+        if not fq_cfg.get("enabled", False):
+            return True, "fill_quality_disabled"
+
+        min_rr = fq_cfg.get("min_rr_to_t1")
+        max_slippage_pct = fq_cfg.get("max_slippage_pct")
+
+        # Get plan values
+        hard_sl = plan.get("stop", {}).get("hard") or plan.get("hard_sl")
+        targets = plan.get("targets", [])
+        t1_level = targets[0].get("level") if targets else None
+        entry_ref = plan.get("entry_ref_price") or plan.get("price")
+
+        if not all([hard_sl, t1_level, entry_ref]):
+            return True, "incomplete_plan_data"
+
+        # Calculate slippage percentage
+        slippage_pct = abs(actual_fill - entry_ref) / entry_ref * 100
+
+        # Calculate actual R:R to T1
+        if side.upper() == "BUY":
+            actual_risk = actual_fill - hard_sl
+            actual_reward_t1 = t1_level - actual_fill
+        else:  # SELL/SHORT
+            actual_risk = hard_sl - actual_fill
+            actual_reward_t1 = actual_fill - t1_level
+
+        # Check if SL already breached
+        if actual_risk <= 0:
+            return False, f"sl_already_breached:fill={actual_fill:.2f},sl={hard_sl:.2f}"
+
+        actual_rr = actual_reward_t1 / actual_risk if actual_risk > 0 else 0
+
+        # Check thresholds
+        if slippage_pct > max_slippage_pct:
+            return False, f"slippage_exceeded:{slippage_pct:.2f}%>{max_slippage_pct}%"
+
+        if actual_rr < min_rr:
+            return False, f"rr_compressed:{actual_rr:.2f}<{min_rr}"
+
+        return True, f"fill_ok:rr={actual_rr:.2f},slip={slippage_pct:.2f}%"
+
+    def _immediate_exit_bad_fill(
+        self,
+        symbol: str,
+        side: str,
+        qty: int,
+        fill_price: float,
+        order_id: str,
+        reason: str
+    ) -> None:
+        """
+        Exit position immediately due to poor fill quality.
+
+        This is the disciplined response when a fill degrades R:R below threshold.
+        Accept the small loss rather than hold a negative expectancy trade.
+        """
+        exit_side = "SELL" if side.upper() == "BUY" else "BUY"
+
+        logger.warning(
+            f"FILL_QUALITY_EXIT | {symbol} | Exiting {qty} @ market | "
+            f"Entry: {fill_price:.2f} | Reason: {reason}"
+        )
+
+        try:
+            # Place immediate exit order
+            self.broker.place_order(
+                symbol=symbol,
+                side=exit_side,
+                qty=qty,
+                order_type="MARKET",
+                product="MIS",
+                variety="regular"
+            )
+
+            # Release capital allocation
+            if self.capital_manager:
+                self.capital_manager.release_allocation(symbol)
+
+            # Log to trade log
+            if self.trading_logger:
+                self.trading_logger.log_exit({
+                    "symbol": symbol,
+                    "reason": f"fill_quality_rejected:{reason}",
+                    "qty": qty,
+                    "exit_price": fill_price,  # Approximate - actual will be market
+                    "pnl": 0,  # Will be small loss due to bid-ask
+                    "diagnostics": {"fill_quality_reason": reason}
+                })
+
+        except Exception as e:
+            logger.error(f"FILL_QUALITY_EXIT_FAILED | {symbol} | {e}")
 
     def _cleanup_expired_trades(self) -> None:
         """Clean up expired and completed trades

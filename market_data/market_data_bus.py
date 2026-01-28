@@ -121,6 +121,10 @@ class MarketDataBus:
         # Tick callbacks for real-time execution (symbol, price, volume, ts)
         self._tick_callbacks: list[Callable[[str, float, float, datetime], None]] = []
 
+        # Latency tracking for subscriber mode
+        self._latency_samples: list[float] = []
+        self._latency_count: int = 0
+
         if mode != "standalone":
             self._init_redis()
 
@@ -207,8 +211,9 @@ class MarketDataBus:
 
         try:
             ts_ns = int(ts.timestamp() * 1_000_000) if hasattr(ts, 'timestamp') else 0
-            # Compact format: "symbol|price|volume|ts_ns"
-            tick_data = f"{symbol}|{price}|{volume}|{ts_ns}"
+            send_ns = time.time_ns()  # For latency measurement
+            # Compact format: "symbol|price|volume|ts_ns|send_ns"
+            tick_data = f"{symbol}|{price}|{volume}|{ts_ns}|{send_ns}"
             self._redis.publish("ticks:stream", tick_data)
         except Exception:
             # Don't log every tick failure - too noisy
@@ -295,48 +300,56 @@ class MarketDataBus:
         logger.info(f"MKT_DATA_BUS | Subscriber started, patterns: {patterns}")
 
     def _subscriber_loop(self) -> None:
-        """Background loop processing Redis pub/sub messages."""
-        while self._running:
-            try:
-                message = self._pubsub.get_message(timeout=0.01)  # 10ms for low latency
-                if message is None:
-                    continue
+        """Background loop processing Redis pub/sub messages.
 
-                if message["type"] not in ("message", "pmessage"):
-                    continue
+        Uses blocking listen() instead of polling get_message() for
+        lower latency tick delivery (~5-10ms improvement).
+        """
+        try:
+            # Blocking iterator - immediate delivery on message arrival
+            for message in self._pubsub.listen():
+                if not self._running:
+                    break
 
-                channel = message.get("channel", "") or message.get("pattern", "")
-                data = message["data"]
+                try:
+                    if message["type"] not in ("message", "pmessage"):
+                        continue
 
-                # Handle tick stream messages
-                if channel == "ticks:stream":
-                    self._handle_tick_message(data)
-                    continue
+                    channel = message.get("channel", "") or message.get("pattern", "")
+                    data = message["data"]
 
-                # Handle bar messages: "bars:5m:RELIANCE" -> timeframe="5m"
-                parts = channel.split(":")
-                if len(parts) >= 2 and parts[0] == "bars":
-                    timeframe = parts[1]
-                    try:
-                        event = BarEvent.from_json(data)
-                        for callback in self._bar_callbacks.get(timeframe, []):
-                            try:
-                                callback(event)
-                            except Exception as e:
-                                logger.exception(f"MKT_DATA_BUS | Bar callback error: {e}")
-                    except Exception as e:
-                        logger.warning(f"MKT_DATA_BUS | Failed to parse bar event: {e}")
+                    # Handle tick stream messages (high priority - latency sensitive)
+                    if channel == "ticks:stream":
+                        self._handle_tick_message(data)
+                        continue
 
-            except Exception as e:
-                logger.warning(f"MKT_DATA_BUS | Subscriber error: {e}")
-                time.sleep(0.1)
+                    # Handle bar messages: "bars:5m:RELIANCE" -> timeframe="5m"
+                    parts = channel.split(":")
+                    if len(parts) >= 2 and parts[0] == "bars":
+                        timeframe = parts[1]
+                        try:
+                            event = BarEvent.from_json(data)
+                            for callback in self._bar_callbacks.get(timeframe, []):
+                                try:
+                                    callback(event)
+                                except Exception as e:
+                                    logger.exception(f"MKT_DATA_BUS | Bar callback error: {e}")
+                        except Exception as e:
+                            logger.warning(f"MKT_DATA_BUS | Failed to parse bar event: {e}")
+
+                except Exception as e:
+                    logger.warning(f"MKT_DATA_BUS | Message processing error: {e}")
+
+        except Exception as e:
+            if self._running:
+                logger.warning(f"MKT_DATA_BUS | Subscriber loop error: {e}")
 
     def _handle_tick_message(self, data: str) -> None:
         """Parse and dispatch tick message to callbacks."""
         try:
-            # Format: "symbol|price|volume|ts_ns"
+            # Format: "symbol|price|volume|ts_ns|send_ns"
             parts = data.split("|")
-            if len(parts) != 4:
+            if len(parts) < 4:
                 return
 
             symbol = parts[0]
@@ -344,6 +357,13 @@ class MarketDataBus:
             volume = float(parts[2])
             ts_ns = int(parts[3])
             ts = datetime.fromtimestamp(ts_ns / 1_000_000)
+
+            # Calculate latency if send_ns is present
+            if len(parts) >= 5:
+                send_ns = int(parts[4])
+                recv_ns = time.time_ns()
+                latency_ms = (recv_ns - send_ns) / 1_000_000
+                self._track_latency(latency_ms)
 
             for callback in self._tick_callbacks:
                 try:
@@ -353,6 +373,26 @@ class MarketDataBus:
         except Exception as e:
             # Don't log every parse failure - too noisy
             pass
+
+    def _track_latency(self, latency_ms: float) -> None:
+        """Track tick latency statistics."""
+        self._latency_samples.append(latency_ms)
+        self._latency_count += 1
+
+        # Log stats every 10000 ticks
+        if self._latency_count % 10000 == 0:
+            samples = self._latency_samples
+            if samples:
+                avg = sum(samples) / len(samples)
+                p50 = sorted(samples)[len(samples) // 2]
+                p99 = sorted(samples)[int(len(samples) * 0.99)]
+                max_lat = max(samples)
+                logger.info(
+                    f"MKT_DATA_BUS | TICK_LATENCY | count={self._latency_count} | "
+                    f"avg={avg:.1f}ms p50={p50:.1f}ms p99={p99:.1f}ms max={max_lat:.1f}ms"
+                )
+            # Reset samples but keep count
+            self._latency_samples = []
 
     def get_ltp(self, symbol: str) -> Optional[tuple[float, int]]:
         """
@@ -394,6 +434,100 @@ class MarketDataBus:
             return None
         except Exception:
             return None
+
+    # ======================== ORB Levels (PDH/PDL/PDC/ORH/ORL) ========================
+
+    def publish_orb_levels(self, session_date: str, levels_by_symbol: Dict[str, Dict[str, float]]) -> None:
+        """
+        Publish ORB levels to Redis (computed once at 09:40 by publisher).
+
+        All subscriber instances will read these identical values, ensuring
+        deterministic signals across LIVE/PAPER/FIXED modes.
+
+        Args:
+            session_date: Date string (YYYY-MM-DD)
+            levels_by_symbol: Dict mapping symbol to levels dict (PDH/PDL/PDC/ORH/ORL)
+        """
+        if self._mode != "publisher":
+            return
+
+        try:
+            key = f"orb:levels:{session_date}"
+            pipeline = self._redis.pipeline()
+
+            for symbol, lvls in levels_by_symbol.items():
+                # Convert NaN to None for JSON serialization
+                clean_lvls = {
+                    k: (None if v != v else v)  # NaN check: NaN != NaN
+                    for k, v in lvls.items()
+                }
+                pipeline.hset(key, symbol, json.dumps(clean_lvls))
+
+            # Set 24h TTL for automatic cleanup
+            pipeline.expire(key, 86400)
+            pipeline.execute()
+
+            valid_orb = sum(1 for v in levels_by_symbol.values()
+                           if v.get("ORH") is not None and v.get("ORL") is not None
+                           and v.get("ORH") == v.get("ORH"))  # NaN check
+            logger.info(
+                f"MKT_DATA_BUS | Published ORB levels for {len(levels_by_symbol)} symbols "
+                f"({valid_orb} with valid ORH/ORL) to Redis"
+            )
+        except Exception as e:
+            logger.warning(f"MKT_DATA_BUS | Failed to publish ORB levels: {e}")
+
+    def get_orb_levels(self, session_date: str) -> Optional[Dict[str, Dict[str, float]]]:
+        """
+        Get ORB levels from Redis (subscriber mode).
+
+        Returns cached PDH/PDL/PDC/ORH/ORL levels computed by the publisher.
+
+        Args:
+            session_date: Date string (YYYY-MM-DD)
+
+        Returns:
+            Dict mapping symbol to levels dict, or None if not found
+        """
+        if self._mode == "standalone":
+            return None
+
+        if self._redis is None:
+            return None
+
+        try:
+            key = f"orb:levels:{session_date}"
+            data = self._redis.hgetall(key)
+
+            if not data:
+                return None
+
+            levels_by_symbol = {}
+            for symbol, lvls_json in data.items():
+                lvls = json.loads(lvls_json)
+                # Convert None back to NaN for consistency with local computation
+                levels_by_symbol[symbol] = {
+                    k: (float("nan") if v is None else v)
+                    for k, v in lvls.items()
+                }
+
+            logger.debug(f"MKT_DATA_BUS | Retrieved ORB levels for {len(levels_by_symbol)} symbols from Redis")
+            return levels_by_symbol
+
+        except Exception as e:
+            logger.warning(f"MKT_DATA_BUS | Failed to get ORB levels: {e}")
+            return None
+
+    def has_orb_levels(self, session_date: str) -> bool:
+        """Check if ORB levels exist in Redis for the given date."""
+        if self._mode == "standalone" or self._redis is None:
+            return False
+
+        try:
+            key = f"orb:levels:{session_date}"
+            return self._redis.exists(key) > 0
+        except Exception:
+            return False
 
     # ======================== Lifecycle ========================
 

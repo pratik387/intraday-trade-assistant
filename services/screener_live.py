@@ -1134,10 +1134,31 @@ class ScreenerLive:
 
         session_date = now.date()
         current_time = now.time()
+        session_date_str = session_date.isoformat() if hasattr(session_date, 'isoformat') else str(session_date)
 
         # Check if already computed for today
         if session_date in self._orb_levels_cache:
             return self._orb_levels_cache[session_date]
+
+        # SUBSCRIBER MODE: Get ORB levels from Redis (computed by publisher/MDS)
+        # This ensures all instances see identical PDH/PDL/PDC/ORH/ORL values
+        if self._market_data_mode == "subscriber" and self._market_data_bus:
+            redis_levels = self._market_data_bus.get_orb_levels(session_date_str)
+            if redis_levels:
+                # Cache locally for fast access on subsequent calls
+                self._orb_levels_cache[session_date] = redis_levels
+                valid_orb = sum(1 for v in redis_levels.values()
+                               if v.get("ORH") is not None and v.get("ORH") == v.get("ORH"))
+                logger.info(
+                    f"ORB_CACHE | Loaded {len(redis_levels)} symbols from Redis "
+                    f"({valid_orb} with valid ORH/ORL) - subscriber mode"
+                )
+                return redis_levels
+            # Not in Redis yet - publisher hasn't computed. Return None and wait.
+            if current_time >= dtime(9, 45):
+                # Past expected computation time but still not in Redis - log warning
+                logger.debug("ORB_CACHE | Subscriber: ORB levels not yet in Redis, waiting for publisher")
+            return None
 
         # Only compute at or after 09:40 (ensures ORB data 09:15-09:30 is complete)
         # By 09:40, more symbols have sufficient data for reliable ORH/ORL calculation
@@ -1188,6 +1209,11 @@ class ScreenerLive:
                 # Cache for the day
                 self._orb_levels_cache[session_date] = levels_by_symbol
                 self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+
+                # PUBLISHER MODE: Publish to Redis for subscriber instances
+                if self._market_data_mode == "publisher" and self._market_data_bus:
+                    self._market_data_bus.publish_orb_levels(session_date_str, levels_by_symbol)
+
                 valid_pdh = sum(1 for v in levels_by_symbol.values() if not pd.isna(v.get("PDH")))
                 logger.info(f"ORB_CACHE | Late start: Computed PDH/PDL/PDC for {valid_pdh}/{len(levels_by_symbol)} symbols")
                 return levels_by_symbol
@@ -1250,6 +1276,11 @@ class ScreenerLive:
 
         # Persist to disk for restart recovery
         self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+
+        # PUBLISHER MODE: Publish to Redis for subscriber instances
+        # This ensures all instances see identical PDH/PDL/PDC/ORH/ORL values
+        if self._market_data_mode == "publisher" and self._market_data_bus:
+            self._market_data_bus.publish_orb_levels(session_date_str, levels_by_symbol)
 
         elapsed = time_module.perf_counter() - start_time
         logger.info(
@@ -1373,6 +1404,12 @@ class ScreenerLive:
 
             # Persist to disk for restart recovery
             self._save_orb_cache_to_disk(session_date, levels_by_symbol)
+
+            # PUBLISHER MODE: Publish to Redis for subscriber instances
+            # This ensures all instances see identical PDH/PDL/PDC/ORH/ORL values after late-start recovery
+            if self._market_data_mode == "publisher" and self._market_data_bus:
+                session_date_str = session_date.isoformat() if hasattr(session_date, 'isoformat') else str(session_date)
+                self._market_data_bus.publish_orb_levels(session_date_str, levels_by_symbol)
 
             orb_count = sum(1 for v in levels_by_symbol.values()
                            if not (pd.isna(v.get("ORH")) or pd.isna(v.get("ORL"))))

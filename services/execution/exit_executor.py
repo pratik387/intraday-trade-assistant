@@ -1621,6 +1621,15 @@ class ExitExecutor:
         if current_qty <= 0:
             return
 
+        # RACE CONDITION FIX: Set t1_done IMMEDIATELY to prevent duplicate T1 exits
+        # This must happen BEFORE any order placement to block concurrent tick processing
+        st = pos.plan.get("_state") or {}
+        if st.get("t1_done", False):
+            logger.info(f"T1_SKIP | {sym} | T1 already done, skipping duplicate")
+            return
+        st["t1_done"] = True
+        pos.plan["_state"] = st
+
         # Check if T2 is infeasible (T1-only scalp mode) or Fast Scalp Lane
         t2_exit_mode = pos.plan.get("quality", {}).get("t2_exit_mode", None)
         if t2_exit_mode in ("T1_only_scalp", "fast_scalp_T1_only"):
@@ -1728,6 +1737,15 @@ class ExitExecutor:
         qty = int(pos.qty)
         if qty <= 0:
             return
+
+        # RACE CONDITION FIX: Set t2_done IMMEDIATELY to prevent duplicate T2 exits
+        # This must happen BEFORE any order placement to block concurrent tick processing
+        st = pos.plan.get("_state") or {}
+        if st.get("t2_done", False):
+            logger.debug(f"T2_SKIP | {sym} | T2 already done, skipping duplicate")
+            return
+        st["t2_done"] = True
+        pos.plan["_state"] = st
 
         # If no trail configured (T1+T2 >= 100%), exit ALL remaining at T2
         # This avoids rounding issues and matches 60-40-0 intent
