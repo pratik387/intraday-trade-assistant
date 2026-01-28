@@ -380,7 +380,7 @@ class ScreenerLive:
         """
         try:
             from datetime import timedelta
-            from utils.time_util import now_ist_naive
+            from utils.time_util import _now_naive_ist
 
             # Get late start config
             late_start_cfg = self.raw_cfg.get("late_start_warmup", {})
@@ -390,7 +390,7 @@ class ScreenerLive:
             threshold_minutes = late_start_cfg.get("threshold_minutes", 30)
 
             # Check if this is a late start
-            now = now_ist_naive()
+            now = _now_naive_ist()
             market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
 
             if now <= market_open + timedelta(minutes=threshold_minutes):
