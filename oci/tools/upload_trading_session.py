@@ -52,11 +52,11 @@ BUCKETS = {
     "live": "live-trading-logs"
 }
 
-# Separate bucket for tick/sidecar data (market data, not logs)
+# Separate bucket for tick/market data (not session logs)
 TICK_DATA_BUCKET = "trading-tick-data"
 
-# Sidecar data directory
-SIDECAR_DIR = ROOT / "data" / "sidecar"
+# Market data directory (ticks, bars recorded by tick_recorder)
+SIDECAR_DIR = ROOT / "data" / "sidecar"  # Legacy path name kept for compatibility
 
 
 def get_mode_from_session(session_id: str) -> str:

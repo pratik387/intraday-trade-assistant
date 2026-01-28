@@ -536,7 +536,7 @@ def main() -> int:
         if result.get("source") == "api":
             cache_persistence.save(sdk.get_daily_cache())
 
-    # Tick recorder for paper/live trading (records to sidecar format for upload)
+    # Tick recorder for paper/live trading (records to parquet for upload)
     tick_recorder = None
 
     # Pick mode
@@ -550,12 +550,14 @@ def main() -> int:
         logger.warning("🧪 PAPER TRADING MODE: Live data, simulated orders (no real trades)")
 
         # Initialize tick recorder for paper trading
-        try:
-            from sidecar.data_collector import TickRecorder as SidecarTickRecorder
-            tick_recorder = SidecarTickRecorder(buffer_size=50000)
-            logger.info("TICK_RECORDER | Initialized for paper trading session")
-        except Exception as e:
-            logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
+        tick_cfg = cfg.get("tick_recording", {})
+        if tick_cfg.get("enabled", True):
+            try:
+                from market_data.tick_recorder import TickRecorder
+                tick_recorder = TickRecorder(buffer_size=tick_cfg.get("buffer_size", 50000))
+                logger.info("TICK_RECORDER | Initialized for paper trading session")
+            except Exception as e:
+                logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
 
         if not args.skip_prewarm:
             _prewarm_daily_cache(sdk)
@@ -580,12 +582,14 @@ def main() -> int:
         logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
 
         # Initialize tick recorder for live trading
-        try:
-            from sidecar.data_collector import TickRecorder as SidecarTickRecorder
-            tick_recorder = SidecarTickRecorder(buffer_size=50000)
-            logger.info("TICK_RECORDER | Initialized for live trading session")
-        except Exception as e:
-            logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
+        tick_cfg = cfg.get("tick_recording", {})
+        if tick_cfg.get("enabled", True):
+            try:
+                from market_data.tick_recorder import TickRecorder
+                tick_recorder = TickRecorder(buffer_size=tick_cfg.get("buffer_size", 50000))
+                logger.info("TICK_RECORDER | Initialized for live trading session")
+            except Exception as e:
+                logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
 
         if not args.skip_prewarm:
             _prewarm_daily_cache(sdk)
@@ -593,20 +597,8 @@ def main() -> int:
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq)
 
-    # Bootstrap from sidecar data (instant startup on late start)
-    # This populates ORB cache, daily levels, and 5m bars from pre-collected sidecar data
-    bootstrap_result = {"success": False, "skipped": True, "reason": "not_attempted"}
-    try:
-        from sidecar import maybe_bootstrap_from_sidecar
-        bootstrap_result = maybe_bootstrap_from_sidecar(screener)
-        if bootstrap_result.get("success"):
-            logger.info(f"SIDECAR | Bootstrapped: {bootstrap_result['orb_count']} ORB, "
-                       f"{bootstrap_result.get('daily_levels_count', 0)} daily levels, "
-                       f"{bootstrap_result['bars_count']} bars for {bootstrap_result['symbols_count']} symbols")
-        elif bootstrap_result.get("skipped"):
-            logger.debug(f"SIDECAR | Skipped: {bootstrap_result.get('reason', 'unknown')}")
-    except Exception as e:
-        logger.debug(f"SIDECAR | Bootstrap not available: {e}")
+    # Late-start warmup is now handled by Redis bar backfill in screener_live.py
+    # (see late_start_warmup config and _late_start_backfill method)
 
     # Tap the central tick router so entries & exits share the same tick clock
     def _ltp_tap(sym: str, price: float, qty: float, ts_dt):
@@ -618,7 +610,7 @@ def main() -> int:
     # Register tick recorder for paper/live trading (records market data for upload)
     if tick_recorder is not None:
         def _tick_recorder_tap(sym: str, price: float, qty: float, cumvol: int, ts_dt):
-            # Adapter: OnTickFull signature → SidecarTickRecorder.on_tick signature
+            # Adapter: OnTickFull signature → TickRecorder.on_tick signature
             tick_recorder.on_tick(sym, price, qty, ts_dt, cumvol)
 
         register_tick_listener_full(_tick_recorder_tap)

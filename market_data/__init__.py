@@ -44,6 +44,7 @@ from .market_data_bus import MarketDataBus, BarEvent
 from .shared_ltp import SharedLTPCache
 from .bar_subscriber import BarSubscriber
 from .factory import create_market_data_components
+from .tick_recorder import TickRecorder, RedisTickRecorder
 
 __all__ = [
     "MarketDataBus",
@@ -51,4 +52,6 @@ __all__ = [
     "SharedLTPCache",
     "BarSubscriber",
     "create_market_data_components",
+    "TickRecorder",
+    "RedisTickRecorder",
 ]

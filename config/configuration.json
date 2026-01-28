@@ -2404,6 +2404,12 @@
     "_comment_ltp_mode": "standalone=local cache, subscriber=read from Redis. Follows 'mode' setting.",
     "_usage": "1) redis-server  2) python -m market_data.market_data_service  3) python main.py --shared-market-data"
   },
+  "_comment_tick_recording": "=== TICK RECORDING (Market Data Archive) ===",
+  "tick_recording": {
+    "enabled": true,
+    "buffer_size": 50000,
+    "_comment": "Records ticks to data/sidecar/ticks/ for backtesting. Can also run standalone: python -m market_data.tick_recorder"
+  },
   "_comment_late_start_warmup": "=== LATE START WARMUP (Subscriber Mode) ===",
   "late_start_warmup": {
     "enabled": true,
