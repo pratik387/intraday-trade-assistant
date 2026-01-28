@@ -321,6 +321,10 @@ class ScreenerLive:
         if self._market_data_mode == "subscriber":
             # Subscriber mode: bars come from Redis via BarSubscriber (already started in factory)
             logger.info("SCREENER | Subscriber mode started - receiving bars from Redis")
+
+            # Late start backfill: if starting after market has been open for a while,
+            # load bar history from Redis to pre-warm indicators immediately
+            self._late_start_backfill()
             return
 
         # Publisher/standalone mode: connect WebSocket
@@ -365,6 +369,49 @@ class ScreenerLive:
         # Trigger executor is managed by main.py
 
         logger.info("ScreenerLive stopped")
+
+    def _late_start_backfill(self) -> None:
+        """
+        Load historical bars from Redis if starting late (after market open).
+
+        This pre-warms the indicator calculations so Stage-0 filtering
+        and volume persistence work immediately instead of requiring
+        45-60 minutes of warmup time.
+        """
+        from datetime import timedelta
+        from utils.time_util import now_ist_naive
+
+        # Get late start config
+        late_start_cfg = self.cfg._raw.get("late_start_warmup", {})
+        if not late_start_cfg.get("enabled", True):
+            return
+
+        threshold_minutes = late_start_cfg.get("threshold_minutes", 30)
+
+        # Check if this is a late start
+        now = now_ist_naive()
+        market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+
+        if now <= market_open + timedelta(minutes=threshold_minutes):
+            # Not a late start - normal warmup will happen
+            return
+
+        minutes_late = int((now - market_open).total_seconds() / 60)
+        logger.info(f"LATE_START | Detected late start at {now.strftime('%H:%M')} ({minutes_late} min after open)")
+
+        # Backfill 5m bars from Redis
+        if hasattr(self.agg, 'backfill_from_redis'):
+            bars_loaded = self.agg.backfill_from_redis(self.core_symbols, "5m")
+            if bars_loaded > 0:
+                avg_bars_per_symbol = bars_loaded / len(self.core_symbols) if self.core_symbols else 0
+                logger.info(
+                    f"LATE_START | Backfilled {bars_loaded} bars "
+                    f"(avg {avg_bars_per_symbol:.1f} bars/symbol)"
+                )
+            else:
+                logger.warning("LATE_START | No bar history found in Redis - warmup will be slow")
+        else:
+            logger.warning("LATE_START | BarSubscriber doesn't support backfill - warmup will be slow")
 
     # ---------------------------------------------------------------------
     # BarBuilder callbacks

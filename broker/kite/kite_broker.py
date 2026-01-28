@@ -376,7 +376,8 @@ class KiteBroker:
     def get_app_orders(self) -> List[Dict]:
         """Get only orders placed by this app (tagged with ITDA_)."""
         orders = self.get_orders()
-        return [o for o in orders if o.get("tag", "").startswith(APP_ORDER_TAG_PREFIX)]
+        # Use `or ""` because tag can be None (not just missing), and .get() default doesn't handle None values
+        return [o for o in orders if (o.get("tag") or "").startswith(APP_ORDER_TAG_PREFIX)]
 
     def get_order_fill_price(self, order_id: str, max_retries: int = 3, retry_delay: float = 0.5) -> Optional[float]:
         """

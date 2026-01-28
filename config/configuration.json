@@ -2403,5 +2403,11 @@
     "ltp_mode": "standalone",
     "_comment_ltp_mode": "standalone=local cache, subscriber=read from Redis. Follows 'mode' setting.",
     "_usage": "1) redis-server  2) python -m market_data.market_data_service  3) python main.py --shared-market-data"
+  },
+  "_comment_late_start_warmup": "=== LATE START WARMUP (Subscriber Mode) ===",
+  "late_start_warmup": {
+    "enabled": true,
+    "threshold_minutes": 30,
+    "_comment": "If starting >30min after 09:15, backfill 5m bar history from Redis to pre-warm indicators"
   }
 }

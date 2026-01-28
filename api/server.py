@@ -16,6 +16,7 @@ import os
 import threading
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Optional, Callable, Dict, List, Any, Tuple
 from functools import partial
 from queue import Queue, Empty
@@ -95,6 +96,8 @@ class APIServer:
 
         # Closed trades log (in-memory for current session)
         self._closed_trades: List[Dict[str, Any]] = []
+        self._state_dir: Optional[Path] = None
+        self._closed_trades_file: Optional[Path] = None
 
         self._lock = threading.RLock()
 
@@ -144,14 +147,85 @@ class APIServer:
             self._metrics[name] = self._metrics.get(name, 0) + value
 
     def log_closed_trade(self, trade: Dict[str, Any]):
-        """Log a closed trade for the session."""
+        """Log a closed trade for the session and persist to disk."""
         with self._lock:
             self._closed_trades.append(trade)
+            self._save_closed_trades()
+        # Broadcast to WebSocket clients
+        self.broadcast_ws("closed_trade", trade)
 
     def get_closed_trades(self) -> List[Dict[str, Any]]:
         """Get all closed trades for this session."""
         with self._lock:
             return list(self._closed_trades)
+
+    # ==================== Closed Trades Persistence ====================
+
+    def set_state_dir(self, state_dir: Path):
+        """
+        Set state directory and load persisted closed trades.
+
+        Args:
+            state_dir: Directory where state files are stored
+        """
+        self._state_dir = Path(state_dir)
+        self._closed_trades_file = self._state_dir / "closed_trades.json"
+        self._load_closed_trades()
+
+    def _load_closed_trades(self) -> None:
+        """
+        Load closed trades from disk if file exists and is from today.
+
+        Date validation: Only loads trades from today's snapshot.
+        Stale snapshots (from previous days) are rejected because
+        they represent previous session's realized PnL.
+        """
+        if not self._closed_trades_file or not self._closed_trades_file.exists():
+            return
+
+        try:
+            with open(self._closed_trades_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Date validation
+            snapshot_ts = data.get("timestamp")
+            if snapshot_ts:
+                try:
+                    snapshot_date = datetime.fromisoformat(snapshot_ts).date()
+                    today = datetime.now().date()
+                    if snapshot_date != today:
+                        logger.info(
+                            f"[API] Stale closed trades snapshot rejected: {snapshot_date} != today ({today})"
+                        )
+                        return  # Don't load stale trades
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"[API] Could not parse snapshot timestamp: {snapshot_ts}")
+
+            trades = data.get("trades", [])
+            with self._lock:
+                self._closed_trades = trades
+            logger.info(f"[API] Loaded {len(trades)} closed trades from snapshot")
+
+        except Exception as e:
+            logger.error(f"[API] Failed to load closed trades: {e}")
+
+    def _save_closed_trades(self) -> None:
+        """Atomic save of closed trades to disk."""
+        if not self._closed_trades_file:
+            return
+
+        try:
+            data = {
+                "timestamp": datetime.now().isoformat(),
+                "trades": self._closed_trades,
+            }
+            # Atomic write: write to temp, then rename
+            temp_file = self._closed_trades_file.with_suffix(".tmp")
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+            temp_file.replace(self._closed_trades_file)  # Atomic on most systems
+        except Exception as e:
+            logger.error(f"[API] Failed to save closed trades: {e}")
 
     # ==================== External References ====================
 

@@ -143,6 +143,80 @@ class BarSubscriber:
         self._started = True
         logger.info(f"BAR_SUBSCRIBER | Started, symbols={self._symbols or 'all'}")
 
+    def backfill_from_redis(self, symbols: List[str], timeframe: str = "5m") -> int:
+        """
+        Load historical bars from Redis to pre-warm indicator calculations.
+
+        Called on late starts (after market open) to immediately populate
+        bar cache so Stage-0 filtering and indicator calculations work.
+
+        Args:
+            symbols: List of symbols to backfill
+            timeframe: Bar timeframe to backfill (default "5m")
+
+        Returns:
+            Total number of bars loaded across all symbols
+        """
+        if self._bus is None or self._bus._redis is None:
+            logger.warning("BAR_SUBSCRIBER | Cannot backfill - no Redis connection")
+            return 0
+
+        redis = self._bus._redis
+        total_loaded = 0
+        symbols_with_data = 0
+
+        for symbol in symbols:
+            key = f"bars:{timeframe}:history:{symbol}"
+            try:
+                # Get all stored bars (newest first due to lpush)
+                bar_jsons = redis.lrange(key, 0, -1)
+                if not bar_jsons:
+                    continue
+
+                symbols_with_data += 1
+
+                # Process in chronological order (reverse since lpush stores newest first)
+                for bar_json in reversed(bar_jsons):
+                    try:
+                        event = BarEvent.from_json(bar_json)
+
+                        # Convert BarEvent to pandas Series (matches _on_bar_event)
+                        bar = pd.Series({
+                            "open": event.open,
+                            "high": event.high,
+                            "low": event.low,
+                            "close": event.close,
+                            "volume": event.volume,
+                            "vwap": event.vwap,
+                            "adx": event.adx,
+                            "rsi": event.rsi,
+                            "bb_width_proxy": event.bb_width_proxy,
+                        })
+
+                        # Parse timestamp
+                        try:
+                            bar.name = pd.Timestamp(event.ts)
+                        except Exception:
+                            from datetime import datetime as dt
+                            bar.name = dt.fromisoformat(event.ts)
+
+                        # Store bar in local cache (no callbacks - just backfill)
+                        self._store_bar(symbol, timeframe, bar)
+                        total_loaded += 1
+
+                    except Exception as e:
+                        logger.debug(f"BAR_SUBSCRIBER | Failed to parse backfill bar: {e}")
+                        continue
+
+            except Exception as e:
+                logger.debug(f"BAR_SUBSCRIBER | Backfill error for {symbol}: {e}")
+                continue
+
+        logger.info(
+            f"BAR_BACKFILL | Loaded {total_loaded} bars for {symbols_with_data}/{len(symbols)} symbols"
+        )
+        return total_loaded
+
     def _on_bar_event(self, event: BarEvent) -> None:
         """Handle incoming bar event from Redis."""
         # Convert BarEvent to pandas Series (matches BarBuilder output)

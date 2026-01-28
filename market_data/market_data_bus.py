@@ -169,9 +169,39 @@ class MarketDataBus:
             # Store latest bar in hash for late joiners
             self._redis.hset(f"bars:{timeframe}:latest", symbol, event.to_json())
 
+            # Store bar history for late-start backfill (5m bars only)
+            if timeframe == "5m":
+                self._store_bar_history(symbol, timeframe, event)
+
             logger.debug(f"MKT_DATA_BUS | Published {timeframe} bar: {symbol} @ {event.ts}")
         except Exception as e:
             logger.warning(f"MKT_DATA_BUS | Failed to publish bar: {e}")
+
+    def _store_bar_history(self, symbol: str, timeframe: str, event: BarEvent) -> None:
+        """
+        Store bar in Redis list for subscriber backfill on late start.
+
+        Maintains a rolling history of last 100 bars per symbol for each timeframe.
+        Late-starting subscribers can load this history to pre-warm indicators.
+
+        Args:
+            symbol: Trading symbol
+            timeframe: Bar timeframe (e.g., "5m")
+            event: BarEvent to store
+        """
+        try:
+            key = f"bars:{timeframe}:history:{symbol}"
+            bar_json = event.to_json()
+
+            # Push to list (newest first), trim to 100 bars, set 24h TTL
+            pipe = self._redis.pipeline()
+            pipe.lpush(key, bar_json)
+            pipe.ltrim(key, 0, 99)  # Keep last 100 bars
+            pipe.expire(key, 86400)  # 24h TTL for automatic cleanup
+            pipe.execute()
+        except Exception:
+            # Don't log every failure - too noisy
+            pass
 
     def update_ltp(self, symbol: str, price: float, ts: datetime) -> None:
         """

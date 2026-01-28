@@ -20,6 +20,7 @@ import time
 import signal
 import argparse
 import threading
+from pathlib import Path
 from typing import Optional
 import pandas as pd
 
@@ -635,6 +636,12 @@ def main() -> int:
     api.set_ltp_cache(ltp_cache)
     api.set_kite_client(sdk)  # For broker API calls (funds, etc.)
     api.set_auth_token(args.admin_token)  # For protected endpoints
+
+    # Set state directory for closed trades persistence
+    state_dir = Path(__file__).resolve().parent / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    api.set_state_dir(state_dir)
+
     api.start()
 
     # Initialize WebSocket server for real-time dashboard updates
