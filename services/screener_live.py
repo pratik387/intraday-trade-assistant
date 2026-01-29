@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from datetime import datetime, time as dtime
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import queue as queue_mod
 import threading
 
 import pandas as pd
@@ -306,6 +307,11 @@ class ScreenerLive:
         )
         logger.info("ScreenerLive: Persistent worker pool created (2 workers)")
 
+        # Async scan dispatch (live/paper only — backtest stays synchronous)
+        self._scan_queue: queue_mod.Queue = queue_mod.Queue(maxsize=50)
+        self._scan_thread: Optional[threading.Thread] = None
+        self._scan_running = False
+        self._scan_busy = False  # True while scan is executing (gates dispatcher)
 
         logger.debug(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
@@ -327,6 +333,9 @@ class ScreenerLive:
             # IMPORTANT: Do backfill BEFORE starting subscriber to avoid race condition
             self._late_start_backfill()
 
+            # Start async scan dispatch worker (subscriber mode is always live/paper)
+            self._start_scan_worker()
+
             # Now start the subscriber to receive real-time bars
             # (Backfill is complete, so first scan will have historical data)
             if hasattr(self.agg, 'start'):
@@ -339,6 +348,9 @@ class ScreenerLive:
         self.ws.start()
 
         # Trigger executor is managed by main.py
+
+        # Start async scan dispatch worker (live/paper only)
+        self._start_scan_worker()
 
         logger.info("WS connected; core subscriptions scheduled: %d symbols", len(self.core_symbols))
 
@@ -363,6 +375,9 @@ class ScreenerLive:
         if self._market_data_mode == "subscriber" and hasattr(self.agg, 'shutdown'):
             try: self.agg.shutdown()
             except Exception: pass
+
+        # Stop async scan dispatch worker
+        self._stop_scan_worker()
 
         # Shutdown persistent worker pool
         try:
@@ -613,8 +628,64 @@ class ScreenerLive:
             "htf_exhaustion": htf_exhaustion,
         }
 
+    # ----- Async scan dispatch (live/paper) ---------------------------------
+    def _start_scan_worker(self) -> None:
+        """Start background scan thread for async dispatch."""
+        if env.DRY_RUN:
+            return  # Backtest doesn't need async
+        self._scan_running = True
+        self._scan_thread = threading.Thread(
+            target=self._scan_worker_loop,
+            name="ScanWorker",
+            daemon=True,
+        )
+        self._scan_thread.start()
+        logger.info("SCAN_DISPATCH | Background scan worker started")
+
+    def _scan_worker_loop(self) -> None:
+        """Background thread: dequeue and run scans sequentially."""
+        while self._scan_running:
+            try:
+                symbol, bar_5m = self._scan_queue.get(timeout=1.0)
+            except queue_mod.Empty:
+                continue
+            try:
+                self._run_5m_scan(symbol, bar_5m)
+            except Exception as e:
+                logger.exception("SCAN_DISPATCH | Scan failed: %s", e)
+            finally:
+                self._scan_busy = False  # Ungate for next 5m cycle
+                self._scan_queue.task_done()
+
+    def _stop_scan_worker(self) -> None:
+        """Stop background scan thread."""
+        self._scan_running = False
+        if self._scan_thread and self._scan_thread.is_alive():
+            self._scan_thread.join(timeout=5.0)
+        logger.info("SCAN_DISPATCH | Background scan worker stopped")
+
+    # ----- 5m close dispatch + scan pipeline --------------------------------
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
-        """Main driver: invoked for each CLOSED 5m bar of any symbol."""
+        """Dispatch 5m close: async in live/paper, sync in backtest."""
+        if env.DRY_RUN:
+            # Backtest: synchronous for deterministic replay
+            self._run_5m_scan(symbol, bar_5m)
+            return
+
+        # Live/Paper: queue for background scan thread
+        # _scan_busy gates so only the first symbol per 5m cycle queues
+        if self._scan_busy:
+            return
+
+        self._scan_busy = True  # Block further dispatches until scan completes
+        try:
+            self._scan_queue.put_nowait((symbol, bar_5m))
+        except queue_mod.Full:
+            self._scan_busy = False
+            logger.warning("SCAN_DISPATCH | Queue full, dropping %s", symbol)
+
+    def _run_5m_scan(self, symbol: str, bar_5m: pd.Series) -> None:
+        """Main scan driver: runs full pipeline for a 5m bar close."""
         import time
         _t_bar_start = time.perf_counter()
 
