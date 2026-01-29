@@ -662,6 +662,11 @@ class MomentumPipeline(BasePipeline):
         t2_dist = min(t2_rr * risk_per_share, cap2)
         t3_dist = min(t3_rr * risk_per_share, cap3)
 
+        # Recompute effective R:R after capping (actual distance / risk, not configured multiple)
+        t1_rr = t1_dist / max(risk_per_share, 1e-6)
+        t2_rr = t2_dist / max(risk_per_share, 1e-6)
+        t3_rr = t3_dist / max(risk_per_share, 1e-6)
+
         if bias == "long":
             t1 = entry_ref_price + t1_dist
             t2 = entry_ref_price + t2_dist

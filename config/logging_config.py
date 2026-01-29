@@ -248,3 +248,51 @@ def get_events_decision_logger():
     if _events_decision_logger is None:
         _initialize_loggers()
     return _events_decision_logger
+
+
+# -------------------- Child Process Logger Initialization --------------------
+
+def initialize_child_loggers(log_dir: Path, process_tag: str):
+    """
+    Initialize loggers for a child process using the parent's log directory.
+
+    Called by the exec child process (spawned via multiprocessing) to write
+    logs into the SAME session folder as the parent, avoiding log fragmentation.
+
+    Creates:
+      - agent_{tag}.log  (separate from parent's agent.log)
+      - trade_logs.log   (exec child owns trade logging)
+      - TradingLogger    (exec child owns analytics)
+      - events_decisions.jsonl (exec child owns decision logging)
+
+    Args:
+        log_dir: Parent's log directory (Path object)
+        process_tag: Tag for this process (e.g., "exec") — used in agent log filename
+    """
+    global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path
+    global _events_decision_logger
+
+    dir_path = log_dir
+    _session_id = log_dir.name  # Reuse parent's session ID from directory name
+
+    formatter = logging.Formatter('%(asctime)s — %(levelname)s — %(name)s — %(message)s')
+
+    # Agent logger — separate file per process to avoid write contention
+    _agent_logger = logging.getLogger(f"agent_{process_tag}")
+    _agent_logger.setLevel(logging.INFO)
+    agent_file = logging.FileHandler(log_dir / f"agent_{process_tag}.log", encoding="utf-8")
+    agent_file.setFormatter(formatter)
+    _agent_logger.addHandler(agent_file)
+
+    # Trade logger — exec child owns trade logging
+    _trade_logger = logging.getLogger(f"trade_{process_tag}")
+    _trade_logger.setLevel(logging.INFO)
+    trade_file = logging.FileHandler(log_dir / "trade_logs.log", encoding="utf-8")
+    trade_file.setFormatter(formatter)
+    _trade_logger.addHandler(trade_file)
+
+    # Enhanced Trading Logger — exec child owns analytics
+    _trading_logger = TradingLogger(_session_id, log_dir)
+
+    # Events decision JSONL — exec child owns decision logging
+    _events_decision_logger = JSONLLogger(log_dir / "events_decisions.jsonl", "events_decision")

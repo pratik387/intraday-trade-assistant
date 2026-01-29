@@ -2316,7 +2316,7 @@
   "exits": {
     "score_drop_enabled": true,
     "score_drop_bpct": 30.0,
-    "time_stop_min": 45.0,
+    "time_stop_min": 0,
     "time_stop_req_rr": 0.5,
     "breakout_short_risk_control": true,
     "breakout_short_initial_stop_mult": 0.7,
@@ -2410,6 +2410,16 @@
       "compression_level": 6,
       "max_size_mb": 200
     }
+  },
+  "_comment_execution_process": "=== EXECUTION PROCESS SEPARATION ===",
+  "execution_mode": "in_process",
+  "_comment_execution_mode": "in_process=all-in-one (default), separated=auto-spawn exec child process (shared logs), scan_only/exec_only=manual two-terminal. Backtest always forces in_process.",
+  "trade_plan_queue_key": "trade_plans:queue",
+  "_comment_trade_plan_queue": "Redis list key for trade plan handoff between scan and exec processes",
+  "exec_heartbeat": {
+    "key": "exec:heartbeat",
+    "interval_sec": 5,
+    "ttl_sec": 15
   },
   "_comment_tick_recording": "=== TICK RECORDING (Market Data Archive) ===",
   "tick_recording": {

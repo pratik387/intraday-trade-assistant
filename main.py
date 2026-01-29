@@ -29,12 +29,13 @@ from config.filters_setup import load_filters
 
 from services.orders.order_queue import OrderQueue
 from services.screener_live import ScreenerLive
-from services.execution.trade_executor import RiskState, Position
+from services.execution.trade_executor import RiskState
 from services.execution.exit_executor import ExitExecutor
 from services.ingest.tick_router import register_tick_listener, register_tick_listener_full
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
 from services.capital_manager import CapitalManager
-from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
+from services.state.position_store import PositionStore
+from services.state.recovery import startup_recovery
 from services.state.daily_cache_persistence import DailyCachePersistence
 from pipelines.base_pipeline import set_base_config_override, load_base_config
 from api import get_api_server, SessionState
@@ -60,98 +61,8 @@ logger = get_agent_logger()
 trading_logger = get_trading_logger()
 
 
-# ------------------------ Shared Position Store ------------------------
 
-class _PositionStore:
-    """
-    Thread-safe in-memory store shared by TriggerAwareExecutor (writer) and ExitExecutor (reader/updater).
-    Broadcasts position changes to WebSocket clients for real-time dashboard updates.
-    """
-    def __init__(self, api_server=None) -> None:
-        self._by_sym: dict[str, Position] = {}
-        self._lock = threading.RLock()
-        self._api_server = api_server
-
-    def set_api_server(self, api_server):
-        """Set API server for WebSocket broadcasts."""
-        self._api_server = api_server
-
-    def upsert(self, p: Position) -> None:
-        with self._lock:
-            self._by_sym[p.symbol] = p
-        self._broadcast_positions()
-
-    def get(self, sym: str) -> Optional[Position]:
-        with self._lock:
-            return self._by_sym.get(sym)
-
-    def all(self) -> list[Position]:
-        with self._lock:
-            return list(self._by_sym.values())
-
-    # --- required by ExitExecutor ---
-    def list_open(self) -> dict[str, Position]:
-        with self._lock:
-            return dict(self._by_sym)
-
-    def close(self, sym: str) -> None:
-        with self._lock:
-            self._by_sym.pop(sym, None)
-        self._broadcast_positions()
-
-    def reduce(self, sym: str, qty_exit: int) -> None:
-        """Reduce qty for partial exits; remove if goes to zero."""
-        with self._lock:
-            p = self._by_sym.get(sym)
-            if not p:
-                return
-            new_qty = int(p.qty) - int(qty_exit)
-            if new_qty <= 0:
-                self._by_sym.pop(sym, None)
-            else:
-                p.qty = new_qty
-                self._by_sym[sym] = p
-        self._broadcast_positions()
-
-    def _broadcast_positions(self):
-        """Broadcast current positions to WebSocket clients.
-        Excludes shadow trades - they're for internal analysis only.
-        """
-        if not self._api_server:
-            return
-        positions = []
-        with self._lock:
-            for p in self._by_sym.values():
-                # Skip shadow trades - simulated positions that don't consume capital
-                if hasattr(p, 'plan') and p.plan and p.plan.get("shadow", False):
-                    continue
-                pos_dict = {
-                    "symbol": p.symbol,
-                    "side": p.side,
-                    "qty": p.qty,
-                    "entry": p.avg_price,
-                }
-                # Include plan data if available
-                if hasattr(p, 'plan') and p.plan:
-                    plan = p.plan
-                    stop_data = plan.get("stop", {})
-                    pos_dict["sl"] = stop_data.get("hard") if isinstance(stop_data, dict) else plan.get("sl")
-                    targets = plan.get("targets", [])
-                    if targets and len(targets) > 0:
-                        pos_dict["t1"] = targets[0].get("level")
-                    if targets and len(targets) > 1:
-                        pos_dict["t2"] = targets[1].get("level")
-                    pos_dict["setup"] = plan.get("setup_type", "unknown")
-                    pos_dict["entry_time"] = plan.get("entry_ts") or plan.get("trigger_ts")
-                    state = plan.get("_state", {})
-                    pos_dict["t1_done"] = state.get("t1_done", False)
-                    # Include all partial profits: T1 + T2 + manual API partials
-                    t1_profit = state.get("t1_profit", 0) or 0
-                    t2_profit = state.get("t2_profit", 0) or 0
-                    manual_profit = state.get("manual_partial_profit", 0) or 0
-                    pos_dict["booked_pnl"] = t1_profit + t2_profit + manual_profit
-                positions.append(pos_dict)
-        self._api_server.broadcast_ws("positions", {"positions": positions})
+# PositionStore extracted to services/state/position_store.py
 
 
 # ------------------------ LTP cache (tick clock) ------------------------
@@ -205,196 +116,7 @@ class _DryRunBroker:
         return self._real._last_bar_ohlc
 
 
-# ------------------------ Startup Recovery (Phase 4) ------------------------
-
-def _merge_persisted_state_into_plan(pers_pos) -> dict:
-    """
-    Merge PersistedPosition.state into plan["_state"] for proper recovery.
-
-    The exit_executor reads state from plan["_state"], but persistence stores
-    updates in a separate 'state' field. This merges them back together.
-    """
-    plan = dict(pers_pos.plan) if pers_pos.plan else {}
-    if pers_pos.state:
-        # Merge persisted state into plan's _state
-        plan_state = plan.get("_state", {})
-        plan_state.update(pers_pos.state)
-        plan["_state"] = plan_state
-    return plan
-
-
-def startup_recovery(
-    broker,
-    is_live_mode: bool,
-    is_paper_mode: bool,
-    log_dir,
-    position_store: _PositionStore,
-    trading_logger_instance=None
-) -> Optional[PositionPersistence]:
-    """
-    Recover position state on startup.
-
-    For live mode: Reconciles with broker positions
-    For paper mode: Validates positions against current price (SL/T1/T2 checks)
-    For dry-run (backtest): Returns None (no persistence needed)
-
-    Args:
-        broker: KiteBroker instance
-        is_live_mode: True if live trading
-        is_paper_mode: True if paper trading
-        log_dir: Directory for position snapshot
-        position_store: PositionStore to populate
-        trading_logger_instance: TradingLogger for phantom exit logging
-
-    Returns:
-        PositionPersistence instance (or None for backtests)
-    """
-    from pathlib import Path
-
-    # Backtests don't need persistence
-    if not is_live_mode and not is_paper_mode:
-        logger.info("[RECOVERY] Backtest mode - persistence disabled")
-        return None
-
-    # Use a dedicated state directory for persistence (not session-specific)
-    # This allows recovery across sessions
-    state_dir = Path(__file__).resolve().parent / "state"
-    state_dir.mkdir(parents=True, exist_ok=True)
-
-    persistence = PositionPersistence(state_dir)
-    persisted = persistence.load_snapshot()
-
-    if not persisted:
-        logger.info("[RECOVERY] No persisted positions found")
-        return persistence
-
-    logger.info(f"[RECOVERY] Found {len(persisted)} persisted positions")
-
-    if is_live_mode:
-        # Live mode: Reconcile with broker
-        try:
-            reconciliation = BrokerReconciliation(broker)
-            result = reconciliation.reconcile(persisted)
-
-            # Log results
-            if result.orphaned_app:
-                logger.warning(f"[RECOVERY] Positions closed externally: {list(result.orphaned_app.keys())}")
-            if result.manual_trades:
-                logger.info(f"[RECOVERY] Manual trades detected (not managed): {list(result.manual_trades.keys())}")
-            if result.qty_mismatch:
-                logger.warning(f"[RECOVERY] QTY MISMATCH - adjusting to broker state: {list(result.qty_mismatch.keys())}")
-
-            # Restore matched positions
-            for sym, pers_pos in result.matched.items():
-                merged_plan = _merge_persisted_state_into_plan(pers_pos)
-                position_store.upsert(Position(
-                    symbol=pers_pos.symbol,
-                    side=pers_pos.side,
-                    qty=pers_pos.qty,
-                    avg_price=pers_pos.avg_price,
-                    plan=merged_plan,
-                ))
-                logger.info(f"[RECOVERY] Restored position: {sym} {pers_pos.side} {pers_pos.qty}@{pers_pos.avg_price} state={pers_pos.state}")
-
-            # Handle qty mismatches - trust broker
-            for sym, (pers_pos, broker_pos) in result.qty_mismatch.items():
-                adjusted_pos = reconciliation.adjust_for_broker(pers_pos, broker_pos)
-                merged_plan = _merge_persisted_state_into_plan(adjusted_pos)
-                position_store.upsert(Position(
-                    symbol=adjusted_pos.symbol,
-                    side=adjusted_pos.side,
-                    qty=adjusted_pos.qty,
-                    avg_price=adjusted_pos.avg_price,
-                    plan=merged_plan,
-                ))
-                # Update persistence with adjusted qty
-                persistence.update_position(sym, new_qty=adjusted_pos.qty)
-                logger.info(f"[RECOVERY] Adjusted position (broker qty): {sym} {adjusted_pos.qty} state={adjusted_pos.state}")
-
-            # Remove orphaned positions from persistence
-            for sym in result.orphaned_app:
-                persistence.remove_position(sym)
-
-            logger.info(f"[RECOVERY] Recovered {len(result.matched) + len(result.qty_mismatch)} positions")
-
-        except Exception as e:
-            logger.error(f"[RECOVERY] Broker reconciliation failed: {e}")
-            # Fall back to persisted state only
-            for sym, pers_pos in persisted.items():
-                merged_plan = _merge_persisted_state_into_plan(pers_pos)
-                position_store.upsert(Position(
-                    symbol=pers_pos.symbol,
-                    side=pers_pos.side,
-                    qty=pers_pos.qty,
-                    avg_price=pers_pos.avg_price,
-                    plan=merged_plan,
-                ))
-            logger.warning(f"[RECOVERY] Restored {len(persisted)} positions from snapshot (no broker verification)")
-
-    else:  # Paper mode
-        # Paper mode: Validate positions against current price before restoring
-        # This handles positions where SL/T1/T2 would have been hit while offline
-        restored_count = 0
-        phantom_exit_count = 0
-
-        for sym, pers_pos in persisted.items():
-            # Get current price to validate position
-            try:
-                current_price = broker.get_ltp(sym)
-                if current_price is None:
-                    logger.warning(f"[RECOVERY] Could not get LTP for {sym}, skipping validation")
-                    current_price = pers_pos.avg_price  # Fallback to entry price
-            except Exception as e:
-                logger.warning(f"[RECOVERY] LTP fetch failed for {sym}: {e}, using entry price")
-                current_price = pers_pos.avg_price
-
-            # Validate position against current price (SL/T1/T2 checks)
-            should_restore, state_updates, phantom_logged = validate_paper_position_on_recovery(
-                pers_pos=pers_pos,
-                current_price=current_price,
-                trading_logger=trading_logger_instance,
-                persistence=persistence
-            )
-
-            if phantom_logged:
-                phantom_exit_count += 1
-
-            if not should_restore:
-                continue  # Position was stopped out or T2 hit - already handled
-
-            # Apply state updates (e.g., t1_done=True if T1 was hit)
-            if state_updates:
-                if pers_pos.state is None:
-                    pers_pos.state = {}
-                pers_pos.state.update(state_updates)
-
-                # Update quantity if T1 was hit (partial exit happened)
-                if "_remaining_qty" in state_updates:
-                    pers_pos.qty = state_updates["_remaining_qty"]
-
-                # Update persistence with new state
-                persistence.update_position(sym, new_qty=pers_pos.qty, state_updates=state_updates)
-
-            merged_plan = _merge_persisted_state_into_plan(pers_pos)
-            position_store.upsert(Position(
-                symbol=pers_pos.symbol,
-                side=pers_pos.side,
-                qty=pers_pos.qty,
-                avg_price=pers_pos.avg_price,
-                plan=merged_plan,
-            ))
-            restored_count += 1
-            logger.info(
-                f"[RECOVERY] Restored position (paper): {sym} {pers_pos.side} {pers_pos.qty}@{pers_pos.avg_price} "
-                f"state={pers_pos.state} current_price={current_price:.2f}"
-            )
-
-        logger.info(
-            f"[RECOVERY] Paper mode recovery complete: restored={restored_count} "
-            f"phantom_exits={phantom_exit_count} total_persisted={len(persisted)}"
-        )
-
-    return persistence
+# startup_recovery extracted to services/state/recovery.py
 
 
 # ------------------------ Main orchestration ------------------------
@@ -522,8 +244,27 @@ def main() -> int:
     dynamic_risk = capital_manager.get_risk_per_trade(fallback=fallback_risk)
     set_base_config_override('risk_per_trade_rupees', dynamic_risk)
 
-    # Order queue handles pacing/retries; it reads its own config internally
-    oq = OrderQueue()
+    # Determine execution mode: in_process (all-in-one) or scan_only (exec runs separately)
+    execution_mode = getattr(args, 'execution_mode', None) or cfg.get("execution_mode", "in_process")
+    if args.dry_run:
+        execution_mode = "in_process"  # Backtest always forces in_process
+
+    if execution_mode != "in_process":
+        logger.info("EXEC_MODE | %s", execution_mode)
+
+    # Order queue: local (in_process), Redis publish (scan_only/separated), Redis consume (exec_only)
+    mdb_cfg = cfg.get("market_data_bus", {})
+    redis_url = mdb_cfg.get("redis_url", "redis://localhost:6379/0")
+    queue_key = cfg["trade_plan_queue_key"]
+
+    if execution_mode in ("scan_only", "separated"):
+        from services.execution.redis_plan_queue import RedisPlanPublisher
+        oq = RedisPlanPublisher(redis_url=redis_url, queue_key=queue_key)
+    elif execution_mode == "exec_only":
+        from services.execution.redis_plan_queue import RedisPlanConsumer
+        oq = RedisPlanConsumer(redis_url=redis_url, queue_key=queue_key)
+    else:
+        oq = OrderQueue()
 
     def _prewarm_daily_cache(sdk):
         """Pre-warm daily cache: Redis (1-3s) -> rolling disk (2-5s) -> API (15min)."""
@@ -639,11 +380,326 @@ def main() -> int:
         if not args.skip_prewarm:
             _prewarm_daily_cache(sdk)
 
+    # ---------- exec_only: full execution pipeline, no screener ----------
+    if execution_mode == "exec_only":
+        from market_data import BarSubscriber
+        from services.execution.exec_heartbeat import ExecHeartbeatPublisher
+
+        # BarSubscriber as tick source (receives from MDS via Redis — own GIL isolation)
+        bar_subscriber = BarSubscriber(redis_url=redis_url, symbols=None)
+        bar_subscriber.init_redis()
+
+        # Wire LTP cache to BarSubscriber ticks
+        _original_on_tick = bar_subscriber.on_tick
+        def _ltp_tap_on_tick(symbol, price, volume, ts):
+            _original_on_tick(symbol, price, volume, ts)
+            ltp_cache.update(symbol, float(price), pd.Timestamp(ts))
+        bar_subscriber.on_tick = _ltp_tap_on_tick
+
+        # Risk + shared positions
+        risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
+        positions = PositionStore()
+
+        # API server
+        api = get_api_server(port=args.health_port)
+        api.set_state(SessionState.RECOVERING)
+        api.set_position_store(positions)
+        api.set_capital_manager(capital_manager)
+        api.set_ltp_cache(ltp_cache)
+        api.set_kite_client(sdk)
+        api.set_auth_token(args.admin_token)
+
+        state_dir = Path(__file__).resolve().parent / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        api.set_state_dir(state_dir)
+        api.start()
+
+        # WebSocket server
+        from api.websocket_server import WebSocketServer, LTPBatcher
+        ws_port = args.ws_port if args.ws_port else args.health_port + 1
+        ws_server = WebSocketServer(port=ws_port)
+        ws_server.start()
+        api.set_websocket_server(ws_server)
+
+        positions.set_api_server(api)
+        ltp_batcher = LTPBatcher(api.broadcast_ws, interval_ms=500)
+        ltp_cache.set_ltp_batcher(ltp_batcher)
+
+        # Startup recovery
+        from config.logging_config import get_log_directory
+        is_live = not args.dry_run and not args.paper_trading
+        persistence = startup_recovery(
+            broker=broker,
+            is_live_mode=is_live,
+            is_paper_mode=args.paper_trading,
+            log_dir=get_log_directory(),
+            position_store=positions,
+            trading_logger_instance=trading_logger,
+        )
+
+        # Executors — use BarSubscriber (duck-typed BarBuilder) and RedisPlanConsumer (duck-typed OrderQueue)
+        trader = TriggerAwareExecutor(
+            broker=broker,
+            order_queue=oq,           # RedisPlanConsumer
+            risk_state=risk,
+            positions=positions,
+            get_ltp_ts=ltp_cache.get_ltp_ts,
+            bar_builder=bar_subscriber,  # BarSubscriber (duck-typed BarBuilder)
+            trading_logger=trading_logger,
+            capital_manager=capital_manager,
+            persistence=persistence,
+            api_server=api,
+        )
+        exit_exec = ExitExecutor(
+            broker=broker,
+            positions=positions,
+            get_ltp_ts=ltp_cache.get_ltp_ts,
+            bar_builder=bar_subscriber,
+            trading_logger=trading_logger,
+            capital_manager=capital_manager,
+            persistence=persistence,
+            api_server=api,
+        )
+
+        # Start BarSubscriber (begin receiving ticks from MDS)
+        bar_subscriber.start()
+        logger.info("EXEC_ONLY | BarSubscriber started — receiving ticks from MDS")
+
+        # Start executor threads
+        threads: list[threading.Thread] = []
+        t_trade = threading.Thread(target=trader.run_forever, name="TriggerAwareExecutor", daemon=True)
+        t_trade.start(); threads.append(t_trade)
+        logger.info("trigger-aware-executor: started")
+
+        t_exit = threading.Thread(target=exit_exec.run_forever, name="ExitExecutor", daemon=True)
+        t_exit.start(); threads.append(t_exit)
+        logger.info("exit-executor: started")
+
+        def monitor_triggers():
+            while True:
+                try:
+                    summary = trader.get_pending_trades_summary()
+                    if summary["total_pending"] > 0 or summary["total_triggered"] > 0:
+                        logger.info(
+                            f"TRIGGER_STATUS: pending={summary['total_pending']} "
+                            f"triggered={summary['total_triggered']} "
+                            f"symbols={list(summary['by_symbol'].keys())}"
+                        )
+                    time.sleep(30)
+                except Exception as e:
+                    logger.exception(f"Monitor thread error: {e}")
+                    time.sleep(30)
+
+        t_monitor = threading.Thread(target=monitor_triggers, name="TriggerMonitor", daemon=True)
+        t_monitor.start(); threads.append(t_monitor)
+
+        # Heartbeat publisher — scan process checks this before enqueuing
+        hb_cfg = cfg["exec_heartbeat"]
+        heartbeat = ExecHeartbeatPublisher(
+            redis_url=redis_url,
+            key=hb_cfg["key"],
+            interval_sec=hb_cfg["interval_sec"],
+            ttl_sec=hb_cfg["ttl_sec"],
+        )
+        heartbeat.start()
+
+        api.set_state(SessionState.TRADING)
+        logger.info("EXEC_ONLY | All components started — ready for trade plans from Redis")
+
+        # Run until EOD / signal
+        stop = threading.Event()
+
+        def _sig_handler(signum, frame):
+            logger.warning(f"signal {signum} received – shutting down exec_only")
+            stop.set()
+
+        def _shutdown_via_http():
+            logger.info("Shutdown requested via HTTP")
+            stop.set()
+
+        signal.signal(signal.SIGINT, _sig_handler)
+        signal.signal(signal.SIGTERM, _sig_handler)
+        if api:
+            api.set_shutdown_callback(_shutdown_via_http)
+
+        try:
+            while not stop.is_set():
+                time.sleep(0.2)
+        except KeyboardInterrupt:
+            logger.info("keyboard interrupt – stopping exec_only")
+        finally:
+            api.set_state(SessionState.SHUTTING_DOWN)
+
+            try:
+                with trader._lock:
+                    for trade in trader.pending_trades.values():
+                        if trade.state == TradeState.WAITING_TRIGGER:
+                            trade.state = TradeState.CANCELLED
+                logger.info("Cancelled all pending trades for EOD")
+            except Exception as e:
+                logger.warning("Failed to cancel pending trades: %s", e)
+
+            try:
+                exit_exec.square_off_all_open_positions()
+            except Exception as e:
+                logger.warning("final EOD sweep failed: %s", e)
+
+            try:
+                trader.stop()
+            except Exception as e:
+                logger.warning("trader.stop failed: %s", e)
+
+            if capital_manager:
+                try:
+                    log_dir = get_log_directory()
+                    if log_dir and log_dir.exists():
+                        capital_manager.save_final_report(log_dir)
+                except Exception:
+                    pass
+
+            heartbeat.stop()
+            bar_subscriber.shutdown()
+            oq.shutdown()
+            api.set_state(SessionState.STOPPED)
+            api.stop()
+
+        logger.info("EXEC_ONLY | Session end")
+        return 0
+
+    # ---------- separated: spawn exec child, then run scan in this process ----------
+    if execution_mode == "separated":
+        import multiprocessing as mp
+        from config.logging_config import get_log_directory
+        from services.execution.exec_process import run_exec_child
+
+        log_dir = get_log_directory()
+        stop_event = mp.Event()
+        args_dict = {
+            "paper_trading": args.paper_trading,
+            "dry_run": args.dry_run,
+            "health_port": args.health_port,
+            "ws_port": args.ws_port,
+            "admin_token": args.admin_token,
+        }
+
+        exec_child = mp.Process(
+            target=run_exec_child,
+            args=(str(log_dir), stop_event, args_dict),
+            name="ExecChild",
+            daemon=False,  # Not daemon — we join it on shutdown
+        )
+        exec_child.start()
+        logger.info("SEPARATED | Exec child spawned (PID=%d)", exec_child.pid)
+
+        # Wait for exec child heartbeat before starting scan
+        time.sleep(3)
+        try:
+            from services.execution.exec_heartbeat import ExecHeartbeatChecker
+            hb_cfg = cfg["exec_heartbeat"]
+            hb = ExecHeartbeatChecker(redis_url=redis_url, key=hb_cfg["key"])
+            if hb.is_alive():
+                logger.info("SEPARATED | Exec child heartbeat OK")
+            else:
+                logger.warning("SEPARATED | Exec child heartbeat not yet detected — continuing anyway")
+            hb.shutdown()
+        except Exception as e:
+            logger.warning("SEPARATED | Heartbeat check failed: %s", e)
+
+        # Parent becomes scan process
+        screener = ScreenerLive(sdk=sdk, order_queue=oq)
+        logger.info("SEPARATED | Starting screener (exec runs in child process PID=%d)", exec_child.pid)
+
+        stop = threading.Event()
+
+        def _sig_handler(signum, frame):
+            logger.warning(f"signal {signum} received – shutting down separated mode")
+            stop.set()
+
+        signal.signal(signal.SIGINT, _sig_handler)
+        signal.signal(signal.SIGTERM, _sig_handler)
+
+        try:
+            screener.start()
+            while not getattr(screener, "_request_exit", False) and not stop.is_set():
+                # Also check if exec child crashed
+                if not exec_child.is_alive():
+                    logger.error("SEPARATED | Exec child died (exit code=%s) — stopping scan", exec_child.exitcode)
+                    break
+                time.sleep(0.2)
+        except KeyboardInterrupt:
+            logger.info("keyboard interrupt – stopping separated mode")
+        finally:
+            try:
+                screener.stop()
+            except Exception as e:
+                logger.warning("screener.stop failed: %s", e)
+            if hasattr(oq, 'shutdown'):
+                oq.shutdown()
+
+            # Signal exec child to stop and wait for it
+            logger.info("SEPARATED | Signalling exec child to stop")
+            stop_event.set()
+            exec_child.join(timeout=30)
+            if exec_child.is_alive():
+                logger.warning("SEPARATED | Exec child did not exit in 30s — terminating")
+                exec_child.terminate()
+                exec_child.join(timeout=5)
+
+        logger.info("SEPARATED | Session end")
+        return 0
+
+    # ---------- scan_only / in_process: need ScreenerLive ----------
+
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq)
 
     # Late-start warmup is now handled by Redis bar backfill in screener_live.py
     # (see late_start_warmup config and _late_start_backfill method)
+
+    # ---------- scan_only: early return (no executors, no positions) ----------
+    if execution_mode == "scan_only":
+        # Check exec process heartbeat (non-blocking, advisory only)
+        try:
+            from services.execution.exec_heartbeat import ExecHeartbeatChecker
+            hb_cfg = cfg["exec_heartbeat"]
+            hb = ExecHeartbeatChecker(redis_url=redis_url, key=hb_cfg["key"])
+            if hb.is_alive():
+                logger.info("SCAN_ONLY | Exec process heartbeat OK")
+            else:
+                logger.warning("SCAN_ONLY | Exec process heartbeat not detected — plans will queue in Redis")
+            hb.shutdown()
+        except Exception as e:
+            logger.warning("SCAN_ONLY | Heartbeat check failed: %s", e)
+
+        # Simplified run loop: scan + publish plans, no local execution
+        logger.info("SCAN_ONLY | Starting screener (no local executors)")
+        stop = threading.Event()
+
+        def _sig_handler(signum, frame):
+            logger.warning(f"signal {signum} received – shutting down scan_only")
+            stop.set()
+
+        signal.signal(signal.SIGINT, _sig_handler)
+        signal.signal(signal.SIGTERM, _sig_handler)
+
+        try:
+            screener.start()
+            while not getattr(screener, "_request_exit", False) and not stop.is_set():
+                time.sleep(0.2)
+        except KeyboardInterrupt:
+            logger.info("keyboard interrupt – stopping scan_only")
+        finally:
+            try:
+                screener.stop()
+            except Exception as e:
+                logger.warning("screener.stop failed: %s", e)
+            if hasattr(oq, 'shutdown'):
+                oq.shutdown()
+
+        logger.info("SCAN_ONLY | Session end")
+        return 0
+
+    # ---------- in_process: full execution pipeline below ----------
 
     # Tap the central tick router so entries & exits share the same tick clock
     def _ltp_tap(sym: str, price: float, qty: float, ts_dt):
@@ -663,7 +719,7 @@ def main() -> int:
 
     # Risk + shared positions
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
-    positions = _PositionStore()
+    positions = PositionStore()
 
     # Initialize API server for production monitoring
     api = get_api_server(port=args.health_port)
@@ -889,6 +945,8 @@ def _parse_args():
     # Shared market data (subscribe to standalone Market Data Service)
     ap.add_argument("--shared-market-data", action="store_true",
                     help="Subscribe to Market Data Service via Redis (requires: python -m market_data.market_data_service)")
+    ap.add_argument("--execution-mode", choices=["in_process", "separated", "scan_only", "exec_only"], default=None,
+                    help="in_process=all-in-one (default), separated=auto-spawn exec child process, scan_only/exec_only=manual two-terminal")
     return ap.parse_args()
 
 
