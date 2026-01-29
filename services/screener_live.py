@@ -328,6 +328,10 @@ class ScreenerLive:
             # Subscriber mode: bars come from Redis via BarSubscriber
             logger.info("SCREENER | Subscriber mode started - receiving bars from Redis")
 
+            # Init Redis connection FIRST so backfill can read bar history
+            if hasattr(self.agg, 'init_redis'):
+                self.agg.init_redis()
+
             # Late start backfill: if starting after market has been open for a while,
             # load bar history from Redis to pre-warm indicators immediately
             # IMPORTANT: Do backfill BEFORE starting subscriber to avoid race condition

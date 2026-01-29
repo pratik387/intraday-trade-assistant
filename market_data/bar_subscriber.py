@@ -121,15 +121,28 @@ class BarSubscriber:
         if handler not in self._additional_15m_handlers:
             self._additional_15m_handlers.append(handler)
 
-    def start(self) -> None:
-        """Start receiving bars and ticks from Redis."""
-        if self._started:
+    def init_redis(self) -> None:
+        """Initialize Redis connection without starting subscriptions.
+
+        Call this before backfill_from_redis() so the Redis connection
+        exists. Then call start() to begin receiving real-time bars/ticks.
+        """
+        if self._bus is not None:
             return
 
         self._bus = MarketDataBus(
             mode="subscriber",
             redis_url=self._redis_url,
         )
+        logger.info("BAR_SUBSCRIBER | Redis connection initialized")
+
+    def start(self) -> None:
+        """Start receiving bars and ticks from Redis."""
+        if self._started:
+            return
+
+        # Ensure Redis connection exists (idempotent if init_redis() already called)
+        self.init_redis()
 
         # Subscribe to all timeframes for bar events
         self._bus.subscribe_bars("1m", self._on_bar_event, self._symbols)
