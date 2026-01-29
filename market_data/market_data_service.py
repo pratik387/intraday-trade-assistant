@@ -153,6 +153,9 @@ class MarketDataService:
             logger.error(f"MDS | Failed to initialize Kite SDK: {e}")
             raise
 
+        # Pre-warm daily cache and publish to Redis for subscriber instances
+        self._prewarm_and_publish_daily_cache()
+
         # Load universe
         token_map = self._load_universe()
         if not token_map:
@@ -182,6 +185,42 @@ class MarketDataService:
 
         # Start stats reporter
         self._start_stats_reporter()
+
+    def _prewarm_and_publish_daily_cache(self) -> None:
+        """
+        Pre-warm daily OHLCV cache (rolling) and publish to Redis for subscribers.
+
+        Uses rolling cache: loads yesterday's disk cache if today's doesn't exist.
+        The 90% threshold in prewarm_daily_cache() skips API if cache is populated.
+        Then publishes to Redis so subscriber instances load in ~1-3s.
+        """
+        dc_cfg = self._config.get("market_data_bus", {}).get("daily_cache_redis", {})
+        if not dc_cfg.get("enabled", False):
+            logger.info("MDS | daily_cache_redis disabled, skipping daily cache prewarm")
+            return
+
+        from services.state.daily_cache_persistence import DailyCachePersistence
+
+        logger.info("MDS | Pre-warming daily OHLCV cache for Redis distribution...")
+
+        # Rolling load: today's cache or yesterday's (2-5 sec)
+        cache_persistence = DailyCachePersistence()
+        cached_data = cache_persistence.load_latest()
+        if cached_data:
+            self._sdk.set_daily_cache(cached_data)
+
+        # 90% threshold check -- skips API if rolling cache loaded enough symbols
+        result = self._sdk.prewarm_daily_cache(days=210)
+        if result.get("source") == "api":
+            cache_persistence.save(self._sdk.get_daily_cache())
+
+        # Publish to Redis for subscriber instances
+        today = datetime.now().date().isoformat()
+        cache = self._sdk.get_daily_cache()
+        if cache:
+            self._bus.publish_daily_cache(today, cache, dc_cfg)
+        else:
+            logger.warning("MDS | Daily cache empty after prewarm, nothing to publish")
 
     def _start_stats_reporter(self) -> None:
         """Start background thread to report stats periodically."""

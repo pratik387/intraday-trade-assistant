@@ -2402,7 +2402,14 @@
     "_comment_1m": "Only used by Market Data Service (python -m market_data.market_data_service --publish-1m)",
     "ltp_mode": "standalone",
     "_comment_ltp_mode": "standalone=local cache, subscriber=read from Redis. Follows 'mode' setting.",
-    "_usage": "1) redis-server  2) python -m market_data.market_data_service  3) python main.py --shared-market-data"
+    "_usage": "1) redis-server  2) python -m market_data.market_data_service  3) python main.py --shared-market-data",
+    "daily_cache_redis": {
+      "enabled": true,
+      "_comment": "Share daily OHLCV cache via Redis. MDS pre-warms (rolling cache from yesterday) and stores; subscribers load from Redis (~1-3s vs ~17min API). Set enabled:true when using multi-instance with Redis.",
+      "ttl_hours": 24,
+      "compression_level": 6,
+      "max_size_mb": 200
+    }
   },
   "_comment_tick_recording": "=== TICK RECORDING (Market Data Archive) ===",
   "tick_recording": {

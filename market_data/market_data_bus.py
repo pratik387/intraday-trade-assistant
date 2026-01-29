@@ -108,6 +108,7 @@ class MarketDataBus:
         self._redis_url = redis_url
         self._publish_1m = publish_1m_bars
         self._redis: Optional[Any] = None
+        self._redis_binary: Optional[Any] = None  # Separate connection for binary data (no decode_responses)
         self._pubsub: Optional[Any] = None
         self._subscriber_thread: Optional[threading.Thread] = None
         self._running = False
@@ -559,6 +560,130 @@ class MarketDataBus:
         except Exception:
             return False
 
+    # ======================== Daily OHLCV Cache (Redis-shared) ========================
+
+    def _get_binary_redis(self):
+        """
+        Lazy-init a Redis connection WITHOUT decode_responses for binary data.
+
+        The main self._redis uses decode_responses=True (text data for bars/LTP).
+        Daily cache is pickle+zlib compressed binary, requiring raw bytes.
+        """
+        if self._redis_binary is not None:
+            return self._redis_binary
+
+        if not REDIS_AVAILABLE:
+            return None
+
+        try:
+            self._redis_binary = redis.Redis.from_url(self._redis_url, decode_responses=False)
+            self._redis_binary.ping()
+            return self._redis_binary
+        except Exception as e:
+            logger.warning(f"MKT_DATA_BUS | Binary Redis connection failed: {e}")
+            return None
+
+    def publish_daily_cache(self, date_str: str, cache: Dict[str, Any], cfg: dict) -> bool:
+        """
+        Store daily OHLCV cache in Redis for subscriber instances.
+
+        Serializes Dict[symbol -> DataFrame] as zlib-compressed pickle.
+        Uses a dedicated binary Redis connection (not decode_responses).
+
+        Args:
+            date_str: Date string "YYYY-MM-DD"
+            cache: Dict mapping symbol to pandas DataFrame
+            cfg: daily_cache_redis config section
+
+        Returns:
+            True if stored successfully, False otherwise
+        """
+        if self._mode not in ("publisher", "standalone"):
+            return False
+
+        r = self._get_binary_redis()
+        if r is None:
+            return False
+
+        import pickle
+        import zlib
+        import time as time_mod
+
+        compression_level = cfg["compression_level"]
+        max_size_mb = cfg["max_size_mb"]
+        ttl_seconds = cfg["ttl_hours"] * 3600
+
+        try:
+            start = time_mod.perf_counter()
+
+            raw = pickle.dumps(cache, protocol=pickle.HIGHEST_PROTOCOL)
+            compressed = zlib.compress(raw, compression_level)
+            comp_mb = len(compressed) / (1024 * 1024)
+
+            if comp_mb > max_size_mb:
+                logger.warning(
+                    f"MKT_DATA_BUS | Daily cache {comp_mb:.1f}MB > {max_size_mb}MB limit, skipping"
+                )
+                return False
+
+            key = f"daily:cache:{date_str}"
+            r.set(key, compressed, ex=ttl_seconds)
+
+            elapsed = time_mod.perf_counter() - start
+            logger.info(
+                f"MKT_DATA_BUS | Published daily cache: {len(cache)} symbols, "
+                f"{comp_mb:.1f}MB compressed, {elapsed:.2f}s"
+            )
+            return True
+
+        except Exception as e:
+            logger.warning(f"MKT_DATA_BUS | Failed to publish daily cache: {e}")
+            return False
+
+    def get_daily_cache(self, date_str: str) -> Optional[Dict[str, Any]]:
+        """
+        Load daily OHLCV cache from Redis.
+
+        Deserializes zlib-compressed pickle stored by MDS publisher.
+
+        Args:
+            date_str: Date string "YYYY-MM-DD"
+
+        Returns:
+            Dict[symbol -> DataFrame] or None if not found/error
+        """
+        r = self._get_binary_redis()
+        if r is None:
+            return None
+
+        import pickle
+        import zlib
+        import time as time_mod
+
+        try:
+            start = time_mod.perf_counter()
+            key = f"daily:cache:{date_str}"
+
+            compressed = r.get(key)
+            if compressed is None:
+                logger.debug(f"MKT_DATA_BUS | No daily cache in Redis for {date_str}")
+                return None
+
+            raw = zlib.decompress(compressed)
+            cache = pickle.loads(raw)
+
+            elapsed = time_mod.perf_counter() - start
+            comp_mb = len(compressed) / (1024 * 1024)
+            logger.info(
+                f"MKT_DATA_BUS | Loaded daily cache from Redis: "
+                f"{len(cache)} symbols, {comp_mb:.1f}MB compressed, {elapsed:.2f}s"
+            )
+            return cache
+
+        except Exception as e:
+            logger.warning(f"MKT_DATA_BUS | Failed to load daily cache from Redis: {e}")
+            return None
+
     # ======================== Lifecycle ========================
 
     def shutdown(self) -> None:
@@ -574,6 +699,12 @@ class MarketDataBus:
         if self._redis:
             try:
                 self._redis.close()
+            except Exception:
+                pass
+
+        if self._redis_binary:
+            try:
+                self._redis_binary.close()
             except Exception:
                 pass
 

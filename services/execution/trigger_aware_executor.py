@@ -619,7 +619,7 @@ class TriggerAwareExecutor:
 
             # Release capital allocation
             if self.capital_manager:
-                self.capital_manager.release_allocation(symbol)
+                self.capital_manager.exit_position(symbol)
 
             # Log to trade log
             if self.trading_logger:

@@ -526,15 +526,60 @@ def main() -> int:
     oq = OrderQueue()
 
     def _prewarm_daily_cache(sdk):
-        """Pre-warm daily cache: try disk first (2-5s), fallback to API (15min)."""
+        """Pre-warm daily cache: Redis (1-3s) -> rolling disk (2-5s) -> API (15min)."""
+        from datetime import datetime as _dt
+
+        mdb_cfg = cfg.get("market_data_bus", {})
+        dc_cfg = mdb_cfg.get("daily_cache_redis", {})
+        redis_enabled = dc_cfg.get("enabled", False)
+
         cache_persistence = DailyCachePersistence()
-        cached_data = cache_persistence.load_today()
-        if cached_data:
-            sdk.set_daily_cache(cached_data)
+        loaded_from = None
+
+        # Step 1: Try Redis (shared by MDS publisher)
+        if redis_enabled:
+            try:
+                from market_data.market_data_bus import MarketDataBus
+                redis_url = mdb_cfg["redis_url"]
+                bus = MarketDataBus(mode="subscriber", redis_url=redis_url)
+                today = _dt.now().date().isoformat()
+                redis_cache = bus.get_daily_cache(today)
+                bus.shutdown()
+                if redis_cache:
+                    sdk.set_daily_cache(redis_cache)
+                    loaded_from = "redis"
+                    logger.info(f"DAILY_CACHE | Loaded {len(redis_cache)} symbols from Redis")
+            except Exception as e:
+                logger.warning(f"DAILY_CACHE | Redis load failed: {e}")
+
+        # Step 2: Try rolling disk cache (today's or yesterday's)
+        if loaded_from is None:
+            cached_data = cache_persistence.load_latest()
+            if cached_data:
+                sdk.set_daily_cache(cached_data)
+                loaded_from = "disk"
+
+        # Step 3: API fallback (90% threshold skips if rolling cache loaded)
         result = sdk.prewarm_daily_cache(days=210)
-        # Save to disk if we fetched from API (for next restart)
         if result.get("source") == "api":
+            loaded_from = "api"
             cache_persistence.save(sdk.get_daily_cache())
+
+        # Step 4: Cooperative publish to Redis (seed for other instances)
+        if redis_enabled and loaded_from in ("disk", "api"):
+            try:
+                from market_data.market_data_bus import MarketDataBus
+                redis_url = mdb_cfg["redis_url"]
+                bus = MarketDataBus(mode="publisher", redis_url=redis_url)
+                today = _dt.now().date().isoformat()
+                cache = sdk.get_daily_cache()
+                if cache:
+                    bus.publish_daily_cache(today, cache, dc_cfg)
+                bus.shutdown()
+            except Exception as e:
+                logger.warning(f"DAILY_CACHE | Redis publish failed (non-fatal): {e}")
+
+        logger.info(f"DAILY_CACHE | Prewarm complete, source={loaded_from}")
 
     # Tick recorder for paper/live trading (records to parquet for upload)
     tick_recorder = None

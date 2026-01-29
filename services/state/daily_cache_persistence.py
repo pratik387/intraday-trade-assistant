@@ -168,6 +168,64 @@ class DailyCachePersistence:
         except Exception as e:
             logger.debug(f"DAILY_CACHE | Cleanup error: {e}")
 
+    def load_latest(self) -> Optional[Dict[str, pd.DataFrame]]:
+        """
+        Load the most recent daily cache (today's or yesterday's).
+
+        On a new day, today's cache doesn't exist yet. Yesterday's cache
+        has 210 days ending at yesterday's close -- perfectly valid at 9 AM
+        since today's daily bar hasn't formed yet. EMA200/ADX/BB width
+        are negligibly affected by having 209 vs 210 days.
+
+        Returns:
+            Dict mapping symbol to DataFrame, or None if no recent cache
+        """
+        # Try today first (same as load_today)
+        today_cache = self.load_today()
+        if today_cache is not None:
+            return today_cache
+
+        # Fall back to most recent cache file
+        cache_files = sorted(
+            self.cache_dir.glob("daily_cache_*.pkl"),
+            key=lambda p: p.stem,
+            reverse=True,
+        )
+
+        for cache_file in cache_files:
+            try:
+                date_str = cache_file.stem.replace("daily_cache_", "")
+                file_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                age_days = (datetime.now().date() - file_date).days
+
+                # Only use caches from last 3 days (avoids stale weekend data)
+                if age_days > 3:
+                    continue
+
+                start_time = time.perf_counter()
+
+                with self._lock:
+                    with open(cache_file, "rb") as f:
+                        data = pickle.load(f)
+
+                cache = data.get("cache", {})
+                if not cache:
+                    continue
+
+                elapsed = time.perf_counter() - start_time
+                logger.info(
+                    f"DAILY_CACHE | Rolling load: {len(cache)} symbols from "
+                    f"{cache_file.name} ({age_days} day(s) old) in {elapsed:.2f}s"
+                )
+                return cache
+
+            except Exception as e:
+                logger.warning(f"DAILY_CACHE | Failed to load {cache_file.name}: {e}")
+                continue
+
+        logger.info("DAILY_CACHE | No recent cache files found")
+        return None
+
     def exists_today(self) -> bool:
         """Check if today's cache file exists."""
         return self._get_cache_file_path().exists()
