@@ -1586,16 +1586,18 @@ class ExitExecutor:
             # Recalculate PnL using actual broker fill price (not assumed price)
             actual_pnl = qty_now * (actual_exit_px - pos.avg_price) if pos.side.upper() == "BUY" else qty_now * (pos.avg_price - actual_exit_px)
 
-            # Calculate TOTAL trade PnL including any partial exit profits (T1 and manual)
+            # Calculate TOTAL trade PnL including any partial exit profits (T1, manual, EOD)
             state = pos.plan.get("_state", {})
             t1_profit = state.get("t1_profit", 0) or 0
             t1_booked_qty = state.get("t1_booked_qty", 0) or 0
             manual_partial_profit = state.get("manual_partial_profit", 0) or 0
             manual_partial_qty = state.get("manual_partial_qty", 0) or 0
-            total_pnl = t1_profit + manual_partial_profit + actual_pnl  # All partial profits + final exit PnL
+            eod_partial_profit = state.get("eod_partial_profit", 0) or 0
+            eod_partial_qty = state.get("eod_partial_qty", 0) or 0
+            total_pnl = t1_profit + manual_partial_profit + eod_partial_profit + actual_pnl
 
             # Use original entry qty (all partials + remaining), not just final exit qty
-            original_qty = t1_booked_qty + manual_partial_qty + qty_now
+            original_qty = t1_booked_qty + manual_partial_qty + eod_partial_qty + qty_now
 
             # Get entry time - try multiple sources
             entry_time = (
@@ -2071,16 +2073,56 @@ class ExitExecutor:
 
                 if qty_exit > 0:
                     logger.info(f"EOD_SCALE_OUT: {sym} first scale @ {self.eod_scale_out_time1} RR={rr:.2f} < {self.eod_scale_out_rr1} - exit {qty_exit}/{qty}")
-                    self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"eod_scale_out_1st_{rr:.2f}R")
+                    actual_exit_px = self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"eod_scale_out_1st_{rr:.2f}R")
                     self.positions.reduce(sym, qty_exit)
 
+                    # Track EOD partial profit (like T1/manual partials)
+                    if pos.side.upper() == "BUY":
+                        eod_partial_profit = qty_exit * (actual_exit_px - pos.avg_price)
+                    else:
+                        eod_partial_profit = qty_exit * (pos.avg_price - actual_exit_px)
+
+                    new_qty = qty - qty_exit
+                    existing_eod_profit = st.get("eod_partial_profit", 0) or 0
+                    existing_eod_qty = st.get("eod_partial_qty", 0) or 0
                     st["eod_scale_out_first_done"] = True
+                    st["eod_partial_qty"] = existing_eod_qty + qty_exit
+                    st["eod_partial_profit"] = existing_eod_profit + eod_partial_profit
                     pos.plan["_state"] = st
+
+                    # Log partial closed trade to API server for dashboard
+                    if self.api_server:
+                        is_shadow = pos.plan.get("shadow", False)
+                        partial_trade = {
+                            "symbol": sym,
+                            "side": pos.side.upper(),
+                            "qty": qty_exit,
+                            "entry_price": round(pos.avg_price, 2),
+                            "exit_price": round(actual_exit_px, 2),
+                            "pnl": round(eod_partial_profit, 2),
+                            "exit_reason": f"eod_scale_out_1st_{rr:.2f}R",
+                            "setup": pos.plan.get("setup_type", "unknown"),
+                            "exit_time": ts.isoformat() if ts else None,
+                            "entry_time": pos.plan.get("entry_ts") or pos.plan.get("trigger_ts"),
+                            "is_partial": True,
+                            "remaining_qty": new_qty,
+                            "shadow": is_shadow,
+                        }
+                        self.api_server.log_closed_trade(partial_trade)
+                        if not is_shadow:
+                            self.api_server.broadcast_ws("closed_trade", partial_trade)
+
+                    # Release partial margin
+                    if self.capital_manager:
+                        self.capital_manager.reduce_position(sym, qty_exit, new_qty)
 
                     # Update persistence with new qty (crash recovery)
                     if self.persistence:
-                        new_qty = qty - qty_exit
-                        self.persistence.update_position(sym, new_qty=new_qty, state_updates={"eod_scale_out_first_done": True})
+                        self.persistence.update_position(sym, new_qty=new_qty, state_updates={
+                            "eod_scale_out_first_done": True,
+                            "eod_partial_qty": st["eod_partial_qty"],
+                            "eod_partial_profit": st["eod_partial_profit"],
+                        })
 
                     return True
 

@@ -92,6 +92,10 @@ class KiteBroker:
         self._ltp_min_interval = 1.0 / self._ltp_rps  # ~0.4s between calls
         self._ltp_last_call = 0.0
 
+        # Live orders cache for paper mirror feature
+        self._live_orders_cache: Optional[List[Dict]] = None
+        self._live_orders_cache_ts: float = 0.0
+
         if self.dry_run:
             logger.warning("🧪 PAPER TRADING MODE - Orders will be simulated, not sent to Zerodha")
         else:
@@ -511,6 +515,117 @@ class KiteBroker:
             'mode': 'paper_trading'
         }
 
+    # ------------------------------ Paper Mirror (Live Fill Lookup) -----------
+    def _get_live_orders_cached(self, cache_ttl_sec: float) -> List[Dict]:
+        """
+        Fetch live orders from Kite API with caching.
+
+        Bypasses dry_run check (calls kc.orders() directly) so paper mode
+        can access the live order book for fill mirroring.
+
+        Args:
+            cache_ttl_sec: Cache TTL in seconds (from config)
+
+        Returns:
+            List of order dicts from Zerodha, or empty list on failure
+        """
+        now = time.monotonic()
+        if self._live_orders_cache is not None and (now - self._live_orders_cache_ts) < cache_ttl_sec:
+            return self._live_orders_cache
+
+        try:
+            orders = self.kc.orders()
+            self._live_orders_cache = orders or []
+            self._live_orders_cache_ts = time.monotonic()
+            return self._live_orders_cache
+        except Exception as e:
+            logger.warning(f"MIRROR | Failed to fetch live orders: {e}")
+            # Return stale cache if available, else empty
+            return self._live_orders_cache if self._live_orders_cache is not None else []
+
+    def _find_live_mirror_fill(self, symbol: str, side: str, paper_order_ts, cfg: dict) -> Optional[float]:
+        """
+        Find a matching live order fill price for a paper trade.
+
+        Searches the live order book for a COMPLETE order matching:
+        - App tag prefix (ITDA_)
+        - Same tradingsymbol
+        - Same transaction side (BUY/SELL)
+        - Within configured time window of paper order
+
+        Args:
+            symbol: Paper trade symbol (EXCH:TSYM format)
+            side: Paper trade side (BUY/SELL)
+            paper_order_ts: Timestamp of the paper order (pd.Timestamp or datetime)
+            cfg: Configuration dict with mirror settings
+
+        Returns:
+            Live fill price (float) if match found, None otherwise
+        """
+        import pandas as pd
+
+        cache_ttl = cfg.get("paper_mirror_orders_cache_ttl_sec", 5)
+        time_window = cfg.get("paper_mirror_time_window_sec", 60)
+
+        live_orders = self._get_live_orders_cached(cache_ttl)
+        if not live_orders:
+            return None
+
+        _, tsym = _split_symbol(symbol)
+        side_u = side.upper()
+
+        # Ensure paper_order_ts is a pd.Timestamp for comparison
+        if not isinstance(paper_order_ts, pd.Timestamp):
+            paper_order_ts = pd.Timestamp(paper_order_ts)
+
+        best_match = None
+        best_time_diff = float("inf")
+
+        for order in live_orders:
+            # Filter: app-placed orders only
+            tag = order.get("tag") or ""
+            if not tag.startswith(APP_ORDER_TAG_PREFIX):
+                continue
+
+            # Filter: same symbol
+            if order.get("tradingsymbol") != tsym:
+                continue
+
+            # Filter: same side
+            order_side = order.get("transaction_type", "").upper()
+            if order_side != side_u:
+                continue
+
+            # Filter: filled orders only
+            if order.get("status", "").upper() != "COMPLETE":
+                continue
+
+            # Filter: within time window
+            order_ts = order.get("order_timestamp") or order.get("exchange_timestamp")
+            if order_ts is None:
+                continue
+
+            order_ts = pd.Timestamp(order_ts)
+            # Strip timezone if present (IST-naive internally)
+            if order_ts.tzinfo is not None:
+                from pytz import timezone as pytz_tz
+                order_ts = order_ts.astimezone(pytz_tz("Asia/Kolkata")).replace(tzinfo=None)
+            if paper_order_ts.tzinfo is not None:
+                from pytz import timezone as pytz_tz
+                paper_order_ts = paper_order_ts.astimezone(pytz_tz("Asia/Kolkata")).replace(tzinfo=None)
+
+            time_diff = abs((order_ts - paper_order_ts).total_seconds())
+            if time_diff > time_window:
+                continue
+
+            # Pick closest match by time
+            avg_price = order.get("average_price")
+            if avg_price and avg_price > 0 and time_diff < best_time_diff:
+                best_match = float(avg_price)
+                best_time_diff = time_diff
+
+        return best_match
+
     # ------------------------------ Position Reconciliation ------------------
     def reconcile_position(self, symbol: str, order_id: str, expected_qty: int, expected_side: str,
                           timeout: float = 1.0) -> Optional[Dict]:
@@ -538,9 +653,27 @@ class KiteBroker:
             # Check if order exists in paper orders
             for o in self._paper_orders:
                 if str(o.get("order_id")) == str(order_id) and o.get("status") == "COMPLETE":
+                    paper_price = o.get("average_price", 0)
+                    final_price = paper_price
+
+                    # Attempt live fill mirroring if enabled
+                    from config.filters_setup import load_filters
+                    cfg = load_filters()
+                    if cfg.get("paper_mirror_live_fills", False):
+                        paper_ts = o.get("timestamp")
+                        live_price = self._find_live_mirror_fill(
+                            symbol, expected_side, paper_ts, cfg
+                        )
+                        if live_price is not None:
+                            logger.info(
+                                f"MIRROR_ENTRY | {symbol} | Paper: {paper_price:.2f} -> Live: {live_price:.2f} "
+                                f"| Diff: {live_price - paper_price:+.2f}"
+                            )
+                            final_price = live_price
+
                     return {
                         "qty": o.get("quantity", expected_qty),
-                        "avg_price": o.get("average_price", 0),
+                        "avg_price": final_price,
                         "product": o.get("product", "MIS"),
                         "pnl": 0,
                         "verified": True
@@ -624,8 +757,27 @@ class KiteBroker:
         if self.dry_run:
             for o in self._paper_orders:
                 if str(o.get("order_id")) == str(order_id) and o.get("status") == "COMPLETE":
+                    paper_price = o.get("average_price", 0)
+                    final_price = paper_price
+
+                    # Attempt live fill mirroring if enabled
+                    from config.filters_setup import load_filters
+                    cfg = load_filters()
+                    if cfg.get("paper_mirror_live_fills", False):
+                        paper_ts = o.get("timestamp")
+                        exit_side = o.get("side", "").upper()
+                        live_price = self._find_live_mirror_fill(
+                            symbol, exit_side, paper_ts, cfg
+                        )
+                        if live_price is not None:
+                            logger.info(
+                                f"MIRROR_EXIT | {symbol} | Paper: {paper_price:.2f} -> Live: {live_price:.2f} "
+                                f"| Diff: {live_price - paper_price:+.2f}"
+                            )
+                            final_price = live_price
+
                     return {
-                        "avg_price": o.get("average_price", 0),
+                        "avg_price": final_price,
                         "qty_exited": o.get("quantity", expected_qty),
                         "remaining_qty": max(0, position_qty_before - expected_qty),
                         "verified": True

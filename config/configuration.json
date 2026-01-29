@@ -2432,5 +2432,9 @@
     "enabled": true,
     "threshold_minutes": 30,
     "_comment": "If starting >30min after 09:15, backfill 5m bar history from Redis to pre-warm indicators"
-  }
+  },
+  "_comment_paper_mirror": "=== PAPER TRADE LIVE FILL MIRRORING ===",
+  "paper_mirror_live_fills": false,
+  "paper_mirror_time_window_sec": 60,
+  "paper_mirror_orders_cache_ttl_sec": 5
 }
