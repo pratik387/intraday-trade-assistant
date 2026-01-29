@@ -259,9 +259,17 @@ def initialize_child_loggers(log_dir: Path, process_tag: str):
     Called by the exec child process (spawned via multiprocessing) to write
     logs into the SAME session folder as the parent, avoiding log fragmentation.
 
+    CRITICAL: On Linux, multiprocessing.Process uses fork(). The child inherits
+    the parent's module state, including cached logger references like:
+        logger, trade_logger = get_execution_loggers()  # in trigger_aware_executor.py
+    These point to logging.getLogger("agent") and logging.getLogger("trade"),
+    which still have the parent's FileHandlers. We MUST replace handlers on
+    these SAME logger objects (not create new names like "agent_exec") so that
+    all cached module-level references route to the child's log files.
+
     Creates:
-      - agent_{tag}.log  (separate from parent's agent.log)
-      - trade_logs.log   (exec child owns trade logging)
+      - agent_{tag}.log  (replaces parent's agent.log handler)
+      - trade_logs.log   (replaces parent's trade handler)
       - TradingLogger    (exec child owns analytics)
       - events_decisions.jsonl (exec child owns decision logging)
 
@@ -277,15 +285,18 @@ def initialize_child_loggers(log_dir: Path, process_tag: str):
 
     formatter = logging.Formatter('%(asctime)s — %(levelname)s — %(name)s — %(message)s')
 
-    # Agent logger — separate file per process to avoid write contention
-    _agent_logger = logging.getLogger(f"agent_{process_tag}")
+    # Agent logger — replace inherited parent handlers on the SAME "agent" logger
+    # so all module-level cached references (logger = get_agent_logger()) route here
+    _agent_logger = logging.getLogger("agent")
+    _agent_logger.handlers.clear()
     _agent_logger.setLevel(logging.INFO)
     agent_file = logging.FileHandler(log_dir / f"agent_{process_tag}.log", encoding="utf-8")
     agent_file.setFormatter(formatter)
     _agent_logger.addHandler(agent_file)
 
-    # Trade logger — exec child owns trade logging
-    _trade_logger = logging.getLogger(f"trade_{process_tag}")
+    # Trade logger — replace inherited parent handlers on the SAME "trade" logger
+    _trade_logger = logging.getLogger("trade")
+    _trade_logger.handlers.clear()
     _trade_logger.setLevel(logging.INFO)
     trade_file = logging.FileHandler(log_dir / "trade_logs.log", encoding="utf-8")
     trade_file.setFormatter(formatter)

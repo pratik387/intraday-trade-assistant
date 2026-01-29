@@ -528,7 +528,7 @@ class ExitExecutor:
                             continue
 
                 # 4) Indicator kill-switches (precomputed levels)
-                if self._or_kill(sym, pos.side, float(px), pos.plan):
+                if self._or_kill(sym, pos.side, float(px), pos.plan, ts):
                     self._exit(sym, pos, float(px), ts, "or_kill")
                     continue
                 reason = self._custom_kill(pos.side, float(px), pos.plan)
@@ -1004,7 +1004,7 @@ class ExitExecutor:
 
     # ---------- OR / custom kill ----------
 
-    def _or_kill(self, symbol: str, side: str, px: float, plan: Dict[str, Any]) -> bool:
+    def _or_kill(self, symbol: str, side: str, px: float, plan: Dict[str, Any], ts=None) -> bool:
         """
         Enhanced OR kill logic with time-adaptive buffers, volume confirmation,
         momentum filters, and graduated exit strategy.
@@ -1042,7 +1042,7 @@ class ExitExecutor:
         side = side.upper()
 
         # Enhanced buffer calculation with time-of-day adaptation
-        buffer_mult = self._get_time_adaptive_buffer_mult()
+        buffer_mult = self._get_time_adaptive_buffer_mult(ts)
 
         # Regime-specific adjustments
         regime = plan.get("regime", "").lower()
@@ -1080,17 +1080,17 @@ class ExitExecutor:
 
         # Graduated path: Minor breaks trigger observation logic
         if is_minor_break or is_touching:
-            return self._handle_or_observation(symbol, side, px, or_level, price_break, buffer, plan)
+            return self._handle_or_observation(symbol, side, px, or_level, price_break, buffer, plan, ts)
 
         return False
 
-    def _get_time_adaptive_buffer_mult(self) -> float:
+    def _get_time_adaptive_buffer_mult(self, ts=None) -> float:
         """Calculate time-of-day adaptive buffer multiplier"""
         if not self.or_kill_time_adaptive:
             return 0.75  # Default fallback
 
         try:
-            current_time = _now_naive_ist()
+            current_time = pd.Timestamp(ts) if ts is not None else _now_naive_ist()
             minute_of_day = current_time.hour * 60 + current_time.minute
 
             # Session time windows (IST)
@@ -1174,7 +1174,7 @@ class ExitExecutor:
             return False  # Conservative: don't kill on data errors
 
     def _handle_or_observation(self, symbol: str, side: str, px: float, or_level: float,
-                              price_break: float, buffer: float, plan: Dict[str, Any]) -> bool:
+                              price_break: float, buffer: float, plan: Dict[str, Any], ts=None) -> bool:
         """Handle graduated exit strategy for OR touches/minor breaks"""
 
         # Get the current position
@@ -1188,12 +1188,13 @@ class ExitExecutor:
         obs_key = f"{symbol}_{side}"
         observation = self._or_kill_observation.get(obs_key, {})
 
-        current_time = time.time()
+        # Use tick timestamp for backtest compatibility (not wall clock)
+        current_time = pd.Timestamp(ts) if ts is not None else pd.Timestamp(_now_naive_ist())
 
         if not observation:
-            # First touch/minor break - start observation
+            # First touch/minor break - start observation (store tick timestamp)
             observation = {
-                "start_time": current_time,
+                "start_ts": current_time,
                 "or_level": or_level,
                 "initial_price": px,
                 "partial_exit_done": False,
@@ -1230,8 +1231,8 @@ class ExitExecutor:
 
             return False  # Don't kill yet, start observing
 
-        # Check if observation period expired
-        elapsed_minutes = (current_time - observation["start_time"]) / 60.0
+        # Check if observation period expired (tick timestamp diff for backtest compatibility)
+        elapsed_minutes = (current_time - observation["start_ts"]).total_seconds() / 60.0
         if elapsed_minutes >= self.or_kill_observation_minutes:
 
             # Check momentum filter before final kill

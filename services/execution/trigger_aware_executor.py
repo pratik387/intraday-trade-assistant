@@ -608,7 +608,7 @@ class TriggerAwareExecutor:
 
         try:
             # Place immediate exit order
-            self.broker.place_order(
+            order_id = self.broker.place_order(
                 symbol=symbol,
                 side=exit_side,
                 qty=qty,
@@ -617,9 +617,53 @@ class TriggerAwareExecutor:
                 variety="regular"
             )
 
+            # Get actual exit price: broker reconciliation → LTP fallback → entry price fallback
+            actual_exit_px = fill_price  # Default to entry price
+            if order_id and hasattr(self.broker, 'reconcile_exit'):
+                try:
+                    reconciled = self.broker.reconcile_exit(
+                        symbol=symbol,
+                        order_id=order_id,
+                        expected_qty=qty,
+                        position_qty_before=qty,
+                        timeout=0.5
+                    )
+                    if reconciled:
+                        broker_fill = reconciled.get("avg_price")
+                        if broker_fill and broker_fill > 0:
+                            actual_exit_px = broker_fill
+                            logger.info(
+                                f"FILL_QUALITY_EXIT_FILL | {symbol} | Broker: {actual_exit_px:.2f} | "
+                                f"Entry: {fill_price:.2f} | Slippage: {actual_exit_px - fill_price:+.2f}"
+                            )
+                except Exception as e:
+                    logger.warning(f"FILL_QUALITY_EXIT | {symbol} | Reconcile failed: {e}")
+
+            # LTP fallback if broker reconciliation didn't yield a price
+            if actual_exit_px == fill_price:
+                try:
+                    ltp, _ = self.get_ltp_ts(symbol)
+                    if ltp and ltp > 0:
+                        actual_exit_px = ltp
+                except Exception:
+                    pass  # Keep fill_price as fallback
+
+            # Calculate actual PnL
+            if side.upper() == "BUY":
+                pnl = round((actual_exit_px - fill_price) * qty, 2)
+            else:
+                pnl = round((fill_price - actual_exit_px) * qty, 2)
+
+            logger.info(
+                f"FILL_QUALITY_EXIT_DONE | {symbol} | Exit: {actual_exit_px:.2f} | PnL: {pnl:+.2f}"
+            )
+
             # Release capital allocation
             if self.capital_manager:
                 self.capital_manager.exit_position(symbol)
+
+            # Use tick timestamp for backtest compatibility
+            exit_ts = self._last_tick_ts if self._last_tick_ts else self._get_current_time()
 
             # Log to trade log
             if self.trading_logger:
@@ -627,8 +671,8 @@ class TriggerAwareExecutor:
                     "symbol": symbol,
                     "reason": f"fill_quality_rejected:{reason}",
                     "qty": qty,
-                    "exit_price": fill_price,  # Approximate - actual will be market
-                    "pnl": 0,  # Will be small loss due to bid-ask
+                    "exit_price": actual_exit_px,
+                    "pnl": pnl,
                     "diagnostics": {"fill_quality_reason": reason}
                 })
 
@@ -645,11 +689,11 @@ class TriggerAwareExecutor:
                     "side": side.upper(),
                     "qty": qty,
                     "entry_price": round(fill_price, 2),
-                    "exit_price": round(fill_price, 2),  # Market exit ~ entry price
-                    "pnl": 0,  # Small bid-ask loss
+                    "exit_price": round(actual_exit_px, 2),
+                    "pnl": pnl,
                     "exit_reason": f"fill_quality_rejected:{reason}",
                     "setup": plan.get("setup_type", "unknown"),
-                    "exit_time": pd.Timestamp.now().isoformat(),
+                    "exit_time": str(exit_ts),
                     "entry_time": plan.get("entry_ts") or plan.get("trigger_ts"),
                     "sl": round(sl, 2) if sl else None,
                     "t1": round(t1, 2) if t1 else None,
