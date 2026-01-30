@@ -335,9 +335,9 @@
   "fees_slippage_bps": 5.0,
   "fill_quality": {
     "enabled": true,
-    "min_rr_to_t1": 0.5,
-    "max_slippage_pct": 0.5,
-    "_comment": "Reject fills that compress R:R below 0.5 or slip > 0.5%. Exit immediately on rejection."
+    "min_rr_to_t1": 0.3,
+    "max_slippage_pct": 0.75,
+    "_comment": "Reject fills that compress R:R below 0.3 or slip > 0.75%. T1 is partial (50% qty), so 0.3R still covers costs. 0.75% allows normal mid-cap slippage while catching liquidity gaps."
   },
   "enable_lunch_pause": true,
   "lunch_start": "12:15",

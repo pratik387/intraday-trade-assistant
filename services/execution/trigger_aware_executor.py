@@ -607,6 +607,9 @@ class TriggerAwareExecutor:
         """
         exit_side = "SELL" if side.upper() == "BUY" else "BUY"
 
+        # Block this symbol from re-entry for the rest of the session
+        self._fq_rejected.add(symbol)
+
         logger.warning(
             f"FILL_QUALITY_EXIT | {symbol} | Exiting {qty} @ market | "
             f"Entry: {fill_price:.2f} | Reason: {reason}"
@@ -839,6 +842,9 @@ class TriggerAwareExecutor:
         trigger_cfg = self.cfg.get("trigger_system", {})
         self.staleness_seconds = float(trigger_cfg.get("staleness_seconds", 1800))
         
+        # Symbols rejected by fill quality gate — block re-entry for the session
+        self._fq_rejected: set = set()
+
         # Hook into BarBuilder's 1m callback
         self.original_1m_handler = bar_builder._on_1m_close
         bar_builder._on_1m_close = self._enhanced_1m_handler
@@ -1100,7 +1106,12 @@ class TriggerAwareExecutor:
             if not symbol or not plan:
                 logger.warning("Invalid trade item received")
                 return
-            
+
+            # Block re-entry for symbols rejected by fill quality gate
+            if symbol in self._fq_rejected:
+                logger.info(f"PLAN_SKIP | {symbol} | Previously rejected by fill quality gate, ignoring")
+                return
+
             # Create trade ID
             trade_id = plan.get("trade_id") or f"{symbol}_{uuid.uuid4().hex[:8]}"
             
