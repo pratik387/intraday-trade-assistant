@@ -209,8 +209,14 @@ class MarketDataService:
         if cached_data:
             self._sdk.set_daily_cache(cached_data)
 
-        # 90% threshold check -- skips API if rolling cache loaded enough symbols
-        result = self._sdk.prewarm_daily_cache(days=210)
+        # If today's cache doesn't exist, the rolling load gave us stale data
+        # (yesterday's file has data through day-before-yesterday).
+        # Force API refresh to fetch yesterday's close prices.
+        is_rolling = not cache_persistence.exists_today()
+        if is_rolling and cached_data:
+            logger.info("MDS | Rolling cache is stale (no today file), will force API refresh")
+
+        result = self._sdk.prewarm_daily_cache(days=210, force_refresh=is_rolling)
         if result.get("source") == "api":
             cache_persistence.save(self._sdk.get_daily_cache())
 
