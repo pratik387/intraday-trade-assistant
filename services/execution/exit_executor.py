@@ -1,11 +1,9 @@
 # services/execution/exit_executor.py
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Dict, Any, Callable, Optional, Tuple, List
 import math
 import time
-import threading
 import pandas as pd  # for Timestamp typing only
 
 from config.logging_config import get_execution_loggers
@@ -14,60 +12,11 @@ from utils.time_util import _to_naive_ist, _now_naive_ist, _minute_of_day, _pars
 from diagnostics.diag_event_log import diag_event_log
 import uuid
 
+from services.execution.models import Position
+from services.state.position_store import PositionStore
+
 # Both loggers (as requested)
 logger, trade_logger = get_execution_loggers()
-
-
-# ---------- Data model (matches earlier executors) ----------
-
-@dataclass
-class Position:
-    symbol: str
-    side: str                 # "BUY" or "SELL"
-    qty: int
-    avg_price: float
-    plan: Dict[str, Any] = field(default_factory=dict)
-
-
-class PositionStore:
-    """
-    Minimal store interface used by ExitExecutor.
-
-    Thread-safe: Uses RLock to protect concurrent access from tick/bar handlers.
-    RLock allows same thread to acquire lock multiple times (reentrant).
-    """
-    def __init__(self) -> None:
-        self._pos: Dict[str, Position] = {}
-        self._lock = threading.RLock()
-
-    def list_open(self) -> Dict[str, Position]:
-        with self._lock:
-            return dict(self._pos)
-
-    def get(self, sym: str) -> Optional[Position]:
-        """Get a single position by symbol (thread-safe)."""
-        with self._lock:
-            return self._pos.get(sym)
-
-    def upsert(self, p: Position) -> None:
-        with self._lock:
-            self._pos[p.symbol] = p
-
-    def close(self, sym: str) -> None:
-        with self._lock:
-            self._pos.pop(sym, None)
-
-    def reduce(self, sym: str, qty_exit: int) -> None:
-        with self._lock:
-            p = self._pos.get(sym)
-            if not p:
-                return
-            nq = int(p.qty) - int(qty_exit)
-            if nq <= 0:
-                self._pos.pop(sym, None)
-            else:
-                p.qty = nq
-                self._pos[sym] = p
 
 
 # ---------- Helpers ----------

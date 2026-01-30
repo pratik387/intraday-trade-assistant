@@ -29,7 +29,7 @@ from config.filters_setup import load_filters
 
 from services.orders.order_queue import OrderQueue
 from services.screener_live import ScreenerLive
-from services.execution.trade_executor import RiskState
+from services.execution.models import RiskState
 from services.execution.exit_executor import ExitExecutor
 from services.ingest.tick_router import register_tick_listener, register_tick_listener_full
 from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState

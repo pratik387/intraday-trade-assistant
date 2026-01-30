@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from config.logging_config import get_agent_logger
-from services.execution.trade_executor import Position
+from services.execution.models import Position
 from services.state import PositionPersistence, BrokerReconciliation, validate_paper_position_on_recovery
 from services.state.position_store import PositionStore
 

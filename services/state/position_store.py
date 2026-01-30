@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from services.execution.trade_executor import Position
+from services.execution.models import Position
 
 
 class PositionStore:

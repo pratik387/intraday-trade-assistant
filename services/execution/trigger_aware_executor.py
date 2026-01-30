@@ -314,7 +314,7 @@ class TriggerAwareExecutor:
 
             # Update shared position store for exit executor
             if self.positions:
-                from services.execution.trade_executor import Position
+                from services.execution.models import Position
 
                 # CRITICAL FIX: Recalculate targets based on ACTUAL entry price
                 # Original targets were calculated from entry_ref_price, but actual

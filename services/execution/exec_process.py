@@ -59,7 +59,7 @@ def _run_exec_loop(logger, trading_logger, stop_event, args_dict: Dict[str, Any]
     from config.filters_setup import load_filters
     from config.logging_config import get_log_directory
     from services.capital_manager import CapitalManager
-    from services.execution.trade_executor import RiskState
+    from services.execution.models import RiskState
     from services.execution.trigger_aware_executor import TriggerAwareExecutor, TradeState
     from services.execution.exit_executor import ExitExecutor
     from services.execution.redis_plan_queue import RedisPlanConsumer

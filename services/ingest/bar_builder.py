@@ -162,20 +162,6 @@ class BarBuilder:
             self._ltp[symbol] = _LastTick(price=float(price), volume=float(volume), ts=ts)
             self._update_1m(symbol, float(price), float(volume), ts)
 
-    def get_df_1m_tail(self, symbol: str, n: int) -> pd.DataFrame:
-        with self._lock:
-            df = self._bars_1m.get(symbol)
-            if df is None or df.empty:
-                return _empty_df()
-            return df.tail(int(n)).copy()
-
-    def get_df_5m_tail(self, symbol: str, n: int) -> pd.DataFrame:
-        with self._lock:
-            df = self._bars_5m.get(symbol)
-            if df is None or df.empty:
-                return _empty_df()
-            return df.tail(int(n)).copy()
-
     def get_df_15m_tail(self, symbol: str, n: int) -> pd.DataFrame:
         with self._lock:
             df = self._bars_15m.get(symbol)
