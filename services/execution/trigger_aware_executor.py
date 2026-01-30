@@ -574,14 +574,20 @@ class TriggerAwareExecutor:
 
         actual_rr = actual_reward_t1 / actual_risk if actual_risk > 0 else 0
 
-        # Check thresholds
-        if slippage_pct > max_slippage_pct:
+        # Check slippage — but skip if fill is within entry zone.
+        # The entry zone defines the structurally acceptable fill range;
+        # slippage from the reference price is irrelevant if the fill is in-zone.
+        entry_zone = plan.get("entry", {}).get("zone", [])
+        in_zone = len(entry_zone) == 2 and entry_zone[0] <= actual_fill <= entry_zone[1]
+
+        if not in_zone and slippage_pct > max_slippage_pct:
             return False, f"slippage_exceeded:{slippage_pct:.2f}%>{max_slippage_pct}%"
 
         if actual_rr < min_rr:
             return False, f"rr_compressed:{actual_rr:.2f}<{min_rr}"
 
-        return True, f"fill_ok:rr={actual_rr:.2f},slip={slippage_pct:.2f}%"
+        zone_tag = "in_zone" if in_zone else f"slip={slippage_pct:.2f}%"
+        return True, f"fill_ok:rr={actual_rr:.2f},{zone_tag}"
 
     def _immediate_exit_bad_fill(
         self,

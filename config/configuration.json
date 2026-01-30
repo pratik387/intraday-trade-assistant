@@ -2409,7 +2409,9 @@
       "ttl_hours": 24,
       "compression_level": 6,
       "max_size_mb": 200
-    }
+    },
+    "mds_eod_shutdown_time": "15:32",
+    "_comment_mds_eod": "MDS builds daily bars from 1m data (9:15-15:30) and shuts down at this time (IST). 2 min buffer after market close to finalize last bar."
   },
   "_comment_execution_process": "=== EXECUTION PROCESS SEPARATION ===",
   "execution_mode": "in_process",

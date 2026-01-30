@@ -172,10 +172,12 @@ class DailyCachePersistence:
         """
         Load the most recent daily cache (today's or yesterday's).
 
-        On a new day, today's cache doesn't exist yet. Yesterday's cache
-        has 210 days ending at yesterday's close -- perfectly valid at 9 AM
-        since today's daily bar hasn't formed yet. EMA200/ADX/BB width
-        are negligibly affected by having 209 vs 210 days.
+        Rolling cache design: MDS builds today's daily bar from 1m data at EOD
+        and saves it. Next morning, this file is loaded — cache has 210 days
+        ending at yesterday's close, which is current. No API fetch needed.
+
+        On first day (cold start), today's cache won't exist and no rolling
+        cache is available, so prewarm_daily_cache() does a full API fetch.
 
         Returns:
             Dict mapping symbol to DataFrame, or None if no recent cache

@@ -204,19 +204,16 @@ class MarketDataService:
         logger.info("MDS | Pre-warming daily OHLCV cache for Redis distribution...")
 
         # Rolling load: today's cache or yesterday's (2-5 sec)
+        # Yesterday's cache has data through T-2 which is fine for startup.
+        # At EOD, MDS builds today's daily bar from 1m data and appends it,
+        # so tomorrow's rolling cache will have data through today.
         cache_persistence = DailyCachePersistence()
         cached_data = cache_persistence.load_latest()
         if cached_data:
             self._sdk.set_daily_cache(cached_data)
 
-        # If today's cache doesn't exist, the rolling load gave us stale data
-        # (yesterday's file has data through day-before-yesterday).
-        # Force API refresh to fetch yesterday's close prices.
-        is_rolling = not cache_persistence.exists_today()
-        if is_rolling and cached_data:
-            logger.info("MDS | Rolling cache is stale (no today file), will force API refresh")
-
-        result = self._sdk.prewarm_daily_cache(days=210, force_refresh=is_rolling)
+        # Only fetches from API if cache is empty (cold start, no rolling cache)
+        result = self._sdk.prewarm_daily_cache(days=210)
         if result.get("source") == "api":
             cache_persistence.save(self._sdk.get_daily_cache())
 
@@ -243,6 +240,84 @@ class MarketDataService:
         t = threading.Thread(target=report_stats, daemon=True, name="MDS-Stats")
         t.start()
 
+    def _build_and_save_eod_daily_bars(self) -> None:
+        """
+        Build today's daily OHLCV from bar_builder's 1m bars and append to rolling cache.
+
+        At EOD the bar_builder has all 1m bars for the session. We aggregate them
+        into a single daily bar per symbol (open/high/low/close/volume from 9:15-15:30),
+        append to the rolling cache, and save to disk.
+
+        Next day's startup loads this file → cache has data through today → fresh.
+        No Kite historical API calls needed.
+        """
+        import pandas as pd
+        from services.state.daily_cache_persistence import DailyCachePersistence
+
+        logger.info("MDS | Building EOD daily bars from 1m intraday data...")
+
+        today = pd.Timestamp(datetime.now().date())
+        market_open = today + pd.Timedelta(hours=9, minutes=15)
+        market_close = today + pd.Timedelta(hours=15, minutes=30)
+
+        # Get current daily cache (loaded at startup from rolling file)
+        daily_cache = self._sdk.get_daily_cache()
+
+        updated = 0
+        skipped = 0
+
+        with self._bar_builder._lock:
+            all_symbols = list(self._bar_builder._bars_1m.keys())
+
+            for symbol in all_symbols:
+                df_1m = self._bar_builder._bars_1m.get(symbol)
+                if df_1m is None or df_1m.empty:
+                    skipped += 1
+                    continue
+
+                # Filter to regular session only (9:15 to 15:30)
+                session = df_1m[(df_1m.index >= market_open) & (df_1m.index < market_close)]
+                if session.empty:
+                    skipped += 1
+                    continue
+
+                # Aggregate 1m bars to daily OHLCV
+                daily_row = pd.DataFrame({
+                    "open": [float(session.iloc[0]["open"])],
+                    "high": [float(session["high"].max())],
+                    "low": [float(session["low"].min())],
+                    "close": [float(session.iloc[-1]["close"])],
+                    "volume": [float(session["volume"].sum())],
+                }, index=[today])
+
+                # Append to existing historical data for this symbol
+                existing = daily_cache.get(symbol)
+                if existing is not None and not existing.empty:
+                    # Remove today if somehow already present
+                    existing = existing[existing.index < today]
+                    combined = pd.concat([existing, daily_row])
+                    daily_cache[symbol] = combined.tail(210)
+                else:
+                    daily_cache[symbol] = daily_row
+
+                updated += 1
+
+        # Save updated cache
+        self._sdk.set_daily_cache(daily_cache)
+        persistence = DailyCachePersistence()
+        persistence.save(daily_cache)
+
+        # Publish updated cache to Redis
+        dc_cfg = self._config.get("market_data_bus", {}).get("daily_cache_redis", {})
+        if dc_cfg.get("enabled", False):
+            today_str = datetime.now().date().isoformat()
+            self._bus.publish_daily_cache(today_str, daily_cache, dc_cfg)
+
+        logger.info(
+            f"MDS | EOD daily bars complete: {updated} symbols updated, "
+            f"{skipped} skipped (no session data), saved to disk"
+        )
+
     def stop(self) -> None:
         """Stop the market data service."""
         logger.info("MDS | Stopping...")
@@ -260,7 +335,7 @@ class MarketDataService:
         logger.info("MDS | Stopped")
 
     def run_forever(self) -> None:
-        """Run until interrupted."""
+        """Run until interrupted. Auto-shuts down at EOD after building daily bars."""
         self.start()
 
         # Handle Ctrl+C
@@ -272,10 +347,28 @@ class MarketDataService:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        # Keep running
-        logger.info("MDS | Running... Press Ctrl+C to stop")
+        # Parse EOD shutdown time from config
+        eod_time_str = self._config.get("market_data_bus", {}).get("mds_eod_shutdown_time")
+        if not eod_time_str:
+            raise ValueError("Missing config: market_data_bus.mds_eod_shutdown_time")
+        eod_h, eod_m = map(int, eod_time_str.split(":"))
+        eod_done = False
+
+        logger.info(f"MDS | Running... EOD shutdown scheduled at {eod_time_str} IST")
         while self._running:
             time.sleep(1)
+
+            if not eod_done:
+                now = datetime.now()
+                if now.hour > eod_h or (now.hour == eod_h and now.minute >= eod_m):
+                    logger.info(f"MDS | EOD time reached ({eod_time_str}), building daily bars...")
+                    try:
+                        self._build_and_save_eod_daily_bars()
+                    except Exception as e:
+                        logger.error(f"MDS | EOD daily bar build failed: {e}", exc_info=True)
+                    eod_done = True
+                    logger.info("MDS | EOD complete, shutting down")
+                    self.stop()
 
 
 def main():
