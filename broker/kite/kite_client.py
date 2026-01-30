@@ -297,8 +297,7 @@ class KiteClient:
         self._rps = max(0.5, float(rps))
         self._rl_min_dt = 1.0 / self._rps
 
-    def prewarm_daily_cache(self, symbols: List[str] = None, days: int = 210,
-                            force_refresh: bool = False) -> dict:
+    def prewarm_daily_cache(self, symbols: List[str] = None, days: int = 210) -> dict:
         """
         Pre-warm the daily data cache by fetching from Kite API.
 
@@ -308,11 +307,14 @@ class KiteClient:
         NOTE: Disk persistence is handled externally by DailyCachePersistence.
         Use set_daily_cache() to inject cached data before calling this.
 
+        Rolling cache design: Yesterday's cache (data through T-2) is loaded at startup
+        via set_daily_cache(). At EOD, MDS builds today's daily bar from 1m data and
+        appends it, so next day's rolling cache has data through T-1. No API fetch needed
+        after initial cold start.
+
         Args:
             symbols: List of symbols to pre-warm. If None, uses all equity instruments.
             days: Number of days of daily data to fetch (default 210 for regime detection)
-            force_refresh: If True, clear stale rolling cache and fetch fresh data from API.
-                          Used when today's cache file doesn't exist (rolling load from previous day).
 
         Returns:
             dict with 'success', 'failed', 'elapsed_seconds' counts
@@ -324,8 +326,8 @@ class KiteClient:
 
         total = len(symbols)
 
-        # Check if cache already populated (e.g., from disk persistence)
-        if not force_refresh and len(self._daily_cache) >= total * 0.9:  # 90% threshold
+        # Check if cache already populated (e.g., from disk persistence / rolling cache)
+        if len(self._daily_cache) >= total * 0.9:  # 90% threshold
             logger.info(f"PREWARM_DAILY | Cache already has {len(self._daily_cache)} symbols, skipping API fetch")
             return {
                 "success": len(self._daily_cache),
@@ -334,12 +336,6 @@ class KiteClient:
                 "elapsed_seconds": 0.0,
                 "source": "cache"
             }
-
-        # Clear stale rolling cache so get_daily() fetches fresh data from API
-        if force_refresh and self._daily_cache:
-            logger.info(f"PREWARM_DAILY | Clearing stale rolling cache ({len(self._daily_cache)} symbols) for fresh API fetch")
-            with self._daily_cache_lock:
-                self._daily_cache.clear()
 
         logger.info(f"PREWARM_DAILY | Starting pre-warm for {total} symbols ({days} days each)")
         logger.info(f"PREWARM_DAILY | Estimated time: {total / self._rps / 60:.1f} minutes at {self._rps} RPS")

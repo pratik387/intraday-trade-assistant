@@ -11,12 +11,17 @@ Two duck-type replacements for OrderQueue:
     Interface: get_next(timeout: float) -> Optional[dict]
     Used by: TriggerAwareExecutor (self.oq.get_next(timeout=0.1))
 
-Transport: Redis list with RPUSH (publish) / BLPOP (consume).
+Transport: Redis Pub/Sub with PUBLISH (fan-out) / SUBSCRIBE (all consumers).
+Each consumer receives ALL plans — supports multiple exec instances
+(1 live + N paper) without BLPOP race conditions.
+
 Serialization: JSON with default=str for Timestamp/datetime fields.
 """
 from __future__ import annotations
 
 import json
+import queue
+import threading
 from typing import Any, Dict, Optional
 
 from config.logging_config import get_agent_logger
@@ -34,7 +39,7 @@ class RedisPlanPublisher:
     """
     Drop-in replacement for OrderQueue on the scan side.
 
-    Publishes trade plan dicts to a Redis list via RPUSH.
+    Publishes trade plan dicts via Redis PUBLISH (fan-out to all subscribers).
     ScreenerLive calls self.oq.enqueue(exec_item) — this class
     implements that interface so zero changes needed in ScreenerLive.
     """
@@ -43,29 +48,28 @@ class RedisPlanPublisher:
         if not REDIS_AVAILABLE:
             raise ImportError("redis package required for RedisPlanPublisher")
 
-        self._queue_key = queue_key
+        self._channel = queue_key
         self._redis = redis.Redis.from_url(redis_url, decode_responses=True)
         self._redis.ping()
         logger.info(
-            "PLAN_QUEUE | Publisher connected to Redis, queue_key=%s", queue_key
+            "PLAN_QUEUE | Publisher connected to Redis, channel=%s", queue_key
         )
 
     def enqueue(self, order: Dict[str, Any]) -> None:
-        """Publish a trade plan to Redis (same signature as OrderQueue.enqueue)."""
+        """Publish a trade plan to all subscribers via Redis Pub/Sub."""
         try:
             payload = json.dumps(order, default=str)
-            self._redis.rpush(self._queue_key, payload)
+            num_receivers = self._redis.publish(self._channel, payload)
             symbol = order.get("symbol", "?")
-            logger.info("PLAN_QUEUE | Published plan for %s", symbol)
+            logger.info("PLAN_QUEUE | Published plan for %s (receivers=%d)", symbol, num_receivers)
+            if num_receivers == 0:
+                logger.warning("PLAN_QUEUE | No subscribers received plan for %s", symbol)
         except Exception as e:
             logger.error("PLAN_QUEUE | Failed to publish plan: %s", e)
 
     def approx_backlog(self) -> int:
-        """Return approximate queue length (for monitoring)."""
-        try:
-            return self._redis.llen(self._queue_key)
-        except Exception:
-            return 0
+        """Pub/Sub has no backlog concept — always returns 0."""
+        return 0
 
     def shutdown(self) -> None:
         """Close Redis connection."""
@@ -79,7 +83,10 @@ class RedisPlanConsumer:
     """
     Drop-in replacement for OrderQueue on the exec side.
 
-    Consumes trade plan dicts from a Redis list via BLPOP.
+    Subscribes to Redis Pub/Sub channel and buffers incoming plans.
+    Every consumer instance receives ALL plans (fan-out), solving the
+    BLPOP race condition where multiple exec processes compete for plans.
+
     TriggerAwareExecutor calls self.oq.get_next(timeout=0.1) — this class
     implements that interface so zero changes needed in TriggerAwareExecutor.
     """
@@ -88,52 +95,80 @@ class RedisPlanConsumer:
         if not REDIS_AVAILABLE:
             raise ImportError("redis package required for RedisPlanConsumer")
 
-        self._queue_key = queue_key
-        self._redis = redis.Redis.from_url(redis_url, decode_responses=True)
-        self._redis.ping()
-        logger.info(
-            "PLAN_QUEUE | Consumer connected to Redis, queue_key=%s", queue_key
+        self._channel = queue_key
+        self._buffer: queue.Queue = queue.Queue()
+        self._running = True
+
+        # Subscriber needs its own connection (Redis requirement for pub/sub)
+        self._redis_sub = redis.Redis.from_url(redis_url, decode_responses=True)
+        self._redis_sub.ping()
+
+        # Start subscriber thread
+        self._sub_thread = threading.Thread(
+            target=self._subscribe_loop, daemon=True, name="PlanQueueSub"
         )
+        self._sub_thread.start()
+
+        logger.info(
+            "PLAN_QUEUE | Consumer subscribed to Redis, channel=%s", queue_key
+        )
+
+    def _subscribe_loop(self) -> None:
+        """Background thread: subscribe to channel and buffer incoming plans."""
+        pubsub = self._redis_sub.pubsub()
+        pubsub.subscribe(self._channel)
+
+        try:
+            while self._running:
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message is None:
+                    continue
+                if message["type"] != "message":
+                    continue
+
+                try:
+                    order = json.loads(message["data"])
+                    self._buffer.put(order)
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.error("PLAN_QUEUE | Failed to parse plan: %s", e)
+        except Exception as e:
+            if self._running:
+                logger.error("PLAN_QUEUE | Subscriber loop error: %s", e)
+        finally:
+            try:
+                pubsub.unsubscribe()
+                pubsub.close()
+            except Exception:
+                pass
 
     def get_next(self, timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """
-        Dequeue the next trade plan from Redis (same signature as OrderQueue.get_next).
+        Dequeue the next trade plan from the local buffer.
 
-        Uses BLPOP for blocking wait. Returns None on timeout (matches OrderQueue).
+        Plans are received via Pub/Sub in a background thread and buffered.
+        Returns None on timeout (matches OrderQueue interface).
         """
         try:
-            # BLPOP timeout is in seconds (int). 0 means block forever.
-            # Convert float timeout to int, minimum 1 second for Redis.
-            if timeout is None or timeout <= 0:
-                blpop_timeout = 1  # Avoid infinite block; re-check every 1s
-            else:
-                blpop_timeout = max(1, int(timeout))
-
-            result = self._redis.blpop(self._queue_key, timeout=blpop_timeout)
-            if result is None:
-                return None
-
-            # BLPOP returns (key, value) tuple
-            _, payload = result
-            order = json.loads(payload)
+            wait = max(0.1, timeout) if timeout else 0.1
+            order = self._buffer.get(timeout=wait)
             symbol = order.get("symbol", "?")
             logger.info("PLAN_QUEUE | Consumed plan for %s", symbol)
             return order
-
-        except Exception as e:
-            logger.error("PLAN_QUEUE | Failed to consume plan: %s", e)
+        except queue.Empty:
             return None
 
     def approx_backlog(self) -> int:
-        """Return approximate queue length (for monitoring)."""
-        try:
-            return self._redis.llen(self._queue_key)
-        except Exception:
-            return 0
+        """Return number of buffered plans waiting to be consumed."""
+        return self._buffer.qsize()
 
     def shutdown(self) -> None:
-        """Close Redis connection."""
+        """Stop subscriber thread and close Redis connection."""
+        self._running = False
         try:
-            self._redis.close()
+            self._sub_thread.join(timeout=3)
+        except Exception:
+            pass
+        try:
+            self._redis_sub.close()
         except Exception:
             pass
