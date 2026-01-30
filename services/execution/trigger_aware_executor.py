@@ -70,6 +70,13 @@ class TriggerAwareExecutor:
                     trade.state = TradeState.EXPIRED  # Mark as expired to avoid repeated checks
                     return False
 
+            # Block duplicate — position may have been opened by another plan
+            # between _add_pending_trade and now
+            if trade.symbol in self.risk.open_positions:
+                logger.warning(f"DUPLICATE_BLOCKED | {trade.symbol} | Position already open at execution time")
+                trade.state = TradeState.EXPIRED
+                return False
+
             # Check market hours
             minute_of_day = _minute_of_day(now)
             if self.entry_cutoff_md and minute_of_day >= self.entry_cutoff_md:
@@ -1110,6 +1117,11 @@ class TriggerAwareExecutor:
             # Block re-entry for symbols rejected by fill quality gate
             if symbol in self._fq_rejected:
                 logger.info(f"PLAN_SKIP | {symbol} | Previously rejected by fill quality gate, ignoring")
+                return
+
+            # Block duplicate entry — symbol already has an open position
+            if symbol in self.risk.open_positions:
+                logger.info(f"PLAN_SKIP | {symbol} | Already has open position, ignoring duplicate plan")
                 return
 
             # Create trade ID

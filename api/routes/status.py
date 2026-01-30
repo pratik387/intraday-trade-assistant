@@ -123,19 +123,21 @@ def _build_status(server) -> dict:
                     pos_dict["t2"] = plan.get("t2")
 
                 state = plan.get("_state", {})
+                # Booked PnL: sum of all partial exit profits (T1 + T2 + manual)
+                # Must match WebSocket broadcast logic in position_store.py
+                t1_profit = state.get("t1_profit", 0) or 0
+                t2_profit = state.get("t2_profit", 0) or 0
+                manual_profit = state.get("manual_partial_profit", 0) or 0
+                booked = t1_profit + t2_profit + manual_profit
+                pos_dict["booked_pnl"] = booked
+                total_booked_pnl += booked
+
                 if state.get("t1_done"):
                     pos_dict["t1_done"] = True
-                    # Only full exit available after T1 taken
                     pos_dict["exit_options"] = ["full"]
-                    # Add booked PnL and T1 exit time if available
-                    booked = state.get("t1_profit", 0)
-                    pos_dict["booked_pnl"] = booked
                     pos_dict["t1_exit_time"] = state.get("t1_exit_time")
-                    total_booked_pnl += booked  # Add to session total
                 else:
-                    # Both 50% and full exit available
                     pos_dict["exit_options"] = ["partial", "full"]
-                    pos_dict["booked_pnl"] = 0
 
                 # Entry time from plan
                 pos_dict["entry_time"] = plan.get("entry_ts") or plan.get("trigger_ts")

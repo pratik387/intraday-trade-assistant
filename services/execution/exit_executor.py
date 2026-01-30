@@ -1535,18 +1535,20 @@ class ExitExecutor:
             # Recalculate PnL using actual broker fill price (not assumed price)
             actual_pnl = qty_now * (actual_exit_px - pos.avg_price) if pos.side.upper() == "BUY" else qty_now * (pos.avg_price - actual_exit_px)
 
-            # Calculate TOTAL trade PnL including any partial exit profits (T1, manual, EOD)
+            # Calculate TOTAL trade PnL including ALL partial exit profits (T1, T2, manual, EOD)
             state = pos.plan.get("_state", {})
             t1_profit = state.get("t1_profit", 0) or 0
             t1_booked_qty = state.get("t1_booked_qty", 0) or 0
+            t2_profit = state.get("t2_profit", 0) or 0
+            t2_booked_qty = state.get("t2_booked_qty", 0) or 0
             manual_partial_profit = state.get("manual_partial_profit", 0) or 0
             manual_partial_qty = state.get("manual_partial_qty", 0) or 0
             eod_partial_profit = state.get("eod_partial_profit", 0) or 0
             eod_partial_qty = state.get("eod_partial_qty", 0) or 0
-            total_pnl = t1_profit + manual_partial_profit + eod_partial_profit + actual_pnl
+            total_pnl = t1_profit + t2_profit + manual_partial_profit + eod_partial_profit + actual_pnl
 
             # Use original entry qty (all partials + remaining), not just final exit qty
-            original_qty = t1_booked_qty + manual_partial_qty + eod_partial_qty + qty_now
+            original_qty = t1_booked_qty + t2_booked_qty + manual_partial_qty + eod_partial_qty + qty_now
 
             # Get entry time - try multiple sources
             entry_time = (
@@ -1571,6 +1573,7 @@ class ExitExecutor:
                 "t1": round(t1, 2) if t1 else None,
                 "t2": round(t2, 2) if t2 else None,
                 "t1_profit": round(t1_profit, 2) if t1_profit else None,  # Breakdown for debugging
+                "t2_profit": round(t2_profit, 2) if t2_profit else None,
                 "t1_exit_time": state.get("t1_exit_time"),  # When T1 was taken
                 "manual_partial_profit": round(manual_partial_profit, 2) if manual_partial_profit else None,  # Manual partial exits
                 "shadow": is_shadow,  # Shadow trade flag (for filtering in dashboard)
@@ -1624,13 +1627,14 @@ class ExitExecutor:
         if current_qty <= 0:
             return
 
-        # RACE CONDITION FIX: Set t1_done IMMEDIATELY to prevent duplicate T1 exits
-        # This must happen BEFORE any order placement to block concurrent tick processing
+        # RACE CONDITION FIX: Use _t1_processing lock flag to prevent duplicate T1 exits
+        # We defer setting t1_done until t1_profit is also ready, so HTTP polls and
+        # WebSocket broadcasts never see t1_done=True with booked_pnl=0.
         st = pos.plan.get("_state") or {}
-        if st.get("t1_done", False):
-            logger.info(f"T1_SKIP | {sym} | T1 already done, skipping duplicate")
+        if st.get("t1_done", False) or st.get("_t1_processing", False):
+            logger.info(f"T1_SKIP | {sym} | T1 already done/processing, skipping duplicate")
             return
-        st["t1_done"] = True
+        st["_t1_processing"] = True
         pos.plan["_state"] = st
 
         # Check if T2 is infeasible (T1-only scalp mode) or Fast Scalp Lane
@@ -1639,6 +1643,7 @@ class ExitExecutor:
             # Exit 100% at T1 if T2 is not feasible or in Fast Scalp Lane
             reason_suffix = "t2_infeasible" if t2_exit_mode == "T1_only_scalp" else "fast_scalp_lane"
             logger.info(f"exit_executor: {sym} {t2_exit_mode} mode - exiting 100% at T1 ({reason_suffix})")
+            st.pop("_t1_processing", None)  # Clean up lock before full exit
             self._exit(sym, pos, float(px), ts, f"target_t1_full_{reason_suffix}")
             return
 
@@ -1662,6 +1667,7 @@ class ExitExecutor:
             if current_qty > 2:  # Changed from 1 to 2 - allow partial even for small positions
                 qty_exit = max(1, current_qty // 2)  # Take 50% minimum
             else:
+                st.pop("_t1_processing", None)  # Clean up lock before full exit
                 self._exit(sym, pos, float(px), ts, "target_t1_full")
                 return
 
@@ -1678,11 +1684,13 @@ class ExitExecutor:
 
         # UPDATE STATE BEFORE reduce() - so WebSocket broadcast has correct t1_profit/t1_done
         # (positions.reduce triggers _broadcast_positions which reads from pos.plan["_state"])
+        # Set t1_done and t1_profit ATOMICALLY so HTTP polls never see t1_done=True with booked=0
         st["t1_done"] = True
         st["t1_booked_qty"] = qty_exit
         st["t1_booked_price"] = px
         st["t1_profit"] = profit_booked
         st["t1_exit_time"] = ts.isoformat() if ts else None
+        st.pop("_t1_processing", None)  # Clean up lock flag
 
         # Enhanced breakeven logic - always move to BE after T1
         if not st.get("sl_moved_to_be"):
@@ -1716,7 +1724,10 @@ class ExitExecutor:
 
         # Update persistence with new qty and state (crash recovery)
         if self.persistence:
-            self.persistence.update_position(sym, new_qty=new_qty, state_updates={"t1_done": True})
+            self.persistence.update_position(sym, new_qty=new_qty, state_updates={
+                "t1_done": True,
+                "t1_profit": round(profit_booked, 2),
+            })
 
         if self.eod_md is not None and ts is not None:
             try:
@@ -1747,13 +1758,13 @@ class ExitExecutor:
         if qty <= 0:
             return
 
-        # RACE CONDITION FIX: Set t2_done IMMEDIATELY to prevent duplicate T2 exits
-        # This must happen BEFORE any order placement to block concurrent tick processing
+        # RACE CONDITION FIX: Use _t2_processing lock flag to prevent duplicate T2 exits
+        # We defer setting t2_done until t2_profit is also ready (same pattern as T1).
         st = pos.plan.get("_state") or {}
-        if st.get("t2_done", False):
-            logger.debug(f"T2_SKIP | {sym} | T2 already done, skipping duplicate")
+        if st.get("t2_done", False) or st.get("_t2_processing", False):
+            logger.debug(f"T2_SKIP | {sym} | T2 already done/processing, skipping duplicate")
             return
-        st["t2_done"] = True
+        st["_t2_processing"] = True
         pos.plan["_state"] = st
 
         # If no trail configured (T1+T2 >= 100%), exit ALL remaining at T2
@@ -1761,6 +1772,7 @@ class ExitExecutor:
         no_trail = (self.t1_book_pct + self.t2_book_pct) >= 100.0
         if no_trail:
             logger.info(f"exit_executor: {sym} T2_FULL exit (no trail configured: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-0%)")
+            st.pop("_t2_processing", None)
             self._exit(sym, pos, float(px), ts, "target_t2_full")
             return
 
@@ -1780,6 +1792,7 @@ class ExitExecutor:
 
         # Exit fully if calculated qty covers remaining position
         if qty_exit >= qty:
+            st.pop("_t2_processing", None)
             self._exit(sym, pos, float(px), ts, "target_t2_full")
             return
 
@@ -1797,10 +1810,12 @@ class ExitExecutor:
 
         # UPDATE STATE BEFORE reduce() - so WebSocket broadcast has correct t2_profit/t2_done
         # (positions.reduce triggers _broadcast_positions which reads from pos.plan["_state"])
+        # Set t2_done and t2_profit ATOMICALLY (same pattern as T1)
         st["t2_done"] = True
         st["t2_booked_qty"] = qty_exit
         st["t2_booked_price"] = px
         st["t2_profit"] = profit_booked
+        st.pop("_t2_processing", None)  # Clean up lock flag
         pos.plan["_state"] = st
 
         # Place exit order AFTER state update
@@ -1815,7 +1830,11 @@ class ExitExecutor:
 
         # Update persistence with new qty and state (crash recovery)
         if self.persistence:
-            self.persistence.update_position(sym, new_qty=remaining_qty, state_updates={"t1_done": True, "t2_done": True})
+            self.persistence.update_position(sym, new_qty=remaining_qty, state_updates={
+                "t1_done": True,
+                "t2_done": True,
+                "t2_profit": round(profit_booked, 2),
+            })
 
     def _fabricate_eod_ts(self, pos: Position) -> pd.Timestamp:
         try:

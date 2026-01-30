@@ -453,6 +453,14 @@ class CapitalManager:
             'entry_time': timestamp or datetime.now()
         }
 
+        if margin_used > self.available_capital and not shadow:
+            logger.error(
+                f"CAP_OVERFLOW | {symbol} | margin_used={margin_used:,.0f} > "
+                f"available={self.available_capital:,.0f} — blocking entry"
+            )
+            self.positions.pop(symbol, None)
+            return
+
         self.available_capital -= margin_used
 
         # Update stats
