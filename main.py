@@ -253,17 +253,35 @@ def main() -> int:
         logger.info("EXEC_MODE | %s", execution_mode)
 
     # Order queue: local (in_process), Redis publish (scan_only/separated), Redis consume (exec_only)
+    # Each instance MUST have its own dedicated channel to prevent cross-instance plan leakage.
+    # - separated: auto-generates unique channel (parent passes to child via args_dict)
+    # - scan_only/exec_only: requires --instance-id to pair scan+exec processes
+    # - in_process: uses local OrderQueue (no Redis)
     mdb_cfg = cfg.get("market_data_bus", {})
     redis_url = mdb_cfg.get("redis_url", "redis://localhost:6379/0")
-    queue_key = cfg["trade_plan_queue_key"]
+    base_queue_key = cfg["trade_plan_queue_key"]
 
-    if execution_mode in ("scan_only", "separated"):
+    if execution_mode == "separated":
+        import uuid
+        queue_key = f"{base_queue_key}:{uuid.uuid4().hex[:8]}"
+        from services.execution.redis_plan_queue import RedisPlanPublisher
+        oq = RedisPlanPublisher(redis_url=redis_url, queue_key=queue_key)
+    elif execution_mode == "scan_only":
+        instance_id = getattr(args, 'instance_id', None)
+        if not instance_id:
+            raise ValueError("--instance-id is required for scan_only mode (e.g., --instance-id=live)")
+        queue_key = f"{base_queue_key}:{instance_id}"
         from services.execution.redis_plan_queue import RedisPlanPublisher
         oq = RedisPlanPublisher(redis_url=redis_url, queue_key=queue_key)
     elif execution_mode == "exec_only":
+        instance_id = getattr(args, 'instance_id', None)
+        if not instance_id:
+            raise ValueError("--instance-id is required for exec_only mode (e.g., --instance-id=live)")
+        queue_key = f"{base_queue_key}:{instance_id}"
         from services.execution.redis_plan_queue import RedisPlanConsumer
         oq = RedisPlanConsumer(redis_url=redis_url, queue_key=queue_key)
     else:
+        queue_key = base_queue_key
         oq = OrderQueue()
 
     def _prewarm_daily_cache(sdk):
@@ -580,6 +598,7 @@ def main() -> int:
             "health_port": args.health_port,
             "ws_port": args.ws_port,
             "admin_token": args.admin_token,
+            "queue_key": queue_key,  # Auto-generated unique channel for this instance
         }
 
         exec_child = mp.Process(
@@ -947,6 +966,9 @@ def _parse_args():
                     help="Subscribe to Market Data Service via Redis (requires: python -m market_data.market_data_service)")
     ap.add_argument("--execution-mode", choices=["in_process", "separated", "scan_only", "exec_only"], default=None,
                     help="in_process=all-in-one (default), separated=auto-spawn exec child process, scan_only/exec_only=manual two-terminal")
+    ap.add_argument("--instance-id", default=None,
+                    help="Unique instance identifier for Redis plan queue channel (e.g., live, paper1, paper2). "
+                         "Required when running multiple instances to prevent cross-instance plan leakage.")
     return ap.parse_args()
 
 

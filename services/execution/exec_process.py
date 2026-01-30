@@ -77,9 +77,9 @@ def _run_exec_loop(logger, trading_logger, stop_event, args_dict: Dict[str, Any]
     # --- Market data config ---
     mdb_cfg = cfg.get("market_data_bus", {})
     redis_url = mdb_cfg.get("redis_url", "redis://localhost:6379/0")
-    queue_key = cfg["trade_plan_queue_key"]
-    if paper_trading:
-        queue_key = f"{queue_key}:paper"
+
+    # Use parent's queue_key (unique per instance, passed via args_dict)
+    queue_key = args_dict["queue_key"]
 
     # --- RedisPlanConsumer (duck-typed OrderQueue) ---
     plan_consumer = RedisPlanConsumer(redis_url=redis_url, queue_key=queue_key)
