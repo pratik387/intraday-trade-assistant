@@ -1921,7 +1921,8 @@ class BasePipeline(ABC):
 
             "stop": {
                 "hard": round(hard_sl, 2),
-                "risk_per_share": round(rps, 2),  # Use locally calculated rps with floor protection
+                "risk_per_share": round(rps, 2),  # Absolute risk for position sizing (entry - SL)
+                "target_risk": round(target_result.risk_per_share, 2),  # Risk basis used for target R:R (structure-based for breakout)
             },
 
             "targets": target_result.targets,

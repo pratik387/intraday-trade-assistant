@@ -579,7 +579,13 @@ class TriggerAwareExecutor:
         if actual_risk <= 0:
             return False, f"sl_already_breached:fill={actual_fill:.2f},sl={hard_sl:.2f}"
 
-        actual_rr = actual_reward_t1 / actual_risk if actual_risk > 0 else 0
+        # Use target_risk for RR calculation — matches the risk basis used to compute targets.
+        # Breakout targets use structure risk (ORH-ORL), not absolute entry-to-SL distance.
+        # Falls back to actual_risk for legacy plans or non-breakout trades without target_risk.
+        target_risk = plan.get("stop", {}).get("target_risk")
+        rr_denominator = target_risk if target_risk and target_risk > 0 else actual_risk
+        actual_rr = actual_reward_t1 / rr_denominator if rr_denominator > 0 else 0
+        risk_tag = "target" if (target_risk and target_risk > 0) else "absolute"
 
         # Check slippage — but skip if fill is within entry zone.
         # The entry zone defines the structurally acceptable fill range;
@@ -591,10 +597,10 @@ class TriggerAwareExecutor:
             return False, f"slippage_exceeded:{slippage_pct:.2f}%>{max_slippage_pct}%"
 
         if actual_rr < min_rr:
-            return False, f"rr_compressed:{actual_rr:.2f}<{min_rr}"
+            return False, f"rr_compressed:{actual_rr:.2f}<{min_rr}(risk={risk_tag})"
 
         zone_tag = "in_zone" if in_zone else f"slip={slippage_pct:.2f}%"
-        return True, f"fill_ok:rr={actual_rr:.2f},{zone_tag}"
+        return True, f"fill_ok:rr={actual_rr:.2f},{zone_tag},risk={risk_tag}"
 
     def _immediate_exit_bad_fill(
         self,
