@@ -584,7 +584,7 @@ class TriggerAwareExecutor:
         # Check slippage — but skip if fill is within entry zone.
         # The entry zone defines the structurally acceptable fill range;
         # slippage from the reference price is irrelevant if the fill is in-zone.
-        entry_zone = plan.get("entry", {}).get("zone", [])
+        entry_zone = plan.get("entry_zone") or plan.get("entry", {}).get("zone", [])
         in_zone = len(entry_zone) == 2 and entry_zone[0] <= actual_fill <= entry_zone[1]
 
         if not in_zone and slippage_pct > max_slippage_pct:
