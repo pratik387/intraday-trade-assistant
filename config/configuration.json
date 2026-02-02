@@ -2361,7 +2361,8 @@
   "_comment_capital_management": "=== CAPITAL MANAGEMENT & MIS ===",
   "capital_management": {
     "enabled": false,
-    "initial_capital": 500000,
+    "initial_capital": 50000,
+    "paper_initial_capital": 500000,
     "max_concurrent_positions": 50,
     "risk": {
       "mode": "percentage",

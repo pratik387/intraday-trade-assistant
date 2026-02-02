@@ -225,7 +225,7 @@ def main() -> int:
 
     capital_manager = CapitalManager(
         enabled=capital_enabled,
-        initial_capital=cap_mgmt_cfg['initial_capital'],
+        initial_capital=cap_mgmt_cfg['paper_initial_capital'] if (args.paper_trading or args.dry_run) else cap_mgmt_cfg['initial_capital'],
         max_positions=cap_mgmt_cfg['max_concurrent_positions'],
         min_notional_pct=cap_mgmt_cfg['min_notional_pct'],
         capital_utilization=cap_mgmt_cfg['capital_utilization'],

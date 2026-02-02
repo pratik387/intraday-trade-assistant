@@ -122,7 +122,7 @@ def _run_exec_loop(logger, trading_logger, stop_event, args_dict: Dict[str, Any]
 
     capital_manager = CapitalManager(
         enabled=True,
-        initial_capital=cap_mgmt_cfg['initial_capital'],
+        initial_capital=cap_mgmt_cfg['paper_initial_capital'] if paper_trading else cap_mgmt_cfg['initial_capital'],
         max_positions=cap_mgmt_cfg['max_concurrent_positions'],
         min_notional_pct=cap_mgmt_cfg['min_notional_pct'],
         capital_utilization=cap_mgmt_cfg['capital_utilization'],
