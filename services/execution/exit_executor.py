@@ -606,27 +606,9 @@ class ExitExecutor:
         if self.persistence:
             self.persistence.update_position(sym, new_qty=new_qty, state_updates={"manual_partial_profit": st["manual_partial_profit"]})
 
-        # Log partial closed trade to API server for real-time dashboard
-        if self.api_server:
-            is_shadow = pos.plan.get("shadow", False)
-            partial_trade = {
-                "symbol": sym,
-                "side": pos.side.upper(),
-                "qty": qty_exit,
-                "entry_price": round(entry_price, 2),
-                "exit_price": round(actual_exit_px, 2),
-                "pnl": round(partial_profit, 2),
-                "exit_reason": reason,
-                "setup": pos.plan.get("setup_type", "unknown"),
-                "exit_time": ts.isoformat() if ts else None,
-                "entry_time": pos.plan.get("entry_ts") or pos.plan.get("trigger_ts"),
-                "is_partial": True,  # Flag to identify partial exits
-                "remaining_qty": new_qty,
-                "shadow": is_shadow,
-            }
-            self.api_server.log_closed_trade(partial_trade)
-            if not is_shadow:
-                self.api_server.broadcast_ws("closed_trade", partial_trade)
+        # Manual partial profit is tracked in _state (like T1 partial), NOT as a
+        # separate dashboard row. The final _exit() call will include manual_partial_profit
+        # and manual_partial_qty in the total trade summary — one trade = one dashboard row.
 
     def run_forever(self, sleep_ms: int = 200) -> None:
         try:
@@ -2058,27 +2040,9 @@ class ExitExecutor:
                     st["eod_partial_profit"] = existing_eod_profit + eod_partial_profit
                     pos.plan["_state"] = st
 
-                    # Log partial closed trade to API server for dashboard
-                    if self.api_server:
-                        is_shadow = pos.plan.get("shadow", False)
-                        partial_trade = {
-                            "symbol": sym,
-                            "side": pos.side.upper(),
-                            "qty": qty_exit,
-                            "entry_price": round(pos.avg_price, 2),
-                            "exit_price": round(actual_exit_px, 2),
-                            "pnl": round(eod_partial_profit, 2),
-                            "exit_reason": f"eod_scale_out_1st_{rr:.2f}R",
-                            "setup": pos.plan.get("setup_type", "unknown"),
-                            "exit_time": ts.isoformat() if ts else None,
-                            "entry_time": pos.plan.get("entry_ts") or pos.plan.get("trigger_ts"),
-                            "is_partial": True,
-                            "remaining_qty": new_qty,
-                            "shadow": is_shadow,
-                        }
-                        self.api_server.log_closed_trade(partial_trade)
-                        if not is_shadow:
-                            self.api_server.broadcast_ws("closed_trade", partial_trade)
+                    # EOD first scale-out is tracked in _state (like T1 partial), NOT as a
+                    # separate dashboard row. The final _exit() call will include eod_partial_profit
+                    # and eod_partial_qty in the total trade summary — one trade = one dashboard row.
 
                     # Release partial margin
                     if self.capital_manager:

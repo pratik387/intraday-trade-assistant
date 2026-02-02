@@ -95,10 +95,15 @@ class PositionStore:
                     pos_dict["entry_time"] = plan.get("entry_ts") or plan.get("trigger_ts")
                     state = plan.get("_state", {})
                     pos_dict["t1_done"] = state.get("t1_done", False)
-                    # Include all partial profits: T1 + T2 + manual API partials
+                    if state.get("eod_scale_out_first_done"):
+                        pos_dict["eod_partial_done"] = True
+                    if state.get("manual_partial_qty", 0):
+                        pos_dict["manual_partial_done"] = True
+                    # Include all partial profits: T1 + T2 + manual + EOD
                     t1_profit = state.get("t1_profit", 0) or 0
                     t2_profit = state.get("t2_profit", 0) or 0
                     manual_profit = state.get("manual_partial_profit", 0) or 0
-                    pos_dict["booked_pnl"] = t1_profit + t2_profit + manual_profit
+                    eod_profit = state.get("eod_partial_profit", 0) or 0
+                    pos_dict["booked_pnl"] = t1_profit + t2_profit + manual_profit + eod_profit
                 positions.append(pos_dict)
         self._api_server.broadcast_ws("positions", {"positions": positions})

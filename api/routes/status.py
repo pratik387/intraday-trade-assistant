@@ -128,7 +128,8 @@ def _build_status(server) -> dict:
                 t1_profit = state.get("t1_profit", 0) or 0
                 t2_profit = state.get("t2_profit", 0) or 0
                 manual_profit = state.get("manual_partial_profit", 0) or 0
-                booked = t1_profit + t2_profit + manual_profit
+                eod_profit = state.get("eod_partial_profit", 0) or 0
+                booked = t1_profit + t2_profit + manual_profit + eod_profit
                 pos_dict["booked_pnl"] = booked
                 total_booked_pnl += booked
 
@@ -138,6 +139,11 @@ def _build_status(server) -> dict:
                     pos_dict["t1_exit_time"] = state.get("t1_exit_time")
                 else:
                     pos_dict["exit_options"] = ["partial", "full"]
+
+                if state.get("eod_scale_out_first_done"):
+                    pos_dict["eod_partial_done"] = True
+                if state.get("manual_partial_qty", 0):
+                    pos_dict["manual_partial_done"] = True
 
                 # Entry time from plan
                 pos_dict["entry_time"] = plan.get("entry_ts") or plan.get("trigger_ts")
