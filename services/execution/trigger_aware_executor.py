@@ -208,6 +208,16 @@ class TriggerAwareExecutor:
                     logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
                     return False
 
+            # Pre-order R:R gate: reject if trigger price already compresses R:R
+            # Pure arithmetic (~microseconds) — avoids placing orders that will immediately exit
+            pre_ok, pre_reason = self._check_fill_quality(plan, price, side)
+            if not pre_ok:
+                logger.warning(
+                    f"PRE_ORDER_RR_REJECT | {symbol} | Skipping entry | "
+                    f"Price: {price:.2f} | Reason: {pre_reason}"
+                )
+                return False
+
             # Check if this is a shadow trade (simulated, no capital consumed)
             is_shadow = plan.get("shadow", False)
 

@@ -1108,6 +1108,7 @@ class ScreenerLive:
             exec_item = {
                 "symbol": plan["symbol"],
                 "plan": {
+                    "symbol": plan["symbol"],
                     "side": "BUY" if plan["bias"] == "long" else "SELL",
                     "qty": int(plan["sizing"]["qty"]),
                     "entry_zone": (plan["entry"] or {}).get("zone"),
