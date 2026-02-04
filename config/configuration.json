@@ -2438,6 +2438,9 @@
     "threshold_minutes": 30,
     "_comment": "If starting >30min after 09:15, backfill 5m bar history from Redis to pre-warm indicators"
   },
+  "_comment_reconciliation": "=== POSITION RECONCILIATION ===",
+  "reconcile_position_retries": 3,
+  "reconcile_position_retry_delay": 1.0,
   "_comment_paper_mirror": "=== PAPER TRADE LIVE FILL MIRRORING ===",
   "paper_mirror_live_fills": true,
   "paper_mirror_time_window_sec": 60,

@@ -219,8 +219,15 @@ class ExitExecutor:
                     # Set exit_pending BEFORE placing order to prevent race
                     st["exit_pending"] = True
                     pos.plan["_state"] = st
-                    logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f}")
-                    self._exit(symbol, pos, tick_price, ts_pd, "tick_sl")
+                    # Match bar-level convention: sl_post_t2 > sl_post_t1 > tick_sl
+                    if st.get("t2_done"):
+                        sl_reason = "sl_post_t2"
+                    elif st.get("t1_done"):
+                        sl_reason = "sl_post_t1"
+                    else:
+                        sl_reason = "tick_sl"
+                    logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f} reason={sl_reason}")
+                    self._exit(symbol, pos, tick_price, ts_pd, sl_reason)
                     return
 
             # Check targets using tick price directly
@@ -589,6 +596,7 @@ class ExitExecutor:
         existing_partial_qty = st.get("manual_partial_qty", 0) or 0
         st["manual_partial_profit"] = existing_partial_profit + partial_profit
         st["manual_partial_qty"] = existing_partial_qty + qty_exit
+        st["manual_partial_price"] = actual_exit_px  # Store broker fill for weighted avg exit
         st["manual_partial_time"] = ts.isoformat() if ts else None
         pos.plan["_state"] = st
 
@@ -1539,13 +1547,31 @@ class ExitExecutor:
                 state.get("entry_time")
             )
 
+            # Weighted average exit price from all broker fills (T1, T2, manual, EOD, final)
+            exit_legs = []
+            t1_px = state.get("t1_booked_price")
+            if t1_booked_qty > 0 and t1_px:
+                exit_legs.append((t1_booked_qty, float(t1_px)))
+            t2_px = state.get("t2_booked_price")
+            if t2_booked_qty > 0 and t2_px:
+                exit_legs.append((t2_booked_qty, float(t2_px)))
+            manual_px = state.get("manual_partial_price")
+            if manual_partial_qty > 0 and manual_px:
+                exit_legs.append((manual_partial_qty, float(manual_px)))
+            eod_px = state.get("eod_partial_price")
+            if eod_partial_qty > 0 and eod_px:
+                exit_legs.append((eod_partial_qty, float(eod_px)))
+            exit_legs.append((qty_now, actual_exit_px))  # Final exit (always has broker fill)
+            total_exit_qty = sum(q for q, _ in exit_legs)
+            weighted_exit_px = sum(q * p for q, p in exit_legs) / total_exit_qty if total_exit_qty > 0 else actual_exit_px
+
             is_shadow = pos.plan.get("shadow", False)
             closed_trade = {
                 "symbol": sym,
                 "side": pos.side.upper(),
                 "qty": original_qty,  # Total trade qty, not just final exit qty
                 "entry_price": round(pos.avg_price, 2),
-                "exit_price": round(actual_exit_px, 2),  # Use actual broker fill price
+                "exit_price": round(weighted_exit_px, 2),  # Weighted avg across all broker fills
                 "pnl": round(total_pnl, 2),  # Total trade PnL using actual broker price
                 "exit_reason": reason,
                 "setup": pos.plan.get("setup_type", "unknown"),
@@ -1695,7 +1721,16 @@ class ExitExecutor:
         pos.plan["_state"] = st
 
         # Place exit order AFTER state update
-        self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
+        actual_t1_fill = self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
+
+        # Update state with actual broker fill price (initial state used signal price for fast WebSocket)
+        if actual_t1_fill != px:
+            st["t1_booked_price"] = actual_t1_fill
+            if pos.side.upper() == "BUY":
+                st["t1_profit"] = qty_exit * (actual_t1_fill - pos.avg_price)
+            else:
+                st["t1_profit"] = qty_exit * (pos.avg_price - actual_t1_fill)
+            pos.plan["_state"] = st
 
         # Reduce position qty (triggers WebSocket broadcast with updated state)
         self.positions.reduce(sym, int(qty_exit))
@@ -1801,7 +1836,16 @@ class ExitExecutor:
         pos.plan["_state"] = st
 
         # Place exit order AFTER state update
-        self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
+        actual_t2_fill = self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
+
+        # Update state with actual broker fill price (initial state used signal price for fast WebSocket)
+        if actual_t2_fill != px:
+            st["t2_booked_price"] = actual_t2_fill
+            if pos.side.upper() == "BUY":
+                st["t2_profit"] = qty_exit * (actual_t2_fill - pos.avg_price)
+            else:
+                st["t2_profit"] = qty_exit * (pos.avg_price - actual_t2_fill)
+            pos.plan["_state"] = st
 
         # Reduce position qty (triggers WebSocket broadcast with updated state)
         self.positions.reduce(sym, int(qty_exit))
@@ -2038,6 +2082,7 @@ class ExitExecutor:
                     st["eod_scale_out_first_done"] = True
                     st["eod_partial_qty"] = existing_eod_qty + qty_exit
                     st["eod_partial_profit"] = existing_eod_profit + eod_partial_profit
+                    st["eod_partial_price"] = actual_exit_px  # Store broker fill for weighted avg exit
                     pos.plan["_state"] = st
 
                     # EOD first scale-out is tracked in _state (like T1 partial), NOT as a
