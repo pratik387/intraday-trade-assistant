@@ -27,7 +27,6 @@ from config.logging_config import get_agent_logger
 
 logger = get_agent_logger()
 
-NIFTY_DAILY_CSV = Path(__file__).resolve().parents[2] / "assets" / "nifty_daily.csv"
 INDEX_OHLCV_DIR = Path(__file__).resolve().parents[2] / "backtest-cache-download" / "index_ohlcv"
 
 
@@ -59,8 +58,6 @@ class DirectionalBiasTracker:
         self._flip_count: int = 0
         self._change_pct: float = 0.0
 
-        # Cache for backtest daily data
-        self._daily_cache: Optional[pd.DataFrame] = None
         # Cache for backtest intraday 5m bars (Nifty close at each 5m bar)
         self._intraday_5m: Optional[pd.Series] = None
 
@@ -82,24 +79,27 @@ class DirectionalBiasTracker:
 
     def set_prev_close_for_date(self, session_date) -> bool:
         """
-        Set prev_close from cached daily CSV for backtest mode.
-        Returns True if successful, False if data not available.
+        Set prev_close from the 1m feather for backtest mode.
+        Derives daily close from the same intraday data used for price tracking.
+        No separate CSV needed — single data source for both daily and intraday.
         """
-        if self._daily_cache is None:
-            self._daily_cache = self._load_daily_cache()
-        if self._daily_cache is None or self._daily_cache.empty:
+        # Ensure intraday cache is loaded (same feather used for price tracking)
+        if self._intraday_5m is None:
+            self._intraday_5m = self._load_intraday_5m()
+        if self._intraday_5m is None or self._intraday_5m.empty:
             return False
 
         session_dt = pd.Timestamp(session_date).normalize()
-        # Get the last trading day BEFORE session_date
-        prior = self._daily_cache[self._daily_cache.index < session_dt]
+        # Get last close from the previous trading day
+        prior = self._intraday_5m[self._intraday_5m.index < session_dt]
         if prior.empty:
             return False
 
-        self.prev_close = float(prior["Close"].iloc[-1])
+        self.prev_close = float(prior.iloc[-1])
+        prev_date = prior.index[-1].date()
         logger.info(
             f"DIR_BIAS | Backtest prev_close for {session_dt.date()}: "
-            f"{self.prev_close:.2f} (from {prior.index[-1].date()})"
+            f"{self.prev_close:.2f} (from {prev_date})"
         )
         return True
 
@@ -236,25 +236,6 @@ class DirectionalBiasTracker:
     # ------------------------------------------------------------------ #
     #  Internal helpers                                                    #
     # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _load_daily_cache() -> Optional[pd.DataFrame]:
-        """Load cached Nifty daily CSV for backtest lookups."""
-        if not NIFTY_DAILY_CSV.exists():
-            logger.warning(f"DIR_BIAS | Daily cache not found: {NIFTY_DAILY_CSV}")
-            return None
-        try:
-            df = pd.read_csv(NIFTY_DAILY_CSV, parse_dates=["Date"], index_col="Date")
-            # Handle multi-level columns from yfinance
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            # Normalize index to tz-naive dates
-            df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
-            logger.info(f"DIR_BIAS | Loaded daily cache: {len(df)} days")
-            return df
-        except Exception as e:
-            logger.error(f"DIR_BIAS | Failed to load daily cache: {e}")
-            return None
 
     def _load_intraday_5m(self) -> Optional[pd.Series]:
         """
