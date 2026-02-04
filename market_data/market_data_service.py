@@ -64,6 +64,15 @@ class MarketDataService:
         # Load config for universe
         self._config = load_filters()
 
+        # ORB level computation config (fail-fast on missing keys)
+        mdb_cfg = self._config.get("market_data_bus", {})
+        orb_trigger = mdb_cfg.get("orb_compute_trigger_hhmm")
+        if not orb_trigger:
+            raise ValueError("Missing config: market_data_bus.orb_compute_trigger_hhmm")
+        self._orb_trigger_hhmm = str(orb_trigger)
+        self._session_open_hhmm = str(self._config["session_open_hhmm"])
+        self._orb_minutes = int(self._config["orb_minutes"])
+
         # Create market data bus (publisher mode)
         self._bus = MarketDataBus(
             mode="publisher",
@@ -90,6 +99,9 @@ class MarketDataService:
         self._bar_1m_count = 0
         self._bar_5m_count = 0
         self._last_tick_time = None
+
+        # ORB levels: computed and published once per day
+        self._orb_levels_published = False
 
     def _get_index_symbols(self) -> list:
         """Get index symbols from config."""
@@ -132,9 +144,90 @@ class MarketDataService:
         self._bus.publish_bar(symbol, "5m", bar)
         logger.info(f"MDS | 5m bar: {symbol} close={bar.get('close', 0):.2f} @ {bar.name}")
 
+        # Trigger one-time ORB level computation when trigger bar fires
+        if not self._orb_levels_published:
+            bar_hhmm = bar.name.strftime("%H%M") if hasattr(bar.name, 'strftime') else ""
+            if bar_hhmm >= self._orb_trigger_hhmm:
+                self._orb_levels_published = True  # Set BEFORE thread spawn (prevents re-entry)
+                logger.info(f"MDS | ORB trigger bar detected ({bar_hhmm}), spawning ORB computation")
+                threading.Thread(
+                    target=self._compute_and_publish_orb_levels,
+                    daemon=True,
+                    name="MDS-ORB-Compute",
+                ).start()
+
     def _on_15m_close(self, symbol: str, bar) -> None:
         """Publish 15m bar to Redis."""
         self._bus.publish_bar(symbol, "15m", bar)
+
+    def _compute_and_publish_orb_levels(self) -> None:
+        """
+        Compute ORH/ORL/PDH/PDL/PDC for all symbols and publish to Redis.
+
+        Called once per day when the ORB trigger bar fires. Runs in a background
+        thread to avoid blocking bar delivery (~2000 symbols).
+
+        Uses market_data.orb_calculator for self-contained computation
+        (no dependencies on services/ or utils/ trading modules).
+        """
+        from market_data.orb_calculator import compute_opening_range, compute_previous_day_levels
+        import time as time_module
+
+        start_t = time_module.perf_counter()
+        session_date = datetime.now().date()
+        session_date_str = session_date.isoformat()
+
+        logger.info("MDS | ORB_COMPUTE | Starting ORB level computation for all symbols...")
+
+        # Snapshot symbol list (same pattern as _build_and_save_eod_daily_bars)
+        with self._bar_builder._lock:
+            all_symbols = list(self._bar_builder._bars_5m.keys())
+
+        logger.info(f"MDS | ORB_COMPUTE | Processing {len(all_symbols)} symbols")
+
+        levels_by_symbol = {}
+        ok, fail = 0, 0
+
+        for sym in all_symbols:
+            try:
+                df_5m = self._bar_builder.get_df_5m_tail(sym, 20)
+                orh, orl = compute_opening_range(
+                    df_5m, self._session_open_hhmm, self._orb_minutes, symbol=sym
+                )
+
+                daily_df = self._sdk.get_daily(sym, days=210)
+                pd_lvls = compute_previous_day_levels(daily_df, session_date)
+
+                levels_by_symbol[sym] = {
+                    "ORH": float(orh), "ORL": float(orl),
+                    "PDH": pd_lvls.get("PDH", float("nan")),
+                    "PDL": pd_lvls.get("PDL", float("nan")),
+                    "PDC": pd_lvls.get("PDC", float("nan")),
+                }
+                ok += 1
+            except Exception as e:
+                logger.debug(f"MDS | ORB_COMPUTE | Failed for {sym}: {e}")
+                levels_by_symbol[sym] = {}
+                fail += 1
+
+        # Publish to Redis for all subscriber instances
+        self._bus.publish_orb_levels(session_date_str, levels_by_symbol)
+
+        elapsed = time_module.perf_counter() - start_t
+        valid_orb = sum(
+            1 for v in levels_by_symbol.values()
+            if v.get("ORH") is not None and v.get("ORH") == v.get("ORH")
+        )
+        valid_pdh = sum(
+            1 for v in levels_by_symbol.values()
+            if v.get("PDH") is not None and v.get("PDH") == v.get("PDH")
+        )
+        logger.info(
+            f"MDS | ORB_COMPUTE | Complete: {ok} ok, {fail} failed | "
+            f"Valid ORH/ORL: {valid_orb}/{len(all_symbols)} | "
+            f"Valid PDH/PDL/PDC: {valid_pdh}/{len(all_symbols)} | "
+            f"Time: {elapsed:.2f}s"
+        )
 
     def start(self) -> None:
         """Start the market data service."""
