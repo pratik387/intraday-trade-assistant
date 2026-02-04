@@ -689,47 +689,62 @@ class KiteBroker:
             logger.warning(f"RECONCILE | {symbol} | Order {order_id} not filled - position rejected")
             return None
 
-        # Fetch positions from broker
-        try:
-            positions = self.get_positions()
-            _, tsym = _split_symbol(symbol)
+        # Fetch positions from broker - retry to handle API propagation delay
+        from config.filters_setup import load_filters
+        cfg = load_filters()
+        max_retries = int(cfg["reconcile_position_retries"])
+        retry_delay = float(cfg["reconcile_position_retry_delay"])
 
-            # Check day positions first (for intraday)
-            for pos in positions.get("day", []):
-                if pos.get("tradingsymbol") == tsym:
-                    broker_qty = pos.get("quantity", 0)
-                    # Verify direction matches
-                    if (expected_side == "BUY" and broker_qty > 0) or \
-                       (expected_side == "SELL" and broker_qty < 0):
-                        logger.info(f"RECONCILE | {symbol} | Position verified | Qty: {broker_qty} @ {fill_price}")
-                        return {
-                            "qty": abs(broker_qty),
-                            "avg_price": fill_price,
-                            "product": pos.get("product", "MIS"),
-                            "pnl": pos.get("pnl", 0),
-                            "verified": True
-                        }
+        _, tsym = _split_symbol(symbol)
 
-            # Position not found in day positions - check net
-            for pos in positions.get("net", []):
-                if pos.get("tradingsymbol") == tsym:
-                    broker_qty = pos.get("quantity", 0)
-                    if broker_qty != 0:
-                        logger.info(f"RECONCILE | {symbol} | Position in net | Qty: {broker_qty} @ {fill_price}")
-                        return {
-                            "qty": abs(broker_qty),
-                            "avg_price": fill_price,
-                            "product": pos.get("product", "MIS"),
-                            "pnl": pos.get("pnl", 0),
-                            "verified": True
-                        }
+        for attempt in range(max_retries):
+            try:
+                positions = self.get_positions()
 
-            logger.warning(f"RECONCILE | {symbol} | Position NOT found at broker despite order {order_id} filled")
-            return None
+                # Check day positions first (for intraday)
+                for pos in positions.get("day", []):
+                    if pos.get("tradingsymbol") == tsym:
+                        broker_qty = pos.get("quantity", 0)
+                        # Verify direction matches
+                        if (expected_side == "BUY" and broker_qty > 0) or \
+                           (expected_side == "SELL" and broker_qty < 0):
+                            logger.info(f"RECONCILE | {symbol} | Position verified | Qty: {broker_qty} @ {fill_price}")
+                            return {
+                                "qty": abs(broker_qty),
+                                "avg_price": fill_price,
+                                "product": pos.get("product", "MIS"),
+                                "pnl": pos.get("pnl", 0),
+                                "verified": True
+                            }
 
-        except Exception as e:
-            logger.error(f"RECONCILE | {symbol} | Failed to fetch positions: {e}")
-            return None
+                # Position not found in day positions - check net
+                for pos in positions.get("net", []):
+                    if pos.get("tradingsymbol") == tsym:
+                        broker_qty = pos.get("quantity", 0)
+                        if broker_qty != 0:
+                            logger.info(f"RECONCILE | {symbol} | Position in net | Qty: {broker_qty} @ {fill_price}")
+                            return {
+                                "qty": abs(broker_qty),
+                                "avg_price": fill_price,
+                                "product": pos.get("product", "MIS"),
+                                "pnl": pos.get("pnl", 0),
+                                "verified": True
+                            }
+
+                # Not found this attempt
+                if attempt < max_retries - 1:
+                    logger.info(f"RECONCILE | {symbol} | Position not found (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.warning(f"RECONCILE | {symbol} | Position NOT found at broker despite order {order_id} filled (after {max_retries} attempts)")
+                    return None
+
+            except Exception as e:
+                logger.error(f"RECONCILE | {symbol} | Failed to fetch positions (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                else:
+                    return None
 
     def reconcile_exit(self, symbol: str, order_id: str, expected_qty: int, position_qty_before: int,
                        timeout: float = 1.0) -> Optional[Dict]:
