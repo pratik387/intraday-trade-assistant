@@ -49,8 +49,8 @@
     }
   },
   "liquidity_gates": {
-    "_comment": "Market Cap Segmentation - Priority 1: Liquidity Filters (evidence-based thresholds)",
-    "enabled": true,
+    "_comment": "Market Cap Segmentation - Priority 1: Liquidity Filters (evidence-based thresholds). NOTE: Was silently broken until 2026-02-03 (symbol format bug). Disable until thresholds are re-evaluated against baseline.",
+    "enabled": false,
     "exclude_micro_caps": false,
     "_rationale_micro_caps": "ENABLED per 3-month baseline analysis: micro-caps generated 84% of profits (Rs.5,550 out of Rs.6,617). failure_fade strategy excels in volatile, illiquid names.",
     "large_cap": {
@@ -2439,5 +2439,20 @@
   "_comment_paper_mirror": "=== PAPER TRADE LIVE FILL MIRRORING ===",
   "paper_mirror_live_fills": true,
   "paper_mirror_time_window_sec": 60,
-  "paper_mirror_orders_cache_ttl_sec": 5
+  "paper_mirror_orders_cache_ttl_sec": 5,
+  "_comment_directional_bias": "=== DIRECTIONAL BIAS (Nifty Green/Red Size Modulation) ===",
+  "directional_bias": {
+    "enabled": true,
+    "index_symbol": "NSE:NIFTY 50",
+    "threshold_pct": 0.15,
+    "with_trend_mult": 1.15,
+    "against_trend_mult": 0.85,
+    "chop_max_flips": 4,
+    "_comment": "3-year backtest evidence: WITH-trend +7.2pp win rate edge (63.9% vs 56.7%). Scales to +11.3pp on >1% days. Entry-only sizing, does not affect existing positions."
+  },
+  "_comment_backtest_mis": "=== BACKTEST MIS FILTERING (Reject non-MIS stocks in backtest to match live) ===",
+  "backtest_mis_filtering": {
+    "enabled": true,
+    "_comment": "Filter non-MIS stocks in backtest using nse_all.json mis_enabled field. Large/mid cap MIS is 98.9% stable over 3 years. No capital restrictions applied — backtest tests signals/filters, not capital management."
+  }
 }

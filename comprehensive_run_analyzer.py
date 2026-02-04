@@ -52,7 +52,7 @@ CESS_RATE = 0.04  # 4% health and education cess on tax
 # MIS LEVERAGE (Zerodha Margin Intraday Square-off)
 # ============================================================================
 NRML_MARGIN_PCT = 0.50  # NRML margin is typically 50% for most stocks
-DEFAULT_MIS_MULTIPLIER = 2.0  # Default 2x leverage if MIS data unavailable
+DEFAULT_MIS_MULTIPLIER = 5.0  # Default 5x leverage (typical Zerodha MIS for large/mid caps)
 
 
 def estimate_trade_charges(entry_price, exit_price, qty):
@@ -463,8 +463,12 @@ class ComprehensiveRunAnalyzer:
                         # Fallback: estimate ~Rs 140 per trade
                         setup_charges = total_trades * 140
 
-                    # Calculate FINAL NET P&L for this setup
-                    final_net_result = calculate_final_net_pnl(gross_pnl, setup_charges, DEFAULT_MIS_MULTIPLIER)
+                    # Use per-trade MIS leverage if available, else default
+                    if 'mis_leverage' in group.columns and group['mis_leverage'].notna().any():
+                        setup_mis_mult = group['mis_leverage'].dropna().mean()
+                    else:
+                        setup_mis_mult = DEFAULT_MIS_MULTIPLIER
+                    final_net_result = calculate_final_net_pnl(gross_pnl, setup_charges, setup_mis_mult)
 
                     setup_analysis[setup] = {
                         'total_trades': total_trades,
@@ -1943,14 +1947,21 @@ class ComprehensiveRunAnalyzer:
                 # Fallback: estimate ~Rs 140 per trade (typical for NSE equity)
                 total_charges = total_trades * 140
 
-            # Calculate FINAL NET P&L (MIS + charges + tax)
-            final_net_result = calculate_final_net_pnl(gross_pnl, total_charges, DEFAULT_MIS_MULTIPLIER)
+            # Use per-trade MIS leverage if available, else default
+            if 'mis_leverage' in self.combined_trades.columns and self.combined_trades['mis_leverage'].notna().any():
+                overall_mis_mult = self.combined_trades['mis_leverage'].dropna().mean()
+                mis_source = 'per_trade'
+            else:
+                overall_mis_mult = DEFAULT_MIS_MULTIPLIER
+                mis_source = 'default'
+            final_net_result = calculate_final_net_pnl(gross_pnl, total_charges, overall_mis_mult)
 
             self.performance_summary = {
                 'total_trades': total_trades,
                 # GROSS P&L (before any deductions)
                 'gross_pnl': gross_pnl,
                 # MIS-adjusted values
+                'mis_source': mis_source,
                 'mis_multiplier': final_net_result['mis_multiplier'],
                 'gross_pnl_mis': final_net_result['gross_pnl_mis'],
                 # Charges
@@ -1992,7 +2003,8 @@ class ComprehensiveRunAnalyzer:
             print(f"Total Trades: {ps['total_trades']}")
             print(f"\n--- P&L BREAKDOWN ---")
             print(f"  Gross P&L (NRML):       Rs.{ps.get('gross_pnl', ps.get('total_pnl', 0)):>12,.2f}")
-            print(f"  MIS Leverage:           {ps.get('mis_multiplier', 2.0):>12.1f}x")
+            mis_src = "per-trade" if ps.get('mis_source') == 'per_trade' else "default"
+            print(f"  MIS Leverage ({mis_src}):{ps.get('mis_multiplier', 2.0):>8.1f}x")
             print(f"  Gross P&L (MIS):        Rs.{ps.get('gross_pnl_mis', ps.get('total_pnl', 0) * 2):>12,.2f}")
             print(f"  Less: Charges:          Rs.{ps.get('total_charges', 0):>12,.2f}")
             print(f"  Less: Tax (31.2%):      Rs.{ps.get('tax', 0):>12,.2f}")

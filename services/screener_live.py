@@ -260,6 +260,11 @@ class ScreenerLive:
             quality_filters=raw.get("quality_filters", {}),
         )
 
+        # Directional bias tracker (Nifty green/red → position size modulation)
+        from services.gates.directional_bias import DirectionalBiasTracker, set_tracker
+        self.directional_bias = DirectionalBiasTracker(raw)
+        set_tracker(self.directional_bias)  # Module-level singleton for pipeline access
+
         # Stage-0 scanner
         scanner_cfg = raw.get("energy_scanner")
         self.scanner = EnergyScanner(
@@ -759,6 +764,33 @@ class ScreenerLive:
         if not shortlist:
             return
 
+        # ---------- Directional bias: init prev_close once + update every scan ----------
+        if self.directional_bias.enabled:
+            index_sym = self.raw_cfg["directional_bias"]["index_symbol"]
+
+            # Set prev_close once (first scan only)
+            if self.directional_bias.prev_close is None:
+                if env.DRY_RUN:
+                    self.directional_bias.set_prev_close_for_date(now)
+                else:
+                    try:
+                        pdc = self.sdk.get_prevday_levels(index_sym).get("PDC", float("nan"))
+                        if pdc and not pd.isna(pdc):
+                            self.directional_bias.set_prev_close(pdc)
+                        else:
+                            logger.warning(f"DIR_BIAS | No prev close available for {index_sym}")
+                    except Exception as e:
+                        logger.error(f"DIR_BIAS | Failed to fetch prev close for {index_sym}: {e}")
+
+            # Update direction every scan (same logic for live and backtest)
+            if self.directional_bias.prev_close is not None:
+                if env.DRY_RUN:
+                    index_price = self.directional_bias.get_backtest_price_at(now)
+                else:
+                    index_price = self._shared_ltp_cache.get_ltp(index_sym)
+                if index_price is not None:
+                    self.directional_bias.update_price(index_price)
+
         # ---------- Gate per candidate (structure + regime + events + news) ----------
         index_df5 = self._index_df5()
         decisions: List[Tuple[str, Decision]] = []
@@ -858,17 +890,18 @@ class ScreenerLive:
 
                     # Log screener rejection with detailed context
                     # Phase 2: Include multi-TF regime diagnostics
-                    screener_logger.log_reject(
-                        sym,
-                        top_reason,
-                        timestamp=now.isoformat(),
-                        setup_type=decision.setup_type or "unknown",
-                        regime=decision.regime or "unknown",
-                        all_reasons=decision.reasons,
-                        structure_confidence=getattr(decision, 'structure_confidence', 0),
-                        current_price=df5['close'].iloc[-1] if not df5.empty else 0,
-                        regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
-                    )
+                    if screener_logger:
+                        screener_logger.log_reject(
+                            sym,
+                            top_reason,
+                            timestamp=now.isoformat(),
+                            setup_type=decision.setup_type or "unknown",
+                            regime=decision.regime or "unknown",
+                            all_reasons=decision.reasons,
+                            structure_confidence=getattr(decision, 'structure_confidence', 0),
+                            current_price=df5['close'].iloc[-1] if not df5.empty else 0,
+                            regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
+                        )
                     continue
 
                 logger.debug(
@@ -879,19 +912,20 @@ class ScreenerLive:
 
                 # Log screener acceptance with detailed context
                 # Phase 2: Include multi-TF regime diagnostics
-                screener_logger.log_accept(
-                    sym,
-                    timestamp=now.isoformat(),
-                    setup_type=decision.setup_type or "unknown",
-                    regime=decision.regime or "unknown",
-                    size_mult=decision.size_mult,
-                    min_hold_bars=decision.min_hold_bars,
-                    all_reasons=decision.reasons,
-                    structure_confidence=getattr(decision, 'structure_confidence', 0),
-                    current_price=df5['close'].iloc[-1] if not df5.empty else 0,
-                    vwap=df5.get('vwap', pd.Series([0])).iloc[-1] if not df5.empty else 0,
-                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
-                )
+                if screener_logger:
+                    screener_logger.log_accept(
+                        sym,
+                        timestamp=now.isoformat(),
+                        setup_type=decision.setup_type or "unknown",
+                        regime=decision.regime or "unknown",
+                        size_mult=decision.size_mult,
+                        min_hold_bars=decision.min_hold_bars,
+                        all_reasons=decision.reasons,
+                        structure_confidence=getattr(decision, 'structure_confidence', 0),
+                        current_price=df5['close'].iloc[-1] if not df5.empty else 0,
+                        vwap=df5.get('vwap', pd.Series([0])).iloc[-1] if not df5.empty else 0,
+                        regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
+                    )
                 decisions.append((sym, decision))
         except Exception as e:
             logger.exception(f"Worker pool processing failed: {e}")
@@ -1719,14 +1753,19 @@ class ScreenerLive:
             # Build symbol → cap_data mapping
             cap_map = {}
             for item in data:
-                sym = item["symbol"]
+                raw_sym = item["symbol"]
+                # Convert "AARTIIND.NS" → "NSE:AARTIIND" to match screener df.index format
+                sym = f"NSE:{raw_sym[:-3]}" if raw_sym.endswith(".NS") else raw_sym
                 cap_map[sym] = {
                     "market_cap_cr": item.get("market_cap_cr", 0),
-                    "cap_segment": item.get("cap_segment", "unknown")
+                    "cap_segment": item.get("cap_segment", "unknown"),
+                    "mis_enabled": item.get("mis_enabled", False),
+                    "mis_leverage": item.get("mis_leverage"),
                 }
 
             self._cap_map_cache = cap_map
-            logger.info(f"CAP_MAPPING | Loaded market cap data for {len(cap_map)} symbols")
+            mis_count = sum(1 for v in cap_map.values() if v.get("mis_enabled"))
+            logger.info(f"CAP_MAPPING | Loaded market cap data for {len(cap_map)} symbols ({mis_count} MIS-enabled)")
             return cap_map
 
         except Exception as e:
@@ -1802,13 +1841,14 @@ class ScreenerLive:
 
         # ========== CAP-AWARE LIQUIDITY GATES (Priority 1) ==========
         liq_cfg = cfg.get("liquidity_gates", {})
-        if liq_cfg.get("enabled", False):
+        if liq_cfg.get("enabled", False) and len(df) > 0:
             # Load market cap mapping
             cap_map = self._load_cap_mapping()
 
             # Build pass/fail mask for cap-specific volume requirements
             passes_liquidity = []
-            for sym in df.index:
+            for idx, row in df.iterrows():
+                sym = row["symbol"]
                 cap_data = cap_map.get(sym, {})
                 cap_segment = cap_data.get("cap_segment", "unknown")
 
@@ -1825,7 +1865,7 @@ class ScreenerLive:
 
                 # Check volume surge requirement (cap-specific)
                 # Small-caps need 3x surge, mid-caps 2x, large-caps 1.3x
-                vol_mult = df.loc[sym, "vol_ratio"] if "vol_ratio" in df.columns else 1.0
+                vol_mult = row["vol_ratio"] if "vol_ratio" in df.columns else 1.0
                 min_surge = seg_cfg.get("volume_surge_min", 1.0)
 
                 passes = vol_mult >= min_surge
@@ -1839,6 +1879,17 @@ class ScreenerLive:
             if before_count > after_count:
                 logger.info(f"LIQUIDITY_GATE | Filtered {before_count}→{after_count} symbols "
                            f"({before_count - after_count} failed cap-specific volume requirements)")
+
+        # ========== MIS FILTER (Backtest only — reject non-MIS stocks) ==========
+        mis_cfg = self.raw_cfg.get("backtest_mis_filtering", {})
+        if mis_cfg.get("enabled", False) and env.DRY_RUN and len(df) > 0:
+            cap_map = self._load_cap_mapping()
+            before_mis = len(df)
+            mis_mask = [cap_map.get(sym, {}).get("mis_enabled", False) for sym in df["symbol"]]
+            df = df[mis_mask]
+            rejected = before_mis - len(df)
+            if rejected > 0:
+                logger.info(f"MIS_FILTER | Filtered {before_mis}→{len(df)} ({rejected} non-MIS rejected)")
 
         return df
 

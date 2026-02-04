@@ -114,6 +114,9 @@ def build_csv_from_events(log_dir: Path | None = None,
             row["plan_notional"] = sz.get("notional")
             row["risk_per_share"] = sz.get("risk_per_share")
             row["risk_rupees"]    = sz.get("risk_rupees")
+            row["mis_enabled"]    = sz.get("mis_enabled", False)
+            row["mis_leverage"]   = sz.get("mis_leverage", 1.0)
+            row["cap_segment"]    = sz.get("cap_segment", "unknown")
 
             lv = _levels_from_plan(dec)
             row["PDH"], row["PDL"], row["PDC"], row["ORH"], row["ORL"] = lv.get("PDH"), lv.get("PDL"), lv.get("PDC"), lv.get("ORH"), lv.get("ORL")

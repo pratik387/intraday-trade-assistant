@@ -172,6 +172,44 @@ def get_cap_segment(symbol: str) -> str:
     return _cap_segment_cache.get(normalized, "unknown")
 
 
+# Cache for MIS info lookups (loaded once per session)
+_mis_info_cache: Dict[str, dict] = {}
+_mis_info_loaded: bool = False
+
+
+def get_mis_info(symbol: str) -> dict:
+    """
+    Get MIS (Margin Intraday Square-off) info for a symbol from nse_all.json.
+
+    Returns dict with:
+      - mis_enabled: bool (whether Zerodha allows MIS for this stock)
+      - mis_leverage: float or None (typically 5.0 for MIS-eligible stocks)
+    """
+    global _mis_info_cache, _mis_info_loaded
+
+    if not _mis_info_loaded:
+        try:
+            nse_file = Path(__file__).parent.parent / "nse_all.json"
+            if nse_file.exists():
+                with nse_file.open() as f:
+                    data = json.load(f)
+                _mis_info_cache = {
+                    _normalize_symbol(item["symbol"]): {
+                        "mis_enabled": item.get("mis_enabled", False),
+                        "mis_leverage": item.get("mis_leverage"),
+                    }
+                    for item in data
+                }
+                _mis_info_loaded = True
+                logger.debug(f"MIS_INFO: Loaded {len(_mis_info_cache)} symbols from nse_all.json")
+        except Exception as e:
+            logger.debug(f"MIS_INFO: Failed to load cache: {e}")
+            _mis_info_loaded = True
+
+    normalized = _normalize_symbol(symbol)
+    return _mis_info_cache.get(normalized, {"mis_enabled": False, "mis_leverage": None})
+
+
 @dataclass
 class ScreeningResult:
     """Result of screening phase."""
@@ -1548,6 +1586,7 @@ class BasePipeline(ABC):
         # Use passed cap_segment or fetch if not provided
         if cap_segment is None:
             cap_segment = get_cap_segment(symbol)
+        mis_info = get_mis_info(symbol)
         cap_passed, cap_reason = self._check_cap_strategy_blocking(symbol, setup_type, cap_segment)
         if not cap_passed:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at UNIVERSAL_GATES: {cap_reason}")
@@ -1886,6 +1925,17 @@ class BasePipeline(ABC):
         # These adjust position size based on volatility regime and market cap
         size_mult *= volatility_mult * cap_size_mult
 
+        # 8a-ii. DIRECTIONAL BIAS MULTIPLIER (Nifty green/red → position size modulation)
+        dir_bias_mult = 1.0
+        dir_bias_reason = "dir_bias:neutral"
+        from services.gates.directional_bias import get_tracker
+        db_tracker = get_tracker()
+        if db_tracker is not None:
+            dir_bias_mult, dir_bias_reason = db_tracker.get_size_mult(bias)
+            size_mult *= dir_bias_mult
+            if dir_bias_mult != 1.0:
+                cautions.append(dir_bias_reason)
+
         # 8b. CALCULATE POSITION SIZE (qty)
         # Uses risk-based position sizing: qty = risk_per_trade / risk_per_share * multipliers
         # NOTE: Use locally calculated 'rps' (with floor protection) NOT target_result.risk_per_share
@@ -1953,9 +2003,13 @@ class BasePipeline(ABC):
                 "base_mult": round(gate_result.size_mult, 2),
                 "volatility_mult": round(volatility_mult, 2),
                 "cap_size_mult": round(cap_size_mult, 2),
+                "dir_bias_mult": round(dir_bias_mult, 2),
+                "dir_bias_reason": dir_bias_reason,
                 "cap_segment": cap_segment,
                 "cap_sl_mult": round(cap_sl_mult, 2),
                 "min_hold_bars": gate_result.min_hold_bars,
+                "mis_enabled": mis_info.get("mis_enabled", False),
+                "mis_leverage": mis_info.get("mis_leverage") or 1.0,
             },
 
             "indicators": {
