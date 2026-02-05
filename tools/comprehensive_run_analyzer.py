@@ -32,12 +32,82 @@ from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
+# ============================================================================
+# SHARED REPORTING UTILITIES (single source of truth)
+# Fee constants, charge calculations, tax, and MIS leverage from report_utils.py
+# ============================================================================
+try:
+    from report_utils import (
+        BROKERAGE_RATE, BROKERAGE_CAP, STT_RATE, EXCHANGE_RATE_NSE,
+        SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
+        calculate_order_charges, calculate_income_tax,
+        load_nse_all, get_mis_leverage_for_symbol,
+        load_mis_from_trade_reports, get_trade_mis_leverage,
+    )
+except ImportError:
+    from tools.report_utils import (
+        BROKERAGE_RATE, BROKERAGE_CAP, STT_RATE, EXCHANGE_RATE_NSE,
+        SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
+        calculate_order_charges, calculate_income_tax,
+        load_nse_all, get_mis_leverage_for_symbol,
+        load_mis_from_trade_reports, get_trade_mis_leverage,
+    )
+
+DEFAULT_MIS_MULTIPLIER = 5.0  # Fallback when no per-trade MIS data available
+
+
+def estimate_trade_charges(entry_price, exit_price, qty):
+    """
+    Estimate Zerodha intraday charges for a single trade.
+    Delegates to calculate_order_charges() from report_utils (single source of truth).
+    """
+    buy_turnover = entry_price * qty
+    sell_turnover = exit_price * qty
+    result = calculate_order_charges(buy_turnover, sell_turnover, num_orders=2)
+    result['turnover'] = result['total_turnover']
+    return result
+
+
+# calculate_income_tax() is now imported from report_utils (single source of truth)
+
+
+def calculate_final_net_pnl(gross_pnl, total_charges, mis_multiplier=DEFAULT_MIS_MULTIPLIER):
+    """
+    Calculate FINAL NET P&L including MIS leverage, charges, and tax.
+
+    Formula:
+    1. Apply MIS leverage to gross PnL
+    2. Subtract trading charges
+    3. Apply income tax on profit
+
+    Returns:
+        Dict with full breakdown
+    """
+    # Step 1: Apply MIS leverage
+    gross_pnl_mis = gross_pnl * mis_multiplier
+
+    # Step 2: Subtract charges
+    net_after_charges = gross_pnl_mis - total_charges
+
+    # Step 3: Apply tax
+    tax_result = calculate_income_tax(net_after_charges)
+
+    return {
+        'gross_pnl': gross_pnl,
+        'mis_multiplier': mis_multiplier,
+        'gross_pnl_mis': gross_pnl_mis,
+        'total_charges': total_charges,
+        'net_after_charges': net_after_charges,
+        'tax': tax_result['total_tax'],
+        'final_net_pnl': tax_result['net_after_tax']
+    }
+
+
 class ComprehensiveRunAnalyzer:
-    def __init__(self, run_prefix: str, logs_dir: str = "logs", ohlcv_cache_dir: str = "cache/ohlcv_archive", baseline_run_prefix: str = None):
+    def __init__(self, run_prefix: str, logs_dir: str = "logs", ohlcv_cache_dir: str = "cache/ohlcv_archive"):
         self.run_prefix = run_prefix
         self.logs_dir = logs_dir
         self.ohlcv_cache_dir = ohlcv_cache_dir
-        self.baseline_run_prefix = baseline_run_prefix  # NEW: For baseline comparison
         self.sessions = []
         self.combined_trades = pd.DataFrame()
         self.combined_decisions = pd.DataFrame()
@@ -96,7 +166,7 @@ class ComprehensiveRunAnalyzer:
                                             'bias': trade_data.get('bias', ''),
                                             'strategy': trade_data.get('strategy', ''),
                                             'entry_reference': trade_data.get('entry_reference', 0),
-                                            'entry_price': trade_data.get('actual_entry_price', trade_data.get('entry_price', 0)),  # Use actual_entry_price first
+                                            'entry_price': trade_data.get('entry_price', trade_data.get('actual_entry_price', 0)),
                                             'qty': trade_data.get('qty', 0),
                                             'exit_price': trade_data.get('exit_price', 0),
                                             'realized_pnl': trade_data.get('pnl', 0),
@@ -182,6 +252,16 @@ class ComprehensiveRunAnalyzer:
         if all_executed_trades:
             self.combined_trades = pd.concat(all_executed_trades, ignore_index=True)
             print(f"Combined {len(self.combined_trades)} EXECUTED trades from {len(all_executed_trades)} sessions")
+            # Merge mis_leverage from trade_report.csv (planned trades have it, executed don't)
+            if all_trades and 'trade_id' in self.combined_trades.columns:
+                planned_df = pd.concat(all_trades, ignore_index=True)
+                if 'mis_leverage' in planned_df.columns and 'trade_id' in planned_df.columns:
+                    mis_map = (planned_df.dropna(subset=['trade_id', 'mis_leverage'])
+                               [['trade_id', 'mis_leverage']].drop_duplicates('trade_id'))
+                    self.combined_trades = self.combined_trades.merge(
+                        mis_map, on='trade_id', how='left')
+                    merged_count = self.combined_trades['mis_leverage'].notna().sum()
+                    print(f"Merged mis_leverage for {merged_count}/{len(self.combined_trades)} trades from trade_report.csv")
         elif all_trades:
             self.combined_trades = pd.concat(all_trades, ignore_index=True)
             print(f"Combined {len(self.combined_trades)} PLANNED trades from {len(all_trades)} sessions (no executed trades found)")
@@ -218,8 +298,8 @@ class ComprehensiveRunAnalyzer:
             print(f"Warning: No OHLCV data directory found for {symbol_file}")
             return None
 
-        # Find minute data file - look for 1minute files
-        minute_files = glob.glob(os.path.join(symbol_dir, "*1minute*.feather"))
+        # Find minute data file - prioritize July 2025 data based on discovery
+        minute_files = glob.glob(os.path.join(symbol_dir, "*_minutes_*.feather"))
 
         if not minute_files:
             print(f"Warning: No minute data files found for {symbol_file}")
@@ -303,7 +383,7 @@ class ComprehensiveRunAnalyzer:
             return None
 
     def analyze_setup_performance(self):
-        """Detailed analysis of setup performance"""
+        """Detailed analysis of setup performance with FINAL NET P&L"""
         if self.combined_trades.empty:
             return {}
 
@@ -316,19 +396,51 @@ class ComprehensiveRunAnalyzer:
             for setup, group in setup_groups:
                 if 'realized_pnl' in group.columns:
                     pnls = group['realized_pnl'].dropna()
+                    gross_pnl = pnls.sum()
+                    total_trades = len(group)
+
+                    # Calculate charges for this setup
+                    setup_charges = 0
+                    if 'entry_price' in group.columns and 'exit_price' in group.columns:
+                        for _, trade in group.iterrows():
+                            entry_price = trade.get('entry_price', 0)
+                            exit_price = trade.get('exit_price', 0)
+                            qty = trade.get('qty', 1)
+                            if entry_price > 0 and exit_price > 0 and qty > 0:
+                                charges = estimate_trade_charges(entry_price, exit_price, qty)
+                                setup_charges += charges['total_charges']
+                    else:
+                        # Fallback: estimate ~Rs 140 per trade
+                        setup_charges = total_trades * 140
+
+                    # Use per-trade MIS leverage if available, else default
+                    if 'mis_leverage' in group.columns and group['mis_leverage'].notna().any():
+                        setup_mis_mult = group['mis_leverage'].dropna().mean()
+                    else:
+                        setup_mis_mult = DEFAULT_MIS_MULTIPLIER
+                    final_net_result = calculate_final_net_pnl(gross_pnl, setup_charges, setup_mis_mult)
 
                     setup_analysis[setup] = {
-                        'total_trades': len(group),
+                        'total_trades': total_trades,
                         'winning_trades': len(pnls[pnls > 0]),
                         'losing_trades': len(pnls[pnls < 0]),
                         'breakeven_trades': len(pnls[pnls == 0]),
                         'win_rate': len(pnls[pnls > 0]) / len(pnls) * 100 if len(pnls) > 0 else 0,
-                        'total_pnl': pnls.sum(),
+                        # Gross P&L (legacy field)
+                        'total_pnl': gross_pnl,
                         'avg_pnl': pnls.mean(),
+                        # FINAL NET P&L (PRIMARY METRIC)
+                        'gross_pnl_mis': final_net_result['gross_pnl_mis'],
+                        'charges': setup_charges,
+                        'tax': final_net_result['tax'],
+                        'final_net_pnl': final_net_result['final_net_pnl'],
+                        'avg_final_net': final_net_result['final_net_pnl'] / total_trades if total_trades > 0 else 0,
+                        'profitable': final_net_result['final_net_pnl'] > 0,
+                        # Other metrics
                         'median_pnl': pnls.median(),
                         'best_trade': pnls.max(),
                         'worst_trade': pnls.min(),
-                        'profit_factor': pnls[pnls > 0].sum() / abs(pnls[pnls < 0].sum()) if pnls[pnls < 0].sum() != 0 else 999.99,  # Use 999.99 instead of infinity for JSON compatibility
+                        'profit_factor': pnls[pnls > 0].sum() / abs(pnls[pnls < 0].sum()) if pnls[pnls < 0].sum() != 0 else 999.99,
                         'avg_winner': pnls[pnls > 0].mean() if len(pnls[pnls > 0]) > 0 else 0,
                         'avg_loser': pnls[pnls < 0].mean() if len(pnls[pnls < 0]) > 0 else 0,
                     }
@@ -1667,8 +1779,7 @@ class ComprehensiveRunAnalyzer:
         """Save comprehensive analysis report"""
         if output_file is None:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            # Save directly to analysis/reports/misc/ folder
-            output_file = f"analysis/reports/misc/analysis_report_{self.run_prefix}_{timestamp}.json"
+            output_file = f"analysis_report_{self.run_prefix}_{timestamp}.json"
 
         # Generate report with ANALYSIS ONLY (no recommendations)
         report = {
@@ -1724,13 +1835,7 @@ class ComprehensiveRunAnalyzer:
             'quality_calibration': getattr(self, 'quality_calibration', {}),
             'sequence_analysis': getattr(self, 'sequence_analysis', {}),
             'time_in_trade_analysis': getattr(self, 'time_analysis', {}),
-            'market_validation': getattr(self, 'market_validation', {}),
-            # NEW: Enhanced sections per ANALYSIS_WORKFLOW.md
-            'spike_test_analysis': getattr(self, 'spike_test_analysis', {}),
-            'rejected_trades_analysis': getattr(self, 'rejected_trades_analysis', {}),
-            'regime_validation': getattr(self, 'regime_rank_validation', {}).get('regime_validation', {}),
-            'rank_calibration': getattr(self, 'regime_rank_validation', {}).get('rank_calibration', {}),
-            'baseline_comparison': getattr(self, 'baseline_comparison', {})
+            'market_validation': getattr(self, 'market_validation', {})
         }
 
         with open(output_file, 'w') as f:
@@ -1738,453 +1843,6 @@ class ComprehensiveRunAnalyzer:
 
         print(f"Analysis report saved to: {output_file}")
         return output_file
-
-    def analyze_spike_tests(self):
-        """
-        Spike Test Analysis - MFE/MAE/Target Hits/SL Quality
-        Per ANALYSIS_WORKFLOW.md Step 2.1
-
-        Analyzes executed trades to determine if SL/target placement was optimal
-        """
-        print("  - Spike test analysis (MFE/MAE/targets/SL quality)...")
-
-        if self.combined_trades.empty:
-            return {}
-
-        spike_analysis = {
-            'hard_sl_rate': 0,
-            'mfe_stats': {},
-            'mae_stats': {},
-            'target_hit_rates': {},
-            'sl_optimization': {},
-            'total_trades_analyzed': 0
-        }
-
-        # Calculate hard SL rate
-        if 'exit_reason' in self.combined_trades.columns:
-            total = len(self.combined_trades)
-            hard_sl_count = len(self.combined_trades[self.combined_trades['exit_reason'].str.contains('hard_sl', na=False)])
-            spike_analysis['hard_sl_rate'] = (hard_sl_count / total * 100) if total > 0 else 0
-
-        # Build a map of trade_id -> entry_timestamp from TRIGGER events
-        trade_entry_times = {}
-        for session in self.sessions:
-            events_file = os.path.join(session, 'events.jsonl')
-            if os.path.exists(events_file):
-                try:
-                    with open(events_file, 'r') as f:
-                        for line in f:
-                            try:
-                                event = json.loads(line.strip())
-                                if event.get('type') == 'TRIGGER':
-                                    trade_id = event.get('trade_id')
-                                    entry_ts = event.get('ts')
-                                    if trade_id and entry_ts:
-                                        trade_entry_times[trade_id] = pd.to_datetime(entry_ts)
-                            except json.JSONDecodeError:
-                                continue
-                except Exception as e:
-                    continue
-
-        # For each executed trade, load 1m data and calculate MFE/MAE
-        mfe_list = []
-        mae_list = []
-        t1_hits = 0
-        t2_hits = 0
-        sl_too_tight_count = 0
-
-        # Limit to avoid long processing
-        max_trades = min(len(self.combined_trades), 50)
-
-        for idx, trade in self.combined_trades.head(max_trades).iterrows():
-            try:
-                symbol = trade['symbol'] if 'symbol' in trade else None
-                trade_id = trade['trade_id'] if 'trade_id' in trade else None
-                exit_ts = trade['exit_ts'] if 'exit_ts' in trade else None
-
-                if not exit_ts or not symbol or not trade_id:
-                    continue
-
-                # Get entry timestamp from TRIGGER events
-                entry_ts = trade_entry_times.get(trade_id)
-                if not entry_ts:
-                    continue
-
-                # Extract date and load full day's 1m data
-                date_str = str(exit_ts)[:10]  # YYYY-MM-DD
-                ohlcv = self.load_ohlcv_data(symbol, date_str)
-
-                if ohlcv is None or ohlcv.empty:
-                    continue
-
-                # Extract trade parameters (use columns from combined_trades)
-                # Direction: detect from setup_type (breakout_long/short, failure_fade_long/short)
-                setup_type = trade['setup_type'] if 'setup_type' in trade else ''
-                direction = 'long' if 'long' in setup_type else 'short'
-
-                entry_price = trade['entry_price'] if 'entry_price' in trade else None
-
-                if not entry_price or entry_price == 0:
-                    continue
-
-                # Filter OHLCV data to the trade time window (entry to exit)
-                exit_ts_dt = pd.to_datetime(exit_ts)
-
-                # Ensure timezone alignment
-                if ohlcv.index.tz is not None and entry_ts.tz is None:
-                    entry_ts = entry_ts.tz_localize('Asia/Kolkata')
-                    exit_ts_dt = exit_ts_dt.tz_localize('Asia/Kolkata')
-                elif ohlcv.index.tz is None and entry_ts.tz is not None:
-                    ohlcv.index = ohlcv.index.tz_localize('Asia/Kolkata')
-
-                trade_window = ohlcv[(ohlcv.index >= entry_ts) & (ohlcv.index <= exit_ts_dt)]
-
-                if trade_window.empty:
-                    continue
-
-                spike_analysis['total_trades_analyzed'] += 1
-
-                # Calculate MFE and MAE from trade window only
-                if direction == 'long':
-                    mfe_pct = ((trade_window['high'].max() - entry_price) / entry_price * 100)
-                    mae_pct = ((trade_window['low'].min() - entry_price) / entry_price * 100)
-                else:  # short
-                    mfe_pct = ((entry_price - trade_window['low'].min()) / entry_price * 100)
-                    mae_pct = ((entry_price - trade_window['high'].max()) / entry_price * 100)
-
-                mfe_list.append(mfe_pct)
-                mae_list.append(mae_pct)
-
-            except Exception as e:
-                # Skip trades that fail
-                continue
-
-        # Aggregate statistics
-        if mfe_list:
-            spike_analysis['mfe_stats'] = {
-                'avg_mfe_pct': round(np.mean(mfe_list), 2),
-                'median_mfe_pct': round(np.median(mfe_list), 2),
-                'max_mfe_pct': round(max(mfe_list), 2),
-                'trades_analyzed': len(mfe_list)
-            }
-
-        if mae_list:
-            spike_analysis['mae_stats'] = {
-                'avg_mae_pct': round(np.mean(mae_list), 2),
-                'median_mae_pct': round(np.median(mae_list), 2),
-                'worst_mae_pct': round(min(mae_list), 2),
-                'trades_analyzed': len(mae_list)
-            }
-
-        return spike_analysis
-
-    def _simulate_hypothetical_trade(self, decision_event, holding_period_minutes=120):
-        """
-        Simulate what would have happened if we took this rejected trade.
-
-        Returns dict with:
-        - would_be_profitable: bool
-        - hypothetical_pnl_pct: float (% return)
-        - max_favorable: float (best price reached)
-        - max_adverse: float (worst price reached)
-        """
-        try:
-            symbol = decision_event.get('symbol', '')
-            plan = decision_event.get('plan', {})
-            direction = plan.get('bias', 'long')
-            trigger_price = plan.get('trigger_price')
-            hard_sl = plan.get('stop', {}).get('hard')
-
-            # Get targets
-            targets = plan.get('targets', [])
-            t1_level = targets[0]['level'] if len(targets) > 0 else None
-            t2_level = targets[1]['level'] if len(targets) > 1 else None
-
-            if not trigger_price or not hard_sl:
-                return None
-
-            # Get timestamp
-            ts = decision_event.get('ts', decision_event.get('timestamp'))
-            if not ts:
-                return None
-
-            entry_dt = pd.to_datetime(ts)
-            date_str = entry_dt.strftime('%Y-%m-%d')
-
-            # Load 1m data
-            ohlcv_1m = self.get_market_data_at_time(symbol, ts, minutes_after=holding_period_minutes)
-
-            if ohlcv_1m is None or ohlcv_1m.empty:
-                return None
-
-            # Simulate trade from trigger price
-            entry_price = trigger_price
-
-            # Filter bars after entry
-            bars_after_entry = ohlcv_1m[ohlcv_1m['date'] > entry_dt].copy()
-
-            if bars_after_entry.empty:
-                return None
-
-            # Calculate MFE and MAE
-            if direction == 'long':
-                max_favorable = bars_after_entry['high'].max()
-                max_adverse = bars_after_entry['low'].min()
-                mfe_pct = (max_favorable - entry_price) / entry_price * 100
-                mae_pct = (max_adverse - entry_price) / entry_price * 100
-
-                # Check if SL would have been hit
-                sl_hit = max_adverse <= hard_sl
-
-                # Check if targets would have been hit
-                t1_hit = t1_level and max_favorable >= t1_level
-                t2_hit = t2_level and max_favorable >= t2_level
-
-            else:  # short
-                max_favorable = bars_after_entry['low'].min()
-                max_adverse = bars_after_entry['high'].max()
-                mfe_pct = (entry_price - max_favorable) / entry_price * 100
-                mae_pct = (entry_price - max_adverse) / entry_price * 100
-
-                # Check if SL would have been hit
-                sl_hit = max_adverse >= hard_sl
-
-                # Check if targets would have been hit
-                t1_hit = t1_level and max_favorable <= t1_level
-                t2_hit = t2_level and max_favorable <= t2_level
-
-            # Estimate PnL based on exit priority
-            if sl_hit:
-                # Would have hit SL
-                hypothetical_pnl_pct = mae_pct  # Negative
-                exit_reason = 'hard_sl'
-            elif t2_hit:
-                # Would have hit T2
-                hypothetical_pnl_pct = mfe_pct * 0.8  # Assume 80% of MFE captured
-                exit_reason = 'target_t2'
-            elif t1_hit:
-                # Would have hit T1
-                hypothetical_pnl_pct = mfe_pct * 0.5  # Assume 50% of MFE captured
-                exit_reason = 'target_t1'
-            else:
-                # Would have held until EOD/time exit
-                # Use last bar price
-                last_price = bars_after_entry.iloc[-1]['close']
-                if direction == 'long':
-                    hypothetical_pnl_pct = (last_price - entry_price) / entry_price * 100
-                else:
-                    hypothetical_pnl_pct = (entry_price - last_price) / entry_price * 100
-                exit_reason = 'time_exit'
-
-            return {
-                'would_be_profitable': hypothetical_pnl_pct > 0,
-                'hypothetical_pnl_pct': hypothetical_pnl_pct,
-                'max_favorable_pct': mfe_pct,
-                'max_adverse_pct': mae_pct,
-                'sl_would_hit': sl_hit,
-                't1_would_hit': t1_hit,
-                't2_would_hit': t2_hit,
-                'simulated_exit_reason': exit_reason
-            }
-
-        except Exception as e:
-            # Silently return None if simulation fails
-            return None
-
-    def analyze_rejected_trades(self):
-        """
-        Rejected Trades Analysis - Missed Opportunities/Gate Effectiveness
-        Per ANALYSIS_WORKFLOW.md Step 2.2
-
-        Now includes "What if we took it?" analysis using 1m data
-        """
-        print("  - Rejected trades analysis (missed opportunities)...")
-
-        rejected_analysis = {
-            'total_rejected': 0,
-            'rejection_reasons': {},
-            'gate_effectiveness': {},
-            'missed_opportunities': {
-                'total_would_be_winners': 0,
-                'total_would_be_losers': 0,
-                'total_missed_profit_pct': 0,
-                'total_avoided_loss_pct': 0
-            }
-        }
-
-        # Track per-gate statistics
-        gate_stats = defaultdict(lambda: {
-            'total_rejected': 0,
-            'simulated_count': 0,
-            'would_be_winners': 0,
-            'would_be_losers': 0,
-            'total_hypothetical_pnl_pct': 0,
-            'accuracy': 0  # % of rejections that were correct (would have lost)
-        })
-
-        # Parse events_decisions.jsonl for REJECT decisions
-        rejected_events = []
-        for session in self.sessions:
-            events_file = os.path.join(session, 'events_decisions.jsonl')
-            if not os.path.exists(events_file):
-                continue
-
-            try:
-                with open(events_file, 'r') as f:
-                    for line in f:
-                        try:
-                            event = json.loads(line.strip())
-                            if event.get('action') == 'reject':
-                                rejected_events.append(event)
-                                rejected_analysis['total_rejected'] += 1
-
-                                # Track rejection reason
-                                reason = event.get('rejection_reason', event.get('reason', 'unknown'))
-                                rejected_analysis['rejection_reasons'][reason] = rejected_analysis['rejection_reasons'].get(reason, 0) + 1
-                        except json.JSONDecodeError:
-                            continue
-            except Exception as e:
-                print(f"    Warning: Could not parse {events_file}: {e}")
-
-        # Simulate hypothetical outcomes for rejected trades (sample if too many)
-        max_simulations = min(len(rejected_events), 100)  # Limit to 100 to avoid long processing
-
-        if rejected_events:
-            print(f"    Simulating outcomes for {max_simulations}/{len(rejected_events)} rejected trades...")
-
-            for event in rejected_events[:max_simulations]:
-                outcome = self._simulate_hypothetical_trade(event)
-
-                if outcome is None:
-                    continue  # Skip if simulation failed
-
-                reason = event.get('rejection_reason', 'unknown')
-                gate_stats[reason]['simulated_count'] += 1
-
-                if outcome['would_be_profitable']:
-                    gate_stats[reason]['would_be_winners'] += 1
-                    gate_stats[reason]['total_hypothetical_pnl_pct'] += outcome['hypothetical_pnl_pct']
-                    rejected_analysis['missed_opportunities']['total_would_be_winners'] += 1
-                    rejected_analysis['missed_opportunities']['total_missed_profit_pct'] += outcome['hypothetical_pnl_pct']
-                else:
-                    gate_stats[reason]['would_be_losers'] += 1
-                    gate_stats[reason]['total_hypothetical_pnl_pct'] += outcome['hypothetical_pnl_pct']
-                    rejected_analysis['missed_opportunities']['total_would_be_losers'] += 1
-                    rejected_analysis['missed_opportunities']['total_avoided_loss_pct'] += abs(outcome['hypothetical_pnl_pct'])
-
-        # Calculate gate effectiveness
-        for reason, stats in gate_stats.items():
-            if stats['simulated_count'] > 0:
-                # Accuracy = % of rejections that were correct (would have lost money)
-                stats['accuracy'] = (stats['would_be_losers'] / stats['simulated_count']) * 100
-                stats['avg_hypothetical_pnl_pct'] = stats['total_hypothetical_pnl_pct'] / stats['simulated_count']
-
-            rejected_analysis['gate_effectiveness'][reason] = {
-                'total_rejected': rejected_analysis['rejection_reasons'].get(reason, 0),
-                'simulated': stats['simulated_count'],
-                'would_be_winners': stats['would_be_winners'],
-                'would_be_losers': stats['would_be_losers'],
-                'accuracy_pct': round(stats['accuracy'], 1),
-                'avg_hypothetical_pnl_pct': round(stats['avg_hypothetical_pnl_pct'], 2),
-                'verdict': 'GOOD_FILTER' if stats['accuracy'] > 60 else 'OVER_FILTERING' if stats['accuracy'] < 40 else 'NEUTRAL'
-            }
-
-        return rejected_analysis
-
-    def analyze_baseline_comparison(self, baseline_run_prefix=None):
-        """
-        Baseline Comparison - Same Month Performance Delta
-        Per ANALYSIS_WORKFLOW.md Step 4
-        """
-        if not baseline_run_prefix:
-            return {}
-
-        print(f"  - Baseline comparison vs {baseline_run_prefix}...")
-
-        # Find baseline analysis report
-        baseline_report_pattern = f"analysis/reports/misc/analysis_report_{baseline_run_prefix}_*.json"
-        baseline_files = glob.glob(baseline_report_pattern)
-
-        if not baseline_files:
-            print(f"    Warning: No baseline report found for {baseline_run_prefix}")
-            return {'error': 'baseline_not_found'}
-
-        try:
-            with open(baseline_files[0], 'r') as f:
-                baseline_data = json.load(f)
-        except Exception as e:
-            print(f"    Warning: Could not load baseline: {e}")
-            return {'error': str(e)}
-
-        # Compare metrics
-        baseline_perf = baseline_data.get('performance_summary', {})
-        current_perf = self.performance_summary
-
-        comparison = {
-            'baseline_run': baseline_run_prefix,
-            'performance_delta': {
-                'win_rate': f"{current_perf.get('win_rate', 0) - baseline_perf.get('win_rate', 0):+.1f}%",
-                'total_pnl': f"{current_perf.get('total_pnl', 0) - baseline_perf.get('total_pnl', 0):+.0f}",
-                'profit_factor': 'TBD',  # Need to calculate profit factor
-                'trade_count': f"{current_perf.get('total_trades', 0) - baseline_perf.get('total_trades', 0):+d}"
-            },
-            'baseline_metrics': baseline_perf,
-            'current_metrics': current_perf
-        }
-
-        return comparison
-
-    def analyze_regime_and_rank_validation(self):
-        """
-        Regime Validation & Rank Calibration
-        Per ANALYSIS_WORKFLOW.md Step 4.5 & 4.6
-        """
-        print("  - Regime classification & rank score validation...")
-
-        validation = {
-            'regime_validation': {},
-            'rank_calibration': {}
-        }
-
-        # Regime validation - check if regime classifications make sense
-        if 'regime' in self.combined_trades.columns and 'entry_adx' in self.combined_trades.columns:
-            regimes = {}
-            for regime in self.combined_trades['regime'].unique():
-                regime_trades = self.combined_trades[self.combined_trades['regime'] == regime]
-                avg_adx = regime_trades['entry_adx'].mean() if 'entry_adx' in regime_trades.columns else None
-
-                regimes[regime] = {
-                    'trade_count': len(regime_trades),
-                    'avg_adx': avg_adx,
-                    'accuracy': 'TBD'  # Needs ADX threshold validation
-                }
-
-            validation['regime_validation'] = regimes
-
-        # Rank calibration - check if rank_score predicts outcomes
-        if 'rank_score' in self.combined_trades.columns and 'realized_pnl' in self.combined_trades.columns:
-            # Calculate correlation
-            correlation = self.combined_trades[['rank_score', 'realized_pnl']].corr().iloc[0, 1]
-
-            # Group by quality rating if available
-            if 'acceptance_status' in self.combined_trades.columns:
-                by_quality = {}
-                for quality in self.combined_trades['acceptance_status'].unique():
-                    quality_trades = self.combined_trades[self.combined_trades['acceptance_status'] == quality]
-                    pnls = quality_trades['realized_pnl'].dropna()
-                    by_quality[quality] = {
-                        'trade_count': len(quality_trades),
-                        'win_rate': len(pnls[pnls > 0]) / len(pnls) * 100 if len(pnls) > 0 else 0,
-                        'avg_pnl': pnls.mean() if len(pnls) > 0 else 0
-                    }
-
-                validation['rank_calibration'] = {
-                    'correlation': correlation,
-                    'by_quality': by_quality,
-                    'predictive_power': 'STRONG' if correlation > 0.5 else 'MODERATE' if correlation > 0.3 else 'WEAK'
-                }
-
-        return validation
 
     def run_comprehensive_analysis(self):
         """Run the complete analysis pipeline"""
@@ -2217,29 +1875,64 @@ class ComprehensiveRunAnalyzer:
         self.sequence_analysis = self.analyze_sequence_and_risk()
         self.time_analysis = self.analyze_time_in_trade()
 
-        # NEW: Enhanced analysis per ANALYSIS_WORKFLOW.md
-        self.spike_test_analysis = self.analyze_spike_tests()
-        self.rejected_trades_analysis = self.analyze_rejected_trades()
-        self.regime_rank_validation = self.analyze_regime_and_rank_validation()
-
         # Step 4: Skip recommendations generation (analysis only)
 
-        # Step 6: Create performance summary
+        # Step 6: Create performance summary with FINAL NET P&L
         if 'realized_pnl' in self.combined_trades.columns:
             pnls = self.combined_trades['realized_pnl'].dropna()
+            gross_pnl = pnls.sum()
+            total_trades = len(self.combined_trades)
+
+            # Estimate total charges from trade data
+            total_charges = 0
+            if 'entry_price' in self.combined_trades.columns and 'exit_price' in self.combined_trades.columns:
+                for _, trade in self.combined_trades.iterrows():
+                    entry_price = trade.get('entry_price', 0)
+                    exit_price = trade.get('exit_price', 0)
+                    qty = trade.get('qty', 1)
+                    if entry_price > 0 and exit_price > 0 and qty > 0:
+                        charges = estimate_trade_charges(entry_price, exit_price, qty)
+                        total_charges += charges['total_charges']
+            else:
+                # Fallback: estimate ~Rs 140 per trade (typical for NSE equity)
+                total_charges = total_trades * 140
+
+            # Use per-trade MIS leverage if available, else default
+            if 'mis_leverage' in self.combined_trades.columns and self.combined_trades['mis_leverage'].notna().any():
+                overall_mis_mult = self.combined_trades['mis_leverage'].dropna().mean()
+                mis_source = 'per_trade'
+            else:
+                overall_mis_mult = DEFAULT_MIS_MULTIPLIER
+                mis_source = 'default'
+            final_net_result = calculate_final_net_pnl(gross_pnl, total_charges, overall_mis_mult)
+
             self.performance_summary = {
-                'total_trades': len(self.combined_trades),
-                'total_pnl': pnls.sum(),
+                'total_trades': total_trades,
+                # GROSS P&L (before any deductions)
+                'gross_pnl': gross_pnl,
+                # MIS-adjusted values
+                'mis_source': mis_source,
+                'mis_multiplier': final_net_result['mis_multiplier'],
+                'gross_pnl_mis': final_net_result['gross_pnl_mis'],
+                # Charges
+                'total_charges': total_charges,
+                'avg_charges_per_trade': total_charges / total_trades if total_trades > 0 else 0,
+                # Net after charges (before tax)
+                'net_after_charges': final_net_result['net_after_charges'],
+                # Tax
+                'tax': final_net_result['tax'],
+                # FINAL NET P&L (PRIMARY METRIC - after MIS + charges + tax)
+                'final_net_pnl': final_net_result['final_net_pnl'],
+                'avg_final_net_per_trade': final_net_result['final_net_pnl'] / total_trades if total_trades > 0 else 0,
+                # Legacy field for backward compatibility
+                'total_pnl': gross_pnl,
+                # Other metrics
                 'win_rate': len(pnls[pnls > 0]) / len(pnls) * 100 if len(pnls) > 0 else 0,
                 'avg_pnl_per_trade': pnls.mean(),
                 'best_trade': pnls.max(),
                 'worst_trade': pnls.min(),
                 'sessions': len(self.sessions)
             }
-
-        # Step 6.5: Baseline comparison (if provided)
-        if self.baseline_run_prefix:
-            self.baseline_comparison = self.analyze_baseline_comparison(self.baseline_run_prefix)
 
         # Step 7: Print summary
         self.print_summary()
@@ -2250,22 +1943,37 @@ class ComprehensiveRunAnalyzer:
         return report_file
 
     def print_summary(self):
-        """Print analysis summary"""
+        """Print analysis summary with FINAL NET P&L as primary metric"""
         print("\n" + "=" * 60)
         print("ANALYSIS SUMMARY")
         print("=" * 60)
 
         if self.performance_summary:
-            print(f"Total Trades: {self.performance_summary['total_trades']}")
-            print(f"Total PnL: Rs.{self.performance_summary['total_pnl']:.2f}")
-            print(f"Win Rate: {self.performance_summary['win_rate']:.1f}%")
-            print(f"Average PnL/Trade: Rs.{self.performance_summary['avg_pnl_per_trade']:.2f}")
+            ps = self.performance_summary
+            print(f"Total Trades: {ps['total_trades']}")
+            print(f"\n--- P&L BREAKDOWN ---")
+            print(f"  Gross P&L (NRML):       Rs.{ps.get('gross_pnl', ps.get('total_pnl', 0)):>12,.2f}")
+            mis_src = "per-trade" if ps.get('mis_source') == 'per_trade' else "default"
+            print(f"  MIS Leverage ({mis_src}):{ps.get('mis_multiplier', 2.0):>8.1f}x")
+            print(f"  Gross P&L (MIS):        Rs.{ps.get('gross_pnl_mis', ps.get('total_pnl', 0) * 2):>12,.2f}")
+            print(f"  Less: Charges:          Rs.{ps.get('total_charges', 0):>12,.2f}")
+            print(f"  Less: Tax (31.2%):      Rs.{ps.get('tax', 0):>12,.2f}")
+            print(f"  --------------------------------------")
+            print(f"  FINAL NET P&L:          Rs.{ps.get('final_net_pnl', 0):>12,.2f}")
+            print(f"\n  Avg Net per Trade:      Rs.{ps.get('avg_final_net_per_trade', 0):>12,.2f}")
+            print(f"  Win Rate:               {ps['win_rate']:>12.1f}%")
 
-        print(f"\nSETUP PERFORMANCE:")
+        print(f"\nSETUP PERFORMANCE (FINAL NET):")
         if self.setup_analysis:
-            setup_sorted = sorted(self.setup_analysis.items(), key=lambda x: x[1]['total_pnl'], reverse=True)
+            # Sort by FINAL NET P&L
+            setup_sorted = sorted(self.setup_analysis.items(),
+                                  key=lambda x: x[1].get('final_net_pnl', x[1].get('total_pnl', 0)),
+                                  reverse=True)
             for setup, data in setup_sorted[:5]:  # Top 5
-                print(f"  {setup}: Rs.{data['total_pnl']:.0f} ({data['win_rate']:.1f}% WR, {data['total_trades']} trades)")
+                final_net = data.get('final_net_pnl', data.get('total_pnl', 0))
+                avg_net = data.get('avg_final_net', data.get('avg_pnl', 0))
+                status = "[OK]" if data.get('profitable', final_net > 0) else "[X]"
+                print(f"  {status} {setup}: Rs.{final_net:,.0f} (Avg: Rs.{avg_net:.0f}, {data['win_rate']:.1f}% WR, {data['total_trades']} trades)")
 
         # Display regime performance
         print(f"\nREGIME PERFORMANCE:")
@@ -2307,20 +2015,13 @@ class ComprehensiveRunAnalyzer:
                 print(f"    Triggered avg return: {comp['triggered']['avg_hypothetical_pnl']:.2f}%")
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description='Comprehensive Run Analysis per ANALYSIS_WORKFLOW.md')
-    parser.add_argument('run_prefix', help='Run prefix to analyze (e.g., run_146c0d45_)')
-    parser.add_argument('--baseline', '-b', help='Baseline run prefix for comparison (e.g., run_f2cc7fba_)', default=None)
-    args = parser.parse_args()
+    if len(sys.argv) != 2:
+        print("Usage: python comprehensive_run_analyzer.py <run_prefix>")
+        print("Example: python comprehensive_run_analyzer.py run_146c0d45_")
+        sys.exit(1)
 
-    run_prefix = args.run_prefix
-    baseline = args.baseline
-
-    print(f"Analyzing: {run_prefix}")
-    if baseline:
-        print(f"Baseline: {baseline}")
-
-    analyzer = ComprehensiveRunAnalyzer(run_prefix, baseline_run_prefix=baseline)
+    run_prefix = sys.argv[1]
+    analyzer = ComprehensiveRunAnalyzer(run_prefix)
 
     try:
         report_file = analyzer.run_comprehensive_analysis()

@@ -33,6 +33,24 @@ import statistics
 import zipfile
 import glob
 
+# Shared reporting utilities (fee constants, tax, MIS leverage)
+try:
+    from report_utils import (
+        BROKERAGE_RATE, BROKERAGE_CAP, STT_RATE, EXCHANGE_RATE_NSE,
+        SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
+        calculate_income_tax, load_nse_all, get_mis_leverage_for_symbol,
+        load_mis_from_trade_reports, get_trade_mis_leverage,
+    )
+except ImportError:
+    from tools.report_utils import (
+        BROKERAGE_RATE, BROKERAGE_CAP, STT_RATE, EXCHANGE_RATE_NSE,
+        SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
+        calculate_income_tax, load_nse_all, get_mis_leverage_for_symbol,
+        load_mis_from_trade_reports, get_trade_mis_leverage,
+    )
+
+EXCHANGE_RATE = EXCHANGE_RATE_NSE
+
 
 def get_git_info() -> dict:
     """
@@ -100,175 +118,11 @@ def extract_run_id_from_path(path_str: str) -> str:
         return match.group(1)
     return None
 
-# ============================================================================
-# ZERODHA INTRADAY EQUITY CHARGES
-# ============================================================================
-BROKERAGE_PER_ORDER = 20  # Rs 20 per executed order (flat)
-STT_RATE = 0.00025  # 0.025% on SELL side only
-EXCHANGE_RATE = 0.0000345  # NSE charges ~0.00345%
-SEBI_RATE = 0.000001  # 0.0001%
-STAMP_DUTY_RATE = 0.00003  # 0.003% on BUY side
-GST_RATE = 0.18  # 18% on brokerage + exchange charges
 
-# ============================================================================
-# INCOME TAX ON SPECULATIVE BUSINESS INCOME
-# ============================================================================
-TAX_RATE = 0.30  # 30% (highest slab for speculative income)
-CESS_RATE = 0.04  # 4% health and education cess on tax
-
-# ============================================================================
-# MIS LEVERAGE (Zerodha Margin Intraday Square-off)
-# ============================================================================
-NRML_MARGIN_PCT = 0.50  # NRML margin is typically 50% for most stocks
-
-# Try to load pandas for MIS margin file reading
-try:
-    import pandas as pd
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
-
-
-def load_mis_margins(mis_file=None):
-    """
-    Load MIS margin data from Excel file.
-
-    Args:
-        mis_file: Path to Excel file with MIS margin percentages.
-                  If None, searches common locations.
-
-    Returns:
-        Dict mapping symbol -> MIS margin percentage (e.g., 0.20 for 20%)
-    """
-    if not PANDAS_AVAILABLE:
-        return {}
-
-    # Find MIS file if not provided
-    if not mis_file:
-        # Project root is parent of tools directory
-        project_root = Path(__file__).parent.parent
-        candidates = [
-            project_root / 'zerodha_mis_margin.xlsx',  # E:\Codebase\intraday-trade-assistant\zerodha_mis_margin.xlsx
-            Path.cwd() / 'zerodha_mis_margin.xlsx',
-            project_root / 'config' / 'zerodha_mis_margin.xlsx',
-            Path.home() / 'zerodha_mis_margin.xlsx',
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                mis_file = str(candidate)
-                print(f"      Found MIS file: {mis_file}")
-                break
-
-    if not mis_file or not Path(mis_file).exists():
-        return {}
-
-    try:
-        df = pd.read_excel(mis_file)
-        margins = {}
-
-        # Find symbol and margin columns
-        symbol_col = None
-        margin_col = None
-        for col in df.columns:
-            col_lower = str(col).lower()
-            if 'scrip' in col_lower or 'symbol' in col_lower or 'tradingsymbol' in col_lower:
-                symbol_col = col
-            elif 'mis' in col_lower:
-                margin_col = col
-            elif 'margin' in col_lower and margin_col is None:
-                margin_col = col
-
-        if symbol_col and margin_col:
-            for _, row in df.iterrows():
-                symbol = str(row[symbol_col]).upper().strip()
-                if symbol in ('NAN', 'SCRIP', 'SYMBOL', '') or pd.isna(row[symbol_col]):
-                    continue
-
-                margin = row[margin_col]
-                if isinstance(margin, str) and 'margin' in margin.lower():
-                    continue
-
-                try:
-                    if isinstance(margin, str):
-                        margin = float(margin.replace('%', '').replace('x', '').strip())
-                    else:
-                        margin = float(margin)
-
-                    # If value > 1, assume it's a percentage (e.g., 20 = 20%)
-                    if margin > 1:
-                        margin = margin / 100
-
-                    if margin > 0:
-                        margins[symbol] = margin
-                        # Also add without exchange prefix
-                        if ':' in symbol:
-                            margins[symbol.split(':')[-1]] = margin
-                except (ValueError, TypeError):
-                    continue
-
-        print(f"      Loaded MIS margins for {len(margins)} symbols")
-        return margins
-
-    except Exception as e:
-        print(f"      Warning: Could not load MIS data: {e}")
-        return {}
-
-
-def get_mis_multiplier(symbol, mis_margins):
-    """
-    Get MIS leverage multiplier for a symbol.
-
-    Multiplier = NRML_MARGIN / MIS_MARGIN
-    Example: NRML 50% / MIS 20% = 2.5x leverage
-    """
-    clean_symbol = symbol.upper().strip()
-    if ':' in clean_symbol:
-        clean_symbol = clean_symbol.split(':')[-1]
-    if '_' in clean_symbol:
-        clean_symbol = clean_symbol.split('_')[0]
-
-    mis_margin = mis_margins.get(clean_symbol, NRML_MARGIN_PCT)
-
-    if mis_margin <= 0:
-        return 1.0
-
-    return NRML_MARGIN_PCT / mis_margin
-
-
-def calculate_income_tax(profit_after_fees):
-    """
-    Calculate income tax on trading profits.
-
-    For intraday trading, profits are classified as "Speculative Business Income"
-    and taxed at individual's applicable slab rate.
-    Uses highest slab (30%) for conservative estimate.
-
-    Args:
-        profit_after_fees: Net profit after all trading fees
-
-    Returns:
-        Dict with tax breakdown
-    """
-    if profit_after_fees <= 0:
-        return {
-            'taxable_income': 0,
-            'base_tax': 0,
-            'cess': 0,
-            'total_tax': 0,
-            'net_after_tax': profit_after_fees
-        }
-
-    base_tax = profit_after_fees * TAX_RATE
-    cess = base_tax * CESS_RATE
-    total_tax = base_tax + cess
-
-    return {
-        'taxable_income': round(profit_after_fees, 2),
-        'base_tax': round(base_tax, 2),
-        'cess': round(cess, 2),
-        'total_tax': round(total_tax, 2),
-        'net_after_tax': round(profit_after_fees - total_tax, 2)
-    }
+# Fee constants, income tax, and MIS leverage are now imported from report_utils.
+# Old inline definitions (BROKERAGE_PER_ORDER, STT_RATE, etc.) removed.
+# Old functions removed: load_mis_margins(), get_mis_multiplier(), calculate_income_tax()
+# These are now in tools/report_utils.py — single source of truth.
 
 
 def discover_backtest_sources(specific_paths=None):
@@ -520,6 +374,7 @@ def calculate_charges(orders):
     total_gst = 0
     total_stamp = 0
     total_sebi = 0
+    total_ipft = 0
     total_turnover = 0
     total_orders = 0
     precalc_count = 0
@@ -537,41 +392,61 @@ def calculate_charges(orders):
             total_gst += fees.get('gst', 0)
             total_stamp += fees.get('stamp_duty', 0)
             total_sebi += fees.get('sebi', 0)
+            total_ipft += fees.get('ipft', 0)
             total_turnover += entry_turnover + exit_turnover
             total_orders += 2 if order['exit_sequence'] == 1 else 1
             precalc_count += 1
         else:
             # Fallback: calculate locally for backward compatibility
+            is_first_exit = order['exit_sequence'] == 1
+
             # Entry order counted only once per trade (on first exit)
-            if order['exit_sequence'] == 1:
+            if is_first_exit:
                 total_orders += 1
-                total_brokerage += BROKERAGE_PER_ORDER
+                entry_brokerage = min(BROKERAGE_RATE * entry_turnover, BROKERAGE_CAP)
+                total_brokerage += entry_brokerage
                 total_stamp += entry_turnover * STAMP_DUTY_RATE
+                total_exchange += entry_turnover * EXCHANGE_RATE
+                total_sebi += entry_turnover * SEBI_RATE
+                total_ipft += entry_turnover * IPFT_RATE
                 total_turnover += entry_turnover
 
             # Exit order (each partial exit is separate)
             total_orders += 1
-            total_brokerage += BROKERAGE_PER_ORDER
+            exit_brokerage = min(BROKERAGE_RATE * exit_turnover, BROKERAGE_CAP)
+            total_brokerage += exit_brokerage
             total_stt += exit_turnover * STT_RATE
             total_exchange += exit_turnover * EXCHANGE_RATE
             total_sebi += exit_turnover * SEBI_RATE
+            total_ipft += exit_turnover * IPFT_RATE
             total_turnover += exit_turnover
 
-    # GST on brokerage + exchange (only for fallback-calculated orders)
+    # GST on (brokerage + exchange + SEBI + IPFT) for fallback-calculated orders
     # Pre-calculated fees already include GST
     if precalc_count < len(orders):
-        # Some orders used fallback calculation, need to add GST for those
-        fallback_brokerage = sum(
-            BROKERAGE_PER_ORDER * (2 if o['exit_sequence'] == 1 else 1)
-            for o in orders if not o.get('has_precalc_fees')
-        )
-        fallback_exchange = sum(
-            o['exit_price'] * o['qty'] * EXCHANGE_RATE
-            for o in orders if not o.get('has_precalc_fees')
-        )
-        total_gst += (fallback_brokerage + fallback_exchange) * GST_RATE
+        fb_brokerage = 0
+        fb_exchange = 0
+        fb_sebi = 0
+        fb_ipft = 0
+        for o in orders:
+            if o.get('has_precalc_fees'):
+                continue
+            e_tv = o['entry_price'] * o['qty']
+            x_tv = o['exit_price'] * o['qty']
+            is_first = o['exit_sequence'] == 1
+            if is_first:
+                fb_brokerage += min(BROKERAGE_RATE * e_tv, BROKERAGE_CAP)
+                fb_exchange += e_tv * EXCHANGE_RATE
+                fb_sebi += e_tv * SEBI_RATE
+                fb_ipft += e_tv * IPFT_RATE
+            fb_brokerage += min(BROKERAGE_RATE * x_tv, BROKERAGE_CAP)
+            fb_exchange += x_tv * EXCHANGE_RATE
+            fb_sebi += x_tv * SEBI_RATE
+            fb_ipft += x_tv * IPFT_RATE
+        total_gst += (fb_brokerage + fb_exchange + fb_sebi + fb_ipft) * GST_RATE
 
-    total_charges = total_brokerage + total_stt + total_exchange + total_gst + total_stamp + total_sebi
+    total_charges = (total_brokerage + total_stt + total_exchange + total_gst
+                     + total_stamp + total_sebi + total_ipft)
 
     return {
         'total_orders': total_orders,
@@ -579,6 +454,7 @@ def calculate_charges(orders):
         'brokerage': total_brokerage,
         'stt': total_stt,
         'exchange': total_exchange,
+        'ipft': total_ipft,
         'gst': total_gst,
         'stamp_duty': total_stamp,
         'sebi': total_sebi,
@@ -588,13 +464,23 @@ def calculate_charges(orders):
     }
 
 
-def calculate_setup_charges(orders, mis_margins=None):
+def calculate_setup_charges(orders, mis_from_csv=None, nse_all=None):
     """
     Calculate charges per setup type for profitability analysis.
 
     Now includes MIS leverage and tax for FINAL NET calculation.
     All metrics use FINAL NET (after MIS + charges + tax) as the primary number.
+
+    Args:
+        orders: List of order dicts from extract_order_data()
+        mis_from_csv: Dict trade_id -> mis_leverage from load_mis_from_trade_reports()
+        nse_all: Pre-loaded nse_all.json dict for symbol-level MIS fallback
     """
+    if mis_from_csv is None:
+        mis_from_csv = {}
+    if nse_all is None:
+        nse_all = load_nse_all()
+
     by_setup = defaultdict(lambda: {
         'orders': [],
         'gross_pnl': 0,
@@ -617,10 +503,9 @@ def calculate_setup_charges(orders, mis_margins=None):
     for setup, data in by_setup.items():
         charges = calculate_charges(data['orders'])
 
-        # Calculate MIS-adjusted gross PnL
-        if mis_margins and data['symbols']:
-            # Calculate weighted average multiplier for this setup
-            multipliers = [get_mis_multiplier(s, mis_margins) for s in data['symbols']]
+        # Calculate MIS-adjusted gross PnL using nse_all.json (not stale xlsx)
+        if data['symbols']:
+            multipliers = [get_mis_leverage_for_symbol(s, nse_all) for s in data['symbols']]
             avg_multiplier = sum(multipliers) / len(multipliers) if multipliers else 1.0
             gross_pnl_mis = data['gross_pnl'] * avg_multiplier
         else:
@@ -828,18 +713,24 @@ def calculate_capital_requirements(trades):
     }
 
 
-def simulate_capital_constraint(trades, capital_limit, mis_margins=None):
+def simulate_capital_constraint(trades, capital_limit, mis_from_csv=None, nse_all=None):
     """
     Simulate trading with a capital constraint.
 
     Args:
         trades: List of trade dicts with entry_time, exit_time, notional, pnl, symbol, fees
         capital_limit: Maximum capital to deploy at any time
-        mis_margins: Dict of symbol -> MIS margin percentage (for leverage calculation)
+        mis_from_csv: Dict trade_id -> mis_leverage from load_mis_from_trade_reports()
+        nse_all: Pre-loaded nse_all.json dict for symbol-level MIS fallback
 
     Returns:
         Dict with trades_taken, gross_pnl_mis, fees, tax, net_pnl, capture_rate
     """
+    if mis_from_csv is None:
+        mis_from_csv = {}
+    if nse_all is None:
+        nse_all = load_nse_all()
+
     by_date = defaultdict(list)
     for t in trades:
         if t["entry_time"] and t["exit_time"] and t["notional"] > 0:
@@ -858,11 +749,8 @@ def simulate_capital_constraint(trades, capital_limit, mis_margins=None):
             active = [(et, n) for et, n in active if et > t["entry_time"]]
             current = sum(n for _, n in active)
 
-            # Calculate MIS-adjusted PnL for this trade
-            if mis_margins:
-                multiplier = get_mis_multiplier(t.get("symbol", ""), mis_margins)
-            else:
-                multiplier = 1.0
+            # Calculate MIS-adjusted PnL using per-trade CSV data or nse_all.json
+            multiplier = get_trade_mis_leverage(t, mis_from_csv, nse_all)
             mis_pnl = t["pnl"] * multiplier
 
             if current + t["notional"] <= capital_limit:
@@ -1388,36 +1276,45 @@ def main():
     yearly = calculate_yearly_breakdown(trades, sessions)
     monthly = calculate_monthly_breakdown(trades, sessions)
 
-    print("[4/8] Loading MIS margins...")
-    mis_margins = load_mis_margins()
+    print("[4/8] Loading MIS leverage data...")
+    # Load per-trade MIS leverage from trade_report.csv (preferred source)
+    mis_from_csv = load_mis_from_trade_reports(BACKTEST_DIRS)
+    # Load nse_all.json as fallback for symbol-level MIS lookup
+    nse_all = load_nse_all()
+    if mis_from_csv:
+        print(f"      MIS source: trade_report.csv ({len(mis_from_csv)} trades with MIS data)")
+    elif nse_all:
+        print(f"      MIS source: nse_all.json ({len(nse_all)//3} symbols)")
+    else:
+        print(f"      WARNING: No MIS data found, using 1x leverage")
 
     print("[5/8] Calculating Zerodha charges and FINAL NET P&L...")
     charges = calculate_charges(orders)
-    # Pass mis_margins to calculate setup-level final net (with MIS + tax)
-    setup_charges = calculate_setup_charges(orders, mis_margins)
+    # Pass MIS data to calculate setup-level final net (with MIS + tax)
+    setup_charges = calculate_setup_charges(orders, mis_from_csv, nse_all)
     net_after_fees = performance['total_pnl'] - charges['total_charges']
     print(f"      Total charges: Rs {charges['total_charges']:,.0f}")
     print(f"      Net P&L after charges (NRML): Rs {net_after_fees:,.0f}")
-    if mis_margins:
-        # Calculate MIS-adjusted PnL per trade
-        multipliers = []
-        mis_pnl_total = 0
-        for trade in trades:
-            multiplier = get_mis_multiplier(trade.get('symbol', ''), mis_margins)
-            multipliers.append(multiplier)
-            mis_pnl_total += trade.get('pnl', 0) * multiplier
-        avg_multiplier = sum(multipliers) / len(multipliers) if multipliers else 1.0
-        mis_net_after_fees = mis_pnl_total - charges['total_charges']
-        print(f"      Avg MIS multiplier: {avg_multiplier:.2f}x")
-        print(f"      Gross PnL with MIS: Rs {mis_pnl_total:,.0f}")
-        print(f"      Net PnL with MIS (after fees): Rs {mis_net_after_fees:,.0f}")
-    else:
-        print(f"      No MIS file found, using 1x leverage (NRML)")
-        avg_multiplier = 1.0
-        mis_pnl_total = performance['total_pnl']
-        mis_net_after_fees = net_after_fees
 
-    # Calculate income tax on profit after fees (using MIS-adjusted if available)
+    # Calculate MIS-adjusted PnL using fallback chain:
+    # 1. Per-trade MIS from trade_report.csv
+    # 2. Symbol lookup from nse_all.json
+    # 3. Default 1.0
+    multipliers = []
+    mis_pnl_total = 0
+    for trade in trades:
+        multiplier = get_trade_mis_leverage(trade, mis_from_csv, nse_all)
+        multipliers.append(multiplier)
+        mis_pnl_total += trade.get('pnl', 0) * multiplier
+    avg_multiplier = sum(multipliers) / len(multipliers) if multipliers else 1.0
+    mis_net_after_fees = mis_pnl_total - charges['total_charges']
+    mis_source = "trade_report.csv" if mis_from_csv else ("nse_all.json" if nse_all else "none (1x)")
+    print(f"      MIS source: {mis_source}")
+    print(f"      Avg MIS multiplier: {avg_multiplier:.2f}x")
+    print(f"      Gross PnL with MIS: Rs {mis_pnl_total:,.0f}")
+    print(f"      Net PnL with MIS (after fees): Rs {mis_net_after_fees:,.0f}")
+
+    # Calculate income tax on profit after fees (using MIS-adjusted)
     tax_result = calculate_income_tax(mis_net_after_fees)
     print(f"      Income tax (30% + 4% cess): Rs {tax_result['total_tax']:,.0f}")
     print(f"      Final Net PnL after tax: Rs {tax_result['net_after_tax']:,.0f}")
@@ -1430,13 +1327,16 @@ def main():
     capital = calculate_capital_requirements(trades)
     capital_scenarios = {}
     for limit, label in [(300000, "3L"), (500000, "5L"), (600000, "6L"), (1000000, "10L")]:
-        capital_scenarios[label] = simulate_capital_constraint(trades, limit, mis_margins)
+        capital_scenarios[label] = simulate_capital_constraint(trades, limit, mis_from_csv, nse_all)
 
     print("[8/8] Calculating risk metrics...")
     risk_metrics = calculate_risk_metrics(trades, sessions)
     drawdown = calculate_drawdown_analysis(sessions)
 
     all_dates = [s["date"] for s in sessions]
+    if not all_dates:
+        print("ERROR: No sessions with trades found. Nothing to report.")
+        return
     start_date = min(all_dates)
     end_date = max(all_dates)
     years = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days / 365.25
@@ -1459,7 +1359,8 @@ def main():
             "gross_pnl_nrml": performance['total_pnl'],
             "gross_pnl_mis": mis_pnl_total,
             "net_after_fees_mis": mis_net_after_fees,
-            "has_mis_data": bool(mis_margins),
+            "has_mis_data": bool(mis_from_csv) or bool(nse_all),
+            "mis_source": mis_source,
         },
         "tax": tax_result,
     }
@@ -1504,9 +1405,15 @@ def main():
 
     with open(exec_path, "r", encoding="utf-8") as f:
         content = f.read()
-        # Replace Unicode box characters that may not print on Windows console
+        # Replace Unicode characters that may not print on Windows console (cp1252)
         content = content.replace("═", "=").replace("─", "-").replace("✓", "[OK]").replace("✗", "[X]")
-        print("\n" + content)
+        content = content.replace("╔", "+").replace("╗", "+").replace("╚", "+").replace("╝", "+").replace("║", "|")
+        content = content.replace("−", "-")  # Unicode minus → ASCII hyphen
+        # Fallback: encode with errors='replace' for any remaining non-ASCII
+        try:
+            print("\n" + content)
+        except UnicodeEncodeError:
+            print("\n" + content.encode('ascii', errors='replace').decode('ascii'))
 
 
 if __name__ == "__main__":

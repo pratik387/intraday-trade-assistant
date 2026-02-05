@@ -2444,11 +2444,18 @@
   "directional_bias": {
     "enabled": true,
     "index_symbol": "NSE:NIFTY 50",
-    "threshold_pct": 0.15,
+    "entry_threshold_pct": 0.3,
+    "exit_threshold_pct": 0.1,
     "with_trend_mult": 1.15,
     "against_trend_mult": 0.85,
     "chop_max_flips": 4,
-    "_comment": "3-year backtest evidence: WITH-trend +7.2pp win rate edge (63.9% vs 56.7%). Scales to +11.3pp on >1% days. Entry-only sizing, does not affect existing positions."
+    "category_overrides": {
+      "BREAKOUT":  {"with_trend_mult": 1.25, "against_trend_mult": 0.65},
+      "MOMENTUM":  {"with_trend_mult": 1.25, "against_trend_mult": 0.65},
+      "REVERSION": {"with_trend_mult": 1.05, "against_trend_mult": 0.95},
+      "LEVEL":     {"with_trend_mult": 1.15, "against_trend_mult": 0.85}
+    },
+    "_comment": "Hysteresis: 0.3% to establish bias, 0.1% to clear. Prevents flip-flopping on sub-0.3% moves. Category-specific multipliers: breakout/momentum get aggressive treatment, reversion barely affected. 3-year evidence: WITH-trend +7.2pp WR edge (63.9% vs 56.7%), scales to +11.3pp on >1% days."
   },
   "_comment_backtest_mis": "=== BACKTEST MIS FILTERING (Reject non-MIS stocks in backtest to match live) ===",
   "backtest_mis_filtering": {

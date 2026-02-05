@@ -1931,7 +1931,7 @@ class BasePipeline(ABC):
         from services.gates.directional_bias import get_tracker
         db_tracker = get_tracker()
         if db_tracker is not None:
-            dir_bias_mult, dir_bias_reason = db_tracker.get_size_mult(bias)
+            dir_bias_mult, dir_bias_reason = db_tracker.get_size_mult(bias, category=self.get_category_name())
             size_mult *= dir_bias_mult
             if dir_bias_mult != 1.0:
                 cautions.append(dir_bias_reason)

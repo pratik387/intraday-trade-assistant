@@ -33,102 +33,42 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ============================================================================
-# ZERODHA INTRADAY EQUITY CHARGES
+# SHARED REPORTING UTILITIES (single source of truth)
+# Fee constants, charge calculations, tax, and MIS leverage from report_utils.py
 # ============================================================================
-BROKERAGE_PER_ORDER = 20  # Rs 20 per executed order (flat)
-STT_RATE = 0.00025  # 0.025% on SELL side only
-EXCHANGE_RATE = 0.0000345  # NSE charges ~0.00345%
-SEBI_RATE = 0.000001  # 0.0001%
-STAMP_DUTY_RATE = 0.00003  # 0.003% on BUY side
-GST_RATE = 0.18  # 18% on brokerage + exchange charges
+try:
+    from report_utils import (
+        BROKERAGE_RATE, BROKERAGE_CAP, STT_RATE, EXCHANGE_RATE_NSE,
+        SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
+        calculate_order_charges, calculate_income_tax,
+        load_nse_all, get_mis_leverage_for_symbol,
+        load_mis_from_trade_reports, get_trade_mis_leverage,
+    )
+except ImportError:
+    from tools.report_utils import (
+        BROKERAGE_RATE, BROKERAGE_CAP, STT_RATE, EXCHANGE_RATE_NSE,
+        SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
+        calculate_order_charges, calculate_income_tax,
+        load_nse_all, get_mis_leverage_for_symbol,
+        load_mis_from_trade_reports, get_trade_mis_leverage,
+    )
 
-# ============================================================================
-# INCOME TAX ON SPECULATIVE BUSINESS INCOME
-# ============================================================================
-TAX_RATE = 0.30  # 30% (highest slab for speculative income)
-CESS_RATE = 0.04  # 4% health and education cess on tax
-
-# ============================================================================
-# MIS LEVERAGE (Zerodha Margin Intraday Square-off)
-# ============================================================================
-NRML_MARGIN_PCT = 0.50  # NRML margin is typically 50% for most stocks
-DEFAULT_MIS_MULTIPLIER = 5.0  # Default 5x leverage (typical Zerodha MIS for large/mid caps)
+DEFAULT_MIS_MULTIPLIER = 5.0  # Fallback when no per-trade MIS data available
 
 
 def estimate_trade_charges(entry_price, exit_price, qty):
     """
     Estimate Zerodha intraday charges for a single trade.
-
-    Args:
-        entry_price: Entry price per share
-        exit_price: Exit price per share
-        qty: Number of shares
-
-    Returns:
-        Dict with charge breakdown
+    Delegates to calculate_order_charges() from report_utils (single source of truth).
     """
-    entry_turnover = entry_price * qty
-    exit_turnover = exit_price * qty
-    total_turnover = entry_turnover + exit_turnover
-
-    # 2 orders per trade (entry + exit)
-    brokerage = BROKERAGE_PER_ORDER * 2
-
-    # STT on sell side only
-    stt = exit_turnover * STT_RATE
-
-    # Exchange + SEBI on exit
-    exchange = exit_turnover * EXCHANGE_RATE
-    sebi = exit_turnover * SEBI_RATE
-
-    # Stamp duty on buy side
-    stamp_duty = entry_turnover * STAMP_DUTY_RATE
-
-    # GST on brokerage + exchange
-    gst = (brokerage + exchange) * GST_RATE
-
-    total_charges = brokerage + stt + exchange + gst + stamp_duty + sebi
-
-    return {
-        'brokerage': brokerage,
-        'stt': stt,
-        'exchange': exchange,
-        'gst': gst,
-        'stamp_duty': stamp_duty,
-        'sebi': sebi,
-        'total_charges': total_charges,
-        'turnover': total_turnover
-    }
+    buy_turnover = entry_price * qty
+    sell_turnover = exit_price * qty
+    result = calculate_order_charges(buy_turnover, sell_turnover, num_orders=2)
+    result['turnover'] = result['total_turnover']
+    return result
 
 
-def calculate_income_tax(profit_after_fees):
-    """
-    Calculate income tax on trading profits.
-
-    For intraday trading, profits are classified as "Speculative Business Income"
-    and taxed at individual's applicable slab rate.
-    Uses highest slab (30%) for conservative estimate.
-    """
-    if profit_after_fees <= 0:
-        return {
-            'taxable_income': 0,
-            'base_tax': 0,
-            'cess': 0,
-            'total_tax': 0,
-            'net_after_tax': profit_after_fees
-        }
-
-    base_tax = profit_after_fees * TAX_RATE
-    cess = base_tax * CESS_RATE
-    total_tax = base_tax + cess
-
-    return {
-        'taxable_income': round(profit_after_fees, 2),
-        'base_tax': round(base_tax, 2),
-        'cess': round(cess, 2),
-        'total_tax': round(total_tax, 2),
-        'net_after_tax': round(profit_after_fees - total_tax, 2)
-    }
+# calculate_income_tax() is now imported from report_utils (single source of truth)
 
 
 def calculate_final_net_pnl(gross_pnl, total_charges, mis_multiplier=DEFAULT_MIS_MULTIPLIER):
@@ -226,7 +166,7 @@ class ComprehensiveRunAnalyzer:
                                             'bias': trade_data.get('bias', ''),
                                             'strategy': trade_data.get('strategy', ''),
                                             'entry_reference': trade_data.get('entry_reference', 0),
-                                            'entry_price': trade_data.get('entry_price', 0),
+                                            'entry_price': trade_data.get('entry_price', trade_data.get('actual_entry_price', 0)),
                                             'qty': trade_data.get('qty', 0),
                                             'exit_price': trade_data.get('exit_price', 0),
                                             'realized_pnl': trade_data.get('pnl', 0),
@@ -312,6 +252,16 @@ class ComprehensiveRunAnalyzer:
         if all_executed_trades:
             self.combined_trades = pd.concat(all_executed_trades, ignore_index=True)
             print(f"Combined {len(self.combined_trades)} EXECUTED trades from {len(all_executed_trades)} sessions")
+            # Merge mis_leverage from trade_report.csv (planned trades have it, executed don't)
+            if all_trades and 'trade_id' in self.combined_trades.columns:
+                planned_df = pd.concat(all_trades, ignore_index=True)
+                if 'mis_leverage' in planned_df.columns and 'trade_id' in planned_df.columns:
+                    mis_map = (planned_df.dropna(subset=['trade_id', 'mis_leverage'])
+                               [['trade_id', 'mis_leverage']].drop_duplicates('trade_id'))
+                    self.combined_trades = self.combined_trades.merge(
+                        mis_map, on='trade_id', how='left')
+                    merged_count = self.combined_trades['mis_leverage'].notna().sum()
+                    print(f"Merged mis_leverage for {merged_count}/{len(self.combined_trades)} trades from trade_report.csv")
         elif all_trades:
             self.combined_trades = pd.concat(all_trades, ignore_index=True)
             print(f"Combined {len(self.combined_trades)} PLANNED trades from {len(all_trades)} sessions (no executed trades found)")

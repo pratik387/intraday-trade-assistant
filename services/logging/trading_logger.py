@@ -36,15 +36,17 @@ class TradingLogger:
     """Enhanced logging service for trading analytics"""
 
     # ========================================================================
-    # ZERODHA INTRADAY EQUITY CHARGES (as of Dec 2024)
-    # Reference: https://zerodha.com/brokerage-calculator
+    # ZERODHA INTRADAY EQUITY CHARGES (post Oct 1, 2024 "true-to-label")
+    # Reference: https://zerodha.com/charges
     # ========================================================================
-    BROKERAGE_PER_ORDER = 20        # Rs 20 per executed order (flat)
+    BROKERAGE_RATE = 0.0003         # 0.03% of order value
+    BROKERAGE_CAP = 20.0            # Rs 20 per order cap (whichever is lower)
     STT_RATE = 0.00025              # 0.025% on SELL side only
-    EXCHANGE_RATE = 0.0000297       # NSE charges ~0.00297%
-    SEBI_RATE = 0.000001            # 0.0001% (Rs 10 per crore)
+    EXCHANGE_RATE = 0.0000297       # NSE charges 0.00297% (total turnover)
+    SEBI_RATE = 0.000001            # Rs 10 per crore (total turnover)
+    IPFT_RATE = 0.000001            # Rs 10 per crore NSE Investor Protection Fund (total turnover)
     STAMP_DUTY_RATE = 0.00003       # 0.003% on BUY side
-    GST_RATE = 0.18                 # 18% on brokerage + exchange + SEBI
+    GST_RATE = 0.18                 # 18% on (brokerage + exchange + SEBI + IPFT)
 
     @classmethod
     def calculate_trade_fees(cls, entry_price: float, exit_price: float, qty: int,
@@ -64,34 +66,36 @@ class TradingLogger:
         entry_turnover = entry_price * qty
         exit_turnover = exit_price * qty
 
-        # Brokerage: Rs 20 per order
-        # Entry order counted only on first exit (is_entry_order=True)
-        brokerage = cls.BROKERAGE_PER_ORDER  # Exit order
+        # Brokerage: min(0.03% × order_value, Rs 20) per order
+        exit_brokerage = min(cls.BROKERAGE_RATE * exit_turnover, cls.BROKERAGE_CAP)
+        brokerage = exit_brokerage
         if is_entry_order:
-            brokerage += cls.BROKERAGE_PER_ORDER  # Entry order
+            entry_brokerage = min(cls.BROKERAGE_RATE * entry_turnover, cls.BROKERAGE_CAP)
+            brokerage += entry_brokerage
 
         # STT: 0.025% on sell side only
         stt = exit_turnover * cls.STT_RATE
 
-        # Exchange transaction charges (on exit turnover)
-        exchange = exit_turnover * cls.EXCHANGE_RATE
-
-        # SEBI charges (on exit turnover)
-        sebi = exit_turnover * cls.SEBI_RATE
+        # Exchange/SEBI/IPFT: on each order's turnover
+        leg_turnover = exit_turnover + (entry_turnover if is_entry_order else 0)
+        exchange = leg_turnover * cls.EXCHANGE_RATE
+        sebi = leg_turnover * cls.SEBI_RATE
+        ipft = leg_turnover * cls.IPFT_RATE
 
         # Stamp duty: 0.003% on buy side only
         stamp_duty = entry_turnover * cls.STAMP_DUTY_RATE if is_entry_order else 0
 
-        # GST: 18% on (brokerage + exchange + SEBI)
-        gst = (brokerage + exchange + sebi) * cls.GST_RATE
+        # GST: 18% on (brokerage + exchange + SEBI + IPFT)
+        gst = (brokerage + exchange + sebi + ipft) * cls.GST_RATE
 
-        total = brokerage + stt + exchange + sebi + stamp_duty + gst
+        total = brokerage + stt + exchange + sebi + ipft + stamp_duty + gst
 
         return {
             'brokerage': round(brokerage, 2),
             'stt': round(stt, 2),
             'exchange': round(exchange, 2),
             'sebi': round(sebi, 2),
+            'ipft': round(ipft, 2),
             'stamp_duty': round(stamp_duty, 2),
             'gst': round(gst, 2),
             'total_fees': round(total, 2)
