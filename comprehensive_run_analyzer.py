@@ -280,59 +280,76 @@ class ComprehensiveRunAnalyzer:
         return session_summary
 
     def load_ohlcv_data(self, symbol: str, date_str: str = None):
-        """Load 1-minute OHLCV data for a symbol from feather files"""
-        # Convert NSE:SYMBOL format to SYMBOL.NS format for file lookup
-        if symbol.startswith('NSE:'):
-            symbol_file = symbol.replace('NSE:', '') + '.NS'
-        else:
-            symbol_file = symbol
+        """Load 1-minute OHLCV data for a symbol from monthly consolidated feather files.
+
+        Uses backtest-cache-download/monthly/YYYY_MM_1m.feather files which contain
+        all symbols for a given month. Falls back to cache/ohlcv_archive for index data.
+        """
+        # Normalize symbol: NSE:SYMBOL → SYMBOL
+        clean_symbol = symbol.replace('NSE:', '') if symbol.startswith('NSE:') else symbol
 
         # Use cache to avoid reloading
-        cache_key = f"{symbol_file}_{date_str}"
+        cache_key = f"{clean_symbol}_{date_str}"
         if cache_key in self.ohlcv_cache:
             return self.ohlcv_cache[cache_key]
 
-        # Look for minute data files
-        symbol_dir = os.path.join(self.ohlcv_cache_dir, symbol_file)
-        if not os.path.exists(symbol_dir):
-            print(f"Warning: No OHLCV data directory found for {symbol_file}")
-            return None
+        # Strategy 1: Load from monthly consolidated feathers (primary source)
+        if date_str:
+            try:
+                dt = pd.to_datetime(date_str)
+                monthly_file = os.path.join(
+                    "backtest-cache-download", "monthly",
+                    f"{dt.year}_{dt.month:02d}_1m.feather"
+                )
+                if os.path.exists(monthly_file):
+                    # Cache the full monthly file (keyed by month) to avoid re-reading
+                    month_key = f"_monthly_{dt.year}_{dt.month:02d}"
+                    if month_key not in self.ohlcv_cache:
+                        self.ohlcv_cache[month_key] = pd.read_feather(monthly_file)
 
-        # Find minute data file - prioritize July 2025 data based on discovery
-        minute_files = glob.glob(os.path.join(symbol_dir, "*_minutes_*.feather"))
+                    month_df = self.ohlcv_cache[month_key]
+                    # Filter for this symbol (monthly files use plain symbol names)
+                    sym_df = month_df[month_df['symbol'] == clean_symbol].copy()
 
-        if not minute_files:
-            print(f"Warning: No minute data files found for {symbol_file}")
-            return None
+                    if not sym_df.empty:
+                        # Use 'ts' column (IST-naive) as index for consistency
+                        if 'ts' in sym_df.columns:
+                            sym_df.index = pd.to_datetime(sym_df['ts'])
+                        elif 'date' in sym_df.columns:
+                            sym_df.index = pd.to_datetime(sym_df['date'])
+                        sym_df.sort_index(inplace=True)
+                        self.ohlcv_cache[cache_key] = sym_df
+                        return sym_df
+            except Exception as e:
+                print(f"Warning: Error loading monthly data for {clean_symbol}: {e}")
 
-        # Try to load the first available minute file
-        try:
-            minute_file = minute_files[0]  # Use first available file
-            df = pd.read_feather(minute_file)
+        # Strategy 2: Fallback to cache/ohlcv_archive (index data like NIFTY 50)
+        symbol_ns = clean_symbol + '.NS'
+        symbol_dir = os.path.join(self.ohlcv_cache_dir, symbol_ns)
+        if os.path.exists(symbol_dir):
+            minute_files = glob.glob(os.path.join(symbol_dir, "*_minutes_*.feather"))
+            if minute_files:
+                try:
+                    df = pd.read_feather(minute_files[0])
+                    if 'date' in df.columns:
+                        df.index = pd.to_datetime(df['date'])
+                        df.drop('date', axis=1, inplace=True)
+                    elif 'datetime' in df.columns:
+                        df.index = pd.to_datetime(df['datetime'])
+                    elif df.index.name != 'datetime':
+                        df.index = pd.to_datetime(df.index)
+                    self.ohlcv_cache[cache_key] = df
+                    return df
+                except Exception as e:
+                    print(f"Error loading OHLCV archive for {symbol_ns}: {e}")
 
-            # Ensure datetime index - handle different column names
-            if 'date' in df.columns:
-                df['datetime'] = pd.to_datetime(df['date'])
-                df.set_index('datetime', inplace=True)
-                df.drop('date', axis=1, inplace=True)
-            elif 'datetime' in df.columns:
-                df['datetime'] = pd.to_datetime(df['datetime'])
-                df.set_index('datetime', inplace=True)
-            elif df.index.name != 'datetime':
-                df.index = pd.to_datetime(df.index)
-
-            # Cache the loaded data
-            self.ohlcv_cache[cache_key] = df
-
-            return df
-
-        except Exception as e:
-            print(f"Error loading OHLCV data for {symbol_file}: {e}")
-            return None
+        return None
 
     def get_market_data_at_time(self, symbol: str, timestamp: str, minutes_after: int = 60):
         """Get market data for a symbol at specific timestamp and following period"""
-        ohlcv_df = self.load_ohlcv_data(symbol)
+        # Pass date_str so load_ohlcv_data can pick the right monthly file
+        date_str = str(pd.to_datetime(timestamp).date()) if timestamp else None
+        ohlcv_df = self.load_ohlcv_data(symbol, date_str=date_str)
 
         if ohlcv_df is None or ohlcv_df.empty:
             return None
