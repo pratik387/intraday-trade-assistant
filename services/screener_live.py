@@ -796,6 +796,12 @@ class ScreenerLive:
                 else:
                     # Enough bars to compute levels normally
                     lvl = self._levels_for(sym, df5, now)
+                    # MDS_DIAG: Log when levels are computed locally (not from cache/Redis)
+                    if self._market_data_mode == "subscriber":
+                        logger.warning(
+                            f"MDS_DIAG_LEVELS | LOCAL_COMPUTE | {sym} | "
+                            f"levels_by_symbol=None, computing locally (MDS may not have published yet)"
+                        )
 
             # Phase 2: Fetch daily data (210 days for EMA200, uses cache)
             daily_df = self.sdk.get_daily(sym, days=210)
@@ -1105,6 +1111,13 @@ class ScreenerLive:
             }
             diag_event_log.log_decision(symbol=plan["symbol"], now=now, plan=plan, features=features, decision=decision_dict)
 
+            # MDS DIAGNOSTIC: Log levels at entry decision for verification
+            _lvls = plan.get("levels") or {}
+            if _lvls.get("ORH"):
+                logger.info(f"MDS_DIAG_ENTRY | {sym} | ORH={_lvls.get('ORH'):.2f} ORL={_lvls.get('ORL'):.2f} PDH={_lvls.get('PDH'):.2f} PDL={_lvls.get('PDL'):.2f}")
+            else:
+                logger.info(f"MDS_DIAG_ENTRY | {sym} | levels=NONE")
+
             exec_item = {
                 "symbol": plan["symbol"],
                 "plan": {
@@ -1289,9 +1302,11 @@ class ScreenerLive:
                 )
                 return redis_levels
             # Not in Redis yet - publisher hasn't computed. Return None and wait.
-            if current_time >= dtime(9, 45):
-                # Past expected computation time but still not in Redis - log warning
-                logger.debug("ORB_CACHE | Subscriber: ORB levels not yet in Redis, waiting for publisher")
+            # MDS_DIAG: Log every miss to track timing issues between MDS publish and subscriber read
+            logger.warning(
+                f"MDS_DIAG_LEVELS | MISS | time={current_time} | "
+                f"ORB levels NOT in Redis for {session_date_str} - waiting for MDS to publish"
+            )
             return None
 
         # Only compute at or after 09:40 (ensures ORB data 09:15-09:30 is complete)
@@ -1596,6 +1611,10 @@ class ScreenerLive:
 
         try:
             logger.debug(f"LEVELS: Computing opening range for {symbol}, df5 shape: {df5.shape if df5 is not None else None}")
+            # MDS DIAGNOSTIC: Log bar timestamps to verify data freshness
+            if df5 is not None and not df5.empty:
+                bar_times = [str(t)[:19] for t in df5.index[:6]]  # First 6 bars
+                logger.info(f"MDS_DIAG | {symbol} | df5_bars={bar_times} | latest={str(df5.index[-1])[:19]}")
             orh, orl = levels.opening_range(df5, symbol=symbol)
             orh = float(orh); orl = float(orl)
             logger.debug(f"LEVELS: Computed ORH={orh}, ORL={orl}")
