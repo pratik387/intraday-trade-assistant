@@ -1139,6 +1139,10 @@ class ScreenerLive:
             }
             diag_event_log.log_decision(symbol=plan["symbol"], now=now, plan=plan, features=features, decision=decision_dict)
 
+            # MDS DIAGNOSTIC: Log levels at entry decision for verification
+            lvls = plan.get("levels") or {}
+            logger.info(f"MDS_DIAG_ENTRY | {sym} | ORH={lvls.get('ORH'):.2f} ORL={lvls.get('ORL'):.2f} PDH={lvls.get('PDH'):.2f} PDL={lvls.get('PDL'):.2f}" if lvls.get('ORH') else f"MDS_DIAG_ENTRY | {sym} | levels=NONE")
+
             exec_item = {
                 "symbol": plan["symbol"],
                 "plan": {
@@ -1630,6 +1634,10 @@ class ScreenerLive:
 
         try:
             logger.debug(f"LEVELS: Computing opening range for {symbol}, df5 shape: {df5.shape if df5 is not None else None}")
+            # MDS DIAGNOSTIC: Log bar timestamps to verify data freshness
+            if df5 is not None and not df5.empty:
+                bar_times = [str(t)[:19] for t in df5.index[:6]]  # First 6 bars
+                logger.info(f"MDS_DIAG | {symbol} | df5_bars={bar_times} | latest={str(df5.index[-1])[:19]}")
             orh, orl = levels.opening_range(df5, symbol=symbol)
             orh = float(orh); orl = float(orl)
             logger.debug(f"LEVELS: Computed ORH={orh}, ORL={orl}")

@@ -1800,10 +1800,10 @@
   "_comment_sl_second_atr": "Additional ATR to add at second threshold (cumulative: 0.3 + 0.2 = 0.5 ATR total)",
   "trail_to": "atr",
   "_comment_trail": "REVERT: Trail disabled (T3=0) - trail was losing money in exit-opt-003. Full exit at T2.",
-  "exit_t1_book_pct": 60.0,
-  "_comment_t1": "FALLBACK ONLY - Pipeline configs should override via trade plan. OLD config was 60-40.",
-  "exit_t2_book_pct": 40.0,
-  "_comment_t2": "FALLBACK ONLY - Pipeline configs should override via trade plan. OLD config was 60-40.",
+  "exit_t1_book_pct": 80.0,
+  "_comment_t1": "Changed from 60-40 to 80-20 based on T1 simulation showing +Rs.86K over 3yr backtest",
+  "exit_t2_book_pct": 20.0,
+  "_comment_t2": "T1 per-share (Rs.2.76) > Remainder per-share (Rs.2.49), so higher T1% is optimal",
   "exit_t1_move_sl_to_be": true,
   "exit_be_buffer_pct": 0.1,
   "_comment_be_buffer": "Buffer above/below breakeven for SL after T1 (0.1% = 10 bps)",
@@ -2455,7 +2455,19 @@
       "REVERSION": {"with_trend_mult": 1.05, "against_trend_mult": 0.95},
       "LEVEL":     {"with_trend_mult": 1.15, "against_trend_mult": 0.85}
     },
-    "_comment": "Hysteresis: 0.3% to establish bias, 0.1% to clear. Prevents flip-flopping on sub-0.3% moves. Category-specific multipliers: breakout/momentum get aggressive treatment, reversion barely affected. 3-year evidence: WITH-trend +7.2pp WR edge (63.9% vs 56.7%), scales to +11.3pp on >1% days."
+    "exit_modifiers": {
+      "against_trend": {
+        "trail_atr_mult": 0.75,
+        "t1_book_pct_add": 20,
+        "time_stop_mult": 0.75
+      },
+      "with_trend": {
+        "trail_atr_mult": 1.2,
+        "t1_book_pct_add": -15,
+        "time_stop_mult": 1.25
+      }
+    },
+    "_comment": "Hysteresis: 0.3% to establish bias, 0.1% to clear. Prevents flip-flopping on sub-0.3% moves. Category-specific multipliers: breakout/momentum get aggressive treatment, reversion barely affected. Exit modifiers: against-trend gets tighter trail/faster time stop/higher T1 booking, with-trend gets wider trail/slower time stop/lower T1 booking. 3-year evidence: WITH-trend +7.2pp WR edge (63.9% vs 56.7%), scales to +11.3pp on >1% days."
   },
   "_comment_backtest_mis": "=== BACKTEST MIS FILTERING (Reject non-MIS stocks in backtest to match live) ===",
   "backtest_mis_filtering": {

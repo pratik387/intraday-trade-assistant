@@ -300,6 +300,22 @@ class DirectionalBiasTracker:
     #  Status / debugging                                                  #
     # ------------------------------------------------------------------ #
 
+    def classify_alignment(self, side: str) -> str:
+        """
+        Classify whether a trade side aligns with current Nifty direction.
+
+        Returns: "with", "against", or "neutral"
+        """
+        if not self.enabled or self.direction in ("neutral", "chop") or self.prev_close is None:
+            return "neutral"
+
+        side_upper = side.upper()
+        is_with = (
+            (side_upper in ("BUY", "LONG") and self.direction == "green")
+            or (side_upper in ("SELL", "SHORT") and self.direction == "red")
+        )
+        return "with" if is_with else "against"
+
     def format_status(self) -> str:
         """Format current state for logging / API."""
         if not self.enabled:

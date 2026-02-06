@@ -118,6 +118,10 @@ class ExitExecutor:
         self.trail_time_tighten = str(cfg.get("exit_trail_time_tighten", "14:30"))
         self.trail_atr_mult_late = float(cfg.get("exit_trail_atr_mult_late", 1.5))
 
+        # Directional bias exit modifiers
+        db_cfg = cfg.get("directional_bias", {})
+        self._exit_modifiers = db_cfg.get("exit_modifiers", {}) if db_cfg.get("enabled", False) else {}
+
         # Time-based SL widening (Pro Trader Standard - reduces morning whipsaw)
         self.sl_time_widening_enabled = bool(cfg["sl_time_widening_enabled"])
         self.sl_time_widening_after_minutes = float(cfg["sl_time_widening_after_minutes"])
@@ -915,9 +919,13 @@ class ExitExecutor:
                     mult = self.trail_atr_mult  # 2.0× ATR before 14:30
                     why_suffix = ""
 
-                pts = atr * mult
+                bias_mods = self._get_bias_exit_modifiers(pos)
+                trail_bias_mult = bias_mods.get("trail_atr_mult", 1.0)
+                pts = atr * mult * trail_bias_mult
                 level = (px - pts) if side == "BUY" else (px + pts)
                 why = f"trail_ATRx{mult}{why_suffix}"
+                if trail_bias_mult != 1.0:
+                    why += f"_bias{trail_bias_mult}"
         except Exception:
             pass
 
@@ -1237,7 +1245,10 @@ class ExitExecutor:
 
         ref_ts = pd.Timestamp(ts) if ts is not None else _now_naive_ist()
         mins_live = max(0.0, (ref_ts - start).total_seconds() / 60.0)
-        if mins_live < float(self.time_stop_min):
+        bias_mods = self._get_bias_exit_modifiers(pos)
+        time_mult = bias_mods.get("time_stop_mult", 1.0)
+        adjusted_time_stop = float(self.time_stop_min) * time_mult
+        if mins_live < adjusted_time_stop:
             return False
 
         if math.isnan(sl):
@@ -1249,6 +1260,27 @@ class ExitExecutor:
 
         rr = ((px - float(pos.avg_price)) / r_ps) if side == "BUY" else ((float(pos.avg_price) - px) / r_ps)
         return rr < float(self.time_stop_req_rr)
+
+    # ---------- Directional bias exit modifiers ----------
+
+    def _get_bias_exit_modifiers(self, pos: Position) -> dict:
+        """Get directional bias exit modifiers for current position.
+        Queries LIVE tracker state — automatically handles bias flips during hold.
+        Returns empty dict if no modifiers apply (neutral/chop/disabled).
+        """
+        if not self._exit_modifiers:
+            return {}
+
+        from services.gates.directional_bias import get_tracker
+        tracker = get_tracker()
+        if tracker is None:
+            return {}
+
+        alignment = tracker.classify_alignment(pos.side)
+        if alignment == "neutral":
+            return {}
+
+        return self._exit_modifiers.get(f"{alignment}_trend", {})
 
     # ---------- Place exits + logging ----------
 
@@ -1639,7 +1671,9 @@ class ExitExecutor:
 
         # Use config-driven percentage (60-40-0 split from config)
         # FIX: Calculate based on ORIGINAL entry qty, not current remaining
-        actual_pct = max(1.0, self.t1_book_pct)
+        bias_mods = self._get_bias_exit_modifiers(pos)
+        t1_add = bias_mods.get("t1_book_pct_add", 0)
+        actual_pct = max(1.0, self.t1_book_pct + t1_add)
 
         qty_exit = int(max(1, round(original_qty * (actual_pct / 100.0))))
         qty_exit = min(qty_exit, current_qty)  # Can't exit more than we have
@@ -1659,7 +1693,8 @@ class ExitExecutor:
             profit_booked = qty_exit * (px - pos.avg_price)
         else:
             profit_booked = qty_exit * (pos.avg_price - px)  # SHORT: profit when price goes down
-        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{original_qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{self.t2_book_pct:.0f}%-0% split]")
+        adjusted_t2 = self.t2_book_pct - bias_mods.get("t1_book_pct_add", 0)
+        logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{original_qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{adjusted_t2:.0f}%-0% split]")
 
         # Calculate new qty for capital manager
         new_qty = current_qty - int(qty_exit)
@@ -1749,17 +1784,24 @@ class ExitExecutor:
         st["_t2_processing"] = True
         pos.plan["_state"] = st
 
+        # Adjust T2 to absorb T1's bias modifier (keep T1+T2 total consistent)
+        # Base: 60+40=100 (no trail). With-trend T1=45 → T2=55. Against-trend T1=80 → T2=20.
+        bias_mods = self._get_bias_exit_modifiers(pos)
+        t1_add = bias_mods.get("t1_book_pct_add", 0)
+        adjusted_t1 = self.t1_book_pct + t1_add
+        adjusted_t2 = self.t2_book_pct - t1_add  # T2 absorbs what T1 gives up/takes
+
         # If no trail configured (T1+T2 >= 100%), exit ALL remaining at T2
         # This avoids rounding issues and matches 60-40-0 intent
-        no_trail = (self.t1_book_pct + self.t2_book_pct) >= 100.0
+        no_trail = (adjusted_t1 + adjusted_t2) >= 100.0
         if no_trail:
-            logger.info(f"exit_executor: {sym} T2_FULL exit (no trail configured: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-0%)")
+            logger.info(f"exit_executor: {sym} T2_FULL exit (no trail configured: {adjusted_t1:.0f}%-{adjusted_t2:.0f}%-0%)")
             st.pop("_t2_processing", None)
             self._exit(sym, pos, float(px), ts, "target_t2_full")
             return
 
         # Trail is configured - do partial T2 exit
-        t2_pct = self.t2_book_pct
+        t2_pct = adjusted_t2
 
         # Get or store original entry quantity (for consistent split)
         st = pos.plan.get("_state") or {}
@@ -1787,8 +1829,8 @@ class ExitExecutor:
 
         t2_pct_of_original = (qty_exit / original_entry_qty * 100) if original_entry_qty > 0 else 0
         remaining_qty = qty - qty_exit
-        trail_pct = 100.0 - self.t1_book_pct - self.t2_book_pct
-        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {self.t1_book_pct:.0f}%-{self.t2_book_pct:.0f}%-{trail_pct:.0f}%, leaving {remaining_qty} for trail]")
+        trail_pct = 100.0 - adjusted_t1 - adjusted_t2
+        logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {adjusted_t1:.0f}%-{adjusted_t2:.0f}%-{trail_pct:.0f}%, leaving {remaining_qty} for trail]")
 
         # UPDATE STATE BEFORE reduce() - so WebSocket broadcast has correct t2_profit/t2_done
         # (positions.reduce triggers _broadcast_positions which reads from pos.plan["_state"])

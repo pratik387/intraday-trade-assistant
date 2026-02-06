@@ -2005,6 +2005,7 @@ class BasePipeline(ABC):
                 "cap_size_mult": round(cap_size_mult, 2),
                 "dir_bias_mult": round(dir_bias_mult, 2),
                 "dir_bias_reason": dir_bias_reason,
+                "dir_bias_alignment": db_tracker.classify_alignment(bias) if db_tracker else "neutral",
                 "cap_segment": cap_segment,
                 "cap_sl_mult": round(cap_sl_mult, 2),
                 "min_hold_bars": gate_result.min_hold_bars,
