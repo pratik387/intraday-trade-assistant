@@ -806,6 +806,22 @@ class TradingLogger:
                 'order_id': trigger_data.get('order_id', ''),
             })
 
+        # Extract exit diagnostics (MAE/MFE, R-multiple, bars_held, time in trade)
+        diag = exit_event.get('exit', {}).get('diagnostics', {})
+        if diag:
+            analytics.update({
+                'mae': diag.get('mae'),
+                'mfe': diag.get('mfe'),
+                'mae_pct': diag.get('mae_pct'),
+                'mfe_pct': diag.get('mfe_pct'),
+                'r_multiple': diag.get('r_multiple'),
+                'bars_held': diag.get('bars_held'),
+                'time_in_trade_minutes': diag.get('time_since_entry_mins'),
+                'exit_type': diag.get('exit_type'),
+                'remaining_qty': diag.get('remaining_qty'),
+                'acceptance_status': diag.get('acceptance_status'),
+            })
+
         # Add analytics fields
         analytics['analytics'] = {
             'time_decay_factor': 1.0,

@@ -40,6 +40,7 @@ try:
         SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
         calculate_income_tax, load_nse_all, get_mis_leverage_for_symbol,
         load_mis_from_trade_reports, get_trade_mis_leverage,
+        get_financial_year, calculate_annual_tax,
     )
 except ImportError:
     from tools.report_utils import (
@@ -47,6 +48,7 @@ except ImportError:
         SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
         calculate_income_tax, load_nse_all, get_mis_leverage_for_symbol,
         load_mis_from_trade_reports, get_trade_mis_leverage,
+        get_financial_year, calculate_annual_tax,
     )
 
 EXCHANGE_RATE = EXCHANGE_RATE_NSE
@@ -324,6 +326,7 @@ def extract_order_data():
             if not session_path.is_dir():
                 continue
 
+            date = session_path.name
             analytics_file = session_path / "analytics.jsonl"
             if analytics_file.exists():
                 with open(analytics_file, encoding='utf-8') as f:
@@ -351,7 +354,9 @@ def extract_order_data():
                                 'gross_pnl': ev.get('total_trade_pnl', 0) if ev.get('is_final_exit') else 0,
                                 'net_pnl': ev.get('net_pnl', 0) if ev.get('is_final_exit') else 0,
                                 'setup': setup,
-                                'symbol': ev.get('symbol', ''),  # For MIS leverage calculation
+                                'trade_id': ev.get('trade_id', ''),  # For per-trade MIS lookup
+                                'symbol': ev.get('symbol', ''),      # For MIS leverage calculation
+                                'date': date,                        # For FY tax grouping
                                 # Pre-calculated fees from analytics (if available)
                                 'fees': fees,
                                 'has_precalc_fees': bool(fees),
@@ -468,8 +473,8 @@ def calculate_setup_charges(orders, mis_from_csv=None, nse_all=None):
     """
     Calculate charges per setup type for profitability analysis.
 
-    Now includes MIS leverage and tax for FINAL NET calculation.
-    All metrics use FINAL NET (after MIS + charges + tax) as the primary number.
+    Uses per-trade MIS leverage (applied to each trade's PnL individually,
+    both profits AND losses) and per-trade charges for FINAL NET calculation.
 
     Args:
         orders: List of order dicts from extract_order_data()
@@ -484,8 +489,10 @@ def calculate_setup_charges(orders, mis_from_csv=None, nse_all=None):
     by_setup = defaultdict(lambda: {
         'orders': [],
         'gross_pnl': 0,
+        'mis_pnl': 0,       # Per-trade MIS-adjusted PnL (summed)
         'trades': 0,
-        'symbols': []
+        'multipliers': [],   # Per-trade MIS multipliers
+        'fy_nets': {},       # FY → net after MIS & charges (for annual tax)
     })
 
     for order in orders:
@@ -494,30 +501,36 @@ def calculate_setup_charges(orders, mis_from_csv=None, nse_all=None):
         if order['is_final']:
             by_setup[setup]['gross_pnl'] += order['gross_pnl']
             by_setup[setup]['trades'] += 1
-            # Track symbol for MIS calculation
+            # Per-trade MIS
             symbol = order.get('symbol', '')
-            if symbol:
-                by_setup[setup]['symbols'].append(symbol)
+            trade_as_dict = {'trade_id': order.get('trade_id', ''), 'symbol': symbol}
+            multiplier = get_trade_mis_leverage(trade_as_dict, mis_from_csv, nse_all)
+            trade_mis_pnl = order['gross_pnl'] * multiplier
+            by_setup[setup]['mis_pnl'] += trade_mis_pnl
+            by_setup[setup]['multipliers'].append(multiplier)
+            # Per-trade charges (from pre-calculated fees if available)
+            trade_fees = order.get('fees', {})
+            trade_charges = trade_fees.get('total_fees', 0) if isinstance(trade_fees, dict) else 0
+            # Accumulate trade net into FY bucket for annual tax
+            trade_net = trade_mis_pnl - trade_charges
+            date_str = order.get('date', '')
+            fy = get_financial_year(date_str) if date_str and len(date_str) >= 10 else 'UNKNOWN'
+            fy_nets = by_setup[setup]['fy_nets']
+            fy_nets[fy] = fy_nets.get(fy, 0.0) + trade_net
 
     result = {}
     for setup, data in by_setup.items():
         charges = calculate_charges(data['orders'])
 
-        # Calculate MIS-adjusted gross PnL using nse_all.json (not stale xlsx)
-        if data['symbols']:
-            multipliers = [get_mis_leverage_for_symbol(s, nse_all) for s in data['symbols']]
-            avg_multiplier = sum(multipliers) / len(multipliers) if multipliers else 1.0
-            gross_pnl_mis = data['gross_pnl'] * avg_multiplier
-        else:
-            avg_multiplier = 1.0
-            gross_pnl_mis = data['gross_pnl']
+        gross_pnl_mis = data['mis_pnl']
+        avg_multiplier = (sum(data['multipliers']) / len(data['multipliers'])
+                          if data['multipliers'] else 1.0)
 
-        # Net after charges (MIS-adjusted)
-        net_after_charges = gross_pnl_mis - charges['total_charges']
-
-        # Apply tax
-        tax_result = calculate_income_tax(net_after_charges)
-        final_net = tax_result['net_after_tax']
+        # Annual tax with loss carry-forward (Section 73)
+        tax_result = calculate_annual_tax(data['fy_nets'])
+        total_tax = tax_result['total_tax']
+        net_before_tax = gross_pnl_mis - charges['total_charges']
+        final_net = net_before_tax - total_tax
 
         result[setup] = {
             'trades': data['trades'],
@@ -525,15 +538,11 @@ def calculate_setup_charges(orders, mis_from_csv=None, nse_all=None):
             'gross_pnl_mis': gross_pnl_mis,
             'mis_multiplier': avg_multiplier,
             'charges': charges['total_charges'],
-            'net_after_charges': net_after_charges,
-            'tax': tax_result['total_tax'],
-            'final_net': final_net,  # PRIMARY METRIC: after MIS + charges + tax
+            'tax': total_tax,
+            'final_net': final_net,  # PRIMARY: per-trade MIS+charges, annual tax
             'avg_gross': data['gross_pnl'] / data['trades'] if data['trades'] > 0 else 0,
             'avg_final_net': final_net / data['trades'] if data['trades'] > 0 else 0,
             'profitable': final_net > 0,
-            # Keep old fields for backward compatibility
-            'net_pnl': net_after_charges,
-            'avg_net': net_after_charges / data['trades'] if data['trades'] > 0 else 0,
         }
 
     return dict(sorted(result.items(), key=lambda x: x[1]['final_net'], reverse=True))
@@ -741,6 +750,7 @@ def simulate_capital_constraint(trades, capital_limit, mis_from_csv=None, nse_al
     pnl_taken = 0
     pnl_skipped = 0
     fees_taken = 0
+    fy_nets = {}  # FY → net after MIS & charges (for annual tax)
 
     for date, day_trades in by_date.items():
         day_trades.sort(key=lambda x: x["entry_time"])
@@ -749,33 +759,41 @@ def simulate_capital_constraint(trades, capital_limit, mis_from_csv=None, nse_al
             active = [(et, n) for et, n in active if et > t["entry_time"]]
             current = sum(n for _, n in active)
 
-            # Calculate MIS-adjusted PnL using per-trade CSV data or nse_all.json
+            # Per-trade MIS
             multiplier = get_trade_mis_leverage(t, mis_from_csv, nse_all)
             mis_pnl = t["pnl"] * multiplier
 
             if current + t["notional"] <= capital_limit:
                 active.append((t["exit_time"], t["notional"]))
                 pnl_taken += mis_pnl
-                fees_taken += t.get("fees", 0)  # Use actual fees from trade
+                trade_fees = t.get("fees", 0)
+                if isinstance(trade_fees, (int, float)):
+                    fees_taken += trade_fees
+                else:
+                    trade_fees = 0
+                # Accumulate trade net into FY bucket
+                trade_net = mis_pnl - trade_fees
+                date_str = t.get("date", "")
+                fy = get_financial_year(date_str) if date_str and len(date_str) >= 10 else 'UNKNOWN'
+                fy_nets[fy] = fy_nets.get(fy, 0.0) + trade_net
                 trades_taken += 1
             else:
                 pnl_skipped += mis_pnl
                 trades_skipped += 1
 
-    # Net after fees (using actual fees from trades taken)
-    net_after_fees = pnl_taken - fees_taken
-
-    # Calculate tax on profit
-    tax_result = calculate_income_tax(net_after_fees)
-    net_pnl = tax_result['net_after_tax']
+    # Annual tax with loss carry-forward
+    tax_result = calculate_annual_tax(fy_nets)
+    tax_taken = tax_result['total_tax']
+    net_before_tax = pnl_taken - fees_taken
+    final_net_taken = net_before_tax - tax_taken
 
     return {
         "trades_taken": trades_taken,
         "trades_skipped": trades_skipped,
         "gross_pnl_mis": pnl_taken,
         "fees": fees_taken,
-        "tax": tax_result['total_tax'],
-        "net_pnl": net_pnl,
+        "tax": tax_taken,
+        "net_pnl": final_net_taken,
         "capture_rate": trades_taken / (trades_taken + trades_skipped) * 100 if (trades_taken + trades_skipped) > 0 else 0,
     }
 
@@ -911,18 +929,27 @@ def generate_executive_summary(data, output_path):
     gross_pnl = perf['total_pnl']
     gross_mis = mis.get('gross_pnl_mis', gross_pnl)
     total_charges = chg['total_charges']
-    net_before_tax = mis.get('net_after_fees_mis', gross_pnl - total_charges)
     total_tax = tax.get('total_tax', 0)
 
     lines.append(f"  Gross P&L (NRML 1x):         Rs {gross_pnl:>15,.0f}")
     if mis.get('has_mis_data'):
-        lines.append(f"  × MIS Leverage ({mis.get('avg_multiplier', 1.0):.2f}x):      Rs {gross_mis:>15,.0f}")
-    lines.append(f"  − Trading Charges:           Rs {total_charges:>15,.0f}")
-    lines.append(f"  ────────────────────────────────────────────────────────")
-    lines.append(f"  Net P&L (before tax):        Rs {net_before_tax:>15,.0f}")
-    lines.append(f"  − Income Tax (31.2%):        Rs {total_tax:>15,.0f}")
+        lines.append(f"  MIS PnL (per-trade ×lev):    Rs {gross_mis:>15,.0f}")
+    lines.append(f"  − Trading Charges (per-trade):Rs {total_charges:>15,.0f}")
+    lines.append(f"  − Income Tax (annual/FY):    Rs {total_tax:>15,.0f}")
     lines.append(f"  ════════════════════════════════════════════════════════")
     lines.append(f"  FINAL NET P&L:               Rs {final_net:>15,.0f}")
+    lines.append(f"  (MIS & charges per-trade; tax on net annual FY income)")
+    # Show per-FY tax breakdown if available
+    per_fy = tax.get('per_fy', [])
+    if per_fy:
+        lines.append("")
+        lines.append("  Tax by Financial Year (Section 73 — loss carry-forward):")
+        for fy_info in per_fy:
+            loss_note = f"  (offset: {fy_info['loss_offset']:,.0f})" if fy_info['loss_offset'] > 0 else ""
+            lines.append(f"    {fy_info['fy']}: net Rs {fy_info['gross_net']:>12,.0f}  →  taxable Rs {fy_info['taxable']:>12,.0f}  →  tax Rs {fy_info['tax']:>10,.0f}{loss_note}")
+        loss_cf = tax.get('loss_carried_forward', 0)
+        if loss_cf > 0:
+            lines.append(f"    Unexpired loss carry-forward: Rs {loss_cf:,.0f}")
     lines.append("")
 
     lines.append("-" * 80)
@@ -1296,28 +1323,48 @@ def main():
     print(f"      Total charges: Rs {charges['total_charges']:,.0f}")
     print(f"      Net P&L after charges (NRML): Rs {net_after_fees:,.0f}")
 
-    # Calculate MIS-adjusted PnL using fallback chain:
-    # 1. Per-trade MIS from trade_report.csv
-    # 2. Symbol lookup from nse_all.json
-    # 3. Default 1.0
+    # Per-trade MIS & charges, annual tax (Section 73: net per FY, loss carry-forward)
     multipliers = []
     mis_pnl_total = 0
+    fy_nets = {}  # FY → net after MIS & charges
     for trade in trades:
+        # 1. Per-trade MIS
         multiplier = get_trade_mis_leverage(trade, mis_from_csv, nse_all)
         multipliers.append(multiplier)
-        mis_pnl_total += trade.get('pnl', 0) * multiplier
+        trade_mis_pnl = trade.get('pnl', 0) * multiplier
+        mis_pnl_total += trade_mis_pnl
+        # 2. Per-trade charges (from pre-calculated fees in analytics)
+        trade_fees = trade.get('fees', 0)
+        if isinstance(trade_fees, (int, float)):
+            trade_charges = trade_fees
+        else:
+            trade_charges = 0
+        # 3. Accumulate trade net into FY bucket for annual tax
+        trade_net = trade_mis_pnl - trade_charges
+        date_str = trade.get('date', '')
+        fy = get_financial_year(date_str) if date_str and len(date_str) >= 10 else 'UNKNOWN'
+        fy_nets[fy] = fy_nets.get(fy, 0.0) + trade_net
     avg_multiplier = sum(multipliers) / len(multipliers) if multipliers else 1.0
-    mis_net_after_fees = mis_pnl_total - charges['total_charges']
     mis_source = "trade_report.csv" if mis_from_csv else ("nse_all.json" if nse_all else "none (1x)")
+    # Annual tax with loss carry-forward (Section 73)
+    tax_result_annual = calculate_annual_tax(fy_nets)
+    total_tax = tax_result_annual['total_tax']
+    net_before_tax = mis_pnl_total - charges['total_charges']
+    final_net_total = net_before_tax - total_tax
     print(f"      MIS source: {mis_source}")
     print(f"      Avg MIS multiplier: {avg_multiplier:.2f}x")
     print(f"      Gross PnL with MIS: Rs {mis_pnl_total:,.0f}")
-    print(f"      Net PnL with MIS (after fees): Rs {mis_net_after_fees:,.0f}")
-
-    # Calculate income tax on profit after fees (using MIS-adjusted)
-    tax_result = calculate_income_tax(mis_net_after_fees)
-    print(f"      Income tax (30% + 4% cess): Rs {tax_result['total_tax']:,.0f}")
-    print(f"      Final Net PnL after tax: Rs {tax_result['net_after_tax']:,.0f}")
+    print(f"      Tax (annual per FY): Rs {total_tax:,.0f}")
+    for fy_info in tax_result_annual['per_fy']:
+        print(f"        {fy_info['fy']}: net={fy_info['gross_net']:>12,.0f}  loss_offset={fy_info['loss_offset']:>10,.0f}  taxable={fy_info['taxable']:>12,.0f}  tax={fy_info['tax']:>10,.0f}")
+    print(f"      Final Net PnL: Rs {final_net_total:,.0f}")
+    # Build tax_result dict for downstream use
+    tax_result = {
+        'total_tax': total_tax,
+        'net_after_tax': final_net_total,
+        'per_fy': tax_result_annual['per_fy'],
+        'loss_carried_forward': tax_result_annual['total_loss_carried_forward'],
+    }
 
     print("[6/8] Analyzing setup and regime performance...")
     setups = calculate_setup_performance(trades)
@@ -1358,7 +1405,6 @@ def main():
             "avg_multiplier": round(avg_multiplier, 2),
             "gross_pnl_nrml": performance['total_pnl'],
             "gross_pnl_mis": mis_pnl_total,
-            "net_after_fees_mis": mis_net_after_fees,
             "has_mis_data": bool(mis_from_csv) or bool(nse_all),
             "mis_source": mis_source,
         },

@@ -284,17 +284,26 @@ class ExitExecutor:
                 else:
                     current_excursion = entry_price - px
 
-                # Update MAE (worst drawdown)
+                # Update MAE (worst drawdown) — always initialize to 0.0
                 current_mae = st.get('mae', 0.0)
                 if current_excursion < current_mae:
                     st['mae'] = current_excursion
-                    pos.plan['_state'] = st
+                elif 'mae' not in st:
+                    st['mae'] = 0.0
 
-                # Update MFE (best profit)
+                # Update MFE (best profit) — always initialize to 0.0
                 current_mfe = st.get('mfe', 0.0)
                 if current_excursion > current_mfe:
                     st['mfe'] = current_excursion
-                    pos.plan['_state'] = st
+                elif 'mfe' not in st:
+                    st['mfe'] = 0.0
+
+                # Track bars held (only increment on new bar timestamp)
+                bar_ts_key = str(ts)
+                if st.get('_last_bar_ts') != bar_ts_key:
+                    st['bars_held'] = st.get('bars_held', 0) + 1
+                    st['_last_bar_ts'] = bar_ts_key
+                pos.plan['_state'] = st
 
                 # 0) EOD square-off by tick timestamp
                 if self.eod_md is not None and _minute_of_day(ts) >= self.eod_md:
@@ -1156,7 +1165,7 @@ class ExitExecutor:
                         exit_result = False
 
                     if exit_result:
-                        trade_logger.info(f"OR_KILL_PARTIAL | {symbol} | {pos.side} {partial_qty} @ {px:.2f} | remaining: {pos.qty - partial_qty}")
+                        logger.info(f"OR_KILL_PARTIAL | {symbol} | {pos.side} {partial_qty} @ {px:.2f} | remaining: {pos.qty - partial_qty}")
                         self.positions.reduce(symbol, partial_qty)  # Update position quantity
                         # Update persistence with new qty (crash recovery)
                         if self.persistence:
@@ -1390,10 +1399,16 @@ class ExitExecutor:
                 if risk_per_unit > 0:
                     r_multiple = pnl / (qty_exit * risk_per_unit)
 
-            # Get MAE/MFE from state if tracked
+            # Get MAE/MFE and bars_held from state if tracked
+            # Default to 0.0 (not None) — trade may exit via tick before run_once tracks bars
             state = pos.plan.get('_state', {})
-            mae = state.get('mae')
-            mfe = state.get('mfe')
+            mae = state.get('mae', 0.0)
+            mfe = state.get('mfe', 0.0)
+            bars_held = state.get('bars_held', 0)
+
+            # Compute MAE/MFE as % of entry price (for cross-stock comparison)
+            mae_pct = round(mae / entry_price * 100, 4) if mae is not None and entry_price > 0 else None
+            mfe_pct = round(mfe / entry_price * 100, 4) if mfe is not None and entry_price > 0 else None
 
             # Calculate time in trade
             entry_ts = pos.plan.get('entry_ts')
@@ -1426,10 +1441,13 @@ class ExitExecutor:
                     'r_multiple': round(r_multiple, 2) if r_multiple is not None else None,
                     'mae': round(mae, 2) if mae is not None else None,
                     'mfe': round(mfe, 2) if mfe is not None else None,
+                    'mae_pct': mae_pct,
+                    'mfe_pct': mfe_pct,
+                    'bars_held': bars_held,
                     'time_since_entry_mins': round(time_since_entry_mins, 1) if time_since_entry_mins is not None else None,
                     'regime': pos.plan.get('regime'),
                     'setup_type': pos.plan.get('setup_type'),
-                    'acceptance_status': pos.plan.get('quality', {}).get('acceptance_status')
+                    'acceptance_status': pos.plan.get('quality', {}).get('status')
                 }
             }
             self.trading_logger.log_exit(exit_data)
@@ -1500,9 +1518,10 @@ class ExitExecutor:
                 r_multiple = pnl / (qty_now * risk_per_unit)
 
         # Get MAE/MFE from state if tracked
+        # Default to 0.0 (not None) — trade may exit via tick before run_once tracks bars
         state = pos.plan.get('_state', {})
-        mae = state.get('mae')
-        mfe = state.get('mfe')
+        mae = state.get('mae', 0.0)
+        mfe = state.get('mfe', 0.0)
 
         # Calculate time in trade
         entry_ts = pos.plan.get('entry_ts')

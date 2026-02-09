@@ -1161,6 +1161,13 @@ class ScreenerLive:
                     "orl": (plan.get("levels") or {}).get("ORL"),
                     "decision_ts": plan["decision_ts"],
                     "strategy": plan.get("strategy", ""),
+                    "setup_type": plan.get("strategy", ""),  # Alias: exit_executor reads setup_type
+                    "regime": plan.get("regime", ""),
+                    "quality": plan.get("quality"),
+                    "levels": plan.get("levels"),
+                    "category": plan.get("category", ""),
+                    "cap_segment": plan.get("sizing", {}).get("cap_segment", ""),
+                    "mis_leverage": plan.get("sizing", {}).get("mis_leverage", 1.0),
                 },
                 "meta": plan,
             }

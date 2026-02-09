@@ -5,12 +5,13 @@ Directional Bias Tracker - Nifty Green/Red Position Size Modulation
 Tracks whether Nifty is green (above prev close) or red (below prev close)
 and returns a position size multiplier based on trade side alignment.
 
-V2: Hysteresis thresholds + category-specific multipliers.
-  - entry_threshold (0.3%): How far Nifty must move to establish bias
-  - exit_threshold (0.1%): How far Nifty must fall back to clear bias
-  - Prevents flip-flopping on sub-0.3% oscillations
-  - Category overrides: breakout/momentum get aggressive treatment,
-    reversion barely affected (mean reversion trades are the point)
+V4: Data-optimized (boost-only, no blocking).
+  - entry_threshold (0.2%): How far Nifty must move to establish bias
+  - exit_threshold (0.07%): How far Nifty must fall back to clear bias
+  - Against-trend trades are net profitable (+Rs.197 avg) — NOT reduced
+  - Edge is in boosting with-trend trades 1.2x
+  - strong_trend_pct disabled (99.0) — hard blocking tested negative
+  - Grid search over 2,144 trades found this maximizes PnL (+5.8%)
 
 Evidence (3-year backtest, 3,493 trades):
   - WITH trend:    63.9% WR, Rs 656 avg PnL
@@ -60,6 +61,8 @@ class DirectionalBiasTracker:
         self.against_mult: float = db_cfg["against_trend_mult"]
         self.chop_max_flips: int = db_cfg["chop_max_flips"]
         self._category_overrides: dict = db_cfg.get("category_overrides", {})
+        self.strong_trend_pct: float = db_cfg["strong_trend_pct"]
+        self.hard_block_mult: float = db_cfg["hard_block_mult"]
 
         self.prev_close: Optional[float] = None
         self.current_price: Optional[float] = None
@@ -76,6 +79,7 @@ class DirectionalBiasTracker:
                 f"DIR_BIAS | Initialized: entry_threshold={self.entry_threshold_pct}%, "
                 f"exit_threshold={self.exit_threshold_pct}%, "
                 f"with={self.with_mult}x, against={self.against_mult}x, "
+                f"strong_trend={self.strong_trend_pct}%, hard_block={self.hard_block_mult}x, "
                 f"chop_flips={self.chop_max_flips}, "
                 f"category_overrides={list(self._category_overrides.keys())}"
             )
@@ -274,9 +278,11 @@ class DirectionalBiasTracker:
             override = self._category_overrides[cat_upper]
             w_mult = override["with_trend_mult"]
             a_mult = override["against_trend_mult"]
+            hb_mult = override.get("hard_block_mult", self.hard_block_mult)
         else:
             w_mult = self.with_mult
             a_mult = self.against_mult
+            hb_mult = self.hard_block_mult
 
         side_upper = side.upper()
         is_with = (
@@ -288,7 +294,12 @@ class DirectionalBiasTracker:
         if is_with:
             mult, reason = w_mult, f"dir_bias:with_{self.direction}{cat_tag}"
         else:
-            mult, reason = a_mult, f"dir_bias:against_{self.direction}{cat_tag}"
+            # Strong trend: apply hard block multiplier instead of regular against
+            if abs(self._change_pct) >= self.strong_trend_pct:
+                mult = hb_mult
+                reason = f"dir_bias:HARD_BLOCK_{self.direction}{cat_tag}({self._change_pct:+.2f}%)"
+            else:
+                mult, reason = a_mult, f"dir_bias:against_{self.direction}{cat_tag}"
 
         logger.info(
             f"DIR_BIAS | APPLIED {mult}x ({reason}) for {side_upper} | "
