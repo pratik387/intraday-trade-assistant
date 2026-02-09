@@ -49,8 +49,8 @@
     }
   },
   "liquidity_gates": {
-    "_comment": "Market Cap Segmentation - Priority 1: Liquidity Filters (evidence-based thresholds)",
-    "enabled": true,
+    "_comment": "Market Cap Segmentation - Priority 1: Liquidity Filters (evidence-based thresholds). NOTE: Was silently broken until 2026-02-03 (symbol format bug). Disable until thresholds are re-evaluated against baseline.",
+    "enabled": false,
     "exclude_micro_caps": false,
     "_rationale_micro_caps": "ENABLED per 3-month baseline analysis: micro-caps generated 84% of profits (Rs.5,550 out of Rs.6,617). failure_fade strategy excels in volatile, illiquid names.",
     "large_cap": {
@@ -1801,9 +1801,9 @@
   "trail_to": "atr",
   "_comment_trail": "REVERT: Trail disabled (T3=0) - trail was losing money in exit-opt-003. Full exit at T2.",
   "exit_t1_book_pct": 60.0,
-  "_comment_t1": "FALLBACK ONLY - Pipeline configs should override via trade plan. OLD config was 60-40.",
+  "_comment_t1": "Reverted to 60-40. 80-20 lost Rs.28K in 3yr backtest cross-reference (hurt range_bounce/resistance_bounce).",
   "exit_t2_book_pct": 40.0,
-  "_comment_t2": "FALLBACK ONLY - Pipeline configs should override via trade plan. OLD config was 60-40.",
+  "_comment_t2": "60-40 split allows T2 runners to capture more profit on winning trades.",
   "exit_t1_move_sl_to_be": true,
   "exit_be_buffer_pct": 0.1,
   "_comment_be_buffer": "Buffer above/below breakeven for SL after T1 (0.1% = 10 bps)",
@@ -2444,5 +2444,41 @@
   "_comment_paper_mirror": "=== PAPER TRADE LIVE FILL MIRRORING ===",
   "paper_mirror_live_fills": true,
   "paper_mirror_time_window_sec": 60,
-  "paper_mirror_orders_cache_ttl_sec": 5
+  "paper_mirror_orders_cache_ttl_sec": 5,
+  "_comment_directional_bias": "=== DIRECTIONAL BIAS (Nifty Green/Red Size Modulation) ===",
+  "directional_bias": {
+    "enabled": true,
+    "index_symbol": "NSE:NIFTY 50",
+    "entry_threshold_pct": 0.2,
+    "exit_threshold_pct": 0.07,
+    "strong_trend_pct": 99.0,
+    "with_trend_mult": 1.2,
+    "against_trend_mult": 1.0,
+    "hard_block_mult": 0.0,
+    "chop_max_flips": 4,
+    "category_overrides": {
+      "BREAKOUT":  {"with_trend_mult": 1.2, "against_trend_mult": 1.0, "hard_block_mult": 0.0},
+      "MOMENTUM":  {"with_trend_mult": 1.2, "against_trend_mult": 1.0, "hard_block_mult": 0.0},
+      "REVERSION": {"with_trend_mult": 1.2, "against_trend_mult": 1.0, "hard_block_mult": 0.0},
+      "LEVEL":     {"with_trend_mult": 1.2, "against_trend_mult": 1.0, "hard_block_mult": 0.0}
+    },
+    "exit_modifiers": {
+      "against_trend": {
+        "trail_atr_mult": 1.0,
+        "t1_book_pct_add": 0,
+        "time_stop_mult": 1.0
+      },
+      "with_trend": {
+        "trail_atr_mult": 1.0,
+        "t1_book_pct_add": 0,
+        "time_stop_mult": 1.0
+      }
+    },
+    "_comment": "V4: Data-optimized. 3yr grid search shows against-trend trades are net profitable (avg +Rs.197). Edge is in BOOSTING with-trend 1.2x, NOT blocking against. Exit modifiers neutralized (T1 split and trail changes tested negative). entry_threshold 0.2% for earlier direction detection."
+  },
+  "_comment_backtest_mis": "=== BACKTEST MIS FILTERING (Reject non-MIS stocks in backtest to match live) ===",
+  "backtest_mis_filtering": {
+    "enabled": true,
+    "_comment": "Filter non-MIS stocks in backtest using nse_all.json mis_enabled field. Large/mid cap MIS is 98.9% stable over 3 years. No capital restrictions applied — backtest tests signals/filters, not capital management."
+  }
 }

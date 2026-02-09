@@ -38,6 +38,74 @@ from datetime import datetime
 from pathlib import Path
 
 
+def get_next_retry_number(base_run_id, project_root):
+    """
+    Find the next retry number for a given base run ID.
+
+    Mirrors OCIBacktestSubmitter._get_next_retry_number logic.
+
+    Args:
+        base_run_id: The original run ID (without -retry suffix)
+        project_root: Project root path
+
+    Returns:
+        Next retry number (1 if no retries exist)
+    """
+    cloud_results = project_root / 'cloud_results'
+    if not cloud_results.exists():
+        return 1
+
+    existing_retries = []
+    for d in cloud_results.iterdir():
+        if d.is_dir() and d.name.startswith(base_run_id):
+            if '-retry' in d.name:
+                try:
+                    retry_part = d.name.split('-retry')[-1]
+                    retry_num = int(retry_part)
+                    existing_retries.append(retry_num)
+                except ValueError:
+                    pass
+
+    if not existing_retries:
+        return 1
+
+    return max(existing_retries) + 1
+
+
+def submit_retry_job(failed_dates_file, project_root):
+    """
+    Submit a retry job for failed dates using submit_oci_backtest.py --no-wait.
+
+    Nodes are assumed to be already running (we haven't scaled down yet).
+
+    Args:
+        failed_dates_file: Path to failed_dates.json
+        project_root: Project root path
+
+    Returns:
+        True if submission succeeded, False otherwise
+    """
+    print()
+    print("=" * 80)
+    print("AUTO-RETRY: Re-running failed dates")
+    print("=" * 80)
+    print()
+
+    submit_script = project_root / 'oci' / 'tools' / 'submit_oci_backtest.py'
+    cmd = [sys.executable, str(submit_script),
+           '--failed-dates', str(failed_dates_file),
+           '--no-wait']
+
+    result = subprocess.run(cmd)
+
+    if result.returncode != 0:
+        print()
+        print("❌ Auto-retry submission failed")
+        return False
+
+    return True
+
+
 def get_failed_dates_from_pods(run_id, dates_list):
     """
     Get the list of dates that failed by mapping failed pod indices to dates.
@@ -500,6 +568,8 @@ Examples:
                         help='Run cleanup even if job has failures (default: True)')
     parser.add_argument('--skip-download-on-failure', action='store_true',
                         help='Skip downloading results if job has failures (still scales down nodes)')
+    parser.add_argument('--no-auto-retry', action='store_true',
+                        help='Disable automatic retry of failed dates (default: auto-retries once)')
     parser.add_argument('--local', action='store_true',
                         help='Local workflow: download all (original + retries), process, generate report (no zip)')
 
@@ -548,7 +618,55 @@ Examples:
     # Check if job has failures
     has_failures = result.get('failed', 0) > 0
 
-    # If job has failures OR didn't complete properly, only scale down nodes
+    # If job has failures, attempt auto-retry once before giving up
+    if has_failures and result.get('completed') and not args.no_auto_retry:
+        failed_dates_file = project_root / 'cloud_results' / base_run_id / 'failed_dates.json'
+
+        # Compute retry run ID before submitting (must match what submit script generates)
+        retry_num = get_next_retry_number(base_run_id, project_root)
+        retry_run_id = f"{base_run_id}-retry{retry_num}"
+
+        print()
+        print(f"⚠️  {result.get('failed', 0)} dates failed — auto-retrying once before scaling down...")
+        print(f"   Retry run ID: {retry_run_id}")
+
+        retry_submitted = submit_retry_job(failed_dates_file, project_root)
+
+        if retry_submitted:
+            # Monitor the retry job
+            print()
+            retry_result = monitor_job(retry_run_id)
+
+            # Save retry failed dates if any
+            if retry_result.get('failed_dates'):
+                retry_failed_file = save_failed_dates(retry_run_id, retry_result['failed_dates'], project_root)
+                if retry_failed_file:
+                    print(f"📝 Retry failed dates saved to: {retry_failed_file}")
+                # Also update base run's failed_dates.json so manual suggestions point to remaining failures
+                save_failed_dates(base_run_id, retry_result['failed_dates'], project_root)
+
+            retry_has_failures = retry_result.get('failed', 0) > 0
+
+            if not retry_has_failures and retry_result.get('completed'):
+                # Retry fixed everything — run full cleanup (downloads original + retry)
+                print()
+                print("✅ Auto-retry succeeded — all failed dates recovered!")
+                run_cleanup(args.run_id, args)
+
+                print()
+                print("=" * 80)
+                print("ALL DONE!")
+                print("=" * 80)
+                print()
+                sys.exit(0)
+            else:
+                # Retry still has failures — update result for the scale-down path below
+                print()
+                print(f"⚠️  Auto-retry still has {retry_result.get('failed', 0)} missing dates")
+                result = retry_result
+                has_failures = True
+
+    # If job has failures OR didn't complete properly, scale down nodes
     if has_failures or not result.get('completed'):
         print()
         if has_failures:

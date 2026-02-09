@@ -33,134 +33,45 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ============================================================================
-# ZERODHA INTRADAY EQUITY CHARGES
+# SHARED REPORTING UTILITIES (single source of truth)
+# Fee constants, charge calculations, tax, and MIS leverage from report_utils.py
 # ============================================================================
-BROKERAGE_PER_ORDER = 20  # Rs 20 per executed order (flat)
-STT_RATE = 0.00025  # 0.025% on SELL side only
-EXCHANGE_RATE = 0.0000345  # NSE charges ~0.00345%
-SEBI_RATE = 0.000001  # 0.0001%
-STAMP_DUTY_RATE = 0.00003  # 0.003% on BUY side
-GST_RATE = 0.18  # 18% on brokerage + exchange charges
-
-# ============================================================================
-# INCOME TAX ON SPECULATIVE BUSINESS INCOME
-# ============================================================================
-TAX_RATE = 0.30  # 30% (highest slab for speculative income)
-CESS_RATE = 0.04  # 4% health and education cess on tax
-
-# ============================================================================
-# MIS LEVERAGE (Zerodha Margin Intraday Square-off)
-# ============================================================================
-NRML_MARGIN_PCT = 0.50  # NRML margin is typically 50% for most stocks
-DEFAULT_MIS_MULTIPLIER = 2.0  # Default 2x leverage if MIS data unavailable
-
+try:
+    from report_utils import (
+        BROKERAGE_RATE, BROKERAGE_CAP, STT_RATE, EXCHANGE_RATE_NSE,
+        SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
+        calculate_order_charges, calculate_income_tax,
+        calculate_single_trade_charges, calculate_per_trade_final_pnl,
+        get_financial_year, calculate_annual_tax,
+        load_nse_all, get_mis_leverage_for_symbol,
+        load_mis_from_trade_reports, get_trade_mis_leverage,
+    )
+except ImportError:
+    from tools.report_utils import (
+        BROKERAGE_RATE, BROKERAGE_CAP, STT_RATE, EXCHANGE_RATE_NSE,
+        SEBI_RATE, IPFT_RATE, STAMP_DUTY_RATE, GST_RATE,
+        calculate_order_charges, calculate_income_tax,
+        calculate_single_trade_charges, calculate_per_trade_final_pnl,
+        get_financial_year, calculate_annual_tax,
+        load_nse_all, get_mis_leverage_for_symbol,
+        load_mis_from_trade_reports, get_trade_mis_leverage,
+    )
 
 def estimate_trade_charges(entry_price, exit_price, qty):
     """
     Estimate Zerodha intraday charges for a single trade.
-
-    Args:
-        entry_price: Entry price per share
-        exit_price: Exit price per share
-        qty: Number of shares
-
-    Returns:
-        Dict with charge breakdown
+    Uses per-order brokerage cap from calculate_single_trade_charges().
     """
-    entry_turnover = entry_price * qty
-    exit_turnover = exit_price * qty
-    total_turnover = entry_turnover + exit_turnover
-
-    # 2 orders per trade (entry + exit)
-    brokerage = BROKERAGE_PER_ORDER * 2
-
-    # STT on sell side only
-    stt = exit_turnover * STT_RATE
-
-    # Exchange + SEBI on exit
-    exchange = exit_turnover * EXCHANGE_RATE
-    sebi = exit_turnover * SEBI_RATE
-
-    # Stamp duty on buy side
-    stamp_duty = entry_turnover * STAMP_DUTY_RATE
-
-    # GST on brokerage + exchange
-    gst = (brokerage + exchange) * GST_RATE
-
-    total_charges = brokerage + stt + exchange + gst + stamp_duty + sebi
-
-    return {
-        'brokerage': brokerage,
-        'stt': stt,
-        'exchange': exchange,
-        'gst': gst,
-        'stamp_duty': stamp_duty,
-        'sebi': sebi,
-        'total_charges': total_charges,
-        'turnover': total_turnover
-    }
+    result = calculate_single_trade_charges(entry_price, exit_price, qty)
+    buy_turnover = entry_price * qty
+    sell_turnover = exit_price * qty
+    result['turnover'] = round(buy_turnover + sell_turnover, 2)
+    return result
 
 
-def calculate_income_tax(profit_after_fees):
-    """
-    Calculate income tax on trading profits.
-
-    For intraday trading, profits are classified as "Speculative Business Income"
-    and taxed at individual's applicable slab rate.
-    Uses highest slab (30%) for conservative estimate.
-    """
-    if profit_after_fees <= 0:
-        return {
-            'taxable_income': 0,
-            'base_tax': 0,
-            'cess': 0,
-            'total_tax': 0,
-            'net_after_tax': profit_after_fees
-        }
-
-    base_tax = profit_after_fees * TAX_RATE
-    cess = base_tax * CESS_RATE
-    total_tax = base_tax + cess
-
-    return {
-        'taxable_income': round(profit_after_fees, 2),
-        'base_tax': round(base_tax, 2),
-        'cess': round(cess, 2),
-        'total_tax': round(total_tax, 2),
-        'net_after_tax': round(profit_after_fees - total_tax, 2)
-    }
-
-
-def calculate_final_net_pnl(gross_pnl, total_charges, mis_multiplier=DEFAULT_MIS_MULTIPLIER):
-    """
-    Calculate FINAL NET P&L including MIS leverage, charges, and tax.
-
-    Formula:
-    1. Apply MIS leverage to gross PnL
-    2. Subtract trading charges
-    3. Apply income tax on profit
-
-    Returns:
-        Dict with full breakdown
-    """
-    # Step 1: Apply MIS leverage
-    gross_pnl_mis = gross_pnl * mis_multiplier
-
-    # Step 2: Subtract charges
-    net_after_charges = gross_pnl_mis - total_charges
-
-    # Step 3: Apply tax
-    tax_result = calculate_income_tax(net_after_charges)
-
-    return {
-        'gross_pnl': gross_pnl,
-        'mis_multiplier': mis_multiplier,
-        'gross_pnl_mis': gross_pnl_mis,
-        'total_charges': total_charges,
-        'net_after_charges': net_after_charges,
-        'tax': tax_result['total_tax'],
-        'final_net_pnl': tax_result['net_after_tax']
-    }
+# calculate_income_tax() is now imported from report_utils (single source of truth)
+# calculate_per_trade_final_pnl() is imported from report_utils — use it for
+# correct per-trade MIS leverage and charges calculation.
 
 
 class ComprehensiveRunAnalyzer:
@@ -226,7 +137,7 @@ class ComprehensiveRunAnalyzer:
                                             'bias': trade_data.get('bias', ''),
                                             'strategy': trade_data.get('strategy', ''),
                                             'entry_reference': trade_data.get('entry_reference', 0),
-                                            'entry_price': trade_data.get('entry_price', 0),
+                                            'entry_price': trade_data.get('entry_price', trade_data.get('actual_entry_price', 0)),
                                             'qty': trade_data.get('qty', 0),
                                             'exit_price': trade_data.get('exit_price', 0),
                                             'realized_pnl': trade_data.get('pnl', 0),
@@ -312,6 +223,16 @@ class ComprehensiveRunAnalyzer:
         if all_executed_trades:
             self.combined_trades = pd.concat(all_executed_trades, ignore_index=True)
             print(f"Combined {len(self.combined_trades)} EXECUTED trades from {len(all_executed_trades)} sessions")
+            # Merge mis_leverage from trade_report.csv (planned trades have it, executed don't)
+            if all_trades and 'trade_id' in self.combined_trades.columns:
+                planned_df = pd.concat(all_trades, ignore_index=True)
+                if 'mis_leverage' in planned_df.columns and 'trade_id' in planned_df.columns:
+                    mis_map = (planned_df.dropna(subset=['trade_id', 'mis_leverage'])
+                               [['trade_id', 'mis_leverage']].drop_duplicates('trade_id'))
+                    self.combined_trades = self.combined_trades.merge(
+                        mis_map, on='trade_id', how='left')
+                    merged_count = self.combined_trades['mis_leverage'].notna().sum()
+                    print(f"Merged mis_leverage for {merged_count}/{len(self.combined_trades)} trades from trade_report.csv")
         elif all_trades:
             self.combined_trades = pd.concat(all_trades, ignore_index=True)
             print(f"Combined {len(self.combined_trades)} PLANNED trades from {len(all_trades)} sessions (no executed trades found)")
@@ -330,59 +251,76 @@ class ComprehensiveRunAnalyzer:
         return session_summary
 
     def load_ohlcv_data(self, symbol: str, date_str: str = None):
-        """Load 1-minute OHLCV data for a symbol from feather files"""
-        # Convert NSE:SYMBOL format to SYMBOL.NS format for file lookup
-        if symbol.startswith('NSE:'):
-            symbol_file = symbol.replace('NSE:', '') + '.NS'
-        else:
-            symbol_file = symbol
+        """Load 1-minute OHLCV data for a symbol from monthly consolidated feather files.
+
+        Uses backtest-cache-download/monthly/YYYY_MM_1m.feather files which contain
+        all symbols for a given month. Falls back to cache/ohlcv_archive for index data.
+        """
+        # Normalize symbol: NSE:SYMBOL → SYMBOL
+        clean_symbol = symbol.replace('NSE:', '') if symbol.startswith('NSE:') else symbol
 
         # Use cache to avoid reloading
-        cache_key = f"{symbol_file}_{date_str}"
+        cache_key = f"{clean_symbol}_{date_str}"
         if cache_key in self.ohlcv_cache:
             return self.ohlcv_cache[cache_key]
 
-        # Look for minute data files
-        symbol_dir = os.path.join(self.ohlcv_cache_dir, symbol_file)
-        if not os.path.exists(symbol_dir):
-            print(f"Warning: No OHLCV data directory found for {symbol_file}")
-            return None
+        # Strategy 1: Load from monthly consolidated feathers (primary source)
+        if date_str:
+            try:
+                dt = pd.to_datetime(date_str)
+                monthly_file = os.path.join(
+                    "backtest-cache-download", "monthly",
+                    f"{dt.year}_{dt.month:02d}_1m.feather"
+                )
+                if os.path.exists(monthly_file):
+                    # Cache the full monthly file (keyed by month) to avoid re-reading
+                    month_key = f"_monthly_{dt.year}_{dt.month:02d}"
+                    if month_key not in self.ohlcv_cache:
+                        self.ohlcv_cache[month_key] = pd.read_feather(monthly_file)
 
-        # Find minute data file - prioritize July 2025 data based on discovery
-        minute_files = glob.glob(os.path.join(symbol_dir, "*_minutes_*.feather"))
+                    month_df = self.ohlcv_cache[month_key]
+                    # Filter for this symbol (monthly files use plain symbol names)
+                    sym_df = month_df[month_df['symbol'] == clean_symbol].copy()
 
-        if not minute_files:
-            print(f"Warning: No minute data files found for {symbol_file}")
-            return None
+                    if not sym_df.empty:
+                        # Use 'ts' column (IST-naive) as index for consistency
+                        if 'ts' in sym_df.columns:
+                            sym_df.index = pd.to_datetime(sym_df['ts'])
+                        elif 'date' in sym_df.columns:
+                            sym_df.index = pd.to_datetime(sym_df['date'])
+                        sym_df.sort_index(inplace=True)
+                        self.ohlcv_cache[cache_key] = sym_df
+                        return sym_df
+            except Exception as e:
+                print(f"Warning: Error loading monthly data for {clean_symbol}: {e}")
 
-        # Try to load the first available minute file
-        try:
-            minute_file = minute_files[0]  # Use first available file
-            df = pd.read_feather(minute_file)
+        # Strategy 2: Fallback to cache/ohlcv_archive (index data like NIFTY 50)
+        symbol_ns = clean_symbol + '.NS'
+        symbol_dir = os.path.join(self.ohlcv_cache_dir, symbol_ns)
+        if os.path.exists(symbol_dir):
+            minute_files = glob.glob(os.path.join(symbol_dir, "*_minutes_*.feather"))
+            if minute_files:
+                try:
+                    df = pd.read_feather(minute_files[0])
+                    if 'date' in df.columns:
+                        df.index = pd.to_datetime(df['date'])
+                        df.drop('date', axis=1, inplace=True)
+                    elif 'datetime' in df.columns:
+                        df.index = pd.to_datetime(df['datetime'])
+                    elif df.index.name != 'datetime':
+                        df.index = pd.to_datetime(df.index)
+                    self.ohlcv_cache[cache_key] = df
+                    return df
+                except Exception as e:
+                    print(f"Error loading OHLCV archive for {symbol_ns}: {e}")
 
-            # Ensure datetime index - handle different column names
-            if 'date' in df.columns:
-                df['datetime'] = pd.to_datetime(df['date'])
-                df.set_index('datetime', inplace=True)
-                df.drop('date', axis=1, inplace=True)
-            elif 'datetime' in df.columns:
-                df['datetime'] = pd.to_datetime(df['datetime'])
-                df.set_index('datetime', inplace=True)
-            elif df.index.name != 'datetime':
-                df.index = pd.to_datetime(df.index)
-
-            # Cache the loaded data
-            self.ohlcv_cache[cache_key] = df
-
-            return df
-
-        except Exception as e:
-            print(f"Error loading OHLCV data for {symbol_file}: {e}")
-            return None
+        return None
 
     def get_market_data_at_time(self, symbol: str, timestamp: str, minutes_after: int = 60):
         """Get market data for a symbol at specific timestamp and following period"""
-        ohlcv_df = self.load_ohlcv_data(symbol)
+        # Pass date_str so load_ohlcv_data can pick the right monthly file
+        date_str = str(pd.to_datetime(timestamp).date()) if timestamp else None
+        ohlcv_df = self.load_ohlcv_data(symbol, date_str=date_str)
 
         if ohlcv_df is None or ohlcv_df.empty:
             return None
@@ -449,22 +387,53 @@ class ComprehensiveRunAnalyzer:
                     gross_pnl = pnls.sum()
                     total_trades = len(group)
 
-                    # Calculate charges for this setup
-                    setup_charges = 0
-                    if 'entry_price' in group.columns and 'exit_price' in group.columns:
-                        for _, trade in group.iterrows():
-                            entry_price = trade.get('entry_price', 0)
-                            exit_price = trade.get('exit_price', 0)
-                            qty = trade.get('qty', 1)
-                            if entry_price > 0 and exit_price > 0 and qty > 0:
-                                charges = estimate_trade_charges(entry_price, exit_price, qty)
-                                setup_charges += charges['total_charges']
-                    else:
-                        # Fallback: estimate ~Rs 140 per trade
-                        setup_charges = total_trades * 140
+                    # Per-trade MIS & charges, annual tax (Section 73)
+                    setup_mis_pnl = 0.0
+                    setup_charges = 0.0
+                    setup_multipliers = []
+                    # Collect per-trade net by FY for annual tax
+                    setup_fy_nets = {}
+                    for _, trade in group.iterrows():
+                        # 1. Per-trade MIS
+                        trade_pnl = trade.get('realized_pnl', 0) or 0
+                        mis_mult = trade.get('mis_leverage', None)
+                        if mis_mult is None or (hasattr(mis_mult, '__class__') and str(mis_mult) == 'nan'):
+                            mis_mult = 1.0
+                        else:
+                            mis_mult = float(mis_mult) if float(mis_mult) > 0 else 1.0
+                        trade_mis_pnl = trade_pnl * mis_mult
+                        setup_mis_pnl += trade_mis_pnl
+                        setup_multipliers.append(mis_mult)
 
-                    # Calculate FINAL NET P&L for this setup
-                    final_net_result = calculate_final_net_pnl(gross_pnl, setup_charges, DEFAULT_MIS_MULTIPLIER)
+                        # 2. Per-trade charges
+                        trade_charges = 0.0
+                        entry_price = trade.get('entry_price', 0)
+                        exit_price = trade.get('exit_price', 0)
+                        qty = trade.get('qty', 1)
+                        if entry_price > 0 and exit_price > 0 and qty > 0:
+                            charges = estimate_trade_charges(entry_price, exit_price, qty)
+                            trade_charges = charges['total_charges']
+                        setup_charges += trade_charges
+
+                        # 3. Accumulate trade net into FY bucket
+                        trade_net = trade_mis_pnl - trade_charges
+                        session = str(trade.get('session', ''))
+                        import re as _re
+                        date_match = _re.search(r'\d{4}-\d{2}-\d{2}', session)
+                        date_str = date_match.group() if date_match else ''
+                        if date_str:
+                            fy = get_financial_year(date_str)
+                        else:
+                            fy = 'UNKNOWN'
+                        setup_fy_nets[fy] = setup_fy_nets.get(fy, 0.0) + trade_net
+
+                    # Annual tax with loss carry-forward
+                    setup_tax_result = calculate_annual_tax(setup_fy_nets)
+                    setup_tax = setup_tax_result['total_tax']
+                    setup_net_before_tax = setup_mis_pnl - setup_charges
+                    setup_final_net = setup_net_before_tax - setup_tax
+
+                    avg_mis_mult = sum(setup_multipliers) / len(setup_multipliers) if setup_multipliers else 1.0
 
                     setup_analysis[setup] = {
                         'total_trades': total_trades,
@@ -475,13 +444,14 @@ class ComprehensiveRunAnalyzer:
                         # Gross P&L (legacy field)
                         'total_pnl': gross_pnl,
                         'avg_pnl': pnls.mean(),
-                        # FINAL NET P&L (PRIMARY METRIC)
-                        'gross_pnl_mis': final_net_result['gross_pnl_mis'],
+                        # FINAL NET P&L (all per-trade: MIS, charges, tax)
+                        'gross_pnl_mis': setup_mis_pnl,
+                        'mis_multiplier': avg_mis_mult,
                         'charges': setup_charges,
-                        'tax': final_net_result['tax'],
-                        'final_net_pnl': final_net_result['final_net_pnl'],
-                        'avg_final_net': final_net_result['final_net_pnl'] / total_trades if total_trades > 0 else 0,
-                        'profitable': final_net_result['final_net_pnl'] > 0,
+                        'tax': setup_tax,
+                        'final_net_pnl': setup_final_net,
+                        'avg_final_net': setup_final_net / total_trades if total_trades > 0 else 0,
+                        'profitable': setup_final_net > 0,
                         # Other metrics
                         'median_pnl': pnls.median(),
                         'best_trade': pnls.max(),
@@ -1929,40 +1899,73 @@ class ComprehensiveRunAnalyzer:
             gross_pnl = pnls.sum()
             total_trades = len(self.combined_trades)
 
-            # Estimate total charges from trade data
-            total_charges = 0
-            if 'entry_price' in self.combined_trades.columns and 'exit_price' in self.combined_trades.columns:
-                for _, trade in self.combined_trades.iterrows():
-                    entry_price = trade.get('entry_price', 0)
-                    exit_price = trade.get('exit_price', 0)
-                    qty = trade.get('qty', 1)
-                    if entry_price > 0 and exit_price > 0 and qty > 0:
-                        charges = estimate_trade_charges(entry_price, exit_price, qty)
-                        total_charges += charges['total_charges']
-            else:
-                # Fallback: estimate ~Rs 140 per trade (typical for NSE equity)
-                total_charges = total_trades * 140
+            # Per-trade MIS & charges, annual tax (Section 73)
+            mis_pnl_total = 0.0
+            total_charges = 0.0
+            all_multipliers = []
+            fy_nets = {}  # FY → net after MIS & charges
+            has_mis_data = 'mis_leverage' in self.combined_trades.columns
+            for _, trade in self.combined_trades.iterrows():
+                trade_pnl = trade.get('realized_pnl', 0) or 0
 
-            # Calculate FINAL NET P&L (MIS + charges + tax)
-            final_net_result = calculate_final_net_pnl(gross_pnl, total_charges, DEFAULT_MIS_MULTIPLIER)
+                # 1. Per-trade MIS leverage
+                mis_mult = trade.get('mis_leverage', None) if has_mis_data else None
+                if mis_mult is None or (hasattr(mis_mult, '__class__') and str(mis_mult) == 'nan'):
+                    mis_mult = 1.0
+                else:
+                    mis_mult = float(mis_mult) if float(mis_mult) > 0 else 1.0
+                trade_mis_pnl = trade_pnl * mis_mult
+                mis_pnl_total += trade_mis_pnl
+                all_multipliers.append(mis_mult)
+
+                # 2. Per-trade charges
+                trade_charges = 0.0
+                entry_price = trade.get('entry_price', 0)
+                exit_price = trade.get('exit_price', 0)
+                qty = trade.get('qty', 1)
+                if entry_price > 0 and exit_price > 0 and qty > 0:
+                    charges = estimate_trade_charges(entry_price, exit_price, qty)
+                    trade_charges = charges['total_charges']
+                total_charges += trade_charges
+
+                # 3. Accumulate trade net into FY bucket
+                trade_net = trade_mis_pnl - trade_charges
+                session = str(trade.get('session', ''))
+                import re as _re
+                date_match = _re.search(r'\d{4}-\d{2}-\d{2}', session)
+                date_str = date_match.group() if date_match else ''
+                if date_str:
+                    fy = get_financial_year(date_str)
+                else:
+                    fy = 'UNKNOWN'
+                fy_nets[fy] = fy_nets.get(fy, 0.0) + trade_net
+
+            avg_multiplier = sum(all_multipliers) / len(all_multipliers) if all_multipliers else 1.0
+            mis_source = 'per_trade' if has_mis_data and any(m != 1.0 for m in all_multipliers) else 'default'
+
+            # Annual tax with loss carry-forward (Section 73)
+            tax_result = calculate_annual_tax(fy_nets)
+            total_tax = tax_result['total_tax']
+            net_before_tax = mis_pnl_total - total_charges
+            final_net_total = net_before_tax - total_tax
 
             self.performance_summary = {
                 'total_trades': total_trades,
                 # GROSS P&L (before any deductions)
                 'gross_pnl': gross_pnl,
-                # MIS-adjusted values
-                'mis_multiplier': final_net_result['mis_multiplier'],
-                'gross_pnl_mis': final_net_result['gross_pnl_mis'],
-                # Charges
-                'total_charges': total_charges,
-                'avg_charges_per_trade': total_charges / total_trades if total_trades > 0 else 0,
-                # Net after charges (before tax)
-                'net_after_charges': final_net_result['net_after_charges'],
-                # Tax
-                'tax': final_net_result['tax'],
-                # FINAL NET P&L (PRIMARY METRIC - after MIS + charges + tax)
-                'final_net_pnl': final_net_result['final_net_pnl'],
-                'avg_final_net_per_trade': final_net_result['final_net_pnl'] / total_trades if total_trades > 0 else 0,
+                # MIS-adjusted values (per-trade MIS × PnL, then summed)
+                'mis_source': mis_source,
+                'mis_multiplier': round(avg_multiplier, 2),
+                'gross_pnl_mis': round(mis_pnl_total, 2),
+                # Charges (per-trade, summed)
+                'total_charges': round(total_charges, 2),
+                'avg_charges_per_trade': round(total_charges / total_trades, 2) if total_trades > 0 else 0,
+                # Tax (annual per FY, with loss carry-forward)
+                'tax': round(total_tax, 2),
+                'tax_by_fy': tax_result['per_fy'],
+                # FINAL NET P&L (per-trade MIS+charges, annual tax)
+                'final_net_pnl': round(final_net_total, 2),
+                'avg_final_net_per_trade': round(final_net_total / total_trades, 2) if total_trades > 0 else 0,
                 # Legacy field for backward compatibility
                 'total_pnl': gross_pnl,
                 # Other metrics
@@ -1992,7 +1995,8 @@ class ComprehensiveRunAnalyzer:
             print(f"Total Trades: {ps['total_trades']}")
             print(f"\n--- P&L BREAKDOWN ---")
             print(f"  Gross P&L (NRML):       Rs.{ps.get('gross_pnl', ps.get('total_pnl', 0)):>12,.2f}")
-            print(f"  MIS Leverage:           {ps.get('mis_multiplier', 2.0):>12.1f}x")
+            mis_src = "per-trade" if ps.get('mis_source') == 'per_trade' else "default"
+            print(f"  MIS Leverage ({mis_src}):{ps.get('mis_multiplier', 2.0):>8.1f}x")
             print(f"  Gross P&L (MIS):        Rs.{ps.get('gross_pnl_mis', ps.get('total_pnl', 0) * 2):>12,.2f}")
             print(f"  Less: Charges:          Rs.{ps.get('total_charges', 0):>12,.2f}")
             print(f"  Less: Tax (31.2%):      Rs.{ps.get('tax', 0):>12,.2f}")

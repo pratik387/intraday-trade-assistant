@@ -234,6 +234,56 @@ def download_monthly_cache(date_str):
         sys.exit(1)
 
 
+def download_index_ohlcv():
+    """
+    Download index OHLCV feather from OCI Object Storage.
+    Required by DirectionalBiasTracker for backtest Nifty price lookups.
+
+    Bucket path:  index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1minutes.feather
+    Local path:   /app/backtest-cache-download/index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1minutes.feather
+    """
+    log("Downloading index OHLCV for directional bias...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
+
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    object_name = "index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1minutes.feather"
+
+    try:
+        get_obj = os_client.get_object(
+            namespace_name=namespace,
+            bucket_name=bucket,
+            object_name=object_name
+        )
+
+        local_dir = Path('/app/backtest-cache-download/index_ohlcv/NSE_NIFTY_50')
+        local_dir.mkdir(parents=True, exist_ok=True)
+
+        local_file = local_dir / 'NSE_NIFTY_50_1minutes.feather'
+
+        with open(local_file, 'wb') as f:
+            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                f.write(chunk)
+
+        size_mb = local_file.stat().st_size / (1024 * 1024)
+        log(f"Downloaded index OHLCV: {size_mb:.1f} MB")
+
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            log(f"WARNING: Index OHLCV not found in OCI: {object_name}")
+            log("Directional bias will be disabled for this run")
+        else:
+            log(f"ERROR downloading index OHLCV: {e}")
+            raise
+
+    except Exception as e:
+        log(f"ERROR downloading index OHLCV: {e}")
+        raise
+
+
 def run_backtest(date_str):
     """
     Run backtest for the given date.
@@ -386,6 +436,9 @@ def main():
 
     # Download monthly cache for this specific date
     download_monthly_cache(date_str)
+
+    # Download index OHLCV for directional bias
+    download_index_ohlcv()
 
     # Run backtest
     result = run_backtest(date_str)

@@ -180,6 +180,7 @@ class OCIBacktestSubmitter:
             'pipelines/**/*.py',
             'pipelines/**/*.json',
             'api/**/*.py',
+            'market_data/**/*.py',
             'assets/**/*.json',
             'nse_all.json',
             'requirements.txt',
