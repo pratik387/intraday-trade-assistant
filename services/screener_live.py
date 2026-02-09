@@ -828,6 +828,12 @@ class ScreenerLive:
                 else:
                     # Enough bars to compute levels normally
                     lvl = self._levels_for(sym, df5, now)
+                    # MDS_DIAG: Log when levels are computed locally (not from cache/Redis)
+                    if self._market_data_mode == "subscriber":
+                        logger.warning(
+                            f"MDS_DIAG_LEVELS | LOCAL_COMPUTE | {sym} | "
+                            f"levels_by_symbol=None, computing locally (MDS may not have published yet)"
+                        )
 
             # Phase 2: Fetch daily data (210 days for EMA200, uses cache)
             daily_df = self.sdk.get_daily(sym, days=210)
@@ -1142,7 +1148,6 @@ class ScreenerLive:
             # MDS DIAGNOSTIC: Log levels at entry decision for verification
             lvls = plan.get("levels") or {}
             logger.info(f"MDS_DIAG_ENTRY | {sym} | ORH={lvls.get('ORH'):.2f} ORL={lvls.get('ORL'):.2f} PDH={lvls.get('PDH'):.2f} PDL={lvls.get('PDL'):.2f}" if lvls.get('ORH') else f"MDS_DIAG_ENTRY | {sym} | levels=NONE")
-
             exec_item = {
                 "symbol": plan["symbol"],
                 "plan": {
@@ -1334,9 +1339,11 @@ class ScreenerLive:
                 )
                 return redis_levels
             # Not in Redis yet - publisher hasn't computed. Return None and wait.
-            if current_time >= dtime(9, 45):
-                # Past expected computation time but still not in Redis - log warning
-                logger.debug("ORB_CACHE | Subscriber: ORB levels not yet in Redis, waiting for publisher")
+            # MDS_DIAG: Log every miss to track timing issues between MDS publish and subscriber read
+            logger.warning(
+                f"MDS_DIAG_LEVELS | MISS | time={current_time} | "
+                f"ORB levels NOT in Redis for {session_date_str} - waiting for MDS to publish"
+            )
             return None
 
         # Only compute at or after 09:40 (ensures ORB data 09:15-09:30 is complete)

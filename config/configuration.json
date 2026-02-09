@@ -2412,7 +2412,9 @@
       "max_size_mb": 200
     },
     "mds_eod_shutdown_time": "15:32",
-    "_comment_mds_eod": "MDS builds daily bars from 1m data (9:15-15:30) and shuts down at this time (IST). 2 min buffer after market close to finalize last bar."
+    "_comment_mds_eod": "MDS builds daily bars from 1m data (9:15-15:30) and shuts down at this time (IST). 2 min buffer after market close to finalize last bar.",
+    "orb_compute_trigger_hhmm": "0935",
+    "_comment_orb_trigger": "5m bar start-timestamp that triggers ORB level computation. Bar 0935 covers [09:35-09:40) and fires at ~09:40 wall time, after opening range (0915-0930) is complete."
   },
   "_comment_execution_process": "=== EXECUTION PROCESS SEPARATION ===",
   "execution_mode": "in_process",
@@ -2436,6 +2438,9 @@
     "threshold_minutes": 30,
     "_comment": "If starting >30min after 09:15, backfill 5m bar history from Redis to pre-warm indicators"
   },
+  "_comment_reconciliation": "=== POSITION RECONCILIATION ===",
+  "reconcile_position_retries": 3,
+  "reconcile_position_retry_delay": 1.0,
   "_comment_paper_mirror": "=== PAPER TRADE LIVE FILL MIRRORING ===",
   "paper_mirror_live_fills": true,
   "paper_mirror_time_window_sec": 60,
