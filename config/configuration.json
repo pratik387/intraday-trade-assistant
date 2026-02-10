@@ -2447,7 +2447,7 @@
   "paper_mirror_orders_cache_ttl_sec": 5,
   "_comment_directional_bias": "=== DIRECTIONAL BIAS (Nifty Green/Red Size Modulation) ===",
   "directional_bias": {
-    "enabled": true,
+    "enabled": false,
     "index_symbol": "NSE:NIFTY 50",
     "entry_threshold_pct": 0.2,
     "exit_threshold_pct": 0.07,

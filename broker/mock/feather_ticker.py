@@ -118,21 +118,47 @@ class FeatherTicker:
                     # r may be a Series (single row) or DataFrame (dup minute); take first
                     if not isinstance(r, pd.Series):
                         r = r.iloc[0]
-                    price = float(r["close"]) if self._use_close else float(r.get("last_price", r["close"]))
-                    qty = int(r.get("volume", 0))
 
-                    batch.append({
-                        "instrument_token": int(tok),
-                        "last_price": price,
-                        "last_quantity": qty,
-                        "timestamp": ts,   # naive datetime
-                        "ohlc": {
-                            "open": float(r.get("open", price)),
-                            "high": float(r.get("high", price)),
-                            "low": float(r.get("low", price)),
-                            "close": price
-                        }
-                    })
+                    o = float(r.get("open", r["close"]))
+                    h = float(r.get("high", r["close"]))
+                    l = float(r.get("low", r["close"]))
+                    c = float(r["close"])
+                    total_vol = int(r.get("volume", 0))
+
+                    ohlc_dict = {"open": o, "high": h, "low": l, "close": c}
+                    tok_int = int(tok)
+
+                    # Adaptive 4-tick OHLC simulation (NautilusTrader method):
+                    # Emit O, H, L, C as 4 synthetic ticks so BarBuilder
+                    # reconstructs proper candle shapes from stored 1m bars.
+                    # Ordering: if bar is bullish (close > open), price likely
+                    # dipped first → O → L → H → C.  If bearish → O → H → L → C.
+                    if abs(h - l) < 1e-9:
+                        # Flat bar (O=H=L=C) — single tick is enough
+                        batch.append({
+                            "instrument_token": tok_int,
+                            "last_price": c,
+                            "last_quantity": total_vol,
+                            "timestamp": ts,
+                            "ohlc": ohlc_dict,
+                        })
+                    else:
+                        bullish = c >= o  # includes doji as bullish
+                        price_seq = [o, l, h, c] if bullish else [o, h, l, c]
+
+                        # Distribute volume: 25% each, remainder to close
+                        vol_quarter = total_vol // 4
+                        vol_remainder = total_vol - vol_quarter * 3
+                        vol_seq = [vol_quarter, vol_quarter, vol_quarter, vol_remainder]
+
+                        for price, vol in zip(price_seq, vol_seq):
+                            batch.append({
+                                "instrument_token": tok_int,
+                                "last_price": price,
+                                "last_quantity": vol,
+                                "timestamp": ts,
+                                "ohlc": ohlc_dict,
+                            })
 
                 if batch and callable(self._on_ticks_cb):
                     try: self._on_ticks_cb(self, batch)

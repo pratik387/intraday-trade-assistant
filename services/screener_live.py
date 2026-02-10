@@ -171,6 +171,229 @@ def _worker_process_symbol(symbol, df5_data, df1m_data, index_df5_data, levels, 
         get_agent_logger().exception(f"Worker task failed for {symbol}: {e}")
         return (symbol, None)
 
+# ---------------------------------------------------------------------
+# Stage-0 Worker Pool State (initialized once per Stage-0 worker process)
+# Runs EnergyScanner.compute_features + filter + shortlist in a separate
+# process to avoid GIL contention with the MarketDataBus subscriber thread.
+# ---------------------------------------------------------------------
+_stage0_scanner = None
+_stage0_config = None
+_stage0_cap_map = None
+
+
+def _init_stage0_worker(config_dict):
+    """
+    Initialize Stage-0 worker process (called once per worker).
+    Pre-loads EnergyScanner + cap mapping to avoid per-task overhead.
+    """
+    global _stage0_scanner, _stage0_config, _stage0_cap_map
+    try:
+        # Suppress all console output from worker process.
+        # Important logs are returned to parent process and logged there.
+        import logging
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.addHandler(logging.NullHandler())
+
+        from services.scan.energy_scanner import EnergyScanner
+
+        _stage0_config = config_dict
+
+        scanner_cfg = config_dict["energy_scanner"]
+        _stage0_scanner = EnergyScanner(
+            top_k_long=scanner_cfg["top_k_long"],
+            top_k_short=scanner_cfg["top_k_short"],
+        )
+
+        # Pre-load cap mapping (same logic as ScreenerLive._load_cap_mapping)
+        import json
+        from pathlib import Path
+        nse_file = Path(__file__).parent.parent / "nse_all.json"
+        if nse_file.exists():
+            with nse_file.open() as f:
+                data = json.load(f)
+            cap_map = {}
+            for item in data:
+                raw_sym = item["symbol"]
+                sym = f"NSE:{raw_sym[:-3]}" if raw_sym.endswith(".NS") else raw_sym
+                cap_map[sym] = {
+                    "market_cap_cr": item.get("market_cap_cr", 0),
+                    "cap_segment": item.get("cap_segment", "unknown"),
+                    "mis_enabled": item.get("mis_enabled", False),
+                    "mis_leverage": item.get("mis_leverage"),
+                }
+            _stage0_cap_map = cap_map
+        else:
+            _stage0_cap_map = {}
+
+    except Exception as e:
+        # Re-enable console logging for error reporting if init fails
+        import sys
+        logging.getLogger().handlers.clear()
+        logging.getLogger().addHandler(logging.StreamHandler(sys.stderr))
+        logging.getLogger().exception(f"Stage-0 worker init failed: {e}")
+        raise
+
+
+def _filter_stage0_standalone(feats, now_ts, *, skip_vol_persist, config, cap_map, is_dry_run):
+    """
+    Stage-0 filter logic extracted for cross-process execution.
+    Mirrors ScreenerLive._filter_stage0 exactly, but takes all
+    dependencies as explicit parameters instead of reading from self.
+    """
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    if feats is None or feats.empty:
+        return feats
+
+    # Inline _time_bucket (avoids self reference)
+    md = now_ts.hour * 60 + now_ts.minute
+    if md <= 10 * 60 + 30:
+        bkt = "early"
+    elif md <= 13 * 60 + 30:
+        bkt = "mid"
+    else:
+        bkt = "late"
+
+    vmin = int(config["scanner_min_bar5_volume"])
+    vwap_caps = config["scanner_vwap_bps_caps"]
+    ret1_max = float(config["scanner_ret1_max"])
+    vp_bars = int(config["scanner_vol_persist_bars"])
+    vr_min = float(config["scanner_vol_ratio_min"])
+
+    df = feats.copy()
+    initial_count = len(df)
+
+    if "volume" in df.columns and vmin > 0:
+        df = df[df["volume"] >= vmin]
+        if len(df) < initial_count:
+            _logger.debug(f"STAGE0_DEBUG | volume filter: {initial_count}→{len(df)} (vmin={vmin})")
+
+    after_vol = len(df)
+    if "dist_to_vwap" in df.columns:
+        cap_bps = float(vwap_caps[bkt])
+        df = df[(df["dist_to_vwap"].abs() * 10000.0) <= cap_bps]
+        if len(df) < after_vol:
+            _logger.debug(f"STAGE0_DEBUG | vwap filter: {after_vol}→{len(df)} (cap_bps={cap_bps}, bkt={bkt})")
+
+    after_vwap = len(df)
+    if "ret_1" in df.columns:
+        df = df[df["ret_1"].abs() <= ret1_max]
+        if len(df) < after_vwap:
+            _logger.debug(f"STAGE0_DEBUG | ret_1 filter: {after_vwap}→{len(df)} (max={ret1_max})")
+
+    if not skip_vol_persist:
+        if "vol_persist_ok" in df.columns:
+            before_vp = len(df)
+            df = df[df["vol_persist_ok"] >= (1 if vp_bars >= 2 else 0)]
+            if len(df) < before_vp:
+                _logger.debug(f"STAGE0_DEBUG | vol_persist filter: {before_vp}→{len(df)} (vp_bars={vp_bars})")
+        if "vol_ratio" in df.columns:
+            before_vr = len(df)
+            df = df[df["vol_ratio"] >= vr_min]
+            if len(df) < before_vr:
+                _logger.debug(f"STAGE0_DEBUG | vol_ratio filter: {before_vr}→{len(df)} (vr_min={vr_min})")
+
+    # Log if all symbols were filtered
+    if len(df) == 0 and initial_count > 0:
+        sample_feats = feats.head(3)
+        sample_info = ""
+        if not sample_feats.empty:
+            for col in ["volume", "dist_to_vwap", "ret_1", "vol_persist_ok", "vol_ratio"]:
+                if col in sample_feats.columns:
+                    vals = sample_feats[col].tolist()
+                    sample_info += f"{col}={vals[:3]} "
+        _logger.warning(f"STAGE0_DEBUG | ALL symbols filtered! initial={initial_count} skip_vol_persist={skip_vol_persist} sample: {sample_info}")
+
+    # Cap-aware liquidity gates
+    liq_cfg = config["liquidity_gates"]
+    if liq_cfg["enabled"] and len(df) > 0:
+        passes_liquidity = []
+        for _, row in df.iterrows():
+            sym = row["symbol"]
+            cap_data = cap_map.get(sym, {})
+            cap_segment = cap_data.get("cap_segment", "unknown")
+
+            if liq_cfg["exclude_micro_caps"] and cap_segment == "micro_cap":
+                passes_liquidity.append(False)
+                continue
+
+            seg_cfg = liq_cfg.get(cap_segment, {})
+            if not seg_cfg:
+                passes_liquidity.append(True)
+                continue
+
+            vol_mult = row["vol_ratio"] if "vol_ratio" in df.columns else 1.0
+            min_surge = seg_cfg["volume_surge_min"]
+            passes = vol_mult >= min_surge
+            passes_liquidity.append(passes)
+
+        before_count = len(df)
+        df = df[passes_liquidity]
+        after_count = len(df)
+        if before_count > after_count:
+            _logger.info(f"LIQUIDITY_GATE | Filtered {before_count}→{after_count} symbols "
+                        f"({before_count - after_count} failed cap-specific volume requirements)")
+
+    # MIS filter (backtest only)
+    mis_cfg = config["backtest_mis_filtering"]
+    if mis_cfg["enabled"] and is_dry_run and len(df) > 0:
+        before_mis = len(df)
+        mis_mask = [cap_map.get(sym, {}).get("mis_enabled", False) for sym in df["symbol"]]
+        df = df[mis_mask]
+        rejected = before_mis - len(df)
+        if rejected > 0:
+            _logger.info(f"MIS_FILTER | Filtered {before_mis}→{len(df)} ({rejected} non-MIS rejected)")
+
+    return df
+
+
+def _run_stage0_in_process(df5_tails, levels_by_symbol, now_ts, in_opening_bell, is_dry_run):
+    """
+    Execute Stage-0 pipeline in a separate process (GIL-free).
+    Runs compute_features + filter + select_shortlist.
+
+    Returns (feats_df, shortlist_dict).
+    """
+    global _stage0_scanner, _stage0_cap_map, _stage0_config
+
+    if _stage0_scanner is None:
+        raise RuntimeError("Stage-0 worker not initialized")
+
+    import time
+    t0 = time.perf_counter()
+
+    feats_df = _stage0_scanner.compute_features(
+        df5_tails,
+        lookback_bars=20,
+        levels_by_symbol=levels_by_symbol,
+        allow_early_scan=in_opening_bell,
+    )
+    t1 = time.perf_counter()
+
+    feats_df = _filter_stage0_standalone(
+        feats_df, now_ts,
+        skip_vol_persist=in_opening_bell,
+        config=_stage0_config,
+        cap_map=_stage0_cap_map,
+        is_dry_run=is_dry_run,
+    )
+    t2 = time.perf_counter()
+
+    shortlist_dict = _stage0_scanner.select_shortlist(feats_df)
+    t3 = time.perf_counter()
+
+    timing = {
+        "compute": t1 - t0, "filter": t2 - t1, "shortlist": t3 - t2, "total": t3 - t0,
+        "filtered": len(feats_df) if feats_df is not None and not feats_df.empty else 0,
+        "long": len(shortlist_dict.get("long", [])),
+        "short": len(shortlist_dict.get("short", [])),
+    }
+
+    return (feats_df, shortlist_dict, timing)
+
+
 @dataclass
 class ScreenerConfig:
     """Strict config contract for ScreenerLive."""
@@ -312,6 +535,14 @@ class ScreenerLive:
         )
         logger.info("ScreenerLive: Persistent worker pool created (2 workers)")
 
+        # Create Stage-0 worker pool (1 worker — GIL-free compute_features + filter + shortlist)
+        self._stage0_executor = ProcessPoolExecutor(
+            max_workers=1,
+            initializer=_init_stage0_worker,
+            initargs=(self.raw_cfg,)
+        )
+        logger.info("ScreenerLive: Stage-0 worker pool created (1 worker)")
+
         # Async scan dispatch (live/paper only — backtest stays synchronous)
         self._scan_queue: queue_mod.Queue = queue_mod.Queue(maxsize=50)
         self._scan_thread: Optional[threading.Thread] = None
@@ -388,7 +619,15 @@ class ScreenerLive:
         # Stop async scan dispatch worker
         self._stop_scan_worker()
 
-        # Shutdown persistent worker pool
+        # Shutdown Stage-0 worker pool
+        try:
+            if hasattr(self, '_stage0_executor') and self._stage0_executor:
+                self._stage0_executor.shutdown(wait=True, cancel_futures=True)
+                logger.info("ScreenerLive: Stage-0 worker pool shut down")
+        except Exception as e:
+            logger.warning(f"ScreenerLive: Stage-0 worker pool shutdown error: {e}")
+
+        # Shutdown persistent worker pool (structure detection)
         try:
             if hasattr(self, '_executor') and self._executor:
                 self._executor.shutdown(wait=True, cancel_futures=True)
@@ -719,7 +958,6 @@ class ScreenerLive:
 
         # ---------- Stage-0: EnergyScanner (single unified path) ----------
         shortlist: List[str] = []
-        feats_df = None
         levels_by_symbol = None  # Initialize so it's available to structure detection phase
 
         # OPENING BELL FIX: Determine minimum bars needed - 1 during opening bell (09:20-09:30), 3 normally
@@ -735,21 +973,37 @@ class ScreenerLive:
                 if validate_df(df5, min_rows=min_bars_for_processing):
                     df5_by_symbol[s] = df5
             if df5_by_symbol:
-                # PERFORMANCE FIX: Compute ORB levels once at 09:40 and cache for entire day
-                # - ORH/ORL values finalized at 09:30 (end of opening range)
-                # - Computing for all 1992 symbols takes ~54s in OCI (one-time cost)
-                # - Returns cached values on all subsequent bars (fast)
-                # - Before 09:40: returns None (ORB priority scanner won't have dist_to_ORH/ORL columns)
-                # Impact: ONE-TIME 54s cost at 09:40 instead of 30min spread across multiple bars
+                # Compute ORB levels once at 09:40 and cache for entire day
                 levels_by_symbol = self._compute_orb_levels_once(now, df5_by_symbol)
 
-                feats_df = self.scanner.compute_features(df5_by_symbol, lookback_bars=20, levels_by_symbol=levels_by_symbol, allow_early_scan=in_opening_bell)
-                feats_df = self._filter_stage0(feats_df, now, skip_vol_persist=in_opening_bell)  # liquidity + vwap proximity + momentum + (opt) vol persistence
-                # Use scanner's select_shortlist for proper structured logging
-                shortlist_dict = self.scanner.select_shortlist(feats_df)
+                # GIL FIX: Trim to 20-bar tails before pickling (55MB → 2.2MB)
+                # compute_features only needs lookback_bars=20, not the full 500
+                df5_tails = {
+                    sym: df.tail(20).copy()
+                    for sym, df in df5_by_symbol.items()
+                }
+
+                # Submit Stage-0 to separate process (GIL released during wait)
+                # future.result() is a C-level wait on pipe — subscriber thread runs freely
+                stage0_future = self._stage0_executor.submit(
+                    _run_stage0_in_process,
+                    df5_tails,
+                    levels_by_symbol,
+                    now,
+                    in_opening_bell,
+                    bool(env.DRY_RUN),
+                )
+                _, shortlist_dict, stage0_timing = stage0_future.result(timeout=60)
                 shortlist = shortlist_dict.get("long", []) + shortlist_dict.get("short", [])
+                logger.info(
+                    "STAGE0_PROCESS | compute=%.2fs filter=%.2fs shortlist=%.2fs total=%.2fs | "
+                    "filtered=%d long=%d short=%d",
+                    stage0_timing["compute"], stage0_timing["filter"],
+                    stage0_timing["shortlist"], stage0_timing["total"],
+                    stage0_timing["filtered"], stage0_timing["long"], stage0_timing["short"],
+                )
         except Exception as e:
-            logger.exception("EnergyScanner failed; fallback shortlist: %s", e)
+            logger.exception("Stage-0 process failed; fallback shortlist: %s", e)
             shortlist = self._fallback_shortlist()
 
         # ENHANCED LOGGING: Stage-0 completion with accurate counts
@@ -1242,11 +1496,14 @@ class ScreenerLive:
         try:
             self.symbol_map = self.sdk.get_symbol_map()
             self.token_map = self.sdk.get_token_map()
-            # Filter out ETFs - symbols ending with "ETF" (e.g., TNIDETF, SBIETFPB)
+            # Filter out ETFs/index funds — covers *ETF, *BEES, *IETF, LIQUID*
             all_symbols = list(self.symbol_map.keys())
+            def _is_etf(sym: str) -> bool:
+                bare = sym.replace("NSE:", "").upper()
+                return (bare.endswith("ETF") or bare.endswith("BEES")
+                        or bare.endswith("IETF") or bare.startswith("LIQUID"))
             self.core_symbols = [
-                sym for sym in all_symbols
-                if not sym.replace("NSE:", "").upper().endswith("ETF")
+                sym for sym in all_symbols if not _is_etf(sym)
             ]
             etf_count = len(all_symbols) - len(self.core_symbols)
             if etf_count > 0:
@@ -1796,124 +2053,16 @@ class ScreenerLive:
 
     def _filter_stage0(self, feats: pd.DataFrame, now_ts, skip_vol_persist: bool = False) -> pd.DataFrame:
         """
-        Stage-0 shortlist filter: liquidity + VWAP proximity (time-aware) + momentum clamp.
-        Optional: volume persistency & vol ratio if columns are present.
-
-        Args:
-            skip_vol_persist: If True, skip volume persistence filter (used during opening bell with <3 bars)
+        Stage-0 shortlist filter — delegates to standalone function.
+        Kept as instance method for fallback path compatibility.
         """
-        cfg = load_filters()
-        if feats is None or feats.empty:
-            return feats
-        bkt = self._time_bucket(now_ts)
-
-        vmin = int(cfg.get("scanner_min_bar5_volume", 0))
-        vwap_caps = cfg.get("scanner_vwap_bps_caps", {"early": 50, "mid": 60, "late": 100})
-        ret1_max = float(cfg.get("scanner_ret1_max", 1.0))
-        vp_bars = int(cfg.get("scanner_vol_persist_bars", 2))
-        vr_min = float(cfg.get("scanner_vol_ratio_min", 1.2))
-
-        df = feats.copy()
-        initial_count = len(df)
-
-        if "volume" in df.columns and vmin > 0:
-            df = df[df["volume"] >= vmin]
-            if len(df) < initial_count:
-                logger.debug(f"STAGE0_DEBUG | volume filter: {initial_count}→{len(df)} (vmin={vmin})")
-
-        after_vol = len(df)
-        if "dist_to_vwap" in df.columns:
-            cap_bps = float(vwap_caps.get(bkt, 100))
-            df = df[(df["dist_to_vwap"].abs() * 10000.0) <= cap_bps]
-            if len(df) < after_vol:
-                logger.debug(f"STAGE0_DEBUG | vwap filter: {after_vol}→{len(df)} (cap_bps={cap_bps}, bkt={bkt})")
-
-        after_vwap = len(df)
-        if "ret_1" in df.columns:
-            df = df[df["ret_1"].abs() <= ret1_max]
-            if len(df) < after_vwap:
-                logger.debug(f"STAGE0_DEBUG | ret_1 filter: {after_vwap}→{len(df)} (max={ret1_max})")
-
-        # OPENING BELL FIX: Skip volume persistence filter during opening bell (09:20-09:30)
-        # With only 1-2 bars, vol_persist_ok would reject all symbols
-        after_ret = len(df)
-        if not skip_vol_persist:
-            if "vol_persist_ok" in df.columns:
-                before_vp = len(df)
-                df = df[df["vol_persist_ok"] >= (1 if vp_bars >= 2 else 0)]
-                if len(df) < before_vp:
-                    logger.debug(f"STAGE0_DEBUG | vol_persist filter: {before_vp}→{len(df)} (vp_bars={vp_bars})")
-            if "vol_ratio" in df.columns:
-                before_vr = len(df)
-                df = df[df["vol_ratio"] >= vr_min]
-                if len(df) < before_vr:
-                    logger.debug(f"STAGE0_DEBUG | vol_ratio filter: {before_vr}→{len(df)} (vr_min={vr_min})")
-
-        # Log if all symbols were filtered
-        if len(df) == 0 and initial_count > 0:
-            # Show which filter killed all symbols
-            sample_feats = feats.head(3)
-            sample_info = ""
-            if not sample_feats.empty:
-                for col in ["volume", "dist_to_vwap", "ret_1", "vol_persist_ok", "vol_ratio"]:
-                    if col in sample_feats.columns:
-                        vals = sample_feats[col].tolist()
-                        sample_info += f"{col}={vals[:3]} "
-            logger.warning(f"STAGE0_DEBUG | ALL symbols filtered! initial={initial_count} skip_vol_persist={skip_vol_persist} sample: {sample_info}")
-
-        # ========== CAP-AWARE LIQUIDITY GATES (Priority 1) ==========
-        liq_cfg = cfg.get("liquidity_gates", {})
-        if liq_cfg.get("enabled", False) and len(df) > 0:
-            # Load market cap mapping
-            cap_map = self._load_cap_mapping()
-
-            # Build pass/fail mask for cap-specific volume requirements
-            passes_liquidity = []
-            for idx, row in df.iterrows():
-                sym = row["symbol"]
-                cap_data = cap_map.get(sym, {})
-                cap_segment = cap_data.get("cap_segment", "unknown")
-
-                # Exclude micro-caps if configured (institutional standard)
-                if liq_cfg.get("exclude_micro_caps", True) and cap_segment == "micro_cap":
-                    passes_liquidity.append(False)
-                    continue
-
-                # Get segment-specific requirements
-                seg_cfg = liq_cfg.get(cap_segment, {})
-                if not seg_cfg:
-                    passes_liquidity.append(True)  # No config = allow
-                    continue
-
-                # Check volume surge requirement (cap-specific)
-                # Small-caps need 3x surge, mid-caps 2x, large-caps 1.3x
-                vol_mult = row["vol_ratio"] if "vol_ratio" in df.columns else 1.0
-                min_surge = seg_cfg.get("volume_surge_min", 1.0)
-
-                passes = vol_mult >= min_surge
-                passes_liquidity.append(passes)
-
-            # Apply filter
-            before_count = len(df)
-            df = df[passes_liquidity]
-            after_count = len(df)
-
-            if before_count > after_count:
-                logger.info(f"LIQUIDITY_GATE | Filtered {before_count}→{after_count} symbols "
-                           f"({before_count - after_count} failed cap-specific volume requirements)")
-
-        # ========== MIS FILTER (Backtest only — reject non-MIS stocks) ==========
-        mis_cfg = self.raw_cfg.get("backtest_mis_filtering", {})
-        if mis_cfg.get("enabled", False) and env.DRY_RUN and len(df) > 0:
-            cap_map = self._load_cap_mapping()
-            before_mis = len(df)
-            mis_mask = [cap_map.get(sym, {}).get("mis_enabled", False) for sym in df["symbol"]]
-            df = df[mis_mask]
-            rejected = before_mis - len(df)
-            if rejected > 0:
-                logger.info(f"MIS_FILTER | Filtered {before_mis}→{len(df)} ({rejected} non-MIS rejected)")
-
-        return df
+        return _filter_stage0_standalone(
+            feats, now_ts,
+            skip_vol_persist=skip_vol_persist,
+            config=load_filters(),
+            cap_map=self._load_cap_mapping(),
+            is_dry_run=bool(env.DRY_RUN),
+        )
 
     # ---------- De-dupe ----------
     def _bars_since(self, older: pd.Timestamp, newer: pd.Timestamp) -> int:
