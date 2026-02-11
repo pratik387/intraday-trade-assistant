@@ -113,6 +113,11 @@ class WSClient:
 
         try:
             self._ticker.subscribe(tokens)
+            # Ensure quote mode so volume_traded is included in tick data
+            try:
+                self._ticker.set_mode("quote", tokens)
+            except Exception as e:
+                logger.debug(f"WSClient: set_mode('quote') after subscribe: {e}")
         except Exception as e:
             logger.error(f"WSClient: Subscribe failed for {len(tokens)} tokens: {e}")
 
@@ -175,6 +180,11 @@ class WSClient:
                         for batch in self._pending_subscriptions:
                             try:
                                 self._ticker.subscribe(batch)
+                                # Ensure quote mode so volume_traded is included
+                                try:
+                                    self._ticker.set_mode("quote", batch)
+                                except Exception:
+                                    pass
                             except Exception as e:
                                 logger.error(f"Failed to subscribe buffered tokens: {e}")
 

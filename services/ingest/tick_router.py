@@ -10,13 +10,15 @@ Usage in ScreenerLive:
 Contracts
 - `symbol` is always "EXCH:TRADINGSYMBOL" (e.g., "NSE:RELIANCE") in the callback
 - `price` is float LTP
-- `volume` is *per-tick* traded quantity (not cumulative day volume). If not present,
-  we pass 0.0 and let the bar builder accumulate only on known trade prints.
+- `volume` is the **per-tick volume delta** computed from cumulative `volume_traded`.
+  Kite websocket sends ~1 tick/sec with cumulative day volume; we compute the delta
+  between consecutive ticks to get real per-interval volume. When cumulative volume
+  is not available (e.g., backtest/FeatherTicker), we fall back to `last_quantity`.
 - `ts` is IST-naive datetime (no tzinfo). We convert if packet has tz-aware time.
 
 This module is broker-agnostic but ships with Zerodha Kite-friendly parsing.
 Kite tick usually contains keys: instrument_token, last_price, last_traded_quantity,
-last_trade_time (tz-aware), volume (cumulative), ohlc, etc.
+last_trade_time (tz-aware), volume_traded (cumulative), ohlc, etc.
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -91,6 +93,11 @@ class TickRouter:
     ) -> None:
         self._on_tick: Optional[OnTick] = on_tick
         self._maps = _Maps(token_to_symbol=dict(token_to_symbol or {}))
+
+        # Cumulative volume tracking per instrument token for delta computation.
+        # Kite websocket sends cumulative day volume (volume_traded); we compute
+        # the delta between consecutive ticks to get real per-interval volume.
+        self._prev_volume: Dict[int, int] = {}
 
         # metrics
         self._miss_no_map = 0
@@ -212,20 +219,35 @@ class TickRouter:
             if self._miss_no_map <= 3:
                 logger.debug("tick_router: no symbol map for token=%s", token)
             return
-        try:
-            self._on_tick(sym, price, qty, ts)
 
+        # Compute per-tick volume from cumulative volume_traded delta.
+        # Kite websocket sends cumulative day volume (~1 tick/sec); delta gives
+        # real traded volume per interval. When cumulative is unavailable
+        # (backtest/FeatherTicker sends volume=0), fall back to per-tick qty.
+        if volume > 0:
+            prev = self._prev_volume.get(token, 0)
+            vol_delta = volume - prev
+            if vol_delta < 0:
+                # Day reset or data anomaly — use raw qty, set new baseline
+                vol_delta = qty if qty > 0 else 0
+            self._prev_volume[token] = volume
+        else:
+            # No cumulative volume (backtest/feather ticks) — use per-tick qty
+            vol_delta = qty
+
+        try:
+            self._on_tick(sym, price, vol_delta, ts)
         except Exception as e:  # pragma: no cover
             logger.exception("tick_router: on_tick callback failed: %s", e)
 
-        # Standard listeners (4 args: symbol, price, qty, ts)
+        # Standard listeners (4 args: symbol, price, vol_delta, ts)
         for cb in list(_tick_listeners):
             try:
-                cb(sym, price, qty, ts)
+                cb(sym, price, vol_delta, ts)
             except Exception as e:
                 logger.exception(f"tick_listener error: {e}")
 
-        # Full listeners with volume (5 args: symbol, price, qty, volume, ts)
+        # Full listeners with raw values (5 args: symbol, price, qty, volume, ts)
         for cb in list(_tick_listeners_full):
             try:
                 cb(sym, price, qty, volume, ts)
