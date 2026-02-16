@@ -20,7 +20,8 @@
         "equilibrium_breakout_long", "equilibrium_breakout_short",
         "level_breakout_long", "level_breakout_short",
         "orb_level_breakout_long", "orb_level_breakout_short",
-        "first_hour_momentum_long", "first_hour_momentum_short"
+        "first_hour_momentum_long", "first_hour_momentum_short",
+        "volume_breakout_long", "volume_breakout_short"
     ],
 
     "screening": {
@@ -116,12 +117,10 @@
         },
         "regime_rules": {
             "chop": {
-                "_comment": "DATA-DRIVEN (Dec 2024): ORB CHOP winners have 283k volume vs losers 107k (+164%), winners have srr 1.28 vs losers 2.28 (-44%)",
+                "_comment": "GATES-OFF RUN: All chop restrictions removed",
                 "allowed": true,
-                "size_mult": 0.7,
-                "orb_chop_min_volume": 150000,
-                "orb_chop_max_structural_rr": 1.8,
-                "_orb_chop_evidence": "Filter vol>=150k AND srr<1.8: 54 trades, 64.8% WR, +5,190 Rs. Turns -8,404 Rs loser into +5,190 Rs winner. Improvement: +13,594 Rs"
+                "allow_non_orb": true,
+                "size_mult": 1.0
             },
             "trend_up": {
                 "allowed": true,
@@ -189,54 +188,71 @@
             }
         },
         "setup_filters": {
-            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Optimized for ~23K trades, 94% ROI at Rs 3L capital",
-            "_active_profile": "MODERATE",
-            "breakout_long": {
-                "enabled": true,
-                "allowed_regimes": ["trend_down"],
-                "min_rsi": 40,
-                "max_rsi": 60,
-                "_salvage_filter": "trend_down regime + RSI 40-60",
-                "_evidence": "ELIMINATION Dec 2024: 14 trades, Rs 127 net avg (was 1,211 trades, Rs -107 net)"
-            },
-            "breakout_short": {
-                "enabled": false
-            },
+            "_comment": "DATA-DRIVEN (Feb 2026): 3-year edge optimizer analysis (618K trades, FY2022-26)",
+            "_active_profile": "OPTIMIZED",
             "first_hour_momentum_long": {
                 "enabled": true,
-                "max_adx": 15,
-                "_salvage_filter": "ADX < 15",
-                "_evidence": "ELIMINATION Dec 2024: 22 trades, Rs 106 net avg (was 2,234 trades, Rs -197 net)"
-            },
-            "first_hour_momentum_short": {
-                "enabled": false
+                "blocked_entirely": true,
+                "_evidence": "5,694 trades, WR 37.9%, Rs -19.15L loss, negative ALL 4 FYs."
             },
             "orb_breakout_long": {
                 "enabled": true,
                 "blocked_entirely": true,
-                "_moderate_filter": "BLOCKED - negative expectancy",
-                "_evidence": "MODERATE: Rs -120K loss, 1541 trades - block entirely"
+                "_evidence": "11,756 trades, WR 34.3%, Rs -12.70L loss, negative ALL 4 FYs."
             },
-            "orb_breakout_short": {
-                "enabled": false
+            "gap_breakout_long": {
+                "enabled": false,
+                "blocked_regimes": ["chop", "squeeze", "trend_up"],
+                "blocked_hours": [10, 11, 13, 14],
+                "blocked_caps": ["micro_cap", "mid_cap", "small_cap"],
+                "_evidence": "18,507 trades, Rs -12.81L. Only profitable in trend_down, hour 9, large_cap.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
             },
-            "orb_breakdown_long": {
-                "enabled": false
+            "volume_breakout_long": {
+                "enabled": false,
+                "blocked_regimes": ["chop", "squeeze", "trend_up"],
+                "blocked_hours": [10, 11],
+                "blocked_caps": ["mid_cap", "small_cap", "unknown"],
+                "_evidence": "491 trades, Rs -0.88L. Only profitable in trend_down.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
             },
-            "orb_breakdown_short": {
-                "enabled": false
+            "breakout_long": {
+                "enabled": false,
+                "blocked_regimes": ["chop"],
+                "blocked_hours": [14],
+                "blocked_caps": ["mid_cap", "small_cap"],
+                "_evidence": "1,387 trades, Rs +0.56L marginally. chop WR 44%, mid/small cap WR 40-43%.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
+            },
+            "momentum_breakout_long": {
+                "enabled": false,
+                "blocked_regimes": ["trend_down", "trend_up"],
+                "blocked_caps": ["large_cap", "mid_cap"],
+                "_evidence": "668 trades. Only profitable in chop/squeeze. trend_down WR 37%, trend_up WR 40%.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
+            },
+            "first_hour_momentum_short": {
+                "enabled": false,
+                "blocked_regimes": ["trend_up"],
+                "blocked_caps": ["large_cap"],
+                "_evidence": "622 trades, Rs +1.31L. trend_up WR 39% Rs -437. large_cap WR 44% Rs -27.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
+            },
+            "break_of_structure_long": {
+                "enabled": false,
+                "blocked_caps": ["small_cap"],
+                "_evidence": "102 trades, Rs +0.27L. small_cap WR 46% Rs -149.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
+            },
+            "flag_continuation_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "3yr deep_edge: Rs -305 avg, 34 trades. Negative overall."
             },
             "squeeze_release_long": {
                 "enabled": true,
-                "max_rsi": 70,
-                "_moderate_filter": "RSI <= 70 - block overbought entries",
-                "_evidence": "OPTION A Dec 2024: ADX 25-30 (Rs 702 net), RSI 70+ blocked (Rs -31 net). 45 trades remain profitable."
-            },
-            "break_of_structure_long": {
-                "enabled": true,
                 "blocked_entirely": true,
-                "_reason": "NOT SALVAGEABLE - all filter combos negative",
-                "_evidence": "ELIMINATION Dec 2024: 64 trades, Rs -345 net - no profitable combo found"
+                "_evidence": "3yr deep_edge: Rs -67 avg. Negative overall."
             }
         },
         "global_filters": {
@@ -495,8 +511,8 @@
     },
 
     "stop_loss": {
-        "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
-        "atr_multiplier": 2.0
+        "_comment": "DATA-DRIVEN: 3.5x ATR (Feb 2026 edge optimizer: P90 MAE of winners = 5.56x, intermediate step from 2.0). Tight SL Q1 WR 51% +Rs200, Wide Q4 WR 49% -Rs42.",
+        "atr_multiplier": 3.5
     },
 
     "orb_target_recalculation": {

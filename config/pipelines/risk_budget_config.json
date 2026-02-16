@@ -52,7 +52,7 @@
         "max_positions_per_symbol": 1,
         "max_positions_total": 100,
 
-        "min_budget_threshold": 0.10,
+        "min_budget_threshold": 0.0,
         "_min_budget_comment": "Categories with budget < threshold get 0 slots",
 
         "slot_allocation_method": "proportional",

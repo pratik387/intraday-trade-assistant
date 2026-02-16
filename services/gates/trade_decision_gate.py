@@ -130,6 +130,7 @@ class GateDecision:
     p_breakout: Optional[float] = None  # placeholder for meta-prob models
     setup_candidates: Optional[List[SetupCandidate]] = None  # NEW: full structure detection results
     regime_diagnostics: Optional[dict] = None  # Phase 2: Multi-TF regime diagnostics
+    structure_confidence: float = 0.0  # Detector strength of best candidate
 
 
 # ----------------------------- Component Protocols -----------------------------
@@ -1076,6 +1077,7 @@ class TradeDecisionGate:
             min_hold_bars=max(0, min_hold),
             setup_candidates=setups,  # NEW: full setup candidates for structure system
             regime_diagnostics=regime_diagnostics,  # Phase 2: Multi-TF regime diagnostics
+            structure_confidence=strength,  # Detector strength of best candidate
         )
 
     def _get_strategy_momentum_threshold(self, setup_type: Optional[str]) -> float:

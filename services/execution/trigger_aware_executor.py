@@ -14,6 +14,7 @@ from config.logging_config import get_execution_loggers
 from config.filters_setup import load_filters
 from services.orders.order_queue import OrderQueue
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
+from utils.price_utils import round_to_tick
 from diagnostics.diag_event_log import diag_event_log
 from pipelines.breakout_pipeline import BreakoutPipeline
 
@@ -181,7 +182,7 @@ class TriggerAwareExecutor:
                 bias = plan.get("bias", "long")
                 side = "SELL" if bias.lower() == "short" else "BUY"
             qty = int(plan.get("qty", 0))
-            price = trade.trigger_price or plan.get("price")
+            price = round_to_tick(trade.trigger_price or plan.get("price"))
             
             if qty <= 0:
                 logger.warning(f"Invalid qty for {symbol}: {qty}")
@@ -258,7 +259,7 @@ class TriggerAwareExecutor:
                             slippage = broker_fill - price
                             slippage_bps = (slippage / price) * 10000 if price > 0 else 0
                             logger.info(f"ENTRY_FILL | {symbol} | Broker: {broker_fill:.2f} | Assumed: {price:.2f} | Slippage: {slippage:+.2f} ({slippage_bps:+.1f} bps)")
-                            price = broker_fill  # Use actual fill price for all downstream
+                            price = round_to_tick(broker_fill)  # Use actual fill price for all downstream
                             qty = reconciled.get("qty", qty)  # Use actual qty if different
                     except RuntimeError:
                         raise  # Re-raise position not found
@@ -271,42 +272,32 @@ class TriggerAwareExecutor:
                     self._immediate_exit_bad_fill(symbol, side, qty, price, order_id, fq_reason, plan)
                     return False
 
-            # REMOVED duplicate trade_logger.info() call for TRIGGER_EXEC
-            # Reason: Both trade_logger.info() (removed) and trading_logger.log_trigger() (below)
-            #         write to the SAME trade_logs.log file, creating duplicate TRIGGER_EXEC entries
-            #
-            # Evidence from logs/run_bb5bf6d6_20251013_084000/trade_logs.log:
-            #   - Line 1: trade_logger format (basic)
-            #   - Line 2: trading_logger format (with diagnostics)
-            #
-            # Decision: Use trading_logger.log_trigger() as single source of truth
-            # Benefits:
-            #   - No duplicates in trade_logs.log
-            #   - Rich diagnostics (confidence_score, validation_count, entry_zone)
-            #   - Consistent with EXIT logging (also uses trading_logger only)
+            # Log TRIGGER to events.jsonl (single writer: diag_event_log)
+            diag_event_log.log_trigger(
+                symbol=symbol,
+                plan=plan,
+                side=side,
+                qty=qty,
+                price=price,
+                trigger_ts=trade.trigger_timestamp,
+                order_id=order_id,
+                strategy=plan.get('strategy', ''),
+                shadow=plan.get('shadow', False),
+                diagnostics={
+                    'confidence_score': trade.confidence_score,
+                    'trigger_mode': 'bar' if trade.confidence_score > 0 else 'tick',
+                    'trigger_price': trade.trigger_price,
+                    'validation_count': trade.validation_count,
+                    'entry_zone': plan.get('entry_zone') or plan.get('entry', {}).get('zone', []),
+                },
+            )
 
-            # Enhanced logging: Log TRIGGER event to events.jsonl
+            # Log TRIGGER to trade_logs.log (human-readable)
             if self.trading_logger:
-                trigger_data = {
-                    'symbol': symbol,
-                    'trade_id': trade.trade_id,
-                    'price': price,
-                    'qty': qty,
-                    'timestamp': str(trade.trigger_timestamp) if trade.trigger_timestamp else str(pd.Timestamp.now()),
-                    'strategy': plan.get('strategy', ''),
-                    'setup_type': plan.get('setup_type', ''),
-                    'regime': plan.get('regime', ''),
-                    'order_id': order_id,
-                    'side': side,
-                    'shadow': plan.get('shadow', False),  # Shadow trade flag
-                    'diagnostics': {
-                        'confidence_score': trade.confidence_score,
-                        'trigger_price': trade.trigger_price,
-                        'validation_count': trade.validation_count,
-                        'entry_zone': plan.get('entry', {}).get('zone', [])
-                    }
-                }
-                self.trading_logger.log_trigger(trigger_data)
+                self.trading_logger.log_trigger({
+                    'symbol': symbol, 'price': price, 'qty': qty,
+                    'strategy': plan.get('strategy', ''), 'order_id': order_id, 'side': side,
+                })
 
             # Update risk state
             self.risk.open_positions[symbol] = {
@@ -377,7 +368,7 @@ class TriggerAwareExecutor:
                     except Exception as e:
                         logger.error(f"[PERSIST] Failed to save position {symbol}: {e}")
                 else:
-                    logger.warning(f"[PERSIST] persistence is None - position {symbol} NOT saved")
+                    logger.debug(f"[PERSIST] persistence disabled - position {symbol} not persisted (expected in backtest)")
 
             return True
 
@@ -446,7 +437,7 @@ class TriggerAwareExecutor:
                         if "stop" in adjusted_plan and isinstance(adjusted_plan["stop"], dict):
                             adjusted_plan["stop"]["risk_per_share"] = round(actual_rps, 2)
                         adjusted_plan["risk_per_share"] = round(actual_rps, 2)
-                        adjusted_plan["actual_entry"] = round(actual_entry, 2)
+                        adjusted_plan["actual_entry"] = round_to_tick(actual_entry)
 
                         logger.info(
                             f"LEVEL_TARGET_PRESERVED: {plan.get('symbol')} {strategy} "
@@ -529,7 +520,7 @@ class TriggerAwareExecutor:
                 adjusted_plan["stop"]["risk_per_share"] = round(actual_rps, 2)
             # Also store at top level for exec_item structure
             adjusted_plan["risk_per_share"] = round(actual_rps, 2)
-            adjusted_plan["actual_entry"] = round(actual_entry, 2)
+            adjusted_plan["actual_entry"] = round_to_tick(actual_entry)
 
             # Log recalculation for non-LEVEL strategies (REVERSION, MOMENTUM, etc.)
             logger.info(
@@ -697,15 +688,23 @@ class TriggerAwareExecutor:
             # Use tick timestamp for backtest compatibility
             exit_ts = self._last_tick_ts if self._last_tick_ts else self._get_current_time()
 
-            # Log to trade log
+            # Log EXIT to events.jsonl (single writer: diag_event_log)
+            diag_event_log.log_exit(
+                symbol=symbol,
+                plan=plan or {},
+                reason=f"fill_quality_rejected:{reason}",
+                exit_price=actual_exit_px,
+                exit_qty=qty,
+                ts=exit_ts,
+                pnl=pnl,
+                diagnostics={"fill_quality_reason": reason},
+            )
+
+            # Log EXIT to trade_logs.log (human-readable)
             if self.trading_logger:
                 self.trading_logger.log_exit({
-                    "symbol": symbol,
-                    "reason": f"fill_quality_rejected:{reason}",
-                    "qty": qty,
-                    "exit_price": actual_exit_px,
-                    "pnl": pnl,
-                    "diagnostics": {"fill_quality_reason": reason}
+                    "symbol": symbol, "reason": f"fill_quality_rejected:{reason}",
+                    "qty": qty, "entry_price": price, "exit_price": actual_exit_px, "pnl": pnl,
                 })
 
             # Log closed trade to API server for dashboard display

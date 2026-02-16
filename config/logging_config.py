@@ -133,6 +133,10 @@ def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     # Enhanced Trading Logger
     _trading_logger = TradingLogger(_session_id, log_dir)
 
+    # Configure diag_event_log (single writer for events.jsonl)
+    from diagnostics.diag_event_log import diag_event_log
+    diag_event_log.set_output(out_dir=str(log_dir), run_id=_session_id)
+
     # Stage JSONL Loggers
     _scanner_logger = JSONLLogger(log_dir / "scanning.jsonl", "scanner")
     _screener_logger = JSONLLogger(log_dir / "screening.jsonl", "screener")
@@ -304,6 +308,10 @@ def initialize_child_loggers(log_dir: Path, process_tag: str):
 
     # Enhanced Trading Logger — exec child owns analytics
     _trading_logger = TradingLogger(_session_id, log_dir)
+
+    # Configure diag_event_log for exec child process
+    from diagnostics.diag_event_log import diag_event_log
+    diag_event_log.set_output(out_dir=str(log_dir), run_id=_session_id)
 
     # Events decision JSONL — exec child owns decision logging
     _events_decision_logger = JSONLLogger(log_dir / "events_decisions.jsonl", "events_decision")

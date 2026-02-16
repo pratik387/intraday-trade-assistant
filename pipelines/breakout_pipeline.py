@@ -514,40 +514,30 @@ class BreakoutPipeline(BasePipeline):
                         reasons.append(f"fhm_regime_override:rvol{rvol:.1f}x>={rvol_threshold}x")
                         logger.debug(f"[BREAKOUT] FHM regime override for {symbol}: RVOL={rvol:.2f}x >= {rvol_threshold}x, skipping regime blocking")
 
-        # Regime rules from config - HARD GATE for chop (ORB allowed with volume+srr filter, others blocked)
-        # Exception: FHM regime override bypasses this check when RVOL >= 3x
+        # Regime rules from config
         regime_cfg = self._get("gates", "regime_rules")
         if regime in regime_cfg:
-            if regime == "chop":
-                # FHM OVERRIDE: Skip chop blocking when RVOL >= 3x (institutional flow trumps regime)
+            rule = regime_cfg[regime]
+            if not rule.get("allowed", True):
+                # Config says regime not allowed — hard block
+                reasons.append(f"regime_blocked:{regime}")
+                passed = False
+            elif regime == "chop" and rule.get("orb_chop_min_volume"):
+                # Chop has additional ORB-specific filters (only when config defines them)
                 if fhm_regime_override or is_fhm:
                     reasons.append(f"regime_ok:chop_fhm_override")
                 elif is_orb:
-                    # DATA-DRIVEN FIX (Dec 2024 analysis):
-                    # ORB in CHOP: Winners have 283k volume vs Losers 107k volume (+164% diff)
-                    # ORB in CHOP: Winners have 1.28 structural_rr vs Losers 2.28 (-44% diff)
-                    # Best filter: volume >= 150k AND structural_rr < 1.8 → 64.8% win rate, +5,190 Rs
-                    # This turns ORB CHOP from -8,404 Rs loser to +5,190 Rs winner (+13,594 Rs improvement)
-
-                    # Get volume from 5m bar
                     bar5_volume = float(df5m["volume"].iloc[-1]) if len(df5m) > 0 and "volume" in df5m.columns else 0
-
-                    # strength parameter is actually structural_rr (passed from calculate_quality)
                     structural_rr = strength
+                    min_volume = rule.get("orb_chop_min_volume")
+                    max_structural_rr = rule.get("orb_chop_max_structural_rr")
 
-                    # Get thresholds from config (with defaults from spike test)
-                    orb_chop_cfg = self._get("gates", "regime_rules", "chop")
-                    min_volume = orb_chop_cfg.get("orb_chop_min_volume")
-                    max_structural_rr = orb_chop_cfg.get("orb_chop_max_structural_rr")
-
-                    # ALLOW if volume >= threshold AND structural_rr < threshold
                     volume_ok = bar5_volume >= min_volume
                     srr_ok = structural_rr < max_structural_rr
 
                     if volume_ok and srr_ok:
                         reasons.append(f"regime_ok:chop_orb_vol{bar5_volume/1000:.0f}k_srr{structural_rr:.2f}")
                     else:
-                        # Block trades with low volume OR high structural_rr
                         fail_reasons = []
                         if not volume_ok:
                             fail_reasons.append(f"vol{bar5_volume/1000:.0f}k<{min_volume/1000:.0f}k")
@@ -555,10 +545,11 @@ class BreakoutPipeline(BasePipeline):
                             fail_reasons.append(f"srr{structural_rr:.2f}>={max_structural_rr}")
                         reasons.append(f"regime_blocked:chop_orb_{','.join(fail_reasons)}")
                         passed = False
-                else:
-                    # Non-ORB breakouts blocked in chop
+                elif not rule.get("allow_non_orb", True):
                     reasons.append("regime_blocked:chop_non_orb")
                     passed = False
+                else:
+                    reasons.append(f"regime_ok:{regime}")
             else:
                 reasons.append(f"regime_ok:{regime}")
 

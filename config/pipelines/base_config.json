@@ -12,9 +12,9 @@
     },
 
     "cap_strategy_blocking": {
-        "_comment": "From trade_decision_gate.py - Block certain setups for certain market cap segments",
+        "_comment": "GATES-OFF RUN: disabled cap-specific setup blocking",
         "_evidence": "DATA-DRIVEN (Dec 2024): FHM LONG only profitable in mid_cap (+1,342 Rs). large_cap=-8,934 Rs, small_cap=-18,011 Rs, micro_cap=-4,260 Rs",
-        "enabled": true,
+        "enabled": false,
         "blocked_setups": {
             "micro_cap": ["momentum_breakout", "squeeze_release"],
             "small_cap": [],
@@ -89,8 +89,8 @@
     },
 
     "quality_filters": {
-        "_comment": "From planner_internal.py lines 1358-1451 - Professional quality enforcement",
-        "enabled": true,
+        "_comment": "GATES-OFF RUN: disabled quality enforcement (structural_rr, T1_rr thresholds)",
+        "enabled": false,
 
         "min_structural_rr": 1.2,
         "strategy_structural_rr_overrides": {
@@ -163,9 +163,9 @@
         "_description": "Time-of-day filtering, blacklist penalties, RR caps, multi-TF adjustments",
 
         "time_of_day": {
-            "_comment": "From ranker.py lines 569-622 - Late-day noise filtering",
+            "_comment": "GATES-OFF RUN: disabled late-day ranking penalty",
             "_audit_finding": "39 signals in 14:00-15:00 window, only 3 trades (7.7% conversion = noise)",
-            "enabled": true,
+            "enabled": false,
             "late_afternoon_start_hour": 14,
             "late_afternoon_end_minute": 30,
             "late_afternoon_mult": 1.5,
@@ -211,9 +211,9 @@
         },
 
         "blacklist": {
-            "_comment": "From ranker.py lines 513-517 - Penalty for historically poor setups",
+            "_comment": "GATES-OFF RUN: disabled blacklist to test all setups raw",
             "_description": "Blacklisted setups get -999 penalty (effectively blocking them) but still get detected so other detectors can work",
-            "enabled": true,
+            "enabled": false,
             "penalty": -999,
             "strategies": [
                 "range_rejection_long",
@@ -234,8 +234,8 @@
     },
 
     "rsi_dead_zone": {
-        "_comment": "Data-driven filter: RSI 35-50 causes 43% of ALL hard_sl losses for LONG trades",
-        "enabled": true,
+        "_comment": "GATES-OFF RUN: disabled RSI dead zone filter",
+        "enabled": false,
         "long_min": 35,
         "long_max": 50,
         "_evidence": "101 hard_sl trades in RSI 40-50 = -54,687 loss (43% of ALL hard_sl loss)"
@@ -251,5 +251,59 @@
     "_comment_sl_ticks": "Buffer below structure stop (swing low/high) - from OLD config",
 
     "risk_per_trade_rupees": 1000.0,
-    "_comment_risk": "Risk per trade in Rupees - 1% of 1L capital"
+    "_comment_risk": "Risk per trade in Rupees - 1% of 1L capital",
+
+    "validated_combinations": {
+        "_comment": "SELECTIVE level: Walk-forward validated whitelist gate (618K trades, 4 FYs, Feb 2026)",
+        "_evidence": "deep_edge_analysis.py + filter_simulation.py: 37.2 trades/day, Rs 896 avg, Rs 251L total 3yr",
+        "enabled": true,
+
+        "setup_rules": {
+            "_comment": "Tier 1: Setup-specific IMPROVING/STABLE interactions. OR logic — ANY rule matching = trade passes.",
+            "volume_spike_reversal_long": [
+                {"name": "body_high", "conditions": [{"feature": "bar_body_ratio", "min": 0.9441}]},
+                {"name": "vwap_dist_high", "conditions": [{"feature": "vwap_dist_pct", "min": 0.5989}]},
+                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.004931}]},
+                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 4621}]},
+                {"name": "vol_or_low", "conditions": [{"feature": "vol_or_ratio", "max": 0.2804}]},
+                {"name": "or_range_high", "conditions": [{"feature": "or_range_pct", "min": 2.3232}]}
+            ],
+            "volume_spike_reversal_short": [
+                {"name": "or_range_mid", "conditions": [{"feature": "or_range_pct", "min": 1.293, "max": 2.128}]},
+                {"name": "adx_low", "conditions": [{"feature": "adx", "max": 29.25}]},
+                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.005534}]}
+            ],
+            "momentum_breakout_long": [
+                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 5801}]}
+            ],
+            "volume_breakout_long": [
+                {"name": "body_mid", "conditions": [{"feature": "bar_body_ratio", "min": 0.6439, "max": 0.8519}]},
+                {"name": "pd_range_low", "conditions": [{"feature": "pd_range_pct", "max": 2.6887}]},
+                {"name": "volume_high", "conditions": [{"feature": "volume5", "min": 13592}]}
+            ],
+            "gap_fill_short": [
+                {"name": "all", "conditions": [], "_comment": "IMPROVING setup — all trades have positive edge"}
+            ],
+            "gap_fill_long": [
+                {"name": "all", "conditions": [], "_comment": "IMPROVING setup — all trades have positive edge"}
+            ],
+            "breakout_long": [
+                {"name": "vol_or_high", "conditions": [{"feature": "vol_or_ratio", "min": 2.143}]}
+            ],
+            "first_hour_momentum_short": [
+                {"name": "or_range_mid", "conditions": [{"feature": "or_range_pct", "min": 1.3086, "max": 2.0311}]}
+            ]
+        },
+
+        "cap_rules": {
+            "_comment": "Tier 2: Cap-segment STABLE filters. Trades matching ANY cap rule also pass.",
+            "micro_cap": [
+                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.001043}]}
+            ],
+            "unknown": [
+                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 1294}]},
+                {"name": "vol_or_low", "conditions": [{"feature": "vol_or_ratio", "max": 0.0888}]}
+            ]
+        }
+    }
 }

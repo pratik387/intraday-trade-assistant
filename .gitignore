@@ -21,6 +21,7 @@ cache/
 cache/ohlcv_archive/
 logs/
 backtesting/
+data/sidecar/
 *.feather
 *.parquet
 
@@ -75,3 +76,4 @@ backtest_20*
 docs/*
 .claude/
 .claude/settings.local.json
+state/closed_trades.json

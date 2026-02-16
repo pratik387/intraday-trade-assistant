@@ -27,6 +27,7 @@ from .orb_structure import ORBStructure
 from .support_resistance_structure import SupportResistanceStructure
 from .trend_structure import TrendStructure
 from .volume_structure import VolumeStructure
+from .volume_breakout_structure import VolumeBreakoutStructure
 from .range_structure import RangeStructure
 from .fhm_structure import FHMStructure
 from pipelines.base_pipeline import get_cap_segment
@@ -111,6 +112,8 @@ class MainDetector(BaseStructure):
             ("trend_pullback_short", TrendStructure, "trend_pullback_short"),
             ("volume_spike_reversal_long", VolumeStructure, "volume_spike_reversal_long"),
             ("volume_spike_reversal_short", VolumeStructure, "volume_spike_reversal_short"),
+            ("volume_breakout_long", VolumeBreakoutStructure, "volume_breakout_long"),
+            ("volume_breakout_short", VolumeBreakoutStructure, "volume_breakout_short"),
             ("range_rejection_long", RangeStructure, "range_rejection_long"),
             ("range_rejection_short", RangeStructure, "range_rejection_short"),
             ("vwap_mean_reversion_long", VWAPStructure, "vwap_mean_reversion_long"),
@@ -571,6 +574,8 @@ class MainDetector(BaseStructure):
             # Volume structures
             'volume_spike_reversal_long': 'volume_spike_reversal_long',
             'volume_spike_reversal_short': 'volume_spike_reversal_short',
+            'volume_breakout_long': 'volume_breakout_long',
+            'volume_breakout_short': 'volume_breakout_short',
 
             # Range structures
             'range_bounce_long': 'range_bounce_long',

@@ -503,6 +503,7 @@ class ScreenerLive:
         # State
         self._last_produced_at: Optional[datetime] = None
         self._levels_cache: Dict[tuple, Dict[str, float]] = {}
+        self._levels_cache_lock = threading.Lock()
 
         # ORB levels cache: computed once per day at 09:35 and reused for entire day
         # Key: date, Value: Dict[symbol, Dict[str, float]] containing PDH/PDL/PDC/ORH/ORL
@@ -528,12 +529,14 @@ class ScreenerLive:
         )
 
         # Create persistent worker pool for structure detection (avoid 3-5s overhead every 5m)
+        # Worker count configurable: default 2 (safe for OCI 1.5 OCPU pods), increase locally for faster runs
+        structure_workers = int(raw["structure_detection_workers"])
         self._executor = ProcessPoolExecutor(
-            max_workers=2,
+            max_workers=structure_workers,
             initializer=_init_worker,
             initargs=(self.raw_cfg,)
         )
-        logger.info("ScreenerLive: Persistent worker pool created (2 workers)")
+        logger.info("ScreenerLive: Persistent worker pool created (%d workers)", structure_workers)
 
         # Create Stage-0 worker pool (1 worker — GIL-free compute_features + filter + shortlist)
         self._stage0_executor = ProcessPoolExecutor(
@@ -1082,12 +1085,6 @@ class ScreenerLive:
                 else:
                     # Enough bars to compute levels normally
                     lvl = self._levels_for(sym, df5, now)
-                    # MDS_DIAG: Log when levels are computed locally (not from cache/Redis)
-                    if self._market_data_mode == "subscriber":
-                        logger.warning(
-                            f"MDS_DIAG_LEVELS | LOCAL_COMPUTE | {sym} | "
-                            f"levels_by_symbol=None, computing locally (MDS may not have published yet)"
-                        )
 
             # Phase 2: Fetch daily data (210 days for EMA200, uses cache)
             daily_df = self.sdk.get_daily(sym, days=210)
@@ -1218,7 +1215,7 @@ class ScreenerLive:
         # Returns plans already sorted by ranking score
         logger.info("ORCHESTRATOR | Processing %d symbols via pipeline orchestrator", len(decisions))
 
-        max_trades_per_cycle = self.raw_cfg.get("max_trades_per_cycle", 10)
+        max_trades_per_cycle = int(self.raw_cfg["max_trades_per_cycle"])
         trades_planned = 0
         ranking_logger = get_ranking_logger()
         events_logger = get_events_decision_logger()
@@ -1291,7 +1288,19 @@ class ScreenerLive:
                 strategy_type=strategy_type,
                 rank_position=i + 1,
                 total_candidates=len(eligible_plans),
-                regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None
+                regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None,
+                # Component scores for ML analysis
+                rank_components=plan.get("ranking", {}).get("components"),
+                rank_base_score=plan.get("ranking", {}).get("base_score"),
+                rank_multipliers=plan.get("ranking", {}).get("multipliers"),
+                # Indicators at decision time
+                indicators=plan.get("indicators"),
+                # Quality summary
+                structural_rr=plan.get("quality", {}).get("structural_rr"),
+                quality_status=plan.get("quality", {}).get("status"),
+                # Category and bias
+                category=plan.get("category"),
+                bias=plan.get("bias"),
             )
 
             # 1) Eligibility (already checked, but keep for compatibility)
@@ -1399,9 +1408,6 @@ class ScreenerLive:
             }
             diag_event_log.log_decision(symbol=plan["symbol"], now=now, plan=plan, features=features, decision=decision_dict)
 
-            # MDS DIAGNOSTIC: Log levels at entry decision for verification
-            lvls = plan.get("levels") or {}
-            logger.info(f"MDS_DIAG_ENTRY | {sym} | ORH={lvls.get('ORH'):.2f} ORL={lvls.get('ORL'):.2f} PDH={lvls.get('PDH'):.2f} PDL={lvls.get('PDL'):.2f}" if lvls.get('ORH') else f"MDS_DIAG_ENTRY | {sym} | levels=NONE")
             exec_item = {
                 "symbol": plan["symbol"],
                 "plan": {
@@ -1596,11 +1602,6 @@ class ScreenerLive:
                 )
                 return redis_levels
             # Not in Redis yet - publisher hasn't computed. Return None and wait.
-            # MDS_DIAG: Log every miss to track timing issues between MDS publish and subscriber read
-            logger.warning(
-                f"MDS_DIAG_LEVELS | MISS | time={current_time} | "
-                f"ORB levels NOT in Redis for {session_date_str} - waiting for MDS to publish"
-            )
             return None
 
         # Only compute at or after 09:40 (ensures ORB data 09:15-09:30 is complete)
@@ -1875,7 +1876,8 @@ class ScreenerLive:
         except Exception:
             session_date = None
         key = (symbol, session_date)
-        cached = self._levels_cache.get(key)
+        with self._levels_cache_lock:
+            cached = self._levels_cache.get(key)
         if cached:
             return cached
 
@@ -1905,10 +1907,6 @@ class ScreenerLive:
 
         try:
             logger.debug(f"LEVELS: Computing opening range for {symbol}, df5 shape: {df5.shape if df5 is not None else None}")
-            # MDS DIAGNOSTIC: Log bar timestamps to verify data freshness
-            if df5 is not None and not df5.empty:
-                bar_times = [str(t)[:19] for t in df5.index[:6]]  # First 6 bars
-                logger.info(f"MDS_DIAG | {symbol} | df5_bars={bar_times} | latest={str(df5.index[-1])[:19]}")
             orh, orl = levels.opening_range(df5, symbol=symbol)
             orh = float(orh); orl = float(orl)
             logger.debug(f"LEVELS: Computed ORH={orh}, ORL={orl}")
@@ -1950,8 +1948,14 @@ class ScreenerLive:
             )
             logger.warning(f"LEVELS: No valid levels computed for {symbol} - structure detection will be skipped")
 
-        self._levels_cache.clear()
-        self._levels_cache[key] = out
+        # Only cache if we have at least PDH+PDL (essential for structure detection).
+        # If daily data wasn't available yet (SDK warming up), don't cache NaN —
+        # allow retry next 5m cycle when data may be ready.
+        # ORH/ORL being NaN is acceptable to cache (opening range is fixed from first bars).
+        has_prev_day = not (pd.isna(pdh) or pd.isna(pdl))
+        if has_prev_day:
+            with self._levels_cache_lock:
+                self._levels_cache[key] = out
         return out
 
     def _fallback_shortlist(self) -> List[str]:

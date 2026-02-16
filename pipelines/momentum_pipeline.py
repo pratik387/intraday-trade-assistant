@@ -292,31 +292,32 @@ class MomentumPipeline(BasePipeline):
             logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED by setup filters: {setup_reasons}")
             return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
-        # Regime check from config - momentum NEEDS trend - HARD GATES only
+        # Regime check from config - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
 
         if regime in regime_cfg:
             rule = regime_cfg[regime]
-            if not rule["allowed"]:
+            if not rule.get("allowed", True):
                 reasons.append(f"regime_blocked:{regime}")
                 passed = False
             else:
                 reasons.append(f"regime_ok:{regime}")
 
-                # Check trend alignment for trending regimes - HARD GATE for counter-trend
+                # Check trend alignment for trending regimes
+                # Configurable via "allow_counter_trend" in regime_rules (default: block counter-trend)
                 if regime in ("trend_up", "trend_down"):
                     is_long_trade = "_long" in setup_type
                     if (regime == "trend_up" and is_long_trade) or (regime == "trend_down" and not is_long_trade):
                         reasons.append("trend_aligned")
-                    else:
-                        # Counter-trend momentum is blocked (don't fight the trend)
+                    elif not rule.get("allow_counter_trend", False):
                         reasons.append("counter_trend_blocked")
                         passed = False
+                    else:
+                        reasons.append("counter_trend_allowed")
 
-        # ADX gate from config - strict for momentum - HARD GATE
-        # Note: ADX is also checked in screening, this is additional validation
+        # ADX gate from config
         adx_cfg = self._get("gates", "adx")
-        if adx < adx_cfg["min_value"]:
+        if adx_cfg.get("block_below", True) and adx < adx_cfg["min_value"]:
             reasons.append(f"adx_weak:{adx:.1f}<{adx_cfg['min_value']}")
             passed = False
         else:

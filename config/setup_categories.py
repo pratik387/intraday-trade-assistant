@@ -46,6 +46,7 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "change_of_character": SetupCategory.BREAKOUT,
     "level_breakout": SetupCategory.BREAKOUT,
     "orb_level_breakout": SetupCategory.BREAKOUT,  # Level breakouts at ORH/ORL (ORB-related)
+    "volume_breakout": SetupCategory.BREAKOUT,      # Swing level breakout with institutional volume surge
 
     # LEVEL: Bounce/rejection at levels
     # Quality = retest_ok + hold_ok (level acceptance)

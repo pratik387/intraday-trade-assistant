@@ -41,15 +41,7 @@ logger = get_agent_logger()
 # Pro trader approach: AVOID trading during squeeze/consolidation. Wait for breakout.
 # ================================================================================
 HARD_BLOCKS = {
-    "squeeze": [
-        "first_hour_momentum_long",      # Rs 119 in 40 trades = Rs 3/trade avg
-        "volume_spike_reversal_short",   # Rs -632 in 7 trades = negative
-        "premium_zone_short",            # Not designed for squeeze regime
-    ],
-    # Add other regime hard blocks here as analysis reveals them
-    # "chop": [...],
-    # "trend_up": [...],
-    # "trend_down": [...],
+    # GATES-OFF RUN: All hard blocks disabled for raw detection quality test
 }
 
 
@@ -584,6 +576,61 @@ class BasePipeline(ABC):
         # Use centralized utility from services/indicators/indicators.py
         # It already handles None/empty df and returns 1.0 as default
         return _volume_ratio_util(df, lookback=lookback)
+
+    # ======================== VALIDATED COMBINATION WHITELIST ========================
+    # Walk-forward validated filter gate. A trade MUST match at least one
+    # validated combination (setup-specific OR cap-segment) to pass.
+    # Config: base_config.json -> validated_combinations
+
+    def _check_validated_combinations(
+        self, setup_type: str, features: Dict[str, Any]
+    ) -> Tuple[bool, str]:
+        """
+        Whitelist gate: trade must match at least one walk-forward validated
+        combination to pass. Returns (passed, reason).
+
+        Rules are OR'd: if ANY setup rule OR ANY cap rule matches, trade passes.
+        Within a single rule, all conditions are AND'd.
+        """
+        base_cfg = load_base_config()
+        vc_cfg = base_cfg.get("validated_combinations", {})
+        if not vc_cfg.get("enabled", False):
+            return True, "vc_disabled"
+
+        setup_lower = setup_type.lower()
+        cap = features.get("cap_segment", "unknown")
+
+        # Check setup-specific rules (OR logic - ANY match = pass)
+        setup_rules = vc_cfg.get("setup_rules", {}).get(setup_lower, [])
+        for rule in setup_rules:
+            if self._vc_rule_matches(rule, features):
+                return True, f"vc_setup:{setup_lower}:{rule.get('name', 'unnamed')}"
+
+        # Check cap-segment rules (OR logic - ANY match = pass)
+        cap_rules = vc_cfg.get("cap_rules", {}).get(cap, [])
+        for rule in cap_rules:
+            if self._vc_rule_matches(rule, features):
+                return True, f"vc_cap:{cap}:{rule.get('name', 'unnamed')}"
+
+        # No match found - reject
+        return False, f"vc_no_match:{setup_lower}:{cap}"
+
+    def _vc_rule_matches(self, rule: Dict[str, Any], features: Dict[str, Any]) -> bool:
+        """Check if a single validated combination rule matches the current features."""
+        conditions = rule.get("conditions", [])
+        if len(conditions) == 0:
+            # Empty conditions = unconditional pass (e.g. gap_fill_short "all" rule)
+            return True
+        for cond in conditions:
+            feat_name = cond["feature"]
+            val = features.get(feat_name)
+            if val is None:
+                return False
+            if "min" in cond and val < cond["min"]:
+                return False
+            if "max" in cond and val > cond["max"]:
+                return False
+        return True
 
     # ======================== UNIFIED FILTER SYSTEM ========================
     # All setup-specific filters are applied through this centralized method.
@@ -1570,6 +1617,38 @@ class BasePipeline(ABC):
 
         # daily_df now used for daily ATR fallback in morning ORB setups
 
+        # --- Derived features for validated combination whitelist ---
+        last_bar = df5m.iloc[-1]
+        bar_range = float(last_bar["high"]) - float(last_bar["low"])
+        features["bar_body_ratio"] = abs(float(last_bar["close"]) - float(last_bar["open"])) / bar_range if bar_range > 0 else 0.0
+
+        vwap_for_dist = float(last_bar.get("vwap", 0)) if "vwap" in last_bar.index else 0
+        features["vwap_dist_pct"] = abs(current_close - vwap_for_dist) / vwap_for_dist * 100 if vwap_for_dist > 0 else 0.0
+
+        orh_level = levels.get("ORH")
+        orl_level = levels.get("ORL")
+        if orh_level is not None and orl_level is not None and not pd.isna(orh_level) and not pd.isna(orl_level) and orl_level > 0:
+            or_width = orh_level - orl_level
+            features["or_range_pct"] = or_width / orl_level * 100
+            features["or_position"] = (current_close - orl_level) / or_width if or_width > 0 else 0.5
+        else:
+            features["or_range_pct"] = None
+            features["or_position"] = None
+
+        pdh_level = levels.get("PDH")
+        pdl_level = levels.get("PDL")
+        if pdh_level is not None and pdl_level is not None and not pd.isna(pdh_level) and not pd.isna(pdl_level) and pdl_level > 0:
+            features["pd_range_pct"] = (pdh_level - pdl_level) / pdl_level * 100
+        else:
+            features["pd_range_pct"] = None
+
+        last_volume = float(last_bar["volume"]) if "volume" in last_bar.index else 0
+        or_range_val = features.get("or_range_pct")
+        features["vol_or_ratio"] = last_volume / (or_range_val * 10000) if or_range_val and or_range_val > 0 else None
+        features["bb_width_proxy"] = float(last_bar.get("bb_width_proxy", 0)) if "bb_width_proxy" in last_bar.index else 0.0
+        features["volume5"] = last_volume
+        features["cap_segment"] = cap_segment
+
         # 0. UNIVERSAL GATES (apply BEFORE category-specific gates)
         # Check if we're in opening bell window (9:15-9:30) - may bypass some gates
         opening_bell_active = self._is_opening_bell_window(now)
@@ -1617,6 +1696,12 @@ class BasePipeline(ABC):
         logger.debug(f"QUALITY_{category}: {symbol} structural_rr={quality_result.structural_rr:.2f} "
                     f"status={quality_result.quality_status} metrics={clean_metrics}")
 
+        # Hard floor: reject plans with zero structural R:R (no reward)
+        # This fires even when quality_filters are disabled — zero-reward trades are never worth taking
+        if quality_result.structural_rr <= 0.0:
+            logger.warning(f"ZERO_RR: {symbol} {setup_type} structural_rr={quality_result.structural_rr:.2f} — rejected (zero reward)")
+            return {"eligible": False, "reason": "zero_structural_rr", "details": [f"structural_rr={quality_result.structural_rr:.2f}"]}
+
         # NOTE: Structural R:R min check with strategy-specific overrides is done in _apply_quality_filters()
         # This allows breakouts to use relaxed thresholds while other categories use stricter defaults
 
@@ -1632,7 +1717,25 @@ class BasePipeline(ABC):
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at GATES: {gate_result.reasons}")
             return {"eligible": False, "reason": "gate_fail", "details": gate_result.reasons}
 
-        # 3b. UNIVERSAL RSI DEAD ZONE FILTER (for LONGS only) - CONFIG DRIVEN
+        # 3b. VALIDATED COMBINATION WHITELIST (walk-forward evidence gate)
+        vc_passed, vc_reason = self._check_validated_combinations(setup_type, features)
+        vc_audit = {
+            "bar_body_ratio": round(features.get("bar_body_ratio", 0), 4),
+            "vwap_dist_pct": round(features.get("vwap_dist_pct", 0), 4),
+            "bb_width_proxy": round(features.get("bb_width_proxy", 0), 6),
+            "volume5": features.get("volume5", 0),
+            "vol_or_ratio": round(features["vol_or_ratio"], 4) if features.get("vol_or_ratio") is not None else None,
+            "or_range_pct": round(features["or_range_pct"], 4) if features.get("or_range_pct") is not None else None,
+            "pd_range_pct": round(features["pd_range_pct"], 4) if features.get("pd_range_pct") is not None else None,
+            "adx": round(features.get("adx", 0), 1) if features.get("adx") else None,
+            "cap": features.get("cap_segment", "unknown"),
+        }
+        if not vc_passed:
+            logger.info(f"[{category}] {symbol} {setup_type} REJECTED VC: {vc_reason} | {vc_audit}")
+            return {"eligible": False, "reason": "validated_combo_fail", "details": [vc_reason]}
+        logger.info(f"[{category}] {symbol} {setup_type} PASSED VC: {vc_reason} | {vc_audit}")
+
+        # 3c. UNIVERSAL RSI DEAD ZONE FILTER (for LONGS only) - CONFIG DRIVEN
         # Data-driven: RSI 35-50 has 43% of ALL hard_sl losses for LONG trades
         # ORB/FHM setups bypass this filter - RSI erratic at market open, structure detector enforces time cutoff
         base_cfg = load_base_config()
@@ -1962,6 +2065,7 @@ class BasePipeline(ABC):
             "category": self.get_category_name(),
 
             "entry_ref_price": round(plan_entry_ref, 2),
+            "entry_zone": [round(entry_result.entry_zone[0], 2), round(entry_result.entry_zone[1], 2)],
             "entry": {
                 "reference": round(plan_entry_ref, 2),
                 "zone": [round(entry_result.entry_zone[0], 2), round(entry_result.entry_zone[1], 2)],
@@ -2019,6 +2123,8 @@ class BasePipeline(ABC):
                 "rsi": round(rsi_val, 1) if rsi_val else None,
                 "vwap": round(vwap_val, 2) if vwap_val else None,
             },
+
+            "vc_reason": vc_reason,
 
             "levels": levels,
             "pipeline_reasons": screen_result.reasons + gate_result.reasons,

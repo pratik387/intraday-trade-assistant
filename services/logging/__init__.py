@@ -2,6 +2,6 @@
 Logging services for trading system
 """
 
-from .trading_logger import TradingLogger, TradeLifecycle
+from .trading_logger import TradingLogger
 
-__all__ = ['TradingLogger', 'TradeLifecycle']
+__all__ = ['TradingLogger']
