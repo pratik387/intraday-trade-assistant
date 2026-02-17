@@ -47,6 +47,7 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "level_breakout": SetupCategory.BREAKOUT,
     "orb_level_breakout": SetupCategory.BREAKOUT,  # Level breakouts at ORH/ORL (ORB-related)
     "volume_breakout": SetupCategory.BREAKOUT,      # Swing level breakout with institutional volume surge
+    "equilibrium_breakout": SetupCategory.BREAKOUT,  # Equilibrium zone breakout
 
     # LEVEL: Bounce/rejection at levels
     # Quality = retest_ok + hold_ok (level acceptance)
@@ -69,6 +70,8 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "vwap_mean_reversion": SetupCategory.REVERSION,
     "liquidity_sweep": SetupCategory.REVERSION,
     "fair_value_gap": SetupCategory.REVERSION,
+    "range_deviation": SetupCategory.REVERSION,       # Range deviation mean reversion
+    "range_mean_reversion": SetupCategory.REVERSION,  # Range-based mean reversion
 
     # MOMENTUM: Trend continuation
     # Quality = ADX (trend strength) + trend alignment

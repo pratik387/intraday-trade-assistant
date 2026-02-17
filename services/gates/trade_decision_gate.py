@@ -710,6 +710,21 @@ class TradeDecisionGate:
             structural_rr = 0.0
             if plan and "quality" in plan and plan["quality"]:
                 structural_rr = float(plan["quality"].get("structural_rr", 0.0) or 0.0)
+            elif df5m_tail is not None and len(df5m_tail) >= 3 and levels:
+                # Estimate structural R:R from price/levels when plan not yet available
+                _close = float(df5m_tail["close"].iloc[-1])
+                _bias = best.bias if hasattr(best, 'bias') else "long"
+                if _bias == "long":
+                    _sl = levels.get("ORL") or levels.get("PDL")
+                    _tp = levels.get("PDH") or levels.get("ORH")
+                else:
+                    _sl = levels.get("ORH") or levels.get("PDH")
+                    _tp = levels.get("PDL") or levels.get("ORL")
+                if _sl and _tp:
+                    _risk = abs(_close - _sl)
+                    _reward = abs(_tp - _close)
+                    if _risk > 0:
+                        structural_rr = _reward / _risk
 
             features = self._compute_features(
                 symbol=symbol,

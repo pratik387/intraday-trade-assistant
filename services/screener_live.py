@@ -714,13 +714,12 @@ class ScreenerLive:
 
     def _enhance_candidates_with_htf(self, symbol: str, candidates: List) -> List:
         """
-        Phase 1.4: Enhance setup candidate strength with 15m HTF confirmation.
-
-        Applies confidence boost/penalty based on 15m trend and volume alignment:
-        - +15% boost if 15m trend aligned with setup direction
-        - -10% penalty if 15m trend opposes setup direction
-        - +5% boost if 15m volume surge (>1.3x median)
+        DEPRECATED: HTF enhancement is now handled via htf_context parameter
+        passed to PipelineOrchestrator.process_setup_candidates().
+        The orchestrator applies HTF 15m multipliers in apply_universal_ranking_adjustments().
+        This method is kept for reference but is not called.
         """
+        logger.debug(f"_enhance_candidates_with_htf called for {symbol} but is DEPRECATED — HTF context flows via orchestrator")
         from dataclasses import dataclass, replace
         from services.gates.trade_decision_gate import SetupCandidate
 
@@ -1238,6 +1237,18 @@ class ScreenerLive:
             # Build HTF context from 15m data for category-specific ranking adjustments
             htf_context = self._build_htf_context(sym)
 
+            # Compute daily_score from daily_df for daily/intraday score weighting
+            daily_score = 0.0
+            if daily_df is not None and len(daily_df) >= 20:
+                try:
+                    _d_close = float(daily_df["close"].iloc[-1])
+                    _d_sma20 = float(daily_df["close"].tail(20).mean())
+                    _d_atr = float((daily_df["high"] - daily_df["low"]).tail(14).mean())
+                    if _d_atr > 0:
+                        daily_score = max(-1.0, min(1.0, (_d_close - _d_sma20) / _d_atr))
+                except Exception:
+                    daily_score = 0.0
+
             try:
                 plan = process_setup_candidates(
                     symbol=sym,
@@ -1248,7 +1259,9 @@ class ScreenerLive:
                     now=now,
                     candidates=setup_candidates,
                     daily_df=daily_df,
-                    htf_context=htf_context
+                    htf_context=htf_context,
+                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
+                    daily_score=daily_score
                 )
             except Exception as e:
                 logger.exception("orchestrator failed for %s: %s", sym, e)
@@ -1433,6 +1446,8 @@ class ScreenerLive:
                     "category": plan.get("category", ""),
                     "cap_segment": plan.get("sizing", {}).get("cap_segment", ""),
                     "mis_leverage": plan.get("sizing", {}).get("mis_leverage", 1.0),
+                    "bias": plan.get("bias"),
+                    "indicators": plan.get("indicators"),
                 },
                 "meta": plan,
             }

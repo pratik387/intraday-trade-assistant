@@ -36,6 +36,7 @@ import pandas as pd
 import numpy as np
 
 from config.logging_config import get_agent_logger
+from config.setup_categories import get_base_setup_name
 
 from .base_pipeline import (
     BasePipeline,
@@ -277,29 +278,37 @@ class BreakoutPipeline(BasePipeline):
 
     # ======================== QUALITY ========================
 
+    # Momentum-driven breakouts: quality from candle body strength, not level distance.
+    # These setups detect momentum surges without a specific reference level being broken.
+    _MOMENTUM_BREAKOUTS = frozenset({"momentum_breakout", "flag_continuation", "squeeze_release", "change_of_character"})
+
+    # ORB-family: always use ORH/ORL as breakout reference (opening range context).
+    _ORB_SETUPS = frozenset({"orb_breakout", "orb_breakdown", "orb_level_breakout", "first_hour_momentum"})
+
     def calculate_quality(
         self,
         symbol: str,
         df5m: pd.DataFrame,
         bias: str,
         levels: Dict[str, float],
-        atr: float
+        atr: float,
+        setup_type: str = ""
     ) -> QualityResult:
         """
         Breakout quality: volume * breakout_strength / normalized_risk
 
-        From planner_internal.py lines 1162-1177:
-        - Breakout distance (ATR-normalized) measures momentum
-        - Volume ratio confirms institutional participation
-        - Quality = strength of the break, not distance to arbitrary levels
+        Setup-type-aware breakout reference (pro Indian trader approach):
+        - ORB setups: ORH/ORL (opening range is the reference)
+        - Level-based breakouts: detected_level > PDH/PDL > ORH/ORL cascade
+          (PDH/PDL are the two most important institutional intraday levels)
+        - Momentum breakouts: candle body strength (no reference level — momentum IS the signal)
 
-        NOTE: ORB setups naturally have LOW structural_rr (near 0) since we enter AT the level.
-        The old config handles this with strategy_structural_rr_overrides: 0.25 for orb_* setups.
+        NOTE: ORB setups naturally have LOW structural_rr since we enter AT the level.
+        The config handles this with strategy_structural_rr_overrides for orb_* setups.
         """
-        logger.debug(f"[BREAKOUT] Calculating quality for {symbol} bias={bias}")
+        logger.debug(f"[BREAKOUT] Calculating quality for {symbol} bias={bias} setup={setup_type}")
         current_close = float(df5m["close"].iloc[-1])
-        orh = safe_level_get(levels, "ORH", current_close)
-        orl = safe_level_get(levels, "ORL", current_close)
+        base_name = get_base_setup_name(setup_type) if setup_type else ""
 
         # Volume ratio with floor from config
         vol_ratio = self.get_volume_ratio(df5m)
@@ -309,11 +318,69 @@ class BreakoutPipeline(BasePipeline):
         # ADX for trend strength
         adx = float(df5m["adx"].iloc[-1]) if "adx" in df5m.columns and not pd.isna(df5m["adx"].iloc[-1]) else 20.0
 
-        # Breakout strength calculation
-        if bias == "long":
-            breakout_distance = max(current_close - orh, 0)
+        # --- Determine breakout_distance based on setup sub-type ---
+        ref_level = None
+        ref_source = "none"
+
+        if base_name in self._MOMENTUM_BREAKOUTS:
+            # Momentum-driven: use directional candle body as proxy for breakout distance.
+            # Pro traders measure momentum by candle body relative to ATR — a strong
+            # momentum bar (body > 1 ATR) with volume confirms institutional participation.
+            last_bar = df5m.iloc[-1]
+            if bias == "long":
+                breakout_distance = max(float(last_bar["close"]) - float(last_bar["open"]), 0)
+            else:
+                breakout_distance = max(float(last_bar["open"]) - float(last_bar["close"]), 0)
+            ref_source = "candle_body"
+
+        elif base_name in self._ORB_SETUPS:
+            # ORB family: ORH/ORL is the natural reference level
+            if bias == "long":
+                ref_level = safe_level_get(levels, "ORH", current_close)
+            else:
+                ref_level = safe_level_get(levels, "ORL", current_close)
+            breakout_distance = max(abs(current_close - ref_level), 0)
+            ref_source = "ORH/ORL"
+
         else:
-            breakout_distance = max(orl - current_close, 0)
+            # Non-ORB level-based breakouts (level_breakout, resistance_breakout,
+            # volume_breakout, break_of_structure, range_breakout, etc.)
+            # Cascade: detected_level > PDH/PDL > ORH/ORL
+            detected = levels.get("detected_level")
+            if detected is not None and not pd.isna(detected):
+                ref_level = detected
+                ref_source = "detected_level"
+            elif bias == "long":
+                pdh = levels.get("PDH")
+                if pdh is not None and not pd.isna(pdh):
+                    ref_level = pdh
+                    ref_source = "PDH"
+                else:
+                    orh = levels.get("ORH")
+                    if orh is not None and not pd.isna(orh):
+                        ref_level = orh
+                        ref_source = "ORH"
+            else:
+                pdl = levels.get("PDL")
+                if pdl is not None and not pd.isna(pdl):
+                    ref_level = pdl
+                    ref_source = "PDL"
+                else:
+                    orl = levels.get("ORL")
+                    if orl is not None and not pd.isna(orl):
+                        ref_level = orl
+                        ref_source = "ORL"
+
+            if ref_level is not None:
+                if bias == "long":
+                    breakout_distance = max(current_close - ref_level, 0)
+                else:
+                    breakout_distance = max(ref_level - current_close, 0)
+            else:
+                breakout_distance = 0
+
+        logger.debug(f"[BREAKOUT] {symbol} ref_source={ref_source} ref_level={ref_level} "
+                     f"breakout_dist={breakout_distance:.2f} atr={atr:.2f}")
 
         breakout_strength = breakout_distance / max(atr, 1e-6)
 
@@ -341,7 +408,8 @@ class BreakoutPipeline(BasePipeline):
             "adx": round(adx, 1),
         }
 
-        reasons = [f"vol={vol_ratio:.2f}", f"break_str={breakout_strength:.3f}", f"adx={adx:.1f}"]
+        reasons = [f"vol={vol_ratio:.2f}", f"break_str={breakout_strength:.3f}",
+                   f"adx={adx:.1f}", f"ref={ref_source}"]
 
         return QualityResult(
             structural_rr=structural_rr,
@@ -679,11 +747,11 @@ class BreakoutPipeline(BasePipeline):
         """
         logger.debug(f"[BREAKOUT] Calculating rank score for {symbol} in {regime}")
 
-        # REQUIRED features
+        # REQUIRED features (guard None from missing indicator columns)
         vol_ratio = float(intraday_features["volume_ratio"])
-        rsi = float(intraday_features["rsi"])
-        adx = float(intraday_features["adx"])
-        above_vwap = bool(intraday_features["above_vwap"])
+        rsi = float(intraday_features["rsi"] or 50.0)
+        adx = float(intraday_features["adx"] or 0.0)
+        above_vwap = bool(intraday_features["above_vwap"]) if intraday_features["above_vwap"] is not None else (intraday_features["bias"] == "long")
         bias = intraday_features["bias"]
 
         # OPTIONAL features (None = skip scoring, no hidden defaults)

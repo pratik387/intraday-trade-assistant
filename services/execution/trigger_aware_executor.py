@@ -292,6 +292,17 @@ class TriggerAwareExecutor:
                 },
             )
 
+            # Log ENTRY fill to events.jsonl (actual execution record)
+            diag_event_log.log_entry_fill(
+                symbol=symbol,
+                plan=plan,
+                side=side,
+                qty=qty,
+                price=price,
+                entry_ts=trade.trigger_timestamp,
+                order_meta={"order_id": order_id},
+            )
+
             # Log TRIGGER to trade_logs.log (human-readable)
             if self.trading_logger:
                 self.trading_logger.log_trigger({
@@ -408,6 +419,17 @@ class TriggerAwareExecutor:
         import copy
         from config.setup_categories import is_level_category
         adjusted_plan = copy.deepcopy(plan)
+
+        # Snapshot decision-time SL and targets BEFORE recalculation.
+        # These persist in pos.plan for EXIT diagnostics audit trail.
+        stop_data_orig = plan.get("stop", {})
+        if stop_data_orig.get("hard") is not None and "_decision_sl" not in adjusted_plan:
+            adjusted_plan["_decision_sl"] = stop_data_orig["hard"]
+        original_targets = plan.get("targets", [])
+        if original_targets and "_decision_targets" not in adjusted_plan:
+            adjusted_plan["_decision_targets"] = [
+                t.get("level") for t in original_targets if t.get("level") is not None
+            ]
 
         try:
             # Check if this is an ORB setup - use OR range-based targets (pro standard)
@@ -1064,22 +1086,6 @@ class TriggerAwareExecutor:
                     f"price={price:.2f} zone=[{entry_min:.2f}, {entry_max:.2f}] "
                     f"ts={ts.strftime('%H:%M:%S')} trade_id={trade.trade_id}"
                 )
-
-                # Also log to trade logger for detailed analysis
-                if self.trading_logger:
-                    try:
-                        self.trading_logger.log_tick_in_zone(
-                            symbol=symbol,
-                            price=price,
-                            entry_zone=entry_zone,
-                            zone_status=zone_status,
-                            timestamp=ts,
-                            trade_id=trade.trade_id,
-                            strategy=strategy,
-                            bias=bias
-                        )
-                    except Exception as e:
-                        logger.debug(f"Trading logger tick log failed: {e}")
 
                 # Trigger on tick - broker handles live vs backtest polymorphically
                 self._try_trigger_on_tick(trade, price, ts)

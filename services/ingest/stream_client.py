@@ -47,14 +47,15 @@ class WSClient:
         - .set_mode(mode: str, tokens: list[int])
     """
 
-    def __init__(self, sdk: Any, on_tick: Callable[[dict], None]) -> None:
+    def __init__(self, sdk: Any, on_tick: Callable[[dict], None] = None) -> None:
         self._sdk = sdk
         self._ticker: Any = None
         self._on_message: Optional[Callable[[Any], None]] = None
         self._on_close_cb: Optional[Callable] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        self.on_tick = on_tick
+        # on_tick kept for backward compat; actual dispatch flows through on_message() -> TickRouter
+        self._on_tick_legacy = on_tick
 
         # Buffer for subscriptions before WebSocket connects
         self._connected = threading.Event()

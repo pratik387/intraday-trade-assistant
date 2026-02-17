@@ -1797,6 +1797,8 @@
   "t2_rr": 3.0,
   "sl_atr_mult": 1.6,
   "_comment_sl_atr_mult": "REVERTED from 2.0 to 1.6 - wider stops were causing 800+ Rs losses instead of 600-700 Rs max",
+  "exit_sl_atr_mult_min": 0,
+  "_comment_exit_sl_atr_mult_min": "ATR SL adjustment disabled (0 = off). When >0, widens SL to at least N*ATR from entry. Was hardcoded to 1.0.",
   "sl_below_swing_ticks": 0.0,
   "_comment_time_based_sl": "=== TIME-BASED SL WIDENING (Pro Trader Standard) ===",
   "_comment_time_sl_rationale": "Research: Morning volatility (10-11 AM) causes 35% hard_sl rate. Pro traders widen stops after time-in-trade to avoid whipsaw. Based on LuxAlgo/TrendSpider ATR strategies.",

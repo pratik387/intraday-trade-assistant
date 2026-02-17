@@ -299,7 +299,9 @@ class MainDetector(BaseStructure):
                 d['vol_z'] = (d['volume'] - vol_mean) / vol_std.replace(0, np.nan)
 
             if 'atr' not in d.columns:
-                # Simple ATR calculation
+                # Fallback ATR: simple 14-bar rolling mean of true range
+                # Note: bar_builder uses Wilder-smoothed ADX; if 'atr' column is present
+                # from upstream (e.g. bar_builder), we use it directly (no recalculation)
                 high_low = d['high'] - d['low']
                 high_close = np.abs(d['high'] - d['close'].shift())
                 low_close = np.abs(d['low'] - d['close'].shift())
@@ -462,14 +464,15 @@ class MainDetector(BaseStructure):
                 # Extract detected level from event.levels (pro trader: use actual detected level for quality)
                 # Structure detectors store: support_bounce -> {"support": level}, resistance_bounce -> {"resistance": level}
                 # Range detectors store: {"support": level, "resistance": level}
+                # ICT BOS stores: {"broken_level": swing_high/low} — the swing level that was broken
                 detected_level = None
                 if event.levels:
                     if event.side == "long":
-                        # Long setups bounce off support
-                        detected_level = event.levels.get("support") or event.levels.get("nearest_support")
+                        # Long setups bounce off support; BOS long breaks above swing high (broken_level)
+                        detected_level = event.levels.get("support") or event.levels.get("nearest_support") or event.levels.get("broken_level")
                     else:
-                        # Short setups bounce off resistance
-                        detected_level = event.levels.get("resistance") or event.levels.get("nearest_resistance")
+                        # Short setups bounce off resistance; BOS short breaks below swing low (broken_level)
+                        detected_level = event.levels.get("resistance") or event.levels.get("nearest_resistance") or event.levels.get("broken_level")
 
                 if setup_type:
                     setup_candidates.append(SetupCandidate(

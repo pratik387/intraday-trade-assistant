@@ -254,55 +254,47 @@
     "_comment_risk": "Risk per trade in Rupees - 1% of 1L capital",
 
     "validated_combinations": {
-        "_comment": "SELECTIVE level: Walk-forward validated whitelist gate (618K trades, 4 FYs, Feb 2026)",
-        "_evidence": "deep_edge_analysis.py + filter_simulation.py: 37.2 trades/day, Rs 896 avg, Rs 251L total 3yr",
+        "_comment": "Level 2 SELECTIVE: Walk-forward validated whitelist gate (48K trades, 4-tick OHLC, 4 FYs, Feb 2026)",
+        "_evidence": "deep_edge_analysis.py + filter_simulation.py on 20260215-224737: ~39 trades/day, Rs 1053 avg",
+        "_data_source": "20260215-224737_full/selective_thresholds.json + deep_edge_combinations.json",
+        "_note": "V3: sl_atr_mult REMOVED (gate-time approx diverges 3-40x from post-hoc). small_cap cap_rule REMOVED (vol_or<=0.027 passed 66% of all VC passes). unknown:volume_low tightened 418->200. High-volume setups pass ONLY via cap_rules.",
         "enabled": true,
 
         "setup_rules": {
-            "_comment": "Tier 1: Setup-specific IMPROVING/STABLE interactions. OR logic — ANY rule matching = trade passes.",
+            "_comment": "Tier 1: Setup-specific IMPROVING/STABLE interactions. OR logic — ANY rule match = pass. Only setups with gate-time-available features.",
+
             "volume_spike_reversal_long": [
-                {"name": "body_high", "conditions": [{"feature": "bar_body_ratio", "min": 0.9441}]},
-                {"name": "vwap_dist_high", "conditions": [{"feature": "vwap_dist_pct", "min": 0.5989}]},
-                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.004931}]},
-                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 4621}]},
-                {"name": "vol_or_low", "conditions": [{"feature": "vol_or_ratio", "max": 0.2804}]},
-                {"name": "or_range_high", "conditions": [{"feature": "or_range_pct", "min": 2.3232}]}
+                {"name": "vwap_dist_high", "conditions": [{"feature": "vwap_dist_pct", "min": 0.619}], "_edge": "N=2071, Rs 1567, lift Rs 823, STABLE"},
+                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.005}], "_edge": "N=2072, Rs 1433, lift Rs 689, STABLE"},
+                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 3650}], "_edge": "N=2071, Rs 1342, lift Rs 598, IMPROVING"},
+                {"name": "vol_or_low", "conditions": [{"feature": "vol_or_ratio", "max": 0.225}], "_edge": "N=1989, Rs 1120, lift Rs 376, IMPROVING"}
             ],
+
             "volume_spike_reversal_short": [
-                {"name": "or_range_mid", "conditions": [{"feature": "or_range_pct", "min": 1.293, "max": 2.128}]},
-                {"name": "adx_low", "conditions": [{"feature": "adx", "max": 29.25}]},
-                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.005534}]}
+                {"name": "adx_low", "conditions": [{"feature": "adx", "max": 25.93}], "_edge": "N=2294, Rs 1063, lift Rs 190, STABLE"}
             ],
-            "momentum_breakout_long": [
-                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 5801}]}
-            ],
-            "volume_breakout_long": [
-                {"name": "body_mid", "conditions": [{"feature": "bar_body_ratio", "min": 0.6439, "max": 0.8519}]},
-                {"name": "pd_range_low", "conditions": [{"feature": "pd_range_pct", "max": 2.6887}]},
-                {"name": "volume_high", "conditions": [{"feature": "volume5", "min": 13592}]}
-            ],
+
             "gap_fill_short": [
                 {"name": "all", "conditions": [], "_comment": "IMPROVING setup — all trades have positive edge"}
             ],
             "gap_fill_long": [
                 {"name": "all", "conditions": [], "_comment": "IMPROVING setup — all trades have positive edge"}
             ],
+
             "breakout_long": [
-                {"name": "vol_or_high", "conditions": [{"feature": "vol_or_ratio", "min": 2.143}]}
-            ],
-            "first_hour_momentum_short": [
-                {"name": "or_range_mid", "conditions": [{"feature": "or_range_pct", "min": 1.3086, "max": 2.0311}]}
+                {"name": "bb_width_mid", "conditions": [{"feature": "bb_width_proxy", "min": 0.0011, "max": 0.0023}], "_edge": "N=343, Rs 464, lift Rs 210, IMPROVING"},
+                {"name": "vol_or_high", "conditions": [{"feature": "vol_or_ratio", "min": 11.39}], "_edge": "N=343, Rs 377, lift Rs 123, IMPROVING"}
             ]
         },
 
         "cap_rules": {
-            "_comment": "Tier 2: Cap-segment STABLE filters. Trades matching ANY cap rule also pass.",
-            "micro_cap": [
-                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.001043}]}
-            ],
+            "_comment": "Tier 2: Cap-segment global filters. range_bounce_short, premium_zone_short, etc. pass ONLY through these. small_cap REMOVED (vol_or<=0.027 passed 316/475 = 66% of all VC passes on test day — too permissive).",
             "unknown": [
-                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 1294}]},
-                {"name": "vol_or_low", "conditions": [{"feature": "vol_or_ratio", "max": 0.0888}]}
+                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 200}], "_edge": "tightened from 418 (LOW tercile) to 200 — unknown-cap stocks often have missing pd_range data, need stricter filter"},
+                {"name": "vol_or_low", "conditions": [{"feature": "vol_or_ratio", "max": 0.027}], "_edge": "global LOW tercile from 48K data"}
+            ],
+            "micro_cap": [
+                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.002348}], "_edge": "global HIGH tercile from 48K data"}
             ]
         }
     }

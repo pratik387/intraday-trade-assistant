@@ -10,7 +10,7 @@ from config.logging_config import get_execution_loggers
 from config.filters_setup import load_filters
 from utils.time_util import _to_naive_ist, _now_naive_ist, _minute_of_day, _parse_hhmm_to_md
 from utils.price_utils import round_to_tick
-from diagnostics.diag_event_log import diag_event_log
+from diagnostics.diag_event_log import diag_event_log, SCHEMA_VERSION as _EVT_SCHEMA
 import uuid
 
 from services.execution.models import Position
@@ -370,7 +370,7 @@ class ExitExecutor:
                 plan_sl = self._get_plan_sl(pos.plan)
                 original_sl = plan_sl  # Store original for logging
                 if not math.isnan(plan_sl):
-                    atr_min_mult = float(load_filters().get("exit_sl_atr_mult_min", 1.0))
+                    atr_min_mult = float(load_filters()["exit_sl_atr_mult_min"])
                     atr_cached = float(pos.plan.get("indicators", {}).get("atr", float("nan")))
                     if (not math.isnan(atr_cached)) and atr_min_mult > 0:
                         # Calculate ATR-based minimum SL
@@ -389,12 +389,47 @@ class ExitExecutor:
                                 (pos.side.upper() == "SELL" and new_plan_sl > plan_sl)
                             ) else "tightened"
 
-                            logger.info(
+                            # Per-tick: debug only (ATR and plan SL are constant — identical every tick)
+                            logger.debug(
                                 f"ATR_SL_ADJUSTMENT | {sym} | {pos.side} | "
                                 f"Original_SL: {plan_sl:.2f} | ATR_Based_SL: {atr_based_sl:.2f} | "
                                 f"Final_SL: {new_plan_sl:.2f} | ATR: {atr_cached:.3f} | "
                                 f"Entry: {pos.avg_price:.2f} | Adjustment: {expansion_direction} by {expansion_amount:.2f}"
                             )
+
+                            # Once per position: INFO log + events.jsonl emit (same pattern as SL_WIDENING)
+                            _atr_st = pos.plan.get("_state") or {}
+                            if not _atr_st.get("atr_sl_logged"):
+                                logger.info(
+                                    f"ATR_SL_ADJUSTMENT | {sym} | {pos.side} | "
+                                    f"Original_SL: {plan_sl:.2f} | ATR_Based_SL: {atr_based_sl:.2f} | "
+                                    f"Final_SL: {new_plan_sl:.2f} | ATR: {atr_cached:.3f} | "
+                                    f"Entry: {pos.avg_price:.2f} | Adjustment: {expansion_direction} by {expansion_amount:.2f}"
+                                )
+                                try:
+                                    diag_event_log._emit({
+                                        "schema_version": _EVT_SCHEMA,
+                                        "type": "ATR_SL_ADJUSTMENT",
+                                        "run_id": diag_event_log.run_id,
+                                        "trade_id": pos.plan.get("trade_id", ""),
+                                        "symbol": sym,
+                                        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                                        "atr_sl_adjustment": {
+                                            "side": pos.side.upper(),
+                                            "original_sl": round(plan_sl, 2),
+                                            "atr_based_sl": round(atr_based_sl, 2),
+                                            "final_sl": round(new_plan_sl, 2),
+                                            "atr": round(atr_cached, 3),
+                                            "atr_mult": atr_min_mult,
+                                            "entry_price": round(float(pos.avg_price), 2),
+                                            "direction": expansion_direction,
+                                            "amount": round(expansion_amount, 2),
+                                        },
+                                    })
+                                except Exception:
+                                    pass  # Best-effort logging
+                                _atr_st["atr_sl_logged"] = True
+                                pos.plan["_state"] = _atr_st
 
                         plan_sl = new_plan_sl
 
@@ -759,6 +794,27 @@ class ExitExecutor:
                     f"Original_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
                     f"ATR_Add: {self.sl_time_widening_atr_add * atr_cached:.2f}"
                 )
+                # Log SL widening to events.jsonl for post-analysis
+                try:
+                    diag_event_log._emit({
+                        "schema_version": _EVT_SCHEMA,
+                        "type": "SL_WIDENING",
+                        "run_id": diag_event_log.run_id,
+                        "trade_id": pos.plan.get("trade_id", ""),
+                        "symbol": sym,
+                        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                        "sl_widening": {
+                            "stage": 1,
+                            "side": side,
+                            "time_in_trade_min": round(time_in_trade_minutes, 1),
+                            "current_r": round(current_r, 2),
+                            "original_sl": round(plan_sl, 2),
+                            "widened_sl": round(widened_sl, 2),
+                            "atr_add": round(self.sl_time_widening_atr_add * atr_cached, 2),
+                        },
+                    })
+                except Exception:
+                    pass  # Best-effort logging
                 return widened_sl
 
         # Second widening: after 60 minutes (configurable)
@@ -786,6 +842,27 @@ class ExitExecutor:
                     f"Previous_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
                     f"ATR_Add: {self.sl_time_widening_second_atr_add * atr_cached:.2f}"
                 )
+                # Log SL widening to events.jsonl for post-analysis
+                try:
+                    diag_event_log._emit({
+                        "schema_version": _EVT_SCHEMA,
+                        "type": "SL_WIDENING",
+                        "run_id": diag_event_log.run_id,
+                        "trade_id": pos.plan.get("trade_id", ""),
+                        "symbol": sym,
+                        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                        "sl_widening": {
+                            "stage": 2,
+                            "side": side,
+                            "time_in_trade_min": round(time_in_trade_minutes, 1),
+                            "current_r": round(current_r, 2),
+                            "previous_sl": round(plan_sl, 2),
+                            "widened_sl": round(widened_sl, 2),
+                            "atr_add": round(self.sl_time_widening_second_atr_add * atr_cached, 2),
+                        },
+                    })
+                except Exception:
+                    pass  # Best-effort logging
                 return widened_sl
 
         return plan_sl
@@ -1414,6 +1491,9 @@ class ExitExecutor:
 
         remaining_qty = max(0, pos.qty - qty_exit)
 
+        # Decision-time SL (stored before target recalculation in trigger_aware_executor)
+        decision_sl = pos.plan.get('_decision_sl')
+
         exit_diagnostics = {
             'exit_type': 'partial' if qty_exit < pos.qty else 'full',
             'remaining_qty': remaining_qty,
@@ -1427,6 +1507,11 @@ class ExitExecutor:
             'regime': pos.plan.get('regime'),
             'setup_type': pos.plan.get('setup_type'),
             'acceptance_status': pos.plan.get('quality', {}).get('status'),
+            # Actual SL/targets for audit trail (post ATR adjustment + widening + trail)
+            'actual_sl': round(plan_sl, 2) if plan_sl is not None else None,
+            'original_sl': round(decision_sl, 2) if decision_sl is not None else None,
+            'actual_targets': [round(t.get('level', 0), 2) for t in pos.plan.get('targets', []) if t.get('level') is not None],
+            'decision_targets': pos.plan.get('_decision_targets'),
         }
 
         # Log EXIT to events.jsonl (single writer: diag_event_log)

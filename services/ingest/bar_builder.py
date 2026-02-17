@@ -350,11 +350,15 @@ class BarBuilder:
         bar15 = _aggregate_window_to_ohlcv(window)
         bar15.name = start_ts  # ← START-LABELED (matches convention)
 
-        # 15m bars inherit ADX from the last 5m bar in the window
+        # 15m bars inherit ADX and RSI from the last 5m bar in the window
         try:
             bar15["adx"] = float(window.iloc[-1]["adx"]) if "adx" in window.columns else 0.0
         except Exception:
             bar15["adx"] = 0.0
+        try:
+            bar15["rsi"] = float(window.iloc[-1]["rsi"]) if "rsi" in window.columns else 50.0
+        except Exception:
+            bar15["rsi"] = 50.0
 
         df15 = self._bars_15m[symbol]
         row15 = bar15.to_frame().T

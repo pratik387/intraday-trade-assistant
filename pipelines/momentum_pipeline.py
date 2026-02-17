@@ -129,7 +129,8 @@ class MomentumPipeline(BasePipeline):
         df5m: pd.DataFrame,
         bias: str,
         levels: Dict[str, float],
-        atr: float
+        atr: float,
+        setup_type: str = ""
     ) -> QualityResult:
         """
         Momentum quality: ADX_score * EMA_alignment
@@ -358,9 +359,9 @@ class MomentumPipeline(BasePipeline):
 
         # REQUIRED features
         vol_ratio = float(intraday_features["volume_ratio"])
-        rsi = float(intraday_features["rsi"])
-        adx = float(intraday_features["adx"])
-        above_vwap = bool(intraday_features["above_vwap"])
+        rsi = float(intraday_features["rsi"] or 50.0)
+        adx = float(intraday_features["adx"] or 0.0)
+        above_vwap = bool(intraday_features["above_vwap"]) if intraday_features["above_vwap"] is not None else (intraday_features["bias"] == "long")
         bias = intraday_features["bias"]
 
         # OPTIONAL features (None = skip scoring, no hidden defaults)

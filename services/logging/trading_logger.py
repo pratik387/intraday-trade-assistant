@@ -187,7 +187,7 @@ class TradingLogger:
         reason = trade_data.get('reason', '')
 
         self.trade_logger.info(
-            f"EXIT | {symbol} | Qty: {qty} | Entry: Rs.{entry_price} | Exit: Rs.{exit_price} | PnL: Rs.{pnl} {reason}"
+            f"EXIT | {symbol} | Qty: {qty} | Entry: Rs.{round(entry_price, 2)} | Exit: Rs.{round(exit_price, 2)} | PnL: Rs.{round(pnl, 2)} {reason}"
         )
     
     def _update_performance_summary(self):
@@ -427,7 +427,8 @@ class TradingLogger:
                         # Mark if this is the final exit
                         is_final = (i == len(exit_events) - 1)
                         analytics_data = self._create_enhanced_analytics(
-                            decision_event, exit_ev, trigger_event, exit_pnl
+                            decision_event, exit_ev, trigger_event, exit_pnl,
+                            exit_sequence=i + 1
                         )
                         # Add exit sequence info
                         analytics_data['exit_sequence'] = i + 1
@@ -531,7 +532,8 @@ class TradingLogger:
             return 0.0
 
     def _create_enhanced_analytics(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
-                                 trigger_event: Optional[Dict[str, Any]], pnl: float) -> Dict[str, Any]:
+                                 trigger_event: Optional[Dict[str, Any]], pnl: float,
+                                 exit_sequence: int = 1) -> Dict[str, Any]:
         """Create enhanced analytics entry combining decision, trigger, and exit data"""
         # Start with basic exit data
         analytics = {
@@ -597,9 +599,8 @@ class TradingLogger:
         qty = analytics.get('qty', 0)
 
         if entry_price > 0 and exit_price > 0 and qty > 0:
-            # For now, assume each exit is a complete trade (is_entry_order=True)
-            # TODO: Handle partial exits properly (exit_sequence tracking)
-            fees = self.calculate_trade_fees(entry_price, exit_price, qty, is_entry_order=True)
+            # Only charge entry-side fees (brokerage on entry, stamp duty) for the first exit
+            fees = self.calculate_trade_fees(entry_price, exit_price, qty, is_entry_order=(exit_sequence == 1))
             analytics['fees'] = fees
             analytics['net_pnl'] = round(pnl - fees['total_fees'], 2)
 

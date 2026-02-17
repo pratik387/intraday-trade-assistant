@@ -193,8 +193,10 @@ class TickRouter:
             t.get("timestamp")
             or t.get("last_trade_time")
             or t.get("exchange_timestamp")
-            or datetime.now()
         )
+        if ts is None:
+            from utils.time_util import now_ist_naive
+            ts = now_ist_naive()
 
         # Coerce pandas.Timestamp -> datetime
         if hasattr(ts, "to_pydatetime"):

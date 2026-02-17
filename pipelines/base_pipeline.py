@@ -42,7 +42,12 @@ logger = get_agent_logger()
 # ================================================================================
 HARD_BLOCKS = {
     # GATES-OFF RUN: All hard blocks disabled for raw detection quality test
+    # Re-enable with regime-specific entries after next backtest validates:
+    # "squeeze": ["first_hour_momentum_long", "volume_spike_reversal_short"],
 }
+
+if not HARD_BLOCKS:
+    logger.warning("HARD_BLOCKS is empty — all regime-based hard blocks are DISABLED (gates-off mode)")
 
 
 def is_hard_blocked(setup_type: str, regime: str) -> bool:
@@ -446,7 +451,8 @@ class BasePipeline(ABC):
         df5m: pd.DataFrame,
         bias: str,
         levels: Dict[str, float],
-        atr: float
+        atr: float,
+        setup_type: str = ""
     ) -> QualityResult:
         """Calculate category-specific quality metrics."""
         pass
@@ -956,8 +962,10 @@ class BasePipeline(ABC):
         # Late-day signals have poor quality (39 signals in 14:00-15:00, only 3 trades = 7.7% conversion)
         time_mult = self._get_time_of_day_multiplier(current_time, ranking_cfg)
         adjustments["time_of_day_mult"] = time_mult
-        # Note: We apply this as a threshold multiplier, not a score multiplier
-        # The actual filtering happens in the orchestrator when comparing to threshold
+        # Apply as score divisor: higher mult = harder to qualify (lower effective score)
+        if time_mult > 1.0:
+            score /= time_mult
+            logger.debug(f"TIME_OF_DAY_PENALTY: {strategy_type} score {base_score:.3f} -> {score:.3f} (÷{time_mult:.1f}x)")
 
         # 2. BLACKLIST PENALTY
         # Apply severe penalty to historically poor-performing setups (effectively blocks them)
@@ -1647,7 +1655,46 @@ class BasePipeline(ABC):
         features["vol_or_ratio"] = last_volume / (or_range_val * 10000) if or_range_val and or_range_val > 0 else None
         features["bb_width_proxy"] = float(last_bar.get("bb_width_proxy", 0)) if "bb_width_proxy" in last_bar.index else 0.0
         features["volume5"] = last_volume
-        features["cap_segment"] = cap_segment
+
+        # dist_from_level_bpct: distance from nearest key level in basis points
+        _key_levels = [v for k in ("ORH", "ORL", "PDH", "PDL") if (v := levels.get(k)) is not None and not pd.isna(v)]
+        if _key_levels and current_close > 0:
+            _nearest = min(_key_levels, key=lambda lv: abs(lv - current_close))
+            features["dist_from_level_bpct"] = (current_close - _nearest) / current_close * 10000  # signed bps
+        else:
+            features["dist_from_level_bpct"] = None
+
+        # squeeze_pctile: percentile rank of current BB width within recent 5m bars
+        if "bb_width_proxy" in df5m.columns and len(df5m) >= 10:
+            _bbw_series = df5m["bb_width_proxy"].dropna()
+            if len(_bbw_series) >= 10:
+                _cur_bbw = features["bb_width_proxy"]
+                features["squeeze_pctile"] = float((_bbw_series < _cur_bbw).sum() / len(_bbw_series) * 100)
+            else:
+                features["squeeze_pctile"] = None
+        else:
+            features["squeeze_pctile"] = None
+
+        # cap_segment assignment deferred until after fallback lookup below
+
+        # Approximate sl_atr_mult at gate time: sl_dist / bar_range
+        # In step 6 (SL computation), structure_stop falls back to ORL (long) / ORH (short)
+        # since levels["structure_stop"] is never populated. We replicate that here.
+        if bar_range > 0:
+            if bias == "long":
+                _sl_ref = levels.get("ORL")
+                if _sl_ref is not None and not pd.isna(_sl_ref):
+                    features["sl_atr_mult"] = abs(current_close - _sl_ref) / bar_range
+                else:
+                    features["sl_atr_mult"] = None
+            else:
+                _sl_ref = levels.get("ORH")
+                if _sl_ref is not None and not pd.isna(_sl_ref):
+                    features["sl_atr_mult"] = abs(_sl_ref - current_close) / bar_range
+                else:
+                    features["sl_atr_mult"] = None
+        else:
+            features["sl_atr_mult"] = None
 
         # 0. UNIVERSAL GATES (apply BEFORE category-specific gates)
         # Check if we're in opening bell window (9:15-9:30) - may bypass some gates
@@ -1665,6 +1712,7 @@ class BasePipeline(ABC):
         # Use passed cap_segment or fetch if not provided
         if cap_segment is None:
             cap_segment = get_cap_segment(symbol)
+        features["cap_segment"] = cap_segment
         mis_info = get_mis_info(symbol)
         cap_passed, cap_reason = self._check_cap_strategy_blocking(symbol, setup_type, cap_segment)
         if not cap_passed:
@@ -1684,7 +1732,7 @@ class BasePipeline(ABC):
             return {"eligible": False, "reason": "screening_fail", "details": screen_result.reasons}
 
         # 2. QUALITY
-        quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr)
+        quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr, setup_type=setup_type)
 
         # Reject if quality calculation failed (e.g., missing required levels)
         if quality_result is None:
@@ -1726,14 +1774,25 @@ class BasePipeline(ABC):
             "volume5": features.get("volume5", 0),
             "vol_or_ratio": round(features["vol_or_ratio"], 4) if features.get("vol_or_ratio") is not None else None,
             "or_range_pct": round(features["or_range_pct"], 4) if features.get("or_range_pct") is not None else None,
+            "or_position": round(features["or_position"], 4) if features.get("or_position") is not None else None,
             "pd_range_pct": round(features["pd_range_pct"], 4) if features.get("pd_range_pct") is not None else None,
+            "sl_atr_mult": round(features["sl_atr_mult"], 4) if features.get("sl_atr_mult") is not None else None,
             "adx": round(features.get("adx", 0), 1) if features.get("adx") else None,
             "cap": features.get("cap_segment", "unknown"),
         }
         if not vc_passed:
-            logger.info(f"[{category}] {symbol} {setup_type} REJECTED VC: {vc_reason} | {vc_audit}")
-            return {"eligible": False, "reason": "validated_combo_fail", "details": [vc_reason]}
-        logger.info(f"[{category}] {symbol} {setup_type} PASSED VC: {vc_reason} | {vc_audit}")
+            logger.debug(f"[{category}] {symbol} {setup_type} REJECTED VC: {vc_reason} | {vc_audit}")
+            return {
+                "eligible": False,
+                "reason": "validated_combo_fail",
+                "details": [vc_reason],
+                "quality": {
+                    "structural_rr": quality_result.structural_rr,
+                    "status": quality_result.quality_status,
+                },
+                "indicators": vc_audit,
+            }
+        logger.debug(f"[{category}] {symbol} {setup_type} PASSED VC: {vc_reason} | {vc_audit}")
 
         # 3c. UNIVERSAL RSI DEAD ZONE FILTER (for LONGS only) - CONFIG DRIVEN
         # Data-driven: RSI 35-50 has 43% of ALL hard_sl losses for LONG trades
