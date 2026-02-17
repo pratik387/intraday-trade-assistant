@@ -6,6 +6,7 @@ This module serves as the primary coordinator for all structure detection,
 providing comprehensive structure detection through a unified system.
 """
 
+import time as _time_mod
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -231,12 +232,15 @@ class MainDetector(BaseStructure):
             logger.debug(f"MAIN_DETECTOR: {symbol} data check passed, creating market context")
 
             # Create market context
+            _t_ctx = _time_mod.perf_counter()
             context = self._create_market_context(symbol, df, levels)
+            _t_ctx_ms = (_time_mod.perf_counter() - _t_ctx) * 1000
             logger.debug(f"MAIN_DETECTOR: {symbol} market context created successfully")
 
             # Run all detectors
             all_detections = {}
             detection_stats = {}
+            _detector_times = {}  # {detector_name: elapsed_ms}
 
             logger.debug(f"MAIN_DETECTOR: {symbol} starting detector loop with {len(self.detectors)} detectors")
 
@@ -247,7 +251,10 @@ class MainDetector(BaseStructure):
                         continue
 
                     logger.debug(f"DETECTOR_CALL: {symbol} | {detector_name} | CALLING")
+                    _t_det = _time_mod.perf_counter()
                     analysis = detector.detect(context)
+                    _det_ms = (_time_mod.perf_counter() - _t_det) * 1000
+                    _detector_times[detector_name] = _det_ms
 
                     if analysis.events:
                         all_detections[detector_name] = analysis
@@ -264,10 +271,31 @@ class MainDetector(BaseStructure):
                     logger.error(f"DETECTOR_ERROR: {symbol} | {detector_name} | ERROR | {str(e)}")
                     logger.exception(f"MAIN_DETECTOR: Error in {detector_name} for {symbol}: {e}")
             # Resolve conflicts and prioritize
+            _t_resolve = _time_mod.perf_counter()
             final_events = self._resolve_conflicts_and_prioritize(all_detections, symbol)
+            _t_resolve_ms = (_time_mod.perf_counter() - _t_resolve) * 1000
 
             # Convert to SetupCandidate objects
             setup_candidates = self._convert_to_setup_candidates(final_events, symbol, context)
+
+            # Timing summary — log for slow symbols (>150ms) showing bottleneck detectors
+            _total_det_ms = sum(_detector_times.values())
+            _total_ms = _t_ctx_ms + _total_det_ms + _t_resolve_ms
+            if _total_ms > 150 and _detector_times:
+                # Top 5 slowest detectors
+                _top5 = sorted(_detector_times.items(), key=lambda x: x[1], reverse=True)[:5]
+                _top5_str = " ".join(f"{n}={t:.0f}ms" for n, t in _top5)
+                # Aggregate by detector class type (e.g. all ICT variants → "ict")
+                _class_totals = {}
+                for dname, dtime in _detector_times.items():
+                    dtype = dname.rsplit("_", 1)[0] if "_" in dname else dname
+                    # Normalize: premium_zone_short → ict, range_bounce_short → range, etc
+                    det_obj = self.detectors.get(dname)
+                    cname = type(det_obj).__name__ if det_obj else dtype
+                    _class_totals[cname] = _class_totals.get(cname, 0) + dtime
+                _class_str = " ".join(f"{c}={t:.0f}ms" for c, t in sorted(_class_totals.items(), key=lambda x: x[1], reverse=True)[:5])
+                logger.info("DETECTOR_TIMING | %s | total=%.0fms ctx=%.0fms det=%.0fms resolve=%.0fms | by_class: %s | top5: %s",
+                           symbol, _total_ms, _t_ctx_ms, _total_det_ms, _t_resolve_ms, _class_str, _top5_str)
 
             # Log summary with detector statistics
             total_detectors = len(self.detectors)

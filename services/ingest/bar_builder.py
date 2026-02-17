@@ -24,6 +24,7 @@ Notes:
 """
 
 import math
+import time as _time_mod
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
@@ -310,12 +311,15 @@ class BarBuilder:
         else:
             self._bars_5m[symbol] = pd.concat([df5, row5], copy=False)
 
-        # 5m close callback
+        # 5m close callback (in backtest this blocks for the entire scan — log duration)
+        _t_cb = _time_mod.perf_counter()
         try:
             self._on_5m_close(symbol, bar5)
         except Exception as e:
             logger.exception("BarBuilder: on_5m_close callback failed: %s", e)
-            pass
+        _t_cb_elapsed = _time_mod.perf_counter() - _t_cb
+        if _t_cb_elapsed > 1.0:
+            logger.info("BAR_BUILDER_5M_CALLBACK | %s at %s | %.2fs", symbol, start_ts, _t_cb_elapsed)
         
         for handler in self._additional_5m_handlers:
             try:

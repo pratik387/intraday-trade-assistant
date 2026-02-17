@@ -21,6 +21,19 @@ from .data_models import StructureEvent, TradePlan, RiskParams, ExitLevels, Mark
 from config.logging_config import get_agent_logger
 logger = get_agent_logger()
 
+# Module-level computation cache for ICT detectors.
+# All 15 ICT instances (ict_comprehensive, order_block_short, fair_value_gap_long, etc.)
+# share identical detection parameters and run the exact same computation on the same data.
+# The ONLY difference is the post-computation filter on configured_setup_type.
+# Cache key: (symbol, bar_count) — first instance computes, remaining 14 read from cache.
+# Safe because: (1) configs verified identical across all derived setups,
+#                (2) worker processes are single-threaded (no race conditions),
+#                (3) bar_count increases each bar so stale entries are never hit.
+# Eviction: clear when exceeding 800 entries (> 1 bar's worth of symbols).
+_ict_event_cache: Dict[tuple, tuple] = {}  # (symbol, n_bars) → (all_events, augmented_df)
+_ICT_CACHE_MAX_SIZE = 800
+
+
 class ICTStructure(BaseStructure):
     """Comprehensive ICT structure covering all Inner Circle Trader concepts."""
 
@@ -99,9 +112,16 @@ class ICTStructure(BaseStructure):
                    f"FVG gap_size>{self.fvg_min_gap_size_pct*100:.1f}%")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
-        """Detect all ICT patterns and return comprehensive analysis with professional criteria."""
+        """Detect all ICT patterns and return comprehensive analysis with professional criteria.
+
+        Performance: All ICT instances share identical detection params (verified — derived setups
+        only set 'enabled', never override thresholds). A module-level cache keyed by
+        (symbol, bar_count) ensures the full detection pipeline runs ONCE per symbol per bar.
+        Subsequent ICT instances (up to 14 more) get a cache hit and only run the
+        setup_type filter + quality score — ~0.1ms vs ~20ms for a full detect().
+        """
+        global _ict_event_cache
         logger.debug(f"ICT_DETECTOR: Starting detection for {context.symbol}")
-        events = []
 
         try:
             df = context.df_5m
@@ -117,73 +137,79 @@ class ICTStructure(BaseStructure):
                 logger.debug(f"ICT_DETECTOR: {context.symbol} insufficient data (len={len(df) if df is not None else 0}, required={min_bars_required}, opening_bell={in_opening_bell})")
                 return StructureAnalysis(structure_detected=False, events=[], quality_score=0.0)
 
-            # Prepare data
-            d = df.copy()
-            d = self._add_volume_indicators(d)
+            # --- COMPUTATION CACHE: avoid re-running identical detection 15x per symbol ---
+            n_bars = len(df)
+            cache_key = (context.symbol, n_bars)
 
-            # Define key levels for liquidity sweeps
-            levels = {
-                "PDH": context.pdh,
-                "PDL": context.pdl,
-                "ORH": context.orh,
-                "ORL": context.orl
-            }
+            # Evict when cache grows beyond one bar's worth of symbols
+            if len(_ict_event_cache) > _ICT_CACHE_MAX_SIZE:
+                _ict_event_cache.clear()
 
-            # PROFESSIONAL ICT: Detect in specific order to enable professional filters
-            logger.debug(f"ICT_DETECTOR: {context.symbol} running pattern detection (opening_bell={in_opening_bell}, bars={len(df)})")
-
-            # OPENING BELL FIX: With 1-2 bars, only detect premium/discount zones (like pro traders)
-            # Skip complex patterns that need swing structure (OB, FVG, MSS, BOS, CHOCH)
-            if in_opening_bell and len(df) < 3:
-                logger.debug(f"ICT_DETECTOR: {context.symbol} opening bell mode - premium/discount zones only")
-                premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
-
-                # Skip all other patterns during opening bell with <3 bars
-                sweep_events = []
-                mss_events = []
-                order_block_events = []
-                fvg_events = []
-                bos_events = []
-                choch_events = []
+            if cache_key in _ict_event_cache:
+                # CACHE HIT — skip all detection, just filter + score
+                all_events, d = _ict_event_cache[cache_key]
+                logger.debug(f"ICT_DETECTOR: {context.symbol} CACHE HIT ({len(all_events)} events)")
             else:
-                # Normal mode with sufficient bars
-                # Step 1: Detect liquidity sweeps FIRST (required for OB validation)
-                sweep_events = self._detect_liquidity_sweeps(d, context, levels)
-                logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(sweep_events)} sweeps")
+                # CACHE MISS — full detection pipeline (runs once per symbol per bar)
+                d = df.copy()
+                d = self._add_volume_indicators(d)
 
-                # Step 2: Detect swing points (required for MSS)
-                swing_highs = self._find_swing_points(d, 'high')
-                swing_lows = self._find_swing_points(d, 'low')
+                # Define key levels for liquidity sweeps
+                levels = {
+                    "PDH": context.pdh,
+                    "PDL": context.pdl,
+                    "ORH": context.orh,
+                    "ORL": context.orl
+                }
 
-                # Step 3: Detect Market Structure Shift
-                mss_events = self._detect_market_structure_shift(d, context, swing_highs, swing_lows)
-                logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(mss_events)} MSS")
+                logger.debug(f"ICT_DETECTOR: {context.symbol} running pattern detection (opening_bell={in_opening_bell}, bars={n_bars})")
 
-                # Step 4: Detect Order Blocks with PROFESSIONAL criteria (sweep + MSS required)
-                order_block_events = self._detect_order_blocks(d, context, sweep_events, mss_events)
-                logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(order_block_events)} OBs")
+                # OPENING BELL FIX: With 1-2 bars, only detect premium/discount zones
+                if in_opening_bell and n_bars < 3:
+                    logger.debug(f"ICT_DETECTOR: {context.symbol} opening bell mode - premium/discount zones only")
+                    premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
+                    sweep_events = []
+                    mss_events = []
+                    order_block_events = []
+                    fvg_events = []
+                    bos_events = []
+                    choch_events = []
+                else:
+                    # Normal mode with sufficient bars
+                    sweep_events = self._detect_liquidity_sweeps(d, context, levels)
+                    logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(sweep_events)} sweeps")
 
-                # Step 5: Detect FVGs with displacement
-                fvg_events = self._detect_fair_value_gaps(d, context)
-                logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(fvg_events)} FVGs")
+                    swing_highs = self._find_swing_points(d, 'high')
+                    swing_lows = self._find_swing_points(d, 'low')
 
-                # Step 6: Other ICT patterns (unchanged)
-                premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
-                bos_events = self._detect_break_of_structure(d, context)
-                choch_events = self._detect_change_of_character(d, context)
+                    mss_events = self._detect_market_structure_shift(d, context, swing_highs, swing_lows)
+                    logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(mss_events)} MSS")
 
-            logger.debug(f"ICT_DETECTOR: {context.symbol} pattern counts - OB:{len(order_block_events)} FVG:{len(fvg_events)} "
-                       f"Sweep:{len(sweep_events)} MSS:{len(mss_events)} P/D:{len(premium_discount_events)} BOS:{len(bos_events)} CHOCH:{len(choch_events)}")
+                    order_block_events = self._detect_order_blocks(d, context, sweep_events, mss_events)
+                    logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(order_block_events)} OBs")
 
-            # Combine all events
-            all_events = (order_block_events + fvg_events + sweep_events + mss_events +
-                         premium_discount_events + bos_events + choch_events)
+                    fvg_events = self._detect_fair_value_gaps(d, context)
+                    logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(fvg_events)} FVGs")
+
+                    premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
+                    bos_events = self._detect_break_of_structure(d, context)
+                    choch_events = self._detect_change_of_character(d, context)
+
+                logger.debug(f"ICT_DETECTOR: {context.symbol} pattern counts - OB:{len(order_block_events)} FVG:{len(fvg_events)} "
+                           f"Sweep:{len(sweep_events)} MSS:{len(mss_events)} P/D:{len(premium_discount_events)} BOS:{len(bos_events)} CHOCH:{len(choch_events)}")
+
+                # Combine all events (unfiltered — cache stores the full set)
+                all_events = (order_block_events + fvg_events + sweep_events + mss_events +
+                             premium_discount_events + bos_events + choch_events)
+
+                # Store in cache for subsequent ICT instances processing same symbol
+                _ict_event_cache[cache_key] = (all_events, d)
 
             # Filter events to only include those matching configured setup type
             if self.configured_setup_type and all_events:
                 filtered_events = [e for e in all_events if e.structure_type == self.configured_setup_type]
                 if len(filtered_events) < len(all_events):
-                    logger.debug(f"ICT: {context.symbol} - Filtered {len(all_events)}→{len(filtered_events)} events (configured for {self.configured_setup_type})")
+                    logger.debug(f"ICT: {context.symbol} - Filtered {len(all_events)}->{len(filtered_events)} events (configured for {self.configured_setup_type})")
                 all_events = filtered_events
 
             # Calculate quality score based on multiple confirmations

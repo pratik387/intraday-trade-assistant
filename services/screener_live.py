@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from datetime import datetime, time as dtime
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import os
 import queue as queue_mod
 import threading
 
@@ -89,6 +90,12 @@ logger = get_agent_logger()
 # Worker Pool State (initialized once per worker process)
 # ---------------------------------------------------------------------
 _worker_decision_gate = None
+_worker_daily_cache = {}
+
+def _seed_worker_daily_cache(daily_data_dict):
+    """Called once per worker to pre-load daily data cache (avoids re-pickling per bar)."""
+    global _worker_daily_cache
+    _worker_daily_cache = daily_data_dict
 
 def _init_worker(config_dict):
     """
@@ -170,6 +177,39 @@ def _worker_process_symbol(symbol, df5_data, df1m_data, index_df5_data, levels, 
         from config.logging_config import get_agent_logger
         get_agent_logger().exception(f"Worker task failed for {symbol}: {e}")
         return (symbol, None)
+
+def _worker_process_batch(batch_items, index_df5_data, now):
+    """Process a batch of symbols. Returns list of (symbol, decision) tuples.
+
+    Data integrity: symbol is carried through each tuple — no positional dependency.
+    Per-symbol try/except ensures one failure doesn't kill the entire batch.
+    """
+    import time as _time
+    _t0 = _time.perf_counter()
+    global _worker_decision_gate, _worker_daily_cache
+    results = []
+    for (symbol, df5_data, df1m_data, levels) in batch_items:
+        if _worker_decision_gate is None:
+            results.append((symbol, None))
+            continue
+        daily_df = _worker_daily_cache.get(symbol)
+        try:
+            decision = _worker_decision_gate.evaluate(
+                symbol=symbol, now=now,
+                df1m_tail=df1m_data, df5m_tail=df5_data,
+                index_df5m=index_df5_data,
+                levels=levels, daily_df=daily_df,
+            )
+            results.append((symbol, decision))
+        except Exception as e:
+            from config.logging_config import get_agent_logger
+            get_agent_logger().exception(f"Worker batch task failed for {symbol}: {e}")
+            results.append((symbol, None))
+    _elapsed = _time.perf_counter() - _t0
+    from config.logging_config import get_agent_logger
+    get_agent_logger().info("WORKER_BATCH_DONE | %d symbols | %.2fs (%.0fms/sym)",
+                           len(batch_items), _elapsed, (_elapsed / max(len(batch_items), 1)) * 1000)
+    return results
 
 # ---------------------------------------------------------------------
 # Stage-0 Worker Pool State (initialized once per Stage-0 worker process)
@@ -531,11 +571,16 @@ class ScreenerLive:
         # Create persistent worker pool for structure detection (avoid 3-5s overhead every 5m)
         # Worker count configurable: default 2 (safe for OCI 1.5 OCPU pods), increase locally for faster runs
         structure_workers = int(raw["structure_detection_workers"])
+        local_override = raw.get("structure_detection_workers_local")
+        if local_override is not None and not os.environ.get("OCI_RESOURCE_PRINCIPAL_VERSION"):
+            structure_workers = int(local_override)
+        self._structure_workers = structure_workers
         self._executor = ProcessPoolExecutor(
             max_workers=structure_workers,
             initializer=_init_worker,
             initargs=(self.raw_cfg,)
         )
+        self._daily_cache_seeded = False
         logger.info("ScreenerLive: Persistent worker pool created (%d workers)", structure_workers)
 
         # Create Stage-0 worker pool (1 worker — GIL-free compute_features + filter + shortlist)
@@ -952,11 +997,33 @@ class ScreenerLive:
             return
         self._last_produced_at = now
 
-        # ENHANCED LOGGING: Progress tracking (only log once per unique timestamp)
+        # ENHANCED LOGGING: Progress tracking with wall-clock for inter-bar gap analysis
         current_time_str = now.strftime("%Y-%m-%d %H:%M:%S")
         if self._last_logged_timestamp != current_time_str:
-            logger.info("SCANNER_PROGRESS | Bar: %s | Stage-0 starting", current_time_str)
+            logger.info("SCANNER_PROGRESS | Bar: %s | wallclock: %s | Stage-0 starting",
+                       current_time_str, datetime.now().strftime("%H:%M:%S"))
             self._last_logged_timestamp = current_time_str
+
+        # ---------- Seed daily_df cache in workers (once per session) ----------
+        if not self._daily_cache_seeded:
+            _t_seed_start = time.perf_counter()
+            daily_dict = {}
+            for sym in self.core_symbols:
+                dd = self.sdk.get_daily(sym, days=210)
+                if dd is not None and not dd.empty:
+                    daily_dict[sym] = dd
+            _t_seed_fetch = time.perf_counter()
+            seed_futures = []
+            for _ in range(self._structure_workers):
+                seed_futures.append(self._executor.submit(_seed_worker_daily_cache, daily_dict))
+            for f in seed_futures:
+                f.result(timeout=60)
+            self._daily_cache_seeded = True
+            _t_seed_done = time.perf_counter()
+            logger.info("DAILY_CACHE_SEEDED | %d symbols to %d workers | fetch=%.2fs send=%.2fs total=%.2fs",
+                       len(daily_dict), self._structure_workers,
+                       _t_seed_fetch - _t_seed_start, _t_seed_done - _t_seed_fetch,
+                       _t_seed_done - _t_seed_start)
 
         # ---------- Stage-0: EnergyScanner (single unified path) ----------
         shortlist: List[str] = []
@@ -1057,14 +1124,14 @@ class ScreenerLive:
         # This reduces 50s bottleneck to ~15s (3.3x speedup)
 
         # Prepare data for parallel processing
-        # Phase 2: Include daily_df for multi-timeframe regime detection
+        # daily_df is cached in worker processes (seeded once at session start)
         symbol_data_map = {}
         for sym in shortlist:
             df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
             # OPENING BELL FIX: Use same min_bars as scanner (1 during opening bell, 5 normally)
             if not validate_df(df5, min_rows=min_bars_for_processing):
                 continue
-            df1m = self.agg.get_df_1m_tail(sym, 60)
+            df1m = self.agg.get_df_1m_tail(sym, 35)
 
             # PERFORMANCE FIX: Use cached ORB levels if available
             if levels_by_symbol and sym in levels_by_symbol:
@@ -1085,9 +1152,7 @@ class ScreenerLive:
                     # Enough bars to compute levels normally
                     lvl = self._levels_for(sym, df5, now)
 
-            # Phase 2: Fetch daily data (210 days for EMA200, uses cache)
-            daily_df = self.sdk.get_daily(sym, days=210)
-            symbol_data_map[sym] = (df5, df1m, lvl, daily_df)
+            symbol_data_map[sym] = (df5, df1m, lvl)
 
         if not symbol_data_map:
             logger.info("GATES_COMPLETE | No symbols with sufficient data")
@@ -1097,92 +1162,89 @@ class ScreenerLive:
         logger.info("DATA_PREP_COMPLETE | Prepared %d symbols | TIME: %.2fs",
                    len(symbol_data_map), _t_data_prep_end - _t_scanner_end)
 
-        # Use persistent worker pool (created once in __init__)
-        # This saves 3-5 seconds per 5m bar by avoiding worker recreation
-        # Phase 2: Unpack 4-tuple (df5, df1m, lvl, daily_df) for multi-TF regime
-        futures = {}
-        for sym, (df5, df1m, lvl, daily_df) in symbol_data_map.items():
-            future = self._executor.submit(
-                _worker_process_symbol,  # Use function that reuses initialized gate
-                sym,
-                df5,
-                df1m,
-                index_df5,
-                lvl,
-                now,
-                daily_df  # Phase 2: Pass daily_df for multi-timeframe regime
-            )
-            futures[future] = sym
+        # BATCH SUBMISSION: Submit symbols in batches of ~50 to reduce IPC overhead
+        # index_df5 pickled once per batch (not per symbol), daily_df read from worker cache
+        BATCH_SIZE = 50
+        all_items = [
+            (sym, df5, df1m, lvl)
+            for sym, (df5, df1m, lvl) in symbol_data_map.items()
+        ]
+        batches = [all_items[i:i + BATCH_SIZE] for i in range(0, len(all_items), BATCH_SIZE)]
+        _t_submit_start = time.perf_counter()
+        futures = []
+        for batch in batches:
+            future = self._executor.submit(_worker_process_batch, batch, index_df5, now)
+            futures.append((future, {s for s, _, _, _ in batch}))
+        _t_submit_end = time.perf_counter()
+        logger.info("BATCH_SUBMIT | %d batches (%d symbols, batch_size=%d) | submit_time=%.2fs",
+                   len(batches), len(all_items), BATCH_SIZE, _t_submit_end - _t_submit_start)
 
-        # Collect results as they complete
+        # Collect results from batch futures
         try:
-            for future in as_completed(futures):
-                expected_sym = futures[future]
+            for future, expected_syms in futures:
                 try:
-                    returned_sym, decision = future.result()
-
-                    # DATA INTEGRITY CHECK: Verify symbol matches
-                    assert returned_sym == expected_sym, \
-                        f"Symbol mismatch! Expected {expected_sym}, got {returned_sym}"
-
-                    if decision is None:
-                        logger.debug(f"Structure detection returned None for {returned_sym}")
-                        continue
-
-                    sym = returned_sym  # Use verified symbol
-                    df5 = symbol_data_map[sym][0]  # Get original df5 for logging
-
+                    batch_results = future.result()
                 except Exception as e:
-                    logger.exception(f"Failed to process {expected_sym}: {e}")
+                    logger.exception(f"Batch processing failed: {e}")
                     continue
 
-                if not decision.accept:
-                    top_reason = next((r for r in decision.reasons if r.startswith("regime_block:")), None) or \
-                                 (decision.reasons[0] if decision.reasons else "reject")
+                # DATA INTEGRITY CHECK: Verify batch completeness and symbol set
+                returned_syms = {s for s, _ in batch_results}
+                assert returned_syms == expected_syms, \
+                    f"Batch symbol mismatch! Expected {expected_syms}, got {returned_syms}"
+
+                for sym, decision in batch_results:
+                    if decision is None:
+                        logger.debug(f"Structure detection returned None for {sym}")
+                        continue
+
+                    df5 = symbol_data_map[sym][0]  # Get original df5 for logging
+
+                    if not decision.accept:
+                        top_reason = next((r for r in decision.reasons if r.startswith("regime_block:")), None) or \
+                                     (decision.reasons[0] if decision.reasons else "reject")
+                        logger.debug(
+                            "DECISION:REJECT sym=%s setup=%s regime=%s reason=%s | all=%s",
+                            sym, decision.setup_type, decision.regime, top_reason, ";".join(decision.reasons),
+                        )
+
+                        # Log screener rejection with detailed context
+                        if screener_logger:
+                            screener_logger.log_reject(
+                                sym,
+                                top_reason,
+                                timestamp=now.isoformat(),
+                                setup_type=decision.setup_type or "unknown",
+                                regime=decision.regime or "unknown",
+                                all_reasons=decision.reasons,
+                                structure_confidence=getattr(decision, 'structure_confidence', 0),
+                                current_price=df5['close'].iloc[-1] if not df5.empty else 0,
+                                regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
+                            )
+                        continue
+
                     logger.debug(
-                        "DECISION:REJECT sym=%s setup=%s regime=%s reason=%s | all=%s",
-                        sym, decision.setup_type, decision.regime, top_reason, ";".join(decision.reasons),
+                        "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
+                        sym, decision.setup_type, decision.regime, decision.size_mult, decision.min_hold_bars,
+                        ";".join(decision.reasons),
                     )
 
-                    # Log screener rejection with detailed context
-                    # Phase 2: Include multi-TF regime diagnostics
+                    # Log screener acceptance with detailed context
                     if screener_logger:
-                        screener_logger.log_reject(
+                        screener_logger.log_accept(
                             sym,
-                            top_reason,
                             timestamp=now.isoformat(),
                             setup_type=decision.setup_type or "unknown",
                             regime=decision.regime or "unknown",
+                            size_mult=decision.size_mult,
+                            min_hold_bars=decision.min_hold_bars,
                             all_reasons=decision.reasons,
                             structure_confidence=getattr(decision, 'structure_confidence', 0),
                             current_price=df5['close'].iloc[-1] if not df5.empty else 0,
-                            regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
+                            vwap=df5.get('vwap', pd.Series([0])).iloc[-1] if not df5.empty else 0,
+                            regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
                         )
-                    continue
-
-                logger.debug(
-                    "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
-                    sym, decision.setup_type, decision.regime, decision.size_mult, decision.min_hold_bars,
-                    ";".join(decision.reasons),
-                )
-
-                # Log screener acceptance with detailed context
-                # Phase 2: Include multi-TF regime diagnostics
-                if screener_logger:
-                    screener_logger.log_accept(
-                        sym,
-                        timestamp=now.isoformat(),
-                        setup_type=decision.setup_type or "unknown",
-                        regime=decision.regime or "unknown",
-                        size_mult=decision.size_mult,
-                        min_hold_bars=decision.min_hold_bars,
-                        all_reasons=decision.reasons,
-                        structure_confidence=getattr(decision, 'structure_confidence', 0),
-                        current_price=df5['close'].iloc[-1] if not df5.empty else 0,
-                        vwap=df5.get('vwap', pd.Series([0])).iloc[-1] if not df5.empty else 0,
-                        regime_diagnostics=getattr(decision, 'regime_diagnostics', None)  # Phase 2: Multi-TF regime
-                    )
-                decisions.append((sym, decision))
+                    decisions.append((sym, decision))
         except Exception as e:
             logger.exception(f"Worker pool processing failed: {e}")
 
@@ -1212,6 +1274,7 @@ class ScreenerLive:
         # ---------- Pipeline Orchestrator: Ranking + Planning ----------
         # Orchestrator handles: screening + gates + quality + ranking + entry + targets
         # Returns plans already sorted by ranking score
+        _t_orch_start = time.perf_counter()
         logger.info("ORCHESTRATOR | Processing %d symbols via pipeline orchestrator", len(decisions))
 
         max_trades_per_cycle = int(self.raw_cfg["max_trades_per_cycle"])
@@ -1225,7 +1288,8 @@ class ScreenerLive:
             df5 = symbol_data_map.get(sym, (None,))[0]
             df1m = symbol_data_map.get(sym, (None, None))[1]
             lvl = symbol_data_map.get(sym, (None, None, {}))[2]
-            daily_df = symbol_data_map.get(sym, (None, None, None, None))[3] if len(symbol_data_map.get(sym, ())) > 3 else None
+            # daily_df only needed for ~5-20 accepted symbols (not 800), fetch from sdk cache
+            daily_df = self.sdk.get_daily(sym, days=210)
 
             if df5 is None:
                 continue
@@ -1284,7 +1348,9 @@ class ScreenerLive:
         else:
             pctl_score = 0.0
 
-        logger.info("ORCHESTRATOR_COMPLETE | %d eligible plans from %d decisions", len(eligible_plans), len(decisions))
+        _t_orch_end = time.perf_counter()
+        logger.info("ORCHESTRATOR_COMPLETE | %d eligible plans from %d decisions | TIME: %.2fs",
+                   len(eligible_plans), len(decisions), _t_orch_end - _t_orch_start)
 
         # ---------- Process eligible plans → Execution ----------
         for i, (sym, plan, score, decision) in enumerate(eligible_plans):
@@ -1487,12 +1553,14 @@ class ScreenerLive:
 
         # Final timing for entire bar processing
         _t_bar_end = time.perf_counter()
-        logger.info("BAR_COMPLETE | Total bar processing time: %.2fs (Scanner: %.2fs, DataPrep: %.2fs, Structure: %.2fs, Ranking+Planning: %.2fs)",
+        logger.info("BAR_COMPLETE | Total: %.2fs | Scanner: %.2fs | DataPrep: %.2fs | Structure: %.2fs | Orchestrator: %.2fs | Execution: %.2fs | wallclock: %s",
                    _t_bar_end - _t_bar_start,
                    _t_scanner_end - _t_bar_start,
                    _t_data_prep_end - _t_scanner_end,
                    _t_structure_end - _t_data_prep_end,
-                   _t_bar_end - _t_structure_end)
+                   _t_orch_end - _t_structure_end,
+                   _t_bar_end - _t_orch_end,
+                   datetime.now().strftime("%H:%M:%S"))
 
     # ---------- EOD handler ----------
     def _handle_eod(self, now: datetime = None) -> None:
