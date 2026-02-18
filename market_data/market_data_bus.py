@@ -21,6 +21,7 @@ Hashes:
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 from dataclasses import dataclass, asdict
@@ -125,6 +126,11 @@ class MarketDataBus:
         # Latency tracking for subscriber mode
         self._latency_samples: list[float] = []
         self._latency_count: int = 0
+
+        # Bar event queue — bar callbacks run in a separate worker thread
+        # so slow screener pipelines (28s+) don't block tick processing
+        self._bar_event_queue: queue.Queue = queue.Queue()
+        self._bar_worker_thread: Optional[threading.Thread] = None
 
         if mode != "standalone":
             self._init_redis()
@@ -328,6 +334,16 @@ class MarketDataBus:
             name="MarketDataBus-Subscriber"
         )
         self._subscriber_thread.start()
+
+        # Bar worker thread — processes bar events off the main subscriber loop
+        # so slow bar callbacks (screener pipeline 28s+) don't block tick delivery
+        self._bar_worker_thread = threading.Thread(
+            target=self._bar_event_worker,
+            daemon=True,
+            name="MarketDataBus-BarWorker"
+        )
+        self._bar_worker_thread.start()
+
         logger.info(f"MKT_DATA_BUS | Subscriber started, patterns: {patterns}")
 
     def _subscriber_loop(self) -> None:
@@ -354,19 +370,11 @@ class MarketDataBus:
                         self._handle_tick_message(data)
                         continue
 
-                    # Handle bar messages: "bars:5m:RELIANCE" -> timeframe="5m"
+                    # Bar events → queue for separate thread processing
+                    # This prevents slow bar callbacks (screener 28s+) from blocking ticks
                     parts = channel.split(":")
                     if len(parts) >= 2 and parts[0] == "bars":
-                        timeframe = parts[1]
-                        try:
-                            event = BarEvent.from_json(data)
-                            for callback in self._bar_callbacks.get(timeframe, []):
-                                try:
-                                    callback(event)
-                                except Exception as e:
-                                    logger.exception(f"MKT_DATA_BUS | Bar callback error: {e}")
-                        except Exception as e:
-                            logger.warning(f"MKT_DATA_BUS | Failed to parse bar event: {e}")
+                        self._bar_event_queue.put((parts[1], data))
 
                 except Exception as e:
                     logger.warning(f"MKT_DATA_BUS | Message processing error: {e}")
@@ -374,6 +382,27 @@ class MarketDataBus:
         except Exception as e:
             if self._running:
                 logger.warning(f"MKT_DATA_BUS | Subscriber loop error: {e}")
+
+    def _bar_event_worker(self) -> None:
+        """Process bar events in a dedicated thread.
+
+        Bar callbacks (screener pipeline) can take 28s+. Running them here
+        keeps the subscriber loop free to dispatch ticks with <1ms latency.
+        """
+        while self._running:
+            try:
+                timeframe, data = self._bar_event_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            try:
+                event = BarEvent.from_json(data)
+                for callback in self._bar_callbacks.get(timeframe, []):
+                    try:
+                        callback(event)
+                    except Exception as e:
+                        logger.exception(f"MKT_DATA_BUS | Bar callback error: {e}")
+            except Exception as e:
+                logger.warning(f"MKT_DATA_BUS | Failed to parse bar event: {e}")
 
     def _handle_tick_message(self, data: str) -> None:
         """Parse and dispatch tick message to callbacks."""
@@ -689,6 +718,10 @@ class MarketDataBus:
     def shutdown(self) -> None:
         """Clean shutdown of Redis connections."""
         self._running = False
+
+        # Wait for bar worker to drain
+        if self._bar_worker_thread and self._bar_worker_thread.is_alive():
+            self._bar_worker_thread.join(timeout=5.0)
 
         if self._pubsub:
             try:

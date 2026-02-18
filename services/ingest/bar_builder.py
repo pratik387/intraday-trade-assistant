@@ -152,17 +152,8 @@ class BarBuilder:
         logger.info("BAR_BUILDER | Cleared pre-market data at market open")
 
     # ----------------------------- Public API -----------------------------
-    _on_tick_count = 0
-
     def on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
         """Push a realtime tick for aggregation. Thread-safe."""
-        BarBuilder._on_tick_count += 1
-        if BarBuilder._on_tick_count <= 3:
-            logger.info("BAR_BUILDER | on_tick #%d sym=%s price=%s vol=%s ts=%s",
-                        BarBuilder._on_tick_count, symbol, price, volume, ts)
-        if BarBuilder._on_tick_count % 5000 == 0:
-            logger.info("BAR_BUILDER | tick_count=%d symbols=%d",
-                        BarBuilder._on_tick_count, len(self._ltp))
         with self._lock:
             # Clear pre-market data on first tick at/after 9:15
             if not self._market_open_cleared and ts.hour == 9 and ts.minute >= 15:

@@ -1265,7 +1265,7 @@ class ScreenerLive:
             return
 
         gate_accept_count = len(decisions)
-        logger.info("GATES_COMPLETE | %d→%d symbols (%.1f%%) | Gates→Ranking", shortlist_count, gate_accept_count, (gate_accept_count/max(shortlist_count,1))*100)
+        logger.info("GATES_COMPLETE | %d→%d symbols (%.1f%%) | Gates→Orchestrator", shortlist_count, gate_accept_count, (gate_accept_count/max(shortlist_count,1))*100)
         if not decisions:
             return
 

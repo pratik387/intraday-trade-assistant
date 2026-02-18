@@ -281,7 +281,7 @@ class MainDetector(BaseStructure):
             # Timing summary — log for slow symbols (>150ms) showing bottleneck detectors
             _total_det_ms = sum(_detector_times.values())
             _total_ms = _t_ctx_ms + _total_det_ms + _t_resolve_ms
-            if _total_ms > 150 and _detector_times:
+            if _total_ms > 500 and _detector_times:
                 # Top 5 slowest detectors
                 _top5 = sorted(_detector_times.items(), key=lambda x: x[1], reverse=True)[:5]
                 _top5_str = " ".join(f"{n}={t:.0f}ms" for n, t in _top5)
