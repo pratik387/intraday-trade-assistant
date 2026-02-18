@@ -132,6 +132,35 @@
         "t2_max_mm_frac": 3.0
     },
 
+    "trade_quality_gates": {
+        "_comment": "DATA-DRIVEN (Feb 2026): Pipeline-aware A (28,472 trades, 754 sessions, FY2022-26). 13.9 T/day, WR 58.6%, Avg Rs 299, PF 1.81, Total Rs 31.4L. All 4 FYs profitable with growing edge.",
+        "enabled": true,
+        "blocked_hours": [10],
+        "_blocked_hours_evidence": "hour=10: 9,468 trades removed. Remaining WR 56.5% -> 58.6% after quality gates.",
+        "category_thresholds": {
+            "BREAKOUT": {
+                "min_structural_rr": 2.0,
+                "min_t1_rr": 1.5,
+                "_evidence": "srr>=2.0: best PF 1.30 (inverts above 2.5). t1>=1.75: WR 57.4%. 848 trades, Avg Rs 149, PF 1.47."
+            },
+            "LEVEL": {
+                "min_structural_rr": 3.0,
+                "min_t1_rr": 2.0,
+                "_evidence": "srr>=3.0: PF 1.73. t1>=2.0: WR 57.1%. 7,026 trades, Avg Rs 307, PF 1.96."
+            },
+            "REVERSION": {
+                "min_structural_rr": 5.0,
+                "min_t1_rr": 1.0,
+                "_evidence": "srr>=5.0: PF 1.55, WR 58.1%. t1_rr=1.0 for all (fixed targets). 2,622 trades, Avg Rs 328, PF 1.64."
+            },
+            "MOMENTUM": {
+                "min_structural_rr": 2.0,
+                "min_t1_rr": 1.5,
+                "_evidence": "No data in 3yr backtest. Using BREAKOUT thresholds as fallback."
+            }
+        }
+    },
+
     "late_entry_penalty": {
         "_comment": "RSI penalties DISABLED - need context-aware implementation (see todo.md)",
         "rsi_above": 70,

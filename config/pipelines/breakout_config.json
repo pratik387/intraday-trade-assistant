@@ -217,19 +217,16 @@
                 "_disabled_reason": "VC whitelist gate is the primary filter now"
             },
             "breakout_long": {
-                "enabled": false,
-                "blocked_regimes": ["chop"],
-                "blocked_hours": [14],
-                "blocked_caps": ["mid_cap", "small_cap"],
-                "_evidence": "1,387 trades, Rs +0.56L marginally. chop WR 44%, mid/small cap WR 40-43%.",
-                "_disabled_reason": "VC whitelist gate is the primary filter now"
+                "enabled": true,
+                "blocked_regimes": ["chop", "squeeze"],
+                "blocked_hours": [10, 13, 14],
+                "blocked_caps": ["micro_cap", "small_cap"],
+                "_evidence": "3yr backtest: chop WR 38% Avg -Rs 51, squeeze WR 29% Avg -Rs 205, h10 WR 42% Avg -Rs 271, h13 WR 39%, h14 WR 50% Avg -Rs 139, micro_cap WR 41% Avg -Rs 834, small_cap WR 42% Avg -Rs 191."
             },
             "momentum_breakout_long": {
-                "enabled": false,
-                "blocked_regimes": ["trend_down", "trend_up"],
-                "blocked_caps": ["large_cap", "mid_cap"],
-                "_evidence": "668 trades. Only profitable in chop/squeeze. trend_down WR 37%, trend_up WR 40%.",
-                "_disabled_reason": "VC whitelist gate is the primary filter now"
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "3yr backtest (28K trades): 83 trades, WR 30.1%, Avg -Rs 2,453, negative ALL FYs. Edge optimizer: KILL."
             },
             "first_hour_momentum_short": {
                 "enabled": false,
@@ -290,159 +287,6 @@
                 "_note": "ORB uses relaxed ADX (15) and RSI thresholds - market open volatility",
                 "enabled": false
             }
-        }
-    },
-
-    "ranking": {
-        "_comment": "BREAKOUT-SPECIFIC RANKING (Dec 2024) - Pro trader research: high ADX, neutral RSI, VWAP aligned critical",
-        "mode": "breakout_specific",
-        "score_scale": 5.0,
-        "_score_scale_note": "Multiplier to scale weighted sum back to usable range (~0-5). Weighted sum alone produces ~0.17 mean.",
-        "weights": {
-            "volume": {
-                "_comment": "CRITICAL for breakouts - volume confirms breakout validity",
-                "divisor": 2.0,
-                "cap": 2.0,
-                "weight": 0.20
-            },
-            "rsi": {
-                "_comment": "NEUTRAL = GOOD for breakouts (room to run, not overbought/oversold)",
-                "mode": "neutral_is_good",
-                "neutral_min": 45,
-                "neutral_max": 55,
-                "good_min": 40,
-                "good_max": 60,
-                "long_overbought_threshold": 70,
-                "short_oversold_threshold": 30,
-                "neutral_bonus": 0.4,
-                "good_bonus": 0.2,
-                "penalty": -0.3,
-                "weight": 0.15
-            },
-            "adx": {
-                "_comment": "HIGH ADX = GOOD for breakouts (strong trend confirms momentum)",
-                "mode": "high_is_good",
-                "strong_threshold": 35,
-                "good_threshold": 25,
-                "weak_threshold": 20,
-                "strong_bonus": 0.5,
-                "good_bonus": 0.3,
-                "weak_penalty": -0.3,
-                "weight": 0.20
-            },
-            "vwap": {
-                "_comment": "ALIGNED = CRITICAL for breakouts (momentum in direction of VWAP)",
-                "mode": "aligned_required",
-                "aligned_bonus": 0.5,
-                "misaligned_penalty": -0.4,
-                "weight": 0.15
-            },
-            "distance": {
-                "_comment": "Less critical for breakouts - already broken out from level",
-                "near_bpct": 0.5,
-                "near_score": 0.3,
-                "ok_bpct": 1.5,
-                "ok_score": 0.1,
-                "far_score": -0.1,
-                "weight": 0.10
-            },
-            "squeeze": {
-                "_comment": "Squeeze release = good for breakouts (pent-up energy)",
-                "low_bonus": 0.3,
-                "mid_bonus": 0.2,
-                "high_penalty": -0.2,
-                "weight": 0.10
-            },
-            "acceptance": {
-                "_comment": "KEEP for breakouts - structural R:R matters for momentum plays",
-                "enabled": true,
-                "excellent_bonus": 0.4,
-                "good_bonus": 0.2,
-                "weight": 0.10
-            }
-        },
-        "regime_multipliers": {
-            "_comment": "Default fallback multipliers",
-            "trend_up": 1.1,
-            "trend_down": 1.1,
-            "chop": 0.7,
-            "squeeze": 1.0
-        },
-        "strategy_regime_multipliers": {
-            "_comment": "From baseline ranker.py _get_regime_multiplier() - Strategy-specific overrides",
-            "breakout": {
-                "_comment": "Breakout poor in chop per baseline report",
-                "chop": 0.7,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "squeeze": 0.9,
-                "default": 0.9
-            },
-            "orb_breakout": {
-                "chop": 0.7,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "squeeze": 0.9,
-                "default": 0.9
-            },
-            "orb_breakdown": {
-                "chop": 0.7,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "squeeze": 0.9,
-                "default": 0.9
-            },
-            "momentum_breakout": {
-                "_comment": "From baseline: trend=1.4, chop=1.3, other=1.2",
-                "trend_up": 1.4,
-                "trend_down": 1.4,
-                "chop": 1.3,
-                "squeeze": 1.2,
-                "default": 1.2
-            },
-            "flag_continuation": {
-                "trend_up": 1.4,
-                "trend_down": 1.4,
-                "chop": 1.1,
-                "squeeze": 1.2,
-                "default": 1.1
-            },
-            "squeeze_release": {
-                "squeeze": 1.5,
-                "chop": 1.3,
-                "trend_up": 1.2,
-                "trend_down": 1.2,
-                "default": 1.1
-            },
-            "break_of_structure": {
-                "_comment": "From baseline: 1.2 constant for structural shifts",
-                "trend_up": 1.2,
-                "trend_down": 1.2,
-                "chop": 1.2,
-                "squeeze": 1.2,
-                "default": 1.2
-            },
-            "change_of_character": {
-                "_comment": "From baseline: trend=1.4, chop=0.8",
-                "trend_up": 1.4,
-                "trend_down": 1.4,
-                "chop": 0.8,
-                "squeeze": 1.0,
-                "default": 1.0
-            },
-            "first_hour_momentum": {
-                "_comment": "FHM: High multipliers across all regimes - momentum trumps regime in first hour",
-                "trend_up": 1.5,
-                "trend_down": 1.5,
-                "chop": 1.3,
-                "squeeze": 1.4,
-                "default": 1.3
-            }
-        },
-        "daily_trend_multipliers": {
-            "aligned": 1.25,
-            "counter": 0.75,
-            "neutral": 1.0
         }
     },
 

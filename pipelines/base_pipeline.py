@@ -234,14 +234,6 @@ class GateResult:
 
 
 @dataclass
-class RankingResult:
-    """Result of ranking phase."""
-    score: float
-    components: Dict[str, float] = field(default_factory=dict)
-    multipliers: Dict[str, float] = field(default_factory=dict)
-
-
-@dataclass
 class EntryResult:
     """Result of entry calculation phase."""
     entry_zone: Tuple[float, float]
@@ -400,7 +392,7 @@ class BasePipeline(ABC):
 
     def _validate_config(self):
         """Validate that required config sections exist."""
-        required_sections = ["screening", "quality", "gates", "ranking", "entry", "targets"]
+        required_sections = ["screening", "quality", "gates", "entry", "targets"]
         for section in required_sections:
             if section not in self.cfg:
                 raise ConfigurationError(f"Required config section missing: {section}")
@@ -474,18 +466,6 @@ class BasePipeline(ABC):
         pass
 
     @abstractmethod
-    def calculate_rank_score(
-        self,
-        symbol: str,
-        intraday_features: Dict[str, Any],
-        regime: str,
-        daily_trend: Optional[str] = None,
-        htf_context: Optional[Dict] = None
-    ) -> RankingResult:
-        """Calculate category-specific ranking score."""
-        pass
-
-    @abstractmethod
     def calculate_entry(
         self,
         symbol: str,
@@ -514,26 +494,6 @@ class BasePipeline(ABC):
         pass
 
     # ======================== HOOK METHODS (override in subclasses) ========================
-
-    def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:
-        """
-        Apply category-specific RSI penalty to position sizing.
-
-        Override in subclass to implement category-specific logic.
-        Pro Trader RSI Framework (Minervini, Connors, Raschke):
-        - BREAKOUT/MOMENTUM: High RSI = momentum confirmation (GOOD)
-        - REVERSION: Extreme RSI = setup condition (GOOD)
-        - LEVEL: Neutral RSI = ideal, extreme = caution
-
-        Args:
-            rsi_val: Current RSI value (0-100)
-            bias: Trade direction ("long" or "short")
-
-        Returns:
-            Tuple of (multiplier, caution_string or None)
-            multiplier: 1.0 = no penalty, 0.9 = 10% reduction, etc.
-        """
-        return (1.0, None)
 
     # ======================== COMMON UTILITY METHODS ========================
 
@@ -878,471 +838,9 @@ class BasePipeline(ABC):
         reasons.append("global_filters_passed")
         return True, reasons
 
-    def _get_strategy_regime_mult(self, setup_type: str, regime: str) -> float:
-        """
-        Get regime multiplier - strategy-specific if available, else fallback.
-
-        Ported from baseline ranker.py _get_regime_multiplier() function.
-        This allows each strategy type to have tuned regime multipliers that
-        were calibrated in the baseline configuration.
-
-        Args:
-            setup_type: Setup type (e.g., "breakout_long", "vwap_mean_reversion_short")
-            regime: Current regime ("trend_up", "trend_down", "chop", "squeeze")
-
-        Returns:
-            Regime multiplier for ranking score adjustment
-        """
-        # Get strategy-specific regime multipliers from config
-        strategy_mults = self._get("ranking", "strategy_regime_multipliers")
-
-        # Extract base strategy name (e.g., "breakout" from "breakout_long")
-        base_strategy = setup_type.replace("_long", "").replace("_short", "") if setup_type else ""
-
-        if base_strategy in strategy_mults:
-            strat_cfg = strategy_mults[base_strategy]
-            return strat_cfg.get(regime, strat_cfg["default"])
-
-        # Fallback to generic regime multipliers
-        regime_mults = self._get("ranking", "regime_multipliers")
-        return regime_mults[regime]
-
-    # ======================== UNIVERSAL RANKING ADJUSTMENTS ========================
-    # These adjustments apply to ALL categories (from ranker.py analysis)
-
-    def apply_universal_ranking_adjustments(
-        self,
-        base_score: float,
-        symbol: str,
-        strategy_type: str,
-        structural_rr: float,
-        bias: str,
-        current_time: pd.Timestamp,
-        regime_diagnostics: Optional[Dict[str, Any]] = None,
-        daily_score: float = 0.0,
-        htf_context: Optional[Dict[str, Any]] = None,
-        daily_trend: Optional[str] = None
-    ) -> Tuple[float, Dict[str, float]]:
-        """
-        Apply universal ranking adjustments that affect ALL categories.
-
-        From ranker.py analysis - these are ported from OLD baseline:
-        1. Time of day multiplier (1.5x/2.5x late-day threshold)
-        2. Blacklist penalty (-999 for poor-performing setups)
-        3. Unrealistic RR penalty (-0.3 when RR > max)
-        4. Multi-TF daily multiplier (±15% at confidence ≥ 0.70)
-        5. Multi-TF hourly multiplier (±10% at confidence ≥ 0.60)
-        6. HTF 15m multiplier (±12% trend align, +8% volume)
-        7. Daily trend multiplier (±25% for trend alignment)
-        8. Daily score weighting (w_daily * daily_score + w_intr * intraday_score)
-
-        Args:
-            base_score: Score calculated by category-specific ranking
-            symbol: Stock symbol
-            strategy_type: Setup type (e.g., "orb_breakout_long")
-            structural_rr: Calculated structural R:R
-            bias: "long" or "short"
-            current_time: Current timestamp
-            regime_diagnostics: Multi-TF regime info {daily: {regime, confidence}, hourly: {session_bias, confidence}}
-            daily_score: Daily timeframe score (optional)
-            htf_context: HTF 15m context {trend_aligned: bool, volume_mult_15m: float}
-            daily_trend: Daily trend direction ("up", "down", "neutral")
-
-        Returns:
-            Tuple of (adjusted_score, adjustment_details)
-        """
-        score = base_score
-        adjustments = {}
-
-        # Get universal ranking config from base config
-        base_cfg = load_base_config()
-        ranking_cfg = base_cfg["universal_ranking"]
-
-        # 1. TIME OF DAY MULTIPLIER
-        # Late-day signals have poor quality (39 signals in 14:00-15:00, only 3 trades = 7.7% conversion)
-        time_mult = self._get_time_of_day_multiplier(current_time, ranking_cfg)
-        adjustments["time_of_day_mult"] = time_mult
-        # Apply as score divisor: higher mult = harder to qualify (lower effective score)
-        if time_mult > 1.0:
-            score /= time_mult
-            logger.debug(f"TIME_OF_DAY_PENALTY: {strategy_type} score {base_score:.3f} -> {score:.3f} (÷{time_mult:.1f}x)")
-
-        # 2. BLACKLIST PENALTY
-        # Apply severe penalty to historically poor-performing setups (effectively blocks them)
-        blacklist_penalty = self._get_blacklist_penalty(strategy_type, ranking_cfg)
-        score += blacklist_penalty
-        adjustments["blacklist_penalty"] = blacklist_penalty
-
-        # 3. UNREALISTIC RR PENALTY
-        rr_penalty = self._get_unrealistic_rr_penalty(structural_rr, ranking_cfg)
-        score += rr_penalty
-        adjustments["rr_penalty"] = rr_penalty
-
-        # 4. MULTI-TF DAILY MULTIPLIER (±15% at confidence ≥ 0.70)
-        daily_mult = self._get_multi_tf_daily_multiplier(regime_diagnostics, bias, ranking_cfg)
-        score *= daily_mult
-        adjustments["multi_tf_daily_mult"] = daily_mult
-
-        # 5. MULTI-TF HOURLY MULTIPLIER (±10% at confidence ≥ 0.60)
-        hourly_mult = self._get_multi_tf_hourly_multiplier(regime_diagnostics, bias, ranking_cfg)
-        score *= hourly_mult
-        adjustments["multi_tf_hourly_mult"] = hourly_mult
-
-        # 6. HTF 15m MULTIPLIER (±12% trend align, +8% volume)
-        # From ranker.py _get_htf_15m_multiplier() lines 305-347
-        htf_15m_mult = self._get_htf_15m_multiplier(htf_context, bias, ranking_cfg)
-        score *= htf_15m_mult
-        adjustments["htf_15m_mult"] = htf_15m_mult
-
-        # 7. DAILY TREND MULTIPLIER (±25% for trend alignment)
-        # From ranker.py _get_daily_trend_multiplier() lines 269-302
-        daily_trend_mult = self._get_daily_trend_multiplier(daily_trend, bias, ranking_cfg)
-        score *= daily_trend_mult
-        adjustments["daily_trend_mult"] = daily_trend_mult
-
-        # 8. DAILY SCORE WEIGHTING
-        if daily_score != 0.0:
-            score = self._apply_daily_score_weighting(score, daily_score, ranking_cfg)
-            adjustments["daily_score_applied"] = True
-        else:
-            adjustments["daily_score_applied"] = False
-
-        return score, adjustments
-
-    def _get_time_of_day_multiplier(
-        self,
-        current_time: pd.Timestamp,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Dynamic rank threshold multiplier based on time of day.
-
-        From ranker.py lines 569-622:
-        - Morning (10:15-12:00): Normal threshold (1.0x)
-        - Midday (12:00-14:00): Normal threshold (1.0x)
-        - Late afternoon (14:00-14:30): Moderate filter (1.5x)
-        - Final hour (14:30-15:15): Aggressive filter (2.5x)
-
-        This multiplier is applied to the threshold, not the score.
-        Higher multiplier = harder to qualify.
-        """
-        time_cfg = ranking_cfg["time_of_day"]
-        if not time_cfg["enabled"]:
-            return 1.0
-
-        hour = current_time.hour
-        minute = current_time.minute
-
-        # Get thresholds from config
-        late_afternoon_start = time_cfg["late_afternoon_start_hour"]
-        late_afternoon_end_min = time_cfg["late_afternoon_end_minute"]
-        late_afternoon_mult = time_cfg["late_afternoon_mult"]
-        final_hour_mult = time_cfg["final_hour_mult"]
-
-        # Morning and midday: normal threshold
-        if hour < late_afternoon_start:
-            return 1.0
-
-        # Late afternoon (14:00-14:30): moderate filter
-        if hour == late_afternoon_start and minute < late_afternoon_end_min:
-            return late_afternoon_mult
-
-        # Final hour (14:30+): aggressive filter
-        return final_hour_mult
-
-    def _get_blacklist_penalty(
-        self,
-        strategy_type: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply penalty for historically poor-performing setups.
-
-        From ranker.py lines 513-517:
-        - Blacklisted strategies get a severe penalty (-999 by default)
-        - This effectively prevents them from being selected
-        - Setups still get detected (allowing other detectors to work) but blocked at ranking
-        """
-        blacklist_cfg = ranking_cfg["blacklist"]
-        if not blacklist_cfg["enabled"]:
-            return 0.0
-
-        blacklisted_setups = blacklist_cfg["strategies"]
-        penalty = blacklist_cfg["penalty"]
-
-        if strategy_type in blacklisted_setups:
-            logger.debug(f"BLACKLIST_PENALTY: {strategy_type} penalty={penalty}")
-            return penalty
-
-        return 0.0
-
-    def _get_unrealistic_rr_penalty(
-        self,
-        structural_rr: float,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply penalty for unrealistically high R:R ratios.
-
-        From ranker.py lines 519-525:
-        - If structural_rr > max_rr, apply penalty (-0.3 by default)
-        - Unrealistic R:R often indicates bad level placement or data issues
-        """
-        rr_cfg = ranking_cfg["unrealistic_rr"]
-        if not rr_cfg["enabled"]:
-            return 0.0
-
-        max_rr = rr_cfg["max_structural_rr"]
-        penalty = rr_cfg["penalty"]
-
-        if structural_rr > max_rr:
-            logger.debug(f"HIGH_RR_PENALTY: structural_rr={structural_rr:.1f}>{max_rr} penalty={penalty}")
-            return penalty
-
-        return 0.0
-
-    def _get_multi_tf_daily_multiplier(
-        self,
-        regime_diagnostics: Optional[Dict[str, Any]],
-        bias: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply daily regime multiplier based on multi-timeframe analysis.
-
-        From ranker.py lines 350-399 (Linda Raschke MTF filtering):
-        - ±15% adjustment based on daily regime alignment
-        - Only apply if confidence ≥ 0.70
-        - Long boost in daily uptrend, short boost in daily downtrend
-        """
-        mtf_cfg = ranking_cfg["multi_tf_daily"]
-        if not mtf_cfg["enabled"]:
-            return 1.0
-
-        if not regime_diagnostics or "daily" not in regime_diagnostics:
-            return 1.0
-
-        daily = regime_diagnostics["daily"]
-        daily_regime = daily.get("regime", "chop")
-        daily_confidence = daily.get("confidence", 0.0)
-
-        # Confidence threshold from config
-        min_confidence = mtf_cfg["min_confidence"]
-        if daily_confidence < min_confidence:
-            return 1.0
-
-        aligned_mult = mtf_cfg["aligned_mult"]
-        counter_mult = mtf_cfg["counter_mult"]
-        squeeze_mult = mtf_cfg["squeeze_mult"]
-
-        is_long = bias == "long"
-        is_short = bias == "short"
-
-        # Daily trend_up: Boost longs, penalize shorts
-        if daily_regime == "trend_up":
-            if is_long:
-                return aligned_mult  # +15% boost
-            elif is_short:
-                return counter_mult  # -15% penalty
-
-        # Daily trend_down: Boost shorts, penalize longs
-        elif daily_regime == "trend_down":
-            if is_short:
-                return aligned_mult  # +15% boost
-            elif is_long:
-                return counter_mult  # -15% penalty
-
-        # Daily squeeze: Mild penalty for all
-        elif daily_regime == "squeeze":
-            return squeeze_mult  # -10% penalty
-
-        return 1.0
-
-    def _get_multi_tf_hourly_multiplier(
-        self,
-        regime_diagnostics: Optional[Dict[str, Any]],
-        bias: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply hourly session bias multiplier based on multi-timeframe analysis.
-
-        From ranker.py lines 402-447 (Linda Raschke lower TF execution):
-        - ±10% adjustment based on hourly session bias
-        - Only apply if confidence ≥ 0.60
-        - Smaller than daily (it's a lower TF, noisier)
-        """
-        mtf_cfg = ranking_cfg["multi_tf_hourly"]
-        if not mtf_cfg["enabled"]:
-            return 1.0
-
-        if not regime_diagnostics or "hourly" not in regime_diagnostics:
-            return 1.0
-
-        hourly = regime_diagnostics["hourly"]
-        session_bias = hourly.get("session_bias", "neutral")
-        hourly_confidence = hourly.get("confidence", 0.0)
-
-        # Confidence threshold from config (lower than daily)
-        min_confidence = mtf_cfg["min_confidence"]
-        if hourly_confidence < min_confidence:
-            return 1.0
-
-        aligned_mult = mtf_cfg["aligned_mult"]
-        counter_mult = mtf_cfg["counter_mult"]
-
-        is_long = bias == "long"
-        is_short = bias == "short"
-
-        # Hourly bullish: Boost longs, penalize shorts
-        if session_bias == "bullish":
-            if is_long:
-                return aligned_mult  # +10% boost
-            elif is_short:
-                return counter_mult  # -10% penalty
-
-        # Hourly bearish: Boost shorts, penalize longs
-        elif session_bias == "bearish":
-            if is_short:
-                return aligned_mult  # +10% boost
-            elif is_long:
-                return counter_mult  # -10% penalty
-
-        return 1.0
-
-    def _get_htf_15m_multiplier(
-        self,
-        htf_context: Optional[Dict[str, Any]],
-        bias: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply 15m HTF (Higher TimeFrame) confirmation multiplier.
-
-        From ranker.py lines 305-347 (Intraday Scanner Playbook):
-        - Trend align bonus: +12% (5m + 15m same direction)
-        - Volume multiplier bonus: +8% (15m volume > 1.3x median)
-        - Opposing trend penalty: -10% (5m vs 15m divergence)
-
-        Never blocks entries - only affects ranking scores.
-
-        Args:
-            htf_context: Dict with htf_trend, volume_mult_15m, trend_aligned etc.
-            bias: "long" or "short"
-            ranking_cfg: Universal ranking config section
-
-        Returns:
-            Multiplier: 1.0 (neutral) to ~1.21 (aligned + volume) or 0.90 (opposing)
-        """
-        htf_cfg = ranking_cfg.get("htf_15m")
-        if htf_cfg is None or not htf_cfg.get("enabled", True):
-            return 1.0
-
-        if not htf_context:
-            return 1.0  # No HTF data available, neutral
-
-        is_long = bias == "long"
-        is_short = bias == "short"
-        multiplier = 1.0
-
-        # Get alignment/penalty values from config
-        aligned_bonus = htf_cfg["aligned_bonus"]
-        opposing_penalty = htf_cfg["opposing_penalty"]
-        volume_bonus = htf_cfg["volume_bonus"]
-        volume_threshold = htf_cfg["volume_threshold"]
-
-        # Check 15m trend alignment (screener populates "trend_aligned" as boolean)
-        htf_trend_aligned = htf_context.get("trend_aligned", False)
-
-        # Apply alignment bonus or penalty
-        if is_long:
-            if htf_trend_aligned:  # 15m uptrend aligns with long setup
-                multiplier *= aligned_bonus  # +12% bonus
-            else:  # 15m downtrend opposes long setup
-                multiplier *= opposing_penalty  # -10% penalty
-        elif is_short:
-            if not htf_trend_aligned:  # 15m downtrend aligns with short setup
-                multiplier *= aligned_bonus  # +12% bonus
-            else:  # 15m uptrend opposes short setup
-                multiplier *= opposing_penalty  # -10% penalty
-
-        # Check 15m volume context
-        htf_vol_mult = htf_context.get("volume_mult_15m", 1.0)
-        if htf_vol_mult >= volume_threshold:  # 15m volume surge
-            multiplier *= volume_bonus  # +8% bonus
-
-        return multiplier
-
-    def _get_daily_trend_multiplier(
-        self,
-        daily_trend: Optional[str],
-        bias: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply daily trend alignment multiplier for multi-timeframe confluence.
-
-        From ranker.py lines 269-302:
-        - Long setups in daily uptrend: 25% win rate boost
-        - Short setups in daily downtrend: 25% win rate boost
-        - Counter-trend trades: 25% penalty
-
-        Args:
-            daily_trend: "up", "down", or "neutral"
-            bias: "long" or "short"
-            ranking_cfg: Universal ranking config section
-
-        Returns:
-            Multiplier: 1.25 (aligned), 0.75 (counter), 1.0 (neutral)
-        """
-        daily_cfg = ranking_cfg.get("daily_trend")
-        if daily_cfg is None or not daily_cfg.get("enabled", True):
-            return 1.0
-
-        if not daily_trend or daily_trend == "neutral":
-            return 1.0
-
-        # Get multiplier values from config
-        aligned_mult = daily_cfg["aligned_mult"]
-        counter_mult = daily_cfg["counter_mult"]
-
-        is_long = bias == "long"
-        is_short = bias == "short"
-
-        # Apply trend alignment bonus/penalty
-        if daily_trend == "up" and is_long:
-            return aligned_mult  # 25% boost for trend-aligned longs
-        elif daily_trend == "down" and is_short:
-            return aligned_mult  # 25% boost for trend-aligned shorts
-        elif daily_trend == "up" and is_short:
-            return counter_mult  # 25% penalty for counter-trend shorts
-        elif daily_trend == "down" and is_long:
-            return counter_mult  # 25% penalty for counter-trend longs
-
-        return 1.0  # Neutral
-
-    def _apply_daily_score_weighting(
-        self,
-        intraday_score: float,
-        daily_score: float,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Combine daily and intraday scores with configurable weights.
-
-        From ranker.py line 505:
-        final_score = w_daily * daily_score + w_intr * intraday_score
-
-        Default: 30% daily, 70% intraday
-        """
-        weight_cfg = ranking_cfg["daily_score_weighting"]
-        if not weight_cfg["enabled"]:
-            return intraday_score
-
-        w_daily = weight_cfg["weight_daily"]
-        w_intraday = weight_cfg["weight_intraday"]
-
-        return w_daily * daily_score + w_intraday * intraday_score
+    # ======================== REMOVED: RANKING ADJUSTMENTS (Feb 2026) ========================
+    # 3yr backtest: rank_score had -0.019 correlation with winning. All ranking computation
+    # removed. structural_rr used as ordering metric. See plan: pure-twirling-deer.md
 
     # ======================== UNIVERSAL GATES ========================
     # These gates apply BEFORE category-specific gates
@@ -1814,57 +1312,37 @@ class BasePipeline(ABC):
                     logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: RSI dead zone ({rsi_val:.1f} in {rsi_min}-{rsi_max} range)")
                     return {"eligible": False, "reason": "rsi_dead_zone", "details": [f"rsi_{rsi_val:.1f}_in_{rsi_min}_{rsi_max}_dead_zone"]}
 
-        # Add acceptance_status from quality calculation to features for ranking
+        # Add acceptance_status from quality calculation to features
         features["acceptance_status"] = quality_result.quality_status
 
-        # 4. RANKING (with HTF context for category-specific adjustments)
-        rank_result = self.calculate_rank_score(symbol, features, regime, htf_context=htf_context)
+        # 3d. QUALITY STATUS GATE (DATA-DRIVEN Feb 2026)
+        # 3yr backtest: "fair" = 860 trades, WR 46%, Avg -Rs 30. All other statuses profitable.
+        blocked_statuses = self.cfg.get("quality_filters", {}).get("blocked_quality_statuses", [])
+        if quality_result.quality_status in blocked_statuses:
+            logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: quality_status '{quality_result.quality_status}' in blocked list")
+            return {"eligible": False, "reason": "quality_status_blocked", "details": [f"status_{quality_result.quality_status}_blocked"]}
 
-        # Extract daily_trend from htf_context if available (from screener/planner)
-        daily_trend = None
-        if htf_context:
-            daily_trend = htf_context.get("daily_trend", None)
+        # 3e. TRADE QUALITY GATES (DATA-DRIVEN Feb 2026)
+        # Pipeline-aware A: per-category srr + t1_rr thresholds
+        # 13.9 T/day, WR 58.6%, Avg Rs 299, PF 1.81, all 4 FYs profitable
+        tqg = self.cfg.get("trade_quality_gates", {})
+        if tqg.get("enabled", False):
+            blocked_hours = tqg.get("blocked_hours", [])
+            if now and now.hour in blocked_hours:
+                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: hour {now.hour} in blocked_hours {blocked_hours}")
+                return {"eligible": False, "reason": "blocked_hour", "details": [f"hour_{now.hour}_blocked"]}
 
-        # 4b. UNIVERSAL RANKING ADJUSTMENTS (from ranker.py)
-        # Apply time-of-day, blacklist, unrealistic RR, multi-TF daily/hourly, HTF 15m, daily trend multipliers
-        adjusted_score, universal_adjustments = self.apply_universal_ranking_adjustments(
-            base_score=rank_result.score,
-            symbol=symbol,
-            strategy_type=setup_type,
-            structural_rr=quality_result.structural_rr,
-            bias=bias,
-            current_time=now,
-            regime_diagnostics=regime_diagnostics,
-            daily_score=daily_score,
-            htf_context=htf_context,
-            daily_trend=daily_trend
-        )
+            cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
+            min_srr = cat_thresholds.get("min_structural_rr", 0)
+            if min_srr > 0 and quality_result.structural_rr < min_srr:
+                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: structural_rr {quality_result.structural_rr:.2f} < {min_srr:.1f}")
+                return {"eligible": False, "reason": "structural_rr_below_floor", "details": [f"srr_{quality_result.structural_rr:.2f}_below_{min_srr}"]}
 
-        # 4c. POST-RANKING FILTERS (from setup_filters - need adjusted_score)
-        # These filters run AFTER ranking because they need the adjusted rank score.
-        # Pre-ranking filters (hours, RSI, regime, caps, etc.) are handled in validate_gates() via apply_setup_filters()
-        setup_filters = self._get("gates", "setup_filters")
-        setup_block_cfg = setup_filters.get(setup_type.lower(), {}) if setup_filters else {}
-
-        # Check if setup filter is enabled (default True for backwards compat)
-        setup_filter_enabled = setup_block_cfg.get("enabled", True)
-
-        if setup_filter_enabled:
-            # 4c.1 MAX RANK SCORE FILTER (DATA-DRIVEN Dec 2024)
-            # Some setups perform better with lower rank scores (counter-intuitive finding)
-            # e.g., orb_pullback_short: rank_score < 1.0 performs better
-            max_rank_score = setup_block_cfg.get("max_rank_score")
-            if max_rank_score is not None and adjusted_score > max_rank_score:
-                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} > max_rank_score {max_rank_score}")
-                return {"eligible": False, "reason": "max_rank_score_exceeded", "details": [f"rank_{adjusted_score:.3f}_gt_{max_rank_score}"]}
-
-            # 4c.2 MIN RANK SCORE FILTER (DATA-DRIVEN Dec 2024)
-            # Some setups require higher quality signals to be profitable
-            # e.g., resistance_bounce_short: rank_score >= 2 performs better
-            min_rank_score = setup_block_cfg.get("min_rank_score")
-            if min_rank_score is not None and adjusted_score < min_rank_score:
-                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} < min_rank_score {min_rank_score}")
-                return {"eligible": False, "reason": "min_rank_score_not_met", "details": [f"rank_{adjusted_score:.3f}_lt_{min_rank_score}"]}
+        # 4. ORDERING SCORE — structural R:R is the natural, data-validated metric
+        # Ranking system REMOVED (Feb 2026): 3yr backtest proved composite rank_score has -0.019 correlation
+        # with winning. rank_position #1-#5 all perform similarly. Pro approach: quality gates filter,
+        # structural_rr orders. No composite scoring needed.
+        adjusted_score = quality_result.structural_rr
 
         # NOTE: allowed_hours, min_rsi, max_rsi filters removed - handled pre-ranking in validate_gates()
 
@@ -2017,6 +1495,7 @@ class BasePipeline(ABC):
         # 6b. SETUP-SPECIFIC SL MULTIPLIER (sl_mult from setup_filters)
         # This WIDENS the stop loss for setups that need more room (e.g., resistance_bounce_short sl_mult=1.5)
         # NOTE: sl_mult defaults to 1.0 (no widening) if not specified - this is a neutral modifier, not a required value
+        setup_block_cfg = self.cfg.get("gates", {}).get("setup_filters", {}).get(setup_type.lower(), {})
         sl_mult = setup_block_cfg.get("sl_mult", 1.0)
         if sl_mult != 1.0:
             if bias == "long":
@@ -2150,11 +1629,7 @@ class BasePipeline(ABC):
             },
 
             "ranking": {
-                "score": round(adjusted_score, 3),
-                "base_score": round(rank_result.score, 3),
-                "components": rank_result.components,
-                "multipliers": rank_result.multipliers,
-                "universal_adjustments": universal_adjustments,
+                "score": round(adjusted_score, 3),  # = structural_rr (ranking removed Feb 2026)
             },
 
             "sizing": {
@@ -2203,7 +1678,7 @@ class BasePipeline(ABC):
         plan = self._apply_quality_filters(plan, effective_entry_price, atr, measured_move)
 
         if plan["eligible"]:
-            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (base={rank_result.score:.2f}), quality={quality_result.quality_status}, entry={plan_entry_ref:.2f}")
+            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (structural_rr), quality={quality_result.quality_status}, entry={plan_entry_ref:.2f}")
         else:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected by quality filters: {plan.get('quality', {}).get('rejection_reason', 'unknown')}")
 
@@ -2233,6 +1708,18 @@ class BasePipeline(ABC):
         # Get quality filter config
         quality_filters = self.cfg["quality_filters"]
         if not quality_filters["enabled"]:
+            # quality_filters disabled, but trade_quality_gates t1_rr still applies
+            tqg = self.cfg.get("trade_quality_gates", {})
+            if tqg.get("enabled", False) and plan["eligible"] and plan["targets"]:
+                category = self.get_category_name()
+                cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
+                tqg_min_t1_rr = cat_thresholds.get("min_t1_rr", 0)
+                if tqg_min_t1_rr > 0:
+                    t1_rr_val = plan["targets"][0].get("rr", 0)
+                    if t1_rr_val < tqg_min_t1_rr:
+                        plan["eligible"] = False
+                        plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr_val:.2f} < {tqg_min_t1_rr} (trade_quality_gate)"
+                        logger.debug(f"Rejected: T1_rr {t1_rr_val:.2f} < {tqg_min_t1_rr} (trade_quality_gate)")
             return plan
 
         risk_per_share = plan["stop"]["risk_per_share"]
@@ -2322,5 +1809,19 @@ class BasePipeline(ABC):
                 plan["eligible"] = False
                 plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr:.2f} < {min_t1_rr}"
                 logger.debug(f"Rejected: T1_rr {t1_rr:.2f} < {min_t1_rr} (bias={bias})")
+
+        # Trade quality gates — per-category t1_rr floor (DATA-DRIVEN Feb 2026)
+        # Applied AFTER quality_filters t1_rr check (trade_quality_gates threshold may be higher)
+        tqg = self.cfg.get("trade_quality_gates", {})
+        if tqg.get("enabled", False) and plan["eligible"] and plan["targets"]:
+            category = self.get_category_name()
+            cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
+            tqg_min_t1_rr = cat_thresholds.get("min_t1_rr", 0)
+            if tqg_min_t1_rr > 0:
+                t1_rr_val = plan["targets"][0].get("rr", 0)
+                if t1_rr_val < tqg_min_t1_rr:
+                    plan["eligible"] = False
+                    plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr_val:.2f} < {tqg_min_t1_rr} (trade_quality_gate)"
+                    logger.debug(f"Rejected: T1_rr {t1_rr_val:.2f} < {tqg_min_t1_rr} (trade_quality_gate)")
 
         return plan

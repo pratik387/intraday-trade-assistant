@@ -1368,10 +1368,6 @@ class ScreenerLive:
                 rank_position=i + 1,
                 total_candidates=len(eligible_plans),
                 regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None,
-                # Component scores for ML analysis
-                rank_components=plan.get("ranking", {}).get("components"),
-                rank_base_score=plan.get("ranking", {}).get("base_score"),
-                rank_multipliers=plan.get("ranking", {}).get("multipliers"),
                 # Indicators at decision time
                 indicators=plan.get("indicators"),
                 # Quality summary
