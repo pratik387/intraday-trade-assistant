@@ -121,6 +121,9 @@ class MarketDataService:
     def _on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
         """Handle incoming tick - forward to bar builder and publish to Redis."""
         self._tick_count += 1
+        if self._tick_count <= 3:
+            logger.info("MDS | _on_tick #%d sym=%s price=%s vol=%s ts=%s",
+                        self._tick_count, symbol, price, volume, ts)
         self._last_tick_time = ts
 
         # Forward to bar builder

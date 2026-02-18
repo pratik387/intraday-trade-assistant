@@ -123,6 +123,11 @@ class TickRouter:
                 logger.info("tick_router: handle_raw called #%d, type=%s, sample=%s",
                             TickRouter._raw_log_count, type(raw).__name__,
                             str(raw)[:200] if raw else "None")
+            # Periodic stats dump every 5000 ticks
+            if TickRouter._raw_log_count % 5000 == 0:
+                logger.info("tick_router: STATS raw=%d bad_pkt=%d no_map=%d emitted=%d",
+                            TickRouter._raw_log_count, self._miss_bad_pkt,
+                            self._miss_no_map, TickRouter._emit_log_count)
             if raw is None:
                 return
             if isinstance(raw, (list, tuple)):
@@ -156,26 +161,37 @@ class TickRouter:
             else:
                 self._miss_bad_pkt += 1
                 if self._miss_bad_pkt < 5:
-                    logger.debug("tick_router: bad pkt shape=%s", type(pkt))
+                    logger.info("tick_router: bad pkt shape=%s", type(pkt))
         except Exception as e:  # pragma: no cover
             self._miss_bad_pkt += 1
             if self._miss_bad_pkt < 5:
-                logger.debug("tick_router: _handle_one error: %s", e)
+                logger.info("tick_router: _handle_one error: %s", e, exc_info=True)
+
+    _dict_log_count = 0
 
     def _handle_dict(self, t: Dict[str, Any]) -> None:
         # Zerodha Kite style
         token = t.get("instrument_token") or t.get("token") or t.get("tradable")
         if token is None:
             self._miss_bad_pkt += 1
+            TickRouter._dict_log_count += 1
+            if TickRouter._dict_log_count <= 3:
+                logger.info("tick_router: _handle_dict DROP no token, keys=%s", list(t.keys())[:10])
             return
         try:
             token = int(token)
         except Exception:
             self._miss_bad_pkt += 1
+            TickRouter._dict_log_count += 1
+            if TickRouter._dict_log_count <= 3:
+                logger.info("tick_router: _handle_dict DROP token not int: %s (%s)", token, type(token))
             return
 
         price = t.get("last_price") or t.get("ltp") or t.get("last_traded_price")
         if price is None:
+            TickRouter._dict_log_count += 1
+            if TickRouter._dict_log_count <= 3:
+                logger.info("tick_router: _handle_dict DROP no price, token=%s", token)
             return  # nothing to do
         try:
             price = float(price)
@@ -202,8 +218,7 @@ class TickRouter:
             or t.get("exchange_timestamp")
         )
         if ts is None:
-            from utils.time_util import now_ist_naive
-            ts = now_ist_naive()
+            ts = datetime.now()  # fallback: wall-clock (logging only, not trading decisions)
 
         # Coerce pandas.Timestamp -> datetime
         if hasattr(ts, "to_pydatetime"):
@@ -216,16 +231,22 @@ class TickRouter:
         # Make sure it's naive (IST wall time preserved if your _to_ist_naive already handles tz)
         ts = _to_ist_naive(ts)
 
+        TickRouter._dict_log_count += 1
+        if TickRouter._dict_log_count <= 3:
+            logger.info("tick_router: _handle_dict OK token=%s price=%s, calling _emit", token, price)
+
         self._emit(token, price, qty, volume, ts)
 
     # ----------------------------- emit -----------------------------------
     _emit_log_count = 0
 
     def _emit(self, token: int, price: float, qty: float, volume: int, ts: datetime) -> None:
+        TickRouter._emit_log_count += 1
+        if TickRouter._emit_log_count <= 3:
+            logger.info("tick_router: _emit called token=%s on_tick=%s map_size=%d",
+                        token, type(self._on_tick).__name__ if self._on_tick else "None",
+                        len(self._maps.token_to_symbol))
         if self._on_tick is None:
-            TickRouter._emit_log_count += 1
-            if TickRouter._emit_log_count <= 3:
-                logger.info("tick_router: _emit skipped — _on_tick is None")
             return
         sym = self._maps.token_to_symbol.get(int(token))
         if not sym:
