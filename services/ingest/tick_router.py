@@ -111,11 +111,18 @@ class TickRouter:
         self._maps.token_to_symbol = dict(mapping)
 
     # ----------------------------- routing --------------------------------
+    _raw_log_count = 0
+
     def handle_raw(self, raw: Any) -> None:
         """Entry from WSClient.on_message(raw). Accepts list[dict] | dict | tuple.
         Silently skips malformed packets. Logs only on first few misses to avoid noise.
         """
         try:
+            TickRouter._raw_log_count += 1
+            if TickRouter._raw_log_count <= 3:
+                logger.info("tick_router: handle_raw called #%d, type=%s, sample=%s",
+                            TickRouter._raw_log_count, type(raw).__name__,
+                            str(raw)[:200] if raw else "None")
             if raw is None:
                 return
             if isinstance(raw, (list, tuple)):
@@ -127,9 +134,9 @@ class TickRouter:
                 # unknown shape (string/binary) — ignore quietly
                 self._miss_bad_pkt += 1
                 if self._miss_bad_pkt < 5:
-                    logger.debug("tick_router: unexpected payload type=%s", type(raw))
+                    logger.info("tick_router: unexpected payload type=%s", type(raw))
         except Exception as e:  # pragma: no cover
-            logger.debug("tick_router: handle_raw error: %s", e)
+            logger.info("tick_router: handle_raw error: %s", e)
 
     # ----------------------------- parsers --------------------------------
     def _handle_one(self, pkt: Any) -> None:
@@ -212,14 +219,19 @@ class TickRouter:
         self._emit(token, price, qty, volume, ts)
 
     # ----------------------------- emit -----------------------------------
+    _emit_log_count = 0
+
     def _emit(self, token: int, price: float, qty: float, volume: int, ts: datetime) -> None:
         if self._on_tick is None:
+            TickRouter._emit_log_count += 1
+            if TickRouter._emit_log_count <= 3:
+                logger.info("tick_router: _emit skipped — _on_tick is None")
             return
         sym = self._maps.token_to_symbol.get(int(token))
         if not sym:
             self._miss_no_map += 1
             if self._miss_no_map <= 3:
-                logger.debug("tick_router: no symbol map for token=%s", token)
+                logger.info("tick_router: no symbol map for token=%s (map_size=%d)", token, len(self._maps.token_to_symbol))
             return
 
         # Compute per-tick volume from cumulative volume_traded delta.
