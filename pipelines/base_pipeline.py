@@ -41,16 +41,13 @@ logger = get_agent_logger()
 # Pro trader approach: AVOID trading during squeeze/consolidation. Wait for breakout.
 # ================================================================================
 HARD_BLOCKS = {
-    "squeeze": [
-        "first_hour_momentum_long",      # Rs 119 in 40 trades = Rs 3/trade avg
-        "volume_spike_reversal_short",   # Rs -632 in 7 trades = negative
-        "premium_zone_short",            # Not designed for squeeze regime
-    ],
-    # Add other regime hard blocks here as analysis reveals them
-    # "chop": [...],
-    # "trend_up": [...],
-    # "trend_down": [...],
+    # GATES-OFF RUN: All hard blocks disabled for raw detection quality test
+    # Re-enable with regime-specific entries after next backtest validates:
+    # "squeeze": ["first_hour_momentum_long", "volume_spike_reversal_short"],
 }
+
+if not HARD_BLOCKS:
+    logger.warning("HARD_BLOCKS is empty — all regime-based hard blocks are DISABLED (gates-off mode)")
 
 
 def is_hard_blocked(setup_type: str, regime: str) -> bool:
@@ -237,14 +234,6 @@ class GateResult:
 
 
 @dataclass
-class RankingResult:
-    """Result of ranking phase."""
-    score: float
-    components: Dict[str, float] = field(default_factory=dict)
-    multipliers: Dict[str, float] = field(default_factory=dict)
-
-
-@dataclass
 class EntryResult:
     """Result of entry calculation phase."""
     entry_zone: Tuple[float, float]
@@ -403,7 +392,7 @@ class BasePipeline(ABC):
 
     def _validate_config(self):
         """Validate that required config sections exist."""
-        required_sections = ["screening", "quality", "gates", "ranking", "entry", "targets"]
+        required_sections = ["screening", "quality", "gates", "entry", "targets"]
         for section in required_sections:
             if section not in self.cfg:
                 raise ConfigurationError(f"Required config section missing: {section}")
@@ -454,7 +443,8 @@ class BasePipeline(ABC):
         df5m: pd.DataFrame,
         bias: str,
         levels: Dict[str, float],
-        atr: float
+        atr: float,
+        setup_type: str = ""
     ) -> QualityResult:
         """Calculate category-specific quality metrics."""
         pass
@@ -473,18 +463,6 @@ class BasePipeline(ABC):
         regime_diagnostics: Optional[Dict[str, Any]] = None
     ) -> GateResult:
         """Apply category-specific gate validations."""
-        pass
-
-    @abstractmethod
-    def calculate_rank_score(
-        self,
-        symbol: str,
-        intraday_features: Dict[str, Any],
-        regime: str,
-        daily_trend: Optional[str] = None,
-        htf_context: Optional[Dict] = None
-    ) -> RankingResult:
-        """Calculate category-specific ranking score."""
         pass
 
     @abstractmethod
@@ -516,26 +494,6 @@ class BasePipeline(ABC):
         pass
 
     # ======================== HOOK METHODS (override in subclasses) ========================
-
-    def _apply_rsi_penalty(self, rsi_val: float, bias: str) -> tuple:
-        """
-        Apply category-specific RSI penalty to position sizing.
-
-        Override in subclass to implement category-specific logic.
-        Pro Trader RSI Framework (Minervini, Connors, Raschke):
-        - BREAKOUT/MOMENTUM: High RSI = momentum confirmation (GOOD)
-        - REVERSION: Extreme RSI = setup condition (GOOD)
-        - LEVEL: Neutral RSI = ideal, extreme = caution
-
-        Args:
-            rsi_val: Current RSI value (0-100)
-            bias: Trade direction ("long" or "short")
-
-        Returns:
-            Tuple of (multiplier, caution_string or None)
-            multiplier: 1.0 = no penalty, 0.9 = 10% reduction, etc.
-        """
-        return (1.0, None)
 
     # ======================== COMMON UTILITY METHODS ========================
 
@@ -584,6 +542,61 @@ class BasePipeline(ABC):
         # Use centralized utility from services/indicators/indicators.py
         # It already handles None/empty df and returns 1.0 as default
         return _volume_ratio_util(df, lookback=lookback)
+
+    # ======================== VALIDATED COMBINATION WHITELIST ========================
+    # Walk-forward validated filter gate. A trade MUST match at least one
+    # validated combination (setup-specific OR cap-segment) to pass.
+    # Config: base_config.json -> validated_combinations
+
+    def _check_validated_combinations(
+        self, setup_type: str, features: Dict[str, Any]
+    ) -> Tuple[bool, str]:
+        """
+        Whitelist gate: trade must match at least one walk-forward validated
+        combination to pass. Returns (passed, reason).
+
+        Rules are OR'd: if ANY setup rule OR ANY cap rule matches, trade passes.
+        Within a single rule, all conditions are AND'd.
+        """
+        base_cfg = load_base_config()
+        vc_cfg = base_cfg.get("validated_combinations", {})
+        if not vc_cfg.get("enabled", False):
+            return True, "vc_disabled"
+
+        setup_lower = setup_type.lower()
+        cap = features.get("cap_segment", "unknown")
+
+        # Check setup-specific rules (OR logic - ANY match = pass)
+        setup_rules = vc_cfg.get("setup_rules", {}).get(setup_lower, [])
+        for rule in setup_rules:
+            if self._vc_rule_matches(rule, features):
+                return True, f"vc_setup:{setup_lower}:{rule.get('name', 'unnamed')}"
+
+        # Check cap-segment rules (OR logic - ANY match = pass)
+        cap_rules = vc_cfg.get("cap_rules", {}).get(cap, [])
+        for rule in cap_rules:
+            if self._vc_rule_matches(rule, features):
+                return True, f"vc_cap:{cap}:{rule.get('name', 'unnamed')}"
+
+        # No match found - reject
+        return False, f"vc_no_match:{setup_lower}:{cap}"
+
+    def _vc_rule_matches(self, rule: Dict[str, Any], features: Dict[str, Any]) -> bool:
+        """Check if a single validated combination rule matches the current features."""
+        conditions = rule.get("conditions", [])
+        if len(conditions) == 0:
+            # Empty conditions = unconditional pass (e.g. gap_fill_short "all" rule)
+            return True
+        for cond in conditions:
+            feat_name = cond["feature"]
+            val = features.get(feat_name)
+            if val is None:
+                return False
+            if "min" in cond and val < cond["min"]:
+                return False
+            if "max" in cond and val > cond["max"]:
+                return False
+        return True
 
     # ======================== UNIFIED FILTER SYSTEM ========================
     # All setup-specific filters are applied through this centralized method.
@@ -825,469 +838,9 @@ class BasePipeline(ABC):
         reasons.append("global_filters_passed")
         return True, reasons
 
-    def _get_strategy_regime_mult(self, setup_type: str, regime: str) -> float:
-        """
-        Get regime multiplier - strategy-specific if available, else fallback.
-
-        Ported from baseline ranker.py _get_regime_multiplier() function.
-        This allows each strategy type to have tuned regime multipliers that
-        were calibrated in the baseline configuration.
-
-        Args:
-            setup_type: Setup type (e.g., "breakout_long", "vwap_mean_reversion_short")
-            regime: Current regime ("trend_up", "trend_down", "chop", "squeeze")
-
-        Returns:
-            Regime multiplier for ranking score adjustment
-        """
-        # Get strategy-specific regime multipliers from config
-        strategy_mults = self._get("ranking", "strategy_regime_multipliers")
-
-        # Extract base strategy name (e.g., "breakout" from "breakout_long")
-        base_strategy = setup_type.replace("_long", "").replace("_short", "") if setup_type else ""
-
-        if base_strategy in strategy_mults:
-            strat_cfg = strategy_mults[base_strategy]
-            return strat_cfg.get(regime, strat_cfg["default"])
-
-        # Fallback to generic regime multipliers
-        regime_mults = self._get("ranking", "regime_multipliers")
-        return regime_mults[regime]
-
-    # ======================== UNIVERSAL RANKING ADJUSTMENTS ========================
-    # These adjustments apply to ALL categories (from ranker.py analysis)
-
-    def apply_universal_ranking_adjustments(
-        self,
-        base_score: float,
-        symbol: str,
-        strategy_type: str,
-        structural_rr: float,
-        bias: str,
-        current_time: pd.Timestamp,
-        regime_diagnostics: Optional[Dict[str, Any]] = None,
-        daily_score: float = 0.0,
-        htf_context: Optional[Dict[str, Any]] = None,
-        daily_trend: Optional[str] = None
-    ) -> Tuple[float, Dict[str, float]]:
-        """
-        Apply universal ranking adjustments that affect ALL categories.
-
-        From ranker.py analysis - these are ported from OLD baseline:
-        1. Time of day multiplier (1.5x/2.5x late-day threshold)
-        2. Blacklist penalty (-999 for poor-performing setups)
-        3. Unrealistic RR penalty (-0.3 when RR > max)
-        4. Multi-TF daily multiplier (±15% at confidence ≥ 0.70)
-        5. Multi-TF hourly multiplier (±10% at confidence ≥ 0.60)
-        6. HTF 15m multiplier (±12% trend align, +8% volume)
-        7. Daily trend multiplier (±25% for trend alignment)
-        8. Daily score weighting (w_daily * daily_score + w_intr * intraday_score)
-
-        Args:
-            base_score: Score calculated by category-specific ranking
-            symbol: Stock symbol
-            strategy_type: Setup type (e.g., "orb_breakout_long")
-            structural_rr: Calculated structural R:R
-            bias: "long" or "short"
-            current_time: Current timestamp
-            regime_diagnostics: Multi-TF regime info {daily: {regime, confidence}, hourly: {session_bias, confidence}}
-            daily_score: Daily timeframe score (optional)
-            htf_context: HTF 15m context {trend_aligned: bool, volume_mult_15m: float}
-            daily_trend: Daily trend direction ("up", "down", "neutral")
-
-        Returns:
-            Tuple of (adjusted_score, adjustment_details)
-        """
-        score = base_score
-        adjustments = {}
-
-        # Get universal ranking config from base config
-        base_cfg = load_base_config()
-        ranking_cfg = base_cfg["universal_ranking"]
-
-        # 1. TIME OF DAY MULTIPLIER
-        # Late-day signals have poor quality (39 signals in 14:00-15:00, only 3 trades = 7.7% conversion)
-        time_mult = self._get_time_of_day_multiplier(current_time, ranking_cfg)
-        adjustments["time_of_day_mult"] = time_mult
-        # Note: We apply this as a threshold multiplier, not a score multiplier
-        # The actual filtering happens in the orchestrator when comparing to threshold
-
-        # 2. BLACKLIST PENALTY
-        # Apply severe penalty to historically poor-performing setups (effectively blocks them)
-        blacklist_penalty = self._get_blacklist_penalty(strategy_type, ranking_cfg)
-        score += blacklist_penalty
-        adjustments["blacklist_penalty"] = blacklist_penalty
-
-        # 3. UNREALISTIC RR PENALTY
-        rr_penalty = self._get_unrealistic_rr_penalty(structural_rr, ranking_cfg)
-        score += rr_penalty
-        adjustments["rr_penalty"] = rr_penalty
-
-        # 4. MULTI-TF DAILY MULTIPLIER (±15% at confidence ≥ 0.70)
-        daily_mult = self._get_multi_tf_daily_multiplier(regime_diagnostics, bias, ranking_cfg)
-        score *= daily_mult
-        adjustments["multi_tf_daily_mult"] = daily_mult
-
-        # 5. MULTI-TF HOURLY MULTIPLIER (±10% at confidence ≥ 0.60)
-        hourly_mult = self._get_multi_tf_hourly_multiplier(regime_diagnostics, bias, ranking_cfg)
-        score *= hourly_mult
-        adjustments["multi_tf_hourly_mult"] = hourly_mult
-
-        # 6. HTF 15m MULTIPLIER (±12% trend align, +8% volume)
-        # From ranker.py _get_htf_15m_multiplier() lines 305-347
-        htf_15m_mult = self._get_htf_15m_multiplier(htf_context, bias, ranking_cfg)
-        score *= htf_15m_mult
-        adjustments["htf_15m_mult"] = htf_15m_mult
-
-        # 7. DAILY TREND MULTIPLIER (±25% for trend alignment)
-        # From ranker.py _get_daily_trend_multiplier() lines 269-302
-        daily_trend_mult = self._get_daily_trend_multiplier(daily_trend, bias, ranking_cfg)
-        score *= daily_trend_mult
-        adjustments["daily_trend_mult"] = daily_trend_mult
-
-        # 8. DAILY SCORE WEIGHTING
-        if daily_score != 0.0:
-            score = self._apply_daily_score_weighting(score, daily_score, ranking_cfg)
-            adjustments["daily_score_applied"] = True
-        else:
-            adjustments["daily_score_applied"] = False
-
-        return score, adjustments
-
-    def _get_time_of_day_multiplier(
-        self,
-        current_time: pd.Timestamp,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Dynamic rank threshold multiplier based on time of day.
-
-        From ranker.py lines 569-622:
-        - Morning (10:15-12:00): Normal threshold (1.0x)
-        - Midday (12:00-14:00): Normal threshold (1.0x)
-        - Late afternoon (14:00-14:30): Moderate filter (1.5x)
-        - Final hour (14:30-15:15): Aggressive filter (2.5x)
-
-        This multiplier is applied to the threshold, not the score.
-        Higher multiplier = harder to qualify.
-        """
-        time_cfg = ranking_cfg["time_of_day"]
-        if not time_cfg["enabled"]:
-            return 1.0
-
-        hour = current_time.hour
-        minute = current_time.minute
-
-        # Get thresholds from config
-        late_afternoon_start = time_cfg["late_afternoon_start_hour"]
-        late_afternoon_end_min = time_cfg["late_afternoon_end_minute"]
-        late_afternoon_mult = time_cfg["late_afternoon_mult"]
-        final_hour_mult = time_cfg["final_hour_mult"]
-
-        # Morning and midday: normal threshold
-        if hour < late_afternoon_start:
-            return 1.0
-
-        # Late afternoon (14:00-14:30): moderate filter
-        if hour == late_afternoon_start and minute < late_afternoon_end_min:
-            return late_afternoon_mult
-
-        # Final hour (14:30+): aggressive filter
-        return final_hour_mult
-
-    def _get_blacklist_penalty(
-        self,
-        strategy_type: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply penalty for historically poor-performing setups.
-
-        From ranker.py lines 513-517:
-        - Blacklisted strategies get a severe penalty (-999 by default)
-        - This effectively prevents them from being selected
-        - Setups still get detected (allowing other detectors to work) but blocked at ranking
-        """
-        blacklist_cfg = ranking_cfg["blacklist"]
-        if not blacklist_cfg["enabled"]:
-            return 0.0
-
-        blacklisted_setups = blacklist_cfg["strategies"]
-        penalty = blacklist_cfg["penalty"]
-
-        if strategy_type in blacklisted_setups:
-            logger.debug(f"BLACKLIST_PENALTY: {strategy_type} penalty={penalty}")
-            return penalty
-
-        return 0.0
-
-    def _get_unrealistic_rr_penalty(
-        self,
-        structural_rr: float,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply penalty for unrealistically high R:R ratios.
-
-        From ranker.py lines 519-525:
-        - If structural_rr > max_rr, apply penalty (-0.3 by default)
-        - Unrealistic R:R often indicates bad level placement or data issues
-        """
-        rr_cfg = ranking_cfg["unrealistic_rr"]
-        if not rr_cfg["enabled"]:
-            return 0.0
-
-        max_rr = rr_cfg["max_structural_rr"]
-        penalty = rr_cfg["penalty"]
-
-        if structural_rr > max_rr:
-            logger.debug(f"HIGH_RR_PENALTY: structural_rr={structural_rr:.1f}>{max_rr} penalty={penalty}")
-            return penalty
-
-        return 0.0
-
-    def _get_multi_tf_daily_multiplier(
-        self,
-        regime_diagnostics: Optional[Dict[str, Any]],
-        bias: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply daily regime multiplier based on multi-timeframe analysis.
-
-        From ranker.py lines 350-399 (Linda Raschke MTF filtering):
-        - ±15% adjustment based on daily regime alignment
-        - Only apply if confidence ≥ 0.70
-        - Long boost in daily uptrend, short boost in daily downtrend
-        """
-        mtf_cfg = ranking_cfg["multi_tf_daily"]
-        if not mtf_cfg["enabled"]:
-            return 1.0
-
-        if not regime_diagnostics or "daily" not in regime_diagnostics:
-            return 1.0
-
-        daily = regime_diagnostics["daily"]
-        daily_regime = daily.get("regime", "chop")
-        daily_confidence = daily.get("confidence", 0.0)
-
-        # Confidence threshold from config
-        min_confidence = mtf_cfg["min_confidence"]
-        if daily_confidence < min_confidence:
-            return 1.0
-
-        aligned_mult = mtf_cfg["aligned_mult"]
-        counter_mult = mtf_cfg["counter_mult"]
-        squeeze_mult = mtf_cfg["squeeze_mult"]
-
-        is_long = bias == "long"
-        is_short = bias == "short"
-
-        # Daily trend_up: Boost longs, penalize shorts
-        if daily_regime == "trend_up":
-            if is_long:
-                return aligned_mult  # +15% boost
-            elif is_short:
-                return counter_mult  # -15% penalty
-
-        # Daily trend_down: Boost shorts, penalize longs
-        elif daily_regime == "trend_down":
-            if is_short:
-                return aligned_mult  # +15% boost
-            elif is_long:
-                return counter_mult  # -15% penalty
-
-        # Daily squeeze: Mild penalty for all
-        elif daily_regime == "squeeze":
-            return squeeze_mult  # -10% penalty
-
-        return 1.0
-
-    def _get_multi_tf_hourly_multiplier(
-        self,
-        regime_diagnostics: Optional[Dict[str, Any]],
-        bias: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply hourly session bias multiplier based on multi-timeframe analysis.
-
-        From ranker.py lines 402-447 (Linda Raschke lower TF execution):
-        - ±10% adjustment based on hourly session bias
-        - Only apply if confidence ≥ 0.60
-        - Smaller than daily (it's a lower TF, noisier)
-        """
-        mtf_cfg = ranking_cfg["multi_tf_hourly"]
-        if not mtf_cfg["enabled"]:
-            return 1.0
-
-        if not regime_diagnostics or "hourly" not in regime_diagnostics:
-            return 1.0
-
-        hourly = regime_diagnostics["hourly"]
-        session_bias = hourly.get("session_bias", "neutral")
-        hourly_confidence = hourly.get("confidence", 0.0)
-
-        # Confidence threshold from config (lower than daily)
-        min_confidence = mtf_cfg["min_confidence"]
-        if hourly_confidence < min_confidence:
-            return 1.0
-
-        aligned_mult = mtf_cfg["aligned_mult"]
-        counter_mult = mtf_cfg["counter_mult"]
-
-        is_long = bias == "long"
-        is_short = bias == "short"
-
-        # Hourly bullish: Boost longs, penalize shorts
-        if session_bias == "bullish":
-            if is_long:
-                return aligned_mult  # +10% boost
-            elif is_short:
-                return counter_mult  # -10% penalty
-
-        # Hourly bearish: Boost shorts, penalize longs
-        elif session_bias == "bearish":
-            if is_short:
-                return aligned_mult  # +10% boost
-            elif is_long:
-                return counter_mult  # -10% penalty
-
-        return 1.0
-
-    def _get_htf_15m_multiplier(
-        self,
-        htf_context: Optional[Dict[str, Any]],
-        bias: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply 15m HTF (Higher TimeFrame) confirmation multiplier.
-
-        From ranker.py lines 305-347 (Intraday Scanner Playbook):
-        - Trend align bonus: +12% (5m + 15m same direction)
-        - Volume multiplier bonus: +8% (15m volume > 1.3x median)
-        - Opposing trend penalty: -10% (5m vs 15m divergence)
-
-        Never blocks entries - only affects ranking scores.
-
-        Args:
-            htf_context: Dict with htf_trend, volume_mult_15m, trend_aligned etc.
-            bias: "long" or "short"
-            ranking_cfg: Universal ranking config section
-
-        Returns:
-            Multiplier: 1.0 (neutral) to ~1.21 (aligned + volume) or 0.90 (opposing)
-        """
-        htf_cfg = ranking_cfg.get("htf_15m")
-        if htf_cfg is None or not htf_cfg.get("enabled", True):
-            return 1.0
-
-        if not htf_context:
-            return 1.0  # No HTF data available, neutral
-
-        is_long = bias == "long"
-        is_short = bias == "short"
-        multiplier = 1.0
-
-        # Get alignment/penalty values from config
-        aligned_bonus = htf_cfg["aligned_bonus"]
-        opposing_penalty = htf_cfg["opposing_penalty"]
-        volume_bonus = htf_cfg["volume_bonus"]
-        volume_threshold = htf_cfg["volume_threshold"]
-
-        # Check 15m trend alignment (screener populates "trend_aligned" as boolean)
-        htf_trend_aligned = htf_context.get("trend_aligned", False)
-
-        # Apply alignment bonus or penalty
-        if is_long:
-            if htf_trend_aligned:  # 15m uptrend aligns with long setup
-                multiplier *= aligned_bonus  # +12% bonus
-            else:  # 15m downtrend opposes long setup
-                multiplier *= opposing_penalty  # -10% penalty
-        elif is_short:
-            if not htf_trend_aligned:  # 15m downtrend aligns with short setup
-                multiplier *= aligned_bonus  # +12% bonus
-            else:  # 15m uptrend opposes short setup
-                multiplier *= opposing_penalty  # -10% penalty
-
-        # Check 15m volume context
-        htf_vol_mult = htf_context.get("volume_mult_15m", 1.0)
-        if htf_vol_mult >= volume_threshold:  # 15m volume surge
-            multiplier *= volume_bonus  # +8% bonus
-
-        return multiplier
-
-    def _get_daily_trend_multiplier(
-        self,
-        daily_trend: Optional[str],
-        bias: str,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Apply daily trend alignment multiplier for multi-timeframe confluence.
-
-        From ranker.py lines 269-302:
-        - Long setups in daily uptrend: 25% win rate boost
-        - Short setups in daily downtrend: 25% win rate boost
-        - Counter-trend trades: 25% penalty
-
-        Args:
-            daily_trend: "up", "down", or "neutral"
-            bias: "long" or "short"
-            ranking_cfg: Universal ranking config section
-
-        Returns:
-            Multiplier: 1.25 (aligned), 0.75 (counter), 1.0 (neutral)
-        """
-        daily_cfg = ranking_cfg.get("daily_trend")
-        if daily_cfg is None or not daily_cfg.get("enabled", True):
-            return 1.0
-
-        if not daily_trend or daily_trend == "neutral":
-            return 1.0
-
-        # Get multiplier values from config
-        aligned_mult = daily_cfg["aligned_mult"]
-        counter_mult = daily_cfg["counter_mult"]
-
-        is_long = bias == "long"
-        is_short = bias == "short"
-
-        # Apply trend alignment bonus/penalty
-        if daily_trend == "up" and is_long:
-            return aligned_mult  # 25% boost for trend-aligned longs
-        elif daily_trend == "down" and is_short:
-            return aligned_mult  # 25% boost for trend-aligned shorts
-        elif daily_trend == "up" and is_short:
-            return counter_mult  # 25% penalty for counter-trend shorts
-        elif daily_trend == "down" and is_long:
-            return counter_mult  # 25% penalty for counter-trend longs
-
-        return 1.0  # Neutral
-
-    def _apply_daily_score_weighting(
-        self,
-        intraday_score: float,
-        daily_score: float,
-        ranking_cfg: Dict[str, Any]
-    ) -> float:
-        """
-        Combine daily and intraday scores with configurable weights.
-
-        From ranker.py line 505:
-        final_score = w_daily * daily_score + w_intr * intraday_score
-
-        Default: 30% daily, 70% intraday
-        """
-        weight_cfg = ranking_cfg["daily_score_weighting"]
-        if not weight_cfg["enabled"]:
-            return intraday_score
-
-        w_daily = weight_cfg["weight_daily"]
-        w_intraday = weight_cfg["weight_intraday"]
-
-        return w_daily * daily_score + w_intraday * intraday_score
+    # ======================== REMOVED: RANKING ADJUSTMENTS (Feb 2026) ========================
+    # 3yr backtest: rank_score had -0.019 correlation with winning. All ranking computation
+    # removed. structural_rr used as ordering metric. See plan: pure-twirling-deer.md
 
     # ======================== UNIVERSAL GATES ========================
     # These gates apply BEFORE category-specific gates
@@ -1570,6 +1123,77 @@ class BasePipeline(ABC):
 
         # daily_df now used for daily ATR fallback in morning ORB setups
 
+        # --- Derived features for validated combination whitelist ---
+        last_bar = df5m.iloc[-1]
+        bar_range = float(last_bar["high"]) - float(last_bar["low"])
+        features["bar_body_ratio"] = abs(float(last_bar["close"]) - float(last_bar["open"])) / bar_range if bar_range > 0 else 0.0
+
+        vwap_for_dist = float(last_bar.get("vwap", 0)) if "vwap" in last_bar.index else 0
+        features["vwap_dist_pct"] = abs(current_close - vwap_for_dist) / vwap_for_dist * 100 if vwap_for_dist > 0 else 0.0
+
+        orh_level = levels.get("ORH")
+        orl_level = levels.get("ORL")
+        if orh_level is not None and orl_level is not None and not pd.isna(orh_level) and not pd.isna(orl_level) and orl_level > 0:
+            or_width = orh_level - orl_level
+            features["or_range_pct"] = or_width / orl_level * 100
+            features["or_position"] = (current_close - orl_level) / or_width if or_width > 0 else 0.5
+        else:
+            features["or_range_pct"] = None
+            features["or_position"] = None
+
+        pdh_level = levels.get("PDH")
+        pdl_level = levels.get("PDL")
+        if pdh_level is not None and pdl_level is not None and not pd.isna(pdh_level) and not pd.isna(pdl_level) and pdl_level > 0:
+            features["pd_range_pct"] = (pdh_level - pdl_level) / pdl_level * 100
+        else:
+            features["pd_range_pct"] = None
+
+        last_volume = float(last_bar["volume"]) if "volume" in last_bar.index else 0
+        or_range_val = features.get("or_range_pct")
+        features["vol_or_ratio"] = last_volume / (or_range_val * 10000) if or_range_val and or_range_val > 0 else None
+        features["bb_width_proxy"] = float(last_bar.get("bb_width_proxy", 0)) if "bb_width_proxy" in last_bar.index else 0.0
+        features["volume5"] = last_volume
+
+        # dist_from_level_bpct: distance from nearest key level in basis points
+        _key_levels = [v for k in ("ORH", "ORL", "PDH", "PDL") if (v := levels.get(k)) is not None and not pd.isna(v)]
+        if _key_levels and current_close > 0:
+            _nearest = min(_key_levels, key=lambda lv: abs(lv - current_close))
+            features["dist_from_level_bpct"] = (current_close - _nearest) / current_close * 10000  # signed bps
+        else:
+            features["dist_from_level_bpct"] = None
+
+        # squeeze_pctile: percentile rank of current BB width within recent 5m bars
+        if "bb_width_proxy" in df5m.columns and len(df5m) >= 10:
+            _bbw_series = df5m["bb_width_proxy"].dropna()
+            if len(_bbw_series) >= 10:
+                _cur_bbw = features["bb_width_proxy"]
+                features["squeeze_pctile"] = float((_bbw_series < _cur_bbw).sum() / len(_bbw_series) * 100)
+            else:
+                features["squeeze_pctile"] = None
+        else:
+            features["squeeze_pctile"] = None
+
+        # cap_segment assignment deferred until after fallback lookup below
+
+        # Approximate sl_atr_mult at gate time: sl_dist / bar_range
+        # In step 6 (SL computation), structure_stop falls back to ORL (long) / ORH (short)
+        # since levels["structure_stop"] is never populated. We replicate that here.
+        if bar_range > 0:
+            if bias == "long":
+                _sl_ref = levels.get("ORL")
+                if _sl_ref is not None and not pd.isna(_sl_ref):
+                    features["sl_atr_mult"] = abs(current_close - _sl_ref) / bar_range
+                else:
+                    features["sl_atr_mult"] = None
+            else:
+                _sl_ref = levels.get("ORH")
+                if _sl_ref is not None and not pd.isna(_sl_ref):
+                    features["sl_atr_mult"] = abs(_sl_ref - current_close) / bar_range
+                else:
+                    features["sl_atr_mult"] = None
+        else:
+            features["sl_atr_mult"] = None
+
         # 0. UNIVERSAL GATES (apply BEFORE category-specific gates)
         # Check if we're in opening bell window (9:15-9:30) - may bypass some gates
         opening_bell_active = self._is_opening_bell_window(now)
@@ -1586,6 +1210,7 @@ class BasePipeline(ABC):
         # Use passed cap_segment or fetch if not provided
         if cap_segment is None:
             cap_segment = get_cap_segment(symbol)
+        features["cap_segment"] = cap_segment
         mis_info = get_mis_info(symbol)
         cap_passed, cap_reason = self._check_cap_strategy_blocking(symbol, setup_type, cap_segment)
         if not cap_passed:
@@ -1605,7 +1230,7 @@ class BasePipeline(ABC):
             return {"eligible": False, "reason": "screening_fail", "details": screen_result.reasons}
 
         # 2. QUALITY
-        quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr)
+        quality_result = self.calculate_quality(symbol, df5m, bias, levels, atr, setup_type=setup_type)
 
         # Reject if quality calculation failed (e.g., missing required levels)
         if quality_result is None:
@@ -1616,6 +1241,12 @@ class BasePipeline(ABC):
         clean_metrics = {k: round(float(v), 2) if v is not None else None for k, v in quality_result.metrics.items()}
         logger.debug(f"QUALITY_{category}: {symbol} structural_rr={quality_result.structural_rr:.2f} "
                     f"status={quality_result.quality_status} metrics={clean_metrics}")
+
+        # Hard floor: reject plans with zero structural R:R (no reward)
+        # This fires even when quality_filters are disabled — zero-reward trades are never worth taking
+        if quality_result.structural_rr <= 0.0:
+            logger.warning(f"ZERO_RR: {symbol} {setup_type} structural_rr={quality_result.structural_rr:.2f} — rejected (zero reward)")
+            return {"eligible": False, "reason": "zero_structural_rr", "details": [f"structural_rr={quality_result.structural_rr:.2f}"]}
 
         # NOTE: Structural R:R min check with strategy-specific overrides is done in _apply_quality_filters()
         # This allows breakouts to use relaxed thresholds while other categories use stricter defaults
@@ -1632,7 +1263,36 @@ class BasePipeline(ABC):
             logger.debug(f"[{category}] {symbol} {setup_type} rejected at GATES: {gate_result.reasons}")
             return {"eligible": False, "reason": "gate_fail", "details": gate_result.reasons}
 
-        # 3b. UNIVERSAL RSI DEAD ZONE FILTER (for LONGS only) - CONFIG DRIVEN
+        # 3b. VALIDATED COMBINATION WHITELIST (walk-forward evidence gate)
+        vc_passed, vc_reason = self._check_validated_combinations(setup_type, features)
+        vc_audit = {
+            "bar_body_ratio": round(features.get("bar_body_ratio", 0), 4),
+            "vwap_dist_pct": round(features.get("vwap_dist_pct", 0), 4),
+            "bb_width_proxy": round(features.get("bb_width_proxy", 0), 6),
+            "volume5": features.get("volume5", 0),
+            "vol_or_ratio": round(features["vol_or_ratio"], 4) if features.get("vol_or_ratio") is not None else None,
+            "or_range_pct": round(features["or_range_pct"], 4) if features.get("or_range_pct") is not None else None,
+            "or_position": round(features["or_position"], 4) if features.get("or_position") is not None else None,
+            "pd_range_pct": round(features["pd_range_pct"], 4) if features.get("pd_range_pct") is not None else None,
+            "sl_atr_mult": round(features["sl_atr_mult"], 4) if features.get("sl_atr_mult") is not None else None,
+            "adx": round(features.get("adx", 0), 1) if features.get("adx") else None,
+            "cap": features.get("cap_segment", "unknown"),
+        }
+        if not vc_passed:
+            logger.debug(f"[{category}] {symbol} {setup_type} REJECTED VC: {vc_reason} | {vc_audit}")
+            return {
+                "eligible": False,
+                "reason": "validated_combo_fail",
+                "details": [vc_reason],
+                "quality": {
+                    "structural_rr": quality_result.structural_rr,
+                    "status": quality_result.quality_status,
+                },
+                "indicators": vc_audit,
+            }
+        logger.debug(f"[{category}] {symbol} {setup_type} PASSED VC: {vc_reason} | {vc_audit}")
+
+        # 3c. UNIVERSAL RSI DEAD ZONE FILTER (for LONGS only) - CONFIG DRIVEN
         # Data-driven: RSI 35-50 has 43% of ALL hard_sl losses for LONG trades
         # ORB/FHM setups bypass this filter - RSI erratic at market open, structure detector enforces time cutoff
         base_cfg = load_base_config()
@@ -1652,57 +1312,37 @@ class BasePipeline(ABC):
                     logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: RSI dead zone ({rsi_val:.1f} in {rsi_min}-{rsi_max} range)")
                     return {"eligible": False, "reason": "rsi_dead_zone", "details": [f"rsi_{rsi_val:.1f}_in_{rsi_min}_{rsi_max}_dead_zone"]}
 
-        # Add acceptance_status from quality calculation to features for ranking
+        # Add acceptance_status from quality calculation to features
         features["acceptance_status"] = quality_result.quality_status
 
-        # 4. RANKING (with HTF context for category-specific adjustments)
-        rank_result = self.calculate_rank_score(symbol, features, regime, htf_context=htf_context)
+        # 3d. QUALITY STATUS GATE (DATA-DRIVEN Feb 2026)
+        # 3yr backtest: "fair" = 860 trades, WR 46%, Avg -Rs 30. All other statuses profitable.
+        blocked_statuses = self.cfg.get("quality_filters", {}).get("blocked_quality_statuses", [])
+        if quality_result.quality_status in blocked_statuses:
+            logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: quality_status '{quality_result.quality_status}' in blocked list")
+            return {"eligible": False, "reason": "quality_status_blocked", "details": [f"status_{quality_result.quality_status}_blocked"]}
 
-        # Extract daily_trend from htf_context if available (from screener/planner)
-        daily_trend = None
-        if htf_context:
-            daily_trend = htf_context.get("daily_trend", None)
+        # 3e. TRADE QUALITY GATES (DATA-DRIVEN Feb 2026)
+        # Pipeline-aware A: per-category srr + t1_rr thresholds
+        # 13.9 T/day, WR 58.6%, Avg Rs 299, PF 1.81, all 4 FYs profitable
+        tqg = self.cfg.get("trade_quality_gates", {})
+        if tqg.get("enabled", False):
+            blocked_hours = tqg.get("blocked_hours", [])
+            if now and now.hour in blocked_hours:
+                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: hour {now.hour} in blocked_hours {blocked_hours}")
+                return {"eligible": False, "reason": "blocked_hour", "details": [f"hour_{now.hour}_blocked"]}
 
-        # 4b. UNIVERSAL RANKING ADJUSTMENTS (from ranker.py)
-        # Apply time-of-day, blacklist, unrealistic RR, multi-TF daily/hourly, HTF 15m, daily trend multipliers
-        adjusted_score, universal_adjustments = self.apply_universal_ranking_adjustments(
-            base_score=rank_result.score,
-            symbol=symbol,
-            strategy_type=setup_type,
-            structural_rr=quality_result.structural_rr,
-            bias=bias,
-            current_time=now,
-            regime_diagnostics=regime_diagnostics,
-            daily_score=daily_score,
-            htf_context=htf_context,
-            daily_trend=daily_trend
-        )
+            cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
+            min_srr = cat_thresholds.get("min_structural_rr", 0)
+            if min_srr > 0 and quality_result.structural_rr < min_srr:
+                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: structural_rr {quality_result.structural_rr:.2f} < {min_srr:.1f}")
+                return {"eligible": False, "reason": "structural_rr_below_floor", "details": [f"srr_{quality_result.structural_rr:.2f}_below_{min_srr}"]}
 
-        # 4c. POST-RANKING FILTERS (from setup_filters - need adjusted_score)
-        # These filters run AFTER ranking because they need the adjusted rank score.
-        # Pre-ranking filters (hours, RSI, regime, caps, etc.) are handled in validate_gates() via apply_setup_filters()
-        setup_filters = self._get("gates", "setup_filters")
-        setup_block_cfg = setup_filters.get(setup_type.lower(), {}) if setup_filters else {}
-
-        # Check if setup filter is enabled (default True for backwards compat)
-        setup_filter_enabled = setup_block_cfg.get("enabled", True)
-
-        if setup_filter_enabled:
-            # 4c.1 MAX RANK SCORE FILTER (DATA-DRIVEN Dec 2024)
-            # Some setups perform better with lower rank scores (counter-intuitive finding)
-            # e.g., orb_pullback_short: rank_score < 1.0 performs better
-            max_rank_score = setup_block_cfg.get("max_rank_score")
-            if max_rank_score is not None and adjusted_score > max_rank_score:
-                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} > max_rank_score {max_rank_score}")
-                return {"eligible": False, "reason": "max_rank_score_exceeded", "details": [f"rank_{adjusted_score:.3f}_gt_{max_rank_score}"]}
-
-            # 4c.2 MIN RANK SCORE FILTER (DATA-DRIVEN Dec 2024)
-            # Some setups require higher quality signals to be profitable
-            # e.g., resistance_bounce_short: rank_score >= 2 performs better
-            min_rank_score = setup_block_cfg.get("min_rank_score")
-            if min_rank_score is not None and adjusted_score < min_rank_score:
-                logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: rank_score {adjusted_score:.3f} < min_rank_score {min_rank_score}")
-                return {"eligible": False, "reason": "min_rank_score_not_met", "details": [f"rank_{adjusted_score:.3f}_lt_{min_rank_score}"]}
+        # 4. ORDERING SCORE — structural R:R is the natural, data-validated metric
+        # Ranking system REMOVED (Feb 2026): 3yr backtest proved composite rank_score has -0.019 correlation
+        # with winning. rank_position #1-#5 all perform similarly. Pro approach: quality gates filter,
+        # structural_rr orders. No composite scoring needed.
+        adjusted_score = quality_result.structural_rr
 
         # NOTE: allowed_hours, min_rsi, max_rsi filters removed - handled pre-ranking in validate_gates()
 
@@ -1855,6 +1495,7 @@ class BasePipeline(ABC):
         # 6b. SETUP-SPECIFIC SL MULTIPLIER (sl_mult from setup_filters)
         # This WIDENS the stop loss for setups that need more room (e.g., resistance_bounce_short sl_mult=1.5)
         # NOTE: sl_mult defaults to 1.0 (no widening) if not specified - this is a neutral modifier, not a required value
+        setup_block_cfg = self.cfg.get("gates", {}).get("setup_filters", {}).get(setup_type.lower(), {})
         sl_mult = setup_block_cfg.get("sl_mult", 1.0)
         if sl_mult != 1.0:
             if bias == "long":
@@ -1962,6 +1603,7 @@ class BasePipeline(ABC):
             "category": self.get_category_name(),
 
             "entry_ref_price": round(plan_entry_ref, 2),
+            "entry_zone": [round(entry_result.entry_zone[0], 2), round(entry_result.entry_zone[1], 2)],
             "entry": {
                 "reference": round(plan_entry_ref, 2),
                 "zone": [round(entry_result.entry_zone[0], 2), round(entry_result.entry_zone[1], 2)],
@@ -1987,11 +1629,7 @@ class BasePipeline(ABC):
             },
 
             "ranking": {
-                "score": round(adjusted_score, 3),
-                "base_score": round(rank_result.score, 3),
-                "components": rank_result.components,
-                "multipliers": rank_result.multipliers,
-                "universal_adjustments": universal_adjustments,
+                "score": round(adjusted_score, 3),  # = structural_rr (ranking removed Feb 2026)
             },
 
             "sizing": {
@@ -2020,6 +1658,8 @@ class BasePipeline(ABC):
                 "vwap": round(vwap_val, 2) if vwap_val else None,
             },
 
+            "vc_reason": vc_reason,
+
             "levels": levels,
             "pipeline_reasons": screen_result.reasons + gate_result.reasons,
             "cautions": cautions,
@@ -2038,7 +1678,7 @@ class BasePipeline(ABC):
         plan = self._apply_quality_filters(plan, effective_entry_price, atr, measured_move)
 
         if plan["eligible"]:
-            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (base={rank_result.score:.2f}), quality={quality_result.quality_status}, entry={plan_entry_ref:.2f}")
+            logger.info(f"[{category}] {symbol} {setup_type} APPROVED: score={adjusted_score:.2f} (structural_rr), quality={quality_result.quality_status}, entry={plan_entry_ref:.2f}")
         else:
             logger.debug(f"[{category}] {symbol} {setup_type} rejected by quality filters: {plan.get('quality', {}).get('rejection_reason', 'unknown')}")
 
@@ -2068,6 +1708,18 @@ class BasePipeline(ABC):
         # Get quality filter config
         quality_filters = self.cfg["quality_filters"]
         if not quality_filters["enabled"]:
+            # quality_filters disabled, but trade_quality_gates t1_rr still applies
+            tqg = self.cfg.get("trade_quality_gates", {})
+            if tqg.get("enabled", False) and plan["eligible"] and plan["targets"]:
+                category = self.get_category_name()
+                cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
+                tqg_min_t1_rr = cat_thresholds.get("min_t1_rr", 0)
+                if tqg_min_t1_rr > 0:
+                    t1_rr_val = plan["targets"][0].get("rr", 0)
+                    if t1_rr_val < tqg_min_t1_rr:
+                        plan["eligible"] = False
+                        plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr_val:.2f} < {tqg_min_t1_rr} (trade_quality_gate)"
+                        logger.debug(f"Rejected: T1_rr {t1_rr_val:.2f} < {tqg_min_t1_rr} (trade_quality_gate)")
             return plan
 
         risk_per_share = plan["stop"]["risk_per_share"]
@@ -2157,5 +1809,19 @@ class BasePipeline(ABC):
                 plan["eligible"] = False
                 plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr:.2f} < {min_t1_rr}"
                 logger.debug(f"Rejected: T1_rr {t1_rr:.2f} < {min_t1_rr} (bias={bias})")
+
+        # Trade quality gates — per-category t1_rr floor (DATA-DRIVEN Feb 2026)
+        # Applied AFTER quality_filters t1_rr check (trade_quality_gates threshold may be higher)
+        tqg = self.cfg.get("trade_quality_gates", {})
+        if tqg.get("enabled", False) and plan["eligible"] and plan["targets"]:
+            category = self.get_category_name()
+            cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
+            tqg_min_t1_rr = cat_thresholds.get("min_t1_rr", 0)
+            if tqg_min_t1_rr > 0:
+                t1_rr_val = plan["targets"][0].get("rr", 0)
+                if t1_rr_val < tqg_min_t1_rr:
+                    plan["eligible"] = False
+                    plan["quality"]["rejection_reason"] = f"T1_rr {t1_rr_val:.2f} < {tqg_min_t1_rr} (trade_quality_gate)"
+                    logger.debug(f"Rejected: T1_rr {t1_rr_val:.2f} < {tqg_min_t1_rr} (trade_quality_gate)")
 
         return plan

@@ -9,7 +9,8 @@ import pandas as pd  # for Timestamp typing only
 from config.logging_config import get_execution_loggers
 from config.filters_setup import load_filters
 from utils.time_util import _to_naive_ist, _now_naive_ist, _minute_of_day, _parse_hhmm_to_md
-from diagnostics.diag_event_log import diag_event_log
+from utils.price_utils import round_to_tick
+from diagnostics.diag_event_log import diag_event_log, SCHEMA_VERSION as _EVT_SCHEMA
 import uuid
 
 from services.execution.models import Position
@@ -106,6 +107,7 @@ class ExitExecutor:
         self.eod_scale_out_pct1 = float(exits_config["eod_scale_out_pct1"])
 
         # T1 behavior - PHASE 2.5: No defaults, must be in config
+        self.t1_min_partial_r = float(cfg["exit_t1_min_partial_r"])
         self.t1_book_pct = float(cfg["exit_t1_book_pct"])
         self.t1_move_sl_to_be = bool(cfg.get("exit_t1_move_sl_to_be", True))
         self.be_buffer_pct = float(cfg["exit_be_buffer_pct"]) / 100.0  # Convert 0.1 -> 0.001
@@ -160,16 +162,17 @@ class ExitExecutor:
         self.intrabar_inference_enabled = bool(cfg.get("exit_intrabar_inference_enabled", True))
 
         # OR_kill enhancement config
-        self.or_kill_time_adaptive = bool(cfg.get("or_kill_time_adaptive", True))
-        self.or_kill_volume_confirmation = bool(cfg.get("or_kill_volume_confirmation", True))
-        self.or_kill_momentum_filter = bool(cfg.get("or_kill_momentum_filter", True))
-        self.or_kill_partial_exit_pct = float(cfg.get("or_kill_partial_exit_pct", 30.0))
-        self.or_kill_observation_minutes = float(cfg.get("or_kill_observation_minutes", 15.0))
-        self.or_kill_volume_multiplier = float(cfg.get("or_kill_volume_multiplier", 1.5))
-        self.or_kill_early_buffer_mult = float(cfg.get("or_kill_early_buffer_mult", 1.0))
-        self.or_kill_mid_buffer_mult = float(cfg.get("or_kill_mid_buffer_mult", 0.75))
-        self.or_kill_late_buffer_mult = float(cfg.get("or_kill_late_buffer_mult", 0.25))
-        self.or_kill_major_break_mult = float(cfg.get("or_kill_major_break_mult", 2.0))
+        self.or_kill_enabled = bool(cfg["or_kill_enabled"])
+        self.or_kill_time_adaptive = bool(cfg["or_kill_time_adaptive"])
+        self.or_kill_volume_confirmation = bool(cfg["or_kill_volume_confirmation"])
+        self.or_kill_momentum_filter = bool(cfg["or_kill_momentum_filter"])
+        self.or_kill_partial_exit_pct = float(cfg["or_kill_partial_exit_pct"])
+        self.or_kill_observation_minutes = float(cfg["or_kill_observation_minutes"])
+        self.or_kill_volume_multiplier = float(cfg["or_kill_volume_multiplier"])
+        self.or_kill_early_buffer_mult = float(cfg["or_kill_early_buffer_mult"])
+        self.or_kill_mid_buffer_mult = float(cfg["or_kill_mid_buffer_mult"])
+        self.or_kill_late_buffer_mult = float(cfg["or_kill_late_buffer_mult"])
+        self.or_kill_major_break_mult = float(cfg["or_kill_major_break_mult"])
 
     def _enhanced_on_tick(self, symbol: str, price: float, volume: float, ts) -> None:
         """
@@ -227,7 +230,8 @@ class ExitExecutor:
                     if st.get("t2_done"):
                         sl_reason = "sl_post_t2"
                     elif st.get("t1_done"):
-                        sl_reason = "sl_post_t1"
+                        # T1 skipped (low R) = original SL still in place → this is a hard SL
+                        sl_reason = "hard_sl" if st.get("t1_skipped_low_r") else "sl_post_t1"
                     else:
                         sl_reason = "tick_sl"
                     logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f} reason={sl_reason}")
@@ -366,7 +370,7 @@ class ExitExecutor:
                 plan_sl = self._get_plan_sl(pos.plan)
                 original_sl = plan_sl  # Store original for logging
                 if not math.isnan(plan_sl):
-                    atr_min_mult = float(load_filters().get("exit_sl_atr_mult_min", 1.0))
+                    atr_min_mult = float(load_filters()["exit_sl_atr_mult_min"])
                     atr_cached = float(pos.plan.get("indicators", {}).get("atr", float("nan")))
                     if (not math.isnan(atr_cached)) and atr_min_mult > 0:
                         # Calculate ATR-based minimum SL
@@ -385,12 +389,47 @@ class ExitExecutor:
                                 (pos.side.upper() == "SELL" and new_plan_sl > plan_sl)
                             ) else "tightened"
 
-                            logger.info(
+                            # Per-tick: debug only (ATR and plan SL are constant — identical every tick)
+                            logger.debug(
                                 f"ATR_SL_ADJUSTMENT | {sym} | {pos.side} | "
                                 f"Original_SL: {plan_sl:.2f} | ATR_Based_SL: {atr_based_sl:.2f} | "
                                 f"Final_SL: {new_plan_sl:.2f} | ATR: {atr_cached:.3f} | "
                                 f"Entry: {pos.avg_price:.2f} | Adjustment: {expansion_direction} by {expansion_amount:.2f}"
                             )
+
+                            # Once per position: INFO log + events.jsonl emit (same pattern as SL_WIDENING)
+                            _atr_st = pos.plan.get("_state") or {}
+                            if not _atr_st.get("atr_sl_logged"):
+                                logger.info(
+                                    f"ATR_SL_ADJUSTMENT | {sym} | {pos.side} | "
+                                    f"Original_SL: {plan_sl:.2f} | ATR_Based_SL: {atr_based_sl:.2f} | "
+                                    f"Final_SL: {new_plan_sl:.2f} | ATR: {atr_cached:.3f} | "
+                                    f"Entry: {pos.avg_price:.2f} | Adjustment: {expansion_direction} by {expansion_amount:.2f}"
+                                )
+                                try:
+                                    diag_event_log._emit({
+                                        "schema_version": _EVT_SCHEMA,
+                                        "type": "ATR_SL_ADJUSTMENT",
+                                        "run_id": diag_event_log.run_id,
+                                        "trade_id": pos.plan.get("trade_id", ""),
+                                        "symbol": sym,
+                                        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                                        "atr_sl_adjustment": {
+                                            "side": pos.side.upper(),
+                                            "original_sl": round(plan_sl, 2),
+                                            "atr_based_sl": round(atr_based_sl, 2),
+                                            "final_sl": round(new_plan_sl, 2),
+                                            "atr": round(atr_cached, 3),
+                                            "atr_mult": atr_min_mult,
+                                            "entry_price": round(float(pos.avg_price), 2),
+                                            "direction": expansion_direction,
+                                            "amount": round(expansion_amount, 2),
+                                        },
+                                    })
+                                except Exception:
+                                    pass  # Best-effort logging
+                                _atr_st["atr_sl_logged"] = True
+                                pos.plan["_state"] = _atr_st
 
                         plan_sl = new_plan_sl
 
@@ -432,7 +471,8 @@ class ExitExecutor:
                         if t2_done:
                             exit_reason = "sl_post_t2"
                         elif t1_done:
-                            exit_reason = "sl_post_t1"
+                            # T1 skipped (low R) = original SL still in place → this is a hard SL
+                            exit_reason = "hard_sl" if st.get("t1_skipped_low_r") else "sl_post_t1"
                         else:
                             exit_reason = "hard_sl"
 
@@ -734,9 +774,9 @@ class ExitExecutor:
             # Only widen if trade is within max_r from entry
             if abs(current_r) <= self.sl_time_widening_max_r_from_entry:
                 if side == "BUY":
-                    widened_sl = plan_sl - (self.sl_time_widening_atr_add * atr_cached)
+                    widened_sl = round_to_tick(plan_sl - (self.sl_time_widening_atr_add * atr_cached))
                 else:
-                    widened_sl = plan_sl + (self.sl_time_widening_atr_add * atr_cached)
+                    widened_sl = round_to_tick(plan_sl + (self.sl_time_widening_atr_add * atr_cached))
 
                 # Update plan with widened SL
                 if isinstance(pos.plan.get("stop"), dict):
@@ -754,6 +794,27 @@ class ExitExecutor:
                     f"Original_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
                     f"ATR_Add: {self.sl_time_widening_atr_add * atr_cached:.2f}"
                 )
+                # Log SL widening to events.jsonl for post-analysis
+                try:
+                    diag_event_log._emit({
+                        "schema_version": _EVT_SCHEMA,
+                        "type": "SL_WIDENING",
+                        "run_id": diag_event_log.run_id,
+                        "trade_id": pos.plan.get("trade_id", ""),
+                        "symbol": sym,
+                        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                        "sl_widening": {
+                            "stage": 1,
+                            "side": side,
+                            "time_in_trade_min": round(time_in_trade_minutes, 1),
+                            "current_r": round(current_r, 2),
+                            "original_sl": round(plan_sl, 2),
+                            "widened_sl": round(widened_sl, 2),
+                            "atr_add": round(self.sl_time_widening_atr_add * atr_cached, 2),
+                        },
+                    })
+                except Exception:
+                    pass  # Best-effort logging
                 return widened_sl
 
         # Second widening: after 60 minutes (configurable)
@@ -761,9 +822,9 @@ class ExitExecutor:
             # Only widen if trade is within max_r from entry
             if abs(current_r) <= self.sl_time_widening_max_r_from_entry:
                 if side == "BUY":
-                    widened_sl = plan_sl - (self.sl_time_widening_second_atr_add * atr_cached)
+                    widened_sl = round_to_tick(plan_sl - (self.sl_time_widening_second_atr_add * atr_cached))
                 else:
-                    widened_sl = plan_sl + (self.sl_time_widening_second_atr_add * atr_cached)
+                    widened_sl = round_to_tick(plan_sl + (self.sl_time_widening_second_atr_add * atr_cached))
 
                 # Update plan with widened SL
                 if isinstance(pos.plan.get("stop"), dict):
@@ -781,6 +842,27 @@ class ExitExecutor:
                     f"Previous_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
                     f"ATR_Add: {self.sl_time_widening_second_atr_add * atr_cached:.2f}"
                 )
+                # Log SL widening to events.jsonl for post-analysis
+                try:
+                    diag_event_log._emit({
+                        "schema_version": _EVT_SCHEMA,
+                        "type": "SL_WIDENING",
+                        "run_id": diag_event_log.run_id,
+                        "trade_id": pos.plan.get("trade_id", ""),
+                        "symbol": sym,
+                        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                        "sl_widening": {
+                            "stage": 2,
+                            "side": side,
+                            "time_in_trade_min": round(time_in_trade_minutes, 1),
+                            "current_r": round(current_r, 2),
+                            "previous_sl": round(plan_sl, 2),
+                            "widened_sl": round(widened_sl, 2),
+                            "atr_add": round(self.sl_time_widening_second_atr_add * atr_cached, 2),
+                        },
+                    })
+                except Exception:
+                    pass  # Best-effort logging
                 return widened_sl
 
         return plan_sl
@@ -965,6 +1047,8 @@ class ExitExecutor:
         Enhanced OR kill logic with time-adaptive buffers, volume confirmation,
         momentum filters, and graduated exit strategy.
         """
+        if not self.or_kill_enabled:
+            return False
         try:
             # Get ORH/ORL from levels (correct structure)
             levels = plan.get("levels", {})
@@ -1085,10 +1169,8 @@ class ExitExecutor:
             return True  # Allow OR exits - volume confirmation would need intraday data
 
         except Exception as e:
-            # CRITICAL FIX: Log volume confirmation failures and use conservative approach
             logger.error(f"VOLUME_CHECK: Volume confirmation failed for {symbol}: {e}")
-            # Conservative approach: If we can't verify volume, don't allow exit without explicit override
-            return False  # Default to blocking exit on error - safety first
+            return True  # Allow protective exit when volume data unavailable
 
     def _check_momentum_filter(self, symbol: str, side: str, plan: Dict[str, Any]) -> bool:
         """Check momentum indicators to filter false OR breaks"""
@@ -1382,99 +1464,74 @@ class ExitExecutor:
         entry_price = float(pos.avg_price)
         pnl = ((actual_exit_px - entry_price) if pos.side.upper() == "BUY" else (entry_price - actual_exit_px)) * int(qty_exit)
 
-        # REMOVED duplicate trade_logger.info() call for EXIT
-        # Reason: Both trade_logger.info() (removed) and trading_logger.log_exit() (below)
-        #         write to the SAME trade_logs.log file, creating duplicate EXIT entries
-        #
-        # Evidence from logs/run_bb5bf6d6_20251013_084000/trade_logs.log:
-        #   - Line 3: trade_logger format (basic PnL summary)
-        #   - Line 4: trading_logger format (from log_exit with diagnostics)
-        #
-        # Decision: Use trading_logger.log_exit() as single source of truth
-        # Benefits:
-        #   - No duplicates in trade_logs.log
-        #   - Rich diagnostics (R-multiple, MAE/MFE, time in trade, remaining qty)
-        #   - Consistent with TRIGGER logging (also uses trading_logger only)
+        # Compute exit diagnostics for events.jsonl
+        plan_sl = pos.plan.get('stop', {}).get('hard') if isinstance(pos.plan.get('stop'), dict) else pos.plan.get('hard_sl')
+        r_multiple = None
+        if plan_sl:
+            risk_per_unit = abs(entry_price - plan_sl)
+            if risk_per_unit > 0:
+                r_multiple = pnl / (qty_exit * risk_per_unit)
 
-        # Enhanced logging: Log EXIT to events.jsonl via trading_logger
-        # This ensures all exits (partial and full) are captured with rich diagnostics
+        state = pos.plan.get('_state', {})
+        mae = state.get('mae', 0.0)
+        mfe = state.get('mfe', 0.0)
+        bars_held = state.get('bars_held', 0)
+
+        mae_pct = round(mae / entry_price * 100, 4) if mae is not None and entry_price > 0 else None
+        mfe_pct = round(mfe / entry_price * 100, 4) if mfe is not None and entry_price > 0 else None
+
+        entry_ts_val = pos.plan.get('entry_ts')
+        time_since_entry_mins = None
+        if entry_ts_val and ts:
+            try:
+                time_delta = ts - pd.Timestamp(entry_ts_val)
+                time_since_entry_mins = time_delta.total_seconds() / 60
+            except Exception:
+                pass
+
+        remaining_qty = max(0, pos.qty - qty_exit)
+
+        # Decision-time SL (stored before target recalculation in trigger_aware_executor)
+        decision_sl = pos.plan.get('_decision_sl')
+
+        exit_diagnostics = {
+            'exit_type': 'partial' if qty_exit < pos.qty else 'full',
+            'remaining_qty': remaining_qty,
+            'r_multiple': round(r_multiple, 2) if r_multiple is not None else None,
+            'mae': round(mae, 2) if mae is not None else None,
+            'mfe': round(mfe, 2) if mfe is not None else None,
+            'mae_pct': mae_pct,
+            'mfe_pct': mfe_pct,
+            'bars_held': bars_held,
+            'time_since_entry_mins': round(time_since_entry_mins, 1) if time_since_entry_mins is not None else None,
+            'regime': pos.plan.get('regime'),
+            'setup_type': pos.plan.get('setup_type'),
+            'acceptance_status': pos.plan.get('quality', {}).get('status'),
+            # Actual SL/targets for audit trail (post ATR adjustment + widening + trail)
+            'actual_sl': round(plan_sl, 2) if plan_sl is not None else None,
+            'original_sl': round(decision_sl, 2) if decision_sl is not None else None,
+            'actual_targets': [round(t.get('level', 0), 2) for t in pos.plan.get('targets', []) if t.get('level') is not None],
+            'decision_targets': pos.plan.get('_decision_targets'),
+        }
+
+        # Log EXIT to events.jsonl (single writer: diag_event_log)
+        diag_event_log.log_exit(
+            symbol=sym,
+            plan=pos.plan,
+            reason=reason,
+            exit_price=actual_exit_px,
+            exit_qty=qty_exit,
+            ts=ts,
+            pnl=round(pnl, 2),
+            diagnostics=exit_diagnostics,
+        )
+
+        # Log EXIT to trade_logs.log (human-readable)
         if self.trading_logger:
-            # Calculate R-multiple (PnL in units of initial risk)
-            plan_sl = pos.plan.get('stop', {}).get('hard') if isinstance(pos.plan.get('stop'), dict) else pos.plan.get('hard_sl')
-            r_multiple = None
-            if plan_sl:
-                risk_per_unit = abs(entry_price - plan_sl)
-                if risk_per_unit > 0:
-                    r_multiple = pnl / (qty_exit * risk_per_unit)
-
-            # Get MAE/MFE and bars_held from state if tracked
-            # Default to 0.0 (not None) — trade may exit via tick before run_once tracks bars
-            state = pos.plan.get('_state', {})
-            mae = state.get('mae', 0.0)
-            mfe = state.get('mfe', 0.0)
-            bars_held = state.get('bars_held', 0)
-
-            # Compute MAE/MFE as % of entry price (for cross-stock comparison)
-            mae_pct = round(mae / entry_price * 100, 4) if mae is not None and entry_price > 0 else None
-            mfe_pct = round(mfe / entry_price * 100, 4) if mfe is not None and entry_price > 0 else None
-
-            # Calculate time in trade
-            entry_ts = pos.plan.get('entry_ts')
-            time_since_entry_mins = None
-            if entry_ts and ts:
-                try:
-                    entry_time = pd.Timestamp(entry_ts)
-                    time_delta = ts - entry_time
-                    time_since_entry_mins = time_delta.total_seconds() / 60
-                except:
-                    pass
-
-            # Determine remaining quantity after this exit
-            remaining_qty = max(0, pos.qty - qty_exit)
-
-            exit_data = {
-                'symbol': sym,
-                'trade_id': pos.plan.get('trade_id', ''),
-                'qty': qty_exit,
-                'entry_price': entry_price,
-                'exit_price': actual_exit_px,  # Use actual broker fill price
-                'pnl': round(pnl, 2),
-                'reason': reason,
-                'timestamp': str(ts) if ts else str(pd.Timestamp.now()),
-                'shadow': pos.plan.get('shadow', False),  # Shadow trade flag
-                # Edge diagnostic fields for exit analysis
-                'diagnostics': {
-                    'exit_type': 'partial' if qty_exit < pos.qty else 'full',
-                    'remaining_qty': remaining_qty,
-                    'r_multiple': round(r_multiple, 2) if r_multiple is not None else None,
-                    'mae': round(mae, 2) if mae is not None else None,
-                    'mfe': round(mfe, 2) if mfe is not None else None,
-                    'mae_pct': mae_pct,
-                    'mfe_pct': mfe_pct,
-                    'bars_held': bars_held,
-                    'time_since_entry_mins': round(time_since_entry_mins, 1) if time_since_entry_mins is not None else None,
-                    'regime': pos.plan.get('regime'),
-                    'setup_type': pos.plan.get('setup_type'),
-                    'acceptance_status': pos.plan.get('quality', {}).get('status')
-                }
-            }
-            self.trading_logger.log_exit(exit_data)
-
-        # REMOVED diag_event_log.log_exit() call to eliminate duplicate EXIT events
-        # Reason: Both trading_logger.log_exit() (above) and diag_event_log.log_exit() (removed)
-        #         write to the SAME events.jsonl file, creating duplicate EXIT entries
-        #
-        # Evidence from logs/run_3d495b1f_20251013_002316/events.jsonl:
-        #   - Line 5: trading_logger format with rich diagnostics (pnl, mae, mfe, r_multiple)
-        #   - Line 6: diag_event_log format with minimal data (just reason, qty, price)
-        #
-        # Decision: Use trading_logger as single source of truth for EXIT events
-        # Benefits:
-        #   - No duplicates in events.jsonl
-        #   - Rich diagnostics (R-multiple, MAE/MFE, time in trade)
-        #   - Consistent with TRIGGER event logging (also uses trading_logger only)
-        #
-        # Note: diag_event_log is legacy system, trading_logger is the new enhanced system
+            self.trading_logger.log_exit({
+                'symbol': sym, 'qty': qty_exit, 'entry_price': entry_price,
+                'exit_price': actual_exit_px, 'pnl': round(pnl, 2), 'reason': reason,
+            })
 
         logger.debug(f"exit_executor: {sym} qty={qty_exit} reason={reason}")
 
@@ -1546,9 +1603,7 @@ class ExitExecutor:
         state_after = pos.plan.get('_state', {})
         remaining_qty = 0  # Will be 0 for full exits in this function
 
-        # NOTE: _place_and_log_exit() will handle trading_logger.log_exit() call
-        # We don't call it here to avoid duplicate EXIT events in events.jsonl
-        # _place_and_log_exit() has all the necessary logging logic
+        # _place_and_log_exit() handles both diag_event_log + trading_logger logging
 
         # Capture actual broker fill price for API server logging
         actual_exit_px = self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
@@ -1675,11 +1730,6 @@ class ExitExecutor:
             logger.error(f"EXIT: Failed to check remaining quantity for {sym}: {e}")
             pass
 
-        # REMOVED third duplicate trade_logger.info() call for EXIT with remaining qty
-        # This was adding yet another EXIT log to trade_logs.log (line 5 in evidence)
-        # The remaining qty info is already included in trading_logger.log_exit() diagnostics
-        # via the 'remaining_qty' field in exit_data['diagnostics']
-
     def _partial_exit_t1(self, sym: str, pos: Position, px: float, ts: Optional[pd.Timestamp]) -> None:
         # Enhanced partial exit logic - always use partial exits for better R:R
         current_qty = int(pos.qty)
@@ -1732,12 +1782,36 @@ class ExitExecutor:
                 self._exit(sym, pos, float(px), ts, "target_t1_full")
                 return
 
-        # Log enhanced partial exit info
         # Calculate profit based on position direction
         if pos.side.upper() == "BUY":
             profit_booked = qty_exit * (px - pos.avg_price)
         else:
             profit_booked = qty_exit * (pos.avg_price - px)  # SHORT: profit when price goes down
+
+        # Skip T1 partial if profit relative to risk is too low
+        # When entry overshoots past T1, the partial books near-zero R but pays full charges.
+        # "Free trade" condition (Minervini/Grimes): partial profit must cover remaining risk.
+        # At <0.3R, charges eat 87%+ of gross profit on NSE — negative expectancy partial.
+        # SL stays at original level: moving to BE on a tiny favorable move = noise stop-out.
+        rps = pos.plan.get("risk_per_share") or pos.plan.get("stop", {}).get("risk_per_share", 0)
+        if rps > 0:
+            partial_r = profit_booked / (rps * qty_exit)
+            if partial_r < self.t1_min_partial_r:
+                # Mark T1 as done — stop re-checking every tick
+                st["t1_done"] = True
+                st["t1_booked_qty"] = 0
+                st["t1_booked_price"] = px
+                st["t1_profit"] = 0.0
+                st["t1_skipped_low_r"] = True
+                st.pop("_t1_processing", None)
+                pos.plan["_state"] = st
+                logger.info(
+                    f"T1_SKIP_LOW_R | {sym} | T1 partial {partial_r:.2f}R "
+                    f"< min {self.t1_min_partial_r}R (profit Rs.{profit_booked:.0f}, "
+                    f"rps={rps:.2f}) — full qty rides to T2, SL unchanged"
+                )
+                return
+
         adjusted_t2 = self.t2_book_pct - bias_mods.get("t1_book_pct_add", 0)
         logger.info(f"exit_executor: {sym} T1_PARTIAL booking {qty_exit}/{original_qty} ({actual_pct:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {actual_pct:.0f}%-{adjusted_t2:.0f}%-0% split]")
 
@@ -1764,6 +1838,7 @@ class ExitExecutor:
                 else:
                     be_buffer = be - (be * self.be_buffer_pct)
 
+                be_buffer = round_to_tick(be_buffer)
                 if isinstance(pos.plan.get("stop"), dict):
                     pos.plan["stop"]["hard"] = be_buffer
                 pos.plan["hard_sl"] = be_buffer

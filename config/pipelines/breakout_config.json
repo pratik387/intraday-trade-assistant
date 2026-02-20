@@ -20,7 +20,8 @@
         "equilibrium_breakout_long", "equilibrium_breakout_short",
         "level_breakout_long", "level_breakout_short",
         "orb_level_breakout_long", "orb_level_breakout_short",
-        "first_hour_momentum_long", "first_hour_momentum_short"
+        "first_hour_momentum_long", "first_hour_momentum_short",
+        "volume_breakout_long", "volume_breakout_short"
     ],
 
     "screening": {
@@ -116,12 +117,10 @@
         },
         "regime_rules": {
             "chop": {
-                "_comment": "DATA-DRIVEN (Dec 2024): ORB CHOP winners have 283k volume vs losers 107k (+164%), winners have srr 1.28 vs losers 2.28 (-44%)",
+                "_comment": "GATES-OFF RUN: All chop restrictions removed",
                 "allowed": true,
-                "size_mult": 0.7,
-                "orb_chop_min_volume": 150000,
-                "orb_chop_max_structural_rr": 1.8,
-                "_orb_chop_evidence": "Filter vol>=150k AND srr<1.8: 54 trades, 64.8% WR, +5,190 Rs. Turns -8,404 Rs loser into +5,190 Rs winner. Improvement: +13,594 Rs"
+                "allow_non_orb": true,
+                "size_mult": 1.0
             },
             "trend_up": {
                 "allowed": true,
@@ -189,54 +188,68 @@
             }
         },
         "setup_filters": {
-            "_comment": "MODERATE PROFILE FILTERS (Dec 2024): Optimized for ~23K trades, 94% ROI at Rs 3L capital",
-            "_active_profile": "MODERATE",
-            "breakout_long": {
-                "enabled": true,
-                "allowed_regimes": ["trend_down"],
-                "min_rsi": 40,
-                "max_rsi": 60,
-                "_salvage_filter": "trend_down regime + RSI 40-60",
-                "_evidence": "ELIMINATION Dec 2024: 14 trades, Rs 127 net avg (was 1,211 trades, Rs -107 net)"
-            },
-            "breakout_short": {
-                "enabled": false
-            },
+            "_comment": "DATA-DRIVEN (Feb 2026): 3-year edge optimizer analysis (618K trades, FY2022-26)",
+            "_active_profile": "OPTIMIZED",
             "first_hour_momentum_long": {
                 "enabled": true,
-                "max_adx": 15,
-                "_salvage_filter": "ADX < 15",
-                "_evidence": "ELIMINATION Dec 2024: 22 trades, Rs 106 net avg (was 2,234 trades, Rs -197 net)"
-            },
-            "first_hour_momentum_short": {
-                "enabled": false
+                "blocked_entirely": true,
+                "_evidence": "5,694 trades, WR 37.9%, Rs -19.15L loss, negative ALL 4 FYs."
             },
             "orb_breakout_long": {
                 "enabled": true,
                 "blocked_entirely": true,
-                "_moderate_filter": "BLOCKED - negative expectancy",
-                "_evidence": "MODERATE: Rs -120K loss, 1541 trades - block entirely"
+                "_evidence": "11,756 trades, WR 34.3%, Rs -12.70L loss, negative ALL 4 FYs."
             },
-            "orb_breakout_short": {
-                "enabled": false
+            "gap_breakout_long": {
+                "enabled": false,
+                "blocked_regimes": ["chop", "squeeze", "trend_up"],
+                "blocked_hours": [10, 11, 13, 14],
+                "blocked_caps": ["micro_cap", "mid_cap", "small_cap"],
+                "_evidence": "18,507 trades, Rs -12.81L. Only profitable in trend_down, hour 9, large_cap.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
             },
-            "orb_breakdown_long": {
-                "enabled": false
+            "volume_breakout_long": {
+                "enabled": false,
+                "blocked_regimes": ["chop", "squeeze", "trend_up"],
+                "blocked_hours": [10, 11],
+                "blocked_caps": ["mid_cap", "small_cap", "unknown"],
+                "_evidence": "491 trades, Rs -0.88L. Only profitable in trend_down.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
             },
-            "orb_breakdown_short": {
-                "enabled": false
+            "breakout_long": {
+                "enabled": true,
+                "blocked_regimes": ["chop", "squeeze"],
+                "blocked_hours": [10, 13, 14],
+                "blocked_caps": ["micro_cap", "small_cap"],
+                "_evidence": "3yr backtest: chop WR 38% Avg -Rs 51, squeeze WR 29% Avg -Rs 205, h10 WR 42% Avg -Rs 271, h13 WR 39%, h14 WR 50% Avg -Rs 139, micro_cap WR 41% Avg -Rs 834, small_cap WR 42% Avg -Rs 191."
+            },
+            "momentum_breakout_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "3yr backtest (28K trades): 83 trades, WR 30.1%, Avg -Rs 2,453, negative ALL FYs. Edge optimizer: KILL."
+            },
+            "first_hour_momentum_short": {
+                "enabled": false,
+                "blocked_regimes": ["trend_up"],
+                "blocked_caps": ["large_cap"],
+                "_evidence": "622 trades, Rs +1.31L. trend_up WR 39% Rs -437. large_cap WR 44% Rs -27.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
+            },
+            "break_of_structure_long": {
+                "enabled": false,
+                "blocked_caps": ["small_cap"],
+                "_evidence": "102 trades, Rs +0.27L. small_cap WR 46% Rs -149.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
+            },
+            "flag_continuation_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "3yr deep_edge: Rs -305 avg, 34 trades. Negative overall."
             },
             "squeeze_release_long": {
                 "enabled": true,
-                "max_rsi": 70,
-                "_moderate_filter": "RSI <= 70 - block overbought entries",
-                "_evidence": "OPTION A Dec 2024: ADX 25-30 (Rs 702 net), RSI 70+ blocked (Rs -31 net). 45 trades remain profitable."
-            },
-            "break_of_structure_long": {
-                "enabled": true,
                 "blocked_entirely": true,
-                "_reason": "NOT SALVAGEABLE - all filter combos negative",
-                "_evidence": "ELIMINATION Dec 2024: 64 trades, Rs -345 net - no profitable combo found"
+                "_evidence": "3yr deep_edge: Rs -67 avg. Negative overall."
             }
         },
         "global_filters": {
@@ -274,159 +287,6 @@
                 "_note": "ORB uses relaxed ADX (15) and RSI thresholds - market open volatility",
                 "enabled": false
             }
-        }
-    },
-
-    "ranking": {
-        "_comment": "BREAKOUT-SPECIFIC RANKING (Dec 2024) - Pro trader research: high ADX, neutral RSI, VWAP aligned critical",
-        "mode": "breakout_specific",
-        "score_scale": 5.0,
-        "_score_scale_note": "Multiplier to scale weighted sum back to usable range (~0-5). Weighted sum alone produces ~0.17 mean.",
-        "weights": {
-            "volume": {
-                "_comment": "CRITICAL for breakouts - volume confirms breakout validity",
-                "divisor": 2.0,
-                "cap": 2.0,
-                "weight": 0.20
-            },
-            "rsi": {
-                "_comment": "NEUTRAL = GOOD for breakouts (room to run, not overbought/oversold)",
-                "mode": "neutral_is_good",
-                "neutral_min": 45,
-                "neutral_max": 55,
-                "good_min": 40,
-                "good_max": 60,
-                "long_overbought_threshold": 70,
-                "short_oversold_threshold": 30,
-                "neutral_bonus": 0.4,
-                "good_bonus": 0.2,
-                "penalty": -0.3,
-                "weight": 0.15
-            },
-            "adx": {
-                "_comment": "HIGH ADX = GOOD for breakouts (strong trend confirms momentum)",
-                "mode": "high_is_good",
-                "strong_threshold": 35,
-                "good_threshold": 25,
-                "weak_threshold": 20,
-                "strong_bonus": 0.5,
-                "good_bonus": 0.3,
-                "weak_penalty": -0.3,
-                "weight": 0.20
-            },
-            "vwap": {
-                "_comment": "ALIGNED = CRITICAL for breakouts (momentum in direction of VWAP)",
-                "mode": "aligned_required",
-                "aligned_bonus": 0.5,
-                "misaligned_penalty": -0.4,
-                "weight": 0.15
-            },
-            "distance": {
-                "_comment": "Less critical for breakouts - already broken out from level",
-                "near_bpct": 0.5,
-                "near_score": 0.3,
-                "ok_bpct": 1.5,
-                "ok_score": 0.1,
-                "far_score": -0.1,
-                "weight": 0.10
-            },
-            "squeeze": {
-                "_comment": "Squeeze release = good for breakouts (pent-up energy)",
-                "low_bonus": 0.3,
-                "mid_bonus": 0.2,
-                "high_penalty": -0.2,
-                "weight": 0.10
-            },
-            "acceptance": {
-                "_comment": "KEEP for breakouts - structural R:R matters for momentum plays",
-                "enabled": true,
-                "excellent_bonus": 0.4,
-                "good_bonus": 0.2,
-                "weight": 0.10
-            }
-        },
-        "regime_multipliers": {
-            "_comment": "Default fallback multipliers",
-            "trend_up": 1.1,
-            "trend_down": 1.1,
-            "chop": 0.7,
-            "squeeze": 1.0
-        },
-        "strategy_regime_multipliers": {
-            "_comment": "From baseline ranker.py _get_regime_multiplier() - Strategy-specific overrides",
-            "breakout": {
-                "_comment": "Breakout poor in chop per baseline report",
-                "chop": 0.7,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "squeeze": 0.9,
-                "default": 0.9
-            },
-            "orb_breakout": {
-                "chop": 0.7,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "squeeze": 0.9,
-                "default": 0.9
-            },
-            "orb_breakdown": {
-                "chop": 0.7,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "squeeze": 0.9,
-                "default": 0.9
-            },
-            "momentum_breakout": {
-                "_comment": "From baseline: trend=1.4, chop=1.3, other=1.2",
-                "trend_up": 1.4,
-                "trend_down": 1.4,
-                "chop": 1.3,
-                "squeeze": 1.2,
-                "default": 1.2
-            },
-            "flag_continuation": {
-                "trend_up": 1.4,
-                "trend_down": 1.4,
-                "chop": 1.1,
-                "squeeze": 1.2,
-                "default": 1.1
-            },
-            "squeeze_release": {
-                "squeeze": 1.5,
-                "chop": 1.3,
-                "trend_up": 1.2,
-                "trend_down": 1.2,
-                "default": 1.1
-            },
-            "break_of_structure": {
-                "_comment": "From baseline: 1.2 constant for structural shifts",
-                "trend_up": 1.2,
-                "trend_down": 1.2,
-                "chop": 1.2,
-                "squeeze": 1.2,
-                "default": 1.2
-            },
-            "change_of_character": {
-                "_comment": "From baseline: trend=1.4, chop=0.8",
-                "trend_up": 1.4,
-                "trend_down": 1.4,
-                "chop": 0.8,
-                "squeeze": 1.0,
-                "default": 1.0
-            },
-            "first_hour_momentum": {
-                "_comment": "FHM: High multipliers across all regimes - momentum trumps regime in first hour",
-                "trend_up": 1.5,
-                "trend_down": 1.5,
-                "chop": 1.3,
-                "squeeze": 1.4,
-                "default": 1.3
-            }
-        },
-        "daily_trend_multipliers": {
-            "aligned": 1.25,
-            "counter": 0.75,
-            "neutral": 1.0
         }
     },
 
@@ -495,8 +355,8 @@
     },
 
     "stop_loss": {
-        "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0",
-        "atr_multiplier": 2.0
+        "_comment": "DATA-DRIVEN: 3.5x ATR (Feb 2026 edge optimizer: P90 MAE of winners = 5.56x, intermediate step from 2.0). Tight SL Q1 WR 51% +Rs200, Wide Q4 WR 49% -Rs42.",
+        "atr_multiplier": 3.5
     },
 
     "orb_target_recalculation": {

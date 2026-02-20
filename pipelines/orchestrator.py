@@ -522,8 +522,13 @@ class PipelineOrchestrator:
                         category=category.value,
                         structural_rr=plan.get("quality", {}).get("structural_rr") if plan else None,
                         regime=regime,
-                        gate_details=gate_details  # Add detailed gate_fail reasons
-
+                        gate_details=gate_details,
+                        # Indicators at rejection (when plan exists)
+                        indicators=plan.get("indicators") if plan else None,
+                        quality_status=plan.get("quality", {}).get("status") if plan else None,
+                        rank_score=plan.get("ranking", {}).get("score") if plan else None,
+                        rank_components=plan.get("ranking", {}).get("components") if plan else None,
+                        bias=plan.get("bias") if plan else None,
                     )
 
             return plan
@@ -688,7 +693,27 @@ class PipelineOrchestrator:
                     regime=regime,
                     selected=True,
                     competing_plans=sum(len(v) for v in category_plans.values()),
-                    category_budget=budget.get(best_category, 0)
+                    category_budget=budget.get(best_category, 0),
+                    # Stop & targets
+                    stop_hard=best_plan.get("stop", {}).get("hard"),
+                    t2_rr=best_plan["targets"][1]["rr"] if len(best_plan.get("targets", [])) > 1 else None,
+                    entry_zone=best_plan.get("entry_zone"),
+                    # Position sizing
+                    qty=best_plan.get("sizing", {}).get("qty"),
+                    notional=best_plan.get("sizing", {}).get("notional"),
+                    mis_leverage=best_plan.get("sizing", {}).get("mis_leverage"),
+                    risk_per_share=best_plan.get("sizing", {}).get("risk_per_share"),
+                    cap_segment=best_plan.get("sizing", {}).get("cap_segment"),
+                    # Sizing multiplier breakdown
+                    volatility_mult=best_plan.get("sizing", {}).get("volatility_mult"),
+                    cap_size_mult=best_plan.get("sizing", {}).get("cap_size_mult"),
+                    dir_bias_mult=best_plan.get("sizing", {}).get("dir_bias_mult"),
+                    # Rank components
+                    rank_components=best_plan.get("ranking", {}).get("components"),
+                    # Indicators
+                    indicators=best_plan.get("indicators"),
+                    # Validated combination gate audit
+                    vc_reason=best_plan.get("vc_reason"),
                 )
 
         return best_plan
@@ -866,7 +891,27 @@ class PipelineOrchestrator:
                     size_mult=plan.get("sizing", {}).get("size_mult"),
                     regime=regime,
                     selected=True,
-                    allocation_method="regime_budget"
+                    allocation_method="regime_budget",
+                    # Stop & targets
+                    stop_hard=plan.get("stop", {}).get("hard"),
+                    t2_rr=plan["targets"][1]["rr"] if len(plan.get("targets", [])) > 1 else None,
+                    entry_zone=plan.get("entry_zone"),
+                    # Position sizing
+                    qty=plan.get("sizing", {}).get("qty"),
+                    notional=plan.get("sizing", {}).get("notional"),
+                    mis_leverage=plan.get("sizing", {}).get("mis_leverage"),
+                    risk_per_share=plan.get("sizing", {}).get("risk_per_share"),
+                    cap_segment=plan.get("sizing", {}).get("cap_segment"),
+                    # Sizing multiplier breakdown
+                    volatility_mult=plan.get("sizing", {}).get("volatility_mult"),
+                    cap_size_mult=plan.get("sizing", {}).get("cap_size_mult"),
+                    dir_bias_mult=plan.get("sizing", {}).get("dir_bias_mult"),
+                    # Rank components
+                    rank_components=plan.get("ranking", {}).get("components"),
+                    # Indicators
+                    indicators=plan.get("indicators"),
+                    # Validated combination gate audit
+                    vc_reason=plan.get("vc_reason"),
                 )
 
         return selected_plans

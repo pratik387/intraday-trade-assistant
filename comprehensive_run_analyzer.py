@@ -99,56 +99,67 @@ class ComprehensiveRunAnalyzer:
         all_executed_trades = []
         all_decisions = []
         session_summary = {}
+        total_sessions = len(self.sessions)
 
-        for session_dir in self.sessions:
+        for si, session_dir in enumerate(self.sessions):
             session_name = os.path.basename(session_dir)
             trades_file = os.path.join(session_dir, "trade_report.csv")
             analytics_file = os.path.join(session_dir, "analytics.jsonl")
             events_file = os.path.join(session_dir, "events.jsonl")
 
+            if (si + 1) % 100 == 0 or si == 0:
+                print(f"  Loading session {si+1}/{total_sessions}: {session_name}", flush=True)
+
             # Load planned trades from CSV
+            planned_count = 0
             if os.path.exists(trades_file):
                 try:
                     df = pd.read_csv(trades_file)
                     if not df.empty:
                         df['session'] = session_name
                         df['data_source'] = 'planned'
+                        planned_count = len(df)
                         all_trades.append(df)
                 except Exception as e:
                     print(f"Error loading {trades_file}: {e}")
 
-            # Load executed trades from analytics.jsonl
+            # Load executed trades from analytics.jsonl (pre-filter: only parse EXIT lines)
+            session_pnl = 0
+            session_trades_count = 0
             if os.path.exists(analytics_file):
                 try:
                     executed_trades = []
                     with open(analytics_file, 'r') as f:
                         for line in f:
-                            if line.strip():
-                                try:
-                                    trade_data = json.loads(line)
-                                    if trade_data.get('stage') == 'EXIT' and 'pnl' in trade_data:
-                                        # Convert to DataFrame-compatible format
-                                        executed_trade = {
-                                            'session': session_name,
-                                            'symbol': trade_data.get('symbol', ''),
-                                            'trade_id': trade_data.get('trade_id', ''),
-                                            'setup_type': trade_data.get('setup_type', ''),
-                                            'regime': trade_data.get('regime', ''),
-                                            'bias': trade_data.get('bias', ''),
-                                            'strategy': trade_data.get('strategy', ''),
-                                            'entry_reference': trade_data.get('entry_reference', 0),
-                                            'entry_price': trade_data.get('entry_price', trade_data.get('actual_entry_price', 0)),
-                                            'qty': trade_data.get('qty', 0),
-                                            'exit_price': trade_data.get('exit_price', 0),
-                                            'realized_pnl': trade_data.get('pnl', 0),
-                                            'exit_reason': trade_data.get('reason', ''),
-                                            'exit_ts': trade_data.get('timestamp', ''),
-                                            'elapsed_from_decision': trade_data.get('elapsed_from_decision', 0),
-                                            'data_source': 'executed'
-                                        }
-                                        executed_trades.append(executed_trade)
-                                except json.JSONDecodeError:
-                                    continue
+                            # Pre-filter: skip lines that can't be EXIT with pnl
+                            if '"EXIT"' not in line or '"pnl"' not in line:
+                                continue
+                            try:
+                                trade_data = json.loads(line)
+                                if trade_data.get('stage') == 'EXIT' and 'pnl' in trade_data:
+                                    executed_trade = {
+                                        'session': session_name,
+                                        'symbol': trade_data.get('symbol', ''),
+                                        'trade_id': trade_data.get('trade_id', ''),
+                                        'setup_type': trade_data.get('setup_type', ''),
+                                        'regime': trade_data.get('regime', ''),
+                                        'bias': trade_data.get('bias', ''),
+                                        'strategy': trade_data.get('strategy', ''),
+                                        'entry_reference': trade_data.get('entry_reference', 0),
+                                        'entry_price': trade_data.get('entry_price', trade_data.get('actual_entry_price', 0)),
+                                        'qty': trade_data.get('qty', 0),
+                                        'exit_price': trade_data.get('exit_price', 0),
+                                        'realized_pnl': trade_data.get('pnl', 0),
+                                        'exit_reason': trade_data.get('reason', ''),
+                                        'exit_ts': trade_data.get('timestamp', ''),
+                                        'elapsed_from_decision': trade_data.get('elapsed_from_decision', 0),
+                                        'data_source': 'executed'
+                                    }
+                                    executed_trades.append(executed_trade)
+                                    session_pnl += executed_trade['realized_pnl']
+                                    session_trades_count += 1
+                            except json.JSONDecodeError:
+                                continue
 
                     if executed_trades:
                         executed_df = pd.DataFrame(executed_trades)
@@ -157,44 +168,45 @@ class ComprehensiveRunAnalyzer:
                 except Exception as e:
                     print(f"Error loading {analytics_file}: {e}")
 
-            # Load decision events from events.jsonl
+            # Load decision events from events.jsonl (pre-filter: only parse DECISION lines)
             if os.path.exists(events_file):
                 try:
                     decisions = []
                     with open(events_file, 'r') as f:
                         for line in f:
-                            if line.strip():
-                                try:
-                                    event_data = json.loads(line)
-                                    if event_data.get('type') == 'DECISION':
-                                        # Extract key decision data
-                                        decision = {
-                                            'session': session_name,
-                                            'trade_id': event_data.get('trade_id', ''),
-                                            'symbol': event_data.get('symbol', ''),
-                                            'ts': event_data.get('ts', ''),
-                                            'decision_setup_type': event_data.get('decision', {}).get('setup_type', ''),
-                                            'decision_regime': event_data.get('decision', {}).get('regime', ''),
-                                            'acceptance_status': event_data.get('plan', {}).get('quality', {}).get('acceptance_status', ''),
-                                            'entry_reference': event_data.get('plan', {}).get('entry', {}).get('reference', 0),
-                                            'stop_hard': event_data.get('plan', {}).get('stop', {}).get('hard', 0),
-                                            'target_t1': event_data.get('plan', {}).get('targets', [{}])[0].get('level', 0) if event_data.get('plan', {}).get('targets') else 0,
-                                            'target_t2': event_data.get('plan', {}).get('targets', [{}])[1].get('level', 0) if len(event_data.get('plan', {}).get('targets', [])) > 1 else 0,
-                                            'rr_t1': event_data.get('plan', {}).get('targets', [{}])[0].get('rr', 0) if event_data.get('plan', {}).get('targets') else 0,
-                                            'rr_t2': event_data.get('plan', {}).get('targets', [{}])[1].get('rr', 0) if len(event_data.get('plan', {}).get('targets', [])) > 1 else 0,
-                                            'rank_score': event_data.get('features', {}).get('rank_score', 0),
-                                            'vwap': event_data.get('plan', {}).get('indicators', {}).get('vwap', 0),
-                                            'ema20': event_data.get('plan', {}).get('indicators', {}).get('ema20', 0),
-                                            'atr': event_data.get('plan', {}).get('indicators', {}).get('atr', 0),
-                                            'vol_ratio': event_data.get('plan', {}).get('indicators', {}).get('vol_ratio', 0),
-                                            'bar5_close': event_data.get('bar5', {}).get('close', 0),
-                                            'bar5_volume': event_data.get('bar5', {}).get('volume', 0),
-                                            'minute_of_day': event_data.get('timectx', {}).get('minute_of_day', 0),
-                                            'data_source': 'decision'
-                                        }
-                                        decisions.append(decision)
-                                except json.JSONDecodeError:
-                                    continue
+                            # Pre-filter: skip lines that aren't DECISION events
+                            if '"DECISION"' not in line:
+                                continue
+                            try:
+                                event_data = json.loads(line)
+                                if event_data.get('type') == 'DECISION':
+                                    decision = {
+                                        'session': session_name,
+                                        'trade_id': event_data.get('trade_id', ''),
+                                        'symbol': event_data.get('symbol', ''),
+                                        'ts': event_data.get('ts', ''),
+                                        'decision_setup_type': event_data.get('decision', {}).get('setup_type', ''),
+                                        'decision_regime': event_data.get('decision', {}).get('regime', ''),
+                                        'acceptance_status': event_data.get('plan', {}).get('quality', {}).get('acceptance_status', ''),
+                                        'entry_reference': event_data.get('plan', {}).get('entry', {}).get('reference', 0),
+                                        'stop_hard': event_data.get('plan', {}).get('stop', {}).get('hard', 0),
+                                        'target_t1': event_data.get('plan', {}).get('targets', [{}])[0].get('level', 0) if event_data.get('plan', {}).get('targets') else 0,
+                                        'target_t2': event_data.get('plan', {}).get('targets', [{}])[1].get('level', 0) if len(event_data.get('plan', {}).get('targets', [])) > 1 else 0,
+                                        'rr_t1': event_data.get('plan', {}).get('targets', [{}])[0].get('rr', 0) if event_data.get('plan', {}).get('targets') else 0,
+                                        'rr_t2': event_data.get('plan', {}).get('targets', [{}])[1].get('rr', 0) if len(event_data.get('plan', {}).get('targets', [])) > 1 else 0,
+                                        'rank_score': event_data.get('features', {}).get('rank_score', 0),
+                                        'vwap': event_data.get('plan', {}).get('indicators', {}).get('vwap', 0),
+                                        'ema20': event_data.get('plan', {}).get('indicators', {}).get('ema20', 0),
+                                        'atr': event_data.get('plan', {}).get('indicators', {}).get('atr', 0),
+                                        'vol_ratio': event_data.get('plan', {}).get('indicators', {}).get('vol_ratio', 0),
+                                        'bar5_close': event_data.get('bar5', {}).get('close', 0),
+                                        'bar5_volume': event_data.get('bar5', {}).get('volume', 0),
+                                        'minute_of_day': event_data.get('timectx', {}).get('minute_of_day', 0),
+                                        'data_source': 'decision'
+                                    }
+                                    decisions.append(decision)
+                            except json.JSONDecodeError:
+                                continue
 
                     if decisions:
                         decisions_df = pd.DataFrame(decisions)
@@ -203,19 +215,10 @@ class ComprehensiveRunAnalyzer:
                 except Exception as e:
                     print(f"Error loading {events_file}: {e}")
 
-            # Calculate session summary
-            session_pnl = 0
-            session_trades = 0
-
-            if all_executed_trades:
-                for df in all_executed_trades:
-                    session_data = df[df['session'] == session_name]
-                    session_pnl += session_data['realized_pnl'].sum()
-                    session_trades += len(session_data)
-
+            # Session summary (O(1) — tracked inline, no re-scan)
             session_summary[session_name] = {
-                'planned_trades': len(df) if 'df' in locals() and not df.empty else 0,
-                'executed_trades': session_trades,
+                'planned_trades': planned_count,
+                'executed_trades': session_trades_count,
                 'pnl': session_pnl
             }
 
@@ -860,6 +863,11 @@ class ComprehensiveRunAnalyzer:
 
         print("Analyzing indicator effectiveness...")
 
+        # Build trade_id → validation index for O(1) lookups
+        validation_map = {}
+        for _, row in self.validation_data.iterrows():
+            validation_map[row['trade_id']] = row
+
         # Merge decision indicators with market validation results
         decisions_with_indicators = []
 
@@ -874,14 +882,11 @@ class ComprehensiveRunAnalyzer:
             if not indicators:
                 continue
 
-            # Find corresponding validation result
+            # O(1) lookup via dict
             trade_id = decision['trade_id']
-            validation_row = self.validation_data[self.validation_data['trade_id'] == trade_id]
-
-            if validation_row.empty:
+            validation_result = validation_map.get(trade_id)
+            if validation_result is None:
                 continue
-
-            validation_result = validation_row.iloc[0]
 
             # Combine data (indicators already flattened in combined_decisions)
             combined_row = {
@@ -1028,25 +1033,28 @@ class ComprehensiveRunAnalyzer:
 
         calibration_results = {}
 
+        # Build trade_id indexes for O(1) lookups
+        validation_map = {}
+        for _, row in self.validation_data.iterrows():
+            validation_map[row['trade_id']] = row
+        trade_map = {}
+        if not self.combined_trades.empty:
+            for _, row in self.combined_trades.iterrows():
+                trade_map[row['trade_id']] = row
+
         # Get data with rank scores and outcomes
         calibration_data = []
         for idx, decision in self.combined_decisions.iterrows():
             trade_id = decision['trade_id']
             rank_score = decision.get('rank_score', 0)
 
-            # Find validation result for this decision
-            validation_row = self.validation_data[self.validation_data['trade_id'] == trade_id]
-            if validation_row.empty:
+            # O(1) lookup via dict
+            validation_result = validation_map.get(trade_id)
+            if validation_result is None:
                 continue
 
-            validation_result = validation_row.iloc[0]
-
-            # Find executed trade for this decision (if any)
-            executed_trade = None
-            if not self.combined_trades.empty:
-                executed_trade_row = self.combined_trades[self.combined_trades['trade_id'] == trade_id]
-                if not executed_trade_row.empty:
-                    executed_trade = executed_trade_row.iloc[0]
+            # O(1) lookup for executed trade
+            executed_trade = trade_map.get(trade_id)
 
             calibration_row = {
                 'trade_id': trade_id,
@@ -1438,18 +1446,24 @@ class ComprehensiveRunAnalyzer:
 
         time_results = {}
 
+        # Build trade_id → decision timestamp index (O(n) instead of O(n²) lookup)
+        decision_ts_map = {}
+        if not self.combined_decisions.empty and 'trade_id' in self.combined_decisions.columns:
+            for _, dec in self.combined_decisions.iterrows():
+                tid = dec.get('trade_id', '')
+                if tid and tid not in decision_ts_map:
+                    decision_ts_map[tid] = dec.get('ts', '')
+
         # Calculate time in trade for each trade
-        # Use decision timestamp as entry time and exit timestamp from analytics
         trades_with_time = []
         for idx, trade in self.combined_trades.iterrows():
             trade_id = trade['trade_id']
 
-            # Find the decision timestamp for this trade_id
-            decision_row = self.combined_decisions[self.combined_decisions['trade_id'] == trade_id]
-            if decision_row.empty:
+            # O(1) lookup via dict instead of O(n) DataFrame scan
+            entry_ts = decision_ts_map.get(trade_id, '')
+            if not entry_ts:
                 continue
 
-            entry_ts = decision_row.iloc[0].get('ts', '')
             exit_ts = trade.get('exit_ts', trade.get('timestamp', ''))
 
             if entry_ts and exit_ts:
@@ -1862,9 +1876,11 @@ class ComprehensiveRunAnalyzer:
 
     def run_comprehensive_analysis(self):
         """Run the complete analysis pipeline"""
+        import time as _time
+        pipeline_start = _time.time()
         print("=" * 80)
         print(f"COMPREHENSIVE RUN ANALYSIS: {self.run_prefix}")
-        print("=" * 80)
+        print("=" * 80, flush=True)
 
         # Step 1: Find sessions
         if self.find_sessions() == 0:
@@ -1872,24 +1888,36 @@ class ComprehensiveRunAnalyzer:
             return None
 
         # Step 2: Load and combine trade data
+        t0 = _time.time()
         session_summary = self.load_and_combine_trades()
+        print(f"  [TIMING] Data loading: {_time.time() - t0:.1f}s", flush=True)
 
         if self.combined_trades.empty:
             print("No trade data found. Exiting.")
             return None
 
         # Step 3: Analyze different aspects
-        print("\nRunning detailed analysis...")
-        self.setup_analysis = self.analyze_setup_performance()
-        self.regime_analysis = self.analyze_regime_performance()
-        self.timing_analysis = self.analyze_timing_performance()
-        self.risk_analysis = self.analyze_risk_management()
-        self.decision_analysis = self.analyze_decision_quality()
-        self.market_validation = self.analyze_market_validation()
-        self.indicator_analysis = self.analyze_indicator_effectiveness()
-        self.quality_calibration = self.analyze_quality_calibration()
-        self.sequence_analysis = self.analyze_sequence_and_risk()
-        self.time_analysis = self.analyze_time_in_trade()
+        print("\nRunning detailed analysis...", flush=True)
+
+        def _timed(name, func):
+            t0 = _time.time()
+            result = func()
+            print(f"  [TIMING] {name}: {_time.time() - t0:.1f}s", flush=True)
+            return result
+
+        self.setup_analysis = _timed('setup_performance', self.analyze_setup_performance)
+        self.regime_analysis = _timed('regime_performance', self.analyze_regime_performance)
+        self.timing_analysis = _timed('timing_performance', self.analyze_timing_performance)
+        self.risk_analysis = _timed('risk_management', self.analyze_risk_management)
+        self.decision_analysis = _timed('decision_quality', self.analyze_decision_quality)
+        # self.market_validation = self.analyze_market_validation()  # Disabled: slow 1m OHLCV loading
+        self.market_validation = {}
+        self.indicator_analysis = _timed('indicator_effectiveness', self.analyze_indicator_effectiveness)
+        self.quality_calibration = _timed('quality_calibration', self.analyze_quality_calibration)
+        self.sequence_analysis = _timed('sequence_and_risk', self.analyze_sequence_and_risk)
+        self.time_analysis = _timed('time_in_trade', self.analyze_time_in_trade)
+
+        print(f"\n  [TIMING] Total analysis pipeline: {_time.time() - pipeline_start:.1f}s", flush=True)
 
         # Step 4: Skip recommendations generation (analysis only)
 
