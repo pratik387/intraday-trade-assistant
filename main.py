@@ -411,11 +411,13 @@ def main() -> int:
         bar_subscriber = BarSubscriber(redis_url=redis_url, symbols=None)
         bar_subscriber.init_redis()
 
-        # Wire LTP cache to BarSubscriber ticks
+        # Wire LTP cache + tick recorder to BarSubscriber ticks
         _original_on_tick = bar_subscriber.on_tick
         def _ltp_tap_on_tick(symbol, price, volume, ts):
             _original_on_tick(symbol, price, volume, ts)
             ltp_cache.update(symbol, float(price), pd.Timestamp(ts))
+            if tick_recorder is not None:
+                tick_recorder.on_tick(symbol, float(price), 0, ts, float(volume))
         bar_subscriber.on_tick = _ltp_tap_on_tick
 
         # Risk + shared positions
@@ -578,6 +580,13 @@ def main() -> int:
                         capital_manager.save_final_report(log_dir)
                 except Exception:
                     pass
+
+            if tick_recorder is not None:
+                try:
+                    tick_recorder.finalize()
+                    logger.info(f"TICK_RECORDER | Finalized: {tick_recorder.tick_count:,} ticks recorded")
+                except Exception as e:
+                    logger.warning(f"TICK_RECORDER | Finalize failed: {e}")
 
             heartbeat.stop()
             bar_subscriber.shutdown()

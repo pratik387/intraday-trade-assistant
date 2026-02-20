@@ -10,12 +10,20 @@ Usage:
     python upstox_cache_downloader.py --data-type daily  # Download only daily data
     python upstox_cache_downloader.py --data-type minute # Download only minute data
     python upstox_cache_downloader.py --fix-problematic  # Redownload corrupted/incomplete symbols
+    python upstox_cache_downloader.py --update-daily     # Download last 210 days daily (convenience)
+    python upstox_cache_downloader.py --update-daily 300 # Download last 300 days daily
+    python upstox_cache_downloader.py --intraday-today   # Fetch today's 1m + daily via Intraday API
 
 ⚠️ Upstox Rate Limit Guidance:
 - Max ~25 requests/second for historical endpoints.
 - Recommended max_workers = 3 to 5
 - Use exponential backoff on HTTP 429 responses (2s → 4s → 8s)
 - Pause after every 20–25 requests to avoid hitting burst limits
+
+⚠️ Data Availability:
+- Historical API: T+1 delay — today's data available ~7 AM IST next day
+- Intraday API: Today's candles available during/after market hours (same day)
+  Use --intraday-today to fetch today's data without waiting until tomorrow.
 """
 import json
 import requests
@@ -61,6 +69,20 @@ TIMEFRAME_OPTIONS = {
 }
 
 MAX_WORKERS = 8
+
+# --- Index Instruments (for --intraday-today and --update-daily) ---
+INDEX_INSTRUMENTS = {
+    "NIFTY 50": "NSE_INDEX|Nifty 50",
+    "NIFTY BANK": "NSE_INDEX|Nifty Bank",
+    "INDIA VIX": "NSE_INDEX|India VIX",
+    "NIFTY IT": "NSE_INDEX|Nifty IT",
+    "NIFTY FIN SERVICE": "NSE_INDEX|Nifty Fin Service",
+    "NIFTY AUTO": "NSE_INDEX|Nifty Auto",
+    "NIFTY PHARMA": "NSE_INDEX|Nifty Pharma",
+    "NIFTY METAL": "NSE_INDEX|Nifty Metal",
+    "NIFTY ENERGY": "NSE_INDEX|Nifty Energy",
+    "NIFTY PSU BANK": "NSE_INDEX|Nifty PSU Bank",
+}
 
 # --- Output Path ---
 ROOT = Path(__file__).resolve().parents[0]  # Changed to parents[0] to point to current directory
@@ -150,6 +172,14 @@ def is_range_downloaded(metadata, date_range):
 
 # --- API Call ---
 def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timeframe: dict, max_retries=3, force_redownload=False):
+    # Check metadata BEFORE making API calls to skip already-downloaded ranges
+    out_dir = OUTPUT_BASE / symbol
+    metadata_path = out_dir / f"{symbol}_{timeframe['interval']}{timeframe['unit']}_metadata.json"
+    if not force_redownload and metadata_path.exists():
+        metadata = load_metadata(metadata_path)
+        if is_range_downloaded(metadata, date_range):
+            return f"skipped: {symbol} {timeframe['interval']}{timeframe['unit']}: Range {date_range['start_date']} to {date_range['end_date']} already exists"
+
     start_date = datetime.strptime(date_range["start_date"], "%Y-%m-%d")
     end_date = datetime.strptime(date_range["end_date"], "%Y-%m-%d")
     all_chunks = []
@@ -168,24 +198,26 @@ def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timefr
             try:
                 resp = requests.get(url, headers=HEADERS)
                 if resp.status_code == 429:
-                    wait = 2 ** attempt
-                    print(f"\u23f3 {symbol} {timeframe['interval']}{timeframe['unit']}: Rate limited. Retrying in {wait}s...")
+                    wait = 2 ** (attempt + 1)  # 4s, 8s, 16s
+                    print(f"[rate-limit] {symbol} {timeframe['interval']}{timeframe['unit']}: 429, waiting {wait}s...")
                     time.sleep(wait)
                     continue
 
                 if resp.status_code == 400:
-                    return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: 400 Bad Request"
+                    # 400 = no data for this instrument/range — not fatal
+                    return f"skipped: {symbol} {timeframe['interval']}{timeframe['unit']}: 400 (no data for range)"
 
                 resp.raise_for_status()
                 candles = resp.json()["data"].get("candles", [])
                 if candles:
                     all_chunks.extend(candles)
 
+                time.sleep(0.5)  # Pace requests to avoid rate limiting
                 break  # success
 
             except Exception as e:
                 if attempt == max_retries:
-                    return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: Failed: {e}"
+                    return f"FAIL {symbol} {timeframe['interval']}{timeframe['unit']}: Failed: {e}"
 
     else:
         # For minute data, use chunking to respect API limits
@@ -207,29 +239,33 @@ def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timefr
                 try:
                     resp = requests.get(url, headers=HEADERS)
                     if resp.status_code == 429:
-                        wait = 2 ** attempt
-                        print(f"\u23f3 {symbol} {timeframe['interval']}{timeframe['unit']}: Rate limited. Retrying in {wait}s...")
+                        wait = 2 ** (attempt + 1)  # 4s, 8s, 16s
+                        print(f"[rate-limit] {symbol} {timeframe['interval']}{timeframe['unit']}: 429, waiting {wait}s...")
                         time.sleep(wait)
                         continue
 
                     if resp.status_code == 400:
-                        return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: 400 Bad Request"
+                        # 400 on a chunk = no data for this period (e.g. stock not yet listed)
+                        # Skip this chunk, try next — don't fail the entire symbol
+                        break
 
                     resp.raise_for_status()
                     candles = resp.json()["data"].get("candles", [])
                     if candles:
                         all_chunks.extend(candles)
 
+                    time.sleep(0.5)  # Pace requests to avoid rate limiting
                     break  # success
 
                 except Exception as e:
                     if attempt == max_retries:
-                        return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: Failed on chunk {chunk_start_str}–{chunk_end_str}: {e}"
+                        print(f"[warn] {symbol} {timeframe['interval']}{timeframe['unit']}: chunk {chunk_start_str}-{chunk_end_str} failed: {e}")
+                        break  # Skip failed chunk, try next
 
             start_date = chunk_end
 
     if not all_chunks:
-        return f"\u274c {symbol} {timeframe['interval']}{timeframe['unit']}: No candle data retrieved."
+        return f"FAIL {symbol} {timeframe['interval']}{timeframe['unit']}: No candle data retrieved."
 
     df = pd.DataFrame(all_chunks)
     df.columns = ["date", "open", "high", "low", "close", "volume", "_"]
@@ -246,10 +282,6 @@ def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timefr
 
     # Load existing metadata
     metadata = load_metadata(metadata_path)
-
-    # Check if this range already downloaded (skip only if not forcing redownload)
-    if not force_redownload and is_range_downloaded(metadata, date_range):
-        return f"⏩ {symbol} {timeframe['interval']}{timeframe['unit']}: Range {date_range['start_date']} to {date_range['end_date']} already exists, skipped"
 
     # If forcing redownload, delete existing files and metadata
     if force_redownload:
@@ -291,6 +323,198 @@ def fetch_upstox_data(symbol: str, instrument_key: str, date_range: dict, timefr
 
     return f"success: {symbol} {timeframe['interval']}{timeframe['unit']}: Added {len(df)} rows (total: {len(combined_df)})"
 
+
+# --- Intraday API (today's data, no T+1 delay) ---
+def fetch_intraday_today(symbol: str, instrument_key: str, unit: str = "minutes", interval: str = "1", max_retries: int = 3):
+    """Fetch today's candles via the Upstox V3 Intraday API.
+
+    Uses: GET /v3/historical-candle/intraday/{instrument_key}/{unit}/{interval}
+    No date params needed — returns current day's data.
+    No auth needed — same public endpoint as historical.
+
+    Args:
+        symbol: e.g. "RELIANCE.NS" or "NIFTY 50.NS"
+        instrument_key: e.g. "NSE_EQ|INE002A01018" or "NSE_INDEX|Nifty 50"
+        unit: "minutes" or "days"
+        interval: "1" for 1-minute or 1-day candles
+    """
+    url = (
+        f"https://api.upstox.com/v3/historical-candle/intraday/"
+        f"{instrument_key}/{unit}/{interval}"
+    )
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.get(url, headers=HEADERS)
+            if resp.status_code == 429:
+                wait = 2 ** (attempt + 1)
+                print(f"[rate-limit] {symbol} intraday {interval}{unit}: 429, waiting {wait}s...")
+                time.sleep(wait)
+                continue
+
+            if resp.status_code == 400:
+                return f"skipped: {symbol} intraday {interval}{unit}: 400 (no data)"
+
+            resp.raise_for_status()
+            candles = resp.json().get("data", {}).get("candles", [])
+
+            if not candles:
+                return f"skipped: {symbol} intraday {interval}{unit}: no candles returned"
+
+            df = pd.DataFrame(candles)
+            # Response has 7 columns: [date, open, high, low, close, volume, oi]
+            col_names = ["date", "open", "high", "low", "close", "volume"]
+            if len(df.columns) >= 7:
+                df.columns = col_names + ["_"] + list(df.columns[7:])
+                df = df[col_names]
+            else:
+                df.columns = col_names[:len(df.columns)]
+
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.sort_values("date").reset_index(drop=True)
+
+            # Merge with existing feather file
+            out_dir = OUTPUT_BASE / symbol
+            out_dir.mkdir(parents=True, exist_ok=True)
+            data_path = out_dir / f"{symbol}_{interval}{unit}.feather"
+
+            if data_path.exists():
+                try:
+                    existing_df = pd.read_feather(data_path)
+                    combined_df = pd.concat([existing_df, df], ignore_index=True)
+                    combined_df = combined_df.sort_values("date").reset_index(drop=True)
+                    combined_df = combined_df.drop_duplicates(subset=["date"], keep="last")
+                except (OSError, Exception) as e:
+                    print(f"  [warn] {symbol}: corrupted feather, replacing: {e}")
+                    combined_df = df
+            else:
+                combined_df = df
+
+            combined_df.to_feather(data_path)
+
+            time.sleep(0.3)
+            return f"success: {symbol} intraday {interval}{unit}: {len(df)} candles (total: {len(combined_df)})"
+
+        except Exception as e:
+            if attempt == max_retries:
+                return f"FAIL {symbol} intraday {interval}{unit}: {e}"
+            time.sleep(1)
+
+    return f"FAIL {symbol} intraday {interval}{unit}: exhausted retries"
+
+
+def run_intraday_today(instrument_map: dict, workers: int):
+    """Fetch today's 1m + daily candles for all symbols + indices via Intraday API."""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    print(f"Fetching today's intraday data ({today_str}) via Intraday API")
+    print(f"Symbols: {len(instrument_map)} equities + {len(INDEX_INSTRUMENTS)} indices")
+    print()
+
+    # Build combined task list: (symbol, instrument_key, unit, interval)
+    tasks = []
+    for sym, key in instrument_map.items():
+        tasks.append((sym, key, "minutes", "1"))  # 1m candles
+        tasks.append((sym, key, "days", "1"))      # daily bar
+
+    for idx_name, idx_key in INDEX_INSTRUMENTS.items():
+        idx_sym = f"{idx_name}.NS"
+        tasks.append((idx_sym, idx_key, "minutes", "1"))
+        tasks.append((idx_sym, idx_key, "days", "1"))
+
+    total = len(tasks)
+    results = []
+    success_count = 0
+    failure_count = 0
+    skipped = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {}
+        for sym, key, unit, interval in tasks:
+            future = executor.submit(fetch_intraday_today, sym, key, unit, interval)
+            futures[future] = f"{sym}_{interval}{unit}"
+
+        for fut in as_completed(futures):
+            result = fut.result()
+            results.append(result)
+            if "success" in result:
+                success_count += 1
+            elif "skipped" in result:
+                skipped += 1
+            else:
+                failure_count += 1
+
+            if len(results) % 100 == 0:
+                print(f"  Progress: {len(results)}/{total} | OK: {success_count} | Skip: {skipped} | Fail: {failure_count}", flush=True)
+
+    print(f"\n{'='*80}")
+    print(f"INTRADAY-TODAY SUMMARY ({today_str})")
+    print(f"{'='*80}")
+    print(f"Success: {success_count} | Skipped: {skipped} | Failed: {failure_count} / {total} total")
+
+    if failure_count > 0:
+        print("\nFailed:")
+        for r in results:
+            if r.startswith("FAIL"):
+                print(f"  {r}")
+
+
+def run_update_daily(instrument_map: dict, days: int, workers: int):
+    """Download last N days of daily OHLCV for all symbols + indices."""
+    end_date = datetime.now() - timedelta(days=1)  # yesterday (today not on historical API)
+    start_date = end_date - timedelta(days=days)
+    date_range = {
+        "name": f"update_daily_{days}d",
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+    }
+    timeframe = {"interval": "1", "unit": "days"}
+
+    # Combine equities + indices
+    combined_map = dict(instrument_map)
+    for idx_name, idx_key in INDEX_INSTRUMENTS.items():
+        combined_map[f"{idx_name}.NS"] = idx_key
+
+    total = len(combined_map)
+    print(f"Updating daily data: {date_range['start_date']} to {date_range['end_date']} ({days} days)")
+    print(f"Symbols: {total} ({len(instrument_map)} equities + {len(INDEX_INSTRUMENTS)} indices)")
+    print()
+
+    results = []
+    success_count = 0
+    failure_count = 0
+    skipped = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {}
+        for sym, key in combined_map.items():
+            future = executor.submit(fetch_upstox_data, sym, key, date_range, timeframe)
+            futures[future] = sym
+
+        for fut in as_completed(futures):
+            result = fut.result()
+            results.append(result)
+            if "success" in result:
+                success_count += 1
+            elif "skipped" in result:
+                skipped += 1
+            else:
+                failure_count += 1
+
+            if len(results) % 100 == 0:
+                print(f"  Progress: {len(results)}/{total} | OK: {success_count} | Skip: {skipped} | Fail: {failure_count}", flush=True)
+
+    print(f"\n{'='*80}")
+    print(f"UPDATE-DAILY SUMMARY ({days} days)")
+    print(f"{'='*80}")
+    print(f"Success: {success_count} | Skipped: {skipped} | Failed: {failure_count} / {total} total")
+
+    if failure_count > 0:
+        print("\nFailed:")
+        for r in results:
+            if r.startswith("FAIL"):
+                print(f"  {r}")
+
+
 # --- Command Line Argument Parsing ---
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -301,6 +525,10 @@ Examples:
   python upstox_cache_downloader.py                    # Download both 1m and 1d data (default)
   python upstox_cache_downloader.py --data-type daily  # Download only daily data for 3-year coverage
   python upstox_cache_downloader.py --data-type minute # Download only minute data for backtesting
+  python upstox_cache_downloader.py --from 2025-12-01 --to 2026-02-09 --data-type minute
+  python upstox_cache_downloader.py --update-daily     # Last 210 days daily data
+  python upstox_cache_downloader.py --update-daily 300 # Last 300 days daily data
+  python upstox_cache_downloader.py --intraday-today   # Today's 1m + daily via Intraday API
         """
     )
 
@@ -317,17 +545,69 @@ Examples:
         help="Redownload only problematic symbols (from problematic_symbols.json)"
     )
 
+    parser.add_argument(
+        "--from", dest="start_date",
+        help="Start date YYYY-MM-DD (overrides hardcoded DATE_RANGES)"
+    )
+
+    parser.add_argument(
+        "--to", dest="end_date",
+        help="End date YYYY-MM-DD (overrides hardcoded DATE_RANGES)"
+    )
+
+    parser.add_argument(
+        "--workers", type=int, default=MAX_WORKERS,
+        help=f"Number of concurrent download workers (default: {MAX_WORKERS})"
+    )
+
+    parser.add_argument(
+        "--update-daily",
+        nargs="?", const=210, type=int, metavar="DAYS",
+        help="Download last N days of daily OHLCV for all symbols + indices (default: 210)"
+    )
+
+    parser.add_argument(
+        "--intraday-today",
+        action="store_true",
+        help="Fetch today's 1m + daily candles via Intraday API (no T+1 delay)"
+    )
+
     return parser.parse_args()
 
 # --- Runner ---
 if __name__ == "__main__":
     args = parse_arguments()
 
+    # Load full instrument map (needed for all modes)
+    full_instrument_map = load_instrument_map_ndjson(UPSTOX_JSON_PATH)
+
+    # --- Mode: --intraday-today ---
+    if args.intraday_today:
+        run_intraday_today(full_instrument_map, args.workers)
+        exit(0)
+
+    # --- Mode: --update-daily ---
+    if args.update_daily is not None:
+        run_update_daily(full_instrument_map, args.update_daily, args.workers)
+        exit(0)
+
+    # --- Default mode: historical range download ---
+
+    # Override DATE_RANGES if --from/--to provided
+    if args.start_date and args.end_date:
+        try:
+            datetime.strptime(args.start_date, "%Y-%m-%d")
+            datetime.strptime(args.end_date, "%Y-%m-%d")
+        except ValueError:
+            print("ERROR: Dates must be in YYYY-MM-DD format")
+            exit(1)
+        DATE_RANGES = [{"name": "custom", "start_date": args.start_date, "end_date": args.end_date}]
+    elif args.start_date or args.end_date:
+        print("ERROR: Both --from and --to must be provided together")
+        exit(1)
+
     # Select timeframes based on argument
     TIMEFRAMES = TIMEFRAME_OPTIONS[args.data_type]
-
-    # Load full instrument map
-    full_instrument_map = load_instrument_map_ndjson(UPSTOX_JSON_PATH)
 
     # Filter to problematic symbols if flag is set
     force_redownload = False
@@ -370,7 +650,7 @@ if __name__ == "__main__":
     failure_count = 0
     skipped = 0
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {}
 
         # Submit all combinations of symbol x date_range x timeframe
