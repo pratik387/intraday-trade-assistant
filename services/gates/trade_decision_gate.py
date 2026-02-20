@@ -1003,7 +1003,9 @@ class TradeDecisionGate:
                     else:
                         reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
                 else:
-                    reasons.append("breakout_volume_surge_skip:insufficient_data")
+                    bars_available = len(df1m_tail) if df1m_tail is not None else 0
+                    reasons.append(f"breakout_volume_surge_reject:insufficient_data({bars_available}_bars<5)")
+                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
                 # FILTER 2: Momentum candle validation
                 # Professional standard: Breakout candle should be 2-3x larger than previous candles
@@ -1031,7 +1033,9 @@ class TradeDecisionGate:
                     else:
                         reasons.append("breakout_momentum_candle_skip:avg_candle_size_zero")
                 else:
-                    reasons.append("breakout_momentum_candle_skip:insufficient_data")
+                    bars_available = len(df1m_tail) if df1m_tail is not None else 0
+                    reasons.append(f"breakout_momentum_candle_reject:insufficient_data({bars_available}_bars<5)")
+                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
             except Exception as e:
                 import traceback

@@ -636,6 +636,7 @@ class BreakoutPipeline(BasePipeline):
 
         # Check 1m volume surge
         # FHM BYPASS: FHM already validated RVOL in screening, skip 1m volume surge check
+        # FAIL-CLOSED: Reject breakout when 1m data insufficient (can't validate institutional volume)
         lookback = vol_cfg["long"]["lookback_bars"]
         if is_fhm:
             reasons.append(f"fhm_volume_surge_bypass:uses_rvol_from_screening")
@@ -653,9 +654,14 @@ class BreakoutPipeline(BasePipeline):
                         passed = False
                     else:
                         reasons.append(f"volume_surge_pass:{volume_ratio:.2f}x")
+        else:
+            bars_available = len(df1m) if df1m is not None else 0
+            reasons.append(f"volume_surge_reject:insufficient_1m_data({bars_available}_bars<5)")
+            passed = False
 
         # Momentum candle filter
         # FHM BYPASS: FHM uses RVOL-based momentum, not candle analysis
+        # FAIL-CLOSED: Reject breakout when 1m data insufficient (can't validate candle quality)
         if is_fhm:
             reasons.append(f"fhm_momentum_candle_bypass:uses_rvol")
         elif df1m is not None and len(df1m) >= 5:
@@ -672,6 +678,10 @@ class BreakoutPipeline(BasePipeline):
                     passed = False
                 else:
                     reasons.append(f"momentum_candle_pass:{candle_ratio:.2f}x")
+        else:
+            bars_available = len(df1m) if df1m is not None else 0
+            reasons.append(f"momentum_candle_reject:insufficient_1m_data({bars_available}_bars<5)")
+            passed = False
 
         # ADX gate from config - HARD GATE
         # ORB uses relaxed threshold (15) - ADX takes 14+ bars to stabilize, structure detector enforces time

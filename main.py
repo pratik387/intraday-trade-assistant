@@ -378,7 +378,8 @@ def main() -> int:
         to_date   = _hhmm_on(args.session_date, args.to_hhmm)
 
         # MockBroker replays 1m ticks via FeatherTicker and maintains an internal LTP cache
-        sdk = MockBroker(path_json="nse_all.json", from_date=from_date, to_date=to_date)
+        sdk = MockBroker(path_json="nse_all.json", from_date=from_date, to_date=to_date,
+                         slippage_bps=cfg["fees_slippage_bps"])
         sdk.set_session_date(args.session_date)  # prev-day refs (PDH/PDL/PDC) resolve correctly
         broker = _DryRunBroker(sdk)
         logger.warning("📊 BACKTEST MODE: %s %s-%s (historical data replay)", args.session_date, args.from_hhmm, args.to_hhmm)

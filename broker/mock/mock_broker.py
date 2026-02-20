@@ -36,7 +36,11 @@ class MockBroker:
     Note: No changes required in FeatherTicker/FeatherTickLoader.
     """
 
-    def __init__(self, path_json: str = "nse_all.json", from_date: str = None, to_date: str = None):
+    def __init__(self, path_json: str = "nse_all.json", from_date: str = None, to_date: str = None,
+                 slippage_bps: float = None):
+        if slippage_bps is None:
+            raise ValueError("MockBroker requires slippage_bps from config (fees_slippage_bps)")
+        self._slippage_frac = slippage_bps / 10_000  # Convert bps to fraction
         self._sym2inst: Dict[str, _Inst] = {}
         self._tok2sym: Dict[int, str] = {}
         self._equity_instruments: List[str] = []
@@ -476,9 +480,9 @@ class MockBroker:
                     # direction by bar body: up -> use zone low, down -> zone high
                     fill = lo if close >= open_ else hi
 
-                # Fixed 5 bps slippage; side-aware if provided
+                # Side-aware slippage from config (fees_slippage_bps)
                 side = (kwargs.get("side") or "").upper()
-                slip = 0.0005  # 5 bps hardcoded
+                slip = self._slippage_frac
                 if side == "BUY":
                     fill *= (1.0 + slip)
                 elif side == "SELL":
