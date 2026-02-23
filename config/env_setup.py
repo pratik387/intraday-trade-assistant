@@ -19,11 +19,23 @@ if not env_path.exists():
     raise FileNotFoundError(f"Missing environment file: {env_path.name}")
 load_dotenv(env_path)
 
-# ─── Helper to read token from file ──────────────────────────────────────────
+# ─── Helpers to read token from file ─────────────────────────────────────────
 def _read_token_file():
-    """Read access token from token.txt file (if exists)"""
-    # Look in broker/kite folder
+    """Read Kite access token from broker/kite/token.txt (if exists)"""
     token_file = ROOT / "broker" / "kite" / "token.txt"
+    if token_file.exists():
+        try:
+            token = token_file.read_text().strip()
+            if token:
+                return token
+        except Exception:
+            pass
+    return None
+
+
+def _read_upstox_token_file():
+    """Read Upstox access token from broker/upstox/token.txt (if exists)"""
+    token_file = ROOT / "broker" / "upstox" / "token.txt"
     if token_file.exists():
         try:
             token = token_file.read_text().strip()
@@ -43,6 +55,12 @@ class EnvConfig:
     # Priority: token.txt > env variable
     KITE_ACCESS_TOKEN = _read_token_file() or os.getenv("KITE_ACCESS_TOKEN")
     DRY_RUN           = os.getenv("DRY_RUN")
+
+    # Upstox credentials (for hybrid data feed mode)
+    UPSTOX_API_KEY       = os.getenv("UPSTOX_API_KEY")
+    UPSTOX_API_SECRET    = os.getenv("UPSTOX_API_SECRET")
+    UPSTOX_REDIRECT_URI  = os.getenv("UPSTOX_REDIRECT_URI")
+    UPSTOX_ACCESS_TOKEN  = _read_upstox_token_file() or os.getenv("UPSTOX_ACCESS_TOKEN")
 
     @classmethod
     def validate_for_paper_trading(cls):

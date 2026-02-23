@@ -407,9 +407,10 @@ class ScreenerConfig:
 class ScreenerLive:
     """Live orchestrator. Construct once and call start()."""
 
-    def __init__(self, *, sdk, order_queue: OrderQueue) -> None:
+    def __init__(self, *, sdk, order_queue: OrderQueue, mis_fetcher=None) -> None:
         self.sdk = sdk
         self.oq = order_queue
+        self._mis_fetcher = mis_fetcher
 
         raw = load_filters()
         self.raw_cfg = raw  # Store raw config for other methods
@@ -1508,6 +1509,17 @@ class ScreenerLive:
             etf_count = len(all_symbols) - len(self.core_symbols)
             if etf_count > 0:
                 logger.info(f"ETF_FILTER | Excluded {etf_count} ETF symbols from trading universe")
+
+            # Early MIS filter — reduces WS subscriptions, Stage-0, daily cache, ORB
+            mis_filter_cfg = self.raw_cfg.get("early_mis_universe_filter", {})
+            if mis_filter_cfg.get("enabled", False) and self._mis_fetcher and self._mis_fetcher.is_loaded():
+                before = len(self.core_symbols)
+                self.core_symbols = [s for s in self.core_symbols if self._mis_fetcher.is_mis_allowed(s)]
+                filtered_set = set(self.core_symbols)
+                self.token_map = {tok: sym for tok, sym in self.token_map.items() if sym in filtered_set}
+                self.symbol_map = {sym: tok for sym, tok in self.symbol_map.items() if sym in filtered_set}
+                removed = before - len(self.core_symbols)
+                logger.info(f"MIS_UNIVERSE | core_symbols: {before} -> {len(self.core_symbols)} ({removed} non-MIS removed)")
         except Exception as e:
             raise RuntimeError(f"ScreenerLive: sdk.list_equities() failed: {e}")
         return self.token_map

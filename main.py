@@ -172,7 +172,7 @@ def main() -> int:
     # Auto-enable capital management for paper trading and live trading
     # For backtests, only enable if --with-capital-limits flag is set
     capital_enabled = cap_mgmt_cfg.get('enabled', False)
-    mis_fetcher = None  # MIS validation fetcher (paper trading only)
+    mis_fetcher = None  # MIS validation fetcher (paper/live + universe pre-filter)
 
     if args.paper_trading or (not args.dry_run and not args.paper_trading):
         # Paper trading or live trading: always enable
@@ -180,16 +180,20 @@ def main() -> int:
         mis_enabled = True
         logger.info("[CAPITAL] Auto-enabled capital management (paper/live mode)")
 
-        # Fetch MIS-allowed stocks from Zerodha (paper trading only)
-        # Live trading doesn't need this - Zerodha broker will reject non-MIS orders anyway
-        if args.paper_trading:
+        # Fetch MIS-allowed stocks from Zerodha
+        # Used for: (1) paper trading order validation, (2) early universe filtering (when enabled)
+        mis_filter_cfg = cfg.get("early_mis_universe_filter", {})
+        if args.paper_trading or mis_filter_cfg.get("enabled", False):
             try:
                 from services.state.zerodha_mis_fetcher import ZerodhaMISFetcher
+                timeout = mis_filter_cfg.get("fetch_timeout_sec", 30)
                 mis_fetcher = ZerodhaMISFetcher()
-                if mis_fetcher.load_from_zerodha(timeout_sec=30):
+                if mis_fetcher.load_from_zerodha(timeout_sec=timeout):
                     logger.info(f"MIS_FETCHER | Loaded {mis_fetcher.count()} MIS-allowed symbols from Zerodha")
                 else:
-                    logger.warning("MIS_FETCHER | Failed to fetch MIS list - trades on non-MIS stocks may occur")
+                    logger.warning("MIS_FETCHER | Failed to fetch MIS list")
+                    if mis_filter_cfg.get("fallback_to_full_universe", True):
+                        logger.warning("MIS_FETCHER | Falling back to full universe")
                     mis_fetcher = None
             except Exception as e:
                 logger.warning(f"MIS_FETCHER | Error initializing: {e}")
@@ -284,7 +288,7 @@ def main() -> int:
         queue_key = base_queue_key
         oq = OrderQueue()
 
-    def _prewarm_daily_cache(sdk):
+    def _prewarm_daily_cache(sdk, mis_fetcher=None):
         """Pre-warm daily cache: Redis (1-3s) -> rolling disk (2-5s) -> API (15min)."""
         from datetime import datetime as _dt
 
@@ -318,8 +322,16 @@ def main() -> int:
                 sdk.set_daily_cache(cached_data)
                 loaded_from = "disk"
 
+        # Compute MIS-filtered symbol list for prewarm (when early filter enabled)
+        mis_filter_cfg = cfg.get("early_mis_universe_filter", {})
+        prewarm_symbols = None
+        if mis_filter_cfg.get("enabled", False) and mis_fetcher and mis_fetcher.is_loaded():
+            all_eq = list(sdk.get_symbol_map().keys())
+            prewarm_symbols = [s for s in all_eq if mis_fetcher.is_mis_allowed(s)]
+            logger.info(f"MIS_UNIVERSE | Prewarm: {len(all_eq)} -> {len(prewarm_symbols)} symbols")
+
         # Step 3: API fallback (90% threshold skips if rolling cache loaded)
-        result = sdk.prewarm_daily_cache(days=210)
+        result = sdk.prewarm_daily_cache(symbols=prewarm_symbols, days=210)
         if result.get("source") == "api":
             loaded_from = "api"
             cache_persistence.save(sdk.get_daily_cache())
@@ -349,7 +361,14 @@ def main() -> int:
         from config.env_setup import env
         env.validate_for_paper_trading()  # Validate credentials before starting
 
-        sdk = KiteClient()
+        if args.data_source == "upstox":
+            from broker.upstox.upstox_data_client import UpstoxDataClient
+            sdk = UpstoxDataClient()
+            logger.info("DATA_SOURCE | Using Upstox for market data (hybrid mode)")
+        else:
+            sdk = KiteClient()
+
+        # Broker ALWAYS stays Zerodha (preserves full MIS universe for orders)
         broker = KiteBroker(dry_run=True, ltp_cache=ltp_cache)
         logger.warning("🧪 PAPER TRADING MODE: Live data, simulated orders (no real trades)")
 
@@ -364,7 +383,7 @@ def main() -> int:
                 logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
 
         if not args.skip_prewarm:
-            _prewarm_daily_cache(sdk)
+            _prewarm_daily_cache(sdk, mis_fetcher=mis_fetcher)
     elif args.dry_run:
         # Backtesting: historical data + mock broker
         if not args.session_date:
@@ -381,7 +400,14 @@ def main() -> int:
         logger.warning("📊 BACKTEST MODE: %s %s-%s (historical data replay)", args.session_date, args.from_hhmm, args.to_hhmm)
     else:
         # Live trading: real money
-        sdk = KiteClient()
+        if args.data_source == "upstox":
+            from broker.upstox.upstox_data_client import UpstoxDataClient
+            sdk = UpstoxDataClient()
+            logger.info("DATA_SOURCE | Using Upstox for market data (hybrid mode)")
+        else:
+            sdk = KiteClient()
+
+        # Broker ALWAYS stays Zerodha (preserves full MIS universe for orders)
         broker = KiteBroker(dry_run=False, ltp_cache=ltp_cache)
         logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
 
@@ -396,7 +422,7 @@ def main() -> int:
                 logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
 
         if not args.skip_prewarm:
-            _prewarm_daily_cache(sdk)
+            _prewarm_daily_cache(sdk, mis_fetcher=mis_fetcher)
 
     # ---------- exec_only: full execution pipeline, no screener ----------
     if execution_mode == "exec_only":
@@ -625,7 +651,7 @@ def main() -> int:
             logger.warning("SEPARATED | Heartbeat check failed: %s", e)
 
         # Parent becomes scan process
-        screener = ScreenerLive(sdk=sdk, order_queue=oq)
+        screener = ScreenerLive(sdk=sdk, order_queue=oq, mis_fetcher=mis_fetcher)
         logger.info("SEPARATED | Starting screener (exec runs in child process PID=%d)", exec_child.pid)
 
         stop = threading.Event()
@@ -670,7 +696,7 @@ def main() -> int:
     # ---------- scan_only / in_process: need ScreenerLive ----------
 
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
-    screener = ScreenerLive(sdk=sdk, order_queue=oq)
+    screener = ScreenerLive(sdk=sdk, order_queue=oq, mis_fetcher=mis_fetcher)
 
     # Late-start warmup is now handled by Redis bar backfill in screener_live.py
     # (see late_start_warmup config and _late_start_backfill method)
@@ -969,6 +995,8 @@ def _parse_args():
     ap.add_argument("--instance-id", default=None,
                     help="Unique instance identifier for Redis plan queue channel (e.g., live, paper1, paper2). "
                          "Required when running multiple instances to prevent cross-instance plan leakage.")
+    ap.add_argument("--data-source", choices=["zerodha", "upstox"], default="zerodha",
+                    help="Market data source: zerodha (default) or upstox (hybrid mode: Upstox data + Zerodha orders)")
     return ap.parse_args()
 
 

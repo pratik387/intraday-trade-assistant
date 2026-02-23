@@ -2480,5 +2480,12 @@
   "backtest_mis_filtering": {
     "enabled": true,
     "_comment": "Filter non-MIS stocks in backtest using nse_all.json mis_enabled field. Large/mid cap MIS is 98.9% stable over 3 years. No capital restrictions applied — backtest tests signals/filters, not capital management."
+  },
+  "_comment_early_mis_filter": "=== EARLY MIS UNIVERSE FILTER (Reduce live/paper universe to MIS-eligible stocks) ===",
+  "early_mis_universe_filter": {
+    "enabled": true,
+    "fetch_timeout_sec": 30,
+    "fallback_to_full_universe": true,
+    "_comment": "Filter core_symbols to MIS-eligible stocks early in startup. Reduces ~2385 -> ~1500 symbols. Saves WS slots, prewarm time, Stage-0 compute. Uses ZerodhaMISFetcher (Google Sheets CSV). Required for Upstox hybrid mode (2000 instrument limit)."
   }
 }
