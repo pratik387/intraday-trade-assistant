@@ -130,6 +130,7 @@ class GateDecision:
     p_breakout: Optional[float] = None  # placeholder for meta-prob models
     setup_candidates: Optional[List[SetupCandidate]] = None  # NEW: full structure detection results
     regime_diagnostics: Optional[dict] = None  # Phase 2: Multi-TF regime diagnostics
+    structure_confidence: float = 0.0  # Detector strength of best candidate
 
 
 # ----------------------------- Component Protocols -----------------------------
@@ -709,6 +710,21 @@ class TradeDecisionGate:
             structural_rr = 0.0
             if plan and "quality" in plan and plan["quality"]:
                 structural_rr = float(plan["quality"].get("structural_rr", 0.0) or 0.0)
+            elif df5m_tail is not None and len(df5m_tail) >= 3 and levels:
+                # Estimate structural R:R from price/levels when plan not yet available
+                _close = float(df5m_tail["close"].iloc[-1])
+                _bias = best.bias if hasattr(best, 'bias') else "long"
+                if _bias == "long":
+                    _sl = levels.get("ORL") or levels.get("PDL")
+                    _tp = levels.get("PDH") or levels.get("ORH")
+                else:
+                    _sl = levels.get("ORH") or levels.get("PDH")
+                    _tp = levels.get("PDL") or levels.get("ORL")
+                if _sl and _tp:
+                    _risk = abs(_close - _sl)
+                    _reward = abs(_tp - _close)
+                    if _risk > 0:
+                        structural_rr = _reward / _risk
 
             features = self._compute_features(
                 symbol=symbol,
@@ -987,7 +1003,9 @@ class TradeDecisionGate:
                     else:
                         reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
                 else:
-                    reasons.append("breakout_volume_surge_skip:insufficient_data")
+                    bars_available = len(df1m_tail) if df1m_tail is not None else 0
+                    reasons.append(f"breakout_volume_surge_reject:insufficient_data({bars_available}_bars<5)")
+                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
                 # FILTER 2: Momentum candle validation
                 # Professional standard: Breakout candle should be 2-3x larger than previous candles
@@ -1015,7 +1033,9 @@ class TradeDecisionGate:
                     else:
                         reasons.append("breakout_momentum_candle_skip:avg_candle_size_zero")
                 else:
-                    reasons.append("breakout_momentum_candle_skip:insufficient_data")
+                    bars_available = len(df1m_tail) if df1m_tail is not None else 0
+                    reasons.append(f"breakout_momentum_candle_reject:insufficient_data({bars_available}_bars<5)")
+                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
             except Exception as e:
                 import traceback
@@ -1076,6 +1096,7 @@ class TradeDecisionGate:
             min_hold_bars=max(0, min_hold),
             setup_candidates=setups,  # NEW: full setup candidates for structure system
             regime_diagnostics=regime_diagnostics,  # Phase 2: Multi-TF regime diagnostics
+            structure_confidence=strength,  # Detector strength of best candidate
         )
 
     def _get_strategy_momentum_threshold(self, setup_type: Optional[str]) -> float:

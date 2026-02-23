@@ -110,6 +110,9 @@ class _DryRunBroker:
     def get_ltp_batch(self, symbols):
         return self._real.get_ltp_batch(symbols)
 
+    def get_daily(self, symbol: str, days: int = 210):
+        return self._real.get_daily(symbol, days)
+
     @property
     def _last_bar_ohlc(self):
         """Delegate to underlying MockBroker's OHLC cache for T1/T2 detection."""
@@ -394,7 +397,8 @@ def main() -> int:
         to_date   = _hhmm_on(args.session_date, args.to_hhmm)
 
         # MockBroker replays 1m ticks via FeatherTicker and maintains an internal LTP cache
-        sdk = MockBroker(path_json="nse_all.json", from_date=from_date, to_date=to_date)
+        sdk = MockBroker(path_json="nse_all.json", from_date=from_date, to_date=to_date,
+                         slippage_bps=cfg["fees_slippage_bps"])
         sdk.set_session_date(args.session_date)  # prev-day refs (PDH/PDL/PDC) resolve correctly
         broker = _DryRunBroker(sdk)
         logger.warning("📊 BACKTEST MODE: %s %s-%s (historical data replay)", args.session_date, args.from_hhmm, args.to_hhmm)
@@ -433,11 +437,13 @@ def main() -> int:
         bar_subscriber = BarSubscriber(redis_url=redis_url, symbols=None)
         bar_subscriber.init_redis()
 
-        # Wire LTP cache to BarSubscriber ticks
+        # Wire LTP cache + tick recorder to BarSubscriber ticks
         _original_on_tick = bar_subscriber.on_tick
         def _ltp_tap_on_tick(symbol, price, volume, ts):
             _original_on_tick(symbol, price, volume, ts)
             ltp_cache.update(symbol, float(price), pd.Timestamp(ts))
+            if tick_recorder is not None:
+                tick_recorder.on_tick(symbol, float(price), 0, ts, float(volume))
         bar_subscriber.on_tick = _ltp_tap_on_tick
 
         # Risk + shared positions
@@ -600,6 +606,13 @@ def main() -> int:
                         capital_manager.save_final_report(log_dir)
                 except Exception:
                     pass
+
+            if tick_recorder is not None:
+                try:
+                    tick_recorder.finalize()
+                    logger.info(f"TICK_RECORDER | Finalized: {tick_recorder.tick_count:,} ticks recorded")
+                except Exception as e:
+                    logger.warning(f"TICK_RECORDER | Finalize failed: {e}")
 
             heartbeat.stop()
             bar_subscriber.shutdown()

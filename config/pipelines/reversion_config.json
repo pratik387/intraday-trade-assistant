@@ -86,16 +86,17 @@
                 "size_mult": 1.3
             },
             "trend_up": {
-                "_comment": "Counter-trend needs stronger confirmation",
+                "_comment": "GATES-OFF RUN: counter_trend min_strength set to 0",
                 "allowed": true,
                 "size_mult": 1.0,
-                "min_strength_counter_trend": 1.5,
+                "min_strength_counter_trend": 0.0,
                 "counter_trend_size_mult": 0.7
             },
             "trend_down": {
+                "_comment": "GATES-OFF RUN: counter_trend min_strength set to 0",
                 "allowed": true,
                 "size_mult": 1.0,
-                "min_strength_counter_trend": 1.5,
+                "min_strength_counter_trend": 0.0,
                 "counter_trend_size_mult": 0.7
             },
             "squeeze": {
@@ -142,52 +143,46 @@
             }
         },
         "setup_filters": {
-            "_comment": "3-YEAR OPTIMIZED FILTERS (Dec 2024): Analyzed 4,604 triggered trades, 732 trading days",
-            "_active_profile": "3YEAR_OPTIMIZED",
-            "_analysis_date": "2024-12-27",
-            "failure_fade_long": {
+            "_comment": "DATA-DRIVEN (Feb 2026): 3-year edge optimizer analysis (618K trades, FY2022-26)",
+            "_active_profile": "OPTIMIZED",
+            "vwap_mean_reversion_long": {
                 "enabled": true,
                 "blocked_entirely": true,
-                "_evidence": "Keep existing - not enough trades for reanalysis"
-            },
-            "failure_fade_short": {
-                "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "Keep existing - not enough trades for reanalysis"
+                "_evidence": "124 trades, WR 43.5%, Rs -0.86L loss, negative ALL FYs with data."
             },
             "volume_spike_reversal_long": {
                 "enabled": true,
-                "blocked_caps": ["mid_cap"],
-                "_filter": "BASELINE with block mid_cap only",
-                "_evidence": "3YR VERIFIED: 161 trades, Rs 50,295 net (Rs 312 avg). Baseline 186 trades Rs 49,150 (Rs 264 avg).",
-                "_why_baseline": "All regimes profitable (squeeze Rs 26K, trend_up Rs 17K, trend_down Rs 5.5K). 59% win rate. Aggressive filtering HURTS total PnL.",
-                "_why_block_mid_cap": "mid_cap: 25 trades (11W/14L), Rs -1,146 net = only unprofitable segment. Blocking gives +Rs 1,146 improvement.",
-                "_rejected_filter": "rank>=1 + block trend_down + small_cap was WRONG: cut Rs 109K winners but only avoided Rs 68K losses = net -Rs 23K"
+                "blocked_caps": ["large_cap"],
+                "_evidence": "3yr backtest: large_cap N=304, WR 52%, Avg -Rs 92. Overall profitable, block large_cap only."
             },
             "volume_spike_reversal_short": {
-                "enabled": false,
-                "min_volume_ratio": 10,
-                "blocked_daily_regimes": ["trend_up"],
-                "_evidence": "Keep existing - not enough trades for reanalysis"
-            },
-            "vwap_mean_reversion_long": {
-                "enabled": false,
-                "min_volume": 50000,
-                "_evidence": "Keep existing - disabled"
-            },
-            "vwap_mean_reversion_short": {
-                "enabled": false,
-                "min_volume": 50000,
-                "_evidence": "Keep existing - disabled"
-            },
-            "gap_fill_long": {
-                "enabled": false,
-                "min_volume": 150000,
-                "_evidence": "Keep existing - disabled"
+                "enabled": true,
+                "blocked_regimes": ["trend_down"],
+                "_evidence": "3yr backtest: trend_down N=212, WR 52%, Avg -Rs 98. Other regimes profitable (chop 59%, trend_up 59%)."
             },
             "gap_fill_short": {
                 "enabled": false,
-                "_evidence": "Keep existing - disabled"
+                "blocked_regimes": ["trend_down"],
+                "_evidence": "266 trades, Rs +3.68L. trend_down WR 48% Rs -204.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
+            },
+            "gap_fill_long": {
+                "enabled": false,
+                "blocked_regimes": ["trend_up"],
+                "blocked_hours": [10],
+                "blocked_caps": ["mid_cap"],
+                "_evidence": "244 trades. trend_up WR 42% Rs -880. hour 10 WR 48% Rs -495. mid_cap WR 45% Rs -182.",
+                "_disabled_reason": "VC whitelist gate is the primary filter now"
+            },
+            "failure_fade_long": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "3yr deep_edge: Rs -1,137 avg, 48 trades. Negative ALL FYs."
+            },
+            "vwap_mean_reversion_short": {
+                "enabled": true,
+                "blocked_entirely": true,
+                "_evidence": "3yr deep_edge: Rs -231 avg, 74 trades. Negative overall."
             }
         },
         "global_filters": {
@@ -207,139 +202,6 @@
                 "min_rsi": 35,
                 "max_rsi": 65,
                 "_rationale": "Disabled - RSI extremes enforced in screening for reversion"
-            }
-        }
-    },
-
-    "ranking": {
-        "_comment": "REVERSION-SPECIFIC RANKING (Dec 2024) - Pro trader research: low ADX, extreme RSI, counter-VWAP = overextension",
-        "mode": "reversion_specific",
-        "score_scale": 5.0,
-        "_score_scale_note": "Multiplier to scale weighted sum back to usable range (~0-5). Weighted sum alone produces ~0.17 mean.",
-        "weights": {
-            "volume": {
-                "_comment": "MODERATE for reversion - exhaustion volume (high then declining) is key",
-                "divisor": 3.0,
-                "cap": 1.5,
-                "weight": 0.10
-            },
-            "rsi": {
-                "_comment": "EXTREME = GOOD for reversion (oversold/overbought = exhaustion signal)",
-                "mode": "extreme_is_good",
-                "long_oversold_threshold": 35,
-                "long_very_oversold_threshold": 25,
-                "long_overbought_penalty_threshold": 60,
-                "short_overbought_threshold": 65,
-                "short_very_overbought_threshold": 75,
-                "short_oversold_penalty_threshold": 40,
-                "extreme_bonus": 0.6,
-                "good_bonus": 0.4,
-                "penalty": -0.4,
-                "weight": 0.25
-            },
-            "adx": {
-                "_comment": "LOW ADX = GOOD for reversion (ranging market = mean reversion works)",
-                "mode": "low_is_good",
-                "ideal_max": 20,
-                "acceptable_max": 25,
-                "penalty_threshold": 35,
-                "ideal_bonus": 0.4,
-                "acceptable_bonus": 0.2,
-                "penalty": -0.4,
-                "weight": 0.20
-            },
-            "vwap": {
-                "_comment": "COUNTER = GOOD for reversion (extended from VWAP = reversion opportunity)",
-                "mode": "counter_is_good",
-                "counter_bonus": 0.4,
-                "aligned_bonus": 0.1,
-                "weight": 0.15
-            },
-            "distance": {
-                "_comment": "EXTENDED from level = reversion opportunity",
-                "near_bpct": 0.5,
-                "near_score": 0.2,
-                "ok_bpct": 1.5,
-                "ok_score": 0.3,
-                "far_score": 0.4,
-                "weight": 0.10
-            },
-            "squeeze": {
-                "_comment": "Low squeeze = good for reversion (ranging market)",
-                "low_bonus": 0.3,
-                "mid_bonus": 0.2,
-                "high_penalty": -0.2,
-                "weight": 0.10
-            },
-            "acceptance": {
-                "_comment": "DISABLE for reversion - structure less important, exhaustion is key",
-                "enabled": false,
-                "excellent_bonus": 0.0,
-                "good_bonus": 0.0,
-                "weight": 0.10
-            }
-        },
-        "daily_trend_multipliers": {
-            "aligned": 1.25,
-            "counter": 0.75,
-            "neutral": 1.0
-        },
-        "regime_multipliers": {
-            "_comment": "Default fallback - Chop best for mean reversion per baseline analysis",
-            "chop": 1.4,
-            "squeeze": 1.2,
-            "trend_up": 0.9,
-            "trend_down": 0.9
-        },
-        "strategy_regime_multipliers": {
-            "_comment": "From baseline ranker.py _get_regime_multiplier() - Strategy-specific overrides",
-            "vwap_mean_reversion": {
-                "_comment": "From baseline: chop=1.3, other=1.2 - VWAP strategies showed best performance",
-                "chop": 1.3,
-                "squeeze": 1.2,
-                "trend_up": 1.2,
-                "trend_down": 1.2,
-                "default": 1.2
-            },
-            "range_deviation": {
-                "_comment": "From baseline: chop=1.8, squeeze=1.5, other=1.1 - HUGE boost for institutional range trading",
-                "chop": 1.8,
-                "squeeze": 1.5,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "default": 1.1
-            },
-            "range_mean_reversion": {
-                "_comment": "Same as range_deviation - institutional range trading",
-                "chop": 1.8,
-                "squeeze": 1.5,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "default": 1.1
-            },
-            "failure_fade": {
-                "_comment": "From baseline: chop=1.2, other=1.1",
-                "chop": 1.2,
-                "squeeze": 1.1,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "default": 1.1
-            },
-            "liquidity_sweep": {
-                "_comment": "From baseline: chop=1.4, trend=1.1 - sweeps effective in ranging markets",
-                "chop": 1.4,
-                "squeeze": 1.2,
-                "trend_up": 1.1,
-                "trend_down": 1.1,
-                "default": 1.0
-            },
-            "fair_value_gap": {
-                "_comment": "From baseline: trend=1.3, chop=0.9 - FVGs work best in trending markets",
-                "trend_up": 1.3,
-                "trend_down": 1.3,
-                "chop": 0.9,
-                "squeeze": 1.0,
-                "default": 1.0
             }
         }
     },
@@ -394,8 +256,8 @@
     },
 
     "stop_loss": {
-        "_comment": "From baseline configuration.json (commit 3ded63d) - sl_atr_mult: 2.0 (failure_fade setup-specific stop_mult: 1.5 is handled at setup level)",
-        "atr_multiplier": 2.0,
+        "_comment": "DATA-DRIVEN: 3.5x ATR (Feb 2026 edge optimizer: P90 MAE of winners = 5.56x, intermediate step from 2.0). failure_fade stop_mult 1.5 handled at setup level.",
+        "atr_multiplier": 3.5,
         "min_stop_distance_pct": 0.5
     },
 

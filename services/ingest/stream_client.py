@@ -47,14 +47,15 @@ class WSClient:
         - .set_mode(mode: str, tokens: list[int])
     """
 
-    def __init__(self, sdk: Any, on_tick: Callable[[dict], None]) -> None:
+    def __init__(self, sdk: Any, on_tick: Callable[[dict], None] = None) -> None:
         self._sdk = sdk
         self._ticker: Any = None
         self._on_message: Optional[Callable[[Any], None]] = None
         self._on_close_cb: Optional[Callable] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        self.on_tick = on_tick
+        # on_tick kept for backward compat; actual dispatch flows through on_message() -> TickRouter
+        self._on_tick_legacy = on_tick
 
         # Buffer for subscriptions before WebSocket connects
         self._connected = threading.Event()
@@ -139,12 +140,13 @@ class WSClient:
 
     # ------------------------------- Internals ------------------------------
     def _run(self) -> None:
-        """Thread target: obtain ticker, wire callbacks, connect, loop."""
+        """Thread target: obtain ticker, wire callbacks, connect (threaded), keep-alive loop."""
         try:
             self._ticker = self._sdk.make_ticker()
             self._wire_callbacks(self._ticker)
             self._connect(self._ticker)
-            # Passive loop to keep the thread alive as long as SDK runs
+            # connect(threaded=True) returns immediately — reactor runs in KiteTicker's own thread
+            # Keep this thread alive so WSClient.stop() can join it
             while not self._stop.is_set():
                 time.sleep(0.25)
         except Exception as e:
@@ -239,7 +241,7 @@ class WSClient:
             connect = getattr(ticker, "connect", None)
             if not callable(connect):
                 raise RuntimeError("WSClient: ticker has no connect()")
-            connect()
+            connect(threaded=True)
         except Exception as e:
             logger.exception(f"WebSocket connect() failed: {e}", exc_info=True)
             raise RuntimeError(f"WSClient: connect() failed: {e}") from e

@@ -12,9 +12,9 @@
     },
 
     "cap_strategy_blocking": {
-        "_comment": "From trade_decision_gate.py - Block certain setups for certain market cap segments",
+        "_comment": "GATES-OFF RUN: disabled cap-specific setup blocking",
         "_evidence": "DATA-DRIVEN (Dec 2024): FHM LONG only profitable in mid_cap (+1,342 Rs). large_cap=-8,934 Rs, small_cap=-18,011 Rs, micro_cap=-4,260 Rs",
-        "enabled": true,
+        "enabled": false,
         "blocked_setups": {
             "micro_cap": ["momentum_breakout", "squeeze_release"],
             "small_cap": [],
@@ -89,8 +89,8 @@
     },
 
     "quality_filters": {
-        "_comment": "From planner_internal.py lines 1358-1451 - Professional quality enforcement",
-        "enabled": true,
+        "_comment": "GATES-OFF RUN: disabled quality enforcement (structural_rr, T1_rr thresholds)",
+        "enabled": false,
 
         "min_structural_rr": 1.2,
         "strategy_structural_rr_overrides": {
@@ -132,6 +132,35 @@
         "t2_max_mm_frac": 3.0
     },
 
+    "trade_quality_gates": {
+        "_comment": "DATA-DRIVEN (Feb 2026): Pipeline-aware A (28,472 trades, 754 sessions, FY2022-26). 13.9 T/day, WR 58.6%, Avg Rs 299, PF 1.81, Total Rs 31.4L. All 4 FYs profitable with growing edge.",
+        "enabled": true,
+        "blocked_hours": [10],
+        "_blocked_hours_evidence": "hour=10: 9,468 trades removed. Remaining WR 56.5% -> 58.6% after quality gates.",
+        "category_thresholds": {
+            "BREAKOUT": {
+                "min_structural_rr": 2.0,
+                "min_t1_rr": 1.5,
+                "_evidence": "srr>=2.0: best PF 1.30 (inverts above 2.5). t1>=1.75: WR 57.4%. 848 trades, Avg Rs 149, PF 1.47."
+            },
+            "LEVEL": {
+                "min_structural_rr": 3.0,
+                "min_t1_rr": 2.0,
+                "_evidence": "srr>=3.0: PF 1.73. t1>=2.0: WR 57.1%. 7,026 trades, Avg Rs 307, PF 1.96."
+            },
+            "REVERSION": {
+                "min_structural_rr": 5.0,
+                "min_t1_rr": 1.0,
+                "_evidence": "srr>=5.0: PF 1.55, WR 58.1%. t1_rr=1.0 for all (fixed targets). 2,622 trades, Avg Rs 328, PF 1.64."
+            },
+            "MOMENTUM": {
+                "min_structural_rr": 2.0,
+                "min_t1_rr": 1.5,
+                "_evidence": "No data in 3yr backtest. Using BREAKOUT thresholds as fallback."
+            }
+        }
+    },
+
     "late_entry_penalty": {
         "_comment": "RSI penalties DISABLED - need context-aware implementation (see todo.md)",
         "rsi_above": 70,
@@ -163,9 +192,9 @@
         "_description": "Time-of-day filtering, blacklist penalties, RR caps, multi-TF adjustments",
 
         "time_of_day": {
-            "_comment": "From ranker.py lines 569-622 - Late-day noise filtering",
+            "_comment": "GATES-OFF RUN: disabled late-day ranking penalty",
             "_audit_finding": "39 signals in 14:00-15:00 window, only 3 trades (7.7% conversion = noise)",
-            "enabled": true,
+            "enabled": false,
             "late_afternoon_start_hour": 14,
             "late_afternoon_end_minute": 30,
             "late_afternoon_mult": 1.5,
@@ -211,9 +240,9 @@
         },
 
         "blacklist": {
-            "_comment": "From ranker.py lines 513-517 - Penalty for historically poor setups",
+            "_comment": "GATES-OFF RUN: disabled blacklist to test all setups raw",
             "_description": "Blacklisted setups get -999 penalty (effectively blocking them) but still get detected so other detectors can work",
-            "enabled": true,
+            "enabled": false,
             "penalty": -999,
             "strategies": [
                 "range_rejection_long",
@@ -234,8 +263,8 @@
     },
 
     "rsi_dead_zone": {
-        "_comment": "Data-driven filter: RSI 35-50 causes 43% of ALL hard_sl losses for LONG trades",
-        "enabled": true,
+        "_comment": "GATES-OFF RUN: disabled RSI dead zone filter",
+        "enabled": false,
         "long_min": 35,
         "long_max": 50,
         "_evidence": "101 hard_sl trades in RSI 40-50 = -54,687 loss (43% of ALL hard_sl loss)"
@@ -251,5 +280,51 @@
     "_comment_sl_ticks": "Buffer below structure stop (swing low/high) - from OLD config",
 
     "risk_per_trade_rupees": 1000.0,
-    "_comment_risk": "Risk per trade in Rupees - 1% of 1L capital"
+    "_comment_risk": "Risk per trade in Rupees - 1% of 1L capital",
+
+    "validated_combinations": {
+        "_comment": "Level 2 SELECTIVE: Walk-forward validated whitelist gate (48K trades, 4-tick OHLC, 4 FYs, Feb 2026)",
+        "_evidence": "deep_edge_analysis.py + filter_simulation.py on 20260215-224737: ~39 trades/day, Rs 1053 avg",
+        "_data_source": "20260215-224737_full/selective_thresholds.json + deep_edge_combinations.json",
+        "_note": "V3: sl_atr_mult REMOVED (gate-time approx diverges 3-40x from post-hoc). small_cap cap_rule REMOVED (vol_or<=0.027 passed 66% of all VC passes). unknown:volume_low tightened 418->200. High-volume setups pass ONLY via cap_rules.",
+        "enabled": true,
+
+        "setup_rules": {
+            "_comment": "Tier 1: Setup-specific IMPROVING/STABLE interactions. OR logic — ANY rule match = pass. Only setups with gate-time-available features.",
+
+            "volume_spike_reversal_long": [
+                {"name": "vwap_dist_high", "conditions": [{"feature": "vwap_dist_pct", "min": 0.619}], "_edge": "N=2071, Rs 1567, lift Rs 823, STABLE"},
+                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.005}], "_edge": "N=2072, Rs 1433, lift Rs 689, STABLE"},
+                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 3650}], "_edge": "N=2071, Rs 1342, lift Rs 598, IMPROVING"},
+                {"name": "vol_or_low", "conditions": [{"feature": "vol_or_ratio", "max": 0.225}], "_edge": "N=1989, Rs 1120, lift Rs 376, IMPROVING"}
+            ],
+
+            "volume_spike_reversal_short": [
+                {"name": "adx_low", "conditions": [{"feature": "adx", "max": 25.93}], "_edge": "N=2294, Rs 1063, lift Rs 190, STABLE"}
+            ],
+
+            "gap_fill_short": [
+                {"name": "all", "conditions": [], "_comment": "IMPROVING setup — all trades have positive edge"}
+            ],
+            "gap_fill_long": [
+                {"name": "all", "conditions": [], "_comment": "IMPROVING setup — all trades have positive edge"}
+            ],
+
+            "breakout_long": [
+                {"name": "bb_width_mid", "conditions": [{"feature": "bb_width_proxy", "min": 0.0011, "max": 0.0023}], "_edge": "N=343, Rs 464, lift Rs 210, IMPROVING"},
+                {"name": "vol_or_high", "conditions": [{"feature": "vol_or_ratio", "min": 11.39}], "_edge": "N=343, Rs 377, lift Rs 123, IMPROVING"}
+            ]
+        },
+
+        "cap_rules": {
+            "_comment": "Tier 2: Cap-segment global filters. range_bounce_short, premium_zone_short, etc. pass ONLY through these. small_cap REMOVED (vol_or<=0.027 passed 316/475 = 66% of all VC passes on test day — too permissive).",
+            "unknown": [
+                {"name": "volume_low", "conditions": [{"feature": "volume5", "max": 200}], "_edge": "tightened from 418 (LOW tercile) to 200 — unknown-cap stocks often have missing pd_range data, need stricter filter"},
+                {"name": "vol_or_low", "conditions": [{"feature": "vol_or_ratio", "max": 0.027}], "_edge": "global LOW tercile from 48K data"}
+            ],
+            "micro_cap": [
+                {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.002348}], "_edge": "global HIGH tercile from 48K data"}
+            ]
+        }
+    }
 }

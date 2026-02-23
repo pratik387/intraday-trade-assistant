@@ -127,9 +127,9 @@ class TickRouter:
                 # unknown shape (string/binary) — ignore quietly
                 self._miss_bad_pkt += 1
                 if self._miss_bad_pkt < 5:
-                    logger.debug("tick_router: unexpected payload type=%s", type(raw))
+                    logger.info("tick_router: unexpected payload type=%s", type(raw))
         except Exception as e:  # pragma: no cover
-            logger.debug("tick_router: handle_raw error: %s", e)
+            logger.info("tick_router: handle_raw error: %s", e)
 
     # ----------------------------- parsers --------------------------------
     def _handle_one(self, pkt: Any) -> None:
@@ -149,11 +149,11 @@ class TickRouter:
             else:
                 self._miss_bad_pkt += 1
                 if self._miss_bad_pkt < 5:
-                    logger.debug("tick_router: bad pkt shape=%s", type(pkt))
+                    logger.info("tick_router: bad pkt shape=%s", type(pkt))
         except Exception as e:  # pragma: no cover
             self._miss_bad_pkt += 1
             if self._miss_bad_pkt < 5:
-                logger.debug("tick_router: _handle_one error: %s", e)
+                logger.info("tick_router: _handle_one error: %s", e, exc_info=True)
 
     def _handle_dict(self, t: Dict[str, Any]) -> None:
         # Zerodha Kite style
@@ -193,8 +193,9 @@ class TickRouter:
             t.get("timestamp")
             or t.get("last_trade_time")
             or t.get("exchange_timestamp")
-            or datetime.now()
         )
+        if ts is None:
+            ts = datetime.now()  # fallback: wall-clock (logging only, not trading decisions)
 
         # Coerce pandas.Timestamp -> datetime
         if hasattr(ts, "to_pydatetime"):
@@ -217,7 +218,7 @@ class TickRouter:
         if not sym:
             self._miss_no_map += 1
             if self._miss_no_map <= 3:
-                logger.debug("tick_router: no symbol map for token=%s", token)
+                logger.info("tick_router: no symbol map for token=%s (map_size=%d)", token, len(self._maps.token_to_symbol))
             return
 
         # Compute per-tick volume from cumulative volume_traded delta.

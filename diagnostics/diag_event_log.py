@@ -1,6 +1,7 @@
 # services/diagnostics/diag_event_log.py
 from __future__ import annotations
 
+import math
 import os
 import json
 import threading
@@ -67,12 +68,20 @@ def _json_coerce(x: Any) -> Any:
     """
     if x is None:
         return None
-    if isinstance(x, (bool, int, float, str)):
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, float):
+        return None if (math.isnan(x) or math.isinf(x)) else x
+    if isinstance(x, (int, str)):
         return x
     if isinstance(x, pd.Timestamp):
         return _iso(x)
     x = _np_item(x)
-    if isinstance(x, (bool, int, float, str)) or x is None:
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, float):
+        return None if (math.isnan(x) or math.isinf(x)) else x
+    if isinstance(x, (int, str)) or x is None:
         return x
     if isinstance(x, dict):
         return {str(k): _json_coerce(v) for k, v in x.items()}
@@ -135,9 +144,14 @@ class _EventWriter:
     - Thread-safe; optional async mode for hot paths.
     """
 
+    # Shared across all thread-local instances so set_output() on one thread
+    # propagates run_id/dir to writers created later on other threads.
+    _shared_run_id: Optional[str] = None
+    _shared_dir: Optional[str] = None
+
     def __init__(self):
-        self.run_id: Optional[str] = None
-        self.dir = get_log_directory()
+        self.run_id: Optional[str] = _EventWriter._shared_run_id
+        self.dir = _EventWriter._shared_dir or get_log_directory()
         self.path: Optional[str] = None
         self._fh = None
 
@@ -169,6 +183,9 @@ class _EventWriter:
         """
         self.dir = out_dir or self.dir
         self.run_id = run_id
+        # Share with future thread-local instances
+        _EventWriter._shared_run_id = run_id
+        _EventWriter._shared_dir = self.dir
         os.makedirs(self.dir, exist_ok=True)
         self.path = os.path.join(self.dir, "events.jsonl")
         self._fh = open(self.path, "a", encoding="utf-8")
@@ -344,6 +361,46 @@ class _EventWriter:
         self._emit(ev)
         return tid
 
+    def log_trigger(
+        self,
+        *,
+        symbol: str,
+        plan: Dict[str, Any],
+        side: str,
+        qty: int,
+        price: float,
+        trigger_ts: Any = None,
+        order_id: Optional[str] = None,
+        strategy: Optional[str] = None,
+        shadow: bool = False,
+        diagnostics: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        TRIGGER event (actual execution fill).
+        - plan MUST carry trade_id minted at decision time.
+        - diagnostics: confidence_score, trigger_mode, validation_count, entry_zone, etc.
+        """
+        tid = _trade_id(symbol, plan)
+        ev = {
+            "schema_version": SCHEMA_VERSION,
+            "type": "TRIGGER",
+            "run_id": self.run_id,
+            "trade_id": tid,
+            "symbol": symbol,
+            "ts": _iso(trigger_ts),
+            "trigger": {
+                "actual_price": float(price),
+                "qty": int(qty),
+                "side": str(side).upper(),
+                "strategy": str(strategy or ""),
+                "order_id": str(order_id or ""),
+                "shadow": bool(shadow),
+                "diagnostics": diagnostics or {},
+            },
+        }
+        self._emit(ev)
+        return tid
+
     def log_exit(
         self,
         *,
@@ -353,12 +410,25 @@ class _EventWriter:
         exit_price: float,
         exit_qty: int,
         ts: Any = None,
+        pnl: Optional[float] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         EXIT event (partial or full).
         - reason should be canonicalized upstream (e.g., target_t1, target_t2, hard_sl, trail_stop, eod_squareoff).
+        - pnl: realized PnL for this exit leg (optional).
+        - diagnostics: MAE/MFE, R-multiple, bars_held, time_in_trade, etc.
         """
         tid = _trade_id(symbol, plan)
+        exit_data: Dict[str, Any] = {
+            "reason": str(reason).lower(),
+            "qty": int(exit_qty),
+            "price": float(exit_price),
+        }
+        if pnl is not None:
+            exit_data["pnl"] = float(pnl)
+        if diagnostics:
+            exit_data["diagnostics"] = diagnostics
         ev = {
             "schema_version": SCHEMA_VERSION,
             "type": "EXIT",
@@ -366,11 +436,7 @@ class _EventWriter:
             "trade_id": tid,
             "symbol": symbol,
             "ts": _iso(ts),
-            "exit": {
-                "reason": str(reason).lower(),
-                "qty": int(exit_qty),
-                "price": float(exit_price),
-            },
+            "exit": exit_data,
         }
         self._emit(ev)
         return tid

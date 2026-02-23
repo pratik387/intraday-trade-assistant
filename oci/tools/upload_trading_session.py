@@ -82,15 +82,22 @@ def get_date_from_session(session_id: str) -> Optional[str]:
     return None
 
 
-def collect_sidecar_files(date_str: str) -> List[Tuple[Path, str]]:
+def collect_sidecar_files(date_str: str,
+                          sidecar_dir_override: Path = None) -> List[Tuple[Path, str]]:
     """
     Collect sidecar data files for a given date.
+
+    Args:
+        date_str: Date string YYYYMMDD
+        sidecar_dir_override: If provided, use this path instead of default SIDECAR_DIR.
+            Useful when MDS runs from a different folder than the trading instance.
 
     Returns list of (local_path, object_name) tuples.
     """
     files = []
+    base_dir = sidecar_dir_override if sidecar_dir_override else SIDECAR_DIR
 
-    if not SIDECAR_DIR.exists():
+    if not base_dir.exists():
         return files
 
     # Sidecar subdirectories and their file patterns
@@ -102,13 +109,13 @@ def collect_sidecar_files(date_str: str) -> List[Tuple[Path, str]]:
     ]
 
     for subdir, filename in patterns:
-        file_path = SIDECAR_DIR / subdir / filename
+        file_path = base_dir / subdir / filename
         if file_path.exists():
             object_name = f"sidecar/{subdir}/{filename}"
             files.append((file_path, object_name))
 
     # Also check for tick part files (in case of crash before finalize)
-    ticks_dir = SIDECAR_DIR / "ticks"
+    ticks_dir = base_dir / "ticks"
     if ticks_dir.exists():
         for part_file in ticks_dir.glob(f"ticks_{date_str}.part*.parquet"):
             object_name = f"sidecar/ticks/{part_file.name}"
@@ -285,7 +292,8 @@ class SessionUploader:
         return uploaded, failed
 
 
-def upload_session(session_dir: Path, mode: str, prefix: str = '') -> bool:
+def upload_session(session_dir: Path, mode: str, prefix: str = '',
+                   sidecar_dir_override: Path = None) -> bool:
     """
     Upload a trading session to OCI.
 
@@ -297,6 +305,8 @@ def upload_session(session_dir: Path, mode: str, prefix: str = '') -> bool:
         session_dir: Path to session directory
         mode: "paper" or "live"
         prefix: Optional prefix for bucket path (e.g., "fixed" -> fixed/session_id/)
+        sidecar_dir_override: Path to sidecar data dir (for multi-instance setups
+            where MDS runs from a different folder than the trading instance)
 
     Returns:
         True if upload successful
@@ -309,13 +319,15 @@ def upload_session(session_dir: Path, mode: str, prefix: str = '') -> bool:
 
     # Extract date for sidecar files
     date_str = get_date_from_session(session_id)
-    sidecar_files = collect_sidecar_files(date_str) if date_str else []
+    sidecar_files = collect_sidecar_files(date_str, sidecar_dir_override) if date_str else []
 
     print(f"\n{'='*60}")
     print(f"UPLOAD TRADING SESSION TO OCI")
     print(f"{'='*60}")
     print(f"Session: {session_id}")
     print(f"Mode: {mode}")
+    if sidecar_dir_override:
+        print(f"Sidecar dir: {sidecar_dir_override} (override)")
     print(f"Logs bucket: {logs_bucket}")
     print(f"Object path: {object_prefix}/")
     if sidecar_files:
@@ -437,8 +449,10 @@ def main():
 Examples:
   python oci/tools/upload_trading_session.py paper_20251229_073712
   python oci/tools/upload_trading_session.py --prefix fixed paper_20251229_073712
-  python oci/tools/upload_trading_session.py --prefix relative paper_20251229_073712
   python oci/tools/upload_trading_session.py  # Auto-discover latest
+
+  # Multi-instance: MDS runs from /home/user/mds/, paper from /home/user/fixed/
+  python oci/tools/upload_trading_session.py --sidecar-dir /home/user/mds/data/sidecar paper_20260219_084614
         """
     )
 
@@ -447,6 +461,9 @@ Examples:
                         help='Override mode detection (default: auto-detect from session name)')
     parser.add_argument('--prefix', type=str, default='',
                         help='Prefix for bucket path (e.g., "fixed" -> fixed/session_id/)')
+    parser.add_argument('--sidecar-dir', type=str, default=None,
+                        help='Path to sidecar data dir (for multi-instance setups where MDS '
+                             'runs from a different folder). e.g., /home/user/mds/data/sidecar')
     parser.add_argument('--skip-analysis', action='store_true',
                         help='Skip running the analyzer')
 
@@ -463,8 +480,12 @@ Examples:
     # Determine mode
     mode = args.mode or get_mode_from_session(session_dir.name)
 
+    # Resolve sidecar directory override
+    sidecar_override = Path(args.sidecar_dir) if args.sidecar_dir else None
+
     # Upload with optional prefix
-    success = upload_session(session_dir, mode, prefix=args.prefix)
+    success = upload_session(session_dir, mode, prefix=args.prefix,
+                             sidecar_dir_override=sidecar_override)
 
     return 0 if success else 1
 

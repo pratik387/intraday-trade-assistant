@@ -24,6 +24,7 @@ Notes:
 """
 
 import math
+import time as _time_mod
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
@@ -310,12 +311,15 @@ class BarBuilder:
         else:
             self._bars_5m[symbol] = pd.concat([df5, row5], copy=False)
 
-        # 5m close callback
+        # 5m close callback (in backtest this blocks for the entire scan — log duration)
+        _t_cb = _time_mod.perf_counter()
         try:
             self._on_5m_close(symbol, bar5)
         except Exception as e:
             logger.exception("BarBuilder: on_5m_close callback failed: %s", e)
-            pass
+        _t_cb_elapsed = _time_mod.perf_counter() - _t_cb
+        if _t_cb_elapsed > 1.0:
+            logger.info("BAR_BUILDER_5M_CALLBACK | %s at %s | %.2fs", symbol, start_ts, _t_cb_elapsed)
         
         for handler in self._additional_5m_handlers:
             try:
@@ -350,11 +354,15 @@ class BarBuilder:
         bar15 = _aggregate_window_to_ohlcv(window)
         bar15.name = start_ts  # ← START-LABELED (matches convention)
 
-        # 15m bars inherit ADX from the last 5m bar in the window
+        # 15m bars inherit ADX and RSI from the last 5m bar in the window
         try:
             bar15["adx"] = float(window.iloc[-1]["adx"]) if "adx" in window.columns else 0.0
         except Exception:
             bar15["adx"] = 0.0
+        try:
+            bar15["rsi"] = float(window.iloc[-1]["rsi"]) if "rsi" in window.columns else 50.0
+        except Exception:
+            bar15["rsi"] = 50.0
 
         df15 = self._bars_15m[symbol]
         row15 = bar15.to_frame().T

@@ -1,39 +1,36 @@
 """
 trading_logger.py
 ----------------
-Enhanced logging infrastructure for trading system analytics.
+Logging infrastructure for trading system analytics.
 
-Features:
-- Multi-stream logging (events, analytics, performance)
-- Trade lifecycle tracking with unique IDs
-- Real-time performance metrics
-- Analytics-friendly data structure
+Responsibilities:
+- trade_logs.log: Human-readable trade log (TRIGGER/EXIT one-liners)
+- analytics.jsonl: ML-ready trade records (populated EOD from events.jsonl)
+- performance.json: Session summary with PnL, fees, win rate
+- CSV report generation via diagnostics_report_builder
+
+NOTE: events.jsonl is written EXCLUSIVELY by diag_event_log (single writer).
+      This module reads events.jsonl at EOD to build analytics/performance.
 """
 
 import json
 import logging
-import uuid
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
-from dataclasses import dataclass, asdict
 import pandas as pd
 
 
-@dataclass
-class TradeLifecycle:
-    """Track a trade through its complete lifecycle"""
-    lifecycle_id: str
-    trade_id: str
-    symbol: str
-    stage: str  # DECISION, TRIGGER, EXIT
-    timestamp: str
-    data: Dict[str, Any]
-    elapsed_from_decision: Optional[int] = None  # seconds
+def _nan_safe_default(obj):
+    """JSON serializer that converts NaN/Inf to null (RFC 8259 compliant)"""
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return str(obj)
 
 
 class TradingLogger:
-    """Enhanced logging service for trading analytics"""
+    """Trading analytics logger — trade_logs.log + EOD analytics builder"""
 
     # ========================================================================
     # ZERODHA INTRADAY EQUITY CHARGES (post Oct 1, 2024 "true-to-label")
@@ -105,12 +102,9 @@ class TradingLogger:
         self.session_id = session_id
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-
-        # Trade lifecycle tracking
-        self.trade_lifecycles: Dict[str, TradeLifecycle] = {}
         self.session_start = datetime.now()
 
-        # Performance tracking
+        # Performance tracking (populated at EOD by populate_analytics_from_events)
         self.session_stats = {
             'total_decisions': 0,
             'triggered_trades': 0,
@@ -125,27 +119,15 @@ class TradingLogger:
         self._setup_loggers()
 
     def _setup_loggers(self):
-        """Setup multiple logging streams"""
-        
-        # Events logger (existing format + analytics)
-        self.events_logger = self._create_logger(
-            'events', 
-            self.log_dir / 'events.jsonl'
-        )
-        
-        # Analytics logger (clean, triggered trades only)
+        """Setup logging streams (trade_logs.log + analytics.jsonl)"""
+
+        # Analytics logger (clean, triggered trades only — populated EOD)
         self.analytics_logger = self._create_logger(
             'analytics',
             self.log_dir / 'analytics.jsonl'
         )
-        
-        # Performance logger (session summaries)
-        self.performance_logger = self._create_logger(
-            'performance',
-            self.log_dir / 'performance.json'
-        )
-        
-        # Trade logs (existing format)
+
+        # Trade logs (human-readable TRIGGER/EXIT one-liners)
         self.trade_logger = self._create_logger(
             'trade_logs',
             self.log_dir / 'trade_logs.log'
@@ -165,7 +147,7 @@ class TradingLogger:
         handler.setLevel(logging.INFO)
         
         # JSON format for structured logs
-        if name in ['events', 'analytics']:
+        if name in ['analytics']:
             formatter = logging.Formatter('%(message)s')
         else:
             formatter = logging.Formatter(
@@ -178,67 +160,10 @@ class TradingLogger:
         
         return logger
     
-    def log_decision(self, trade_data: Dict[str, Any]):
-        """Log a trading decision with analytics enhancement"""
-        
-        # Generate unique lifecycle ID
-        lifecycle_id = f"{trade_data.get('symbol', 'UNK')}_{uuid.uuid4().hex[:8]}"
-        
-        # Add analytics fields
-        enhanced_data = self._add_analytics_fields(trade_data)
-        enhanced_data['lifecycle_id'] = lifecycle_id
-
-        # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
-        
-        # Log to events stream
-        self.events_logger.info(json.dumps(enhanced_data))
-        
-        # Store lifecycle for tracking
-        self.trade_lifecycles[lifecycle_id] = TradeLifecycle(
-            lifecycle_id=lifecycle_id,
-            trade_id=trade_data.get('trade_id', ''),
-            symbol=trade_data.get('symbol', ''),
-            stage='DECISION',
-            timestamp=enhanced_data.get('ts', ''),
-            data=enhanced_data
-        )
-
-        # NOTE: Live performance summary updates removed - performance tracking now done in post-processing only
-    
     def log_trigger(self, trade_data: Dict[str, Any]):
-        """Log a trade trigger execution"""
-
-        # Find matching lifecycle (but don't require it - defensive logging)
-        lifecycle_id = self._find_lifecycle_id(trade_data)
-
-        if lifecycle_id:
-            # Update existing lifecycle if found
-            lifecycle = self.trade_lifecycles[lifecycle_id]
-            lifecycle.stage = 'TRIGGER'
-            lifecycle.elapsed_from_decision = self._calculate_elapsed(lifecycle)
-
-        # ALWAYS log TRIGGER event to events.jsonl (moved outside if block)
-        # This ensures TRIGGER events are logged even if lifecycle tracking fails
-        # (e.g., when diag_event_log logs DECISION instead of trading_logger.log_decision)
-        trigger_event = {
-            'schema_version': 'trade.v1',
-            'type': 'TRIGGER',
-            'run_id': None,
-            'trade_id': trade_data.get('trade_id', ''),
-            'symbol': trade_data.get('symbol', ''),
-            'ts': trade_data.get('timestamp', str(pd.Timestamp.now())),
-            'trigger': {
-                'actual_price': trade_data.get('price', 0),
-                'qty': trade_data.get('qty', 0),
-                'strategy': trade_data.get('strategy', ''),
-                'order_id': trade_data.get('order_id', ''),
-                'side': trade_data.get('side', 'BUY'),
-                'diagnostics': trade_data.get('diagnostics', {})
-            }
-        }
-        self.events_logger.info(json.dumps(trigger_event))
-
-        # Log to trade logs (existing format)
+        """Log trade trigger to trade_logs.log (human-readable).
+        NOTE: events.jsonl TRIGGER is written by diag_event_log — not here.
+        """
         symbol = trade_data.get('symbol', '')
         qty = trade_data.get('qty', 0)
         price = trade_data.get('price', 0)
@@ -250,182 +175,20 @@ class TradingLogger:
             f"TRIGGER_EXEC | {symbol} | {side} {qty} @ {price} | strategy={strategy} | order_id={order_id}"
         )
 
-        # NOTE: Live performance summary updates removed - performance tracking now done in post-processing only
-    
     def log_exit(self, trade_data: Dict[str, Any]):
-        """Log a trade exit"""
-        
-        # Find matching lifecycle (create one if none exists)
-        lifecycle_id = self._find_or_create_lifecycle_id(trade_data)
-        
-        if lifecycle_id:
-            # Update lifecycle
-            lifecycle = self.trade_lifecycles[lifecycle_id]
-            lifecycle.stage = 'EXIT'
-            lifecycle.elapsed_from_decision = self._calculate_elapsed(lifecycle)
-
-            # NOTE: Live session stats updates removed - performance tracking now done in post-processing only
-            # NOTE: Analytics logging removed - analytics.jsonl populated from events.jsonl in post-processing to avoid duplicates
-        
-        # Log EXIT event to events.jsonl with diagnostics
-        exit_event = {
-            'schema_version': 'trade.v1',
-            'type': 'EXIT',
-            'run_id': None,
-            'trade_id': trade_data.get('trade_id', ''),
-            'symbol': trade_data.get('symbol', ''),
-            'ts': trade_data.get('timestamp', str(pd.Timestamp.now())),
-            'exit': {
-                'price': trade_data.get('exit_price', 0),
-                'qty': trade_data.get('qty', 0),
-                'reason': trade_data.get('reason', ''),
-                'pnl': trade_data.get('pnl', 0),
-                'diagnostics': trade_data.get('diagnostics', {})
-            }
-        }
-        self.events_logger.info(json.dumps(exit_event))
-        
-        # Log to trade logs (existing format)
+        """Log trade exit to trade_logs.log (human-readable).
+        NOTE: events.jsonl EXIT is written by diag_event_log — not here.
+        """
         symbol = trade_data.get('symbol', '')
         qty = trade_data.get('qty', 0)
         entry_price = trade_data.get('entry_price', 0)
         exit_price = trade_data.get('exit_price', 0)
         pnl = trade_data.get('pnl', 0)
         reason = trade_data.get('reason', '')
-        
+
         self.trade_logger.info(
-            f"EXIT | {symbol} | Qty: {qty} | Entry: Rs.{entry_price} | Exit: Rs.{exit_price} | PnL: Rs.{pnl} {reason}"
+            f"EXIT | {symbol} | Qty: {qty} | Entry: Rs.{round(entry_price, 2)} | Exit: Rs.{round(exit_price, 2)} | PnL: Rs.{round(pnl, 2)} {reason}"
         )
-
-        # NOTE: Live performance summary updates removed - performance tracking now done in post-processing only
-    
-    def _add_analytics_fields(self, trade_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Add derived analytics fields to trade data"""
-        enhanced = trade_data.copy()
-        
-        # Add analytics section
-        analytics = {}
-        
-        # Setup quality score (derived from multiple factors)
-        if 'features' in enhanced and 'plan' in enhanced:
-            rank_score = enhanced['features'].get('rank_score', 0)
-            structural_rr = enhanced['plan'].get('quality', {}).get('structural_rr', 0)
-            acceptance_status = enhanced['plan'].get('quality', {}).get('acceptance_status', 'poor')
-
-            # Graduated acceptance scoring for analytics
-            acceptance_score = {
-                "excellent": 1.0,
-                "good": 0.6,
-                "fair": 0.3,
-                "poor": 0.0
-            }.get(acceptance_status, 0.0)
-
-            # Simple quality score calculation
-            analytics['setup_quality_score'] = (
-                rank_score * 3 +
-                structural_rr * 2 +
-                acceptance_score
-            )
-        
-        # Regime confidence
-        if 'decision' in enhanced:
-            regime = enhanced['decision'].get('regime', '')
-            analytics['regime_confidence'] = 0.8 if regime in ['trend_up', 'trend_down'] else 0.5
-        
-        # Time decay factor (setups get stale)
-        analytics['time_decay_factor'] = 1.0  # Could be enhanced based on market hours
-        
-        # Execution probability (based on historical data)
-        analytics['execution_probability'] = 0.15  # Updated from historical 12.1% + buffer
-        
-        enhanced['analytics'] = analytics
-        return enhanced
-    
-    def _extract_analytics_fields(self, trade_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract key fields for analytics logging (simplified version)"""
-        return {
-            'symbol': trade_data.get('symbol', ''),
-            'trade_id': trade_data.get('trade_id', ''),
-            'timestamp': trade_data.get('timestamp', ''),
-            'qty': trade_data.get('qty', 0),
-            'entry_price': trade_data.get('entry_price', 0),
-            'exit_price': trade_data.get('exit_price', 0),
-            'reason': trade_data.get('reason', ''),
-        }
-    
-    def _should_trigger(self, trade_data: Dict[str, Any]) -> bool:
-        """Predict if a trade should trigger based on quality filters"""
-        
-        # Apply the same filters as trade_decision_gate
-        if 'features' in trade_data and 'rank_score' in trade_data['features']:
-            if trade_data['features']['rank_score'] < 2.0:
-                return False
-        
-        if 'plan' in trade_data and 'quality' in trade_data['plan']:
-            structural_rr = trade_data['plan']['quality'].get('structural_rr', 0)
-            if structural_rr < 1.2:
-                return False
-        
-        return True
-    
-    def _extract_analytics_fields(self, trade_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract key fields for analytics logging"""
-        return {
-            'symbol': trade_data.get('symbol', ''),
-            'trade_id': trade_data.get('trade_id', ''),
-            'timestamp': trade_data.get('timestamp', ''),
-            'setup_type': trade_data.get('setup_type', ''),
-            'regime': trade_data.get('regime', ''),
-            'entry_price': trade_data.get('price', 0),
-            'qty': trade_data.get('qty', 0),
-            'risk_amount': trade_data.get('risk_amount', 500),
-            'strategy': trade_data.get('strategy', '')
-        }
-    
-    def _find_lifecycle_id(self, trade_data: Dict[str, Any]) -> Optional[str]:
-        """Find matching lifecycle ID for a trade"""
-        trade_id = trade_data.get('trade_id', '')
-        symbol = trade_data.get('symbol', '')
-        
-        # Search by trade_id first, then symbol
-        for lifecycle_id, lifecycle in self.trade_lifecycles.items():
-            if lifecycle.trade_id == trade_id or lifecycle.symbol == symbol:
-                return lifecycle_id
-        
-        return None
-    
-    def _calculate_elapsed(self, lifecycle: TradeLifecycle) -> int:
-        """Calculate seconds elapsed from decision"""
-        try:
-            decision_time = datetime.fromisoformat(lifecycle.timestamp.replace('Z', '+00:00'))
-            now = datetime.now(decision_time.tzinfo) if decision_time.tzinfo else datetime.now()
-            return int((now - decision_time).total_seconds())
-        except:
-            return 0
-    
-    def _find_or_create_lifecycle_id(self, trade_data: Dict[str, Any]) -> Optional[str]:
-        """Find existing lifecycle or create new one for this trade"""
-        symbol = trade_data.get('symbol', '')
-        trade_id = trade_data.get('trade_id', '')
-        
-        # Try to find existing lifecycle by symbol or trade_id
-        for lifecycle_id, lifecycle in self.trade_lifecycles.items():
-            if (lifecycle.symbol == symbol and 
-                (not trade_id or lifecycle.trade_id == trade_id)):
-                return lifecycle_id
-        
-        # Create new lifecycle for this exit
-        lifecycle_id = str(uuid.uuid4())
-        lifecycle = TradeLifecycle(
-            lifecycle_id=lifecycle_id,
-            symbol=symbol,
-            trade_id=trade_id,
-            timestamp=trade_data.get('timestamp', datetime.now().isoformat()),
-            stage='EXIT',  # This is an exit-only lifecycle
-            data=trade_data  # Include the trade data
-        )
-        self.trade_lifecycles[lifecycle_id] = lifecycle
-        return lifecycle_id
     
     def _update_performance_summary(self):
         """Update the performance summary file"""
@@ -664,7 +427,8 @@ class TradingLogger:
                         # Mark if this is the final exit
                         is_final = (i == len(exit_events) - 1)
                         analytics_data = self._create_enhanced_analytics(
-                            decision_event, exit_ev, trigger_event, exit_pnl
+                            decision_event, exit_ev, trigger_event, exit_pnl,
+                            exit_sequence=i + 1
                         )
                         # Add exit sequence info
                         analytics_data['exit_sequence'] = i + 1
@@ -672,7 +436,7 @@ class TradingLogger:
                         analytics_data['is_final_exit'] = is_final
                         if is_final:
                             analytics_data['total_trade_pnl'] = pnl  # Include total PnL on final exit
-                        self.analytics_logger.info(json.dumps(analytics_data))
+                        self.analytics_logger.info(json.dumps(analytics_data, default=_nan_safe_default))
 
             # Count triggered trades (exclude shadow trades)
             self.session_stats['triggered_trades'] = len(triggers) - len(shadow_trade_ids)
@@ -768,7 +532,8 @@ class TradingLogger:
             return 0.0
 
     def _create_enhanced_analytics(self, decision_event: Dict[str, Any], exit_event: Dict[str, Any],
-                                 trigger_event: Optional[Dict[str, Any]], pnl: float) -> Dict[str, Any]:
+                                 trigger_event: Optional[Dict[str, Any]], pnl: float,
+                                 exit_sequence: int = 1) -> Dict[str, Any]:
         """Create enhanced analytics entry combining decision, trigger, and exit data"""
         # Start with basic exit data
         analytics = {
@@ -834,9 +599,8 @@ class TradingLogger:
         qty = analytics.get('qty', 0)
 
         if entry_price > 0 and exit_price > 0 and qty > 0:
-            # For now, assume each exit is a complete trade (is_entry_order=True)
-            # TODO: Handle partial exits properly (exit_sequence tracking)
-            fees = self.calculate_trade_fees(entry_price, exit_price, qty, is_entry_order=True)
+            # Only charge entry-side fees (brokerage on entry, stamp duty) for the first exit
+            fees = self.calculate_trade_fees(entry_price, exit_price, qty, is_entry_order=(exit_sequence == 1))
             analytics['fees'] = fees
             analytics['net_pnl'] = round(pnl - fees['total_fees'], 2)
 
@@ -851,26 +615,3 @@ class TradingLogger:
         except Exception:
             return 0.0
 
-    def _convert_event_to_analytics(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Convert an events.jsonl event to analytics format"""
-        if event.get('type') != 'EXIT':
-            return None
-            
-        exit_data = event.get('exit', {})
-        return {
-            'symbol': event.get('symbol', ''),
-            'trade_id': event.get('trade_id', ''),
-            'timestamp': event.get('ts', ''),
-            'stage': 'EXIT',
-            'qty': exit_data.get('qty', 0),
-            'exit_price': exit_data.get('price', 0),
-            'reason': exit_data.get('reason', ''),
-            'lifecycle_id': event.get('trade_id', ''),  # Use trade_id as lifecycle_id
-        }
-    
-    def _update_session_stats_from_event(self, event: Dict[str, Any]):
-        """Update session stats from event data"""
-        if event.get('type') == 'EXIT':
-            self.session_stats['completed_trades'] += 1
-            # Note: PnL calculation would require entry price, which isn't in exit events
-            # This will be a limitation of this approach

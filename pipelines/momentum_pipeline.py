@@ -36,7 +36,6 @@ from .base_pipeline import (
     ScreeningResult,
     QualityResult,
     GateResult,
-    RankingResult,
     EntryResult,
     TargetResult,
     get_cap_segment,
@@ -129,7 +128,8 @@ class MomentumPipeline(BasePipeline):
         df5m: pd.DataFrame,
         bias: str,
         levels: Dict[str, float],
-        atr: float
+        atr: float,
+        setup_type: str = ""
     ) -> QualityResult:
         """
         Momentum quality: ADX_score * EMA_alignment
@@ -292,203 +292,38 @@ class MomentumPipeline(BasePipeline):
             logger.debug(f"[MOMENTUM] {symbol} {setup_type} BLOCKED by setup filters: {setup_reasons}")
             return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
 
-        # Regime check from config - momentum NEEDS trend - HARD GATES only
+        # Regime check from config - HARD GATES only
         regime_cfg = self._get("gates", "regime_rules")
 
         if regime in regime_cfg:
             rule = regime_cfg[regime]
-            if not rule["allowed"]:
+            if not rule.get("allowed", True):
                 reasons.append(f"regime_blocked:{regime}")
                 passed = False
             else:
                 reasons.append(f"regime_ok:{regime}")
 
-                # Check trend alignment for trending regimes - HARD GATE for counter-trend
+                # Check trend alignment for trending regimes
+                # Configurable via "allow_counter_trend" in regime_rules (default: block counter-trend)
                 if regime in ("trend_up", "trend_down"):
                     is_long_trade = "_long" in setup_type
                     if (regime == "trend_up" and is_long_trade) or (regime == "trend_down" and not is_long_trade):
                         reasons.append("trend_aligned")
-                    else:
-                        # Counter-trend momentum is blocked (don't fight the trend)
+                    elif not rule.get("allow_counter_trend", False):
                         reasons.append("counter_trend_blocked")
                         passed = False
+                    else:
+                        reasons.append("counter_trend_allowed")
 
-        # ADX gate from config - strict for momentum - HARD GATE
-        # Note: ADX is also checked in screening, this is additional validation
+        # ADX gate from config
         adx_cfg = self._get("gates", "adx")
-        if adx < adx_cfg["min_value"]:
+        if adx_cfg.get("block_below", True) and adx < adx_cfg["min_value"]:
             reasons.append(f"adx_weak:{adx:.1f}<{adx_cfg['min_value']}")
             passed = False
         else:
             reasons.append(f"adx_ok:{adx:.1f}")
 
         return GateResult(passed=passed, reasons=reasons, size_mult=size_mult, min_hold_bars=min_hold)
-
-    # ======================== RANKING ========================
-
-    def calculate_rank_score(
-        self,
-        symbol: str,
-        intraday_features: Dict[str, Any],
-        regime: str,
-        daily_trend: Optional[str] = None,
-        htf_context: Optional[Dict] = None
-    ) -> RankingResult:
-        """
-        MOMENTUM-SPECIFIC RANKING (Dec 2024 Recalibration)
-
-        Pro trader research findings for MOMENTUM/TREND plays:
-        - High ADX = GOOD (strong trend needed for momentum)
-        - Directional RSI = GOOD (RSI confirms trend direction)
-        - VWAP aligned = CRITICAL (riding the wave)
-        - Volume = CRITICAL (confirms institutional participation)
-        - High squeeze = GOOD (pent-up energy about to release)
-
-        7 weighted components:
-        1. Volume (20%): High volume confirms trend
-        2. RSI (15%): Directional RSI (bullish for long, bearish for short)
-        3. ADX (25%): High ADX = strong trend
-        4. VWAP (15%): Aligned = critical for momentum
-        5. Distance (5%): Less critical for momentum
-        6. Squeeze (10%): High squeeze = pent-up energy
-        7. Acceptance (10%): R:R matters for momentum
-        """
-        logger.debug(f"[MOMENTUM] Calculating rank score for {symbol} in {regime}")
-
-        # REQUIRED features
-        vol_ratio = float(intraday_features["volume_ratio"])
-        rsi = float(intraday_features["rsi"])
-        adx = float(intraday_features["adx"])
-        above_vwap = bool(intraday_features["above_vwap"])
-        bias = intraday_features["bias"]
-
-        # OPTIONAL features (None = skip scoring, no hidden defaults)
-        dist_from_level_bpct = intraday_features.get("dist_from_level_bpct")
-        squeeze_pctile = intraday_features.get("squeeze_pctile")
-        acceptance_status = intraday_features.get("acceptance_status")
-
-        weights = self._get("ranking", "weights")
-        score_scale = self._get("ranking", "score_scale")
-
-        # 1. VOLUME SCORE - Critical for momentum
-        vol_cfg = weights["volume"]
-        s_vol = min(vol_ratio / vol_cfg["divisor"], vol_cfg["cap"])
-
-        # 2. RSI SCORE - DIRECTIONAL = GOOD for momentum (confirms trend)
-        rsi_cfg = weights["rsi"]
-        if bias == "long":
-            if rsi >= rsi_cfg["long_strong_bullish_threshold"]:
-                s_rsi = rsi_cfg["strong_bonus"]  # RSI > 60 = strong bullish
-            elif rsi >= rsi_cfg["long_bullish_threshold"]:
-                s_rsi = rsi_cfg["good_bonus"]  # RSI > 55 = bullish
-            elif rsi >= rsi_cfg["long_overbought_threshold"]:
-                s_rsi = rsi_cfg["penalty"]  # RSI > 75 = overbought (exhaustion risk)
-            else:
-                s_rsi = 0.0
-        else:  # short
-            if rsi <= rsi_cfg["short_strong_bearish_threshold"]:
-                s_rsi = rsi_cfg["strong_bonus"]  # RSI < 40 = strong bearish
-            elif rsi <= rsi_cfg["short_bearish_threshold"]:
-                s_rsi = rsi_cfg["good_bonus"]  # RSI < 45 = bearish
-            elif rsi <= rsi_cfg["short_oversold_threshold"]:
-                s_rsi = rsi_cfg["penalty"]  # RSI < 25 = oversold (exhaustion risk)
-            else:
-                s_rsi = 0.0
-
-        # 3. ADX SCORE - HIGH = GOOD for momentum (strong trend needed)
-        adx_cfg = weights["adx"]
-        if adx >= adx_cfg["strong_threshold"]:
-            s_adx = adx_cfg["strong_bonus"]  # ADX > 35 = strong trend
-        elif adx >= adx_cfg["good_threshold"]:
-            s_adx = adx_cfg["good_bonus"]  # ADX > 25 = good trend
-        elif adx <= adx_cfg["weak_threshold"]:
-            s_adx = adx_cfg["weak_penalty"]  # ADX < 20 = no trend
-        else:
-            s_adx = 0.0
-
-        # 4. VWAP SCORE - ALIGNED = CRITICAL for momentum
-        vwap_cfg = weights["vwap"]
-        if bias == "long":
-            s_vwap = vwap_cfg["aligned_bonus"] if above_vwap else vwap_cfg["misaligned_penalty"]
-        else:
-            s_vwap = vwap_cfg["aligned_bonus"] if not above_vwap else vwap_cfg["misaligned_penalty"]
-
-        # 5. DISTANCE SCORE - Less critical for momentum
-        dist_cfg = weights["distance"]
-        if dist_from_level_bpct is not None:
-            adist = abs(dist_from_level_bpct)
-            if adist <= dist_cfg["near_bpct"]:
-                s_dist = dist_cfg["near_score"]
-            elif adist <= dist_cfg["ok_bpct"]:
-                s_dist = dist_cfg["ok_score"]
-            else:
-                s_dist = dist_cfg["far_score"]
-        else:
-            s_dist = 0.0
-
-        # 6. SQUEEZE SCORE - High squeeze = GOOD for momentum (pent-up energy)
-        squeeze_cfg = weights["squeeze"]
-        if squeeze_pctile is not None:
-            if squeeze_pctile <= 50:
-                s_sq = squeeze_cfg["low_bonus"]
-            elif squeeze_pctile <= 70:
-                s_sq = squeeze_cfg["mid_bonus"]
-            elif squeeze_pctile >= 90:
-                s_sq = squeeze_cfg["high_bonus"]  # High squeeze = pent-up energy
-            else:
-                s_sq = 0.0
-        else:
-            s_sq = 0.0
-
-        # 7. ACCEPTANCE SCORE - Keep for momentum
-        acc_cfg = weights["acceptance"]
-        if acc_cfg["enabled"]:
-            if acceptance_status == "excellent":
-                s_acc = acc_cfg["excellent_bonus"]
-            elif acceptance_status == "good":
-                s_acc = acc_cfg["good_bonus"]
-            else:
-                s_acc = 0.0
-        else:
-            s_acc = 0.0
-
-        # WEIGHTED SUM (not simple addition) scaled to usable range
-        weighted_sum = (
-            s_vol * vol_cfg["weight"] +
-            s_rsi * rsi_cfg["weight"] +
-            s_adx * adx_cfg["weight"] +
-            s_vwap * vwap_cfg["weight"] +
-            s_dist * dist_cfg["weight"] +
-            s_sq * squeeze_cfg["weight"] +
-            s_acc * acc_cfg["weight"]
-        )
-        base_score = weighted_sum * score_scale
-
-        # Regime multiplier
-        setup_type = intraday_features["setup_type"]
-        regime_mult = self._get_strategy_regime_mult(setup_type, regime)
-
-        # HTF context handled in universal adjustments
-        _ = daily_trend
-        _ = htf_context
-
-        final_score = base_score * regime_mult
-
-        logger.debug(f"[MOMENTUM] {symbol} score={final_score:.3f} (weighted_sum={weighted_sum:.3f}*scale={score_scale}) * regime={regime_mult:.2f}")
-
-        return RankingResult(
-            score=final_score,
-            components={
-                "volume": s_vol,
-                "rsi": s_rsi,
-                "adx": s_adx,
-                "vwap": s_vwap,
-                "distance": s_dist,
-                "squeeze": s_sq,
-                "acceptance": s_acc
-            },
-            multipliers={"regime": regime_mult, "score_scale": score_scale}
-        )
 
     # ======================== ENTRY ========================
 
