@@ -101,7 +101,17 @@ def get_upstox_token():
             timeout=30,
         )
 
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            print(f"[ERROR] HTTP {resp.status_code}")
+            print(f"  Response: {resp.text}")
+            print()
+            print("Debug info:")
+            print(f"  client_id: {api_key[:8]}...{api_key[-4:]}")
+            print(f"  client_secret: {api_secret[:3]}...{api_secret[-3:]}")
+            print(f"  redirect_uri: {redirect_uri}")
+            print(f"  code: {auth_code}")
+            return
+
         data = resp.json()
         access_token = data.get("access_token")
 
