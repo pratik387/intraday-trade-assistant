@@ -305,12 +305,12 @@ class UpstoxTickerAdapter:
                 continue
 
             try:
-                ff = feed_response.get("ff") if isinstance(feed_response, dict) else None
+                # MessageToDict camelCases "full_feed" → "fullFeed" (not "ff")
+                ff = feed_response.get("fullFeed") or feed_response.get("ff") if isinstance(feed_response, dict) else None
                 if not ff:
                     _no_ff += 1
                     continue
 
-                # V3 MessageToDict uses camelCase: "marketFF" (not "market_ff")
                 market_ff = ff.get("marketFF")
                 if not market_ff:
                     # Could be indexFF for index instruments — skip
@@ -340,9 +340,9 @@ class UpstoxTickerAdapter:
                     except (ValueError, OSError):
                         trade_time = None
 
-                # Extract cumulative day volume from marketOhlc (camelCase)
+                # Extract cumulative day volume — key is "marketOHLC" (from raw dump)
                 cum_volume = 0
-                market_ohlc = market_ff.get("marketOhlc")
+                market_ohlc = market_ff.get("marketOHLC") or market_ff.get("marketOhlc")
                 if market_ohlc:
                     ohlc_list = market_ohlc.get("ohlc", [])
                     for ohlc_item in ohlc_list:
