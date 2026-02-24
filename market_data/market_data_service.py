@@ -3,7 +3,7 @@
 Standalone Market Data Service - Single source of truth for all trading instances.
 
 This service:
-  - Connects to Zerodha WebSocket
+  - Connects to broker WebSocket (Zerodha or Upstox via --data-source)
   - Builds 1m/5m/15m bars via BarBuilder
   - Publishes completed bars to Redis
   - Updates LTP in Redis for all symbols
@@ -13,13 +13,12 @@ and receive identical market data, ensuring deterministic signals.
 
 Usage:
     python -m market_data.market_data_service
-
-    # Or with custom Redis URL
+    python -m market_data.market_data_service --data-source upstox
     python -m market_data.market_data_service --redis-url redis://192.168.1.100:6379/0
 
 Requirements:
     - Redis server running
-    - Zerodha API credentials (via environment or .env)
+    - Broker API credentials (Zerodha or Upstox via .env)
 """
 
 import sys
@@ -56,9 +55,11 @@ class MarketDataService:
         self,
         redis_url: str = "redis://localhost:6379/0",
         publish_1m_bars: bool = False,
+        data_source: str = "zerodha",
     ):
         self._redis_url = redis_url
         self._publish_1m = publish_1m_bars
+        self._data_source = data_source
         self._running = False
 
         # Load config for universe
@@ -108,14 +109,12 @@ class MarketDataService:
         return self._config.get("index_symbols", ["NSE:NIFTY 50", "NSE:NIFTY BANK"])
 
     def _load_universe(self) -> dict:
-        """Load trading universe (token -> symbol mapping) from KiteClient."""
-        # KiteClient loads and filters instruments from Kite API
-        # Use its tok2sym mapping directly
+        """Load trading universe (token -> symbol mapping) from data SDK."""
         if self._sdk is None:
-            logger.error("MDS | KiteClient not initialized")
+            logger.error("MDS | Data SDK not initialized")
             return {}
         token_map = self._sdk._tok2sym  # {token: "NSE:SYMBOL"}
-        logger.info(f"MDS | Loaded {len(token_map)} instruments from KiteClient")
+        logger.info(f"MDS | Loaded {len(token_map)} instruments from {self._data_source} SDK")
         return token_map
 
     def _on_tick(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
@@ -237,13 +236,18 @@ class MarketDataService:
         logger.info(f"Redis URL: {self._redis_url}")
         logger.info(f"Publish 1m bars: {self._publish_1m}")
 
-        # Initialize Kite SDK
+        # Initialize data SDK (Zerodha or Upstox)
         try:
-            from broker.kite.kite_client import KiteClient
-            self._sdk = KiteClient()
-            logger.info("MDS | Kite SDK initialized")
+            if self._data_source == "upstox":
+                from broker.upstox.upstox_data_client import UpstoxDataClient
+                self._sdk = UpstoxDataClient()
+                logger.info("MDS | Upstox data SDK initialized")
+            else:
+                from broker.kite.kite_client import KiteClient
+                self._sdk = KiteClient()
+                logger.info("MDS | Kite SDK initialized")
         except Exception as e:
-            logger.error(f"MDS | Failed to initialize Kite SDK: {e}")
+            logger.error(f"MDS | Failed to initialize {self._data_source} SDK: {e}")
             raise
 
         # Pre-warm daily cache and publish to Redis for subscriber instances
@@ -478,11 +482,18 @@ def main():
         action="store_true",
         help="Also publish 1-minute bars (increases Redis traffic)"
     )
+    parser.add_argument(
+        "--data-source",
+        choices=["zerodha", "upstox"],
+        default="zerodha",
+        help="Market data source: zerodha (KiteConnect) or upstox (Upstox WebSocket + REST)"
+    )
     args = parser.parse_args()
 
     service = MarketDataService(
         redis_url=args.redis_url,
         publish_1m_bars=args.publish_1m,
+        data_source=args.data_source,
     )
     service.run_forever()
 
