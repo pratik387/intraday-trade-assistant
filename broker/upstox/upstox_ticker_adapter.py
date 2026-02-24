@@ -55,10 +55,11 @@ class UpstoxTickerAdapter:
         self._stop = threading.Event()
         self._subscribed_keys: set = set()
 
-    def connect(self) -> None:
+    def connect(self, **kwargs) -> None:
         """
         Connect to Upstox WebSocket (blocking, like KiteTicker.connect()).
         WSClient._run() calls this in a background thread.
+        Accepts **kwargs for compatibility (WSClient passes threaded=True for KiteTicker).
         """
         try:
             import upstox_client

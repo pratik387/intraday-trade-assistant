@@ -113,7 +113,7 @@ class MarketDataService:
         if self._sdk is None:
             logger.error("MDS | Data SDK not initialized")
             return {}
-        token_map = self._sdk._tok2sym  # {token: "NSE:SYMBOL"}
+        token_map = self._sdk.get_token_map()  # {token: "NSE:SYMBOL"}
         logger.info(f"MDS | Loaded {len(token_map)} instruments from {self._data_source} SDK")
         return token_map
 
