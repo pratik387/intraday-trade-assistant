@@ -250,13 +250,38 @@ class MarketDataService:
             logger.error(f"MDS | Failed to initialize {self._data_source} SDK: {e}")
             raise
 
+        # MIS pre-filter: reduce universe to MIS-eligible stocks only
+        mis_filter_cfg = self._config.get("early_mis_universe_filter", {})
+        if mis_filter_cfg.get("enabled", False):
+            try:
+                from services.state.zerodha_mis_fetcher import ZerodhaMISFetcher
+                timeout = mis_filter_cfg.get("fetch_timeout_sec", 30)
+                self._mis_fetcher = ZerodhaMISFetcher()
+                if self._mis_fetcher.load_from_zerodha(timeout_sec=timeout):
+                    logger.info(f"MDS | MIS_FETCHER | Loaded {self._mis_fetcher.count()} MIS-allowed symbols")
+                else:
+                    logger.warning("MDS | MIS_FETCHER | Failed to fetch, using full universe")
+                    self._mis_fetcher = None
+            except Exception as e:
+                logger.warning(f"MDS | MIS_FETCHER | Error: {e}")
+                self._mis_fetcher = None
+        else:
+            self._mis_fetcher = None
+
         # Pre-warm daily cache and publish to Redis for subscriber instances
         self._prewarm_and_publish_daily_cache()
 
-        # Load universe
+        # Load universe and apply MIS filter
         token_map = self._load_universe()
         if not token_map:
             raise RuntimeError("No instruments loaded")
+
+        if self._mis_fetcher and self._mis_fetcher.is_loaded():
+            before = len(token_map)
+            token_map = {tok: sym for tok, sym in token_map.items()
+                         if self._mis_fetcher.is_mis_allowed(sym.replace("NSE:", ""))}
+            removed = before - len(token_map)
+            logger.info(f"MDS | MIS_UNIVERSE | {before} -> {len(token_map)} ({removed} non-MIS removed)")
 
         # Create WebSocket client and tick router
         self._router = TickRouter(
