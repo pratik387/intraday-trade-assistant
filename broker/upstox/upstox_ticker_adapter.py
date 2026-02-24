@@ -96,9 +96,9 @@ class UpstoxTickerAdapter:
             logger.info("UPSTOX_WS | Connecting to Upstox WebSocket (v3)...")
             self._streamer.connect()
 
-            # Fire on_connect callback (WSClient expects this)
-            if self.on_connect:
-                self.on_connect(None, {"status": "connected"})
+            # NOTE: on_connect is fired from _on_open() when the socket is actually ready.
+            # Do NOT fire it here — connect() returns before the socket is open,
+            # and WSClient will flush subscriptions on on_connect which would fail.
 
             # Block until stop is signaled (matches KiteTicker.connect() behavior)
             while not self._stop.is_set():
@@ -185,8 +185,10 @@ class UpstoxTickerAdapter:
     # ─── Internal Upstox event handlers ────────────────────────────────────
 
     def _on_open(self) -> None:
-        """Upstox WebSocket opened."""
+        """Upstox WebSocket opened — fire on_connect so WSClient flushes subscriptions."""
         logger.info("UPSTOX_WS | WebSocket connection opened")
+        if self.on_connect:
+            self.on_connect(None, {"status": "connected"})
 
     def _on_message(self, message: Any) -> None:
         """
