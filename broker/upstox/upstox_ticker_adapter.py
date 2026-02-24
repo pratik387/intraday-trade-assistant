@@ -284,25 +284,43 @@ class UpstoxTickerAdapter:
         if not feeds:
             return ticks
 
+        # One-time diagnostic: dump first feed's raw structure
+        if self._msg_count <= 3:
+            first_key = next(iter(feeds))
+            first_val = feeds[first_key]
+            logger.info(
+                f"UPSTOX_WS | DIAG feed sample: key={first_key}, "
+                f"val_type={type(first_val).__name__}, "
+                f"val_keys={list(first_val.keys()) if isinstance(first_val, dict) else 'N/A'}, "
+                f"raw={str(first_val)[:500]}"
+            )
+
+        # Track drop reasons for diagnostics
+        _no_key = _no_ff = _no_mff = _no_ltpc = 0
+
         for instrument_key, feed_response in feeds.items():
             int_token = self._key_to_int.get(instrument_key)
             if int_token is None:
+                _no_key += 1
                 continue
 
             try:
                 ff = feed_response.get("ff") if isinstance(feed_response, dict) else None
                 if not ff:
+                    _no_ff += 1
                     continue
 
                 # V3 MessageToDict uses camelCase: "marketFF" (not "market_ff")
                 market_ff = ff.get("marketFF")
                 if not market_ff:
                     # Could be indexFF for index instruments — skip
+                    _no_mff += 1
                     continue
 
                 # Extract LTPC (Last Traded Price & Change)
                 ltpc = market_ff.get("ltpc")
                 if not ltpc:
+                    _no_ltpc += 1
                     continue
 
                 ltp = ltpc.get("ltp", 0.0)
@@ -352,5 +370,12 @@ class UpstoxTickerAdapter:
 
             except Exception as e:
                 logger.debug(f"UPSTOX_WS | Tick conversion error for {instrument_key}: {e}")
+
+        # Diagnostic summary for first few messages
+        if self._msg_count <= 5 and not ticks:
+            logger.warning(
+                f"UPSTOX_WS | DIAG 0 ticks from {len(feeds)} feeds: "
+                f"no_key={_no_key}, no_ff={_no_ff}, no_marketFF={_no_mff}, no_ltpc={_no_ltpc}"
+            )
 
         return ticks
