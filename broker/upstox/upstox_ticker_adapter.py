@@ -76,21 +76,16 @@ class UpstoxTickerAdapter:
             )
 
         try:
-            # Configure API client with access token
+            # V3 SDK: ApiClient handles auth internally, no separate WS URL fetch
             configuration = upstox_client.Configuration()
             configuration.access_token = self._access_token
-            api_instance = upstox_client.WebsocketApi(
-                upstox_client.ApiClient(configuration)
-            )
+            api_client = upstox_client.ApiClient(configuration)
 
-            # Get authorized WebSocket URL
-            ws_response = api_instance.get_market_data_feed_authorize("2.0")
-            ws_url = ws_response.data.authorized_redirect_uri
+            # MarketDataStreamerV3 handles WS URL, auth, and protobuf decoding
+            self._streamer = upstox_client.MarketDataStreamerV3(api_client)
 
-            # Create MarketDataStreamerV3
-            self._streamer = upstox_client.MarketDataStreamerV3(
-                api_instance, [ws_url]
-            )
+            # Enable auto-reconnect (5s interval, 50 retries)
+            self._streamer.auto_reconnect(enable=True, interval=5, retry_count=50)
 
             # Wire Upstox event emitter callbacks
             self._streamer.on("open", self._on_open)
@@ -98,7 +93,7 @@ class UpstoxTickerAdapter:
             self._streamer.on("close", self._on_ws_close)
             self._streamer.on("error", self._on_ws_error)
 
-            logger.info("UPSTOX_WS | Connecting to Upstox WebSocket...")
+            logger.info("UPSTOX_WS | Connecting to Upstox WebSocket (v3)...")
             self._streamer.connect()
 
             # Fire on_connect callback (WSClient expects this)
