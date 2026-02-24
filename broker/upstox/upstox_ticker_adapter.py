@@ -54,6 +54,8 @@ class UpstoxTickerAdapter:
         self._streamer: Any = None
         self._stop = threading.Event()
         self._subscribed_keys: set = set()
+        self._msg_count = 0            # diagnostic: count messages received
+        self._tick_count = 0           # diagnostic: count ticks converted
 
     def connect(self, **kwargs) -> None:
         """
@@ -192,22 +194,54 @@ class UpstoxTickerAdapter:
 
     def _on_message(self, message: Any) -> None:
         """
-        Convert Upstox protobuf message to Zerodha-format tick dicts
-        and fire on_ticks callback.
+        Convert Upstox V3 message (Python dict from MessageToDict) to
+        Zerodha-format tick dicts and fire on_ticks callback.
         """
         if not self.on_ticks:
             return
 
         try:
+            # V3 SDK emits dict (protobuf → MessageToDict), not raw protobuf
+            msg_type = message.get("type", "") if isinstance(message, dict) else ""
+            self._msg_count += 1
+
+            # Log first few messages for diagnostics
+            if self._msg_count <= 3:
+                if isinstance(message, dict):
+                    keys = list(message.keys())
+                    feed_count = len(message.get("feeds", {}))
+                    sample_key = next(iter(message.get("feeds", {})), None)
+                    logger.info(
+                        f"UPSTOX_WS | Message #{self._msg_count}: type={msg_type}, "
+                        f"keys={keys}, feeds_count={feed_count}, sample_key={sample_key}"
+                    )
+                else:
+                    logger.info(
+                        f"UPSTOX_WS | Message #{self._msg_count}: "
+                        f"python_type={type(message).__name__}"
+                    )
+
+            # Only process live_feed and initial_feed messages
+            if msg_type not in ("live_feed", "initial_feed"):
+                if msg_type == "market_info":
+                    logger.info("UPSTOX_WS | Received market_info message")
+                return
+
             ticks = self._convert_message_to_ticks(message)
             if ticks:
+                self._tick_count += len(ticks)
+                # Log first successful conversion
+                if self._tick_count <= 5:
+                    logger.info(
+                        f"UPSTOX_WS | First ticks: {ticks[0]}"
+                    )
                 self.on_ticks(None, ticks)
         except Exception as e:
             logger.error(f"UPSTOX_WS | Message conversion error: {e}", exc_info=True)
 
-    def _on_ws_close(self) -> None:
-        """Upstox WebSocket closed."""
-        logger.warning("UPSTOX_WS | WebSocket connection closed")
+    def _on_ws_close(self, close_status_code=None, close_msg=None) -> None:
+        """Upstox WebSocket closed (SDK passes close_status_code, close_msg)."""
+        logger.warning(f"UPSTOX_WS | WebSocket connection closed (code={close_status_code}, msg={close_msg})")
         if self.on_close:
             self.on_close(None, None)
 
@@ -223,12 +257,10 @@ class UpstoxTickerAdapter:
         """
         Convert Upstox MarketDataStreamerV3 message to list of Zerodha-format tick dicts.
 
-        Upstox V3 message structure (protobuf decoded):
-            message.feeds = {instrument_key: FeedResponse, ...}
-            FeedResponse.ff = FullFeed
-            FullFeed.market_ff = MarketFullFeed
-            MarketFullFeed.ltpc = LTPC (ltp, ltq, ltt, cp)
-            MarketFullFeed.market_ohlc = MarketOHLC (ohlc list with interval="1d")
+        V3 SDK emits a **Python dict** (protobuf → MessageToDict with camelCase keys):
+            message["feeds"] = {instrument_key: feed_dict, ...}
+            feed_dict["ff"]["marketFF"]["ltpc"] = {"ltp": float, "ltq": "str", "ltt": "epoch_ms_str", "cp": float}
+            feed_dict["ff"]["marketFF"]["marketOhlc"]["ohlc"] = [{"interval": "1d", "vol": int, ...}]
 
         Zerodha tick dict (what TickRouter expects):
             {
@@ -241,8 +273,10 @@ class UpstoxTickerAdapter:
         """
         ticks = []
 
-        # Handle the protobuf message from MarketDataStreamerV3
-        feeds = getattr(message, "feeds", None)
+        if not isinstance(message, dict):
+            return ticks
+
+        feeds = message.get("feeds")
         if not feeds:
             return ticks
 
@@ -252,55 +286,53 @@ class UpstoxTickerAdapter:
                 continue
 
             try:
-                ff = getattr(feed_response, "ff", None)
-                if ff is None:
+                ff = feed_response.get("ff") if isinstance(feed_response, dict) else None
+                if not ff:
                     continue
 
-                market_ff = getattr(ff, "market_ff", None)
-                if market_ff is None:
+                # V3 MessageToDict uses camelCase: "marketFF" (not "market_ff")
+                market_ff = ff.get("marketFF")
+                if not market_ff:
+                    # Could be indexFF for index instruments — skip
                     continue
 
                 # Extract LTPC (Last Traded Price & Change)
-                ltpc = getattr(market_ff, "ltpc", None)
-                if ltpc is None:
+                ltpc = market_ff.get("ltpc")
+                if not ltpc:
                     continue
 
-                ltp = getattr(ltpc, "ltp", 0.0)
-                ltq = getattr(ltpc, "ltq", 0)
-                ltt = getattr(ltpc, "ltt", None)
+                ltp = ltpc.get("ltp", 0.0)
+                ltq = ltpc.get("ltq", 0)      # may arrive as string
+                ltt = ltpc.get("ltt")          # epoch milliseconds as string
 
                 # Parse last trade time to IST-naive datetime
                 trade_time = None
                 if ltt:
                     try:
-                        if isinstance(ltt, str):
-                            trade_time = datetime.fromisoformat(
-                                ltt.replace("Z", "+00:00")
-                            )
-                            # Convert to IST naive
+                        ltt_val = int(ltt) if isinstance(ltt, str) else ltt
+                        if isinstance(ltt_val, (int, float)):
+                            # Upstox V3 sends epoch milliseconds
+                            epoch_sec = ltt_val / 1000.0 if ltt_val > 1e12 else float(ltt_val)
+                            trade_time = datetime.fromtimestamp(epoch_sec, tz=timezone.utc)
                             trade_time = trade_time.astimezone(_IST).replace(tzinfo=None)
-                        elif isinstance(ltt, (int, float)):
-                            # Epoch seconds -> UTC-aware -> IST naive
-                            trade_time = datetime.fromtimestamp(ltt, tz=timezone.utc)
-                            trade_time = trade_time.astimezone(_IST).replace(tzinfo=None)
-                        elif isinstance(ltt, datetime):
-                            if ltt.tzinfo:
-                                trade_time = ltt.astimezone(_IST).replace(tzinfo=None)
-                            else:
-                                trade_time = ltt
-                    except Exception:
+                    except (ValueError, OSError):
                         trade_time = None
 
-                # Extract cumulative day volume from market OHLC
+                # Extract cumulative day volume from marketOhlc (camelCase)
                 cum_volume = 0
-                market_ohlc = getattr(market_ff, "market_ohlc", None)
+                market_ohlc = market_ff.get("marketOhlc")
                 if market_ohlc:
-                    ohlc_list = getattr(market_ohlc, "ohlc", [])
+                    ohlc_list = market_ohlc.get("ohlc", [])
                     for ohlc_item in ohlc_list:
-                        interval = getattr(ohlc_item, "interval", "")
+                        interval = ohlc_item.get("interval", "")
                         if interval == "1d":
-                            cum_volume = getattr(ohlc_item, "vol", 0) or 0
+                            cum_volume = ohlc_item.get("vol", 0) or ohlc_item.get("volume", 0) or 0
                             break
+
+                # Fallback: use vtt (volume traded today) from marketFF
+                if not cum_volume:
+                    vtt = market_ff.get("vtt", 0)
+                    cum_volume = int(vtt) if vtt else 0
 
                 # Build Zerodha-compatible tick dict
                 tick = {
