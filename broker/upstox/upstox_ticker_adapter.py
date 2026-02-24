@@ -221,8 +221,12 @@ class UpstoxTickerAdapter:
                         f"python_type={type(message).__name__}"
                     )
 
-            # Only process live_feed and initial_feed messages
-            if msg_type not in ("live_feed", "initial_feed"):
+            # Skip market_info messages (no feed data).
+            # Note: MessageToDict omits default enum values, so live_feed/initial_feed
+            # messages often arrive with type="" — process any message that has "feeds".
+            if msg_type == "market_info" or (
+                not message.get("feeds") and msg_type != "live_feed" and msg_type != "initial_feed"
+            ):
                 if msg_type == "market_info":
                     logger.info("UPSTOX_WS | Received market_info message")
                 return
