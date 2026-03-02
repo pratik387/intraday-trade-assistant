@@ -726,7 +726,7 @@ class TriggerAwareExecutor:
             if self.trading_logger:
                 self.trading_logger.log_exit({
                     "symbol": symbol, "reason": f"fill_quality_rejected:{reason}",
-                    "qty": qty, "entry_price": price, "exit_price": actual_exit_px, "pnl": pnl,
+                    "qty": qty, "entry_price": fill_price, "exit_price": actual_exit_px, "pnl": pnl,
                 })
 
             # Log closed trade to API server for dashboard display
