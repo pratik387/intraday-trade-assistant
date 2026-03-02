@@ -1328,7 +1328,9 @@ class BasePipeline(ABC):
         tqg = self.cfg.get("trade_quality_gates", {})
         if tqg.get("enabled", False):
             blocked_hours = tqg.get("blocked_hours", [])
-            if now and now.hour in blocked_hours:
+            exempt_prefixes = tqg.get("blocked_hours_exempt_prefixes", [])
+            setup_exempt = any(setup_type.lower().startswith(p) for p in exempt_prefixes)
+            if now and now.hour in blocked_hours and not setup_exempt:
                 logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: hour {now.hour} in blocked_hours {blocked_hours}")
                 return {"eligible": False, "reason": "blocked_hour", "details": [f"hour_{now.hour}_blocked"]}
 

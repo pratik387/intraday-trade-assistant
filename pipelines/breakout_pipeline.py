@@ -640,6 +640,10 @@ class BreakoutPipeline(BasePipeline):
         lookback = vol_cfg["long"]["lookback_bars"]
         if is_fhm:
             reasons.append(f"fhm_volume_surge_bypass:uses_rvol_from_screening")
+        elif is_orb:
+            # PHASE 1: Bypass to collect ORB trade data. ORB detector validates 1.5x volume on 5m.
+            # TODO: Run edge optimizer on ORB outcomes, derive 1m threshold, replace bypass.
+            reasons.append("orb_volume_surge_bypass:phase1_data_collection")
         elif df1m is not None and len(df1m) >= 5:
             lookback = min(lookback, len(df1m) - 1)
             if lookback >= 4:
@@ -664,6 +668,10 @@ class BreakoutPipeline(BasePipeline):
         # FAIL-CLOSED: Reject breakout when 1m data insufficient (can't validate candle quality)
         if is_fhm:
             reasons.append(f"fhm_momentum_candle_bypass:uses_rvol")
+        elif is_orb:
+            # PHASE 1: Bypass to collect ORB trade data. ORB detector validates candle close (Crabel).
+            # TODO: Run edge optimizer on ORB outcomes, derive 1m threshold, replace bypass.
+            reasons.append("orb_momentum_candle_bypass:phase1_data_collection")
         elif df1m is not None and len(df1m) >= 5:
             last_5 = df1m.tail(5)
             candle_sizes = (last_5["high"] - last_5["low"]).values
@@ -707,6 +715,10 @@ class BreakoutPipeline(BasePipeline):
         if is_fhm:
             # FHM validates momentum via RVOL in screening, RSI check not applicable
             reasons.append(f"fhm_rsi_bypass:{rsi:.0f}:uses_rvol_instead")
+        elif is_orb:
+            # PHASE 1: RSI needs 14 bars (70 min) to stabilize; only 4 bars exist at ORB time.
+            # TODO: After data collection, test if RSI adds edge for ORB entries.
+            reasons.append(f"orb_rsi_bypass:{rsi:.0f}:phase1_data_collection")
         elif is_short:
             # Short breakouts need RSI weakness (high RSI = no selling pressure)
             threshold = rsi_cfg.get("orb_early_short_threshold") if is_orb else rsi_cfg["short_weak_threshold"]

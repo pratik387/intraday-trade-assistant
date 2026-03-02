@@ -88,6 +88,7 @@
 
     "gates": {
         "_comment": "From configuration.json - breakout_volume_surge_min: 1.5 (long), 2.0 (short), breakout_momentum_candle_min_ratio: 2.0 (long), 2.5 (short)",
+        "_orb_phase1_note": "PHASE 1 DATA COLLECTION: ORB bypasses volume_surge, momentum_candle, RSI gates in code (breakout_pipeline.py). ORB detector validates quality on 5m bars. After collecting trade data, run edge optimizer to derive 1m thresholds and replace code bypasses with config values here.",
         "volume_surge": {
             "long": {
                 "min_ratio": 1.5,
