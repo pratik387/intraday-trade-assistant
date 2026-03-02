@@ -173,25 +173,36 @@ class WSClient:
                 # Mark as connected
                 self._connected.set()
 
-                # Flush all buffered subscriptions
+                # Flush all buffered subscriptions with inter-batch delay.
+                # Upstox WS silently drops subscriptions when messages arrive
+                # too fast (observed 669/1447 coverage without delay).
                 with self._pending_lock:
                     if self._pending_subscriptions:
                         total_tokens = sum(len(batch) for batch in self._pending_subscriptions)
-                        logger.info(f"Flushing {total_tokens} buffered subscription tokens...")
+                        n_batches = len(self._pending_subscriptions)
+                        logger.info(
+                            f"Flushing {total_tokens} buffered subscription tokens "
+                            f"in {n_batches} batches..."
+                        )
 
-                        for batch in self._pending_subscriptions:
+                        for i, batch in enumerate(self._pending_subscriptions):
                             try:
                                 self._ticker.subscribe(batch)
-                                # Ensure quote mode so volume_traded is included
-                                try:
-                                    self._ticker.set_mode("quote", batch)
-                                except Exception:
-                                    pass
+                                self._ticker.set_mode("quote", batch)
                             except Exception as e:
-                                logger.error(f"Failed to subscribe buffered tokens: {e}")
+                                logger.error(
+                                    f"Failed to subscribe batch {i+1}/{n_batches} "
+                                    f"({len(batch)} tokens): {e}"
+                                )
+                            # Small delay between batches to avoid server throttling
+                            if i < n_batches - 1:
+                                time.sleep(0.05)
 
                         self._pending_subscriptions.clear()
-                        logger.info("All buffered subscriptions sent")
+                        logger.info(
+                            f"All {n_batches} subscription batches sent "
+                            f"({total_tokens} tokens)"
+                        )
 
             ticker.on_connect = _connected
         else:

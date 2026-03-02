@@ -56,6 +56,8 @@ class UpstoxTickerAdapter:
         self._subscribed_keys: set = set()
         self._msg_count = 0            # diagnostic: count messages received
         self._tick_count = 0           # diagnostic: count ticks converted
+        self._unique_tick_keys: set = set()  # diagnostic: track unique instruments receiving ticks
+        self._last_coverage_log = 0    # diagnostic: throttle coverage log
 
     def connect(self, **kwargs) -> None:
         """
@@ -141,7 +143,10 @@ class UpstoxTickerAdapter:
         if keys_to_sub:
             try:
                 self._streamer.subscribe(keys_to_sub, "full")
-                logger.debug(f"UPSTOX_WS | Subscribed {len(keys_to_sub)} instruments (full mode)")
+                logger.info(
+                    f"UPSTOX_WS | Subscribed {len(keys_to_sub)} instruments "
+                    f"(full mode, total: {len(self._subscribed_keys)})"
+                )
             except Exception as e:
                 logger.error(f"UPSTOX_WS | Subscribe failed: {e}")
 
@@ -167,16 +172,24 @@ class UpstoxTickerAdapter:
     def set_mode(self, mode: str, tokens: List[int]) -> None:
         """
         Set subscription mode for tokens.
-        Maps Zerodha modes to Upstox modes:
-          "full"  -> "full"   (OHLC + depth + LTP)
-          "quote" -> "full"   (Upstox 'full' includes quote-level data)
-          "ltp"   -> "ltpc"   (LTP + change)
+
+        Upstox subscribe() already uses "full" mode which includes OHLC, depth,
+        LTP, and volume — equivalent to Zerodha's "quote" and "full" modes.
+        Sending a redundant change_mode() after each subscribe() doubles the
+        number of WS messages and can trigger server-side throttling that
+        silently drops subscriptions (observed: 669/1447 coverage).
+
+        Only issue a change_mode when the caller explicitly requests "ltp"
+        (downgrade to ltpc), which is never done in the normal pipeline.
         """
         if not self._streamer or not tokens:
             return
 
-        upstox_mode = "full" if mode in ("full", "quote") else "ltpc"
+        # "quote" and "full" are no-ops — already subscribed as "full"
+        if mode in ("full", "quote"):
+            return
 
+        upstox_mode = "ltpc"
         keys = [self._int_to_key[t] for t in tokens if t in self._int_to_key]
         if keys:
             try:
@@ -370,6 +383,19 @@ class UpstoxTickerAdapter:
 
             except Exception as e:
                 logger.debug(f"UPSTOX_WS | Tick conversion error for {instrument_key}: {e}")
+
+        # Track unique instruments receiving ticks (coverage diagnostic)
+        for t in ticks:
+            self._unique_tick_keys.add(t["instrument_token"])
+
+        # Log coverage periodically (every 500 messages)
+        if self._msg_count - self._last_coverage_log >= 500:
+            self._last_coverage_log = self._msg_count
+            logger.info(
+                f"UPSTOX_WS | COVERAGE: {len(self._unique_tick_keys)} unique instruments "
+                f"receiving ticks out of {len(self._subscribed_keys)} subscribed "
+                f"({len(self._unique_tick_keys)/max(1,len(self._subscribed_keys))*100:.1f}%)"
+            )
 
         # Diagnostic summary for first few messages
         if self._msg_count <= 5 and not ticks:
