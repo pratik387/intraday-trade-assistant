@@ -2202,7 +2202,10 @@
     "eod_scale_out_time2": "15:07",
     "eod_scale_out_rr1": 0.7,
     "eod_scale_out_rr2": 0.4,
-    "eod_scale_out_pct1": 50.0
+    "eod_scale_out_pct1": 50.0,
+    "orb_max_hold_minutes": 60,
+    "orb_failed_breakout_buffer_or_pct": 0.3,
+    "_comment_orb_failed_breakout": "Buffer as fraction of OR range before triggering failed breakout exit. 0.3 = close must be 30% of OR range above ORL (for shorts) to trigger exit. Prevents normal pullback retests from killing trades."
   },
   "structure_manager": {
     "enabled": true,
