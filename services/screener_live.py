@@ -47,7 +47,7 @@ import threading
 import pandas as pd
 
 from config.filters_setup import load_filters
-from config.logging_config import get_agent_logger, get_screener_logger, get_ranking_logger, get_events_decision_logger
+from config.logging_config import get_agent_logger, get_screener_logger, get_events_decision_logger
 from config.env_setup import env
 from utils.level_utils import get_previous_day_levels
 from utils.dataframe_utils import validate_df, safe_get_last
@@ -1280,7 +1280,6 @@ class ScreenerLive:
 
         max_trades_per_cycle = int(self.raw_cfg["max_trades_per_cycle"])
         trades_planned = 0
-        ranking_logger = get_ranking_logger()
         events_logger = get_events_decision_logger()
 
         eligible_plans: List[Tuple[str, Dict, float]] = []  # (symbol, plan, score)
@@ -1357,27 +1356,6 @@ class ScreenerLive:
         for i, (sym, plan, score, decision) in enumerate(eligible_plans):
             strategy_type = plan.get("strategy", "unknown")
             df5 = symbol_data_map.get(sym, (None,))[0]
-
-            # Log ranking acceptance
-            ranking_logger.log_accept(
-                sym,
-                timestamp=now.isoformat(),
-                rank_score=score,
-                threshold=0.0,  # Orchestrator already applied thresholds
-                percentile_score=pctl_score,
-                strategy_type=strategy_type,
-                rank_position=i + 1,
-                total_candidates=len(eligible_plans),
-                regime_diagnostics=getattr(decision, 'regime_diagnostics', None) if decision else None,
-                # Indicators at decision time
-                indicators=plan.get("indicators"),
-                # Quality summary
-                structural_rr=plan.get("quality", {}).get("structural_rr"),
-                quality_status=plan.get("quality", {}).get("status"),
-                # Category and bias
-                category=plan.get("category"),
-                bias=plan.get("bias"),
-            )
 
             # 1) Eligibility (already checked, but keep for compatibility)
             if not plan.get("eligible", False):
