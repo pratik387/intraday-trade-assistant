@@ -1460,7 +1460,22 @@ class BasePipeline(ABC):
             # Pro trader approach: For long breakouts, SL at ORL (or below level), not relative to fill.
             vol_stop = entry_ref_price - (sl_atr_mult * adjusted_atr) if bias == "long" else entry_ref_price + (sl_atr_mult * adjusted_atr)
 
-            if bias == "long":
+            is_orb = setup_type.startswith("orb_")
+
+            if is_orb:
+                # ORB FIX: Always use structural SL (ORH/ORL + tick buffer).
+                # The OR boundary IS the invalidation — never tighten inside the OR.
+                # vol_stop often lands inside the OR for entries far from the range.
+                if bias == "long":
+                    structure_sl = structure_stop - sl_below_swing_ticks
+                    hard_sl = structure_sl
+                    rps = max(effective_entry_price - hard_sl, 0.0)
+                else:
+                    structure_sl = structure_stop + sl_below_swing_ticks
+                    hard_sl = structure_sl
+                    rps = max(hard_sl - effective_entry_price, 0.0)
+                logger.debug(f"ORB_SL: {symbol} structural SL={hard_sl:.2f} (structure_stop={structure_stop:.2f}, vol_stop={vol_stop:.2f})")
+            elif bias == "long":
                 # For LONG: SL below entry - use HIGHER value (closer to entry) = TIGHTER stop
                 structure_sl = structure_stop - sl_below_swing_ticks
                 hard_sl = max(structure_sl, vol_stop)  # Takes closer SL to entry

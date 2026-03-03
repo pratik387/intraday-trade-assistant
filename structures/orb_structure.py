@@ -454,13 +454,16 @@ class ORBStructure(BaseStructure):
             logger.debug(f"ORB: {market_context.symbol} - Using minimum stop distance: {min_stop_distance:.3f} ({self.min_stop_distance_pct:.3f}% of price)")
 
         # Calculate hard stop based on OR levels - CONFIGURABLE
+        # ORB FIX: Always use structural level (ORH/ORL + buffer) as SL.
+        # The OR boundary IS the invalidation level — if price crosses back through it,
+        # the breakout/breakdown thesis is dead. Never tighten SL inside the OR.
         buffer_mult = self.config.get("or_level_buffer_mult", 0.1)  # Default: 10% of OR range as buffer
         if entry_price > orh:  # Long position
-            hard_sl = max(orl - (orb_range * buffer_mult), entry_price - stop_distance)
-            logger.debug(f"ORB: {market_context.symbol} - Long hard SL: max(ORL-buffer: {orl - (orb_range * buffer_mult):.3f}, entry-stop: {entry_price - stop_distance:.3f}) = {hard_sl:.3f}")
+            hard_sl = orl - (orb_range * buffer_mult)
+            logger.debug(f"ORB: {market_context.symbol} - Long hard SL: ORL-buffer = {hard_sl:.3f} (ORL: {orl:.3f}, buffer: {orb_range * buffer_mult:.3f})")
         else:  # Short position
-            hard_sl = min(orh + (orb_range * buffer_mult), entry_price + stop_distance)
-            logger.debug(f"ORB: {market_context.symbol} - Short hard SL: min(ORH+buffer: {orh + (orb_range * buffer_mult):.3f}, entry+stop: {entry_price + stop_distance:.3f}) = {hard_sl:.3f}")
+            hard_sl = orh + (orb_range * buffer_mult)
+            logger.debug(f"ORB: {market_context.symbol} - Short hard SL: ORH+buffer = {hard_sl:.3f} (ORH: {orh:.3f}, buffer: {orb_range * buffer_mult:.3f})")
 
         risk_per_share = abs(entry_price - hard_sl)
 

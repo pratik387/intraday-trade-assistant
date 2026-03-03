@@ -906,14 +906,21 @@ class BreakoutPipeline(BasePipeline):
         orl = safe_level_get(levels, "ORL", 0)
 
         # Use structure-based risk when ORH/ORL available and valid
+        is_orb = setup_type.startswith("orb_")
         if orh > 0 and orl > 0 and orh > orl:
             structure_risk = orh - orl
             default_risk = abs(entry_ref_price - hard_sl)
 
-            # Use the smaller of structure risk or default risk
-            # This ensures targets are achievable but not too aggressive
-            risk_per_share = min(structure_risk, default_risk)
-            logger.debug(f"[BREAKOUT] Using structure-based risk for {symbol}: ORH-ORL={structure_risk:.2f} vs entry-SL={default_risk:.2f}, using={risk_per_share:.2f}")
+            if is_orb:
+                # ORB FIX: Use actual risk (entry-to-SL distance) so displayed R:R = actual R:R.
+                # Previously min(structure, default) always picked OR_range, but SL is beyond OR,
+                # making actual risk ~1.1x OR_range. Targets must reflect the real risk taken.
+                risk_per_share = default_risk
+                logger.debug(f"[BREAKOUT] ORB actual risk for {symbol}: entry-SL={default_risk:.2f} (OR_range={structure_risk:.2f})")
+            else:
+                # Non-ORB: use smaller of structure risk or default risk
+                risk_per_share = min(structure_risk, default_risk)
+                logger.debug(f"[BREAKOUT] Using structure-based risk for {symbol}: ORH-ORL={structure_risk:.2f} vs entry-SL={default_risk:.2f}, using={risk_per_share:.2f}")
         else:
             # Fallback to default risk calculation
             risk_per_share = abs(entry_ref_price - hard_sl)

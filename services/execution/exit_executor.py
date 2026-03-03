@@ -134,7 +134,11 @@ class ExitExecutor:
 
         # PRO TRADER: ORB-specific max hold time (Crabel: ideal trade profits instantly)
         # Pro traders hold ORB for 30-90 min max. Exit if no target hit within this time.
-        self.orb_max_hold_minutes = float(cfg.get("orb_max_hold_minutes", 60))
+        self.orb_max_hold_minutes = float(exits_config.get("orb_max_hold_minutes", cfg.get("orb_max_hold_minutes", 60)))
+
+        # ORB failed breakout buffer: fraction of OR range before triggering exit
+        # Prevents normal pullback retests from killing trades prematurely
+        self.orb_failed_breakout_buffer_or_pct = float(exits_config["orb_failed_breakout_buffer_or_pct"])
 
         # execution params
         self.exec_product = str(cfg.get("exec_product", "MIS")).upper()
@@ -332,16 +336,18 @@ class ExitExecutor:
                     if orh is not None and orl is not None:
                         # Check if candle CLOSE is back inside OR (using px as close price)
                         candle_close = float(px)  # At bar end, px is the close
+                        or_range = float(orh) - float(orl)
+                        fb_buffer = or_range * self.orb_failed_breakout_buffer_or_pct
 
-                        if setup_type == "orb_breakout_long" and candle_close < orh:
-                            # Long breakout failed - price closed back below ORH
-                            logger.info(f"FAILED_BREAKOUT | {sym} | LONG closed below ORH | Close: {candle_close:.2f} < ORH: {orh:.2f}")
+                        if setup_type == "orb_breakout_long" and candle_close < orh - fb_buffer:
+                            # Long breakout failed - price closed well below ORH (past buffer)
+                            logger.info(f"FAILED_BREAKOUT | {sym} | LONG closed below ORH-buffer | Close: {candle_close:.2f} < {orh - fb_buffer:.2f} (ORH: {orh:.2f}, buffer: {fb_buffer:.2f})")
                             self._exit(sym, pos, candle_close, ts, "failed_breakout_back_inside_or")
                             continue
 
-                        elif setup_type == "orb_breakdown_short" and candle_close > orl:
-                            # Short breakdown failed - price closed back above ORL
-                            logger.info(f"FAILED_BREAKOUT | {sym} | SHORT closed above ORL | Close: {candle_close:.2f} > ORL: {orl:.2f}")
+                        elif setup_type == "orb_breakdown_short" and candle_close > orl + fb_buffer:
+                            # Short breakdown failed - price closed well above ORL (past buffer)
+                            logger.info(f"FAILED_BREAKOUT | {sym} | SHORT closed above ORL+buffer | Close: {candle_close:.2f} > {orl + fb_buffer:.2f} (ORL: {orl:.2f}, buffer: {fb_buffer:.2f})")
                             self._exit(sym, pos, candle_close, ts, "failed_breakout_back_inside_or")
                             continue
 
