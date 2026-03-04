@@ -138,6 +138,12 @@
                 "long_size_mult": 1.3
             }
         },
+        "orb_direction_bias": {
+            "enabled": true,
+            "block_short_in_regimes": ["trend_up"],
+            "block_long_in_regimes": ["trend_down"],
+            "_rationale": "Pro consensus: only trade ORB in direction of prevailing trend. Counter-trend ORB has negative expectancy."
+        },
         "validated_filters": {
             "_comment": "CROSS-RUN VALIDATED FILTERS (Dec 2024) - Consistent across backtest_20251204 and backtest_20251205",
             "first_hour_momentum_long": {
@@ -198,8 +204,7 @@
             },
             "orb_breakout_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "11,756 trades, WR 34.3%, Rs -12.70L loss, negative ALL 4 FYs."
+                "_evidence": "Phase 2: Enabling with NR7+direction bias+improved R:R. Was blocked (11,756 trades, WR 34.3%) due to no quality filters."
             },
             "gap_breakout_long": {
                 "enabled": false,

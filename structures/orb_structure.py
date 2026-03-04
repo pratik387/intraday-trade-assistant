@@ -164,6 +164,23 @@ class ORBStructure(BaseStructure):
                     rejection_reason=f"ORB range too small: {orb_range_pct:.3f}% < {self.min_range_pct:.3f}%"
                 )
 
+            # PRO TRADER: OR/ATR ratio filter — skip wide ranges where move already happened
+            max_or_atr_ratio = self.config.get("max_or_atr_ratio", None)
+            if max_or_atr_ratio is not None:
+                daily_atr = market_context.indicators.get('daily_atr') if market_context.indicators else None
+                if daily_atr and daily_atr > 0:
+                    or_range_abs = orh - orl
+                    or_atr_ratio = or_range_abs / daily_atr
+                    if or_atr_ratio > max_or_atr_ratio:
+                        logger.debug(f"ORB: {symbol} - OR/ATR ratio {or_atr_ratio:.2f} > max {max_or_atr_ratio} (range exhausted)")
+                        return StructureAnalysis(
+                            structure_detected=False,
+                            events=[],
+                            quality_score=0.0,
+                            rejection_reason=f"OR/ATR ratio {or_atr_ratio:.2f} > {max_or_atr_ratio} - range exhausted"
+                        )
+                    logger.debug(f"ORB: {symbol} - OR/ATR ratio {or_atr_ratio:.2f} <= {max_or_atr_ratio} (OK)")
+
             # PRO TRADER: NR7 Daily Filter (Crabel's #1 ORB filter)
             if self.require_nr7_day:
                 is_nr7 = self._check_nr7_day(market_context)
@@ -588,37 +605,16 @@ class ORBStructure(BaseStructure):
         NR7 = Previous day's range was the smallest of the last 7 days.
         This indicates volatility contraction before potential expansion.
         Crabel: "ORB most effective after NR7 day"
+
+        Pre-computed in MDS from daily data and passed via indicators.
         """
         try:
-            df_daily = market_context.df_daily
-            if df_daily is None or len(df_daily) < self.nr7_lookback_days:
-                logger.debug(f"ORB: NR7 check skipped - insufficient daily data (need {self.nr7_lookback_days} days, have {len(df_daily) if df_daily is not None else 0})")
-                return True  # Allow through if no daily data (don't block)
-
-            # Calculate daily ranges for last N days
-            recent_daily = df_daily.tail(self.nr7_lookback_days)
-            daily_ranges = recent_daily['high'] - recent_daily['low']
-
-            # Previous day's range (second to last, since last is today/incomplete)
-            if len(daily_ranges) < 2:
-                return True
-
-            prev_day_range = daily_ranges.iloc[-2]
-            prior_ranges = daily_ranges.iloc[:-2]  # Days before previous day
-
-            if len(prior_ranges) < 1:
-                return True
-
-            # NR7: Previous day range must be smallest of all lookback days
-            is_nr7 = prev_day_range < prior_ranges.min()
-
+            is_nr7 = market_context.indicators.get('is_nr7', True) if market_context.indicators else True
             if is_nr7:
-                logger.debug(f"ORB: NR7 day detected | Prev day range: {prev_day_range:.2f} < Min prior: {prior_ranges.min():.2f}")
+                logger.debug(f"ORB: {market_context.symbol} - NR7 day confirmed (volatility contracted)")
             else:
-                logger.debug(f"ORB: NOT an NR7 day | Prev day range: {prev_day_range:.2f} vs Min prior: {prior_ranges.min():.2f}")
-
+                logger.debug(f"ORB: {market_context.symbol} - NOT NR7 day (no volatility contraction)")
             return is_nr7
-
         except Exception as e:
             logger.debug(f"ORB: NR7 check error: {e}")
             return True  # Allow through on error

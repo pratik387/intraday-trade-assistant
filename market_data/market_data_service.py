@@ -197,11 +197,27 @@ class MarketDataService:
                 daily_df = self._sdk.get_daily(sym, days=210)
                 pd_lvls = compute_previous_day_levels(daily_df, session_date)
 
+                # Compute NR7 and daily ATR for ORB quality gates
+                is_nr7 = False
+                daily_atr = float("nan")
+                if daily_df is not None and len(daily_df) >= 8:
+                    daily_ranges = daily_df['high'] - daily_df['low']
+                    # NR7: prev day range must be smallest of last 7 days (Crabel's #1 ORB filter)
+                    if len(daily_ranges) >= 8:
+                        prev_day_range = daily_ranges.iloc[-2]
+                        prior_ranges = daily_ranges.iloc[-8:-2]  # 6 days before prev day
+                        is_nr7 = bool(prev_day_range < prior_ranges.min())
+                    # Daily ATR: 14-day rolling mean of daily true ranges
+                    if len(daily_ranges) >= 14:
+                        daily_atr = float(daily_ranges.rolling(14).mean().iloc[-2])
+
                 levels_by_symbol[sym] = {
                     "ORH": float(orh), "ORL": float(orl),
                     "PDH": pd_lvls.get("PDH", float("nan")),
                     "PDL": pd_lvls.get("PDL", float("nan")),
                     "PDC": pd_lvls.get("PDC", float("nan")),
+                    "is_nr7": is_nr7,
+                    "daily_atr": daily_atr,
                 }
                 ok += 1
             except Exception as e:

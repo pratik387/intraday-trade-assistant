@@ -623,6 +623,19 @@ class BreakoutPipeline(BasePipeline):
         # Determine if short (stricter filters)
         is_short = "_short" in setup_type
 
+        # ORB direction bias: block counter-trend ORB entries (pro consensus)
+        if is_orb and passed:
+            dir_bias_cfg = self._get("gates", "orb_direction_bias")
+            if dir_bias_cfg.get("enabled", False):
+                if is_short and regime in dir_bias_cfg.get("block_short_in_regimes", []):
+                    reasons.append(f"orb_direction_blocked:short_in_{regime}")
+                    passed = False
+                elif not is_short and regime in dir_bias_cfg.get("block_long_in_regimes", []):
+                    reasons.append(f"orb_direction_blocked:long_in_{regime}")
+                    passed = False
+                else:
+                    reasons.append(f"orb_direction_ok:{regime}")
+
         # Volume surge filter from config
         vol_cfg = self._get("gates", "volume_surge")
         mom_cfg = self._get("gates", "momentum_candle")

@@ -323,6 +323,9 @@
             "orb_breakout_short": [
                 {"name": "all", "conditions": [], "_comment": "PHASE 1: Pending data collection"}
             ],
+            "orb_breakout_long": [
+                {"name": "all", "conditions": [], "_comment": "PHASE 2: Enabled with NR7+direction bias. Derive VC conditions after data collection."}
+            ],
             "orb_pullback_short": [
                 {"name": "all", "conditions": [], "_comment": "PHASE 1: Pending data collection"}
             ],

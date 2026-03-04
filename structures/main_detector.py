@@ -339,7 +339,9 @@ class MainDetector(BaseStructure):
             # Extract indicators
             indicators = {
                 'vol_z': float(d['vol_z'].iloc[-1]) if not pd.isna(d['vol_z'].iloc[-1]) else 0.0,
-                'atr': float(d['atr'].iloc[-1]) if not pd.isna(d['atr'].iloc[-1]) else 1.0
+                'atr': float(d['atr'].iloc[-1]) if not pd.isna(d['atr'].iloc[-1]) else 1.0,
+                'is_nr7': levels.get('is_nr7', True),       # Pre-computed in MDS from daily data; default True = allow through
+                'daily_atr': levels.get('daily_atr', None),  # For ORB OR/ATR ratio filter
             }
 
             # BUGFIX: Use DataFrame timestamp instead of datetime.now() for backtesting compatibility
