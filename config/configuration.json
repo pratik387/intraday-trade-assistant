@@ -2273,8 +2273,6 @@
     "mode": "standalone",
     "_comment_mode": "standalone=local only (default), subscriber=receive from Market Data Service. Use --shared-market-data flag to enable subscriber mode.",
     "redis_url": "redis://localhost:6379/0",
-    "publish_1m_bars": false,
-    "_comment_1m": "Only used by Market Data Service (python -m market_data.market_data_service --publish-1m)",
     "ltp_mode": "standalone",
     "_comment_ltp_mode": "standalone=local cache, subscriber=read from Redis. Follows 'mode' setting.",
     "_usage": "1) redis-server  2) python -m market_data.market_data_service  3) python main.py --shared-market-data",

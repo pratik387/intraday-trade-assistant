@@ -60,7 +60,6 @@ def create_market_data_components(
     mdb_config = config.get("market_data_bus", {})
     mode = mdb_config.get("mode", "standalone")
     redis_url = mdb_config.get("redis_url", "redis://localhost:6379/0")
-    publish_1m = mdb_config.get("publish_1m_bars", False)
     ltp_mode = mdb_config.get("ltp_mode", mode)  # Default LTP mode follows bus mode
 
     logger.info(f"MARKET_DATA_FACTORY | mode={mode}, ltp_mode={ltp_mode}")
@@ -78,7 +77,6 @@ def create_market_data_components(
         return _create_publisher_components(
             config=config,
             redis_url=redis_url,
-            publish_1m=publish_1m,
             ltp_mode=ltp_mode,
             on_1m_close=on_1m_close,
             on_5m_close=on_5m_close,
@@ -128,7 +126,6 @@ def _create_standalone_components(
 def _create_publisher_components(
     config: dict,
     redis_url: str,
-    publish_1m: bool,
     ltp_mode: str,
     on_1m_close: Optional[Callable],
     on_5m_close: Optional[Callable],
@@ -143,7 +140,6 @@ def _create_publisher_components(
     bus = MarketDataBus(
         mode="publisher",
         redis_url=redis_url,
-        publish_1m_bars=publish_1m,
     )
 
     # Wrap callbacks to publish to Redis after processing

@@ -96,18 +96,15 @@ class MarketDataBus:
     Config keys (from configuration.json):
       - market_data_bus.mode: "standalone" | "publisher" | "subscriber"
       - market_data_bus.redis_url: Redis connection URL
-      - market_data_bus.publish_1m_bars: Whether to publish 1m bars (default: false)
     """
 
     def __init__(
         self,
         mode: str = "standalone",
         redis_url: str = "redis://localhost:6379/0",
-        publish_1m_bars: bool = False,
     ):
         self._mode = mode
         self._redis_url = redis_url
-        self._publish_1m = publish_1m_bars
         self._redis: Optional[Any] = None
         self._redis_binary: Optional[Any] = None  # Separate connection for binary data (no decode_responses)
         self._pubsub: Optional[Any] = None
@@ -161,9 +158,6 @@ class MarketDataBus:
             bar: pandas Series from BarBuilder
         """
         if self._mode != "publisher":
-            return
-
-        if timeframe == "1m" and not self._publish_1m:
             return
 
         try:

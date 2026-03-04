@@ -1515,16 +1515,19 @@ class ExitExecutor:
         }
 
         # Log EXIT to events.jsonl (single writer: diag_event_log)
-        diag_event_log.log_exit(
-            symbol=sym,
-            plan=pos.plan,
-            reason=reason,
-            exit_price=actual_exit_px,
-            exit_qty=qty_exit,
-            ts=ts,
-            pnl=round(pnl, 2),
-            diagnostics=exit_diagnostics,
-        )
+        try:
+            diag_event_log.log_exit(
+                symbol=sym,
+                plan=pos.plan,
+                reason=reason,
+                exit_price=actual_exit_px,
+                exit_qty=qty_exit,
+                ts=ts,
+                pnl=round(pnl, 2),
+                diagnostics=exit_diagnostics,
+            )
+        except Exception as _diag_err:
+            logger.warning("diag_event_log.log_exit failed for %s: %s", sym, _diag_err)
 
         # Log EXIT to trade_logs.log (human-readable)
         if self.trading_logger:

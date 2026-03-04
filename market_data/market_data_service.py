@@ -54,11 +54,9 @@ class MarketDataService:
     def __init__(
         self,
         redis_url: str = "redis://localhost:6379/0",
-        publish_1m_bars: bool = False,
         data_source: str = "zerodha",
     ):
         self._redis_url = redis_url
-        self._publish_1m = publish_1m_bars
         self._data_source = data_source
         self._running = False
 
@@ -78,7 +76,6 @@ class MarketDataService:
         self._bus = MarketDataBus(
             mode="publisher",
             redis_url=redis_url,
-            publish_1m_bars=publish_1m_bars,
         )
 
         # Create bar builder with publish callbacks
@@ -94,6 +91,9 @@ class MarketDataService:
         self._ws = None
         self._router = None
         self._sdk = None
+
+        # Tick recorder (initialized in start())
+        self._tick_recorder = None
 
         # Stats
         self._tick_count = 0
@@ -131,11 +131,14 @@ class MarketDataService:
         # Publish tick to Redis pub/sub (for real-time execution)
         self._bus.publish_tick(symbol, price, volume, ts)
 
+        # Record tick for persistence (parquet archive)
+        if self._tick_recorder is not None:
+            self._tick_recorder.on_tick(symbol, price, 0, ts, volume)
+
     def _on_1m_close(self, symbol: str, bar) -> None:
         """Publish 1m bar to Redis."""
         self._bar_1m_count += 1
-        if self._publish_1m:
-            self._bus.publish_bar(symbol, "1m", bar)
+        self._bus.publish_bar(symbol, "1m", bar)
 
     def _on_5m_close(self, symbol: str, bar) -> None:
         """Publish 5m bar to Redis."""
@@ -234,7 +237,7 @@ class MarketDataService:
         logger.info("MARKET DATA SERVICE - Starting")
         logger.info("=" * 60)
         logger.info(f"Redis URL: {self._redis_url}")
-        logger.info(f"Publish 1m bars: {self._publish_1m}")
+        logger.info("Publish bars: 1m, 5m, 15m")
 
         # Initialize data SDK (Zerodha or Upstox)
         try:
@@ -307,6 +310,18 @@ class MarketDataService:
 
         # Start stats reporter
         self._start_stats_reporter()
+
+        # Initialize tick recorder for persistent tick storage
+        tick_cfg = self._config.get("tick_recording", {})
+        if tick_cfg.get("enabled", True):
+            try:
+                from market_data.tick_recorder import TickRecorder
+                self._tick_recorder = TickRecorder(
+                    buffer_size=tick_cfg.get("buffer_size", 50000),
+                )
+                logger.info(f"MDS | Tick recorder initialized: {self._tick_recorder.output_path}")
+            except Exception as e:
+                logger.warning(f"MDS | Tick recorder failed to initialize: {e}")
 
     def _prewarm_and_publish_daily_cache(self) -> None:
         """
@@ -445,6 +460,17 @@ class MarketDataService:
         logger.info("MDS | Stopping...")
         self._running = False
 
+        # Finalize tick recording (flush buffer + merge part files)
+        if self._tick_recorder is not None:
+            try:
+                path = self._tick_recorder.finalize()
+                if path:
+                    logger.info(
+                        f"MDS | Tick recorder finalized: {self._tick_recorder.tick_count:,} ticks -> {path}"
+                    )
+            except Exception as e:
+                logger.warning(f"MDS | Tick recorder finalize failed: {e}")
+
         if self._ws:
             try:
                 self._ws.stop()
@@ -503,11 +529,6 @@ def main():
         help="Redis connection URL (default: redis://localhost:6379/0)"
     )
     parser.add_argument(
-        "--publish-1m",
-        action="store_true",
-        help="Also publish 1-minute bars (increases Redis traffic)"
-    )
-    parser.add_argument(
         "--data-source",
         choices=["zerodha", "upstox"],
         default="zerodha",
@@ -515,9 +536,19 @@ def main():
     )
     args = parser.parse_args()
 
+    # Initialize file-based logging so MDS logs persist after process exits
+    # Re-init with run_prefix creates logs/mds_YYYYMMDD_HHMMSS/agent.log
+    import logging as _logging
+    mds_logger = get_agent_logger(run_prefix="mds_", force_reinit=True)
+    # Keep console output alongside file logging
+    if not any(isinstance(h, _logging.StreamHandler) and not isinstance(h, _logging.FileHandler)
+               for h in mds_logger.handlers):
+        console = _logging.StreamHandler()
+        console.setFormatter(_logging.Formatter('%(levelname)s - %(message)s'))
+        mds_logger.addHandler(console)
+
     service = MarketDataService(
         redis_url=args.redis_url,
-        publish_1m_bars=args.publish_1m,
         data_source=args.data_source,
     )
     service.run_forever()

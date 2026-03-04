@@ -1371,28 +1371,31 @@ class ScreenerLive:
 
                 logger.info("SKIP %s: ineligible plan rejection_reason=%s cautions=%s",
                             sym, rejection_reason, cautions)
-                events_logger.log_reject(
-                    sym,
-                    "plan_ineligible",
-                    timestamp=now.isoformat(),
-                    rejection_reason=rejection_reason,
-                    cautions=cautions,
-                    strategy_type=strategy_type or "unknown"
-                )
+                if events_logger is not None:
+                    events_logger.log_reject(
+                        sym,
+                        "plan_ineligible",
+                        timestamp=now.isoformat(),
+                        rejection_reason=rejection_reason,
+                        cautions=cautions,
+                        strategy_type=strategy_type or "unknown"
+                    )
                 continue
 
             # 2) Qty
             qty = int((plan.get("sizing") or {}).get("qty") or 0)
             if qty <= 0:
                 logger.info("SKIP %s: qty<=0", sym)
-                events_logger.log_reject(sym, "zero_quantity", timestamp=now.isoformat(), qty=qty, strategy_type=strategy_type or "unknown")
+                if events_logger is not None:
+                    events_logger.log_reject(sym, "zero_quantity", timestamp=now.isoformat(), qty=qty, strategy_type=strategy_type or "unknown")
                 continue
 
             # 3) Bias → side
             bias = str(plan.get("bias", "")).lower()
             if bias not in ("long", "short"):
                 logger.info("SKIP %s: bad bias=%r", sym, bias)
-                events_logger.log_reject(sym, "invalid_bias", timestamp=now.isoformat(), bias=bias, strategy_type=strategy_type or "unknown")
+                if events_logger is not None:
+                    events_logger.log_reject(sym, "invalid_bias", timestamp=now.isoformat(), bias=bias, strategy_type=strategy_type or "unknown")
                 continue
 
             # --- DECISION: canonical payload (no fallbacks) ---
@@ -1406,14 +1409,15 @@ class ScreenerLive:
             setup_type = getattr(decision_obj, "setup_type", None) if decision_obj is not None else None
             if not self._dedupe_ok(sym=sym, now_ts=now, setup_type=setup_type, score=score, pctl_score=pctl_score):
                 logger.info("DEDUPE:SKIP sym=%s reason=cooloff/setup_not_stronger", sym)
-                events_logger.log_reject(
-                    sym,
-                    "deduplication_block",
-                    timestamp=now.isoformat(),
-                    strategy_type=strategy_type or "unknown",
-                    score=score,
-                    pctl_score=pctl_score
-                )
+                if events_logger is not None:
+                    events_logger.log_reject(
+                        sym,
+                        "deduplication_block",
+                        timestamp=now.isoformat(),
+                        strategy_type=strategy_type or "unknown",
+                        score=score,
+                        pctl_score=pctl_score
+                    )
                 continue
 
             # Minimal bar5/features snapshot for diagnostics
@@ -1460,7 +1464,10 @@ class ScreenerLive:
                 "min_hold_bars": getattr(decision_obj, "min_hold_bars", None) if decision_obj is not None else None,
                 "regime_diagnostics": getattr(decision_obj, "regime_diagnostics", None) if decision_obj is not None else None,  # Phase 2: Multi-TF regime
             }
-            diag_event_log.log_decision(symbol=plan["symbol"], now=now, plan=plan, features=features, decision=decision_dict)
+            try:
+                diag_event_log.log_decision(symbol=plan["symbol"], now=now, plan=plan, features=features, decision=decision_dict)
+            except Exception as _diag_err:
+                logger.warning("diag_event_log.log_decision failed for %s: %s", plan["symbol"], _diag_err)
 
             exec_item = {
                 "symbol": plan["symbol"],
@@ -1496,29 +1503,31 @@ class ScreenerLive:
             # Check trades per cycle limit (only for live trading)
             if trades_planned >= max_trades_per_cycle:
                 logger.info("CYCLE:LIMIT_REACHED %d/%d trades - skipping %s", trades_planned, max_trades_per_cycle, sym)
-                events_logger.log_reject(
-                    sym,
-                    "cycle_limit_reached",
-                    timestamp=now.isoformat(),
-                    trades_planned=trades_planned,
-                    max_trades_per_cycle=max_trades_per_cycle,
-                    strategy_type=strategy_type or "unknown"
-                )
+                if events_logger is not None:
+                    events_logger.log_reject(
+                        sym,
+                        "cycle_limit_reached",
+                        timestamp=now.isoformat(),
+                        trades_planned=trades_planned,
+                        max_trades_per_cycle=max_trades_per_cycle,
+                        strategy_type=strategy_type or "unknown"
+                    )
                 break
 
             # Log final events decision acceptance
-            events_logger.log_accept(
-                sym,
-                timestamp=now.isoformat(),
-                strategy_type=strategy_type or "unknown",
-                side=plan["bias"],
-                entry_price=plan.get("price"),
-                qty=qty,
-                trade_id=plan["trade_id"],
-                score=score,
-                trades_planned=trades_planned + 1,
-                max_trades_per_cycle=max_trades_per_cycle
-            )
+            if events_logger is not None:
+                events_logger.log_accept(
+                    sym,
+                    timestamp=now.isoformat(),
+                    strategy_type=strategy_type or "unknown",
+                    side=plan["bias"],
+                    entry_price=plan.get("price"),
+                    qty=qty,
+                    trade_id=plan["trade_id"],
+                    score=score,
+                    trades_planned=trades_planned + 1,
+                    max_trades_per_cycle=max_trades_per_cycle
+                )
 
             # Update de-dupe memory only when we actually enqueue
             self._last_entry[sym] = {"ts": now, "setup": setup_type, "score": float(score)}

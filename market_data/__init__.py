@@ -35,7 +35,6 @@ Configuration (in configuration.json):
     "market_data_bus": {
         "mode": "standalone",      // or "subscriber" (all instances should be subscriber when using standalone service)
         "redis_url": "redis://localhost:6379/0",
-        "publish_1m_bars": false,
         "ltp_mode": "standalone"   // follows mode
     }
 """

@@ -273,35 +273,41 @@ class TriggerAwareExecutor:
                     return False
 
             # Log TRIGGER to events.jsonl (single writer: diag_event_log)
-            diag_event_log.log_trigger(
-                symbol=symbol,
-                plan=plan,
-                side=side,
-                qty=qty,
-                price=price,
-                trigger_ts=trade.trigger_timestamp,
-                order_id=order_id,
-                strategy=plan.get('strategy', ''),
-                shadow=plan.get('shadow', False),
-                diagnostics={
-                    'confidence_score': trade.confidence_score,
-                    'trigger_mode': 'bar' if trade.confidence_score > 0 else 'tick',
-                    'trigger_price': trade.trigger_price,
-                    'validation_count': trade.validation_count,
-                    'entry_zone': plan.get('entry_zone') or plan.get('entry', {}).get('zone', []),
-                },
-            )
+            try:
+                diag_event_log.log_trigger(
+                    symbol=symbol,
+                    plan=plan,
+                    side=side,
+                    qty=qty,
+                    price=price,
+                    trigger_ts=trade.trigger_timestamp,
+                    order_id=order_id,
+                    strategy=plan.get('strategy', ''),
+                    shadow=plan.get('shadow', False),
+                    diagnostics={
+                        'confidence_score': trade.confidence_score,
+                        'trigger_mode': 'bar' if trade.confidence_score > 0 else 'tick',
+                        'trigger_price': trade.trigger_price,
+                        'validation_count': trade.validation_count,
+                        'entry_zone': plan.get('entry_zone') or plan.get('entry', {}).get('zone', []),
+                    },
+                )
+            except Exception as _diag_err:
+                logger.warning("diag_event_log.log_trigger failed for %s: %s", symbol, _diag_err)
 
             # Log ENTRY fill to events.jsonl (actual execution record)
-            diag_event_log.log_entry_fill(
-                symbol=symbol,
-                plan=plan,
-                side=side,
-                qty=qty,
-                price=price,
-                entry_ts=trade.trigger_timestamp,
-                order_meta={"order_id": order_id},
-            )
+            try:
+                diag_event_log.log_entry_fill(
+                    symbol=symbol,
+                    plan=plan,
+                    side=side,
+                    qty=qty,
+                    price=price,
+                    entry_ts=trade.trigger_timestamp,
+                    order_meta={"order_id": order_id},
+                )
+            except Exception as _diag_err:
+                logger.warning("diag_event_log.log_entry_fill failed for %s: %s", symbol, _diag_err)
 
             # Log TRIGGER to trade_logs.log (human-readable)
             if self.trading_logger:
@@ -711,16 +717,19 @@ class TriggerAwareExecutor:
             exit_ts = self._last_tick_ts if self._last_tick_ts else self._get_current_time()
 
             # Log EXIT to events.jsonl (single writer: diag_event_log)
-            diag_event_log.log_exit(
-                symbol=symbol,
-                plan=plan or {},
-                reason=f"fill_quality_rejected:{reason}",
-                exit_price=actual_exit_px,
-                exit_qty=qty,
-                ts=exit_ts,
-                pnl=pnl,
-                diagnostics={"fill_quality_reason": reason},
-            )
+            try:
+                diag_event_log.log_exit(
+                    symbol=symbol,
+                    plan=plan or {},
+                    reason=f"fill_quality_rejected:{reason}",
+                    exit_price=actual_exit_px,
+                    exit_qty=qty,
+                    ts=exit_ts,
+                    pnl=pnl,
+                    diagnostics={"fill_quality_reason": reason},
+                )
+            except Exception as _diag_err:
+                logger.warning("diag_event_log.log_exit failed for %s: %s", symbol, _diag_err)
 
             # Log EXIT to trade_logs.log (human-readable)
             if self.trading_logger:
