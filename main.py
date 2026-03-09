@@ -136,9 +136,10 @@ def main() -> int:
     if not run_prefix:
         if args.paper_trading:
             run_prefix = "paper_"
-        elif not args.dry_run:
+        elif args.dry_run:
+            run_prefix = "backtest_"
+        else:
             run_prefix = "live_"
-        # For dry-run (backtests), empty prefix is fine (logs optional)
 
 
     set_global_run_prefix(run_prefix)
@@ -202,16 +203,31 @@ def main() -> int:
                 logger.warning(f"MIS_FETCHER | Error initializing: {e}")
                 mis_fetcher = None
 
-    elif args.dry_run and args.with_capital_limits:
-        # Backtest with capital limits: enable if flag set
-        capital_enabled = True
-        mis_enabled = True
-        logger.info("[CAPITAL] Enabled capital management for realistic backtest (--with-capital-limits)")
-    else:
-        # Backtest without flag: keep disabled for fast testing
-        capital_enabled = False
-        mis_enabled = False
-        logger.info("[CAPITAL] Disabled capital management for fast backtest")
+    elif args.dry_run:
+        if args.with_capital_limits:
+            capital_enabled = True
+            mis_enabled = True
+            logger.info("[CAPITAL] Enabled capital management for realistic backtest (--with-capital-limits)")
+        else:
+            capital_enabled = False
+            mis_enabled = False
+            logger.info("[CAPITAL] Disabled capital management for fast backtest")
+
+        # Fetch MIS list for backtest universe filtering (same source as paper/live)
+        mis_filter_cfg = cfg.get("early_mis_universe_filter", {})
+        if mis_filter_cfg.get("enabled", False):
+            try:
+                from services.state.zerodha_mis_fetcher import ZerodhaMISFetcher
+                timeout = mis_filter_cfg.get("fetch_timeout_sec", 30)
+                mis_fetcher = ZerodhaMISFetcher()
+                if mis_fetcher.load_from_zerodha(timeout_sec=timeout):
+                    logger.info(f"MIS_FETCHER | Loaded {mis_fetcher.count()} MIS-allowed symbols from Zerodha (backtest universe filter)")
+                else:
+                    logger.warning("MIS_FETCHER | Failed to fetch MIS list for backtest, universe will not be MIS-filtered")
+                    mis_fetcher = None
+            except Exception as e:
+                logger.warning(f"MIS_FETCHER | Error initializing for backtest: {e}")
+                mis_fetcher = None
 
     # Extract risk config (new format with mode, or legacy risk_pct_per_trade)
     risk_cfg = cap_mgmt_cfg.get('risk', {})

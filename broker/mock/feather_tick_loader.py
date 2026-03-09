@@ -153,6 +153,15 @@ class FeatherTickLoader:
             # Filter to requested date range
             df_all = df_all[(df_all['date'] >= from_dt) & (df_all['date'] <= to_dt)].copy()
 
+            # Drop zero-volume bars (Upstox historical API fills gaps with flat O=H=L=C, V=0 bars).
+            # Paper/live trading never sees these fake bars because MDS only receives real ticks.
+            # Keeping them inflates bar counts, distorts energy/momentum, and creates phantom patterns.
+            before_zvf = len(df_all)
+            df_all = df_all[df_all['volume'] > 0]
+            dropped = before_zvf - len(df_all)
+            if dropped > 0:
+                logger.info(f"[FAST MODE] Dropped {dropped:,} zero-volume bars ({dropped/before_zvf*100:.1f}%) to match live data")
+
             if df_all.empty:
                 logger.warning(f"Pre-aggregated file has no data for {self.from_raw} to {self.to_raw}")
                 return None
@@ -211,6 +220,9 @@ class FeatherTickLoader:
             df = pd.read_feather(path)
             df = self._normalize(df)   # parses 'date' (naive), sorts
             df = self._slice(df)       # trims to from_date..to_date inclusive
+            # Drop zero-volume bars (same as pre-aggregated path)
+            if 'volume' in df.columns:
+                df = df[df['volume'] > 0]
             if df.empty:
                 return None
             # logger.info(f"FeatherTickLoader: loaded {len(df)} rows for {sym} from {path}")
