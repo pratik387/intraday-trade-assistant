@@ -94,6 +94,7 @@ class MarketDataService:
 
         # Tick recorder (initialized in start())
         self._tick_recorder = None
+        self._i1_candle_recorder = None
 
         # Stats
         self._tick_count = 0
@@ -323,6 +324,15 @@ class MarketDataService:
             except Exception as e:
                 logger.warning(f"MDS | Tick recorder failed to initialize: {e}")
 
+        # Initialize I1 candle recorder (records broker-constructed 1m candles)
+        try:
+            from market_data.i1_candle_recorder import I1CandleRecorder
+            self._i1_candle_recorder = I1CandleRecorder()
+            self._ws.set_i1_candle_listener(self._i1_candle_recorder.on_i1_candle)
+            logger.info(f"MDS | I1 candle recorder initialized: {self._i1_candle_recorder.output_path}")
+        except Exception as e:
+            logger.warning(f"MDS | I1 candle recorder failed to initialize: {e}")
+
     def _prewarm_and_publish_daily_cache(self) -> None:
         """
         Pre-warm daily OHLCV cache (rolling) and publish to Redis for subscribers.
@@ -470,6 +480,13 @@ class MarketDataService:
                     )
             except Exception as e:
                 logger.warning(f"MDS | Tick recorder finalize failed: {e}")
+
+        # Finalize I1 candle recording
+        if self._i1_candle_recorder is not None:
+            try:
+                self._i1_candle_recorder.finalize()
+            except Exception as e:
+                logger.warning(f"MDS | I1 candle recorder finalize failed: {e}")
 
         if self._ws:
             try:

@@ -39,6 +39,7 @@ class UpstoxTickerAdapter:
     on_ticks: Optional[Callable] = None
     on_close: Optional[Callable] = None
     on_error: Optional[Callable] = None
+    on_i1_candle: Optional[Callable] = None  # (symbol, open, high, low, close, volume, ts_str)
 
     def __init__(
         self,
@@ -380,6 +381,23 @@ class UpstoxTickerAdapter:
                     tick["last_trade_time"] = trade_time
 
                 ticks.append(tick)
+
+                # Extract I1 (1-minute) candle for recording (if callback registered)
+                if self.on_i1_candle is not None and market_ohlc:
+                    for ohlc_item in ohlc_list:
+                        if ohlc_item.get("interval", "") == "I1":
+                            sym = self._tok_to_sym.get(int_token)
+                            if sym:
+                                self.on_i1_candle(
+                                    sym,
+                                    float(ohlc_item.get("open", 0)),
+                                    float(ohlc_item.get("high", 0)),
+                                    float(ohlc_item.get("low", 0)),
+                                    float(ohlc_item.get("close", 0)),
+                                    int(ohlc_item.get("vol", 0) or ohlc_item.get("volume", 0) or 0),
+                                    str(ohlc_item.get("ts", "")),
+                                )
+                            break
 
             except Exception as e:
                 logger.debug(f"UPSTOX_WS | Tick conversion error for {instrument_key}: {e}")

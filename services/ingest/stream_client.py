@@ -52,6 +52,7 @@ class WSClient:
         self._ticker: Any = None
         self._on_message: Optional[Callable[[Any], None]] = None
         self._on_close_cb: Optional[Callable] = None
+        self._on_i1_candle: Optional[Callable] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         # on_tick kept for backward compat; actual dispatch flows through on_message() -> TickRouter
@@ -72,6 +73,10 @@ class WSClient:
     def on_close(self, cb: Callable) -> None:
         """Register callback for when WS connection closes (replay ends in dry-run)."""
         self._on_close_cb = cb
+
+    def set_i1_candle_listener(self, cb: Callable) -> None:
+        """Register callback for I1 (1-minute) candle data from broker WebSocket."""
+        self._on_i1_candle = cb
 
     # ------------------------------ Lifecycle -------------------------------
     def start(self) -> None:
@@ -245,6 +250,11 @@ class WSClient:
             ticker.on_error = _error
         else:
             logger.warning("Ticker has no on_error attribute")
+
+        # on_i1_candle: broker-constructed 1-minute candles (Upstox only)
+        if hasattr(ticker, "on_i1_candle") and self._on_i1_candle is not None:
+            ticker.on_i1_candle = self._on_i1_candle
+            logger.info("WSClient: I1 candle listener wired to ticker")
 
     @staticmethod
     def _connect(ticker: Any) -> None:
