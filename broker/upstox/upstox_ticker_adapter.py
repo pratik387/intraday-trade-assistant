@@ -59,6 +59,7 @@ class UpstoxTickerAdapter:
         self._tick_count = 0           # diagnostic: count ticks converted
         self._unique_tick_keys: set = set()  # diagnostic: track unique instruments receiving ticks
         self._last_coverage_log = 0    # diagnostic: throttle coverage log
+        self._ohlc_intervals_logged = False  # diagnostic: log OHLC intervals once
 
     def connect(self, **kwargs) -> None:
         """
@@ -359,6 +360,13 @@ class UpstoxTickerAdapter:
                 market_ohlc = market_ff.get("marketOHLC") or market_ff.get("marketOhlc")
                 if market_ohlc:
                     ohlc_list = market_ohlc.get("ohlc", [])
+
+                    # One-time diagnostic: log all OHLC intervals Upstox sends
+                    if not self._ohlc_intervals_logged and ohlc_list:
+                        intervals = [item.get("interval", "?") for item in ohlc_list]
+                        logger.info(f"UPSTOX_WS | OHLC intervals from broker: {intervals}")
+                        self._ohlc_intervals_logged = True
+
                     for ohlc_item in ohlc_list:
                         interval = ohlc_item.get("interval", "")
                         if interval == "1d":

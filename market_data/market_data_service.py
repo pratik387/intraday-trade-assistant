@@ -302,16 +302,6 @@ class MarketDataService:
         subs.set_core(set(token_map.keys()))  # Pass token integers, not dict
         subs.start()
 
-        # Start WebSocket
-        self._ws.start()
-        self._running = True
-
-        logger.info(f"MDS | Subscribed to {len(token_map)} symbols")
-        logger.info("MDS | Service started - publishing to Redis")
-
-        # Start stats reporter
-        self._start_stats_reporter()
-
         # Initialize tick recorder for persistent tick storage
         tick_cfg = self._config.get("tick_recording", {})
         if tick_cfg.get("enabled", True):
@@ -325,6 +315,7 @@ class MarketDataService:
                 logger.warning(f"MDS | Tick recorder failed to initialize: {e}")
 
         # Initialize I1 candle recorder (records broker-constructed 1m candles)
+        # Must be before ws.start() so callback is wired before _wire_callbacks runs
         try:
             from market_data.i1_candle_recorder import I1CandleRecorder
             self._i1_candle_recorder = I1CandleRecorder()
@@ -332,6 +323,16 @@ class MarketDataService:
             logger.info(f"MDS | I1 candle recorder initialized: {self._i1_candle_recorder.output_path}")
         except Exception as e:
             logger.warning(f"MDS | I1 candle recorder failed to initialize: {e}")
+
+        # Start WebSocket (after all listeners are registered)
+        self._ws.start()
+        self._running = True
+
+        logger.info(f"MDS | Subscribed to {len(token_map)} symbols")
+        logger.info("MDS | Service started - publishing to Redis")
+
+        # Start stats reporter
+        self._start_stats_reporter()
 
     def _prewarm_and_publish_daily_cache(self) -> None:
         """
