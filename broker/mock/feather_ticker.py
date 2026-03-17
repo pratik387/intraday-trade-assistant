@@ -5,6 +5,9 @@ from config.logging_config import get_agent_logger
 
 logger = get_agent_logger()
 
+# IST offset in nanoseconds (5h30m) for converting IST-naive → UTC epoch ms
+_IST_OFFSET_NS = (5 * 3600 + 30 * 60) * 1_000_000_000
+
 class FeatherTicker:
     """
     Mimics Zerodha KiteTicker API for the mock:
@@ -35,6 +38,10 @@ class FeatherTicker:
         self._on_ticks_cb: Optional[Callable] = None
         self._on_connect_cb: Optional[Callable] = None
         self._on_close_cb: Optional[Callable] = None
+
+        # I1 candle callback (same interface as UpstoxTickerAdapter.on_i1_candle)
+        # Assigned by WSClient._wire_callbacks() if listener is registered
+        self.on_i1_candle: Optional[Callable] = None
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -127,6 +134,12 @@ class FeatherTicker:
 
                     ohlc_dict = {"open": o, "high": h, "low": l, "close": c}
                     tok_int = int(tok)
+
+                    # Emit I1 candle (broker-constructed 1m bar) for BarBuilder.on_i1_candle()
+                    # Same path as live Upstox WebSocket — ensures backtest/live parity
+                    if callable(self.on_i1_candle):
+                        epoch_ms = str((ts.value - _IST_OFFSET_NS) // 1_000_000)
+                        self.on_i1_candle(sym, o, h, l, c, total_vol, epoch_ms)
 
                     # Adaptive 4-tick OHLC simulation (NautilusTrader method):
                     # Emit O, H, L, C as 4 synthetic ticks so BarBuilder

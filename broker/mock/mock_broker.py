@@ -213,6 +213,15 @@ class MockBroker:
                 except Exception:
                     logger.exception("ProxyTicker.on_ticks (client) failed")
 
+            # --- I1 candle callback (forwarded to FeatherTicker) ---
+            @property
+            def on_i1_candle(self):
+                return self._inner.on_i1_candle
+
+            @on_i1_candle.setter
+            def on_i1_candle(self, cb):
+                self._inner.on_i1_candle = cb
+
             # --- pass-through API ---
             def subscribe(self, tokens):  self._inner.subscribe(tokens)
             def unsubscribe(self, tokens): self._inner.unsubscribe(tokens)

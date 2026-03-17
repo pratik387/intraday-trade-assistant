@@ -319,10 +319,18 @@ class MarketDataService:
         try:
             from market_data.i1_candle_recorder import I1CandleRecorder
             self._i1_candle_recorder = I1CandleRecorder()
-            self._ws.set_i1_candle_listener(self._i1_candle_recorder.on_i1_candle)
             logger.info(f"MDS | I1 candle recorder initialized: {self._i1_candle_recorder.output_path}")
         except Exception as e:
             logger.warning(f"MDS | I1 candle recorder failed to initialize: {e}")
+
+        # Wire I1 candles to both bar_builder (signal generation) and recorder (archival)
+        # Dispatch function calls both; either can be None safely
+        def _dispatch_i1(sym, o, h, l, c, v, ts):
+            self._bar_builder.on_i1_candle(sym, o, h, l, c, v, ts)
+            if self._i1_candle_recorder is not None:
+                self._i1_candle_recorder.on_i1_candle(sym, o, h, l, c, v, ts)
+
+        self._ws.set_i1_candle_listener(_dispatch_i1)
 
         # Start WebSocket (after all listeners are registered)
         self._ws.start()

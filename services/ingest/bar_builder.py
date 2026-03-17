@@ -137,6 +137,9 @@ class BarBuilder:
         self._additional_5m_handlers: List[Callable[[str, Bar], None]] = []
         self._additional_15m_handlers: List[Callable[[str, Bar], None]] = []
 
+        # Symbols receiving I1 (broker-constructed 1m) candles — skip tick-based bar building
+        self._i1_symbols: set = set()
+
         # Flag to clear pre-market data once at 9:15
         self._market_open_cleared = False
 
@@ -161,7 +164,72 @@ class BarBuilder:
                 self._market_open_cleared = True
 
             self._ltp[symbol] = _LastTick(price=float(price), volume=float(volume), ts=ts)
-            self._update_1m(symbol, float(price), float(volume), ts)
+
+            # Skip tick-based bar building for symbols receiving I1 candles
+            if symbol not in self._i1_symbols:
+                self._update_1m(symbol, float(price), float(volume), ts)
+
+    def on_i1_candle(
+        self, symbol: str, open_: float, high: float, low: float,
+        close: float, volume: int, ts_str: str,
+    ) -> None:
+        """
+        Accept a running I1 (1-minute) candle from broker WebSocket.
+
+        I1 candles update with every tick. When the minute changes, the
+        previous candle is complete and flows through the same _close_1m →
+        _attempt_close_5m → _attempt_close_15m path as tick-built bars.
+
+        Parameters match the Upstox ticker adapter callback signature.
+        ts_str: epoch milliseconds as string (UTC).
+        """
+        if not ts_str or open_ == 0:
+            return
+
+        with self._lock:
+            # Convert epoch ms UTC → IST-naive datetime (minute start)
+            try:
+                ts_epoch_ms = int(ts_str)
+                ts_ist = datetime.utcfromtimestamp(ts_epoch_ms / 1000) + timedelta(hours=5, minutes=30)
+            except (ValueError, OverflowError):
+                return
+
+            # BarBuilder convention: bar index = bucket_end = minute_start + 1min
+            bucket_end = ts_ist.replace(second=0, microsecond=0) + timedelta(minutes=1)
+
+            # Clear pre-market data on first candle at/after 9:15
+            if not self._market_open_cleared and ts_ist.hour == 9 and ts_ist.minute >= 15:
+                self._clear_pre_market()
+                self._market_open_cleared = True
+
+            # Mark symbol as I1-sourced (disables tick-based bar building)
+            self._i1_symbols.add(symbol)
+
+            # Update LTP from I1 candle
+            self._ltp[symbol] = _LastTick(price=float(close), volume=float(volume), ts=ts_ist)
+
+            cur = self._cur_1m.get(symbol)
+            if cur is not None and cur.name != bucket_end:
+                # Minute changed — close the previous completed bar
+                self._close_1m(symbol, cur)
+
+            # Replace current running bar with broker's OHLCV
+            # VWAP approximation: HLC3 (typical price) — standard proxy without tick data
+            hlc3 = (high + low + close) / 3.0
+            vol_f = float(volume)
+            ser = pd.Series(
+                {
+                    "open": float(open_),
+                    "high": float(high),
+                    "low": float(low),
+                    "close": float(close),
+                    "volume": vol_f,
+                    "vwap_num": hlc3 * vol_f,
+                    "vwap_den": vol_f,
+                },
+                name=bucket_end,
+            )
+            self._cur_1m[symbol] = ser
 
     def get_df_15m_tail(self, symbol: str, n: int) -> pd.DataFrame:
         with self._lock:

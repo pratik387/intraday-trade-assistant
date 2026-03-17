@@ -502,6 +502,11 @@ class ScreenerLive:
                 self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
             self.subs = SubscriptionManager(self.ws)
 
+            # Wire I1 (broker 1m) candles to BarBuilder for live signal generation.
+            # In backtest, no I1 candles arrive so bars are still built from ticks.
+            # Must be before ws.start() so _wire_callbacks sees the listener.
+            self.ws.set_i1_candle_listener(self.agg.on_i1_candle)
+
         # Gates - Use MainDetector directly for structure detection
         self.detector = MainDetector(raw)
         news_cfg = raw.get("news_gate")
