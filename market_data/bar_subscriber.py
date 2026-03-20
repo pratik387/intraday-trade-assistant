@@ -91,6 +91,10 @@ class BarSubscriber:
         # Updated when bars arrive from Redis - uses bar close as proxy for LTP
         self._ltp: Dict[str, _LastTick] = {}
 
+        # Bar density tracking (mirrors BarBuilder for density gate compatibility)
+        self._bar_1m_count: Dict[str, int] = {}
+        self._first_bar_ts: Dict[str, datetime] = {}
+
         # Market data bus for subscription
         self._bus: Optional[MarketDataBus] = None
         self._started = False
@@ -268,6 +272,13 @@ class BarSubscriber:
         # Store bar in local cache
         self._store_bar(symbol, timeframe, bar)
 
+        # Track 1m bar density (same as BarBuilder — for density gate)
+        if timeframe == "1m":
+            with self._lock:
+                self._bar_1m_count[symbol] = self._bar_1m_count.get(symbol, 0) + 1
+                if symbol not in self._first_bar_ts:
+                    self._first_bar_ts[symbol] = bar_ts
+
         # Invoke callbacks
         if timeframe == "1m":
             self._invoke_callbacks(symbol, bar, self._on_1m_close, self._additional_1m_handlers)
@@ -347,13 +358,19 @@ class BarSubscriber:
             return df.tail(int(n)).copy()
 
     def get_bar_density(self, symbol: str, current_ts) -> float:
-        """Bar density stub for BarBuilder duck-type compatibility.
+        """Return bar density (0.0-1.0) = closed_1m_bars / elapsed_minutes.
 
-        BarSubscriber receives pre-built bars from MDS (which already applied density
-        filtering). Returns 1.0 (fully dense) so the density gate never triggers
-        in subscriber/paper mode — MDS handles this upstream.
+        Mirrors BarBuilder.get_bar_density() for density gate compatibility.
         """
-        return 1.0
+        with self._lock:
+            count = self._bar_1m_count.get(symbol, 0)
+            first_ts = self._first_bar_ts.get(symbol)
+            if count == 0 or first_ts is None:
+                return 0.0
+            elapsed = (current_ts - first_ts).total_seconds() / 60.0
+            if elapsed <= 0:
+                return 1.0
+            return min(1.0, count / elapsed)
 
     def last_ltp(self, symbol: str) -> Optional[float]:
         """Get last close price (approximation for LTP in subscriber mode)."""
