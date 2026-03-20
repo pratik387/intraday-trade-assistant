@@ -2354,6 +2354,16 @@
     "_comment": "Filter non-MIS stocks in backtest using nse_all.json mis_enabled field. Large/mid cap MIS is 98.9% stable over 3 years. No capital restrictions applied — backtest tests signals/filters, not capital management."
   },
   "_comment_early_mis_filter": "=== EARLY MIS UNIVERSE FILTER (Reduce live/paper universe to MIS-eligible stocks) ===",
+  "bar_5m_boundary_offset_minutes": 1,
+  "_bar_5m_boundary_offset_note": "Shifts 5m bar boundaries by N minutes to absorb +-1min timestamp jitter between Upstox WebSocket and Historical API. 0=original [09:15,09:20), 1=shifted [09:16,09:21). Both live and backtest use same offset.",
+
+  "bar_density_gate": {
+    "enabled": true,
+    "min_density_pct": 70.0,
+    "min_bars_before_check": 30,
+    "_note": "Filters illiquid symbols where WebSocket doesnt deliver all 1m candles. Density = closed_1m_bars / elapsed_minutes. Symbols below min_density_pct are excluded from screening. min_bars_before_check prevents false positives in early session."
+  },
+
   "early_mis_universe_filter": {
     "enabled": true,
     "fetch_timeout_sec": 30,

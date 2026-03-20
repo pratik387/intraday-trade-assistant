@@ -346,6 +346,15 @@ class BarSubscriber:
                 return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "vwap", "bb_width_proxy", "adx"])
             return df.tail(int(n)).copy()
 
+    def get_bar_density(self, symbol: str, current_ts) -> float:
+        """Bar density stub for BarBuilder duck-type compatibility.
+
+        BarSubscriber receives pre-built bars from MDS (which already applied density
+        filtering). Returns 1.0 (fully dense) so the density gate never triggers
+        in subscriber/paper mode — MDS handles this upstream.
+        """
+        return 1.0
+
     def last_ltp(self, symbol: str) -> Optional[float]:
         """Get last close price (approximation for LTP in subscriber mode)."""
         with self._lock:

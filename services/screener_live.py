@@ -1042,11 +1042,31 @@ class ScreenerLive:
         min_bars_for_processing = 1 if in_opening_bell else 3
 
         try:
+            # Bar density gate: skip illiquid symbols where WebSocket doesn't deliver all 1m candles
+            density_cfg = self.raw_cfg.get("bar_density_gate", {})
+            density_enabled = density_cfg.get("enabled", False)
+            density_min_pct = float(density_cfg.get("min_density_pct", 70.0)) / 100.0
+            density_min_bars = int(density_cfg.get("min_bars_before_check", 30))
+            density_skipped = 0
+
             df5_by_symbol: Dict[str, pd.DataFrame] = {}
             for s in self.core_symbols:
+                # Density gate: check bar delivery reliability before including in scan
+                if density_enabled and hasattr(self.agg, "get_bar_density"):
+                    bar_count = self.agg._bar_1m_count.get(s, 0)
+                    if bar_count >= density_min_bars:
+                        density = self.agg.get_bar_density(s, now)
+                        if density < density_min_pct:
+                            density_skipped += 1
+                            continue
+
                 df5 = self.agg.get_df_5m_tail(s, self.cfg.screener_store_5m_max)
                 if validate_df(df5, min_rows=min_bars_for_processing):
                     df5_by_symbol[s] = df5
+
+            if density_skipped > 0:
+                logger.info("BAR_DENSITY_GATE | Skipped %d illiquid symbols (density < %.0f%%)",
+                           density_skipped, density_min_pct * 100)
             if df5_by_symbol:
                 # Compute ORB levels once at 09:40 and cache for entire day
                 levels_by_symbol = self._compute_orb_levels_once(now, df5_by_symbol)

@@ -113,6 +113,12 @@ class BarBuilder:
         if bar_5m_span_minutes % 5 != 0:
             raise ValueError("bar_5m_span_minutes must be a multiple of 5")
         self._span5 = int(bar_5m_span_minutes)
+
+        # Boundary offset: shifts 5m/15m window boundaries to absorb +-1min timestamp jitter
+        # between Upstox WebSocket and Historical API data sources.
+        from config.filters_setup import load_filters
+        _cfg = load_filters()
+        self._boundary_offset = int(_cfg["bar_5m_boundary_offset_minutes"])
         self._on_1m_close = on_1m_close
         self._on_5m_close = on_5m_close
         self._on_15m_close = on_15m_close or (lambda s, b: None)  # no-op if not provided
@@ -140,6 +146,11 @@ class BarBuilder:
         # Symbols receiving I1 (broker-constructed 1m) candles — skip tick-based bar building
         self._i1_symbols: set = set()
 
+        # Bar density tracking: count closed 1m bars per symbol to detect illiquid symbols
+        # where WebSocket doesn't deliver all candles (causes backtest-live divergence)
+        self._bar_1m_count: Dict[str, int] = {}
+        self._first_bar_ts: Dict[str, datetime] = {}
+
         # Flag to clear pre-market data once at 9:15
         self._market_open_cleared = False
 
@@ -151,6 +162,8 @@ class BarBuilder:
         self._bars_15m.clear()
         self._adx_state.clear()
         self._rsi_state.clear()
+        self._bar_1m_count.clear()
+        self._first_bar_ts.clear()
         # Keep _ltp - we want last traded price
         logger.info("BAR_BUILDER | Cleared pre-market data at market open")
 
@@ -243,6 +256,22 @@ class BarBuilder:
             t = self._ltp.get(symbol)
             return float(t.price) if t else None
 
+    def get_bar_density(self, symbol: str, current_ts: datetime) -> float:
+        """Return bar density (0.0-1.0) = closed_1m_bars / elapsed_minutes since first bar.
+
+        Used to detect illiquid symbols where WebSocket doesn't deliver all 1m candles.
+        Symbols with low density produce unreliable 5m bars (backtest-live divergence).
+        """
+        with self._lock:
+            count = self._bar_1m_count.get(symbol, 0)
+            first_ts = self._first_bar_ts.get(symbol)
+            if count == 0 or first_ts is None:
+                return 0.0
+            elapsed = (current_ts - first_ts).total_seconds() / 60.0
+            if elapsed <= 0:
+                return 1.0
+            return min(1.0, count / elapsed)
+
     def index_df_5m(self, symbol: Optional[str] = None):
         """
         If `symbol` provided and tracked as an index symbol, return its 5m DF.
@@ -302,6 +331,11 @@ class BarBuilder:
         ser = ser.drop(labels=["vwap_num", "vwap_den"], errors="ignore")
         ser["vwap"] = vwap
 
+        # Track bar density (for illiquid symbol detection)
+        self._bar_1m_count[symbol] = self._bar_1m_count.get(symbol, 0) + 1
+        if symbol not in self._first_bar_ts:
+            self._first_bar_ts[symbol] = ser.name
+
         df = self._bars_1m[symbol]
         # Ensure the appended 1-row DataFrame uses the minute timestamp as its index
         row_df = ser.to_frame().T
@@ -330,9 +364,13 @@ class BarBuilder:
         self._attempt_close_15m(symbol, ser.name)
 
     def _attempt_close_5m(self, symbol: str, minute_close_ts: datetime) -> None:
-        # Close a 5m bar when minute_close_ts.minute % span == 0
+        # Close a 5m bar when (minute - boundary_offset) % span == 0
+        # boundary_offset shifts windows to absorb +-1min timestamp jitter between data sources.
+        # offset=0: windows at [09:15,09:20), [09:20,09:25)  (original)
+        # offset=1: windows at [09:16,09:21), [09:21,09:26)  (boundary bars no longer at edges)
         span = self._span5
-        if (minute_close_ts.minute % span) != 0:
+        offset = self._boundary_offset
+        if ((minute_close_ts.minute - offset) % span) != 0:
             return
 
         end_ts = minute_close_ts
@@ -346,10 +384,7 @@ class BarBuilder:
             df1 = df1.copy()
             df1.index = pd.to_datetime(df1.index, errors="coerce")
             df1 = df1[~df1.index.isna()]
-        # CRITICAL FIX: Use START-STAMPED convention (Zerodha/broker standard)
-        # START-STAMPED: 09:15 bar contains data from [09:15, 09:20) labeled at START (09:15)
-        # 09:20 bar contains [09:20, 09:25) labeled at START (09:20)
-        # Excludes end_ts minute (goes into next bar)
+        # START-STAMPED convention: window includes [start_ts, end_ts)
         window = df1[(df1.index >= start_ts) & (df1.index < end_ts)]
         if window.empty:
             return
@@ -396,8 +431,9 @@ class BarBuilder:
                 logger.exception("BarBuilder: additional 5m handler failed: %s", e)
 
     def _attempt_close_15m(self, symbol: str, minute_close_ts: datetime) -> None:
-        """Close a 15m bar when minute_close_ts.minute % 15 == 0"""
-        if (minute_close_ts.minute % 15) != 0:
+        """Close a 15m bar when (minute - boundary_offset) % 15 == 0"""
+        offset = self._boundary_offset
+        if ((minute_close_ts.minute - offset) % 15) != 0:
             return
 
         end_ts = minute_close_ts
