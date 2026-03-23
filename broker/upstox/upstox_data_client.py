@@ -527,3 +527,59 @@ class UpstoxDataClient:
                 time.sleep(0.5 + 0.4 * attempt + random.random() * 0.2)
 
         return None
+
+    # ─── Intraday 5m bars (same pipeline as Historical API) ──────────────
+
+    def get_intraday_5m(self, symbol: str) -> Optional[pd.DataFrame]:
+        """
+        Fetch today's completed 5-minute OHLCV bars from Upstox V3 intraday endpoint.
+
+        Uses the same pipeline as the Historical API — guarantees backtest-live parity
+        for structure detection and planning. No auth required.
+
+        Returns DataFrame with [open, high, low, close, volume], index=datetime (IST-naive).
+        Returns None if no data or API error.
+        """
+        try:
+            ikey = self._instrument_key_for(symbol)
+        except KeyError:
+            return None
+        url = f"{UPSTOX_HIST_BASE}/intraday/{ikey}/minutes/5"
+
+        for attempt in range(3):
+            try:
+                self._rate_limit()
+                resp = requests.get(url, headers=UPSTOX_HEADERS, timeout=10)
+
+                if resp.status_code == 429:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+                if resp.status_code == 400:
+                    return None
+
+                resp.raise_for_status()
+                candles = resp.json().get("data", {}).get("candles", [])
+                if not candles:
+                    return None
+
+                df = pd.DataFrame(candles)
+                df.columns = ["date", "open", "high", "low", "close", "volume", "_"]
+                df = df.drop(columns=["_"])
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+                # Strip timezone to naive IST
+                if getattr(df["date"].dt, "tz", None) is not None:
+                    df["date"] = df["date"].dt.tz_localize(None)
+
+                df = df.sort_values("date").reset_index(drop=True)
+                df = df.set_index("date")
+                df = df[["open", "high", "low", "close", "volume"]].astype(float)
+                return df
+
+            except Exception as e:
+                if attempt == 2:
+                    logger.debug("UPSTOX_5M_INTRADAY | Failed for %s: %s", symbol, e)
+                    return None
+                time.sleep(0.5 + 0.4 * attempt + random.random() * 0.2)
+
+        return None

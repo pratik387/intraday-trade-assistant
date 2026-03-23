@@ -1140,6 +1140,43 @@ class ScreenerLive:
                 if index_price is not None:
                     self.directional_bias.update_price(index_price)
 
+        # ---------- API 5m bars for shortlisted symbols (live/paper only) ----------
+        # Fetch V3 intraday 5m bars from Historical API pipeline.
+        # These match backtest data exactly — eliminates WebSocket vs Historical divergence
+        # for structure detection and planning.
+        api_df5_cache: Dict[str, pd.DataFrame] = {}
+        api_5m_cfg = self.raw_cfg.get("api_5m_bars", {})
+        if api_5m_cfg.get("enabled", False) and not env.DRY_RUN:
+            if hasattr(self.sdk, "get_intraday_5m"):
+                # Wait for API data availability — Upstox takes ~25s after bar close
+                # Stage-0 already consumed some of that time, only sleep the remainder
+                min_delay = float(api_5m_cfg["min_delay_after_bar_close_sec"])
+                elapsed_since_bar = time.perf_counter() - _t_bar_start
+                remaining_wait = min_delay - elapsed_since_bar
+                if remaining_wait > 0:
+                    logger.info("API_5M_FETCH | Waiting %.1fs for API data availability", remaining_wait)
+                    time.sleep(remaining_wait)
+
+                _t_api_start = time.perf_counter()
+                api_ok, api_fail = 0, 0
+                for sym in shortlist:
+                    try:
+                        df_api = self.sdk.get_intraday_5m(sym)
+                        if df_api is not None and len(df_api) >= min_bars_for_processing:
+                            df_api = self._enrich_api_bars(df_api)
+                            api_df5_cache[sym] = df_api
+                            api_ok += 1
+                        else:
+                            api_fail += 1
+                    except Exception as e:
+                        api_fail += 1
+                        logger.debug("API_5M_FETCH | Failed for %s: %s", sym, e)
+                _t_api_elapsed = time.perf_counter() - _t_api_start
+                logger.info(
+                    "API_5M_FETCH | %d ok, %d failed of %d shortlisted | %.1fs",
+                    api_ok, api_fail, len(shortlist), _t_api_elapsed,
+                )
+
         # ---------- Gate per candidate (structure + regime + events + news) ----------
         index_df5 = self._index_df5()
         decisions: List[Tuple[str, Decision]] = []
@@ -1153,7 +1190,11 @@ class ScreenerLive:
         # daily_df is cached in worker processes (seeded once at session start)
         symbol_data_map = {}
         for sym in shortlist:
-            df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
+            # Prefer API 5m bars (Historical API pipeline) over I1-built bars
+            if sym in api_df5_cache:
+                df5 = api_df5_cache[sym]
+            else:
+                df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
             # OPENING BELL FIX: Use same min_bars as scanner (1 during opening bell, 5 normally)
             if not validate_df(df5, min_rows=min_bars_for_processing):
                 continue
@@ -2104,6 +2145,35 @@ class ScreenerLive:
         hh, mm = self.cfg.intraday_cutoff_hhmm.split(":")
         cutoff = dtime(hour=int(hh), minute=int(mm))
         return now.time() >= cutoff
+
+    # ---------- API 5m bar enrichment ----------
+    @staticmethod
+    def _enrich_api_bars(df: pd.DataFrame) -> pd.DataFrame:
+        """Add VWAP, bb_width_proxy, ADX, RSI to raw API 5m bars.
+
+        API bars only have OHLCV. Uses the same indicator functions
+        from services.indicators that BarBuilder uses incrementally.
+        """
+        from services.indicators.indicators import calculate_adx, calculate_rsi
+
+        df = df.copy()
+
+        # VWAP: HLC3 approximation (same as BarBuilder I1 path)
+        df["vwap"] = (df["high"] + df["low"] + df["close"]) / 3.0
+
+        # bb_width_proxy: std(close, 20, ddof=0) / vwap (matches BarBuilder._aggregate_window_to_ohlcv)
+        df["bb_width_proxy"] = df["close"].rolling(20, min_periods=5).std(ddof=0) / df["vwap"]
+        df["bb_width_proxy"] = df["bb_width_proxy"].fillna(0.0)
+
+        # ADX(14) — Wilder smoothing via shared utility
+        df["adx"] = calculate_adx(df, period=14)
+        df["adx"] = df["adx"].fillna(0.0)
+
+        # RSI(14) — Wilder smoothing via shared utility
+        df["rsi"] = calculate_rsi(df["close"], period=14)
+        df["rsi"] = df["rsi"].fillna(50.0)
+
+        return df
 
     # ---------- Stage-0 helpers ----------
     def _time_bucket(self, now_ts: pd.Timestamp) -> str:
