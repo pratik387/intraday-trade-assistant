@@ -1159,22 +1159,34 @@ class ScreenerLive:
 
                 _t_api_start = time.perf_counter()
                 api_ok, api_fail = 0, 0
-                for sym in shortlist:
-                    try:
-                        df_api = self.sdk.get_intraday_5m(sym)
-                        if df_api is not None and len(df_api) >= min_bars_for_processing:
-                            df_api = self._enrich_api_bars(df_api)
-                            api_df5_cache[sym] = df_api
-                            api_ok += 1
-                        else:
+                n_threads = int(api_5m_cfg.get("fetch_threads", 4))
+
+                # Parallel fetch: HTTP IO releases GIL, so threads overlap network waits.
+                # Rate limiter (50 RPS) serializes entry but network calls run concurrently.
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                with ThreadPoolExecutor(max_workers=n_threads, thread_name_prefix="api5m") as http_pool:
+                    futures = {
+                        http_pool.submit(self.sdk.get_intraday_5m, sym): sym
+                        for sym in shortlist
+                    }
+                    for future in as_completed(futures, timeout=120):
+                        sym = futures[future]
+                        try:
+                            df_api = future.result()
+                            if df_api is not None and len(df_api) >= min_bars_for_processing:
+                                df_api = self._enrich_api_bars(df_api)
+                                api_df5_cache[sym] = df_api
+                                api_ok += 1
+                            else:
+                                api_fail += 1
+                        except Exception as e:
                             api_fail += 1
-                    except Exception as e:
-                        api_fail += 1
-                        logger.warning("API_5M_FETCH | Failed for %s: %s", sym, e)
+                            logger.warning("API_5M_FETCH | Failed for %s: %s", sym, e)
+
                 _t_api_elapsed = time.perf_counter() - _t_api_start
                 logger.info(
-                    "API_5M_FETCH | %d ok, %d failed of %d shortlisted | %.1fs",
-                    api_ok, api_fail, len(shortlist), _t_api_elapsed,
+                    "API_5M_FETCH | %d ok, %d failed of %d shortlisted | %.1fs (%d threads)",
+                    api_ok, api_fail, len(shortlist), _t_api_elapsed, n_threads,
                 )
 
         # ---------- Gate per candidate (structure + regime + events + news) ----------
