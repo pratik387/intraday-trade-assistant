@@ -1170,7 +1170,7 @@ class ScreenerLive:
                             api_fail += 1
                     except Exception as e:
                         api_fail += 1
-                        logger.debug("API_5M_FETCH | Failed for %s: %s", sym, e)
+                        logger.warning("API_5M_FETCH | Failed for %s: %s", sym, e)
                 _t_api_elapsed = time.perf_counter() - _t_api_start
                 logger.info(
                     "API_5M_FETCH | %d ok, %d failed of %d shortlisted | %.1fs",

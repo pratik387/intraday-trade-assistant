@@ -75,8 +75,8 @@ class UpstoxDataClient:
         self._daily_cache: Dict[str, pd.DataFrame] = {}
         self._daily_cache_lock = threading.RLock()
 
-        # Rate limiter for REST API (~5 rps conservative)
-        self._rps = 5.0
+        # Rate limiter for REST API (Upstox official limit: 50 RPS, 500/min, 2000/30min)
+        self._rps = 50.0
         self._rl_min_dt = 1.0 / self._rps
         self._rl_last = 0.0
         self._rl_lock = threading.Lock()
