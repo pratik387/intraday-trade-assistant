@@ -22,6 +22,7 @@ from __future__ import annotations
 import gzip
 import json
 import threading
+import asyncio
 import time
 import random
 import zlib
@@ -583,3 +584,100 @@ class UpstoxDataClient:
                 time.sleep(0.5 + 0.4 * attempt + random.random() * 0.2)
 
         return None
+
+    async def async_fetch_intraday_5m_batch(
+        self, symbols: list, concurrency: int = 50, rps: float = 45.0
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Fetch today's 5m intraday bars for multiple symbols concurrently.
+
+        Uses aiohttp with async rate limiting to stay within Upstox's 50 RPS
+        limit while maximizing throughput via concurrent HTTP connections.
+        1000 symbols in ~22s (vs 107s sequential).
+
+        Args:
+            symbols: List of "NSE:SYMBOL" strings
+            concurrency: Max concurrent HTTP connections (default 50)
+            rps: Requests per second limit (default 45, headroom below 50)
+
+        Returns:
+            Dict mapping symbol -> DataFrame [open, high, low, close, volume].
+            Symbols that fail or have no data are silently omitted.
+        """
+        import aiohttp
+        from aiolimiter import AsyncLimiter
+
+        # Pre-resolve instrument keys (sync, fast — uses in-memory dict)
+        sym_to_url = {}
+        skipped = 0
+        for sym in symbols:
+            try:
+                ikey = self._instrument_key_for(sym)
+                sym_to_url[sym] = f"{UPSTOX_HIST_BASE}/intraday/{ikey}/minutes/5"
+            except KeyError:
+                skipped += 1
+
+        if skipped > 0:
+            logger.debug("ASYNC_5M | Skipped %d unknown symbols", skipped)
+        if not sym_to_url:
+            return {}
+
+        limiter = AsyncLimiter(rps, 1.0)
+        sem = asyncio.Semaphore(concurrency)
+        results: Dict[str, pd.DataFrame] = {}
+        retries_429 = 0
+
+        async def _fetch_one(session: aiohttp.ClientSession, sym: str, url: str):
+            nonlocal retries_429
+            for attempt in range(3):
+                try:
+                    async with sem:
+                        async with limiter:
+                            async with session.get(
+                                url, timeout=aiohttp.ClientTimeout(total=10)
+                            ) as resp:
+                                if resp.status == 429:
+                                    retries_429 += 1
+                                    await asyncio.sleep(2 ** (attempt + 1))
+                                    continue
+                                if resp.status == 400:
+                                    return
+                                resp.raise_for_status()
+                                body = await resp.json()
+                except Exception:
+                    if attempt == 2:
+                        return
+                    await asyncio.sleep(0.5 + 0.4 * attempt)
+                    continue
+
+                candles = body.get("data", {}).get("candles", [])
+                if not candles:
+                    return
+
+                df = pd.DataFrame(
+                    candles,
+                    columns=["date", "open", "high", "low", "close", "volume", "_"],
+                )
+                df = df.drop(columns=["_"])
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                if getattr(df["date"].dt, "tz", None) is not None:
+                    df["date"] = df["date"].dt.tz_localize(None)
+                df = df.sort_values("date").set_index("date")
+                df = df[["open", "high", "low", "close", "volume"]].astype(float)
+                results[sym] = df
+                return
+
+        connector = aiohttp.TCPConnector(limit=concurrency, ttl_dns_cache=300)
+        async with aiohttp.ClientSession(
+            connector=connector, headers=UPSTOX_HEADERS
+        ) as session:
+            tasks = [_fetch_one(session, sym, url) for sym, url in sym_to_url.items()]
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        if retries_429 > 0:
+            logger.warning(
+                "ASYNC_5M | %d 429-throttle retries during batch of %d symbols",
+                retries_429, len(sym_to_url),
+            )
+
+        return results

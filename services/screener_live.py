@@ -1158,22 +1158,29 @@ class ScreenerLive:
                     time.sleep(remaining_wait)
 
                 _t_api_start = time.perf_counter()
+                try:
+                    import asyncio
+                    raw_api = asyncio.run(
+                        self.sdk.async_fetch_intraday_5m_batch(shortlist)
+                    )
+                except Exception as e:
+                    logger.warning("API_5M_FETCH | async batch failed: %s", e)
+                    raw_api = {}
+
+                # Enrich raw OHLCV with indicators (VWAP, ADX, RSI, bb_width)
                 api_ok, api_fail = 0, 0
-                for sym in shortlist:
-                    try:
-                        df_api = self.sdk.get_intraday_5m(sym)
-                        if df_api is not None and len(df_api) >= min_bars_for_processing:
-                            df_api = self._enrich_api_bars(df_api)
-                            api_df5_cache[sym] = df_api
-                            api_ok += 1
-                        else:
-                            api_fail += 1
-                    except Exception as e:
+                for sym, df_api in raw_api.items():
+                    if df_api is not None and len(df_api) >= min_bars_for_processing:
+                        df_api = self._enrich_api_bars(df_api)
+                        api_df5_cache[sym] = df_api
+                        api_ok += 1
+                    else:
                         api_fail += 1
-                        logger.warning("API_5M_FETCH | Failed for %s: %s", sym, e)
+                api_fail += len(shortlist) - len(raw_api) - api_fail
+
                 _t_api_elapsed = time.perf_counter() - _t_api_start
                 logger.info(
-                    "API_5M_FETCH | %d ok, %d failed of %d shortlisted | %.1fs",
+                    "API_5M_FETCH | %d ok, %d failed of %d shortlisted | %.1fs (async)",
                     api_ok, api_fail, len(shortlist), _t_api_elapsed,
                 )
 

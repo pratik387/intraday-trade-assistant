@@ -114,11 +114,6 @@ class BarBuilder:
             raise ValueError("bar_5m_span_minutes must be a multiple of 5")
         self._span5 = int(bar_5m_span_minutes)
 
-        # Boundary offset: shifts 5m/15m window boundaries to absorb +-1min timestamp jitter
-        # between Upstox WebSocket and Historical API data sources.
-        from config.filters_setup import load_filters
-        _cfg = load_filters()
-        self._boundary_offset = int(_cfg["bar_5m_boundary_offset_minutes"])
         self._on_1m_close = on_1m_close
         self._on_5m_close = on_5m_close
         self._on_15m_close = on_15m_close or (lambda s, b: None)  # no-op if not provided
@@ -364,13 +359,8 @@ class BarBuilder:
         self._attempt_close_15m(symbol, ser.name)
 
     def _attempt_close_5m(self, symbol: str, minute_close_ts: datetime) -> None:
-        # Close a 5m bar when (minute - boundary_offset) % span == 0
-        # boundary_offset shifts windows to absorb +-1min timestamp jitter between data sources.
-        # offset=0: windows at [09:15,09:20), [09:20,09:25)  (original)
-        # offset=1: windows at [09:16,09:21), [09:21,09:26)  (boundary bars no longer at edges)
         span = self._span5
-        offset = self._boundary_offset
-        if ((minute_close_ts.minute - offset) % span) != 0:
+        if (minute_close_ts.minute % span) != 0:
             return
 
         end_ts = minute_close_ts
@@ -431,9 +421,7 @@ class BarBuilder:
                 logger.exception("BarBuilder: additional 5m handler failed: %s", e)
 
     def _attempt_close_15m(self, symbol: str, minute_close_ts: datetime) -> None:
-        """Close a 15m bar when (minute - boundary_offset) % 15 == 0"""
-        offset = self._boundary_offset
-        if ((minute_close_ts.minute - offset) % 15) != 0:
+        if (minute_close_ts.minute % 15) != 0:
             return
 
         end_ts = minute_close_ts
