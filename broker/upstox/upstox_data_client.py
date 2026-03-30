@@ -619,8 +619,10 @@ class UpstoxDataClient:
             except KeyError:
                 skipped += 1
 
-        if skipped > 0:
-            logger.debug("ASYNC_5M | Skipped %d unknown symbols", skipped)
+        logger.info(
+            "ASYNC_5M | %d symbols passed, %d resolved to URLs, %d skipped (no instrument key)",
+            len(symbols), len(sym_to_url), skipped,
+        )
         if not sym_to_url:
             return {}
 
@@ -628,9 +630,11 @@ class UpstoxDataClient:
         sem = asyncio.Semaphore(concurrency)
         results: Dict[str, pd.DataFrame] = {}
         retries_429 = 0
+        empty_candles = 0
+        http_errors = 0
 
         async def _fetch_one(session: aiohttp.ClientSession, sym: str, url: str):
-            nonlocal retries_429
+            nonlocal retries_429, empty_candles, http_errors
             for attempt in range(3):
                 try:
                     async with sem:
@@ -643,17 +647,20 @@ class UpstoxDataClient:
                                     await asyncio.sleep(2 ** (attempt + 1))
                                     continue
                                 if resp.status == 400:
+                                    http_errors += 1
                                     return
                                 resp.raise_for_status()
                                 body = await resp.json()
                 except Exception:
                     if attempt == 2:
+                        http_errors += 1
                         return
                     await asyncio.sleep(0.5 + 0.4 * attempt)
                     continue
 
                 candles = body.get("data", {}).get("candles", [])
                 if not candles:
+                    empty_candles += 1
                     return
 
                 df = pd.DataFrame(
@@ -676,10 +683,9 @@ class UpstoxDataClient:
             tasks = [_fetch_one(session, sym, url) for sym, url in sym_to_url.items()]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        if retries_429 > 0:
-            logger.warning(
-                "ASYNC_5M | %d 429-throttle retries during batch of %d symbols",
-                retries_429, len(sym_to_url),
-            )
+        logger.info(
+            "ASYNC_5M | batch=%d ok=%d empty=%d http_err=%d 429_retries=%d",
+            len(sym_to_url), len(results), empty_candles, http_errors, retries_429,
+        )
 
         return results
