@@ -586,24 +586,21 @@ class UpstoxDataClient:
         return None
 
     async def async_fetch_intraday_5m_batch(
-        self, symbols: list, concurrency: int = 50, rps: float = 45.0,
-        rpm: float = 450.0,
+        self, symbols: list, concurrency: int = 15, rps: float = 10.0,
     ) -> Dict[str, pd.DataFrame]:
         """
         Fetch today's 5m intraday bars for multiple symbols concurrently.
 
-        Uses aiohttp with dual rate limiting:
-        - Per-second: 45 RPS (under Upstox 50/sec limit)
-        - Per-minute: 450 RPM (under Upstox 500/min limit)
-        Concurrency of 50 connections overlaps network IO waits.
+        Uses aiohttp with conservative rate limiting (10 RPS) to avoid 429s.
+        Sequential fetch worked at ~9.3/sec; async at 10/sec with 15 concurrent
+        connections gives similar throughput with better IO overlap.
 
-        1000 symbols at 450/min = ~133 seconds. Zero 429 failures.
+        ~700 symbols at 10/sec = ~70 seconds.
 
         Args:
             symbols: List of "NSE:SYMBOL" strings
-            concurrency: Max concurrent HTTP connections (default 50)
-            rps: Requests per second limit (default 45, headroom below 50)
-            rpm: Requests per minute limit (default 450, headroom below 500)
+            concurrency: Max concurrent HTTP connections (default 15)
+            rps: Requests per second limit (default 10)
 
         Returns:
             Dict mapping symbol -> DataFrame [open, high, low, close, volume].
@@ -627,9 +624,7 @@ class UpstoxDataClient:
         if not sym_to_url:
             return {}
 
-        # Dual rate limiter: per-second AND per-minute
-        limiter_sec = AsyncLimiter(rps, 1.0)
-        limiter_min = AsyncLimiter(rpm, 60.0)
+        limiter = AsyncLimiter(rps, 1.0)
         sem = asyncio.Semaphore(concurrency)
         results: Dict[str, pd.DataFrame] = {}
         retries_429 = 0
@@ -639,19 +634,18 @@ class UpstoxDataClient:
             for attempt in range(3):
                 try:
                     async with sem:
-                        async with limiter_min:
-                            async with limiter_sec:
-                                async with session.get(
-                                    url, timeout=aiohttp.ClientTimeout(total=10)
-                                ) as resp:
-                                    if resp.status == 429:
-                                        retries_429 += 1
-                                        await asyncio.sleep(2 ** (attempt + 1))
-                                        continue
-                                    if resp.status == 400:
-                                        return
-                                    resp.raise_for_status()
-                                    body = await resp.json()
+                        async with limiter:
+                            async with session.get(
+                                url, timeout=aiohttp.ClientTimeout(total=10)
+                            ) as resp:
+                                if resp.status == 429:
+                                    retries_429 += 1
+                                    await asyncio.sleep(2 ** (attempt + 1))
+                                    continue
+                                if resp.status == 400:
+                                    return
+                                resp.raise_for_status()
+                                body = await resp.json()
                 except Exception:
                     if attempt == 2:
                         return
