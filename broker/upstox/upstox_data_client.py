@@ -586,21 +586,18 @@ class UpstoxDataClient:
         return None
 
     async def async_fetch_intraday_5m_batch(
-        self, symbols: list, concurrency: int = 15, rps: float = 10.0,
+        self, symbols: list, concurrency: int = 25, rps: float = 20.0,
     ) -> Dict[str, pd.DataFrame]:
         """
         Fetch today's 5m intraday bars for multiple symbols concurrently.
 
-        Uses aiohttp with conservative rate limiting (10 RPS) to avoid 429s.
-        Sequential fetch worked at ~9.3/sec; async at 10/sec with 15 concurrent
-        connections gives similar throughput with better IO overlap.
-
-        ~700 symbols at 10/sec = ~70 seconds.
+        Uses aiohttp with rate limiting (20 RPS) to stay under Upstox limits.
+        ~500 unique symbols at 20/sec = ~26 seconds.
 
         Args:
             symbols: List of "NSE:SYMBOL" strings
-            concurrency: Max concurrent HTTP connections (default 15)
-            rps: Requests per second limit (default 10)
+            concurrency: Max concurrent HTTP connections (default 25)
+            rps: Requests per second limit (default 20)
 
         Returns:
             Dict mapping symbol -> DataFrame [open, high, low, close, volume].
@@ -619,10 +616,6 @@ class UpstoxDataClient:
             except KeyError:
                 skipped += 1
 
-        logger.info(
-            "ASYNC_5M | %d symbols passed, %d resolved to URLs, %d skipped (no instrument key)",
-            len(symbols), len(sym_to_url), skipped,
-        )
         if not sym_to_url:
             return {}
 
@@ -630,11 +623,9 @@ class UpstoxDataClient:
         sem = asyncio.Semaphore(concurrency)
         results: Dict[str, pd.DataFrame] = {}
         retries_429 = 0
-        empty_candles = 0
-        http_errors = 0
 
         async def _fetch_one(session: aiohttp.ClientSession, sym: str, url: str):
-            nonlocal retries_429, empty_candles, http_errors
+            nonlocal retries_429
             for attempt in range(3):
                 try:
                     async with sem:
@@ -647,20 +638,17 @@ class UpstoxDataClient:
                                     await asyncio.sleep(2 ** (attempt + 1))
                                     continue
                                 if resp.status == 400:
-                                    http_errors += 1
                                     return
                                 resp.raise_for_status()
                                 body = await resp.json()
                 except Exception:
                     if attempt == 2:
-                        http_errors += 1
                         return
                     await asyncio.sleep(0.5 + 0.4 * attempt)
                     continue
 
                 candles = body.get("data", {}).get("candles", [])
                 if not candles:
-                    empty_candles += 1
                     return
 
                 df = pd.DataFrame(
@@ -683,9 +671,10 @@ class UpstoxDataClient:
             tasks = [_fetch_one(session, sym, url) for sym, url in sym_to_url.items()]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        logger.info(
-            "ASYNC_5M | batch=%d ok=%d empty=%d http_err=%d 429_retries=%d",
-            len(sym_to_url), len(results), empty_candles, http_errors, retries_429,
-        )
+        if retries_429 > 0:
+            logger.warning(
+                "ASYNC_5M | %d 429-throttle retries during batch of %d symbols",
+                retries_429, len(sym_to_url),
+            )
 
         return results

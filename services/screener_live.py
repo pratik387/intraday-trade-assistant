@@ -37,7 +37,7 @@ Notes:
 """
 
 from dataclasses import dataclass
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import os
@@ -1149,19 +1149,23 @@ class ScreenerLive:
         if api_5m_cfg.get("enabled", False) and not env.DRY_RUN:
             if hasattr(self.sdk, "get_intraday_5m"):
                 # Wait for API data availability — Upstox takes ~25s after bar close
-                # Stage-0 already consumed some of that time, only sleep the remainder
+                # In subscriber mode, scan fires ~60s after bar close (WebSocket delay),
+                # so this wait is usually already satisfied. Use actual bar close time.
                 min_delay = float(api_5m_cfg["min_delay_after_bar_close_sec"])
-                elapsed_since_bar = time.perf_counter() - _t_bar_start
-                remaining_wait = min_delay - elapsed_since_bar
+                bar_close_time = now + timedelta(minutes=5)
+                wall_now = datetime.now()
+                elapsed_since_close = (wall_now - bar_close_time).total_seconds()
+                remaining_wait = min_delay - elapsed_since_close
                 if remaining_wait > 0:
                     logger.info("API_5M_FETCH | Waiting %.1fs for API data availability", remaining_wait)
                     time.sleep(remaining_wait)
 
                 _t_api_start = time.perf_counter()
+                unique_shortlist = list(dict.fromkeys(shortlist))
                 try:
                     import asyncio
                     raw_api = asyncio.run(
-                        self.sdk.async_fetch_intraday_5m_batch(shortlist)
+                        self.sdk.async_fetch_intraday_5m_batch(unique_shortlist)
                     )
                 except Exception as e:
                     logger.warning("API_5M_FETCH | async batch failed: %s", e)
@@ -1176,12 +1180,12 @@ class ScreenerLive:
                         api_ok += 1
                     else:
                         api_fail += 1
-                api_fail += len(shortlist) - len(raw_api) - api_fail
+                api_fail += len(unique_shortlist) - len(raw_api) - api_fail
 
                 _t_api_elapsed = time.perf_counter() - _t_api_start
                 logger.info(
-                    "API_5M_FETCH | %d ok, %d failed of %d shortlisted | %.1fs (async)",
-                    api_ok, api_fail, len(shortlist), _t_api_elapsed,
+                    "API_5M_FETCH | %d ok, %d failed of %d unique (%d shortlisted) | %.1fs (async)",
+                    api_ok, api_fail, len(unique_shortlist), len(shortlist), _t_api_elapsed,
                 )
 
         # ---------- Gate per candidate (structure + regime + events + news) ----------
