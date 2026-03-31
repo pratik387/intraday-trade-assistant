@@ -241,8 +241,6 @@ class ReversionPipeline(BasePipeline):
         """
         # df1m reserved for future 1-minute analysis
         _ = df1m
-        # adx not used for reversion gates
-        _ = adx
 
         reasons = []
         passed = True
@@ -320,6 +318,40 @@ class ReversionPipeline(BasePipeline):
                     return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
                 else:
                     reasons.append(f"setup_daily_regime_ok:{daily_regime or 'unknown'}")
+
+        # ========== 3c. ADX REGIME FILTER (for volume_spike_reversal) ==========
+        # Volume spike reversals are mean-reversion: work in chop, dangerous in trends
+        if "volume_spike" in setup_lower:
+            max_adx = setup_filter_cfg.get("max_adx_for_reversal")
+            if max_adx and adx > max_adx:
+                reasons.append(f"adx_trend_too_strong:{adx:.0f}>{max_adx}")
+                logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: ADX {adx:.0f} > {max_adx} (strong trend = continuation, not exhaustion)")
+                return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+            elif max_adx:
+                reasons.append(f"adx_ok:{adx:.0f}")
+
+        # ========== 3d. TIME WINDOW FILTER (for volume_spike_reversal) ==========
+        if "volume_spike" in setup_lower and current_time:
+            current_hhmm = current_time.strftime("%H%M")
+
+            # Blocked time windows (hard block)
+            blocked_windows = setup_filter_cfg.get("blocked_time_windows", [])
+            for window in blocked_windows:
+                if window["start_hhmm"] <= current_hhmm < window["end_hhmm"]:
+                    reason_str = window.get("reason", "blocked_time")
+                    reasons.append(f"time_blocked:{reason_str}:{current_hhmm}")
+                    logger.debug(f"[REVERSION] {symbol} {setup_type} BLOCKED: time {current_hhmm} in blocked window ({reason_str})")
+                    return GateResult(passed=False, reasons=reasons, size_mult=size_mult, min_hold_bars=0)
+
+            # Reduced size time windows (soft — reduce position size)
+            reduced_windows = setup_filter_cfg.get("reduced_size_time_windows", [])
+            for window in reduced_windows:
+                if window["start_hhmm"] <= current_hhmm < window["end_hhmm"]:
+                    window_mult = window.get("size_mult", 0.5)
+                    size_mult *= window_mult
+                    reason_str = window.get("reason", "reduced_time")
+                    reasons.append(f"time_reduced:{reason_str}:size_mult={window_mult}")
+                    logger.debug(f"[REVERSION] {symbol} {setup_type} size reduced to {window_mult}x ({reason_str})")
 
         # ========== VWAP_RECLAIM VOLUME FILTER (DATA-DRIVEN Dec 2024) ==========
         # From spike test: VWAP_RECLAIM vol<50k: 18 trades (6W, 12L), blocking = +2,675 Rs

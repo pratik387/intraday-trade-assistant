@@ -50,11 +50,28 @@ class VolumeStructure(BaseStructure):
         self.spike_sl_buffer_atr = config["spike_sl_buffer_atr"]  # ATR buffer beyond spike candle extreme
         self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
 
+        # P2: Wick rejection ratio — filter out momentum candles masquerading as exhaustion
+        self.min_rejection_wick_ratio = config["min_rejection_wick_ratio"]
+        self.wick_bonus_threshold = config["wick_bonus_threshold"]
+
+        # P3: S/R proximity — boost confidence when spike is at key level
+        self.sr_proximity_atr_mult = config["sr_proximity_atr_mult"]
+        self.sr_confluence_bonus = config["sr_confluence_bonus"]
+
+        # P5: Volume ratio dual check — prevent illiquid z-score noise
+        self.min_volume_ratio = config["min_volume_ratio"]
+
+        # P6: Multi-bar exhaustion pattern
+        self.multi_bar_vol_threshold = config["multi_bar_vol_threshold"]
+        self.multi_bar_lookback = config["multi_bar_lookback"]
+        self.multi_bar_exhaustion_bonus = config["multi_bar_exhaustion_bonus"]
+
         logger.debug(f"VOLUME: Initialized with min spike: {self.min_volume_spike_mult}x")
         logger.debug(f"VOLUME: SL params - spike_buffer: {self.spike_sl_buffer_atr}ATR, min_distance: {self.min_stop_distance_pct}%")
+        logger.debug(f"VOLUME: Wick filter: min_ratio={self.min_rejection_wick_ratio}, S/R proximity: {self.sr_proximity_atr_mult} ATR")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
-        """Detect volume-based structures."""
+        """Detect volume-based structures with structural context."""
         try:
             df = context.df_5m
             if len(df) < 10 or 'vol_z' not in df.columns:
@@ -69,45 +86,156 @@ class VolumeStructure(BaseStructure):
 
             # Volume spike reversal detection
             current_vol_z = float(df['vol_z'].iloc[-1])
-            if current_vol_z >= self.min_volume_spike_mult:
-                current_price = context.current_price
-                open_price = df['open'].iloc[-1]
-                body_size_pct = abs(current_price - open_price) / open_price * 100
+            if current_vol_z < self.min_volume_spike_mult:
+                return StructureAnalysis(
+                    structure_detected=False, events=[], quality_score=0.0,
+                    rejection_reason="No volume patterns detected"
+                )
 
-                if body_size_pct >= self.min_body_size_pct:
-                    # Determine reversal direction
-                    if current_price > open_price:  # Up bar, expect reversal down
-                        structure_type = "volume_spike_reversal_short"
-                        side = "short"
-                    else:  # Down bar, expect reversal up
-                        structure_type = "volume_spike_reversal_long"
-                        side = "long"
+            current_price = context.current_price
+            candle = df.iloc[-1]
+            open_price = float(candle['open'])
+            high_price = float(candle['high'])
+            low_price = float(candle['low'])
+            body_size_pct = abs(current_price - open_price) / open_price * 100
 
-                    event = StructureEvent(
-                        symbol=context.symbol,
-                        timestamp=context.timestamp,
-                        structure_type=structure_type,
-                        side=side,
-                        confidence=self._calculate_institutional_strength(context, current_vol_z, body_size_pct, side),
-                        levels={"reversal_level": current_price},
-                        context={
-                            "volume_spike": current_vol_z,
-                            "body_size_pct": body_size_pct
-                        },
-                        price=current_price
-                    )
-                    # Only add event if it matches our configured setup type (or no filter configured)
-                    if self.configured_setup_type is None or structure_type == self.configured_setup_type:
-                        events.append(event)
-                        logger.debug(f"VOLUME: {context.symbol} - Volume spike reversal {side.upper()}: vol_z {current_vol_z:.1f}, body {body_size_pct:.1f}%")
-                    else:
-                        logger.debug(f"VOLUME: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
+            if body_size_pct < self.min_body_size_pct:
+                return StructureAnalysis(
+                    structure_detected=False, events=[], quality_score=0.0,
+                    rejection_reason="Body size too small"
+                )
+
+            # Determine reversal direction
+            if current_price > open_price:  # Up bar, expect reversal down
+                structure_type = "volume_spike_reversal_short"
+                side = "short"
+            else:  # Down bar, expect reversal up
+                structure_type = "volume_spike_reversal_long"
+                side = "long"
+
+            # Setup type filter
+            if self.configured_setup_type and structure_type != self.configured_setup_type:
+                logger.debug(f"VOLUME: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
+                return StructureAnalysis(
+                    structure_detected=False, events=[], quality_score=0.0,
+                    rejection_reason=f"Direction mismatch: {structure_type} != {self.configured_setup_type}"
+                )
+
+            # --- P5: Volume ratio dual check (prevent illiquid z-score noise) ---
+            if len(df) >= 20:
+                vol_median = float(df['volume'].tail(20).median())
+                vol_ratio = float(candle['volume'] / vol_median) if vol_median > 0 else 0.0
+            else:
+                vol_ratio = float(current_vol_z)  # Fallback to z-score as proxy
+
+            if vol_ratio < self.min_volume_ratio:
+                logger.debug(f"VOLUME: {context.symbol} - vol_ratio {vol_ratio:.1f}x < {self.min_volume_ratio}x (illiquid noise)")
+                return StructureAnalysis(
+                    structure_detected=False, events=[], quality_score=0.0,
+                    rejection_reason=f"Volume ratio {vol_ratio:.1f}x below minimum {self.min_volume_ratio}x"
+                )
+
+            # --- P2: Wick rejection ratio (filter momentum candles) ---
+            total_range = high_price - low_price
+            wick_ratio = 0.0
+            if total_range > 0:
+                if side == "long":  # Down bar → want lower wick (rejection of lows)
+                    lower_wick = min(open_price, current_price) - low_price
+                    wick_ratio = lower_wick / total_range
+                else:  # Up bar → want upper wick (rejection of highs)
+                    upper_wick = high_price - max(open_price, current_price)
+                    wick_ratio = upper_wick / total_range
+
+            if wick_ratio < self.min_rejection_wick_ratio:
+                logger.debug(f"VOLUME: {context.symbol} - wick_ratio {wick_ratio:.2f} < {self.min_rejection_wick_ratio} (momentum candle, not exhaustion)")
+                return StructureAnalysis(
+                    structure_detected=False, events=[], quality_score=0.0,
+                    rejection_reason=f"Wick ratio {wick_ratio:.2f} below minimum {self.min_rejection_wick_ratio}"
+                )
+
+            # --- P3: S/R proximity check (structural confluence) ---
+            atr = self._get_atr(context)
+            proximity_threshold = atr * self.sr_proximity_atr_mult
+            nearest_level_name = None
+            nearest_level_dist = float('inf')
+
+            key_levels = []
+            if hasattr(context, 'pdh') and context.pdh and not np.isnan(context.pdh):
+                key_levels.append(("PDH", context.pdh))
+            if hasattr(context, 'pdl') and context.pdl and not np.isnan(context.pdl):
+                key_levels.append(("PDL", context.pdl))
+            if hasattr(context, 'orh') and context.orh and not np.isnan(context.orh):
+                key_levels.append(("ORH", context.orh))
+            if hasattr(context, 'orl') and context.orl and not np.isnan(context.orl):
+                key_levels.append(("ORL", context.orl))
+            if 'vwap' in df.columns:
+                vwap_val = float(df['vwap'].iloc[-1])
+                if not np.isnan(vwap_val):
+                    key_levels.append(("VWAP", vwap_val))
+
+            for name, level in key_levels:
+                dist = abs(current_price - level)
+                if dist < nearest_level_dist:
+                    nearest_level_dist = dist
+                    nearest_level_name = name
+
+            at_key_level = nearest_level_dist <= proximity_threshold if key_levels else False
+
+            # --- P6: Multi-bar exhaustion pattern ---
+            multi_bar_exhaustion = False
+            elevated_bar_count = 0
+            if len(df) >= self.multi_bar_lookback:
+                recent = df.tail(self.multi_bar_lookback)
+                elevated_bar_count = int((recent['vol_z'] >= self.multi_bar_vol_threshold).sum())
+                closes = recent['close'].values
+                opens = recent['open'].values
+                if side == "long":  # Consecutive down bars
+                    direction_consistent = sum(1 for c, o in zip(closes, opens) if c < o)
+                else:  # Consecutive up bars
+                    direction_consistent = sum(1 for c, o in zip(closes, opens) if c > o)
+                multi_bar_exhaustion = (elevated_bar_count >= 2 and direction_consistent >= 2)
+
+            # Build enriched event context
+            event_context = {
+                "volume_spike": current_vol_z,
+                "body_size_pct": body_size_pct,
+                "wick_ratio": round(wick_ratio, 3),
+                "vol_ratio": round(vol_ratio, 1),
+                "at_key_level": at_key_level,
+                "nearest_level": nearest_level_name,
+                "nearest_level_dist_atr": round(nearest_level_dist / atr, 2) if atr > 0 else 0.0,
+                "multi_bar_exhaustion": multi_bar_exhaustion,
+                "elevated_bar_count": elevated_bar_count,
+            }
+
+            confidence = self._calculate_institutional_strength(
+                context, current_vol_z, body_size_pct, side,
+                wick_ratio=wick_ratio, at_key_level=at_key_level,
+                multi_bar_exhaustion=multi_bar_exhaustion
+            )
+
+            event = StructureEvent(
+                symbol=context.symbol,
+                timestamp=context.timestamp,
+                structure_type=structure_type,
+                side=side,
+                confidence=confidence,
+                levels={"reversal_level": current_price},
+                context=event_context,
+                price=current_price
+            )
+            events.append(event)
+            logger.debug(
+                f"VOLUME: {context.symbol} - Spike reversal {side.upper()}: vol_z={current_vol_z:.1f}, "
+                f"body={body_size_pct:.1f}%, wick={wick_ratio:.2f}, vol_ratio={vol_ratio:.1f}x, "
+                f"at_level={nearest_level_name if at_key_level else 'none'}, multi_bar={multi_bar_exhaustion}"
+            )
 
             return StructureAnalysis(
-                structure_detected=len(events) > 0,
+                structure_detected=True,
                 events=events,
-                quality_score=min(80.0, current_vol_z * 15) if events else 0.0,
-                rejection_reason=None if events else "No volume patterns detected"
+                quality_score=min(80.0, current_vol_z * 15),
+                rejection_reason=None
             )
 
         except Exception as e:
@@ -227,7 +355,10 @@ class VolumeStructure(BaseStructure):
         return context.current_price * 0.01
 
     def _calculate_institutional_strength(self, context: MarketContext, vol_z: float,
-                                        body_size_pct: float, side: str) -> float:
+                                        body_size_pct: float, side: str, *,
+                                        wick_ratio: float = 0.0,
+                                        at_key_level: bool = False,
+                                        multi_bar_exhaustion: bool = False) -> float:
         """Calculate institutional-grade strength for volume patterns."""
         try:
             # Base strength from volume spike magnitude (institutional volume threshold ≥3.0)
@@ -237,47 +368,40 @@ class VolumeStructure(BaseStructure):
             strength_multiplier = 1.0
 
             # Exceptional volume surge bonus (institutional participation)
-            if vol_z >= 5.0:  # Exceptional volume surge
-                strength_multiplier *= 1.4  # 40% bonus for exceptional volume
-                logger.debug(f"VOLUME: Exceptional volume surge bonus applied (vol_z={vol_z:.2f})")
-            elif vol_z >= 3.0:  # Strong institutional volume
-                strength_multiplier *= 1.2  # 20% bonus for strong volume
+            if vol_z >= 5.0:
+                strength_multiplier *= 1.4
+            elif vol_z >= 3.0:
+                strength_multiplier *= 1.2
 
             # Body size significance (shows conviction)
-            if body_size_pct >= 3.0:  # Large body size (3%+ move)
-                strength_multiplier *= 1.25  # 25% bonus for large moves
-                logger.debug(f"VOLUME: Large body size bonus applied ({body_size_pct:.2f}%)")
-            elif body_size_pct >= 2.0:  # Moderate body size
-                strength_multiplier *= 1.15  # 15% bonus for moderate moves
+            if body_size_pct >= 3.0:
+                strength_multiplier *= 1.25
+            elif body_size_pct >= 2.0:
+                strength_multiplier *= 1.15
 
-            # Volume spike consistency (multiple bars with elevated volume)
-            df = context.df_5m
-            if len(df) >= 3:
-                recent_vol_z = df['vol_z'].tail(3)
-                consistent_volume = (recent_vol_z >= 2.0).sum()
-                if consistent_volume >= 2:
-                    strength_multiplier *= 1.2  # 20% bonus for sustained volume
-                    logger.debug(f"VOLUME: Consistent volume bonus applied ({consistent_volume} bars)")
+            # P2: Wick rejection bonus — strong wicks confirm exhaustion
+            if wick_ratio >= self.wick_bonus_threshold:
+                strength_multiplier *= 1.2  # 20% bonus for strong rejection wick
+                logger.debug(f"VOLUME: Strong wick rejection bonus (ratio={wick_ratio:.2f})")
 
-            # Reversal context bonus (volume at key levels)
-            current_price = context.current_price
-            if hasattr(context, 'vwap') and context.vwap:
-                vwap_distance = abs(current_price - context.vwap) / context.vwap
-                if vwap_distance <= 0.005:  # Near VWAP (within 0.5%)
-                    strength_multiplier *= 1.15  # 15% bonus for VWAP interaction
-                    logger.debug(f"VOLUME: VWAP interaction bonus applied")
+            # P3: S/R confluence bonus — spike at key level is higher probability
+            if at_key_level:
+                strength_multiplier *= self.sr_confluence_bonus
+                logger.debug(f"VOLUME: S/R confluence bonus applied ({self.sr_confluence_bonus}x)")
+
+            # P6: Multi-bar exhaustion bonus — sustained climactic volume
+            if multi_bar_exhaustion:
+                strength_multiplier *= self.multi_bar_exhaustion_bonus
+                logger.debug(f"VOLUME: Multi-bar exhaustion bonus ({self.multi_bar_exhaustion_bonus}x)")
 
             # Market timing bonus (volume patterns work best during active hours)
             current_hour = pd.to_datetime(context.timestamp).hour
-            if 10 <= current_hour <= 14:  # Main trading session
-                strength_multiplier *= 1.1  # 10% timing bonus
-                logger.debug(f"VOLUME: Market timing bonus applied (hour={current_hour})")
+            if 10 <= current_hour <= 14:
+                strength_multiplier *= 1.1
 
             # Apply multipliers and ensure institutional minimum
             final_strength = base_strength * strength_multiplier
-
-            # Institutional minimum for regime gate passage (≥2.0)
-            final_strength = max(final_strength, 1.8)  # Strong minimum for volume patterns
+            final_strength = max(final_strength, 1.8)
 
             logger.debug(f"VOLUME: {context.symbol} {side} - Base: {base_strength:.2f}, "
                        f"Multiplier: {strength_multiplier:.2f}, Final: {final_strength:.2f}")
@@ -286,4 +410,4 @@ class VolumeStructure(BaseStructure):
 
         except Exception as e:
             logger.error(f"VOLUME: Error calculating institutional strength: {e}")
-            return 1.8  # Safe fallback below regime threshold
+            return 1.8
