@@ -150,19 +150,9 @@ def main() -> int:
 
     cfg = load_filters()  # validate early; raises if required keys are missing
 
-    # Enable shared market data (subscribe to Market Data Service via Redis)
+    # MDS shared market data removed — standalone only
     if args.shared_market_data:
-        if "market_data_bus" not in cfg:
-            cfg["market_data_bus"] = {}
-        cfg["market_data_bus"]["mode"] = "subscriber"
-        cfg["market_data_bus"]["ltp_mode"] = "subscriber"
-        logger.info("[MARKET_DATA] Shared mode: subscribing to Market Data Service via Redis")
-
-        # Reinitialize global ltp_cache in subscriber mode
-        global ltp_cache
-        redis_url = cfg["market_data_bus"].get("redis_url", "redis://localhost:6379/0")
-        ltp_cache = SharedLTPCache(mode="subscriber", redis_url=redis_url)
-        logger.info("[MARKET_DATA] LTP cache in subscriber mode")
+        logger.warning("--shared-market-data is deprecated (MDS removed). Running standalone.")
 
     # Apply structure caching if requested (monkey-patches TradeDecisionGate.evaluate)
     # Also set flag in config so worker processes can enable caching
@@ -267,79 +257,20 @@ def main() -> int:
     dynamic_risk = capital_manager.get_risk_per_trade(fallback=fallback_risk)
     set_base_config_override('risk_per_trade_rupees', dynamic_risk)
 
-    # Determine execution mode: in_process (all-in-one) or scan_only (exec runs separately)
-    execution_mode = getattr(args, 'execution_mode', None) or cfg.get("execution_mode", "in_process")
-    if args.dry_run:
-        execution_mode = "in_process"  # Backtest always forces in_process
-
-    if execution_mode != "in_process":
-        logger.info("EXEC_MODE | %s", execution_mode)
-
-    # Order queue: local (in_process), Redis publish (scan_only/separated), Redis consume (exec_only)
-    # Each instance MUST have its own dedicated channel to prevent cross-instance plan leakage.
-    # - separated: auto-generates unique channel (parent passes to child via args_dict)
-    # - scan_only/exec_only: requires --instance-id to pair scan+exec processes
-    # - in_process: uses local OrderQueue (no Redis)
-    mdb_cfg = cfg.get("market_data_bus", {})
-    redis_url = mdb_cfg.get("redis_url", "redis://localhost:6379/0")
-    base_queue_key = cfg["trade_plan_queue_key"]
-
-    if execution_mode == "separated":
-        import uuid
-        queue_key = f"{base_queue_key}:{uuid.uuid4().hex[:8]}"
-        from services.execution.redis_plan_queue import RedisPlanPublisher
-        oq = RedisPlanPublisher(redis_url=redis_url, queue_key=queue_key)
-    elif execution_mode == "scan_only":
-        instance_id = getattr(args, 'instance_id', None)
-        if not instance_id:
-            raise ValueError("--instance-id is required for scan_only mode (e.g., --instance-id=live)")
-        queue_key = f"{base_queue_key}:{instance_id}"
-        from services.execution.redis_plan_queue import RedisPlanPublisher
-        oq = RedisPlanPublisher(redis_url=redis_url, queue_key=queue_key)
-    elif execution_mode == "exec_only":
-        instance_id = getattr(args, 'instance_id', None)
-        if not instance_id:
-            raise ValueError("--instance-id is required for exec_only mode (e.g., --instance-id=live)")
-        queue_key = f"{base_queue_key}:{instance_id}"
-        from services.execution.redis_plan_queue import RedisPlanConsumer
-        oq = RedisPlanConsumer(redis_url=redis_url, queue_key=queue_key)
-    else:
-        queue_key = base_queue_key
-        oq = OrderQueue()
+    # Execution mode: in_process only (separated/scan_only/exec_only removed with MDS)
+    execution_mode = "in_process"
+    oq = OrderQueue()
 
     def _prewarm_daily_cache(sdk, mis_fetcher=None):
-        """Pre-warm daily cache: Redis (1-3s) -> rolling disk (2-5s) -> API (15min)."""
-        from datetime import datetime as _dt
-
-        mdb_cfg = cfg.get("market_data_bus", {})
-        dc_cfg = mdb_cfg.get("daily_cache_redis", {})
-        redis_enabled = dc_cfg.get("enabled", False)
-
+        """Pre-warm daily cache: disk (2-5s) -> API (15min)."""
         cache_persistence = DailyCachePersistence()
         loaded_from = None
 
-        # Step 1: Try Redis (shared by MDS publisher)
-        if redis_enabled:
-            try:
-                from market_data.market_data_bus import MarketDataBus
-                redis_url = mdb_cfg["redis_url"]
-                bus = MarketDataBus(mode="subscriber", redis_url=redis_url)
-                today = _dt.now().date().isoformat()
-                redis_cache = bus.get_daily_cache(today)
-                bus.shutdown()
-                if redis_cache:
-                    sdk.set_daily_cache(redis_cache)
-                    loaded_from = "redis"
-                    logger.info(f"DAILY_CACHE | Loaded {len(redis_cache)} symbols from Redis")
-            except Exception as e:
-                logger.warning(f"DAILY_CACHE | Redis load failed: {e}")
-
-        # Step 2: Try rolling disk cache (today's or yesterday's)
-        if loaded_from is None:
-            cached_data = cache_persistence.load_latest()
-            if cached_data:
-                sdk.set_daily_cache(cached_data)
-                loaded_from = "disk"
+        # Step 1: Try rolling disk cache (today's or yesterday's)
+        cached_data = cache_persistence.load_latest()
+        if cached_data:
+            sdk.set_daily_cache(cached_data)
+            loaded_from = "disk"
 
         # Compute MIS-filtered symbol list for prewarm (when early filter enabled)
         mis_filter_cfg = cfg.get("early_mis_universe_filter", {})
@@ -349,25 +280,11 @@ def main() -> int:
             prewarm_symbols = [s for s in all_eq if mis_fetcher.is_mis_allowed(s)]
             logger.info(f"MIS_UNIVERSE | Prewarm: {len(all_eq)} -> {len(prewarm_symbols)} symbols")
 
-        # Step 3: API fallback (90% threshold skips if rolling cache loaded)
+        # Step 2: API fallback (90% threshold skips if rolling cache loaded)
         result = sdk.prewarm_daily_cache(symbols=prewarm_symbols, days=210)
         if result.get("source") == "api":
             loaded_from = "api"
             cache_persistence.save(sdk.get_daily_cache())
-
-        # Step 4: Cooperative publish to Redis (seed for other instances)
-        if redis_enabled and loaded_from in ("disk", "api"):
-            try:
-                from market_data.market_data_bus import MarketDataBus
-                redis_url = mdb_cfg["redis_url"]
-                bus = MarketDataBus(mode="publisher", redis_url=redis_url)
-                today = _dt.now().date().isoformat()
-                cache = sdk.get_daily_cache()
-                if cache:
-                    bus.publish_daily_cache(today, cache, dc_cfg)
-                bus.shutdown()
-            except Exception as e:
-                logger.warning(f"DAILY_CACHE | Redis publish failed (non-fatal): {e}")
 
         logger.info(f"DAILY_CACHE | Prewarm complete, source={loaded_from}")
 
@@ -444,336 +361,9 @@ def main() -> int:
         if not args.skip_prewarm:
             _prewarm_daily_cache(sdk, mis_fetcher=mis_fetcher)
 
-    # ---------- exec_only: full execution pipeline, no screener ----------
-    if execution_mode == "exec_only":
-        from market_data import BarSubscriber
-        from services.execution.exec_heartbeat import ExecHeartbeatPublisher
-
-        # BarSubscriber as tick source (receives from MDS via Redis — own GIL isolation)
-        bar_subscriber = BarSubscriber(redis_url=redis_url, symbols=None)
-        bar_subscriber.init_redis()
-
-        # Wire LTP cache + tick recorder to BarSubscriber ticks
-        _original_on_tick = bar_subscriber.on_tick
-        def _ltp_tap_on_tick(symbol, price, volume, ts):
-            _original_on_tick(symbol, price, volume, ts)
-            ltp_cache.update(symbol, float(price), pd.Timestamp(ts))
-            if tick_recorder is not None:
-                tick_recorder.on_tick(symbol, float(price), 0, ts, float(volume))
-        bar_subscriber.on_tick = _ltp_tap_on_tick
-
-        # Risk + shared positions
-        risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
-        positions = PositionStore()
-
-        # API server
-        api = get_api_server(port=args.health_port)
-        api.set_state(SessionState.RECOVERING)
-        api.set_position_store(positions)
-        api.set_capital_manager(capital_manager)
-        api.set_ltp_cache(ltp_cache)
-        api.set_kite_client(sdk)
-        api.set_auth_token(args.admin_token)
-
-        state_dir = Path(__file__).resolve().parent / "state"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        api.set_state_dir(state_dir)
-        api.start()
-
-        # WebSocket server
-        from api.websocket_server import WebSocketServer, LTPBatcher
-        ws_port = args.ws_port if args.ws_port else args.health_port + 1
-        ws_server = WebSocketServer(port=ws_port)
-        ws_server.start()
-        api.set_websocket_server(ws_server)
-
-        positions.set_api_server(api)
-        ltp_batcher = LTPBatcher(api.broadcast_ws, interval_ms=500)
-        ltp_cache.set_ltp_batcher(ltp_batcher)
-
-        # Startup recovery
-        from config.logging_config import get_log_directory
-        is_live = not args.dry_run and not args.paper_trading
-        persistence = startup_recovery(
-            broker=broker,
-            is_live_mode=is_live,
-            is_paper_mode=args.paper_trading,
-            log_dir=get_log_directory(),
-            position_store=positions,
-            trading_logger_instance=trading_logger,
-        )
-
-        # Executors — use BarSubscriber (duck-typed BarBuilder) and RedisPlanConsumer (duck-typed OrderQueue)
-        trader = TriggerAwareExecutor(
-            broker=broker,
-            order_queue=oq,           # RedisPlanConsumer
-            risk_state=risk,
-            positions=positions,
-            get_ltp_ts=ltp_cache.get_ltp_ts,
-            bar_builder=bar_subscriber,  # BarSubscriber (duck-typed BarBuilder)
-            trading_logger=trading_logger,
-            capital_manager=capital_manager,
-            persistence=persistence,
-            api_server=api,
-        )
-        exit_exec = ExitExecutor(
-            broker=broker,
-            positions=positions,
-            get_ltp_ts=ltp_cache.get_ltp_ts,
-            bar_builder=bar_subscriber,
-            trading_logger=trading_logger,
-            capital_manager=capital_manager,
-            persistence=persistence,
-            api_server=api,
-        )
-
-        # Start BarSubscriber (begin receiving ticks from MDS)
-        bar_subscriber.start()
-        logger.info("EXEC_ONLY | BarSubscriber started — receiving ticks from MDS")
-
-        # Start executor threads
-        threads: list[threading.Thread] = []
-        t_trade = threading.Thread(target=trader.run_forever, name="TriggerAwareExecutor", daemon=True)
-        t_trade.start(); threads.append(t_trade)
-        logger.info("trigger-aware-executor: started")
-
-        t_exit = threading.Thread(target=exit_exec.run_forever, name="ExitExecutor", daemon=True)
-        t_exit.start(); threads.append(t_exit)
-        logger.info("exit-executor: started")
-
-        def monitor_triggers():
-            while True:
-                try:
-                    summary = trader.get_pending_trades_summary()
-                    if summary["total_pending"] > 0 or summary["total_triggered"] > 0:
-                        logger.info(
-                            f"TRIGGER_STATUS: pending={summary['total_pending']} "
-                            f"triggered={summary['total_triggered']} "
-                            f"symbols={list(summary['by_symbol'].keys())}"
-                        )
-                    time.sleep(30)
-                except Exception as e:
-                    logger.exception(f"Monitor thread error: {e}")
-                    time.sleep(30)
-
-        t_monitor = threading.Thread(target=monitor_triggers, name="TriggerMonitor", daemon=True)
-        t_monitor.start(); threads.append(t_monitor)
-
-        # Heartbeat publisher — scan process checks this before enqueuing
-        hb_cfg = cfg["exec_heartbeat"]
-        heartbeat = ExecHeartbeatPublisher(
-            redis_url=redis_url,
-            key=hb_cfg["key"],
-            interval_sec=hb_cfg["interval_sec"],
-            ttl_sec=hb_cfg["ttl_sec"],
-        )
-        heartbeat.start()
-
-        api.set_state(SessionState.TRADING)
-        logger.info("EXEC_ONLY | All components started — ready for trade plans from Redis")
-
-        # Run until EOD / signal
-        stop = threading.Event()
-
-        def _sig_handler(signum, frame):
-            logger.warning(f"signal {signum} received – shutting down exec_only")
-            stop.set()
-
-        def _shutdown_via_http():
-            logger.info("Shutdown requested via HTTP")
-            stop.set()
-
-        signal.signal(signal.SIGINT, _sig_handler)
-        signal.signal(signal.SIGTERM, _sig_handler)
-        if api:
-            api.set_shutdown_callback(_shutdown_via_http)
-
-        try:
-            while not stop.is_set():
-                time.sleep(0.2)
-        except KeyboardInterrupt:
-            logger.info("keyboard interrupt – stopping exec_only")
-        finally:
-            api.set_state(SessionState.SHUTTING_DOWN)
-
-            try:
-                with trader._lock:
-                    for trade in trader.pending_trades.values():
-                        if trade.state == TradeState.WAITING_TRIGGER:
-                            trade.state = TradeState.CANCELLED
-                logger.info("Cancelled all pending trades for EOD")
-            except Exception as e:
-                logger.warning("Failed to cancel pending trades: %s", e)
-
-            try:
-                exit_exec.square_off_all_open_positions()
-            except Exception as e:
-                logger.warning("final EOD sweep failed: %s", e)
-
-            try:
-                trader.stop()
-            except Exception as e:
-                logger.warning("trader.stop failed: %s", e)
-
-            if capital_manager:
-                try:
-                    log_dir = get_log_directory()
-                    if log_dir and log_dir.exists():
-                        capital_manager.save_final_report(log_dir)
-                except Exception:
-                    pass
-
-            if tick_recorder is not None:
-                try:
-                    tick_recorder.finalize()
-                    logger.info(f"TICK_RECORDER | Finalized: {tick_recorder.tick_count:,} ticks recorded")
-                except Exception as e:
-                    logger.warning(f"TICK_RECORDER | Finalize failed: {e}")
-
-            heartbeat.stop()
-            bar_subscriber.shutdown()
-            oq.shutdown()
-            api.set_state(SessionState.STOPPED)
-            api.stop()
-
-        logger.info("EXEC_ONLY | Session end")
-        return 0
-
-    # ---------- separated: spawn exec child, then run scan in this process ----------
-    if execution_mode == "separated":
-        import multiprocessing as mp
-        from config.logging_config import get_log_directory
-        from services.execution.exec_process import run_exec_child
-
-        log_dir = get_log_directory()
-        stop_event = mp.Event()
-        args_dict = {
-            "paper_trading": args.paper_trading,
-            "dry_run": args.dry_run,
-            "health_port": args.health_port,
-            "ws_port": args.ws_port,
-            "admin_token": args.admin_token,
-            "queue_key": queue_key,  # Auto-generated unique channel for this instance
-        }
-
-        exec_child = mp.Process(
-            target=run_exec_child,
-            args=(str(log_dir), stop_event, args_dict),
-            name="ExecChild",
-            daemon=False,  # Not daemon — we join it on shutdown
-        )
-        exec_child.start()
-        logger.info("SEPARATED | Exec child spawned (PID=%d)", exec_child.pid)
-
-        # Wait for exec child heartbeat before starting scan
-        time.sleep(3)
-        try:
-            from services.execution.exec_heartbeat import ExecHeartbeatChecker
-            hb_cfg = cfg["exec_heartbeat"]
-            hb = ExecHeartbeatChecker(redis_url=redis_url, key=hb_cfg["key"])
-            if hb.is_alive():
-                logger.info("SEPARATED | Exec child heartbeat OK")
-            else:
-                logger.warning("SEPARATED | Exec child heartbeat not yet detected — continuing anyway")
-            hb.shutdown()
-        except Exception as e:
-            logger.warning("SEPARATED | Heartbeat check failed: %s", e)
-
-        # Parent becomes scan process
-        screener = ScreenerLive(sdk=sdk, order_queue=oq, mis_fetcher=mis_fetcher)
-        logger.info("SEPARATED | Starting screener (exec runs in child process PID=%d)", exec_child.pid)
-
-        stop = threading.Event()
-
-        def _sig_handler(signum, frame):
-            logger.warning(f"signal {signum} received – shutting down separated mode")
-            stop.set()
-
-        signal.signal(signal.SIGINT, _sig_handler)
-        signal.signal(signal.SIGTERM, _sig_handler)
-
-        try:
-            screener.start()
-            while not getattr(screener, "_request_exit", False) and not stop.is_set():
-                # Also check if exec child crashed
-                if not exec_child.is_alive():
-                    logger.error("SEPARATED | Exec child died (exit code=%s) — stopping scan", exec_child.exitcode)
-                    break
-                time.sleep(0.2)
-        except KeyboardInterrupt:
-            logger.info("keyboard interrupt – stopping separated mode")
-        finally:
-            try:
-                screener.stop()
-            except Exception as e:
-                logger.warning("screener.stop failed: %s", e)
-            if hasattr(oq, 'shutdown'):
-                oq.shutdown()
-
-            # Signal exec child to stop and wait for it
-            logger.info("SEPARATED | Signalling exec child to stop")
-            stop_event.set()
-            exec_child.join(timeout=30)
-            if exec_child.is_alive():
-                logger.warning("SEPARATED | Exec child did not exit in 30s — terminating")
-                exec_child.terminate()
-                exec_child.join(timeout=5)
-
-        logger.info("SEPARATED | Session end")
-        return 0
-
-    # ---------- scan_only / in_process: need ScreenerLive ----------
-
+    # ---------- in_process: single process, scan + execution ----------
     # Screener consumes the SDK (WS/ticker) + enqueues entry intents
     screener = ScreenerLive(sdk=sdk, order_queue=oq, mis_fetcher=mis_fetcher)
-
-    # Late-start warmup is now handled by Redis bar backfill in screener_live.py
-    # (see late_start_warmup config and _late_start_backfill method)
-
-    # ---------- scan_only: early return (no executors, no positions) ----------
-    if execution_mode == "scan_only":
-        # Check exec process heartbeat (non-blocking, advisory only)
-        try:
-            from services.execution.exec_heartbeat import ExecHeartbeatChecker
-            hb_cfg = cfg["exec_heartbeat"]
-            hb = ExecHeartbeatChecker(redis_url=redis_url, key=hb_cfg["key"])
-            if hb.is_alive():
-                logger.info("SCAN_ONLY | Exec process heartbeat OK")
-            else:
-                logger.warning("SCAN_ONLY | Exec process heartbeat not detected — plans will queue in Redis")
-            hb.shutdown()
-        except Exception as e:
-            logger.warning("SCAN_ONLY | Heartbeat check failed: %s", e)
-
-        # Simplified run loop: scan + publish plans, no local execution
-        logger.info("SCAN_ONLY | Starting screener (no local executors)")
-        stop = threading.Event()
-
-        def _sig_handler(signum, frame):
-            logger.warning(f"signal {signum} received – shutting down scan_only")
-            stop.set()
-
-        signal.signal(signal.SIGINT, _sig_handler)
-        signal.signal(signal.SIGTERM, _sig_handler)
-
-        try:
-            screener.start()
-            while not getattr(screener, "_request_exit", False) and not stop.is_set():
-                time.sleep(0.2)
-        except KeyboardInterrupt:
-            logger.info("keyboard interrupt – stopping scan_only")
-        finally:
-            try:
-                screener.stop()
-            except Exception as e:
-                logger.warning("screener.stop failed: %s", e)
-            if hasattr(oq, 'shutdown'):
-                oq.shutdown()
-
-        logger.info("SCAN_ONLY | Session end")
-        return 0
-
-    # ---------- in_process: full execution pipeline below ----------
 
     # Tap the central tick router so entries & exits share the same tick clock
     def _ltp_tap(sym: str, price: float, qty: float, ts_dt):
@@ -1018,12 +608,7 @@ def _parse_args():
                     help="Risk value: Rs. amount if mode=fixed (e.g., 1000), or decimal %% if mode=percentage (e.g., 0.01 for 1%%)")
     # Shared market data (subscribe to standalone Market Data Service)
     ap.add_argument("--shared-market-data", action="store_true",
-                    help="Subscribe to Market Data Service via Redis (requires: python -m market_data.market_data_service)")
-    ap.add_argument("--execution-mode", choices=["in_process", "separated", "scan_only", "exec_only"], default=None,
-                    help="in_process=all-in-one (default), separated=auto-spawn exec child process, scan_only/exec_only=manual two-terminal")
-    ap.add_argument("--instance-id", default=None,
-                    help="Unique instance identifier for Redis plan queue channel (e.g., live, paper1, paper2). "
-                         "Required when running multiple instances to prevent cross-instance plan leakage.")
+                    help="Deprecated (MDS removed). Ignored.")
     ap.add_argument("--data-source", choices=["zerodha", "upstox"], default="zerodha",
                     help="Market data source: zerodha (default) or upstox (hybrid mode: Upstox data + Zerodha orders)")
     return ap.parse_args()

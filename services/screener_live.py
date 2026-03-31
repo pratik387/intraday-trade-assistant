@@ -55,11 +55,11 @@ from utils.dataframe_utils import validate_df, safe_get_last
 # ingest / streaming
 from services.ingest.stream_client import WSClient
 from services.ingest.subscription_manager import SubscriptionManager
-from services.ingest.bar_builder import BarBuilder
+from services.ingest.live_tick_handler import LiveTickHandler
 from services.ingest.tick_router import TickRouter
 
 # market data bus (shared tick/bar distribution for multi-instance trading)
-from market_data.factory import create_market_data_components
+from market_data.shared_ltp import SharedLTPCache
 
 # gates
 from services.gates.regime_gate import MarketRegimeGate
@@ -468,44 +468,29 @@ class ScreenerLive:
         # Timestamp tracking for logging throttle
         self._last_logged_timestamp = None
 
-        # Market data bus mode (standalone/publisher/subscriber)
-        mdb_config = raw.get("market_data_bus", {})
-        self._market_data_mode = mdb_config.get("mode", "standalone")
-
-        # Core ingest / aggregation - use factory for mode-aware component creation
-        self.agg, self._shared_ltp_cache, self._market_data_bus = create_market_data_components(
-            config=raw,
+        # Core tick handler + LTP cache (standalone — MDS removed)
+        self.agg = LiveTickHandler(
+            bar_5m_span_minutes=raw.get("bar_5m_span_minutes", 5),
             on_1m_close=self._on_1m_close,
             on_5m_close=self._on_5m_close,
             on_15m_close=self._on_15m_close,
             index_symbols=self._index_symbols(),
         )
+        self._shared_ltp_cache = SharedLTPCache(mode="standalone")
 
-        # WebSocket and tick routing (only needed in standalone/publisher mode)
-        # In subscriber mode, bars come from Redis - no direct WebSocket connection
-        if self._market_data_mode == "subscriber":
-            logger.info("SCREENER | Subscriber mode: bars will come from Redis, no WebSocket")
-            self.ws = None
-            self.router = None
-            self.subs = None
-            # Still need symbol mapping for filtering and logging, just no WebSocket
-            self._load_core_universe()
+        # WebSocket and tick routing
+        self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
+        self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
+        self.ws.on_message(self.router.handle_raw)
+        if env.DRY_RUN:
+            self.ws.on_close(lambda: self._handle_eod())  # Replay ended = EOD shutdown
         else:
-            self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
-            self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
-            self.ws.on_message(self.router.handle_raw)
-            # Register on_close to trigger clean exit when replay ends (DRY_RUN only)
-            # In live/paper mode, WebSocket drops are handled by Kite SDK auto-reconnect
-            if env.DRY_RUN:
-                self.ws.on_close(lambda: self._handle_eod())  # Replay ended = EOD shutdown
-            else:
-                self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
-            self.subs = SubscriptionManager(self.ws)
+            self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
+        self.subs = SubscriptionManager(self.ws)
 
-            # Wire I1 (broker 1m) candles to BarBuilder for live signal generation.
-            # In backtest, no I1 candles arrive so bars are still built from ticks.
-            # Must be before ws.start() so _wire_callbacks sees the listener.
-            self.ws.set_i1_candle_listener(self.agg.on_i1_candle)
+        # Wire I1 (broker 1m) candles to LiveTickHandler for live signal generation.
+        # In backtest, no I1 candles arrive so bars are still built from ticks.
+        self.ws.set_i1_candle_listener(self.agg.on_i1_candle)
 
         # Gates - Use MainDetector directly for structure detection
         self.detector = MainDetector(raw)
@@ -568,6 +553,13 @@ class ScreenerLive:
 
         self._eod_done: bool = False
         self._request_exit: bool = False
+
+        # Precomputed enriched 5m bars for backtest (loaded from feather cache)
+        # In DRY_RUN: loaded at init, served time-filtered during scans
+        # In paper/live: empty (API 5m bars enriched at runtime instead)
+        self._precomputed_5m: Dict[str, pd.DataFrame] = {}
+        if env.DRY_RUN:
+            self._load_precomputed_5m()
         
         self._opening_block = (
             str(raw.get("opening_block_start_hhmm", "")) or None,
@@ -613,35 +605,11 @@ class ScreenerLive:
     # Public API
     # ---------------------------------------------------------------------
     def start(self) -> None:
-        """Connect WS and subscribe the core universe (or start subscriber for shared data mode)."""
-        if self._market_data_mode == "subscriber":
-            # Subscriber mode: bars come from Redis via BarSubscriber
-            logger.info("SCREENER | Subscriber mode started - receiving bars from Redis")
-
-            # Init Redis connection FIRST so backfill can read bar history
-            if hasattr(self.agg, 'init_redis'):
-                self.agg.init_redis()
-
-            # Late start backfill: if starting after market has been open for a while,
-            # load bar history from Redis to pre-warm indicators immediately
-            # IMPORTANT: Do backfill BEFORE starting subscriber to avoid race condition
-            self._late_start_backfill()
-
-            # Start async scan dispatch worker (subscriber mode is always live/paper)
-            self._start_scan_worker()
-
-            # Now start the subscriber to receive real-time bars
-            # (Backfill is complete, so first scan will have historical data)
-            if hasattr(self.agg, 'start'):
-                self.agg.start()
-            return
-
-        # Publisher/standalone mode: connect WebSocket
+        """Connect WS and subscribe the core universe."""
+        # Connect WebSocket
         self.subs.set_core(self.token_map)
         self.subs.start()
         self.ws.start()
-
-        # Trigger executor is managed by main.py
 
         # Start async scan dispatch worker (live/paper only)
         self._start_scan_worker()
@@ -657,17 +625,8 @@ class ScreenerLive:
             try: self.ws.stop()
             except Exception: pass
 
-        # Shutdown market data bus (if active)
-        if self._market_data_bus:
-            try: self._market_data_bus.shutdown()
-            except Exception: pass
         if self._shared_ltp_cache:
             try: self._shared_ltp_cache.shutdown()
-            except Exception: pass
-
-        # Shutdown BarSubscriber (if in subscriber mode)
-        if self._market_data_mode == "subscriber" and hasattr(self.agg, 'shutdown'):
-            try: self.agg.shutdown()
             except Exception: pass
 
         # Stop async scan dispatch worker
@@ -1153,7 +1112,8 @@ class ScreenerLive:
                 # so this wait is usually already satisfied. Use actual bar close time.
                 min_delay = float(api_5m_cfg["min_delay_after_bar_close_sec"])
                 bar_close_time = now + timedelta(minutes=5)
-                wall_now = datetime.now()
+                from utils.time_util import now_ist_naive
+                wall_now = now_ist_naive()
                 elapsed_since_close = (wall_now - bar_close_time).total_seconds()
                 remaining_wait = min_delay - elapsed_since_close
                 if remaining_wait > 0:
@@ -1171,11 +1131,12 @@ class ScreenerLive:
                     logger.warning("API_5M_FETCH | async batch failed: %s", e)
                     raw_api = {}
 
-                # Enrich raw OHLCV with indicators (VWAP, ADX, RSI, bb_width)
+                # Enrich raw OHLCV with indicators via unified function
+                from services.indicators.bar_enrichment import enrich_5m_bars
                 api_ok, api_fail = 0, 0
                 for sym, df_api in raw_api.items():
                     if df_api is not None and len(df_api) >= min_bars_for_processing:
-                        df_api = self._enrich_api_bars(df_api)
+                        df_api = enrich_5m_bars(df_api)
                         api_df5_cache[sym] = df_api
                         api_ok += 1
                     else:
@@ -1201,11 +1162,20 @@ class ScreenerLive:
         # daily_df is cached in worker processes (seeded once at session start)
         symbol_data_map = {}
         for sym in shortlist:
-            # Prefer API 5m bars (Historical API pipeline) over I1-built bars
+            # Data source priority:
+            # 1. API 5m bars enriched at runtime (paper/live)
+            # 2. Precomputed enriched 5m from feather cache (backtest)
+            # 3. BarBuilder fallback (legacy, should not be needed)
             if sym in api_df5_cache:
                 df5 = api_df5_cache[sym]
+            elif self._precomputed_5m and sym in self._precomputed_5m:
+                df5 = self._get_precomputed_5m(sym, now, self.cfg.screener_store_5m_max)
             else:
+                # Fallback: raw OHLCV from LiveTickHandler — enrich on the fly
                 df5 = self.agg.get_df_5m_tail(sym, self.cfg.screener_store_5m_max)
+                if not df5.empty and "vwap" not in df5.columns:
+                    from services.indicators.bar_enrichment import enrich_5m_bars
+                    df5 = enrich_5m_bars(df5)
             # OPENING BELL FIX: Use same min_bars as scanner (1 during opening bell, 5 normally)
             if not validate_df(df5, min_rows=min_bars_for_processing):
                 continue
@@ -1318,8 +1288,8 @@ class ScreenerLive:
                             min_hold_bars=decision.min_hold_bars,
                             all_reasons=decision.reasons,
                             structure_confidence=getattr(decision, 'structure_confidence', 0),
-                            current_price=df5['close'].iloc[-1] if not df5.empty else 0,
-                            vwap=df5.get('vwap', pd.Series([0])).iloc[-1] if not df5.empty else 0,
+                            current_price=float(df5['close'].iloc[-1]) if not df5.empty else 0,
+                            vwap=float(df5.get('vwap', pd.Series([0])).iloc[-1]) if not df5.empty else 0,
                             regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
                         )
                     decisions.append((sym, decision))
@@ -1742,23 +1712,6 @@ class ScreenerLive:
         if session_date in self._orb_levels_cache:
             return self._orb_levels_cache[session_date]
 
-        # SUBSCRIBER MODE: Get ORB levels from Redis (computed by publisher/MDS)
-        # This ensures all instances see identical PDH/PDL/PDC/ORH/ORL values
-        if self._market_data_mode == "subscriber" and self._market_data_bus:
-            redis_levels = self._market_data_bus.get_orb_levels(session_date_str)
-            if redis_levels:
-                # Cache locally for fast access on subsequent calls
-                self._orb_levels_cache[session_date] = redis_levels
-                valid_orb = sum(1 for v in redis_levels.values()
-                               if v.get("ORH") is not None and v.get("ORH") == v.get("ORH"))
-                logger.info(
-                    f"ORB_CACHE | Loaded {len(redis_levels)} symbols from Redis "
-                    f"({valid_orb} with valid ORH/ORL) - subscriber mode"
-                )
-                return redis_levels
-            # Not in Redis yet - publisher hasn't computed. Return None and wait.
-            return None
-
         # Only compute at or after 09:40 (ensures ORB data 09:15-09:30 is complete)
         # By 09:40, more symbols have sufficient data for reliable ORH/ORL calculation
         if current_time < dtime(9, 40):
@@ -1809,9 +1762,7 @@ class ScreenerLive:
                 self._orb_levels_cache[session_date] = levels_by_symbol
                 self._save_orb_cache_to_disk(session_date, levels_by_symbol)
 
-                # PUBLISHER MODE: Publish to Redis for subscriber instances
-                if self._market_data_mode == "publisher" and self._market_data_bus:
-                    self._market_data_bus.publish_orb_levels(session_date_str, levels_by_symbol)
+                # (MDS publisher mode removed — ORB levels computed locally)
 
                 valid_pdh = sum(1 for v in levels_by_symbol.values() if not pd.isna(v.get("PDH")))
                 logger.info(f"ORB_CACHE | Late start: Computed PDH/PDL/PDC for {valid_pdh}/{len(levels_by_symbol)} symbols")
@@ -1876,10 +1827,7 @@ class ScreenerLive:
         # Persist to disk for restart recovery
         self._save_orb_cache_to_disk(session_date, levels_by_symbol)
 
-        # PUBLISHER MODE: Publish to Redis for subscriber instances
-        # This ensures all instances see identical PDH/PDL/PDC/ORH/ORL values
-        if self._market_data_mode == "publisher" and self._market_data_bus:
-            self._market_data_bus.publish_orb_levels(session_date_str, levels_by_symbol)
+        # (MDS publisher mode removed — ORB levels computed locally)
 
         elapsed = time_module.perf_counter() - start_time
         logger.info(
@@ -2004,11 +1952,7 @@ class ScreenerLive:
             # Persist to disk for restart recovery
             self._save_orb_cache_to_disk(session_date, levels_by_symbol)
 
-            # PUBLISHER MODE: Publish to Redis for subscriber instances
-            # This ensures all instances see identical PDH/PDL/PDC/ORH/ORL values after late-start recovery
-            if self._market_data_mode == "publisher" and self._market_data_bus:
-                session_date_str = session_date.isoformat() if hasattr(session_date, 'isoformat') else str(session_date)
-                self._market_data_bus.publish_orb_levels(session_date_str, levels_by_symbol)
+            # (MDS publisher mode removed — ORB levels computed locally)
 
             orb_count = sum(1 for v in levels_by_symbol.values()
                            if not (pd.isna(v.get("ORH")) or pd.isna(v.get("ORL"))))
@@ -2157,34 +2101,39 @@ class ScreenerLive:
         cutoff = dtime(hour=int(hh), minute=int(mm))
         return now.time() >= cutoff
 
-    # ---------- API 5m bar enrichment ----------
-    @staticmethod
-    def _enrich_api_bars(df: pd.DataFrame) -> pd.DataFrame:
-        """Add VWAP, bb_width_proxy, ADX, RSI to raw API 5m bars.
+    # ---------- Precomputed enriched 5m bars (backtest) ----------
+    def _load_precomputed_5m(self) -> None:
+        """Load precomputed enriched 5m bars from feather cache (backtest only)."""
+        from pathlib import Path
+        cache_dir = Path("cache/ohlcv_archive")
+        loaded = 0
+        for sym in self.core_symbols:
+            tsym = sym.split(":", 1)[-1].strip().upper()
+            for suffix in [f"{tsym}.NS", tsym]:
+                path = cache_dir / suffix / f"{suffix}_5minutes_enriched.feather"
+                if path.exists():
+                    try:
+                        df = pd.read_feather(path)
+                        df["date"] = pd.to_datetime(df["date"])
+                        if getattr(df["date"].dt, "tz", None) is not None:
+                            df["date"] = df["date"].dt.tz_localize(None)
+                        df = df.set_index("date").sort_index()
+                        self._precomputed_5m[sym] = df
+                        loaded += 1
+                    except Exception:
+                        pass
+                    break
+        logger.info("PRECOMPUTED_5M | Loaded %d/%d symbols from enriched feather cache",
+                    loaded, len(self.core_symbols))
 
-        API bars only have OHLCV. Uses the same indicator functions
-        from services.indicators that BarBuilder uses incrementally.
-        """
-        from services.indicators.indicators import calculate_adx, calculate_rsi
-
-        df = df.copy()
-
-        # VWAP: HLC3 approximation (same as BarBuilder I1 path)
-        df["vwap"] = (df["high"] + df["low"] + df["close"]) / 3.0
-
-        # bb_width_proxy: std(close, 20, ddof=0) / vwap (matches BarBuilder._aggregate_window_to_ohlcv)
-        df["bb_width_proxy"] = df["close"].rolling(20, min_periods=5).std(ddof=0) / df["vwap"]
-        df["bb_width_proxy"] = df["bb_width_proxy"].fillna(0.0)
-
-        # ADX(14) — Wilder smoothing via shared utility
-        df["adx"] = calculate_adx(df, period=14)
-        df["adx"] = df["adx"].fillna(0.0)
-
-        # RSI(14) — Wilder smoothing via shared utility
-        df["rsi"] = calculate_rsi(df["close"], period=14)
-        df["rsi"] = df["rsi"].fillna(50.0)
-
-        return df
+    def _get_precomputed_5m(self, symbol: str, up_to: datetime, n: int = 120) -> pd.DataFrame:
+        """Get precomputed enriched 5m bars up to the given timestamp."""
+        df = self._precomputed_5m.get(symbol)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        # Filter to bars <= current simulation time
+        mask = df.index <= pd.Timestamp(up_to)
+        return df[mask].tail(n)
 
     # ---------- Stage-0 helpers ----------
     def _time_bucket(self, now_ts: pd.Timestamp) -> str:
