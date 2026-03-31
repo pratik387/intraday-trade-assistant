@@ -28,6 +28,7 @@ class FeatherTicker:
         sym2tok: Dict[str, int],
         replay_sleep: float = 0.01,
         use_close_as_price: bool = True,
+        enriched_5m: Optional[Dict[str, pd.DataFrame]] = None,
     ):
         self.loader = loader
         self._tok2sym = dict(tok2sym)
@@ -43,6 +44,10 @@ class FeatherTicker:
         # Assigned by WSClient._wire_callbacks() if listener is registered
         self.on_i1_candle: Optional[Callable] = None
 
+        # Direct 5m enriched bar callback — bypasses LiveTickHandler aggregation
+        # When set, fires at 5m boundaries with precomputed enriched bars
+        self.on_5m_enriched: Optional[Callable] = None
+
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._subs: set[int] = set()
@@ -50,6 +55,9 @@ class FeatherTicker:
 
         self._data: Optional[Dict[str, pd.DataFrame]] = None
         self._timeline: Optional[List[pd.Timestamp]] = None
+
+        # Precomputed enriched 5m bars: {symbol: DataFrame with DatetimeIndex}
+        self._enriched_5m = enriched_5m or {}
 
     # ---------------- Kite-like API ----------------
     def on_ticks(self, fn: Callable):   self._on_ticks_cb = fn
@@ -80,6 +88,27 @@ class FeatherTicker:
             self._thread = None
 
     # ---------------- Internals ----------------
+    def _fire_enriched_5m(self, bar_start: pd.Timestamp) -> None:
+        """Fire on_5m_enriched callback ONCE per 5m boundary to trigger the scan.
+        The scan itself processes all shortlisted symbols using precomputed data."""
+        cb = self.on_5m_enriched
+        if not callable(cb):
+            return
+        # Find any symbol with a bar at this timestamp to use as trigger
+        for sym, df in self._enriched_5m.items():
+            try:
+                bar = df.loc[bar_start]
+            except KeyError:
+                continue
+            if not isinstance(bar, pd.Series):
+                bar = bar.iloc[0]
+            bar.name = bar_start
+            try:
+                cb(sym, bar)
+            except Exception:
+                logger.exception("FeatherTicker.on_5m_enriched callback failed for %s", sym)
+            return  # Fire only once — scan handles all symbols internally
+
     def _build_timeline(self):
         assert self._data is not None and len(self._data) > 0
         # CRITICAL FIX: Build timeline from UNION of all symbols' timestamps
@@ -176,6 +205,16 @@ class FeatherTicker:
                 if batch and callable(self._on_ticks_cb):
                     try: self._on_ticks_cb(self, batch)
                     except Exception: logger.exception("FeatherTicker.on_ticks failed")
+
+                # Fire precomputed enriched 5m bars at 5m boundaries
+                # LiveTickHandler fires _on_5m_close when minute % 5 == 0 (e.g., 09:35 closes 09:30 bar)
+                # We replicate that timing: at ts=09:35, fire the 09:30 enriched bar
+                if self._enriched_5m and callable(self.on_5m_enriched):
+                    ts_minute = ts.minute if hasattr(ts, 'minute') else ts.to_pydatetime().minute
+                    if ts_minute % 5 == 0:
+                        from datetime import timedelta as _td
+                        bar_start = ts.floor("5min") - _td(minutes=5)
+                        self._fire_enriched_5m(bar_start)
 
                 time.sleep(self._sleep)
 

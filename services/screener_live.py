@@ -478,6 +478,11 @@ class ScreenerLive:
         )
         self._shared_ltp_cache = SharedLTPCache(mode="standalone")
 
+        # Shared 5m bar cache (Redis) — prevents duplicate API fetches across instances
+        from market_data.shared_5m_cache import Shared5mCache
+        redis_url = raw.get("market_data_bus", {}).get("redis_url", "redis://localhost:6379/0")
+        self._shared_5m_cache = Shared5mCache(redis_url=redis_url) if not env.DRY_RUN else None
+
         # WebSocket and tick routing
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
         self.router = TickRouter(on_tick=self.agg.on_tick, token_to_symbol=self._load_core_universe())
@@ -488,9 +493,22 @@ class ScreenerLive:
             self.ws.on_close(lambda: logger.warning("WebSocket closed - Kite SDK will auto-reconnect"))
         self.subs = SubscriptionManager(self.ws)
 
+        # Precomputed enriched 5m bars for backtest (loaded from feather cache)
+        # In DRY_RUN: loaded at init, served time-filtered during scans
+        # In paper/live: empty (API 5m bars enriched at runtime instead)
+        self._precomputed_5m: Dict[str, pd.DataFrame] = {}
+        if env.DRY_RUN:
+            self._load_precomputed_5m()
+
         # Wire I1 (broker 1m) candles to LiveTickHandler for live signal generation.
         # In backtest, no I1 candles arrive so bars are still built from ticks.
         self.ws.set_i1_candle_listener(self.agg.on_i1_candle)
+
+        # In backtest with precomputed 5m: FeatherTicker fires scan directly via enriched 5m
+        # replay, bypassing LiveTickHandler's 1m→5m aggregation.
+        if env.DRY_RUN and self._precomputed_5m:
+            self.agg._on_5m_close = lambda sym, bar: None  # disable LiveTickHandler scan trigger
+            self.ws.set_5m_enriched_listener(self._on_5m_close)  # enriched replay triggers scan
 
         # Gates - Use MainDetector directly for structure detection
         self.detector = MainDetector(raw)
@@ -554,12 +572,7 @@ class ScreenerLive:
         self._eod_done: bool = False
         self._request_exit: bool = False
 
-        # Precomputed enriched 5m bars for backtest (loaded from feather cache)
-        # In DRY_RUN: loaded at init, served time-filtered during scans
-        # In paper/live: empty (API 5m bars enriched at runtime instead)
-        self._precomputed_5m: Dict[str, pd.DataFrame] = {}
-        if env.DRY_RUN:
-            self._load_precomputed_5m()
+        # (precomputed 5m init moved earlier — before WebSocket wiring)
         
         self._opening_block = (
             str(raw.get("opening_block_start_hhmm", "")) or None,
@@ -1122,32 +1135,57 @@ class ScreenerLive:
 
                 _t_api_start = time.perf_counter()
                 unique_shortlist = list(dict.fromkeys(shortlist))
-                try:
-                    import asyncio
-                    raw_api = asyncio.run(
-                        self.sdk.async_fetch_intraday_5m_batch(unique_shortlist)
+                bar_ts = now.isoformat()  # Cache key = bar start timestamp
+
+                # Check shared Redis cache first (another instance may have already fetched)
+                cached = None
+                if self._shared_5m_cache and self._shared_5m_cache.enabled:
+                    cached = self._shared_5m_cache.get_cached_bars(bar_ts)
+
+                if cached is not None:
+                    # Cache hit — use enriched bars from Redis (no API call)
+                    api_ok = 0
+                    for sym in unique_shortlist:
+                        if sym in cached and len(cached[sym]) >= min_bars_for_processing:
+                            api_df5_cache[sym] = cached[sym]
+                            api_ok += 1
+                    api_fail = len(unique_shortlist) - api_ok
+                    _t_api_elapsed = time.perf_counter() - _t_api_start
+                    logger.info(
+                        "API_5M_FETCH | %d ok, %d failed of %d unique (%d shortlisted) | %.1fs (redis cache)",
+                        api_ok, api_fail, len(unique_shortlist), len(shortlist), _t_api_elapsed,
                     )
-                except Exception as e:
-                    logger.warning("API_5M_FETCH | async batch failed: %s", e)
-                    raw_api = {}
+                else:
+                    # Cache miss — fetch from API, enrich, store to Redis
+                    try:
+                        import asyncio
+                        raw_api = asyncio.run(
+                            self.sdk.async_fetch_intraday_5m_batch(unique_shortlist)
+                        )
+                    except Exception as e:
+                        logger.warning("API_5M_FETCH | async batch failed: %s", e)
+                        raw_api = {}
 
-                # Enrich raw OHLCV with indicators via unified function
-                from services.indicators.bar_enrichment import enrich_5m_bars
-                api_ok, api_fail = 0, 0
-                for sym, df_api in raw_api.items():
-                    if df_api is not None and len(df_api) >= min_bars_for_processing:
-                        df_api = enrich_5m_bars(df_api)
-                        api_df5_cache[sym] = df_api
-                        api_ok += 1
-                    else:
-                        api_fail += 1
-                api_fail += len(unique_shortlist) - len(raw_api) - api_fail
+                    from services.indicators.bar_enrichment import enrich_5m_bars
+                    api_ok, api_fail = 0, 0
+                    for sym, df_api in raw_api.items():
+                        if df_api is not None and len(df_api) >= min_bars_for_processing:
+                            df_api = enrich_5m_bars(df_api)
+                            api_df5_cache[sym] = df_api
+                            api_ok += 1
+                        else:
+                            api_fail += 1
+                    api_fail += len(unique_shortlist) - len(raw_api) - api_fail
 
-                _t_api_elapsed = time.perf_counter() - _t_api_start
-                logger.info(
-                    "API_5M_FETCH | %d ok, %d failed of %d unique (%d shortlisted) | %.1fs (async)",
-                    api_ok, api_fail, len(unique_shortlist), len(shortlist), _t_api_elapsed,
-                )
+                    # Store to Redis for other instances
+                    if self._shared_5m_cache and api_df5_cache:
+                        self._shared_5m_cache.store_bars(bar_ts, api_df5_cache)
+
+                    _t_api_elapsed = time.perf_counter() - _t_api_start
+                    logger.info(
+                        "API_5M_FETCH | %d ok, %d failed of %d unique (%d shortlisted) | %.1fs (async)",
+                        api_ok, api_fail, len(unique_shortlist), len(shortlist), _t_api_elapsed,
+                    )
 
         # ---------- Gate per candidate (structure + regime + events + news) ----------
         index_df5 = self._index_df5()

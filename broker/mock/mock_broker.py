@@ -123,6 +123,64 @@ class MockBroker:
         return out
 
     # -------------------- ticker (with last-price proxy) --------------------
+    def _load_enriched_5m(self) -> Dict[str, pd.DataFrame]:
+        """Load precomputed enriched 5m bars from monthly cache or individual files."""
+        from pathlib import Path
+        import time as _t
+
+        t0 = _t.perf_counter()
+        result = {}
+
+        from_dt = pd.to_datetime(self._from_date)
+        to_dt = pd.to_datetime(self._to_date)
+
+        # Try monthly pre-aggregated file first (fast path)
+        preagg_dir = Path("backtest-cache-download/monthly")
+        if from_dt.year == to_dt.year and from_dt.month == to_dt.month:
+            monthly_file = preagg_dir / f"{from_dt.year}_{from_dt.month:02d}_5m_enriched.feather"
+            if monthly_file.exists():
+                try:
+                    df_all = pd.read_feather(monthly_file)
+                    df_all["date"] = pd.to_datetime(df_all["date"])
+                    if df_all["date"].dt.tz is not None:
+                        df_all["date"] = df_all["date"].dt.tz_localize(None)
+                    df_all = df_all[(df_all["date"] >= from_dt) & (df_all["date"] <= to_dt)]
+
+                    for sym_raw, group in df_all.groupby("symbol"):
+                        sym = f"NSE:{sym_raw}"
+                        df_sym = group.drop(columns=["symbol"]).set_index("date").sort_index()
+                        result[sym] = df_sym
+
+                    elapsed = _t.perf_counter() - t0
+                    logger.info("ENRICHED_5M | Loaded %d symbols from %s (%.1fs)",
+                               len(result), monthly_file.name, elapsed)
+                    return result
+                except Exception as e:
+                    logger.warning("ENRICHED_5M | Monthly file load failed: %s", e)
+
+        # Fallback: individual symbol files
+        cache_dir = Path("cache/ohlcv_archive")
+        for sym in self._equity_instruments:
+            tsym = sym.split(":", 1)[-1].strip().upper()
+            for suffix in [f"{tsym}.NS", tsym]:
+                path = cache_dir / suffix / f"{suffix}_5minutes_enriched.feather"
+                if path.exists():
+                    try:
+                        df = pd.read_feather(path)
+                        df["date"] = pd.to_datetime(df["date"])
+                        if df["date"].dt.tz is not None:
+                            df["date"] = df["date"].dt.tz_localize(None)
+                        df = df[(df["date"] >= from_dt) & (df["date"] <= to_dt)]
+                        df = df.set_index("date").sort_index()
+                        result[sym] = df
+                    except Exception:
+                        pass
+                    break
+
+        elapsed = _t.perf_counter() - t0
+        logger.info("ENRICHED_5M | Loaded %d symbols from individual files (%.1fs)", len(result), elapsed)
+        return result
+
     def make_ticker(self):
         """
         Returns a FeatherTicker proxy that updates the broker's last-price cache
@@ -140,12 +198,16 @@ class MockBroker:
         tok2sym = self.get_token_map()
         sym2tok = {v: k for k, v in tok2sym.items()}
 
+        # Load precomputed enriched 5m bars for direct replay (skip LiveTickHandler aggregation)
+        enriched_5m = self._load_enriched_5m()
+
         inner = FeatherTicker(
             loader=loader,
             tok2sym=tok2sym,
             sym2tok=sym2tok,
             replay_sleep=0.01,
             use_close_as_price=True,
+            enriched_5m=enriched_5m,
         )
 
         broker_self = self  # capture for closures
@@ -221,6 +283,15 @@ class MockBroker:
             @on_i1_candle.setter
             def on_i1_candle(self, cb):
                 self._inner.on_i1_candle = cb
+
+            # --- Enriched 5m bar callback (forwarded to FeatherTicker) ---
+            @property
+            def on_5m_enriched(self):
+                return self._inner.on_5m_enriched
+
+            @on_5m_enriched.setter
+            def on_5m_enriched(self, cb):
+                self._inner.on_5m_enriched = cb
 
             # --- pass-through API ---
             def subscribe(self, tokens):  self._inner.subscribe(tokens)

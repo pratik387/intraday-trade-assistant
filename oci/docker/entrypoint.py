@@ -158,12 +158,33 @@ def download_consolidated_daily_cache():
         raise
 
 
+def _download_oci_file(os_client, namespace, bucket, object_name, local_path):
+    """Download a single file from OCI Object Storage. Returns True on success."""
+    try:
+        get_obj = os_client.get_object(
+            namespace_name=namespace,
+            bucket_name=bucket,
+            object_name=object_name
+        )
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(local_path, 'wb') as f:
+            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                f.write(chunk)
+        size_mb = local_path.stat().st_size / (1024 * 1024)
+        log(f"Downloaded: {object_name} ({size_mb:.1f} MB)")
+        return True
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            log(f"WARNING: Not found in OCI: {object_name}")
+            return False
+        raise
+
+
 def download_monthly_cache(date_str):
     """
-    Download monthly cache file for the given date.
-
-    Args:
-        date_str: Date in YYYY-MM-DD format
+    Download monthly cache files for the given date:
+    - 1m bars (for execution replay)
+    - 5m enriched bars (for structure detection — precomputed indicators)
     """
     log(f"Downloading monthly cache for {date_str}...")
 
@@ -173,64 +194,33 @@ def download_monthly_cache(date_str):
     namespace = os_client.get_namespace().data
     bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
 
-    # Parse date to get year and month
     date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-    monthly_filename = f"{date_obj.year}_{date_obj.month:02d}_1m.feather"
+    year_month = f"{date_obj.year}_{date_obj.month:02d}"
 
-    # Download path in OCI (monthly cache is config-independent - just raw 1m bars)
-    object_name = f"monthly/{monthly_filename}"
+    # Primary: download 1m bars (execution replay) and 5m enriched (structure detection)
+    cache_dir = Path('/app/cache/preaggregate')
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        # Download monthly cache
-        get_obj = os_client.get_object(
-            namespace_name=namespace,
-            bucket_name=bucket,
-            object_name=object_name
-        )
+    # Also save to backtest-cache-download/monthly for FeatherTickLoader fast path
+    monthly_dir = Path('/app/backtest-cache-download/monthly')
+    monthly_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save to /app/cache/preaggregate/
-        cache_dir = Path('/app/cache/preaggregate')
-        cache_dir.mkdir(parents=True, exist_ok=True)
+    files_to_download = [
+        (f"monthly/{year_month}_1m.feather", cache_dir / f"{year_month}_1m.feather"),
+        (f"monthly/{year_month}_1m.feather", monthly_dir / f"{year_month}_1m.feather"),
+        (f"monthly/{year_month}_5m_enriched.feather", monthly_dir / f"{year_month}_5m_enriched.feather"),
+    ]
 
-        cache_file = cache_dir / monthly_filename
+    success_count = 0
+    for object_name, local_path in files_to_download:
+        try:
+            if _download_oci_file(os_client, namespace, bucket, object_name, local_path):
+                success_count += 1
+        except Exception as e:
+            log(f"ERROR downloading {object_name}: {e}")
 
-        with open(cache_file, 'wb') as f:
-            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
-                f.write(chunk)
-
-        size_mb = cache_file.stat().st_size / (1024 * 1024)
-        log(f"Downloaded cache: {monthly_filename} ({size_mb:.1f} MB)")
-
-    except oci.exceptions.ServiceError as e:
-        if e.status == 404:
-            log(f"WARNING: Monthly cache not found: {object_name}")
-            log("Attempting to download consolidated cache...")
-
-            # Fallback: try consolidated cache
-            try:
-                object_name_fallback = f"{config_hash}/preagg_5m.feather"
-                get_obj = os_client.get_object(
-                    namespace_name=namespace,
-                    bucket_name=bucket,
-                    object_name=object_name_fallback
-                )
-
-                cache_file = cache_dir / 'preagg_5m.feather'
-                with open(cache_file, 'wb') as f:
-                    for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
-                        f.write(chunk)
-
-                log(f"Downloaded consolidated cache: {cache_file.stat().st_size / (1024**2):.1f} MB")
-
-            except Exception as e2:
-                log(f"ERROR: Could not download cache: {e2}")
-                sys.exit(1)
-        else:
-            log(f"ERROR downloading cache: {e}")
-            sys.exit(1)
-
-    except Exception as e:
-        log(f"ERROR downloading cache: {e}")
+    if success_count == 0:
+        log("ERROR: No cache files downloaded — backtest may fail")
         sys.exit(1)
 
 

@@ -78,6 +78,10 @@ class WSClient:
         """Register callback for I1 (1-minute) candle data from broker WebSocket."""
         self._on_i1_candle = cb
 
+    def set_5m_enriched_listener(self, cb: Callable) -> None:
+        """Register callback for precomputed enriched 5m bars (backtest only)."""
+        self._on_5m_enriched = cb
+
     # ------------------------------ Lifecycle -------------------------------
     def start(self) -> None:
         """Spawn the reader thread and connect the stream."""
@@ -255,6 +259,11 @@ class WSClient:
         if hasattr(ticker, "on_i1_candle") and self._on_i1_candle is not None:
             ticker.on_i1_candle = self._on_i1_candle
             logger.info("WSClient: I1 candle listener wired to ticker")
+
+        # on_5m_enriched: precomputed enriched 5m bars (backtest only)
+        if hasattr(ticker, "on_5m_enriched") and getattr(self, "_on_5m_enriched", None) is not None:
+            ticker.on_5m_enriched = self._on_5m_enriched
+            logger.info("WSClient: 5m enriched listener wired to ticker")
 
     @staticmethod
     def _connect(ticker: Any) -> None:
