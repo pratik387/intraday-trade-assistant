@@ -1125,8 +1125,8 @@ class ScreenerLive:
                 # so this wait is usually already satisfied. Use actual bar close time.
                 min_delay = float(api_5m_cfg["min_delay_after_bar_close_sec"])
                 bar_close_time = now + timedelta(minutes=5)
-                from utils.time_util import now_ist_naive
-                wall_now = now_ist_naive()
+                from utils.time_util import _now_naive_ist
+                wall_now = _now_naive_ist()
                 elapsed_since_close = (wall_now - bar_close_time).total_seconds()
                 remaining_wait = min_delay - elapsed_since_close
                 if remaining_wait > 0:
