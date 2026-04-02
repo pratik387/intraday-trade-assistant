@@ -574,7 +574,33 @@ class TradeDecisionGate:
                         else:
                             pattern_reasons.append(f"range_compression_pass:{atr_ratio:.3f}<={compression_threshold}")
                     else:
-                        pattern_reasons.append("range_compression_insufficient_data")
+                        # Insufficient 5m data for rolling ATR — use daily ATR as fallback
+                        # This ensures parity between backtest (full history) and live (late start / illiquid stocks)
+                        daily_atr_fallback = None
+                        if daily_df is not None and len(daily_df) >= 15 and pd.notna(current_atr):
+                            d_high = daily_df["high"]
+                            d_low = daily_df["low"]
+                            d_close_prev = daily_df["close"].shift(1)
+                            d_tr = pd.concat([d_high - d_low, abs(d_high - d_close_prev), abs(d_low - d_close_prev)], axis=1).max(axis=1)
+                            d_atr_14 = d_tr.rolling(window=14, min_periods=14).mean().iloc[-1]
+                            if pd.notna(d_atr_14) and d_atr_14 > 0:
+                                daily_atr_fallback = d_atr_14
+
+                        if daily_atr_fallback is not None:
+                            # Scale daily ATR to 5m equivalent: daily range contains ~72 5m bars,
+                            # but intrabar moves overlap, so empirical divisor ~6-8 (sqrt-time scaling)
+                            daily_5m_proxy = daily_atr_fallback / 7.0
+                            atr_ratio = current_atr / daily_5m_proxy
+                            compression_threshold = self.quality_filters.get('range_compression_threshold', 0.8)
+                            if atr_ratio > compression_threshold:
+                                pattern_reasons.append(f"range_compression_fail_daily_fallback:{atr_ratio:.3f}>{compression_threshold}")
+                                pattern_passed = False
+                            else:
+                                pattern_reasons.append(f"range_compression_pass_daily_fallback:{atr_ratio:.3f}<={compression_threshold}")
+                        else:
+                            # No fallback available — block to maintain parity with backtest
+                            pattern_reasons.append("range_compression_blocked:no_baseline_available")
+                            pattern_passed = False
                 except Exception as e:
                     pattern_reasons.append(f"range_compression_error:{e.__class__.__name__}")
 

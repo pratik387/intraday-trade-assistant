@@ -322,15 +322,27 @@ class BreakoutPipeline(BasePipeline):
         ref_source = "none"
 
         if base_name in self._MOMENTUM_BREAKOUTS:
-            # Momentum-driven: use directional candle body as proxy for breakout distance.
-            # Pro traders measure momentum by candle body relative to ATR — a strong
-            # momentum bar (body > 1 ATR) with volume confirms institutional participation.
-            last_bar = df5m.iloc[-1]
-            if bias == "long":
-                breakout_distance = max(float(last_bar["close"]) - float(last_bar["open"]), 0)
+            # Momentum-driven: use directional move as proxy for breakout distance.
+            # Pro traders measure momentum by price displacement relative to ATR.
+            if "squeeze" in base_name:
+                # Squeeze release: multi-bar breakout distance (John Carter TTM approach).
+                # Single-bar candle body is wrong — a squeeze release unfolds over 3+ bars.
+                # The last bar may be a retracement candle within the larger move.
+                squeeze_lookback = self.cfg.get("squeeze_quality_lookback_bars", 3)
+                recent = df5m.tail(min(squeeze_lookback, len(df5m)))
+                if bias == "long":
+                    breakout_distance = max(float(recent["high"].max()) - float(recent["open"].iloc[0]), 0)
+                else:
+                    breakout_distance = max(float(recent["open"].iloc[0]) - float(recent["low"].min()), 0)
+                ref_source = "squeeze_multi_bar"
             else:
-                breakout_distance = max(float(last_bar["open"]) - float(last_bar["close"]), 0)
-            ref_source = "candle_body"
+                # Other momentum breakouts: single-bar candle body
+                last_bar = df5m.iloc[-1]
+                if bias == "long":
+                    breakout_distance = max(float(last_bar["close"]) - float(last_bar["open"]), 0)
+                else:
+                    breakout_distance = max(float(last_bar["open"]) - float(last_bar["close"]), 0)
+                ref_source = "candle_body"
 
         elif base_name in self._ORB_SETUPS:
             # ORB family: ORH/ORL is the natural reference level

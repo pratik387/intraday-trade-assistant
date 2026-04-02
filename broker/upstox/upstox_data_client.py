@@ -475,15 +475,19 @@ class UpstoxDataClient:
         """
         ikey = self._instrument_key_for(symbol)
 
-        # Upstox 1m API requires chunking into 28-day windows
-        # For intraday warmup this is typically same-day, so single call
+        # Use intraday endpoint for same-day requests (historical API doesn't serve today's data)
         from_str = from_dt.strftime("%Y-%m-%d")
         to_str = to_dt.strftime("%Y-%m-%d")
+        today_str = datetime.now().strftime("%Y-%m-%d")
 
-        url = (
-            f"{UPSTOX_HIST_BASE}/"
-            f"{ikey}/minutes/1/{to_str}/{from_str}"
-        )
+        if from_str == today_str:
+            url = f"{UPSTOX_HIST_BASE}/intraday/{ikey}/minutes/1"
+            logger.debug(f"UPSTOX_1M | Using intraday endpoint for same-day fetch: {symbol}")
+        else:
+            url = (
+                f"{UPSTOX_HIST_BASE}/"
+                f"{ikey}/minutes/1/{to_str}/{from_str}"
+            )
 
         for attempt in range(3):
             try:
