@@ -207,7 +207,7 @@ def _worker_process_batch(batch_items, index_df5_data, now):
             results.append((symbol, None))
     _elapsed = _time.perf_counter() - _t0
     from config.logging_config import get_agent_logger
-    get_agent_logger().info("WORKER_BATCH_DONE | %d symbols | %.2fs (%.0fms/sym)",
+    get_agent_logger().debug("WORKER_BATCH_DONE | %d symbols | %.2fs (%.0fms/sym)",
                            len(batch_items), _elapsed, (_elapsed / max(len(batch_items), 1)) * 1000)
     return results
 
@@ -571,6 +571,12 @@ class ScreenerLive:
 
         self._eod_done: bool = False
         self._request_exit: bool = False
+
+        # Warmup cache: previous day's raw 5m bars per symbol for indicator stabilization.
+        # Loaded once at first API fetch. Ensures parity between paper (API enrichment)
+        # and backtest (precomputed enrichment which uses 30-bar warmup).
+        self._api_warmup_cache: Dict[str, pd.DataFrame] = {}
+        self._api_warmup_loaded: bool = False
 
         # (precomputed 5m init moved earlier — before WebSocket wiring)
         
@@ -1167,15 +1173,46 @@ class ScreenerLive:
                         raw_api = {}
 
                     from services.indicators.bar_enrichment import enrich_5m_bars
-                    api_ok, api_fail = 0, 0
+
+                    # Load warmup cache on first API fetch (previous day's 5m bars)
+                    if not self._api_warmup_loaded:
+                        self._load_api_warmup_cache()
+
+                    today_ts = pd.Timestamp(now).normalize() if now else None
+
+                    api_ok, api_fail, warmup_used, warmup_missed = 0, 0, 0, 0
                     for sym, df_api in raw_api.items():
                         if df_api is not None and len(df_api) >= min_bars_for_processing:
-                            df_api = enrich_5m_bars(df_api)
+                            # Prepend warmup bars for indicator stabilization (matches precompute script)
+                            warmup = self._api_warmup_cache.get(sym)
+                            if warmup is not None and not warmup.empty:
+                                combined = pd.concat([warmup, df_api])
+                                df_api = enrich_5m_bars(combined, session_date=today_ts)
+                                warmup_used += 1
+                            else:
+                                df_api = enrich_5m_bars(df_api)
+                                warmup_missed += 1
                             api_df5_cache[sym] = df_api
                             api_ok += 1
                         else:
                             api_fail += 1
                     api_fail += len(unique_shortlist) - len(raw_api) - api_fail
+
+                    # Log first cycle's indicator values for parity debugging
+                    if not getattr(self, '_warmup_debug_logged', False) and api_df5_cache:
+                        self._warmup_debug_logged = True
+                        sample_sym = next(iter(api_df5_cache))
+                        sample_df = api_df5_cache[sample_sym]
+                        if not sample_df.empty:
+                            last = sample_df.iloc[-1]
+                            logger.info(
+                                "WARMUP_DEBUG | sample=%s bars=%d warmup_used=%d/%d missed=%d | "
+                                "adx=%.1f rsi=%.1f bb_width=%.4f vwap=%.2f close=%.2f",
+                                sample_sym, len(sample_df), warmup_used, api_ok, warmup_missed,
+                                float(last.get('adx', 0)), float(last.get('rsi', 50)),
+                                float(last.get('bb_width_proxy', 0)),
+                                float(last.get('vwap', 0)), float(last.get('close', 0)),
+                            )
 
                     # Store to Redis for other instances
                     if self._shared_5m_cache and api_df5_cache:
@@ -1183,8 +1220,9 @@ class ScreenerLive:
 
                     _t_api_elapsed = time.perf_counter() - _t_api_start
                     logger.info(
-                        "API_5M_FETCH | %d ok, %d failed of %d unique (%d shortlisted) | %.1fs (async)",
+                        "API_5M_FETCH | %d ok, %d failed of %d unique (%d shortlisted) | %.1fs (async) | warmup: %d/%d",
                         api_ok, api_fail, len(unique_shortlist), len(shortlist), _t_api_elapsed,
+                        warmup_used, api_ok,
                     )
 
         # ---------- Gate per candidate (structure + regime + events + news) ----------
@@ -2113,6 +2151,51 @@ class ScreenerLive:
                 out.append(sym)
         return out[:60]
 
+    def _load_api_warmup_cache(self) -> None:
+        """
+        Load previous day's raw 5m bars from per-symbol enriched feather files.
+        Used to prepend warmup bars before enrich_5m_bars() in paper/live mode,
+        matching the precompute script's 30-bar warmup for indicator stabilization.
+        Without this, ADX/RSI/BB_width default to fill values (0/50/0) for the
+        first ~30 bars, causing 50-70% more false detections vs backtest.
+        """
+        import time as time_module
+        from pathlib import Path
+
+        _t0 = time_module.perf_counter()
+        cache_dir = Path("cache/ohlcv_archive")
+        loaded = 0
+        warmup_bars = 30  # Match precompute_5m_cache.py WARMUP_BARS
+
+        for sym in self.core_symbols:
+            tsym = sym.split(":", 1)[-1].strip().upper()
+            for suffix in [f"{tsym}.NS", tsym]:
+                path = cache_dir / suffix / f"{suffix}_5minutes_enriched.feather"
+                if path.exists():
+                    try:
+                        df = pd.read_feather(path)
+                        df["date"] = pd.to_datetime(df["date"])
+                        if getattr(df["date"].dt, "tz", None) is not None:
+                            df["date"] = df["date"].dt.tz_localize(None)
+                        df = df.set_index("date").sort_index()
+                        # Take last warmup_bars from the most recent completed day
+                        # (not today — today's bars will come from the API)
+                        today = pd.Timestamp(datetime.now().date())
+                        prev_day_df = df[df.index < today]
+                        if len(prev_day_df) >= warmup_bars:
+                            # Keep only raw OHLCV columns for warmup (indicators will be recomputed)
+                            warmup = prev_day_df[["open", "high", "low", "close", "volume"]].tail(warmup_bars)
+                            self._api_warmup_cache[sym] = warmup
+                            loaded += 1
+                    except Exception:
+                        pass
+                    break
+
+        self._api_warmup_loaded = True
+        _elapsed = time_module.perf_counter() - _t0
+        logger.info("API_WARMUP_CACHE | Loaded %d/%d symbols (%.1fs) | %d warmup bars each",
+                   loaded, len(self.core_symbols), _elapsed, warmup_bars)
+
     def _reasons_for(self, sym: str, decisions: List[Tuple[str, Decision]]) -> List[str]:
         for s, d in decisions:
             if s == sym:
@@ -2145,6 +2228,7 @@ class ScreenerLive:
         from pathlib import Path
         cache_dir = Path("cache/ohlcv_archive")
         loaded = 0
+        single_day_count = 0
         for sym in self.core_symbols:
             tsym = sym.split(":", 1)[-1].strip().upper()
             for suffix in [f"{tsym}.NS", tsym]:
@@ -2158,11 +2242,13 @@ class ScreenerLive:
                         df = df.set_index("date").sort_index()
                         self._precomputed_5m[sym] = df
                         loaded += 1
+                        if len(set(df.index.date)) < 2:
+                            single_day_count += 1
                     except Exception:
                         pass
                     break
-        logger.info("PRECOMPUTED_5M | Loaded %d/%d symbols from enriched feather cache",
-                    loaded, len(self.core_symbols))
+        logger.info("PRECOMPUTED_5M | Loaded %d/%d symbols from enriched feather cache | single_day_only=%d (no warmup)",
+                    loaded, len(self.core_symbols), single_day_count)
 
     def _get_precomputed_5m(self, symbol: str, up_to: datetime, n: int = 120) -> pd.DataFrame:
         """Get precomputed enriched 5m bars up to the given timestamp."""

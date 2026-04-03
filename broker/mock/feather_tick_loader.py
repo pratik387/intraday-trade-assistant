@@ -153,14 +153,20 @@ class FeatherTickLoader:
             # Filter to requested date range
             df_all = df_all[(df_all['date'] >= from_dt) & (df_all['date'] <= to_dt)].copy()
 
-            # Drop zero-volume bars (Upstox historical API fills gaps with flat O=H=L=C, V=0 bars).
-            # Paper/live trading never sees these fake bars because MDS only receives real ticks.
-            # Keeping them inflates bar counts, distorts energy/momentum, and creates phantom patterns.
+            # Drop zero-volume bars EXCEPT during opening range window (09:15-09:30).
+            # Upstox historical API fills gaps with flat O=H=L=C, V=0 bars for illiquid stocks.
+            # Keeping them inflates bar counts and creates phantom patterns AFTER the open.
+            # But during 09:15-09:30, these bars are needed for ORB computation — dropping them
+            # causes "insufficient bars" for ~245 symbols, breaking parity with paper trading
+            # where WebSocket delivers ticks for all minutes.
             before_zvf = len(df_all)
-            df_all = df_all[df_all['volume'] > 0]
+            orb_start = pd.Timestamp("09:15:00").time()
+            orb_end = pd.Timestamp("09:30:00").time()
+            is_orb_window = df_all['date'].dt.time.between(orb_start, orb_end)
+            df_all = df_all[(df_all['volume'] > 0) | is_orb_window]
             dropped = before_zvf - len(df_all)
             if dropped > 0:
-                logger.info(f"[FAST MODE] Dropped {dropped:,} zero-volume bars ({dropped/before_zvf*100:.1f}%) to match live data")
+                logger.info(f"[FAST MODE] Dropped {dropped:,} zero-volume bars ({dropped/before_zvf*100:.1f}%) - preserved ORB window (09:15-09:30)")
 
             if df_all.empty:
                 logger.warning(f"Pre-aggregated file has no data for {self.from_raw} to {self.to_raw}")
@@ -220,8 +226,13 @@ class FeatherTickLoader:
             df = pd.read_feather(path)
             df = self._normalize(df)   # parses 'date' (naive), sorts
             df = self._slice(df)       # trims to from_date..to_date inclusive
-            # Drop zero-volume bars (same as pre-aggregated path)
-            if 'volume' in df.columns:
+            # Drop zero-volume bars EXCEPT during ORB window (same logic as pre-aggregated path)
+            if 'volume' in df.columns and 'date' in df.columns:
+                orb_start = pd.Timestamp("09:15:00").time()
+                orb_end = pd.Timestamp("09:30:00").time()
+                is_orb = df['date'].dt.time.between(orb_start, orb_end)
+                df = df[(df['volume'] > 0) | is_orb]
+            elif 'volume' in df.columns:
                 df = df[df['volume'] > 0]
             if df.empty:
                 return None

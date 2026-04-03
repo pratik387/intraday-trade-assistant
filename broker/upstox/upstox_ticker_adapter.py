@@ -243,7 +243,7 @@ class UpstoxTickerAdapter:
                 not message.get("feeds") and msg_type != "live_feed" and msg_type != "initial_feed"
             ):
                 if msg_type == "market_info":
-                    logger.info("UPSTOX_WS | Received market_info message")
+                    logger.debug("UPSTOX_WS | Received market_info message")
                 return
 
             ticks = self._convert_message_to_ticks(message)
@@ -414,8 +414,8 @@ class UpstoxTickerAdapter:
         for t in ticks:
             self._unique_tick_keys.add(t["instrument_token"])
 
-        # Log coverage periodically (every 500 messages)
-        if self._msg_count - self._last_coverage_log >= 500:
+        # Log coverage periodically (every 5000 messages ≈ every 5 min)
+        if self._msg_count - self._last_coverage_log >= 5000:
             self._last_coverage_log = self._msg_count
             logger.info(
                 f"UPSTOX_WS | COVERAGE: {len(self._unique_tick_keys)} unique instruments "
