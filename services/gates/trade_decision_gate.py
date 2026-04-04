@@ -577,7 +577,7 @@ class TradeDecisionGate:
                         # Insufficient 5m data for rolling ATR — use daily ATR as fallback
                         # This ensures parity between backtest (full history) and live (late start / illiquid stocks)
                         daily_atr_fallback = None
-                        if daily_df is not None and len(daily_df) >= 15 and pd.notna(current_atr):
+                        if daily_df is not None and len(daily_df) >= 15:
                             d_high = daily_df["high"]
                             d_low = daily_df["low"]
                             d_close_prev = daily_df["close"].shift(1)
@@ -590,7 +590,9 @@ class TradeDecisionGate:
                             # Scale daily ATR to 5m equivalent: daily range contains ~72 5m bars,
                             # but intrabar moves overlap, so empirical divisor ~6-8 (sqrt-time scaling)
                             daily_5m_proxy = daily_atr_fallback / 7.0
-                            atr_ratio = current_atr / daily_5m_proxy
+                            # Use 5m current_atr if available, otherwise use daily proxy as both
+                            effective_current_atr = current_atr if pd.notna(current_atr) else daily_5m_proxy
+                            atr_ratio = effective_current_atr / daily_5m_proxy
                             compression_threshold = self.quality_filters.get('range_compression_threshold', 0.8)
                             if atr_ratio > compression_threshold:
                                 pattern_reasons.append(f"range_compression_fail_daily_fallback:{atr_ratio:.3f}>{compression_threshold}")
