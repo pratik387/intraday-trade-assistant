@@ -1019,6 +1019,93 @@ class ScreenerLive:
         in_opening_bell = dtime(9, 20) <= current_time < dtime(9, 30)
         min_bars_for_processing = 1 if in_opening_bell else 3
 
+        # ---------- API 5m bars for ALL symbols (live/paper only) ----------
+        # Fetch V3 intraday 5m bars BEFORE Stage-0 so energy scoring uses
+        # Historical API data (same source as backtest), not WebSocket I1.
+        # This eliminates the data divergence that causes 20-30% trade parity.
+        api_df5_cache: Dict[str, pd.DataFrame] = {}
+        api_5m_cfg = self.raw_cfg.get("api_5m_bars", {})
+        fetch_all = api_5m_cfg.get("fetch_all_symbols", False)
+
+        if api_5m_cfg.get("enabled", False) and not env.DRY_RUN and fetch_all:
+            if hasattr(self.sdk, "async_fetch_intraday_5m_batch"):
+                # Wait for API data availability
+                min_delay = float(api_5m_cfg["min_delay_after_bar_close_sec"])
+                bar_close_time = now + timedelta(minutes=5)
+                from utils.time_util import _now_naive_ist
+                wall_now = _now_naive_ist()
+                elapsed_since_close = (wall_now - bar_close_time).total_seconds()
+                remaining_wait = min_delay - elapsed_since_close
+                if remaining_wait > 0:
+                    logger.info("API_5M_FETCH | Waiting %.1fs for API data availability", remaining_wait)
+                    time.sleep(remaining_wait)
+
+                _t_api_start = time.perf_counter()
+                fetch_symbols = list(self.core_symbols)
+                bar_ts = now.isoformat()
+
+                # Check shared Redis cache first
+                cached = None
+                if self._shared_5m_cache and self._shared_5m_cache.enabled:
+                    cached = self._shared_5m_cache.get_cached_bars(bar_ts)
+
+                if cached is not None:
+                    api_ok = 0
+                    for sym in fetch_symbols:
+                        if sym in cached and len(cached[sym]) >= min_bars_for_processing:
+                            api_df5_cache[sym] = cached[sym]
+                            api_ok += 1
+                    _t_api_elapsed = time.perf_counter() - _t_api_start
+                    logger.info(
+                        "API_5M_FETCH | %d ok of %d symbols | %.1fs (redis cache)",
+                        api_ok, len(fetch_symbols), _t_api_elapsed,
+                    )
+                else:
+                    rps = float(api_5m_cfg["rps"])
+                    concurrency = int(api_5m_cfg["concurrency"])
+                    try:
+                        import asyncio
+                        raw_api = asyncio.run(
+                            self.sdk.async_fetch_intraday_5m_batch(
+                                fetch_symbols, concurrency=concurrency, rps=rps
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning("API_5M_FETCH | async batch failed: %s", e)
+                        raw_api = {}
+
+                    from services.indicators.bar_enrichment import enrich_5m_bars
+
+                    if not self._api_warmup_loaded:
+                        self._load_api_warmup_cache()
+
+                    today_ts = pd.Timestamp(now).normalize() if now else None
+                    api_ok, api_fail, warmup_used = 0, 0, 0
+
+                    for sym, df_api in raw_api.items():
+                        if df_api is not None and len(df_api) >= min_bars_for_processing:
+                            warmup = self._api_warmup_cache.get(sym)
+                            if warmup is not None and not warmup.empty:
+                                combined = pd.concat([warmup, df_api])
+                                df_api = enrich_5m_bars(combined, session_date=today_ts)
+                                warmup_used += 1
+                            else:
+                                df_api = enrich_5m_bars(df_api)
+                            api_df5_cache[sym] = df_api
+                            api_ok += 1
+                        else:
+                            api_fail += 1
+
+                    if self._shared_5m_cache and api_df5_cache:
+                        self._shared_5m_cache.store_bars(bar_ts, api_df5_cache)
+
+                    _t_api_elapsed = time.perf_counter() - _t_api_start
+                    logger.info(
+                        "API_5M_FETCH | %d ok, %d failed of %d symbols | %.1fs (async, %s RPS) | warmup: %d/%d",
+                        api_ok, api_fail, len(fetch_symbols), _t_api_elapsed,
+                        rps, warmup_used, api_ok,
+                    )
+
         try:
             # Bar density gate: skip illiquid symbols where WebSocket doesn't deliver all 1m candles
             density_cfg = self.raw_cfg.get("bar_density_gate", {})
@@ -1029,8 +1116,8 @@ class ScreenerLive:
 
             df5_by_symbol: Dict[str, pd.DataFrame] = {}
             for s in self.core_symbols:
-                # Density gate: check bar delivery reliability before including in scan
-                if density_enabled and hasattr(self.agg, "get_bar_density"):
+                # Density gate: only applies when using BarBuilder data (no API cache)
+                if s not in api_df5_cache and density_enabled and hasattr(self.agg, "get_bar_density"):
                     bar_count = self.agg._bar_1m_count.get(s, 0)
                     if bar_count >= density_min_bars:
                         density = self.agg.get_bar_density(s, now)
@@ -1038,7 +1125,12 @@ class ScreenerLive:
                             density_skipped += 1
                             continue
 
-                df5 = self.agg.get_df_5m_tail(s, self.cfg.screener_store_5m_max)
+                # Data source: API cache (parity with backtest) > BarBuilder (fallback)
+                if s in api_df5_cache:
+                    df5 = api_df5_cache[s]
+                else:
+                    df5 = self.agg.get_df_5m_tail(s, self.cfg.screener_store_5m_max)
+
                 if validate_df(df5, min_rows=min_bars_for_processing):
                     df5_by_symbol[s] = df5
 
@@ -1118,13 +1210,10 @@ class ScreenerLive:
                 if index_price is not None:
                     self.directional_bias.update_price(index_price)
 
-        # ---------- API 5m bars for shortlisted symbols (live/paper only) ----------
-        # Fetch V3 intraday 5m bars from Historical API pipeline.
-        # These match backtest data exactly — eliminates WebSocket vs Historical divergence
-        # for structure detection and planning.
-        api_df5_cache: Dict[str, pd.DataFrame] = {}
-        api_5m_cfg = self.raw_cfg.get("api_5m_bars", {})
-        if api_5m_cfg.get("enabled", False) and not env.DRY_RUN:
+        # ---------- API 5m bars for shortlisted symbols (legacy path) ----------
+        # Only runs when fetch_all_symbols=false (old behavior: fetch after Stage-0)
+        # When fetch_all_symbols=true, api_df5_cache is already populated pre-Stage-0.
+        if api_5m_cfg.get("enabled", False) and not env.DRY_RUN and not fetch_all:
             if hasattr(self.sdk, "get_intraday_5m"):
                 # Wait for API data availability — Upstox takes ~25s after bar close
                 # In subscriber mode, scan fires ~60s after bar close (WebSocket delay),
