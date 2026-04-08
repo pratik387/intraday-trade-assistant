@@ -2393,7 +2393,7 @@
 
   "api_5m_bars": {
     "enabled": true,
-    "min_delay_after_bar_close_sec": 30,
+    "min_delay_after_bar_close_sec": 60,
     "rps": 15,
     "concurrency": 30,
     "fetch_all_symbols": true,

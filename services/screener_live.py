@@ -625,17 +625,14 @@ class ScreenerLive:
     def start(self) -> None:
         """Connect WS and subscribe index symbols only (scan trigger + directional bias).
         Active trade symbols are subscribed dynamically via add_hot at enqueue time."""
-        # In paper/live with API-first Stage-0, we only need WS for:
-        # 1. Index symbol(s) — scan trigger (_on_5m_close) + directional bias LTP
-        # 2. Active trade symbols — tick-level execution (added dynamically)
+        # In paper/live with API-first Stage-0:
+        # - Scan trigger is timer-based (no WebSocket dependency)
+        # - Directional bias uses API data (not WebSocket LTP)
+        # - Only active trade symbols need ticks (added dynamically via add_hot)
         if not env.DRY_RUN and self.raw_cfg.get("api_5m_bars", {}).get("fetch_all_symbols", False):
-            index_sym = self.raw_cfg.get("directional_bias", {}).get("index_symbol", "")
-            index_tokens = set()
-            if index_sym and index_sym in self.symbol_map:
-                index_tokens.add(int(self.symbol_map[index_sym]))
-            self.subs.set_core(index_tokens)
-            logger.info("WS_LEAN | Subscribing %d index tokens only (API-first mode). "
-                       "Trade symbols added dynamically via add_hot.", len(index_tokens))
+            self.subs.set_core(set())  # No core subscriptions — trades added via add_hot
+            logger.info("WS_LEAN | Zero core subscriptions (API-first + timer mode). "
+                       "Trade symbols added dynamically via add_hot.")
         else:
             # Backtest or legacy mode: subscribe all symbols
             self.subs.set_core(self.token_map)
@@ -927,16 +924,96 @@ class ScreenerLive:
         if env.DRY_RUN:
             return  # Backtest doesn't need async
         self._scan_running = True
-        self._scan_thread = threading.Thread(
-            target=self._scan_worker_loop,
-            name="ScanWorker",
-            daemon=True,
-        )
-        self._scan_thread.start()
-        logger.info("SCAN_DISPATCH | Background scan worker started")
+
+        # API-first mode: timer-based scan every 5 minutes (no WebSocket dependency)
+        # Legacy mode: queue-based scan triggered by I1 candle 5m boundary
+        api_first = self.raw_cfg.get("api_5m_bars", {}).get("fetch_all_symbols", False)
+        if api_first:
+            self._scan_thread = threading.Thread(
+                target=self._timer_scan_loop,
+                name="ScanTimer",
+                daemon=True,
+            )
+            self._scan_thread.start()
+            logger.info("SCAN_DISPATCH | Timer-based scan worker started (API-first mode, 5m interval)")
+        else:
+            self._scan_thread = threading.Thread(
+                target=self._scan_worker_loop,
+                name="ScanWorker",
+                daemon=True,
+            )
+            self._scan_thread.start()
+            logger.info("SCAN_DISPATCH | Queue-based scan worker started (legacy mode)")
+
+    def _timer_scan_loop(self) -> None:
+        """Timer-based scan: fire every 5 minutes aligned to IST bar boundaries.
+        Schedule: 09:20, 09:25, 09:30, ..., 15:25 IST (bar 09:15 closes at 09:20, etc.)
+        Each scan fires at bar_close + min_delay_after_bar_close_sec.
+        No WebSocket dependency — purely clock-driven using IST."""
+        from utils.time_util import _now_naive_ist
+        from datetime import time as dtime
+
+        min_delay = float(self.raw_cfg.get("api_5m_bars", {}).get("min_delay_after_bar_close_sec", 60))
+        market_open = dtime(9, 20)   # First bar 09:15 closes at 09:20
+        market_close = dtime(15, 25) # Last bar 15:20 closes at 15:25
+
+        # Pre-compute all scan times for the day (IST): 09:20, 09:25, ..., 15:25
+        scan_times = []
+        t = datetime(2000, 1, 1, 9, 20)  # Start at 09:20
+        while t.time() <= market_close:
+            scan_times.append(t.time())
+            t += timedelta(minutes=5)
+
+        logger.info("SCAN_TIMER | %d scan slots: %s ... %s IST | delay: %.0fs",
+                    len(scan_times), scan_times[0], scan_times[-1], min_delay)
+
+        fired_today = set()  # Track which slots fired to avoid double-fire
+
+        while self._scan_running:
+            try:
+                now = _now_naive_ist()
+
+                # Outside market hours — sleep and re-check
+                if now.time() < market_open or now.time() > dtime(15, 30):
+                    time.sleep(10)
+                    fired_today.clear()  # Reset for next day
+                    continue
+
+                # Find the latest scan slot that should have fired by now
+                fired_this_loop = False
+                for slot in scan_times:
+                    if slot in fired_today:
+                        continue
+                    # Target fire time = slot + min_delay
+                    slot_dt = now.replace(hour=slot.hour, minute=slot.minute, second=0, microsecond=0)
+                    target = slot_dt + timedelta(seconds=min_delay)
+
+                    if now >= target:
+                        # This slot is due — fire the scan
+                        bar_start = slot_dt - timedelta(minutes=5)  # Bar that closed at this slot
+                        dummy_bar = pd.Series(
+                            {"open": 0, "high": 0, "low": 0, "close": 0, "volume": 0},
+                            name=bar_start,
+                        )
+
+                        logger.info("SCAN_TIMER | Firing scan for bar %s | wallclock: %s IST",
+                                   bar_start.strftime("%H:%M"), now.strftime("%H:%M:%S"))
+
+                        self._run_5m_scan("TIMER", dummy_bar)
+                        fired_today.add(slot)
+                        fired_this_loop = True
+                        break  # One scan at a time, check next slot on next loop
+
+                if not fired_this_loop:
+                    # No slot due — sleep briefly and re-check
+                    time.sleep(2)
+
+            except Exception as e:
+                logger.exception("SCAN_TIMER | Scan failed: %s", e)
+                time.sleep(30)
 
     def _scan_worker_loop(self) -> None:
-        """Background thread: dequeue and run scans sequentially."""
+        """Legacy queue-based scan: triggered by I1 candle 5m boundary."""
         while self._scan_running:
             try:
                 symbol, bar_5m = self._scan_queue.get(timeout=1.0)
