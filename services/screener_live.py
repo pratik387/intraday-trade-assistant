@@ -623,16 +623,31 @@ class ScreenerLive:
     # Public API
     # ---------------------------------------------------------------------
     def start(self) -> None:
-        """Connect WS and subscribe the core universe."""
-        # Connect WebSocket
-        self.subs.set_core(self.token_map)
+        """Connect WS and subscribe index symbols only (scan trigger + directional bias).
+        Active trade symbols are subscribed dynamically via add_hot at enqueue time."""
+        # In paper/live with API-first Stage-0, we only need WS for:
+        # 1. Index symbol(s) — scan trigger (_on_5m_close) + directional bias LTP
+        # 2. Active trade symbols — tick-level execution (added dynamically)
+        if not env.DRY_RUN and self.raw_cfg.get("api_5m_bars", {}).get("fetch_all_symbols", False):
+            index_sym = self.raw_cfg.get("directional_bias", {}).get("index_symbol", "")
+            index_tokens = set()
+            if index_sym and index_sym in self.symbol_map:
+                index_tokens.add(int(self.symbol_map[index_sym]))
+            self.subs.set_core(index_tokens)
+            logger.info("WS_LEAN | Subscribing %d index tokens only (API-first mode). "
+                       "Trade symbols added dynamically via add_hot.", len(index_tokens))
+        else:
+            # Backtest or legacy mode: subscribe all symbols
+            self.subs.set_core(self.token_map)
+
         self.subs.start()
         self.ws.start()
 
         # Start async scan dispatch worker (live/paper only)
         self._start_scan_worker()
 
-        logger.info("WS connected; core subscriptions scheduled: %d symbols", len(self.core_symbols))
+        logger.info("WS connected; core subscriptions scheduled: %d symbols",
+                    len(self.subs._core))
 
     def stop(self) -> None:
         # Stop WebSocket/subscriptions (if in publisher/standalone mode)
@@ -1746,6 +1761,12 @@ class ScreenerLive:
             # Update de-dupe memory only when we actually enqueue
             self._last_entry[sym] = {"ts": now, "setup": setup_type, "score": float(score)}
             self.oq.enqueue(exec_item)
+
+            # Subscribe to this symbol's ticks for execution layer (entry zone, SL, targets)
+            sym_token = self.symbol_map.get(sym)
+            if sym_token is not None and self.subs:
+                self.subs.add_hot([int(sym_token)])
+
             trades_planned += 1
             logger.info("ENQUEUE %s score=%.3f count=%d/%d reasons=%s", sym, score, trades_planned, max_trades_per_cycle, ";".join(self._reasons_for(sym, decisions)))
 
