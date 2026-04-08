@@ -6,7 +6,7 @@ Central gate that combines:
   • Structure event detection (breakout/breakdown, VWAP reclaim/lose, squeeze release, failure/fade)
   • Market regime policy (index trend/chop/squeeze)
   • Event policy (macro windows, expiry, symbol events)
-  • News spike adjustments (1-minute anomaly confirmation & sizing)
+  • News spike adjustments (5-minute anomaly confirmation & sizing)
 
 This module **does not** read config files. All thresholds/policies enter via the injected
 components. Keep it pure and deterministic so backtests match live.
@@ -15,7 +15,7 @@ Public API
 ----------
 class TradeDecisionGate:
     def __init__(self, *, structure_detector, regime_gate, event_policy_gate, news_spike_gate): ...
-    def evaluate(self, *, symbol: str, now, df1m_tail, df5m_tail, index_df5m, levels) -> GateDecision: ...
+    def evaluate(self, *, symbol: str, now, df5m_tail, index_df5m, levels) -> GateDecision: ...
 
 Required component protocols (duck-typed):
 - structure_detector.detect_setups(symbol, df5m_tail, levels) -> list[SetupCandidate]
@@ -23,7 +23,7 @@ Required component protocols (duck-typed):
 - regime_gate.allow_setup(setup_type: str, regime: str, strength: float, adx_5m: float, vol_mult_5m: float) -> bool
 - regime_gate.size_multiplier(regime: str) -> float  # optional; if missing, treated as 1.0
 - event_policy_gate.decide_policy(now, symbol) -> (Policy, dict)  # Policy is defined in event_policy_gate
-- news_spike_gate.has_symbol_spike(df1m_tail) -> (bool, NewsSignal)  # NewsSignal in news_spike_gate
+- news_spike_gate.has_symbol_spike(df5m_tail) -> (bool, NewsSignal)  # NewsSignal in news_spike_gate
 - news_spike_gate.adjustment_for(signal) -> Adjustment            # Adjustment in news_spike_gate
 
 Types
@@ -356,7 +356,6 @@ class TradeDecisionGate:
     def _compute_features(
         self,
         symbol: str,
-        df1m_tail: Optional[pd.DataFrame],
         df5m_tail: Optional[pd.DataFrame],
         index_df5m: Optional[pd.DataFrame],
         structural_rr: float
@@ -383,7 +382,6 @@ class TradeDecisionGate:
 
             # Compute features using the centralized function
             features = compute_hcet_features(
-                df1m_tail=df1m_tail,
                 df5m_tail=df5m_tail,
                 index_df5m=index_df5m,
                 sector_df5m=None,  # Not available in gate context
@@ -403,7 +401,6 @@ class TradeDecisionGate:
         *,
         symbol: str,
         now,
-        df1m_tail: pd.DataFrame,
         df5m_tail: pd.DataFrame,
         index_df5m: pd.DataFrame,
         levels: Optional[dict],
@@ -756,7 +753,6 @@ class TradeDecisionGate:
 
             features = self._compute_features(
                 symbol=symbol,
-                df1m_tail=df1m_tail,
                 df5m_tail=df5m_tail,
                 index_df5m=index_df5m,
                 structural_rr=structural_rr
@@ -904,7 +900,7 @@ class TradeDecisionGate:
             reasons.append("event_ctx:" + ",".join(sorted(ctx.keys())))
 
         # ---------------- NEWS SPIKE -------------------
-        spike, sig = self.news_gate.has_symbol_spike(df1m_tail)
+        spike, sig = self.news_gate.has_symbol_spike(df5m_tail)
         if spike:
             adj = self.news_gate.adjustment_for(sig)
             min_hold += int(adj.require_hold_bars)  # Keep hold bars for caution
@@ -999,55 +995,47 @@ class TradeDecisionGate:
                     volume_surge_min = self.quality_filters.get('breakout_volume_surge_min', 1.2)
                     momentum_candle_min_ratio = self.quality_filters.get('breakout_momentum_candle_min_ratio', 1.5)
 
-                # FILTER 1: Volume surge validation
+                # FILTER 1: Volume surge validation (5m bars)
                 # Professional standard: 1.2x average volume (20% above baseline), 1.5x for shorts
-                if df1m_tail is not None and len(df1m_tail) >= 5:
-                    # Use available data with minimum 5 bars
-                    # Lookback window: use last 4-20 bars depending on availability
-                    lookback = min(20, max(4, len(df1m_tail) - 1))
+                if df5m_tail is not None and len(df5m_tail) >= 3:
+                    # Lookback window: use last 2-6 bars depending on availability
+                    lookback = min(6, len(df5m_tail) - 1)
 
-                    if lookback >= 4:  # Minimum 4 bars for meaningful average
+                    if lookback >= 2:  # Minimum 2 bars for meaningful average
                         # Calculate average volume over available bars (exclude current bar)
-                        # Use max(0, ...) to ensure we don't go negative
-                        start_idx = max(0, len(df1m_tail) - lookback - 1)
-                        end_idx = len(df1m_tail) - 1
+                        avg_volume = df5m_tail["volume"].iloc[-lookback-1:-1].mean()
+                        current_volume = df5m_tail["volume"].iloc[-1]
 
-                        if start_idx < end_idx:
-                            avg_volume = df1m_tail["volume"].iloc[start_idx:end_idx].mean()
-                            current_volume = df1m_tail["volume"].iloc[-1]
+                        if avg_volume > 0:
+                            volume_ratio = current_volume / avg_volume
 
-                            if avg_volume > 0:
-                                volume_ratio = current_volume / avg_volume
-
-                                if volume_ratio < volume_surge_min:
-                                    reasons.append(f"breakout_volume_surge_fail:{volume_ratio:.2f}x<{volume_surge_min}x_required(n={lookback})")
-                                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
-                                else:
-                                    reasons.append(f"breakout_volume_surge_pass:{volume_ratio:.2f}x>={volume_surge_min}x(n={end_idx-start_idx})")
+                            if volume_ratio < volume_surge_min:
+                                reasons.append(f"breakout_volume_surge_fail:{volume_ratio:.2f}x<{volume_surge_min}x_required(n={lookback})")
+                                return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
                             else:
-                                reasons.append("breakout_volume_surge_skip:avg_volume_zero")
+                                reasons.append(f"breakout_volume_surge_pass:{volume_ratio:.2f}x>={volume_surge_min}x(n={lookback})")
                         else:
-                            reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
+                            reasons.append("breakout_volume_surge_skip:avg_volume_zero")
                     else:
                         reasons.append("breakout_volume_surge_skip:insufficient_bars_for_average")
                 else:
-                    bars_available = len(df1m_tail) if df1m_tail is not None else 0
-                    reasons.append(f"breakout_volume_surge_reject:insufficient_data({bars_available}_bars<5)")
+                    bars_available = len(df5m_tail) if df5m_tail is not None else 0
+                    reasons.append(f"breakout_volume_surge_reject:insufficient_5m_data({bars_available}_bars<3)")
                     return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
-                # FILTER 2: Momentum candle validation
+                # FILTER 2: Momentum candle validation (5m bars)
                 # Professional standard: Breakout candle should be 2-3x larger than previous candles
-                if df1m_tail is not None and len(df1m_tail) >= 5:
-                    # Get last 5 candles (last 4 for average, current for comparison)
-                    last_5_bars = df1m_tail.tail(5)
+                if df5m_tail is not None and len(df5m_tail) >= 3:
+                    # Get last 3 candles (last 2 for average, current for comparison)
+                    last_3 = df5m_tail.tail(3)
 
                     # Calculate candle sizes (high - low)
-                    candle_sizes = (last_5_bars["high"] - last_5_bars["low"]).values
+                    candle_sizes = (last_3["high"] - last_3["low"]).values
 
                     # Current candle size
                     current_candle_size = candle_sizes[-1]
 
-                    # Average of previous 4 candles
+                    # Average of previous 2 candles
                     avg_prev_candle_size = candle_sizes[:-1].mean()
 
                     if avg_prev_candle_size > 0:
@@ -1061,8 +1049,8 @@ class TradeDecisionGate:
                     else:
                         reasons.append("breakout_momentum_candle_skip:avg_candle_size_zero")
                 else:
-                    bars_available = len(df1m_tail) if df1m_tail is not None else 0
-                    reasons.append(f"breakout_momentum_candle_reject:insufficient_data({bars_available}_bars<5)")
+                    bars_available = len(df5m_tail) if df5m_tail is not None else 0
+                    reasons.append(f"breakout_momentum_candle_reject:insufficient_5m_data({bars_available}_bars<3)")
                     return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
 
             except Exception as e:

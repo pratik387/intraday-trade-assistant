@@ -220,7 +220,6 @@ class ReversionPipeline(BasePipeline):
         setup_type: str,
         regime: str,
         df5m: pd.DataFrame,
-        df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
         vol_mult: float,
@@ -239,8 +238,6 @@ class ReversionPipeline(BasePipeline):
         - Extremes are the SIGNAL, not a penalty condition
         - Rejection candle is confirmation, not requirement
         """
-        # df1m reserved for future 1-minute analysis
-        _ = df1m
 
         reasons = []
         passed = True

@@ -151,7 +151,7 @@ def _init_worker(config_dict):
         get_agent_logger().exception(f"Worker init failed: {e}")
         raise
 
-def _worker_process_symbol(symbol, df5_data, df1m_data, index_df5_data, levels, now, daily_df=None):
+def _worker_process_symbol(symbol, df5_data, index_df5_data, levels, now, daily_df=None):
     """
     Process single symbol using pre-initialized decision gate.
     This function is called once per task and reuses the gate.
@@ -166,7 +166,6 @@ def _worker_process_symbol(symbol, df5_data, df1m_data, index_df5_data, levels, 
         decision = _worker_decision_gate.evaluate(
             symbol=symbol,
             now=now,
-            df1m_tail=df1m_data,
             df5m_tail=df5_data,
             index_df5m=index_df5_data,
             levels=levels,
@@ -188,7 +187,7 @@ def _worker_process_batch(batch_items, index_df5_data, now):
     _t0 = _time.perf_counter()
     global _worker_decision_gate, _worker_daily_cache
     results = []
-    for (symbol, df5_data, df1m_data, levels) in batch_items:
+    for (symbol, df5_data, levels) in batch_items:
         if _worker_decision_gate is None:
             results.append((symbol, None))
             continue
@@ -196,7 +195,7 @@ def _worker_process_batch(batch_items, index_df5_data, now):
         try:
             decision = _worker_decision_gate.evaluate(
                 symbol=symbol, now=now,
-                df1m_tail=df1m_data, df5m_tail=df5_data,
+                df5m_tail=df5_data,
                 index_df5m=index_df5_data,
                 levels=levels, daily_df=daily_df,
             )
@@ -1351,8 +1350,6 @@ class ScreenerLive:
             # OPENING BELL FIX: Use same min_bars as scanner (1 during opening bell, 5 normally)
             if not validate_df(df5, min_rows=min_bars_for_processing):
                 continue
-            df1m = self.agg.get_df_1m_tail(sym, 35)
-
             # PERFORMANCE FIX: Use cached ORB levels if available
             if levels_by_symbol and sym in levels_by_symbol:
                 # Symbol was in cache - use cached levels
@@ -1372,7 +1369,7 @@ class ScreenerLive:
                     # Enough bars to compute levels normally
                     lvl = self._levels_for(sym, df5, now)
 
-            symbol_data_map[sym] = (df5, df1m, lvl)
+            symbol_data_map[sym] = (df5, lvl)
 
         if not symbol_data_map:
             logger.info("GATES_COMPLETE | No symbols with sufficient data")
@@ -1386,15 +1383,15 @@ class ScreenerLive:
         # index_df5 pickled once per batch (not per symbol), daily_df read from worker cache
         BATCH_SIZE = 50
         all_items = [
-            (sym, df5, df1m, lvl)
-            for sym, (df5, df1m, lvl) in symbol_data_map.items()
+            (sym, df5, lvl)
+            for sym, (df5, lvl) in symbol_data_map.items()
         ]
         batches = [all_items[i:i + BATCH_SIZE] for i in range(0, len(all_items), BATCH_SIZE)]
         _t_submit_start = time.perf_counter()
         futures = []
         for batch in batches:
             future = self._executor.submit(_worker_process_batch, batch, index_df5, now)
-            futures.append((future, {s for s, _, _, _ in batch}))
+            futures.append((future, {s for s, _, _ in batch}))
         _t_submit_end = time.perf_counter()
         logger.info("BATCH_SUBMIT | %d batches (%d symbols, batch_size=%d) | submit_time=%.2fs",
                    len(batches), len(all_items), BATCH_SIZE, _t_submit_end - _t_submit_start)
@@ -1505,8 +1502,7 @@ class ScreenerLive:
 
         for sym, decision in decisions:
             df5 = symbol_data_map.get(sym, (None,))[0]
-            df1m = symbol_data_map.get(sym, (None, None))[1]
-            lvl = symbol_data_map.get(sym, (None, None, {}))[2]
+            lvl = symbol_data_map.get(sym, (None, {}))[1]
             # daily_df only needed for ~5-20 accepted symbols (not 800), fetch from sdk cache
             daily_df = self.sdk.get_daily(sym, days=210)
 
@@ -1536,7 +1532,6 @@ class ScreenerLive:
                 plan = process_setup_candidates(
                     symbol=sym,
                     df5m=df5,
-                    df1m=df1m,
                     levels=lvl,
                     regime=decision.regime,
                     now=now,

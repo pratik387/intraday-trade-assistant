@@ -11,12 +11,13 @@ def _wick_bpct(row):
     bot = float(min(row["open"], row["close"]) - row["low"])
     return (top / rng) * 100.0, (bot / rng) * 100.0
 
-def _last_return_z(df1m: pd.DataFrame, lookback: int = 30):
-    if df1m is None or len(df1m) < lookback + 1: return 0.0
-    close = df1m["close"].astype(float)
-    ret = close.pct_change().iloc[-lookback:]
-    mu, sd = float(ret.mean()), float(ret.std(ddof=1)) or 1e-9
-    return float((ret.iloc[-1] - mu) / sd)
+def _last_return_z(df5m: pd.DataFrame, lookback: int = 6):
+    if df5m is None or len(df5m) < lookback + 1: return 0.0
+    close = df5m["close"].astype(float)
+    rets = close.pct_change().dropna().tail(lookback)
+    if len(rets) < 2: return 0.0
+    mu, sd = float(rets.mean()), float(rets.std(ddof=0))
+    return (float(rets.iloc[-1]) - mu) / sd if sd > 1e-9 else 0.0
 
 def _momentum_5m(df5m: pd.DataFrame, bars: int = 3):
     if df5m is None or len(df5m) < bars + 1: return 0.0
@@ -115,23 +116,23 @@ def _vwap(df: pd.DataFrame):
 
 def compute_hcet_features(
     *,
-    df1m_tail: pd.DataFrame,
     df5m_tail: pd.DataFrame,
     index_df5m: pd.DataFrame,
     sector_df5m: pd.DataFrame | None,
     structural_rr: float
 ):
-    # news spike detection using volume analysis
+    # news spike detection using 5m volume analysis
     news_spike_flag = False
-    if df1m_tail is not None and len(df1m_tail) > 0:
+    if df5m_tail is not None and len(df5m_tail) > 0:
         try:
-            vol = df1m_tail["volume"].astype(float)
+            vol = df5m_tail["volume"].astype(float)
             if len(vol) >= 5:
-                recent_median = vol.tail(20).median()
+                recent_median = vol.tail(10).median()
                 current_vol = vol.iloc[-1]
-                news_spike_flag = (current_vol > recent_median * 3.0) if recent_median > 0 else False
+                if recent_median > 0 and current_vol > recent_median * 3.0:
+                    news_spike_flag = True
         except Exception:
-            news_spike_flag = False
+            pass
 
     # shared
     sector_mom = _momentum_5m(sector_df5m or index_df5m, 3)
@@ -161,8 +162,8 @@ def compute_hcet_features(
         c_prev, c_curr = float(c.iloc[-2]), float(c.iloc[-1])
         vwap_reclaim = (c_prev < v_prev) and (c_curr > v_curr)
 
-    # 1m return z
-    ret_z = _last_return_z(df1m_tail, 30)
+    # return z (5m bars, 6-bar lookback ≈ 30 min)
+    ret_z = _last_return_z(df5m_tail, 6)
 
     return {
         "sector_momentum": sector_mom,
