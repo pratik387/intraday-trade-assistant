@@ -520,6 +520,22 @@ def _run_until_eod(
 
     try:
         screener.start()
+
+        # Subscribe WebSocket for any recovered open positions (crash recovery)
+        # In API-first mode, WS starts with zero subscriptions — recovered positions
+        # need ticks immediately for exit monitoring (SL, targets, trailing stops)
+        open_positions = positions.list_open()
+        if open_positions and hasattr(screener, 'subs') and screener.subs:
+            recovery_tokens = []
+            for sym in open_positions:
+                tok = screener.symbol_map.get(sym)
+                if tok is not None:
+                    recovery_tokens.append(int(tok))
+            if recovery_tokens:
+                screener.subs.add_hot(recovery_tokens)
+                logger.info("WS_RECOVERY | Subscribed %d symbols for open positions: %s",
+                           len(recovery_tokens), list(open_positions.keys()))
+
         while not getattr(screener, "_request_exit", False) and not stop.is_set():
             time.sleep(poll_sec)
     except KeyboardInterrupt:

@@ -967,7 +967,17 @@ class ScreenerLive:
         logger.info("SCAN_TIMER | %d scan slots: %s ... %s IST | delay: %.0fs",
                     len(scan_times), scan_times[0], scan_times[-1], min_delay)
 
-        fired_today = set()  # Track which slots fired to avoid double-fire
+        # Mark all past slots as fired so we only scan FUTURE bars
+        now = _now_naive_ist()
+        fired_today = set()
+        for slot in scan_times:
+            slot_dt = now.replace(hour=slot.hour, minute=slot.minute, second=0, microsecond=0)
+            target = slot_dt + timedelta(seconds=min_delay)
+            if now >= target:
+                fired_today.add(slot)
+
+        if fired_today:
+            logger.info("SCAN_TIMER | Skipped %d past slots, waiting for next bar", len(fired_today))
 
         while self._scan_running:
             try:
@@ -979,7 +989,7 @@ class ScreenerLive:
                     fired_today.clear()  # Reset for next day
                     continue
 
-                # Find the latest scan slot that should have fired by now
+                # Find the next slot that's due
                 fired_this_loop = False
                 for slot in scan_times:
                     if slot in fired_today:
@@ -989,8 +999,7 @@ class ScreenerLive:
                     target = slot_dt + timedelta(seconds=min_delay)
 
                     if now >= target:
-                        # This slot is due — fire the scan
-                        bar_start = slot_dt - timedelta(minutes=5)  # Bar that closed at this slot
+                        bar_start = slot_dt - timedelta(minutes=5)
                         dummy_bar = pd.Series(
                             {"open": 0, "high": 0, "low": 0, "close": 0, "volume": 0},
                             name=bar_start,
@@ -1002,10 +1011,9 @@ class ScreenerLive:
                         self._run_5m_scan("TIMER", dummy_bar)
                         fired_today.add(slot)
                         fired_this_loop = True
-                        break  # One scan at a time, check next slot on next loop
+                        break
 
                 if not fired_this_loop:
-                    # No slot due — sleep briefly and re-check
                     time.sleep(2)
 
             except Exception as e:
