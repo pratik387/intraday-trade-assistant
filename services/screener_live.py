@@ -1177,9 +1177,13 @@ class ScreenerLive:
         total_symbols = len(self.core_symbols)
         shortlist_count = len(shortlist)
 
-        logger.info("SCANNER_COMPLETE | Processed %d eligible of %d total symbols → %d shortlisted (%.1f%%) | Stage-0→Gates | TIME: %.2fs",
+        api_sourced = sum(1 for s in df5_by_symbol if s in api_df5_cache)
+        bb_sourced = len(df5_by_symbol) - api_sourced
+        logger.info("SCANNER_COMPLETE | Processed %d eligible of %d total symbols → %d shortlisted (%.1f%%) | "
+                   "data_source: api=%d barbuilder=%d | Stage-0→Gates | TIME: %.2fs",
                    eligible_symbols, total_symbols, shortlist_count,
-                   (shortlist_count/max(eligible_symbols,1))*100, _t_scanner_end - _t_bar_start)
+                   (shortlist_count/max(eligible_symbols,1))*100,
+                   api_sourced, bb_sourced, _t_scanner_end - _t_bar_start)
         if not shortlist:
             return
 

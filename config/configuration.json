@@ -2394,7 +2394,10 @@
   "api_5m_bars": {
     "enabled": true,
     "min_delay_after_bar_close_sec": 30,
-    "_note": "Fetch V3 intraday 5m bars for shortlisted symbols after Stage-0. Uses Historical API pipeline for structure detection — guarantees backtest-live parity. Only active in live/paper mode (not backtest). ~35 symbols at 25 RPS = 1.4s. min_delay_after_bar_close_sec: wait at least this many seconds after the 5m bar close before fetching (API data availability delay)."
+    "rps": 40,
+    "concurrency": 80,
+    "fetch_all_symbols": true,
+    "_note": "Fetch V3 intraday 5m bars for ALL core_symbols BEFORE Stage-0. Uses Historical API pipeline — guarantees backtest-live parity for both energy scoring and structure detection. Only active in live/paper mode (not backtest). 1500 symbols at 40 RPS = ~37s. Set fetch_all_symbols=false to revert to old behavior (fetch shortlisted only, after Stage-0)."
   },
 
   "bar_density_gate": {
