@@ -1100,10 +1100,13 @@ class ScreenerLive:
                         self._shared_5m_cache.store_bars(bar_ts, api_df5_cache)
 
                     _t_api_elapsed = time.perf_counter() - _t_api_start
+                    # Surface 429 count from the batch fetcher for monitoring
+                    throttle_count = getattr(self.sdk, '_last_batch_429s', 0)
+                    throttle_info = f" | 429s: {throttle_count}" if throttle_count > 0 else ""
                     logger.info(
-                        "API_5M_FETCH | %d ok, %d failed of %d symbols | %.1fs (async, %s RPS) | warmup: %d/%d",
+                        "API_5M_FETCH | %d ok, %d failed of %d symbols | %.1fs (async, %s RPS) | warmup: %d/%d%s",
                         api_ok, api_fail, len(fetch_symbols), _t_api_elapsed,
-                        rps, warmup_used, api_ok,
+                        rps, warmup_used, api_ok, throttle_info,
                     )
 
         try:

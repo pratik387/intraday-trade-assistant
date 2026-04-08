@@ -676,6 +676,9 @@ class UpstoxDataClient:
             tasks = [_fetch_one(session, sym, url) for sym, url in sym_to_url.items()]
             await asyncio.gather(*tasks, return_exceptions=True)
 
+        # Store 429 count for caller visibility (screener logs it)
+        self._last_batch_429s = retries_429
+
         if retries_429 > 0:
             logger.warning(
                 "ASYNC_5M | %d 429-throttle retries during batch of %d symbols",
