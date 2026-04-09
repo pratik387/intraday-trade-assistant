@@ -950,6 +950,7 @@ class ScreenerLive:
         Schedule: 09:20, 09:25, 09:30, ..., 15:25 IST (bar 09:15 closes at 09:20, etc.)
         Each scan fires at bar_close + min_delay_after_bar_close_sec.
         No WebSocket dependency — purely clock-driven using IST."""
+        import time
         from utils.time_util import _now_naive_ist
         from datetime import time as dtime
 
