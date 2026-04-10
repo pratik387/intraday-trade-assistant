@@ -44,11 +44,8 @@ class FeatherTicker:
         # Assigned by WSClient._wire_callbacks() if listener is registered
         self.on_i1_candle: Optional[Callable] = None
 
-        # Scan callback: fires at 5m boundaries with enriched bars dict
-        # Signature: on_5m_scan(api_df5_cache: Dict[str, DataFrame])
-        self.on_5m_scan: Optional[Callable] = None
-
-        # Legacy: enriched 5m replay callback (kept for backward compat)
+        # Direct 5m enriched bar callback — bypasses LiveTickHandler aggregation
+        # When set, fires at 5m boundaries with precomputed enriched bars
         self.on_5m_enriched: Optional[Callable] = None
 
         self._running = False
@@ -59,11 +56,7 @@ class FeatherTicker:
         self._data: Optional[Dict[str, pd.DataFrame]] = None
         self._timeline: Optional[List[pd.Timestamp]] = None
 
-        # Native 5m bars from disk: {symbol: DataFrame[open,high,low,close,volume]}
-        # Loaded from _5minutes.feather files (same data as paper's API fetch)
-        self._native_5m: Dict[str, pd.DataFrame] = {}
-
-        # Legacy precomputed enriched 5m bars (kept for backward compat)
+        # Precomputed enriched 5m bars: {symbol: DataFrame with DatetimeIndex}
         self._enriched_5m = enriched_5m or {}
 
     # ---------------- Kite-like API ----------------
@@ -95,71 +88,9 @@ class FeatherTicker:
             self._thread = None
 
     # ---------------- Internals ----------------
-    def load_native_5m(self, cache_dir: str = "cache/ohlcv_archive") -> None:
-        """Load native 5m bars from disk for all symbols.
-        These are the same bars the paper API fetch returns."""
-        from pathlib import Path
-        import time as _t
-
-        _t0 = _t.perf_counter()
-        cache = Path(cache_dir)
-        for sym, tok in self._sym2tok.items():
-            tsym = sym.split(":", 1)[-1].strip().upper() if ":" in sym else sym
-            for suffix in [f"{tsym}.NS", tsym]:
-                path = cache / suffix / f"{suffix}_5minutes.feather"
-                if path.exists():
-                    try:
-                        df = pd.read_feather(path)
-                        df["date"] = pd.to_datetime(df["date"])
-                        if getattr(df["date"].dt, "tz", None) is not None:
-                            df["date"] = df["date"].dt.tz_localize(None)
-                        df = df.set_index("date").sort_index()
-                        df = df[["open", "high", "low", "close", "volume"]].astype(float)
-                        self._native_5m[sym] = df
-                    except Exception:
-                        pass
-                    break
-        logger.info("NATIVE_5M_CACHE | Loaded %d symbols (%.1fs)",
-                   len(self._native_5m), _t.perf_counter() - _t0)
-
-    def _fire_5m_scan(self, bar_start: pd.Timestamp) -> None:
-        """At 5m boundary, load native 5m bars up to this point, enrich, fire scan callback.
-        This is the backtest equivalent of paper's API fetch + enrich."""
-        cb = self.on_5m_scan
-        if not callable(cb):
-            return
-
-        from services.indicators.bar_enrichment import enrich_5m_bars
-        warmup_bars = 30
-        scan_ts = bar_start
-        today = scan_ts.normalize()
-
-        api_df5_cache: Dict[str, pd.DataFrame] = {}
-        for sym, df_all in self._native_5m.items():
-            df_up_to = df_all[df_all.index <= scan_ts]
-            today_bars = df_up_to[df_up_to.index >= today]
-
-            if len(today_bars) < 1:
-                continue
-
-            prev_bars = df_up_to[df_up_to.index < today]
-            if len(prev_bars) >= warmup_bars:
-                warmup = prev_bars.tail(warmup_bars)
-                combined = pd.concat([warmup, today_bars])
-                enriched = enrich_5m_bars(combined, session_date=today)
-            else:
-                enriched = enrich_5m_bars(today_bars)
-
-            if not enriched.empty:
-                api_df5_cache[sym] = enriched
-
-        try:
-            cb(api_df5_cache)
-        except Exception:
-            logger.exception("FeatherTicker._fire_5m_scan failed at %s", bar_start)
-
     def _fire_enriched_5m(self, bar_start: pd.Timestamp) -> None:
-        """Legacy: Fire on_5m_enriched callback for backward compat."""
+        """Fire on_5m_enriched callback ONCE per 5m boundary to trigger the scan.
+        The scan itself processes all shortlisted symbols using precomputed data."""
         cb = self.on_5m_enriched
         if not callable(cb):
             return
@@ -274,18 +205,14 @@ class FeatherTicker:
                     try: self._on_ticks_cb(self, batch)
                     except Exception: logger.exception("FeatherTicker.on_ticks failed")
 
-                # Fire scan at 5m boundaries
-                # At ts=09:20 (minute % 5 == 0), fire scan for bar 09:15
-                ts_minute = ts.minute if hasattr(ts, 'minute') else ts.to_pydatetime().minute
-                if ts_minute % 5 == 0:
-                    from datetime import timedelta as _td
-                    bar_start = ts.floor("5min") - _td(minutes=5)
-
-                    # New path: native 5m from disk → enrich → scan callback
-                    if self._native_5m and callable(self.on_5m_scan):
-                        self._fire_5m_scan(bar_start)
-                    # Legacy path: precomputed enriched 5m replay
-                    elif self._enriched_5m and callable(self.on_5m_enriched):
+                # Fire precomputed enriched 5m bars at 5m boundaries
+                # LiveTickHandler fires _on_5m_close when minute % 5 == 0 (e.g., 09:35 closes 09:30 bar)
+                # We replicate that timing: at ts=09:35, fire the 09:30 enriched bar
+                if self._enriched_5m and callable(self.on_5m_enriched):
+                    ts_minute = ts.minute if hasattr(ts, 'minute') else ts.to_pydatetime().minute
+                    if ts_minute % 5 == 0:
+                        from datetime import timedelta as _td
+                        bar_start = ts.floor("5min") - _td(minutes=5)
                         self._fire_enriched_5m(bar_start)
 
                 time.sleep(self._sleep)

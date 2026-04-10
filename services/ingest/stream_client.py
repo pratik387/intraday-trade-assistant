@@ -82,11 +82,6 @@ class WSClient:
         """Register callback for precomputed enriched 5m bars (backtest only)."""
         self._on_5m_enriched = cb
 
-    def set_5m_scan_listener(self, cb: Callable) -> None:
-        """Register scan callback for native 5m bars (backtest only).
-        FeatherTicker will load native 5m from disk, enrich, and call cb(api_df5_cache)."""
-        self._on_5m_scan = cb
-
     # ------------------------------ Lifecycle -------------------------------
     def start(self) -> None:
         """Spawn the reader thread and connect the stream."""
@@ -265,18 +260,10 @@ class WSClient:
             ticker.on_i1_candle = self._on_i1_candle
             logger.info("WSClient: I1 candle listener wired to ticker")
 
-        # on_5m_scan: native 5m from disk → enrich → scan callback (new path)
-        if hasattr(ticker, "on_5m_scan") and getattr(self, "_on_5m_scan", None) is not None:
-            ticker.on_5m_scan = self._on_5m_scan
-            # Load native 5m data from disk
-            if hasattr(ticker, "load_native_5m"):
-                ticker.load_native_5m()
-            logger.info("WSClient: 5m scan listener wired to ticker (native 5m from disk)")
-
-        # on_5m_enriched: precomputed enriched 5m bars (legacy backtest path)
-        elif hasattr(ticker, "on_5m_enriched") and getattr(self, "_on_5m_enriched", None) is not None:
+        # on_5m_enriched: precomputed enriched 5m bars (backtest only)
+        if hasattr(ticker, "on_5m_enriched") and getattr(self, "_on_5m_enriched", None) is not None:
             ticker.on_5m_enriched = self._on_5m_enriched
-            logger.info("WSClient: 5m enriched listener wired to ticker (legacy)")
+            logger.info("WSClient: 5m enriched listener wired to ticker")
 
     @staticmethod
     def _connect(ticker: Any) -> None:

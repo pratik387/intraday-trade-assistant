@@ -284,19 +284,7 @@ class MockBroker:
             def on_i1_candle(self, cb):
                 self._inner.on_i1_candle = cb
 
-            # --- 5m scan callback: native 5m from disk (forwarded to FeatherTicker) ---
-            @property
-            def on_5m_scan(self):
-                return self._inner.on_5m_scan
-
-            @on_5m_scan.setter
-            def on_5m_scan(self, cb):
-                self._inner.on_5m_scan = cb
-
-            def load_native_5m(self, *args, **kwargs):
-                return self._inner.load_native_5m(*args, **kwargs)
-
-            # --- Enriched 5m bar callback (legacy, forwarded to FeatherTicker) ---
+            # --- Enriched 5m bar callback (forwarded to FeatherTicker) ---
             @property
             def on_5m_enriched(self):
                 return self._inner.on_5m_enriched
