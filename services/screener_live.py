@@ -635,20 +635,21 @@ class ScreenerLive:
     def start(self) -> None:
         """Connect WS and subscribe index symbols only (scan trigger + directional bias).
         Active trade symbols are subscribed dynamically via add_hot at enqueue time."""
-        # In paper/live with API-first Stage-0:
-        # - Scan trigger is timer-based (no WebSocket dependency)
-        # - Directional bias uses API data (not WebSocket LTP)
-        # - Only active trade symbols need ticks (added dynamically via add_hot)
-        if not env.DRY_RUN and self.raw_cfg.get("api_5m_bars", {}).get("fetch_all_symbols", False):
-            self.subs.set_core(set())  # No core subscriptions — trades added via add_hot
-            logger.info("WS_LEAN | Zero core subscriptions (API-first + timer mode). "
-                       "Trade symbols added dynamically via add_hot.")
+        # Paper/live: lean WebSocket — no core subscriptions, trades added dynamically
+        # Backtest: subscribe all symbols (FeatherTicker emulates ticks)
+        if not env.DRY_RUN:
+            self.subs.set_core(set())
+            logger.info("WS_LEAN | Zero core subscriptions. Trade symbols added via add_hot.")
         else:
-            # Backtest or legacy mode: subscribe all symbols
             self.subs.set_core(self.token_map)
 
         self.subs.start()
         self.ws.start()
+
+        # Prewarm API warmup cache (paper/live only) before first scan
+        # Fetches yesterday's 5m bars from Historical API for all core_symbols
+        if not env.DRY_RUN and not self._api_warmup_loaded:
+            self._load_api_warmup_cache()
 
         # Start async scan dispatch worker (live/paper only)
         self._start_scan_worker()
@@ -691,54 +692,6 @@ class ScreenerLive:
         # Trigger executor is managed by main.py
 
         logger.info("ScreenerLive stopped")
-
-    def _late_start_backfill(self) -> None:
-        """
-        Load historical bars from Redis if starting late (after market open).
-
-        This pre-warms the indicator calculations so Stage-0 filtering
-        and volume persistence work immediately instead of requiring
-        45-60 minutes of warmup time.
-        """
-        try:
-            from datetime import timedelta
-            from utils.time_util import _now_naive_ist
-
-            # Get late start config
-            late_start_cfg = self.raw_cfg.get("late_start_warmup", {})
-            if not late_start_cfg.get("enabled", True):
-                return
-
-            threshold_minutes = late_start_cfg.get("threshold_minutes", 30)
-
-            # Check if this is a late start
-            now = _now_naive_ist()
-            market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
-
-            if now <= market_open + timedelta(minutes=threshold_minutes):
-                # Not a late start - normal warmup will happen
-                return
-
-            minutes_late = int((now - market_open).total_seconds() / 60)
-            logger.info(f"LATE_START | Detected late start at {now.strftime('%H:%M')} ({minutes_late} min after open)")
-
-            # Backfill 5m bars from Redis
-            if hasattr(self.agg, 'backfill_from_redis'):
-                bars_loaded = self.agg.backfill_from_redis(self.core_symbols, "5m")
-                if bars_loaded > 0:
-                    avg_bars_per_symbol = bars_loaded / len(self.core_symbols) if self.core_symbols else 0
-                    logger.info(
-                        f"LATE_START | Backfilled {bars_loaded} bars "
-                        f"(avg {avg_bars_per_symbol:.1f} bars/symbol)"
-                    )
-                else:
-                    logger.warning("LATE_START | No bar history found in Redis - warmup will be slow")
-            else:
-                logger.warning("LATE_START | BarSubscriber doesn't support backfill - warmup will be slow")
-
-        except Exception as e:
-            # Don't let backfill failure crash the engine - just warn and continue
-            logger.warning(f"LATE_START | Backfill failed: {e} - warmup will be slow")
 
     # ---------------------------------------------------------------------
     # BarBuilder callbacks
@@ -2206,46 +2159,58 @@ class ScreenerLive:
 
     def _load_api_warmup_cache(self) -> None:
         """
-        Load previous day's raw 5m bars from per-symbol enriched feather files.
-        Used to prepend warmup bars before enrich_5m_bars() in paper/live mode,
-        matching the precompute script's 30-bar warmup for indicator stabilization.
+        Fetch previous trading day's 5m bars from V3 Historical API for all core_symbols.
+        Used to prepend warmup bars before enrich_5m_bars() at runtime, ensuring indicator
+        stabilization (ADX/RSI/BB_width) for the first scan of the day.
 
-        Single canonical source: cache/ohlcv_archive/{SYM}.NS/{SYM}.NS_5minutes_enriched.feather
-        (same file backtest uses via _load_precomputed_5m). We strip the indicator columns
-        and keep only OHLCV — enrich_5m_bars() will recompute indicators on the combined
-        (warmup + today's API bars) DataFrame.
+        Self-contained: no filesystem dependency, no cross-dependency with backtest cache.
+        Paper is fully self-sufficient.
         """
         import time as time_module
-        from pathlib import Path
+        import asyncio
+        from utils.time_util import _now_naive_ist
 
         _t0 = time_module.perf_counter()
-        cache_dir = Path("cache/ohlcv_archive")
-        loaded = 0
-        warmup_bars = 30  # Match precompute_5m_cache.py WARMUP_BARS
+        warmup_bars = 30  # Number of bars to retain per symbol
 
-        for sym in self.core_symbols:
-            tsym = sym.split(":", 1)[-1].strip().upper()
-            for suffix in [f"{tsym}.NS", tsym]:
-                path = cache_dir / suffix / f"{suffix}_5minutes_enriched.feather"
-                if path.exists():
-                    try:
-                        df = pd.read_feather(path)
-                        df["date"] = pd.to_datetime(df["date"])
-                        if getattr(df["date"].dt, "tz", None) is not None:
-                            df["date"] = df["date"].dt.tz_localize(None)
-                        df = df.set_index("date").sort_index()
-                        # Take last warmup_bars from the most recent completed day
-                        # (not today — today's bars will come from the API)
-                        today = pd.Timestamp(datetime.now().date())
-                        prev_day_df = df[df.index < today]
-                        if len(prev_day_df) >= warmup_bars:
-                            # Strip indicators — keep only raw OHLCV for warmup
-                            warmup = prev_day_df[["open", "high", "low", "close", "volume"]].tail(warmup_bars)
-                            self._api_warmup_cache[sym] = warmup
-                            loaded += 1
-                    except Exception:
-                        pass
-                    break
+        # Find previous trading day (skip weekends, limited backward)
+        today_dt = _now_naive_ist().date()
+        from datetime import timedelta as _td
+        prev_day = today_dt - _td(days=1)
+        # Skip weekends
+        while prev_day.weekday() >= 5:  # Saturday=5, Sunday=6
+            prev_day -= _td(days=1)
+
+        from_date = prev_day.isoformat()
+        to_date = prev_day.isoformat()
+
+        logger.info("API_WARMUP_CACHE | Fetching yesterday's 5m bars (%s) from Historical API", from_date)
+
+        if not hasattr(self.sdk, "async_fetch_historical_5m_batch"):
+            logger.warning("API_WARMUP_CACHE | SDK has no async_fetch_historical_5m_batch — skipping warmup")
+            self._api_warmup_loaded = True
+            return
+
+        api_5m_cfg = self.raw_cfg.get("api_5m_bars", {})
+        rps = float(api_5m_cfg.get("rps", 15))
+        concurrency = int(api_5m_cfg.get("concurrency", 30))
+
+        try:
+            raw = asyncio.run(
+                self.sdk.async_fetch_historical_5m_batch(
+                    list(self.core_symbols), from_date, to_date,
+                    concurrency=concurrency, rps=rps,
+                )
+            )
+        except Exception as e:
+            logger.exception("API_WARMUP_CACHE | async batch failed: %s", e)
+            raw = {}
+
+        loaded = 0
+        for sym, df in raw.items():
+            if df is not None and len(df) > 0:
+                self._api_warmup_cache[sym] = df.tail(warmup_bars)
+                loaded += 1
 
         self._api_warmup_loaded = True
         _elapsed = time_module.perf_counter() - _t0

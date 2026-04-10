@@ -2340,12 +2340,6 @@
     "buffer_size": 50000,
     "_comment": "Records ticks to data/sidecar/ticks/ for backtesting. Can also run standalone: python -m market_data.tick_recorder"
   },
-  "_comment_late_start_warmup": "=== LATE START WARMUP (Subscriber Mode) ===",
-  "late_start_warmup": {
-    "enabled": true,
-    "threshold_minutes": 30,
-    "_comment": "If starting >30min after 09:15, backfill 5m bar history from Redis to pre-warm indicators"
-  },
   "_comment_reconciliation": "=== POSITION RECONCILIATION ===",
   "reconcile_position_retries": 3,
   "reconcile_position_retry_delay": 1.0,
