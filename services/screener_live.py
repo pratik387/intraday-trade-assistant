@@ -227,12 +227,19 @@ def _init_stage0_worker(config_dict):
     """
     global _stage0_scanner, _stage0_config, _stage0_cap_map
     try:
-        # Suppress all console output from worker process.
-        # Important logs are returned to parent process and logged there.
+        # Suppress console output from worker process — keep only JSONL file loggers.
         import logging
         root = logging.getLogger()
         root.handlers.clear()
         root.addHandler(logging.NullHandler())
+
+        # Initialize scanner JSONL logger in subprocess so scanning.jsonl gets written
+        log_dir = config_dict.get("_log_dir")
+        if log_dir:
+            from pathlib import Path
+            from config.logging_config import JSONLLogger
+            import config.logging_config as _lc
+            _lc._scanner_logger = JSONLLogger(Path(log_dir) / "scanning.jsonl", "scanner")
 
         from services.scan.energy_scanner import EnergyScanner
 
@@ -503,11 +510,15 @@ class ScreenerLive:
         # In backtest, no I1 candles arrive so bars are still built from ticks.
         self.ws.set_i1_candle_listener(self.agg.on_i1_candle)
 
-        # In backtest with precomputed 5m: FeatherTicker fires scan directly via enriched 5m
-        # replay, bypassing LiveTickHandler's 1m→5m aggregation.
-        if env.DRY_RUN and self._precomputed_5m:
+        # In backtest: FeatherTicker loads native 5m from disk, enriches with warmup,
+        # and fires scan callback with enriched dict — same data as paper's API fetch.
+        # Tick emulation (I1 candles → BarBuilder → executors) stays unchanged.
+        if env.DRY_RUN:
             self.agg._on_5m_close = lambda sym, bar: None  # disable LiveTickHandler scan trigger
-            self.ws.set_5m_enriched_listener(self._on_5m_close)  # enriched replay triggers scan
+
+            # Native 5m from disk → enrich → scan (same data as paper API fetch)
+            # WSClient._wire_callbacks will load native 5m and wire on_5m_scan
+            self.ws.set_5m_scan_listener(self._on_5m_scan)
 
         # Gates - Use MainDetector directly for structure detection
         self.detector = MainDetector(raw)
@@ -600,10 +611,16 @@ class ScreenerLive:
         logger.info("ScreenerLive: Persistent worker pool created (%d workers)", structure_workers)
 
         # Create Stage-0 worker pool (1 worker — GIL-free compute_features + filter + shortlist)
+        # Pass log directory so scanner logger can be initialized in subprocess
+        stage0_cfg = dict(self.raw_cfg)
+        from config.logging_config import get_log_directory
+        log_dir = get_log_directory()
+        if log_dir:
+            stage0_cfg["_log_dir"] = str(log_dir)
         self._stage0_executor = ProcessPoolExecutor(
             max_workers=1,
             initializer=_init_stage0_worker,
-            initargs=(self.raw_cfg,)
+            initargs=(stage0_cfg,)
         )
         logger.info("ScreenerLive: Stage-0 worker pool created (1 worker)")
 
@@ -1043,11 +1060,25 @@ class ScreenerLive:
             self._scan_thread.join(timeout=5.0)
         logger.info("SCAN_DISPATCH | Background scan worker stopped")
 
-    # ----- 5m close dispatch + scan pipeline --------------------------------
+    # ----- 5m scan dispatch --------------------------------
+    def _on_5m_scan(self, api_df5_cache: Dict[str, pd.DataFrame]) -> None:
+        """Backtest scan callback: receives pre-enriched 5m dict from FeatherTicker.
+        Same data format as paper's API fetch. Runs scan synchronously."""
+        if not api_df5_cache:
+            return
+        # Use the first symbol's last bar timestamp as 'now'
+        first_df = next(iter(api_df5_cache.values()))
+        now = first_df.index[-1]
+        # Build a dummy bar_5m for the scan method signature
+        dummy_bar = pd.Series({"open": 0, "high": 0, "low": 0, "close": 0, "volume": 0}, name=now)
+        # Store the cache so _run_5m_scan can use it
+        self._backtest_api_cache = api_df5_cache
+        self._run_5m_scan("SCAN", dummy_bar)
+        self._backtest_api_cache = None
+
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
-        """Dispatch 5m close: async in live/paper, sync in backtest."""
+        """Legacy dispatch: async in live/paper, sync in backtest."""
         if env.DRY_RUN:
-            # Backtest: synchronous for deterministic replay
             self._run_5m_scan(symbol, bar_5m)
             return
 
@@ -1119,15 +1150,23 @@ class ScreenerLive:
         in_opening_bell = dtime(9, 20) <= current_time < dtime(9, 30)
         min_bars_for_processing = 1 if in_opening_bell else 3
 
-        # ---------- API 5m bars for ALL symbols (live/paper only) ----------
-        # Fetch V3 intraday 5m bars BEFORE Stage-0 so energy scoring uses
-        # Historical API data (same source as backtest), not WebSocket I1.
-        # This eliminates the data divergence that causes 20-30% trade parity.
+        # ---------- 5m bars: single code path for paper AND backtest ----------
+        # Paper: fetch native 5m from V3 Intraday API → enrich → api_df5_cache
+        # Backtest: FeatherTicker loads native 5m from disk → enriches → passes via _backtest_api_cache
+        # Both produce identical enriched dicts
         api_df5_cache: Dict[str, pd.DataFrame] = {}
         api_5m_cfg = self.raw_cfg.get("api_5m_bars", {})
         fetch_all = api_5m_cfg.get("fetch_all_symbols", False)
 
-        if api_5m_cfg.get("enabled", False) and not env.DRY_RUN and fetch_all:
+        if env.DRY_RUN and hasattr(self, '_backtest_api_cache') and self._backtest_api_cache:
+            # BACKTEST: enriched data already prepared by FeatherTicker._fire_5m_scan
+            api_df5_cache = self._backtest_api_cache
+
+        elif env.DRY_RUN and fetch_all:
+            # BACKTEST FALLBACK: load native 5m bars from disk
+            api_df5_cache = self._load_5m_from_disk(now, min_bars_for_processing)
+
+        elif api_5m_cfg.get("enabled", False) and not env.DRY_RUN and fetch_all:
             if hasattr(self.sdk, "async_fetch_intraday_5m_batch"):
                 # Wait for API data availability
                 min_delay = float(api_5m_cfg["min_delay_after_bar_close_sec"])
@@ -1219,8 +1258,9 @@ class ScreenerLive:
 
             df5_by_symbol: Dict[str, pd.DataFrame] = {}
             for s in self.core_symbols:
-                # Density gate: only applies when using BarBuilder data (no API cache)
-                if s not in api_df5_cache and density_enabled and hasattr(self.agg, "get_bar_density"):
+                # Density gate: only applies when using BarBuilder data (not API or precomputed)
+                has_enriched = s in api_df5_cache or (self._precomputed_5m and s in self._precomputed_5m)
+                if not has_enriched and density_enabled and hasattr(self.agg, "get_bar_density"):
                     bar_count = self.agg._bar_1m_count.get(s, 0)
                     if bar_count >= density_min_bars:
                         density = self.agg.get_bar_density(s, now)
@@ -1228,9 +1268,14 @@ class ScreenerLive:
                             density_skipped += 1
                             continue
 
-                # Data source: API cache (parity with backtest) > BarBuilder (fallback)
+                # Data source priority:
+                # 1. API cache — paper/live (enriched, fetched from V3 Intraday API)
+                # 2. Precomputed enriched 5m — backtest (from feather cache)
+                # 3. BarBuilder — fallback (raw OHLCV, no indicators)
                 if s in api_df5_cache:
                     df5 = api_df5_cache[s]
+                elif self._precomputed_5m and s in self._precomputed_5m:
+                    df5 = self._get_precomputed_5m(s, now, self.cfg.screener_store_5m_max)
                 else:
                     df5 = self.agg.get_df_5m_tail(s, self.cfg.screener_store_5m_max)
 
@@ -1281,12 +1326,13 @@ class ScreenerLive:
         shortlist_count = len(shortlist)
 
         api_sourced = sum(1 for s in df5_by_symbol if s in api_df5_cache)
-        bb_sourced = len(df5_by_symbol) - api_sourced
+        precomputed_sourced = sum(1 for s in df5_by_symbol if s not in api_df5_cache and self._precomputed_5m and s in self._precomputed_5m)
+        bb_sourced = len(df5_by_symbol) - api_sourced - precomputed_sourced
         logger.info("SCANNER_COMPLETE | Processed %d eligible of %d total symbols → %d shortlisted (%.1f%%) | "
-                   "data_source: api=%d barbuilder=%d | Stage-0→Gates | TIME: %.2fs",
+                   "data_source: api=%d precomputed=%d barbuilder=%d | Stage-0→Gates | TIME: %.2fs",
                    eligible_symbols, total_symbols, shortlist_count,
                    (shortlist_count/max(eligible_symbols,1))*100,
-                   api_sourced, bb_sourced, _t_scanner_end - _t_bar_start)
+                   api_sourced, precomputed_sourced, bb_sourced, _t_scanner_end - _t_bar_start)
         if not shortlist:
             return
 
@@ -2368,7 +2414,11 @@ class ScreenerLive:
         for sym in self.core_symbols:
             tsym = sym.split(":", 1)[-1].strip().upper()
             for suffix in [f"{tsym}.NS", tsym]:
-                path = cache_dir / suffix / f"{suffix}_5minutes_enriched.feather"
+                # Prefer raw native 5m bars (same source as paper API fetch)
+                # Fallback to enriched feather (has OHLCV + indicators)
+                path_raw = cache_dir / suffix / f"{suffix}_5minutes.feather"
+                path_enriched = cache_dir / suffix / f"{suffix}_5minutes_enriched.feather"
+                path = path_raw if path_raw.exists() else path_enriched
                 if path.exists():
                     try:
                         df = pd.read_feather(path)
@@ -2393,6 +2443,90 @@ class ScreenerLive:
         _elapsed = time_module.perf_counter() - _t0
         logger.info("API_WARMUP_CACHE | Loaded %d/%d symbols (%.1fs) | %d warmup bars each",
                    loaded, len(self.core_symbols), _elapsed, warmup_bars)
+
+    def _load_5m_from_disk(self, now: datetime, min_bars: int) -> Dict[str, pd.DataFrame]:
+        """Load native 5m bars from disk, filter to current scan time, enrich with warmup.
+
+        This is the backtest equivalent of the paper API fetch. Uses the same native 5m bars
+        (pre-downloaded from V3 Intraday API) and the same enrichment function, producing
+        identical results. Single code path for parity.
+
+        Args:
+            now: Current scan timestamp (bar start time). Bars up to this time are loaded.
+            min_bars: Minimum bars required for a symbol to be included.
+
+        Returns:
+            Dict[str, DataFrame] — enriched 5m bars per symbol, same format as api_df5_cache.
+        """
+        import time as time_module
+        from pathlib import Path
+        from services.indicators.bar_enrichment import enrich_5m_bars
+
+        _t0 = time_module.perf_counter()
+        cache_dir = Path("cache/ohlcv_archive")
+        warmup_bars = 30
+        scan_ts = pd.Timestamp(now)
+        today = scan_ts.normalize()
+        result: Dict[str, pd.DataFrame] = {}
+        ok, fail, warmup_used = 0, 0, 0
+
+        # Load raw 5m disk cache on first call (avoid re-reading feather files every scan)
+        if not hasattr(self, "_disk_5m_cache"):
+            self._disk_5m_cache: Dict[str, pd.DataFrame] = {}
+            _t_load = time_module.perf_counter()
+            for sym in self.core_symbols:
+                tsym = sym.split(":", 1)[-1].strip().upper()
+                for suffix in [f"{tsym}.NS", tsym]:
+                    path = cache_dir / suffix / f"{suffix}_5minutes.feather"
+                    if path.exists():
+                        try:
+                            df = pd.read_feather(path)
+                            df["date"] = pd.to_datetime(df["date"])
+                            if getattr(df["date"].dt, "tz", None) is not None:
+                                df["date"] = df["date"].dt.tz_localize(None)
+                            df = df.set_index("date").sort_index()
+                            df = df[["open", "high", "low", "close", "volume"]].astype(float)
+                            self._disk_5m_cache[sym] = df
+                        except Exception:
+                            pass
+                        break
+            logger.info("DISK_5M_CACHE | Loaded %d/%d symbols (%.1fs)",
+                       len(self._disk_5m_cache), len(self.core_symbols),
+                       time_module.perf_counter() - _t_load)
+
+        for sym, df_all in self._disk_5m_cache.items():
+            # Filter to bars up to current scan time (no look-ahead)
+            df_up_to = df_all[df_all.index <= scan_ts]
+            if len(df_up_to) < min_bars:
+                fail += 1
+                continue
+
+            # Split: today's bars + warmup from previous days
+            today_bars = df_up_to[df_up_to.index >= today]
+            prev_bars = df_up_to[df_up_to.index < today]
+
+            if len(today_bars) < min_bars:
+                fail += 1
+                continue
+
+            # Prepend warmup (same logic as paper's _load_api_warmup_cache)
+            if len(prev_bars) >= warmup_bars:
+                warmup = prev_bars.tail(warmup_bars)
+                combined = pd.concat([warmup, today_bars])
+                enriched = enrich_5m_bars(combined, session_date=today)
+                warmup_used += 1
+            else:
+                enriched = enrich_5m_bars(today_bars, session_date=today)
+
+            if not enriched.empty:
+                result[sym] = enriched
+                ok += 1
+
+        _elapsed = time_module.perf_counter() - _t0
+        logger.info("DISK_5M_FETCH | %d ok, %d failed of %d symbols | %.1fs | warmup: %d/%d",
+                   ok, fail, len(self._disk_5m_cache), _elapsed, warmup_used, ok)
+
+        return result
 
     def _reasons_for(self, sym: str, decisions: List[Tuple[str, Decision]]) -> List[str]:
         for s, d in decisions:

@@ -485,7 +485,7 @@ def main() -> int:
     api.set_state(SessionState.TRADING)
 
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec, trader, api, capital_manager)
+    _run_until_eod(screener, exit_exec, trader, api, capital_manager, positions)
 
     return 0
 
@@ -496,6 +496,7 @@ def _run_until_eod(
     trader: TriggerAwareExecutor,
     api_server = None,
     capital_manager = None,
+    positions = None,
     poll_sec: float = 0.2
 ) -> None:
     logger.info("session start")
@@ -536,10 +537,16 @@ def _run_until_eod(
                 logger.info("WS_RECOVERY | Subscribed %d symbols for open positions: %s",
                            len(recovery_tokens), list(open_positions.keys()))
 
+        logger.info("MAIN_LOOP | Entering poll loop | _request_exit=%s stop=%s",
+                   getattr(screener, "_request_exit", "?"), stop.is_set())
         while not getattr(screener, "_request_exit", False) and not stop.is_set():
             time.sleep(poll_sec)
+        logger.info("MAIN_LOOP | Exited poll loop | _request_exit=%s stop=%s",
+                   getattr(screener, "_request_exit", "?"), stop.is_set())
     except KeyboardInterrupt:
         logger.info("keyboard interrupt – stopping")
+    except Exception as e:
+        logger.exception("MAIN_LOOP | Unexpected exception: %s", e)
     finally:
         # Update API state
         if api_server:
