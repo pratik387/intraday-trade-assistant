@@ -170,6 +170,14 @@ class MainDetector(BaseStructure):
                     logger.warning(f"MAIN_DETECTOR: {setup_name} enabled but ict_comprehensive not found - skipping")
                     continue
 
+            # Skip ict_comprehensive as a detector — it serves only as config base for
+            # ICT-derived setups. Its detect() filters for structure_type "ict_comprehensive"
+            # which no sub-detector produces, so it always returns empty. The first real
+            # ICT detector instance will prime the shared cache instead.
+            if setup_name == "ict_comprehensive":
+                logger.debug("MAIN_DETECTOR: ict_comprehensive skipped as detector (config-only role)")
+                continue
+
             if setup_config.get("enabled", False):
                 try:
                     # Inject setup name so detectors can filter by their configured type
@@ -187,14 +195,7 @@ class MainDetector(BaseStructure):
                                                                 config.get("max_detections_per_symbol", 5))
         self.conflict_resolution_enabled = main_detector_config.get("conflict_resolution_enabled",
                                                                   config.get("conflict_resolution_enabled", True))
-        self.priority_weights = config.get("priority_weights", {
-            'ict': 1.0,                    # Highest priority - institutional concepts
-            'level_breakout': 0.9,         # High priority - key level breaks
-            'failure_fade': 0.8,           # High priority - mean reversion
-            'squeeze_release': 0.7,        # Medium priority - volatility expansion
-            'flag_continuation': 0.6,      # Medium priority - trend continuation
-            'momentum_breakout': 0.5       # Lower priority - momentum only
-        })
+        self.priority_weights = main_detector_config["priority_weights"]
 
         logger.debug(f"MAIN_DETECTOR: Initialization complete with {len(self.detectors)} active detectors: {list(self.detectors.keys())}")
 

@@ -224,7 +224,6 @@ class MomentumPipeline(BasePipeline):
         setup_type: str,
         regime: str,
         df5m: pd.DataFrame,
-        df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
         vol_mult: float,
@@ -237,8 +236,6 @@ class MomentumPipeline(BasePipeline):
         - Block in chop (no trend to follow)
         - Boost in trend_up/trend_down
         """
-        # df1m reserved for future 1-minute analysis
-        _ = df1m
         # strength reserved for future strength-based gating
         _ = strength
 

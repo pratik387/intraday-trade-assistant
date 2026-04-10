@@ -247,7 +247,6 @@ class LevelPipeline(BasePipeline):
         setup_type: str,
         regime: str,
         df5m: pd.DataFrame,
-        df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
         vol_mult: float,
@@ -266,8 +265,6 @@ class LevelPipeline(BasePipeline):
         - ADX: high ADX is warning but level plays CAN work (no penalty)
         - Volume: nice-to-have, not required (no penalty)
         """
-        # df1m reserved for future bar-level analysis
-        _ = df1m
 
         logger.debug(f"[LEVEL] Validating gates for {symbol} {setup_type}: regime={regime}, adx={adx:.1f}, vol={vol_mult:.2f}")
 

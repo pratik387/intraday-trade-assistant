@@ -325,11 +325,10 @@ class FastConditionValidator:
             if last_update and (current_time - last_update).total_seconds() < 300:
                 return cache_entry.get("avg_volume", 0)
         
-        # Calculate new average (fast approximation)
+        # Calculate new average from 5m bars (4 bars ≈ 20 minutes)
         try:
-            # Get recent bars for volume average
-            df_recent = self.bar_builder.get_df_1m_tail(symbol, 20)
-            if len(df_recent) >= 5:
+            df_recent = self.bar_builder.get_df_5m_tail(symbol, 4)
+            if len(df_recent) >= 2:
                 avg_volume = float(df_recent["volume"].mean())
                 
                 # Cache the result

@@ -322,15 +322,27 @@ class BreakoutPipeline(BasePipeline):
         ref_source = "none"
 
         if base_name in self._MOMENTUM_BREAKOUTS:
-            # Momentum-driven: use directional candle body as proxy for breakout distance.
-            # Pro traders measure momentum by candle body relative to ATR — a strong
-            # momentum bar (body > 1 ATR) with volume confirms institutional participation.
-            last_bar = df5m.iloc[-1]
-            if bias == "long":
-                breakout_distance = max(float(last_bar["close"]) - float(last_bar["open"]), 0)
+            # Momentum-driven: use directional move as proxy for breakout distance.
+            # Pro traders measure momentum by price displacement relative to ATR.
+            if "squeeze" in base_name:
+                # Squeeze release: multi-bar breakout distance (John Carter TTM approach).
+                # Single-bar candle body is wrong — a squeeze release unfolds over 3+ bars.
+                # The last bar may be a retracement candle within the larger move.
+                squeeze_lookback = self.cfg.get("squeeze_quality_lookback_bars", 3)
+                recent = df5m.tail(min(squeeze_lookback, len(df5m)))
+                if bias == "long":
+                    breakout_distance = max(float(recent["high"].max()) - float(recent["open"].iloc[0]), 0)
+                else:
+                    breakout_distance = max(float(recent["open"].iloc[0]) - float(recent["low"].min()), 0)
+                ref_source = "squeeze_multi_bar"
             else:
-                breakout_distance = max(float(last_bar["open"]) - float(last_bar["close"]), 0)
-            ref_source = "candle_body"
+                # Other momentum breakouts: single-bar candle body
+                last_bar = df5m.iloc[-1]
+                if bias == "long":
+                    breakout_distance = max(float(last_bar["close"]) - float(last_bar["open"]), 0)
+                else:
+                    breakout_distance = max(float(last_bar["open"]) - float(last_bar["close"]), 0)
+                ref_source = "candle_body"
 
         elif base_name in self._ORB_SETUPS:
             # ORB family: ORH/ORL is the natural reference level
@@ -425,7 +437,6 @@ class BreakoutPipeline(BasePipeline):
         setup_type: str,
         regime: str,
         df5m: pd.DataFrame,
-        df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
         vol_mult: float,
@@ -640,11 +651,11 @@ class BreakoutPipeline(BasePipeline):
         lookback = vol_cfg["long"]["lookback_bars"]
         if is_fhm:
             reasons.append(f"fhm_volume_surge_bypass:uses_rvol_from_screening")
-        elif df1m is not None and len(df1m) >= 5:
-            lookback = min(lookback, len(df1m) - 1)
-            if lookback >= 4:
-                avg_volume = df1m["volume"].iloc[-lookback-1:-1].mean()
-                current_volume = df1m["volume"].iloc[-1]
+        elif df5m is not None and len(df5m) >= 3:
+            lookback = min(6, len(df5m) - 1)
+            if lookback >= 2:
+                avg_volume = df5m["volume"].iloc[-lookback-1:-1].mean()
+                current_volume = df5m["volume"].iloc[-1]
 
                 if avg_volume > 0:
                     volume_ratio = current_volume / avg_volume
@@ -655,8 +666,8 @@ class BreakoutPipeline(BasePipeline):
                     else:
                         reasons.append(f"volume_surge_pass:{volume_ratio:.2f}x")
         else:
-            bars_available = len(df1m) if df1m is not None else 0
-            reasons.append(f"volume_surge_reject:insufficient_1m_data({bars_available}_bars<5)")
+            bars_available = len(df5m) if df5m is not None else 0
+            reasons.append(f"volume_surge_reject:insufficient_5m_data({bars_available}_bars<3)")
             passed = False
 
         # Momentum candle filter
@@ -664,9 +675,9 @@ class BreakoutPipeline(BasePipeline):
         # FAIL-CLOSED: Reject breakout when 1m data insufficient (can't validate candle quality)
         if is_fhm:
             reasons.append(f"fhm_momentum_candle_bypass:uses_rvol")
-        elif df1m is not None and len(df1m) >= 5:
-            last_5 = df1m.tail(5)
-            candle_sizes = (last_5["high"] - last_5["low"]).values
+        elif df5m is not None and len(df5m) >= 3:
+            last_3 = df5m.tail(3)
+            candle_sizes = (last_3["high"] - last_3["low"]).values
             current_candle = candle_sizes[-1]
             avg_prev = candle_sizes[:-1].mean()
 
@@ -679,8 +690,8 @@ class BreakoutPipeline(BasePipeline):
                 else:
                     reasons.append(f"momentum_candle_pass:{candle_ratio:.2f}x")
         else:
-            bars_available = len(df1m) if df1m is not None else 0
-            reasons.append(f"momentum_candle_reject:insufficient_1m_data({bars_available}_bars<5)")
+            bars_available = len(df5m) if df5m is not None else 0
+            reasons.append(f"momentum_candle_reject:insufficient_5m_data({bars_available}_bars<3)")
             passed = False
 
         # ADX gate from config - HARD GATE

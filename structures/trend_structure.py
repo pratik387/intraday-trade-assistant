@@ -93,6 +93,13 @@ class TrendStructure(BaseStructure):
         self.confidence_strong_trend = config["confidence_strong_trend"]
         self.confidence_weak_trend = config["confidence_weak_trend"]
 
+        # Trend classification parameters (EMA-based)
+        self.ema_trend_buffer = config["ema_trend_buffer"]
+        self.ema_separation_scale = config["ema_separation_scale"]
+
+        # Continuation-specific thresholds
+        self.continuation_momentum_boost = config["continuation_momentum_boost"]
+
         logger.debug(f"TREND: Initialized with min strength: {self.min_trend_strength}, pullback range: {self.min_pullback_pct}-{self.max_pullback_pct}%")
         logger.debug(f"TREND: SL params - swing_buffer: {self.swing_sl_buffer_atr}ATR, lookback: {self.swing_lookback_bars} bars")
 
@@ -172,16 +179,17 @@ class TrendStructure(BaseStructure):
             ema_long_current = ema_long.iloc[-1]
 
             # Determine trend direction
-            if ema_short_current > ema_long_current * 1.005:  # 0.5% buffer
+            buffer = self.ema_trend_buffer
+            if ema_short_current > ema_long_current * (1.0 + buffer):
                 trend_direction = "up"
-            elif ema_short_current < ema_long_current * 0.995:
+            elif ema_short_current < ema_long_current * (1.0 - buffer):
                 trend_direction = "down"
             else:
                 trend_direction = "sideways"
 
             # Calculate trend strength
             ema_separation = abs(ema_short_current - ema_long_current) / ema_long_current * 100
-            trend_strength = min(100.0, ema_separation * 50)  # Scale to 0-100
+            trend_strength = min(100.0, ema_separation * self.ema_separation_scale)
 
             if trend_strength < self.min_trend_strength:
                 logger.debug(f"TREND: {context.symbol} - Weak trend strength: {trend_strength:.1f}")
@@ -236,8 +244,9 @@ class TrendStructure(BaseStructure):
 
             return momentum_score
 
-        except Exception:
-            return 50.0  # Default moderate momentum
+        except Exception as e:
+            logger.warning(f"TREND: Momentum score calculation failed: {e}")
+            raise
 
     def _calculate_trend_age(self, ema_short: pd.Series, ema_long: pd.Series) -> int:
         """Calculate how long the trend has been in place."""
@@ -327,13 +336,13 @@ class TrendStructure(BaseStructure):
             return events, quality_score
 
         # For continuation, we want minimal pullback (momentum continuation)
-        if trend_info.pullback_depth_pct > 15.0:  # More than 15% pullback is not continuation
+        if trend_info.pullback_depth_pct > self.max_pullback_pct:
             return events, quality_score
 
         # Check volume confirmation
         volume_ok = self._check_volume_confirmation(context)
 
-        if volume_ok and trend_info.momentum_score >= self.min_momentum_score + 10:  # Higher threshold for continuation
+        if volume_ok and trend_info.momentum_score >= self.min_momentum_score + self.continuation_momentum_boost:
             if trend_info.trend_direction == "up":
                 structure_type = "trend_continuation_long"
                 side = "long"

@@ -66,6 +66,9 @@
         "min_bars_required": 4
     },
 
+    "squeeze_quality_lookback_bars": 3,
+    "_comment_squeeze_lookback": "Multi-bar breakout distance for squeeze release quality (John Carter TTM approach). Uses 3-bar move instead of single-bar candle body.",
+
     "quality": {
         "_comment": "From configuration.json - min_t1_rr: 1.2, t1_rr: 1.5",
         "min_structural_rr": 1.2,

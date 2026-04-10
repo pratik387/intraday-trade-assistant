@@ -28,7 +28,6 @@ Usage:
     plan = process_setup_candidates(
         symbol="RELIANCE",
         df5m=df5m,
-        df1m=df1m,
         levels={"ORH": 2500, "ORL": 2480},
         regime="trend_up",
         now=pd.Timestamp.now(),

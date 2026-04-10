@@ -427,7 +427,6 @@ class PipelineOrchestrator:
         symbol: str,
         setup_type: str,
         df5m: pd.DataFrame,
-        df1m: Optional[pd.DataFrame],
         levels: Dict[str, float],
         regime: str,
         now: pd.Timestamp,
@@ -444,7 +443,6 @@ class PipelineOrchestrator:
             symbol: Trading symbol
             setup_type: Setup type (e.g., "orb_breakout_long")
             df5m: 5-minute OHLCV DataFrame
-            df1m: 1-minute OHLCV DataFrame (optional)
             levels: Key price levels
             regime: Current market regime
             now: Current timestamp
@@ -483,7 +481,6 @@ class PipelineOrchestrator:
                 symbol=symbol,
                 setup_type=setup_type,
                 df5m=df5m,
-                df1m=df1m,
                 levels=levels,
                 regime=regime,
                 now=now,
@@ -541,7 +538,6 @@ class PipelineOrchestrator:
         self,
         symbol: str,
         df5m: pd.DataFrame,
-        df1m: Optional[pd.DataFrame],
         levels: Dict[str, float],
         regime: str,
         now: pd.Timestamp,
@@ -560,7 +556,6 @@ class PipelineOrchestrator:
         Args:
             symbol: Trading symbol
             df5m: 5-minute OHLCV DataFrame
-            df1m: 1-minute OHLCV DataFrame (optional)
             levels: Key price levels
             regime: Market regime
             now: Current timestamp
@@ -597,7 +592,6 @@ class PipelineOrchestrator:
                 symbol=symbol,
                 setup_type=setup_type,
                 df5m=df5m,
-                df1m=df1m,
                 levels=candidate_levels,
                 regime=regime,
                 now=now,
@@ -740,7 +734,6 @@ class PipelineOrchestrator:
             symbols_data: List of dicts with keys:
                 - symbol: str
                 - df5m: DataFrame
-                - df1m: DataFrame (optional)
                 - levels: Dict
                 - candidates: List
                 - daily_df: DataFrame (optional)
@@ -766,7 +759,6 @@ class PipelineOrchestrator:
         for data in symbols_data:
             symbol = data["symbol"]
             df5m = data["df5m"]
-            df1m = data.get("df1m")
             levels = data["levels"]
             candidates = data.get("candidates", [])
             daily_df = data.get("daily_df")
@@ -788,7 +780,6 @@ class PipelineOrchestrator:
                     symbol=symbol,
                     setup_type=setup_type,
                     df5m=df5m,
-                    df1m=df1m,
                     levels=candidate_levels,
                     regime=regime,
                     now=now,
@@ -953,7 +944,6 @@ def get_orchestrator() -> PipelineOrchestrator:
 def process_setup_candidates(
     symbol: str,
     df5m: pd.DataFrame,
-    df1m: Optional[pd.DataFrame],
     levels: Dict[str, float],
     regime: str,
     now: pd.Timestamp,
@@ -971,7 +961,6 @@ def process_setup_candidates(
     Args:
         symbol: Trading symbol
         df5m: 5-minute OHLCV DataFrame
-        df1m: 1-minute OHLCV DataFrame (optional)
         levels: Key price levels
         regime: Current market regime
         now: Current timestamp
@@ -986,7 +975,6 @@ def process_setup_candidates(
     return orchestrator.process_candidates(
         symbol=symbol,
         df5m=df5m,
-        df1m=df1m,
         levels=levels,
         regime=regime,
         now=now,

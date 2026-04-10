@@ -456,7 +456,6 @@ class BasePipeline(ABC):
         setup_type: str,
         regime: str,
         df5m: pd.DataFrame,
-        df1m: Optional[pd.DataFrame],
         strength: float,
         adx: float,
         vol_mult: float,
@@ -1029,7 +1028,6 @@ class BasePipeline(ABC):
         symbol: str,
         setup_type: str,
         df5m: pd.DataFrame,
-        df1m: Optional[pd.DataFrame],
         levels: Dict[str, float],
         regime: str,
         now: pd.Timestamp,
@@ -1253,7 +1251,7 @@ class BasePipeline(ABC):
 
         # 3. GATES
         gate_result = self.validate_gates(
-            symbol, setup_type, regime, df5m, df1m,
+            symbol, setup_type, regime, df5m,
             strength=quality_result.structural_rr,
             adx=features.get("adx") or 0.0,
             vol_mult=features["volume_ratio"],

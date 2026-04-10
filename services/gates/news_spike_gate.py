@@ -4,12 +4,12 @@ news_spike_gate.py
 ------------------
 Detects very-short-horizon anomalies that are usually caused by news/announcements
 or sudden order-flow imbalances. It does **not** fetch any data or read config;
-callers must pass a 1‑minute bar tail (today) and explicit thresholds.
+callers must pass a 5‑minute bar tail (today) and explicit thresholds.
 
 API
 ---
 - NewsSpikeGate(window_bars, vol_z_thresh, ret_z_thresh, body_atr_ratio_thresh)
-- has_symbol_spike(df1m_tail) -> tuple[bool, NewsSignal]
+- has_symbol_spike(df5m_tail) -> tuple[bool, NewsSignal]
 - adjustment_for(signal) -> Adjustment
 
 Typical use in engine
@@ -18,7 +18,7 @@ Typical use in engine
                          vol_z_thresh=3.0,
                          ret_z_thresh=2.0,
                          body_atr_ratio_thresh=2.0)
-    spike, sig = gate.has_symbol_spike(df1m_tail)
+    spike, sig = gate.has_symbol_spike(df5m_tail)
     adj = gate.adjustment_for(sig)
     # Enforce in the decision layer (e.g., TradeDecisionGate):
     #   min_hold_bars += adj.require_hold_bars
@@ -26,7 +26,7 @@ Typical use in engine
 
 Notes
 -----
-• We evaluate the **last closed 1m bar** against the prior `window_bars` minutes
+• We evaluate the **last closed 5m bar** against the prior `window_bars` bars
   to avoid look-ahead. If not enough data, we return "no spike".
 • ATR is a short rolling mean (by default computed on the same window) and we
   measure candle body / ATR to catch extraordinary single-bar impulses.
@@ -55,18 +55,18 @@ class Adjustment:
 
 
 class NewsSpikeGate:
-    """Lightweight 1m anomaly detector.
+    """Lightweight 5m anomaly detector.
 
     Parameters
     ----------
     window_bars : int
-        Number of **prior** 1m bars used to compute baselines (>= 10 recommended).
+        Number of **prior** 5m bars used to compute baselines (>= 10 recommended).
     vol_z_thresh : float
         Z-score threshold for volume spike.
     ret_z_thresh : float
-        Z-score threshold for absolute 1m return.
+        Z-score threshold for absolute 5m return.
     body_atr_ratio_thresh : float
-        If |close-open| / ATR_1m_mean >= this threshold, mark as spike.
+        If |close-open| / ATR_5m_mean >= this threshold, mark as spike.
     """
 
     def __init__(
@@ -85,20 +85,20 @@ class NewsSpikeGate:
         self.body_atr_ratio_thresh = float(body_atr_ratio_thresh)
 
     # ------------------------------ Public API ------------------------------
-    def has_symbol_spike(self, df1m_tail: pd.DataFrame) -> Tuple[bool, NewsSignal]:
-        """Return (is_spike, NewsSignal) for the **last closed bar** in df1m_tail.
+    def has_symbol_spike(self, df5m_tail: pd.DataFrame) -> Tuple[bool, NewsSignal]:
+        """Return (is_spike, NewsSignal) for the **last closed bar** in df5m_tail.
 
-        Expects df1m_tail with columns: [open, high, low, close, volume].
-        Index should be the 1m close timestamps; only the last row is evaluated.
+        Expects df5m_tail with columns: [open, high, low, close, volume].
+        Index should be 5m close timestamps; only the last row is evaluated.
         """
-        if df1m_tail is None or df1m_tail.empty:
+        if df5m_tail is None or df5m_tail.empty:
             return False, NewsSignal(False, ["no_data"], 0.0, 0.0, 0.0)
-        if len(df1m_tail) < self.window + 1:
+        if len(df5m_tail) < self.window + 1:
             return False, NewsSignal(False, ["insufficient_history"], 0.0, 0.0, 0.0)
 
         # Split history vs. last closed bar (no look-ahead)
-        hist = df1m_tail.iloc[-(self.window + 1):-1]
-        last = df1m_tail.iloc[-1]
+        hist = df5m_tail.iloc[-(self.window + 1):-1]
+        last = df5m_tail.iloc[-1]
 
         # Volume z-score of last bar vs prior baseline
         vol = hist["volume"].astype(float)

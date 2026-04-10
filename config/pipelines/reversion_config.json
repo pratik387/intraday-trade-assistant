@@ -153,11 +153,27 @@
             "volume_spike_reversal_long": {
                 "enabled": true,
                 "blocked_caps": ["large_cap"],
+                "max_adx_for_reversal": 30,
+                "_comment_adx": "P1: Block reversals in strong trends (ADX>30 = continuation, not exhaustion)",
+                "blocked_time_windows": [
+                    {"start_hhmm": "0915", "end_hhmm": "0930", "reason": "opening_noise"}
+                ],
+                "reduced_size_time_windows": [
+                    {"start_hhmm": "1130", "end_hhmm": "1300", "size_mult": 0.5, "reason": "lunch_lull"}
+                ],
                 "_evidence": "3yr backtest: large_cap N=304, WR 52%, Avg -Rs 92. Overall profitable, block large_cap only."
             },
             "volume_spike_reversal_short": {
                 "enabled": true,
                 "blocked_regimes": ["trend_down"],
+                "max_adx_for_reversal": 28,
+                "_comment_adx": "P1: Stricter for shorts — fading upward momentum in strong uptrend is more dangerous",
+                "blocked_time_windows": [
+                    {"start_hhmm": "0915", "end_hhmm": "0930", "reason": "opening_noise"}
+                ],
+                "reduced_size_time_windows": [
+                    {"start_hhmm": "1130", "end_hhmm": "1300", "size_mult": 0.5, "reason": "lunch_lull"}
+                ],
                 "_evidence": "3yr backtest: trend_down N=212, WR 52%, Avg -Rs 98. Other regimes profitable (chop 59%, trend_up 59%)."
             },
             "gap_fill_short": {
