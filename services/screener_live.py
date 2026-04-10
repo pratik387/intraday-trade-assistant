@@ -910,26 +910,35 @@ class ScreenerLive:
 
     def _timer_scan_loop(self) -> None:
         """Timer-based scan: fire every 5 minutes aligned to IST bar boundaries.
-        Schedule: 09:20, 09:25, 09:30, ..., 15:25 IST (bar 09:15 closes at 09:20, etc.)
+        Schedule: 09:20 .. last_scan_hhmm IST (bar 09:15 closes at 09:20, etc.)
         Each scan fires at bar_close + min_delay_after_bar_close_sec.
-        No WebSocket dependency — purely clock-driven using IST."""
+        After the last scan slot, loop only waits for the EOD cutoff (eod_squareoff_hhmm),
+        then fires _handle_eod directly. No WebSocket dependency."""
         import time
         from utils.time_util import _now_naive_ist
         from datetime import time as dtime
 
         min_delay = float(self.raw_cfg.get("api_5m_bars", {}).get("min_delay_after_bar_close_sec", 60))
         market_open = dtime(9, 20)   # First bar 09:15 closes at 09:20
-        market_close = dtime(15, 25) # Last bar 15:20 closes at 15:25
 
-        # Pre-compute all scan times for the day (IST): 09:20, 09:25, ..., 15:25
+        # Last scan cutoff (fail-fast: required config)
+        _lsh, _lsm = str(self.raw_cfg["last_scan_hhmm"]).split(":")
+        last_scan_time = dtime(int(_lsh), int(_lsm))
+
+        # EOD squareoff cutoff — fired directly from timer (independent of scan loop)
+        _eh, _em = str(self.raw_cfg["eod_squareoff_hhmm"]).split(":")
+        eod_time = dtime(int(_eh), int(_em))
+
+        # Pre-compute all scan slots up to last_scan_hhmm (inclusive)
         scan_times = []
-        t = datetime(2000, 1, 1, 9, 20)  # Start at 09:20
-        while t.time() <= market_close:
+        t = datetime(2000, 1, 1, 9, 20)  # First slot at 09:20 (09:15 bar close)
+        while t.time() <= last_scan_time:
             scan_times.append(t.time())
             t += timedelta(minutes=5)
 
-        logger.info("SCAN_TIMER | %d scan slots: %s ... %s IST | delay: %.0fs",
-                    len(scan_times), scan_times[0], scan_times[-1], min_delay)
+        logger.info("SCAN_TIMER | %d scan slots: %s ... %s IST | last_scan=%s eod=%s | delay=%.0fs",
+                    len(scan_times), scan_times[0], scan_times[-1],
+                    last_scan_time, eod_time, min_delay)
 
         # Mark all past slots as fired so we only scan FUTURE bars
         now = _now_naive_ist()
@@ -952,6 +961,15 @@ class ScreenerLive:
                     time.sleep(10)
                     fired_today.clear()  # Reset for next day
                     continue
+
+                # EOD squareoff trigger — fired directly from timer, independent of scans.
+                # Guarantees _handle_eod runs at eod_squareoff_hhmm even if the last scan
+                # is still in-flight or slots have drifted.
+                if not getattr(self, "_eod_done", False) and now.time() >= eod_time:
+                    logger.warning("SCAN_TIMER | EOD cutoff %s reached at wallclock %s — triggering EOD",
+                                   eod_time, now.strftime("%H:%M:%S"))
+                    self._handle_eod(now)
+                    break  # exit timer loop; main loop will tear down via _request_exit
 
                 # Find the next slot that's due
                 fired_this_loop = False
