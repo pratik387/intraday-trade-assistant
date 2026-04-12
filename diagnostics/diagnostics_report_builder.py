@@ -121,6 +121,22 @@ def build_csv_from_events(log_dir: Path | None = None,
             lv = _levels_from_plan(dec)
             row["PDH"], row["PDL"], row["PDC"], row["ORH"], row["ORL"] = lv.get("PDH"), lv.get("PDL"), lv.get("PDC"), lv.get("ORH"), lv.get("ORL")
 
+            # ----- Generic detector features extension point -----
+            # Any detector that puts scalar features into plan["extras"] gets them
+            # auto-promoted to trade_report.csv columns. The downstream edge analysis
+            # tools (deep_edge_analysis.py, edge_optimizer.py, filter_simulation.py)
+            # auto-discover any new column. This is the single integration point for
+            # new detector features.
+            extras = plan.get("extras") if isinstance(plan, dict) else None
+            if isinstance(extras, dict):
+                for _k, _v in extras.items():
+                    # Skip non-scalar values (nested dicts/lists are preserved in
+                    # events.jsonl but excluded from CSV to keep schema clean)
+                    if isinstance(_v, (str, int, float, bool)) or _v is None:
+                        # Avoid clobbering hardcoded fields above (defensive)
+                        if _k not in row:
+                            row[_k] = _v
+
         total_entry_qty = 0
         entry_prices: List[Any] = []
         if entries:

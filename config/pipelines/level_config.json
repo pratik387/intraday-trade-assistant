@@ -121,8 +121,9 @@
             },
             "discount_zone_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "40,961 trades, WR 39.6%, Rs -278.16L loss, negative ALL 4 FYs."
+                "blocked_entirely": false,
+                "_evidence": "40,961 trades, WR 39.6%, Rs -278.16L loss, negative ALL 4 FYs.",
+                "_branch_unblock_note": "feat/premium-zone-ict-fix: unblocked to test whether new ICT-faithful filters (structural range from swing points, OTE 0.21 deep discount, HTF bias gate, MSS+FVG+OB confluence) rescue the edge. If 3yr backtest still shows negative, re-block."
             },
             "orb_pullback_long": {
                 "enabled": true,
@@ -148,8 +149,9 @@
             },
             "premium_zone_short": {
                 "enabled": true,
-                "blocked_regimes": ["trend_up"],
-                "_evidence": "3yr backtest: trend_up N=470, WR 46%, Avg -Rs 22. Other regimes profitable."
+                "blocked_regimes": [],
+                "_evidence": "3yr backtest (OLD detector): trend_up N=470, WR 46%, Avg -Rs 22. Other regimes profitable.",
+                "_branch_note": "feat/premium-zone-ict-fix: regimes UNBLOCKED for wide-open edge discovery with new ICT-faithful detector. The 3yr evidence applies to the OLD geometric detector; the new detector emits confluence features (pdz_has_mss_confluence, etc.) that may rescue the trend_up subset. Will re-evaluate after wide-open 3yr backtest."
             },
             "order_block_long": {
                 "enabled": true,

@@ -290,6 +290,17 @@ class EventPolicyGate:
         """
         ctx = {}
 
+        # WIDE-OPEN MODE: return neutral policy bypassing expiry/session/event adjustments.
+        # Used during 3-year edge rediscovery so raw detector signal flows through.
+        if self.cfg.get("wide_open_mode", False):
+            return Policy(
+                allow_breakout=True,
+                allow_fade=True,
+                size_mult=1.0,
+                min_hold_bars=0,
+                allow_fast_scalp=True,
+            ), {"wide_open_mode": True}
+
         # 1. Get base policy from original logic (expiry window, macro, symbol events)
         base_policy, base_ctx = self._decide_base_policy(now, symbol)
         ctx.update(base_ctx)

@@ -1,7 +1,9 @@
 # logging_config.py — Singleton logger factory
 
+import atexit
 import logging
 import json
+import threading
 from pathlib import Path
 from datetime import datetime
 import os
@@ -20,6 +22,7 @@ _screener_logger = None
 _ranking_logger = None
 _planning_logger = None
 _events_decision_logger = None
+_timing_logger = None
 _current_log_month = None
 _session_id = None
 dir_path = None
@@ -27,11 +30,46 @@ _global_run_prefix = ""  # Global run prefix to be set before any logger initial
 
 
 class JSONLLogger:
-    """Helper class for structured JSONL logging at each pipeline stage"""
+    """Buffered JSONL logger with persistent file handle.
+
+    Previous implementation opened + closed the file on every write, which
+    cost ~224us per call (kernel syscalls: mkdir + open + write + close).
+    At ~157k log lines per backtest day, that's ~35s of wasted wall time.
+
+    This implementation keeps a line-buffered (`buffering=1`) file handle open
+    for the process lifetime and writes are ~6us each. Benchmarked at 37x
+    speedup on local Windows; wins are larger on slower disks (OCI pods).
+
+    Fork safety: ProcessPoolExecutor workers inherit the parent's file handle
+    via fork(). If a child process wrote to the inherited Python buffered
+    file object, the parent's buffer would be corrupted. We detect fork by
+    tracking the PID and transparently reopen the file in the child process.
+    Writes use O_APPEND under the hood, so concurrent parent+child appends
+    are atomic under PIPE_BUF (4096 bytes) — all our JSONL lines are <1KB.
+
+    Crash safety: line-buffered mode flushes on each '\\n', so at worst the
+    last partial line is lost. No data loss for completed runs.
+    """
 
     def __init__(self, file_path: Path, stage_name: str):
         self.file_path = file_path
         self.stage = stage_name
+        self._fh = None
+        self._fh_pid = None
+        self._lock = threading.Lock()
+        atexit.register(self._close)
+
+    def _ensure_open(self):
+        """Open (or reopen after fork) the file handle. Must be called under self._lock."""
+        current_pid = os.getpid()
+        if self._fh is None or self._fh_pid != current_pid:
+            # First open OR this is a forked child that inherited the parent's handle.
+            # Don't close the inherited handle (that would flush/affect the parent's fd).
+            # Just drop the reference and open a fresh one for this process.
+            self._fh = None
+            self.file_path.parent.mkdir(parents=True, exist_ok=True)
+            self._fh = open(self.file_path, 'a', encoding='utf-8', buffering=1)
+            self._fh_pid = current_pid
 
     def log_accept(self, symbol: str, timestamp: str = None, **data):
         """Log an accept decision with additional data"""
@@ -41,12 +79,28 @@ class JSONLLogger:
         """Log a reject decision with reason and additional data"""
         self._write_jsonl("reject", symbol, reason=reason, timestamp=timestamp, **data)
 
+    def log_event(self, **data):
+        """Write an arbitrary structured event to this log file.
+
+        Used for timing.jsonl and any other free-form structured logging that
+        doesn't fit the accept/reject/symbol shape.
+        """
+        line = json.dumps(data) + '\n'
+        # Fast-path fork check: reset lock if PID changed (inherited lock may be in
+        # bad state if forked during a write). Workers are single-threaded per process
+        # in ProcessPoolExecutor, so unlocked reset is safe.
+        if self._fh_pid is not None and self._fh_pid != os.getpid():
+            self._lock = threading.Lock()
+            self._fh = None
+        with self._lock:
+            try:
+                self._ensure_open()
+                self._fh.write(line)
+            except Exception:
+                pass  # never let logging break the caller
+
     def _write_jsonl(self, action: str, symbol: str, timestamp: str = None, **data):
         """Write structured JSONL entry"""
-        # Ensure parent directory exists before writing
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Use provided timestamp or fall back to current time
         ts = timestamp if timestamp else datetime.now().isoformat()
         entry = {
             "timestamp": ts,
@@ -55,8 +109,34 @@ class JSONLLogger:
             "symbol": symbol,
             **data
         }
-        with open(self.file_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry) + '\n')
+        line = json.dumps(entry) + '\n'
+        if self._fh_pid is not None and self._fh_pid != os.getpid():
+            self._lock = threading.Lock()
+            self._fh = None
+        with self._lock:
+            try:
+                self._ensure_open()
+                self._fh.write(line)
+            except Exception:
+                pass
+
+    def _close(self):
+        """Flush and close the file handle. Registered via atexit in __init__."""
+        try:
+            if self._fh_pid != os.getpid():
+                # Another process registered this atexit via fork inheritance;
+                # don't touch — the owning process will handle its own close.
+                return
+            with self._lock:
+                if self._fh is not None:
+                    try:
+                        self._fh.flush()
+                        self._fh.close()
+                    except Exception:
+                        pass
+                    self._fh = None
+        except Exception:
+            pass
 
 def set_global_run_prefix(run_prefix: str):
     """Set the global run prefix before any logger initialization"""
@@ -67,6 +147,7 @@ def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     """Initialize all loggers (internal function)"""
     global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path, _global_run_prefix
     global _scanner_logger, _screener_logger, _ranking_logger, _planning_logger, _events_decision_logger
+    global _timing_logger
 
     # Quick check - if ANY logger is initialized, reuse the existing session
     # UNLESS force_reinit is True (allows re-initialization with different run_prefix)
@@ -143,6 +224,10 @@ def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     _ranking_logger = JSONLLogger(log_dir / "ranking.jsonl", "ranking")
     _planning_logger = JSONLLogger(log_dir / "planning.jsonl", "planning")
     _events_decision_logger = JSONLLogger(log_dir / "events_decisions.jsonl", "events_decision")
+
+    # Timing logger — only used when TRADING_PERF_TIMER=1 in the environment.
+    # Always created (cheap) so get_timing_logger() never returns None.
+    _timing_logger = JSONLLogger(log_dir / "timing.jsonl", "timing")
 
 def get_agent_logger(run_prefix: str = "", force_reinit: bool = False):
     """Get the agent logger for general application logging"""
@@ -254,6 +339,18 @@ def get_events_decision_logger():
     return _events_decision_logger
 
 
+def get_timing_logger():
+    """Get the performance timing logger (writes to timing.jsonl).
+
+    Used by utils.perf_timer.perf() when TRADING_PERF_TIMER=1. Returns a
+    JSONLLogger or None (workers without a run_prefix); caller must guard.
+    """
+    global _timing_logger
+    if _timing_logger is None:
+        _initialize_loggers()
+    return _timing_logger
+
+
 # -------------------- Child Process Logger Initialization --------------------
 
 def initialize_child_loggers(log_dir: Path, process_tag: str):
@@ -282,7 +379,7 @@ def initialize_child_loggers(log_dir: Path, process_tag: str):
         process_tag: Tag for this process (e.g., "exec") — used in agent log filename
     """
     global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path
-    global _events_decision_logger
+    global _events_decision_logger, _timing_logger
 
     dir_path = log_dir
     _session_id = log_dir.name  # Reuse parent's session ID from directory name
@@ -315,3 +412,7 @@ def initialize_child_loggers(log_dir: Path, process_tag: str):
 
     # Events decision JSONL — exec child owns decision logging
     _events_decision_logger = JSONLLogger(log_dir / "events_decisions.jsonl", "events_decision")
+
+    # Timing logger — exec child writes to same timing.jsonl as parent
+    # (each process has its own file handle; O_APPEND atomicity handles interleaving)
+    _timing_logger = JSONLLogger(log_dir / "timing.jsonl", "timing")

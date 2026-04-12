@@ -31,7 +31,7 @@ Types
 SetupType: one of the literals below; extend in your structure detector if needed.
 """
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Protocol, Literal
+from typing import List, Optional, Tuple, Protocol, Literal, Dict, Any
 
 import pandas as pd
 
@@ -43,6 +43,7 @@ from services.indicators.indicators import calculate_rsi
 from collections import defaultdict
 from datetime import datetime, timedelta
 from config.logging_config import get_agent_logger
+from utils.perf_timer import perf
 
 logger = get_agent_logger()
 
@@ -115,6 +116,7 @@ class SetupCandidate:
     retest_zone: Optional[List[float]] = None  # NEW: [low, high] bounds for retest entry
     cap_segment: Optional[str] = None  # Market cap segment passed from main_detector
     detected_level: Optional[float] = None  # Level detected by structure (e.g., nearest_support, range resistance)
+    extras: Optional[Dict[str, Any]] = None  # Detector-emitted scalar features (has_mss, range_position, etc.) — auto-flowed to trade_report.csv via plan["extras"] for edge analysis tools
 
 
 @dataclass(frozen=True)
@@ -611,7 +613,8 @@ class TradeDecisionGate:
 
         # ---------------- STRUCTURE ----------------
         logger.debug(f"TRADE_GATE: Calling structure.detect_setups for {symbol}")
-        setups = self.structure.detect_setups(symbol, df5m_tail, levels)
+        with perf("gate", "detect_setups", sym=symbol):
+            setups = self.structure.detect_setups(symbol, df5m_tail, levels)
         logger.debug(f"TRADE_GATE: Structure detection returned {len(setups)} setups for {symbol}")
         if not setups:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
@@ -687,19 +690,21 @@ class TradeDecisionGate:
 
         # Try multi-timeframe regime if available
         regime_diagnostics = None
-        if hasattr(self.regime_gate, 'compute_regime_multi_tf') and daily_df is not None:
-            try:
-                regime, regime_confidence, regime_diagnostics = self.regime_gate.compute_regime_multi_tf(
-                    df5=df_for_regime,
-                    daily_df=daily_df,
-                    symbol=symbol
-                )
-            except Exception as e:
-                logger.warning(f"Multi-TF regime failed for {symbol}, falling back to 5m-only: {e}")
+        with perf("gate", "regime_compute", sym=symbol,
+                  multi_tf=(hasattr(self.regime_gate, 'compute_regime_multi_tf') and daily_df is not None)):
+            if hasattr(self.regime_gate, 'compute_regime_multi_tf') and daily_df is not None:
+                try:
+                    regime, regime_confidence, regime_diagnostics = self.regime_gate.compute_regime_multi_tf(
+                        df5=df_for_regime,
+                        daily_df=daily_df,
+                        symbol=symbol
+                    )
+                except Exception as e:
+                    logger.warning(f"Multi-TF regime failed for {symbol}, falling back to 5m-only: {e}")
+                    regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
+            else:
+                # Fallback to 5m-only regime
                 regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
-        else:
-            # Fallback to 5m-only regime
-            regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
 
         # Evidence for regime gate
         strength = _safe_float(best.strength, 0.0)
@@ -751,12 +756,13 @@ class TradeDecisionGate:
                     if _risk > 0:
                         structural_rr = _reward / _risk
 
-            features = self._compute_features(
-                symbol=symbol,
-                df5m_tail=df5m_tail,
-                index_df5m=index_df5m,
-                structural_rr=structural_rr
-            )
+            with perf("gate", "hcet_features", sym=symbol):
+                features = self._compute_features(
+                    symbol=symbol,
+                    df5m_tail=df5m_tail,
+                    index_df5m=index_df5m,
+                    structural_rr=structural_rr
+                )
 
             hc_ok, hc_reasons = self._is_high_conviction_candidate(best.setup_type, regime, features)
 
@@ -813,9 +819,10 @@ class TradeDecisionGate:
 
         base_allow = False
         if hasattr(self.regime_gate, "allow_setup"):
-            base_allow = bool(self.regime_gate.allow_setup(
-                best.setup_type, regime, strength, adx_5m, vol_mult_5m, cap_segment=cap_segment
-            ))
+            with perf("gate", "allow_setup", sym=symbol):
+                base_allow = bool(self.regime_gate.allow_setup(
+                    best.setup_type, regime, strength, adx_5m, vol_mult_5m, cap_segment=cap_segment
+                ))
 
         if not base_allow and not hc_ok:
             reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f},cap={cap_segment}]")

@@ -558,6 +558,9 @@ class BasePipeline(ABC):
         Within a single rule, all conditions are AND'd.
         """
         base_cfg = load_base_config()
+        # WIDE-OPEN MODE: bypass VC whitelist for edge rediscovery
+        if base_cfg.get("wide_open_mode", False):
+            return True, "wide_open_mode"
         vc_cfg = base_cfg.get("validated_combinations", {})
         if not vc_cfg.get("enabled", False):
             return True, "vc_disabled"
@@ -642,6 +645,18 @@ class BasePipeline(ABC):
         setup_lower = setup_type.lower()
         reasons = []
         modifiers = {"sl_mult": 1.0, "t1_mult": 1.0, "t2_mult": 1.0}
+
+        # WIDE-OPEN MODE: bypass ALL setup_filters (blocked_entirely, blocked_regimes,
+        # blocked_caps, blocked_hours, allowed_*, min_adx, max_adx, etc.). Used during
+        # 3-year edge rediscovery so raw detector signal flows to trade_report.csv for
+        # analysis via deep_edge_analysis.py / edge_optimizer.py / filter_simulation.py.
+        try:
+            _wide_open = bool(self.cfg.get("wide_open_mode", False))
+        except Exception:
+            _wide_open = False
+        if _wide_open:
+            reasons.append(f"wide_open_mode:{setup_lower}")
+            return True, reasons, modifiers
 
         # Get setup-specific filter config - MUST exist in gates.setup_filters
         setup_filters = self._get("gates", "setup_filters") or {}
@@ -1324,14 +1339,25 @@ class BasePipeline(ABC):
         # Pipeline-aware A: per-category srr + t1_rr thresholds
         # 13.9 T/day, WR 58.6%, Avg Rs 299, PF 1.81, all 4 FYs profitable
         tqg = self.cfg.get("trade_quality_gates", {})
+        # WIDE-OPEN MODE: bypass entire trade_quality_gates block (blocked_hours, category floors,
+        # setup_thresholds floors). Used during 3-year edge rediscovery.
+        if self.cfg.get("wide_open_mode", False):
+            tqg = {}
         if tqg.get("enabled", False):
             blocked_hours = tqg.get("blocked_hours", [])
-            if now and now.hour in blocked_hours:
+            # Setup-specific override: allow a setup to opt out of the global blocked_hours
+            # filter. Used by ICT zone setups in wide-open edge discovery mode — every hour
+            # flows through so we can see the raw detector edge across the full session.
+            setup_thresholds = tqg.get("setup_thresholds", {}).get(setup_type, {})
+            bypass_blocked_hours = setup_thresholds.get("bypass_blocked_hours", False)
+            if not bypass_blocked_hours and now and now.hour in blocked_hours:
                 logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: hour {now.hour} in blocked_hours {blocked_hours}")
                 return {"eligible": False, "reason": "blocked_hour", "details": [f"hour_{now.hour}_blocked"]}
 
             cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
-            min_srr = cat_thresholds.get("min_structural_rr", 0)
+            # Setup-specific override: allows per-setup floors, e.g. ICT zones use
+            # structural range (tighter) and produce lower srr values than classical levels.
+            min_srr = setup_thresholds.get("min_structural_rr", cat_thresholds.get("min_structural_rr", 0))
             if min_srr > 0 and quality_result.structural_rr < min_srr:
                 logger.debug(f"[{category}] {symbol} {setup_type} BLOCKED: structural_rr {quality_result.structural_rr:.2f} < {min_srr:.1f}")
                 return {"eligible": False, "reason": "structural_rr_below_floor", "details": [f"srr_{quality_result.structural_rr:.2f}_below_{min_srr}"]}
@@ -1708,10 +1734,14 @@ class BasePipeline(ABC):
         if not quality_filters["enabled"]:
             # quality_filters disabled, but trade_quality_gates t1_rr still applies
             tqg = self.cfg.get("trade_quality_gates", {})
+            # WIDE-OPEN MODE: bypass trade_quality_gates t1_rr check
+            if self.cfg.get("wide_open_mode", False):
+                return plan
             if tqg.get("enabled", False) and plan["eligible"] and plan["targets"]:
                 category = self.get_category_name()
                 cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
-                tqg_min_t1_rr = cat_thresholds.get("min_t1_rr", 0)
+                setup_thresholds_t1 = tqg.get("setup_thresholds", {}).get(plan.get("strategy", ""), {})
+                tqg_min_t1_rr = setup_thresholds_t1.get("min_t1_rr", cat_thresholds.get("min_t1_rr", 0))
                 if tqg_min_t1_rr > 0:
                     t1_rr_val = plan["targets"][0].get("rr", 0)
                     if t1_rr_val < tqg_min_t1_rr:
@@ -1811,10 +1841,14 @@ class BasePipeline(ABC):
         # Trade quality gates — per-category t1_rr floor (DATA-DRIVEN Feb 2026)
         # Applied AFTER quality_filters t1_rr check (trade_quality_gates threshold may be higher)
         tqg = self.cfg.get("trade_quality_gates", {})
+        # WIDE-OPEN MODE: bypass second trade_quality_gates t1_rr check
+        if self.cfg.get("wide_open_mode", False):
+            return plan
         if tqg.get("enabled", False) and plan["eligible"] and plan["targets"]:
             category = self.get_category_name()
             cat_thresholds = tqg.get("category_thresholds", {}).get(category, {})
-            tqg_min_t1_rr = cat_thresholds.get("min_t1_rr", 0)
+            setup_thresholds_t1 = tqg.get("setup_thresholds", {}).get(plan.get("strategy", ""), {})
+            tqg_min_t1_rr = setup_thresholds_t1.get("min_t1_rr", cat_thresholds.get("min_t1_rr", 0))
             if tqg_min_t1_rr > 0:
                 t1_rr_val = plan["targets"][0].get("rr", 0)
                 if t1_rr_val < tqg_min_t1_rr:

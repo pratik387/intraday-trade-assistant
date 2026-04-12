@@ -155,6 +155,10 @@ class MainDetector(BaseStructure):
         }
         ict_base_config = setups_config.get("ict_comprehensive", {})
 
+        # WIDE-OPEN MODE: propagate root-level wide_open_mode into every setup_config so
+        # detectors can bypass their hard-coded validation checks without a root-config lookup.
+        _wide_open = bool(config.get("wide_open_mode", False))
+
         # Initialize all detectors uniformly
         for setup_name, detector_class, detector_key in detector_configs:
             setup_config = setups_config.get(setup_name, {})
@@ -169,6 +173,10 @@ class MainDetector(BaseStructure):
                 else:
                     logger.warning(f"MAIN_DETECTOR: {setup_name} enabled but ict_comprehensive not found - skipping")
                     continue
+
+            # Inject wide_open_mode from root config so detectors can see it via self.config
+            if _wide_open:
+                setup_config = {**setup_config, "wide_open_mode": True}
 
             # Skip ict_comprehensive as a detector — it serves only as config base for
             # ICT-derived setups. Its detect() filters for structure_type "ict_comprehensive"
@@ -282,6 +290,38 @@ class MainDetector(BaseStructure):
             # Timing summary — log for slow symbols (>150ms) showing bottleneck detectors
             _total_det_ms = sum(_detector_times.values())
             _total_ms = _t_ctx_ms + _total_det_ms + _t_resolve_ms
+
+            # Emit per-class detector timing to timing.jsonl (if TRADING_PERF_TIMER=1).
+            # This happens for every symbol, not just slow ones, so the analyzer can
+            # aggregate total detector cost per class across the full backtest.
+            if _detector_times:
+                try:
+                    from utils.perf_timer import is_enabled as _perf_enabled
+                    if _perf_enabled():
+                        from config.logging_config import get_timing_logger
+                        _class_totals_all = {}
+                        for _dname, _dtime in _detector_times.items():
+                            _det_obj = self.detectors.get(_dname)
+                            _cname = type(_det_obj).__name__ if _det_obj else _dname
+                            _class_totals_all[_cname] = _class_totals_all.get(_cname, 0) + _dtime
+                        _lg = get_timing_logger()
+                        if _lg is not None:
+                            import time as _tt, os as _os
+                            _lg.log_event(
+                                ts=_tt.time(), pid=_os.getpid(),
+                                stage="detector", substage="aggregate",
+                                sym=symbol,
+                                duration_ms=round(_total_ms, 3),
+                                ctx_ms=round(_t_ctx_ms, 3),
+                                det_ms=round(_total_det_ms, 3),
+                                resolve_ms=round(_t_resolve_ms, 3),
+                                n_detectors_run=len(_detector_times),
+                                n_events=sum(len(a.events) for a in all_detections.values()),
+                                by_class_ms={k: round(v, 3) for k, v in _class_totals_all.items()},
+                            )
+                except Exception:
+                    pass
+
             if _total_ms > 500 and _detector_times:
                 # Top 5 slowest detectors
                 _top5 = sorted(_detector_times.items(), key=lambda x: x[1], reverse=True)[:5]
@@ -504,6 +544,18 @@ class MainDetector(BaseStructure):
                         detected_level = event.levels.get("resistance") or event.levels.get("nearest_resistance") or event.levels.get("broken_level")
 
                 if setup_type:
+                    # Preserve detector context as extras — auto-flowed to trade_report.csv
+                    # via plan["extras"] for downstream edge analysis tools (deep_edge_analysis,
+                    # edge_optimizer, filter_simulation auto-discover any new columns).
+                    # Only scalar values (str/int/float/bool/None) make it into the CSV;
+                    # nested dicts/lists are preserved in events.jsonl but skipped in CSV.
+                    extras_dict = None
+                    if hasattr(event, 'context') and event.context:
+                        extras_dict = {
+                            k: v for k, v in event.context.items()
+                            if isinstance(v, (str, int, float, bool, type(None)))
+                        } or None
+
                     setup_candidates.append(SetupCandidate(
                         setup_type=setup_type,
                         strength=float(event.confidence),
@@ -513,7 +565,8 @@ class MainDetector(BaseStructure):
                         entry_mode=entry_mode,
                         retest_zone=retest_zone,
                         cap_segment=market_context.cap_segment,
-                        detected_level=detected_level
+                        detected_level=detected_level,
+                        extras=extras_dict,
                     ))
 
                     if entry_mode:

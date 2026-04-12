@@ -68,6 +68,16 @@ class ICTStructure(BaseStructure):
         self.discount_threshold = config["discount_threshold_pct"] / 100.0
         self.range_lookback_bars = config["range_lookback_bars"]
 
+        # Premium/Discount ICT-faithful filters (new in feat/premium-zone-ict-fix)
+        # All required — KeyError on missing config to fail-fast at startup.
+        self.pdz_min_bars = int(config["premium_discount_min_bars"])
+        self.pdz_min_range_atr_mult = float(config["premium_discount_min_range_atr_mult"])
+        self.pdz_min_range_pct = float(config["premium_discount_min_range_pct"])
+        self.pdz_require_htf_bias = bool(config["premium_discount_require_htf_bias"])
+        self.pdz_require_confluence = bool(config["premium_discount_require_confluence"])
+        self.pdz_skip_open_min = int(config["premium_discount_session_skip_open_min"])
+        self.pdz_skip_close_min = int(config["premium_discount_session_skip_close_min"])
+
         # Break of Structure parameters - will crash with KeyError if missing
         self.bos_min_structure_bars = config["bos_min_structure_bars"]
         self.bos_min_break_pct = config["bos_min_break_pct"] / 100.0
@@ -164,14 +174,17 @@ class ICTStructure(BaseStructure):
 
                 logger.debug(f"ICT_DETECTOR: {context.symbol} running pattern detection (opening_bell={in_opening_bell}, bars={n_bars})")
 
-                # OPENING BELL FIX: With 1-2 bars, only detect premium/discount zones
+                # OPENING BELL: With <3 bars there is no usable structural range for ICT
+                # premium/discount zones (need 20 bars minimum). The new ICT-faithful
+                # detector early-returns on the bars gate, which is the right behavior.
+                # Other ICT primitives also need swing context, so all detectors are skipped.
                 if in_opening_bell and n_bars < 3:
-                    logger.debug(f"ICT_DETECTOR: {context.symbol} opening bell mode - premium/discount zones only")
-                    premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
+                    logger.debug(f"ICT_DETECTOR: {context.symbol} opening bell mode - all ICT detectors require structural context, skipping until 20+ bars")
                     sweep_events = []
                     mss_events = []
                     order_block_events = []
                     fvg_events = []
+                    premium_discount_events = []
                     bos_events = []
                     choch_events = []
                 else:
@@ -191,7 +204,14 @@ class ICTStructure(BaseStructure):
                     fvg_events = self._detect_fair_value_gaps(d, context)
                     logger.debug(f"ICT_DETECTOR: {context.symbol} found {len(fvg_events)} FVGs")
 
-                    premium_discount_events = self._detect_premium_discount_zones(d, context, levels)
+                    # Premium/Discount zones consume mss/fvg/ob events for confluence checks.
+                    # Order matters: mss/fvg/ob must be computed BEFORE premium/discount.
+                    premium_discount_events = self._detect_premium_discount_zones(
+                        d, context, levels,
+                        mss_events=mss_events,
+                        fvg_events=fvg_events,
+                        ob_events=order_block_events,
+                    )
                     bos_events = self._detect_break_of_structure(d, context)
                     choch_events = self._detect_change_of_character(d, context)
 
@@ -259,6 +279,12 @@ class ICTStructure(BaseStructure):
         Returns:
             True if HTF trend exists in specified direction, False otherwise
         """
+        # WIDE-OPEN MODE: always return True so BOS/CHoCH/FVG callers don't reject.
+        # Features are still computed by _detect_premium_discount_zones directly (which
+        # stores pdz_htf_bullish/pdz_htf_bearish regardless of filter state), so the
+        # analyzer can still see whether each trade was with or against HTF bias.
+        if self.config.get("wide_open_mode", False):
+            return True
         try:
             # Use 15m HTF data if available, otherwise use 5m data
             htf_df = getattr(context, 'htf_df', None)
@@ -363,6 +389,9 @@ class ICTStructure(BaseStructure):
         Returns:
             True if price is in correct zone, False otherwise
         """
+        # WIDE-OPEN MODE: always return True so FVG/BOS/sweep callers don't reject.
+        if self.config.get("wide_open_mode", False):
+            return True
         try:
             # Get daily high/low from context
             pdh = context.pdh
@@ -437,7 +466,10 @@ class ICTStructure(BaseStructure):
                 vol_surge_series = move_bars['vol_surge'].dropna()
                 move_had_institutional_volume = (vol_surge_series > 2.0).any() if len(vol_surge_series) > 0 else False
 
-                if abs(move_pct) >= self.ob_min_move_pct and move_had_institutional_volume:
+                # WIDE-OPEN MODE: bypass 2.0x volume requirement in move detection.
+                # In normal mode, requires institutional-volume move. In wide-open, any move >= min pct qualifies.
+                wide_open = bool(self.config.get("wide_open_mode", False)) if hasattr(self, 'config') else False
+                if abs(move_pct) >= self.ob_min_move_pct and (move_had_institutional_volume or wide_open):
                     # Find last opposing candle before move
                     ob_candle_idx = self._find_opposing_candle(df, move_start_idx, move_pct)
 
@@ -447,8 +479,8 @@ class ICTStructure(BaseStructure):
                             ob_candle_idx, move_pct, sweep_events, mss_events
                         )
 
-                        # REQUIRE at least one professional criterion
-                        if has_sweep or has_mss:
+                        # REQUIRE at least one professional criterion (bypassed in wide-open)
+                        if has_sweep or has_mss or wide_open:
                             event = self._create_order_block_event(
                                 df, ob_candle_idx, move_pct, current_price, current_bar_idx,
                                 context, has_sweep, has_mss, confluence_factors
@@ -456,7 +488,7 @@ class ICTStructure(BaseStructure):
                             if event:
                                 events.append(event)
                                 logger.debug(f"OB_PROF: {context.symbol} OB ACCEPTED - "
-                                           f"Sweep:{has_sweep} MSS:{has_mss} Confluence:{len(confluence_factors)}")
+                                           f"Sweep:{has_sweep} MSS:{has_mss} Confluence:{len(confluence_factors)} wide_open={wide_open}")
                         else:
                             logger.debug(f"OB_PROF: {context.symbol} OB REJECTED - No sweep or MSS")
 
@@ -946,62 +978,293 @@ class ICTStructure(BaseStructure):
             return below_level and moved_lower
 
     def _detect_premium_discount_zones(self, df: pd.DataFrame, context: MarketContext,
-                                     levels: Dict[str, float]) -> List[StructureEvent]:
-        """Detect Premium/Discount zone positioning."""
+                                     levels: Dict[str, float],
+                                     mss_events: Optional[List[StructureEvent]] = None,
+                                     fvg_events: Optional[List[StructureEvent]] = None,
+                                     ob_events: Optional[List[StructureEvent]] = None) -> List[StructureEvent]:
+        """Detect Premium/Discount zone positioning — ICT-faithful with full filter stack.
+
+        Previous version was 4 lines of geometry (price >= 70% of last 50 bars) and produced
+        2,656 detections per backtest day with 100% rejection rate. ICT methodology requires
+        the zone to be a *context filter*, not a standalone signal. Required filters:
+
+        1. Minimum bars (need enough data to identify swing structure)
+        2. Session timing (avoid open/close noise)
+        3. Structural range from latest swing high/low (not arbitrary lookback)
+        4. Range size sanity (must exceed ATR * mult AND % of price)
+        5. OTE threshold (canonical ICT deep premium = 0.79, was 0.70)
+        6. HTF bias gate (premium short rejected if HTF in confirmed uptrend)
+        7. Confluence (require bearish MSS / FVG / OB inside the zone)
+
+        Telemetry: every detection candidate emits a structured timing event indicating
+        which gate accepted/rejected it. Used by tools/analyze_timing.py to tune filters.
+        """
         events = []
+        mss_events = mss_events or []
+        fvg_events = fvg_events or []
+        ob_events = ob_events or []
+
+        # Telemetry helper — silently no-op when TRADING_PERF_TIMER=0
+        def _tel(side: str, range_pos, reason: str, **extra):
+            try:
+                from utils.perf_timer import is_enabled as _pe
+                if not _pe():
+                    return
+                from config.logging_config import get_timing_logger
+                lg = get_timing_logger()
+                if lg is None:
+                    return
+                import time as _tt, os as _os
+                lg.log_event(
+                    ts=_tt.time(), pid=_os.getpid(),
+                    stage="pdz_filter", substage=reason,
+                    sym=context.symbol, side=side,
+                    range_position=round(float(range_pos), 4) if range_pos is not None else None,
+                    **extra,
+                )
+            except Exception:
+                pass
 
         try:
-            # Calculate recent range
-            recent_data = df.tail(self.range_lookback_bars)
-            range_high = recent_data['high'].max()
-            range_low = recent_data['low'].min()
-            range_size = range_high - range_low
-
-            if range_size <= 0:
+            # GATE 1: Minimum bars for structural analysis
+            if df is None or len(df) < self.pdz_min_bars:
+                _tel("?", None, "rejected_insufficient_bars",
+                     n_bars=int(len(df) if df is not None else 0))
                 return events
 
+            # GATE 2: Session timing — skip first N min after open and last N min before close
+            cur_ts = context.timestamp
+            cur_time = cur_ts.time() if hasattr(cur_ts, 'time') else cur_ts
+            mod = cur_time.hour * 60 + cur_time.minute
+            market_open_min = 9 * 60 + 15  # 09:15 IST
+            market_close_min = 15 * 60 + 30  # 15:30 IST
+            if mod < market_open_min + self.pdz_skip_open_min:
+                _tel("?", None, "rejected_session_open", minute_of_day=mod)
+                return events
+            if mod > market_close_min - self.pdz_skip_close_min:
+                _tel("?", None, "rejected_session_close", minute_of_day=mod)
+                return events
+
+            # GATE 3: Structural range from latest swing points (NOT arbitrary lookback window)
+            # Use the same pattern as _detect_break_of_structure (lines 1043, 1087):
+            # max of last 3 swing highs / min of last 3 swing lows defines the dealing range.
+            # Fallback: if swings aren't found, use rolling window (legacy behavior).
+            # This ensures WIDE-OPEN mode with filters disabled still produces detections
+            # even for symbols with weak swing structure.
+            swing_highs = self._find_swing_points(df, 'high')
+            swing_lows = self._find_swing_points(df, 'low')
+
+            if swing_highs and swing_lows:
+                range_high = max(swing_highs[-3:]) if len(swing_highs) >= 3 else swing_highs[-1]
+                range_low = min(swing_lows[-3:]) if len(swing_lows) >= 3 else swing_lows[-1]
+                structural_range_source = 'swing_points'
+            else:
+                # Fallback to rolling window
+                recent = df.tail(self.range_lookback_bars)
+                range_high = float(recent['high'].max())
+                range_low = float(recent['low'].min())
+                structural_range_source = 'rolling_window'
+
+            if range_high <= range_low:
+                _tel("?", None, "rejected_invalid_range",
+                     range_high=round(range_high, 4), range_low=round(range_low, 4))
+                return events
+
+            range_size = range_high - range_low
             current_price = context.current_price
 
-            # Calculate position in range (0 = bottom, 1 = top)
+            # ----- Always-computed features (flow to plan.extras for edge analysis) -----
+            # ATR from cache or df column
+            atr_14 = None
+            if context.indicators:
+                atr_14 = context.indicators.get('atr14') or context.indicators.get('atr')
+            if atr_14 is None and 'atr' in df.columns:
+                try:
+                    atr_14 = float(df['atr'].iloc[-1])
+                except Exception:
+                    atr_14 = None
+
+            range_size_pct = (range_size / current_price) if current_price else 0.0
+            range_size_atr = (range_size / atr_14) if atr_14 and atr_14 > 0 else 0.0
+
+            # HTF bias features — ALWAYS computed even when filter is off, so the flag
+            # is available in plan.extras for post-run filter analysis.
+            htf_bullish_trend = bool(self._validate_htf_trend(df, context, 'long'))
+            htf_bearish_trend = bool(self._validate_htf_trend(df, context, 'short'))
+
+            # Range position: 0.0 = at range_low, 1.0 = at range_high
             range_position = (current_price - range_low) / range_size
 
-            # Premium zone (top 30% of range)
+            # GATE 4: Range size sanity — toggled off when both mults are 0
+            min_range_atr = (atr_14 or 0.0) * self.pdz_min_range_atr_mult
+            min_range_pct_val = current_price * self.pdz_min_range_pct
+            min_range_required = max(min_range_atr, min_range_pct_val)
+            if min_range_required > 0 and range_size < min_range_required:
+                _tel("?", range_position, "rejected_range_too_small",
+                     range_size=round(range_size, 4),
+                     min_required=round(min_range_required, 4),
+                     atr=round(atr_14, 4) if atr_14 else None,
+                     range_pct=round(range_size_pct, 5))
+                return events
+
+            # === PREMIUM ZONE (short setup) ===
             if range_position >= self.premium_threshold:
+                # Confluence features — ALWAYS computed regardless of filter flag
+                premium_zone_floor = range_low + range_size * self.premium_threshold
+
+                has_bearish_mss = any(
+                    e.structure_type == 'market_structure_shift_bearish'
+                    for e in mss_events
+                )
+                has_bearish_fvg = any(
+                    e.structure_type == 'fair_value_gap_short'
+                    and (e.context.get('fvg_top') or e.levels.get('resistance', 0)) >= premium_zone_floor
+                    for e in fvg_events
+                )
+                has_bearish_ob = any(
+                    e.side == 'short' and e.levels.get('entry', 0) >= premium_zone_floor
+                    for e in ob_events
+                )
+                confluence_count = int(has_bearish_mss) + int(has_bearish_fvg) + int(has_bearish_ob)
+
+                # GATE 5 (premium): HTF bias — toggled off when flag is False
+                if self.pdz_require_htf_bias and htf_bullish_trend:
+                    _tel("short", range_position, "rejected_htf_bullish",
+                         range_high=round(range_high, 4), range_low=round(range_low, 4),
+                         has_mss=has_bearish_mss, has_fvg=has_bearish_fvg, has_ob=has_bearish_ob,
+                         confluence_count=confluence_count)
+                    return events
+
+                # GATE 6 (premium): Confluence — toggled off when flag is False
+                if self.pdz_require_confluence and confluence_count == 0:
+                    _tel("short", range_position, "rejected_no_confluence",
+                         has_mss=has_bearish_mss, has_fvg=has_bearish_fvg, has_ob=has_bearish_ob,
+                         premium_zone_floor=round(premium_zone_floor, 4),
+                         htf_bullish=htf_bullish_trend,
+                         n_mss=len(mss_events), n_fvg=len(fvg_events), n_ob=len(ob_events))
+                    return events
+
+                # ALL ACTIVE GATES PASSED — emit premium short
+                _tel("short", range_position, "passed",
+                     has_mss=has_bearish_mss, has_fvg=has_bearish_fvg, has_ob=has_bearish_ob,
+                     confluence_count=confluence_count, htf_bullish=htf_bullish_trend,
+                     range_high=round(range_high, 4), range_low=round(range_low, 4))
+
                 events.append(StructureEvent(
                     symbol=context.symbol,
                     timestamp=context.timestamp,
                     structure_type='premium_zone_short',
                     side='short',
-                    confidence=self._calculate_institutional_strength(context, (range_position - self.premium_threshold) * 10, "premium_zone", "short", range_position, 0),
-                    levels={'entry': current_price, 'range_high': range_high, 'range_low': range_low},
+                    confidence=self._calculate_institutional_strength(
+                        context,
+                        (range_position - self.premium_threshold) * 10,
+                        "premium_zone", "short", range_position, confluence_count
+                    ),
+                    # FIX (B-1): expose range_high as 'resistance' so MainDetector._convert_to_setup_candidates
+                    # extracts it as detected_level for short setups, letting level_pipeline.calculate_quality
+                    # use the structural range (not PDH/ORH) as the target level.
+                    levels={'entry': current_price, 'resistance': range_high, 'support': range_low,
+                            'range_high': range_high, 'range_low': range_low},
                     context={
-                        'range_high': range_high,
-                        'range_low': range_low,
-                        'range_position_pct': range_position * 100,
                         'zone_type': 'premium',
-                        'pattern_type': 'premium_zone_positioning'
+                        'pattern_type': 'premium_zone_positioning',
+                        # Always-computed features for edge analysis (flow to plan.extras -> trade_report.csv)
+                        'pdz_range_high': round(range_high, 4),
+                        'pdz_range_low': round(range_low, 4),
+                        'pdz_range_size_pct': round(range_size_pct * 100, 4),
+                        'pdz_range_size_atr': round(range_size_atr, 4),
+                        'pdz_range_position': round(range_position, 4),
+                        'pdz_atr14': round(atr_14, 4) if atr_14 else None,
+                        'pdz_has_mss_confluence': has_bearish_mss,
+                        'pdz_has_fvg_confluence': has_bearish_fvg,
+                        'pdz_has_ob_confluence': has_bearish_ob,
+                        'pdz_confluence_count': confluence_count,
+                        'pdz_htf_bullish': htf_bullish_trend,
+                        'pdz_htf_bearish': htf_bearish_trend,
+                        'pdz_structural_range_source': structural_range_source,
+                        'pdz_minute_of_day': mod,
                     },
                     price=current_price
                 ))
 
-            # Discount zone (bottom 30% of range)
+            # === DISCOUNT ZONE (long setup) — symmetric to premium ===
             elif range_position <= self.discount_threshold:
+                discount_zone_ceiling = range_low + range_size * self.discount_threshold
+
+                has_bullish_mss = any(
+                    e.structure_type == 'market_structure_shift_bullish'
+                    for e in mss_events
+                )
+                has_bullish_fvg = any(
+                    e.structure_type == 'fair_value_gap_long'
+                    and (e.context.get('fvg_bottom') or e.levels.get('support', float('inf'))) <= discount_zone_ceiling
+                    for e in fvg_events
+                )
+                has_bullish_ob = any(
+                    e.side == 'long' and e.levels.get('entry', float('inf')) <= discount_zone_ceiling
+                    for e in ob_events
+                )
+                confluence_count = int(has_bullish_mss) + int(has_bullish_fvg) + int(has_bullish_ob)
+
+                if self.pdz_require_htf_bias and htf_bearish_trend:
+                    _tel("long", range_position, "rejected_htf_bearish",
+                         range_high=round(range_high, 4), range_low=round(range_low, 4),
+                         has_mss=has_bullish_mss, has_fvg=has_bullish_fvg, has_ob=has_bullish_ob,
+                         confluence_count=confluence_count)
+                    return events
+
+                if self.pdz_require_confluence and confluence_count == 0:
+                    _tel("long", range_position, "rejected_no_confluence",
+                         has_mss=has_bullish_mss, has_fvg=has_bullish_fvg, has_ob=has_bullish_ob,
+                         discount_zone_ceiling=round(discount_zone_ceiling, 4),
+                         htf_bearish=htf_bearish_trend,
+                         n_mss=len(mss_events), n_fvg=len(fvg_events), n_ob=len(ob_events))
+                    return events
+
+                _tel("long", range_position, "passed",
+                     has_mss=has_bullish_mss, has_fvg=has_bullish_fvg, has_ob=has_bullish_ob,
+                     confluence_count=confluence_count, htf_bearish=htf_bearish_trend,
+                     range_high=round(range_high, 4), range_low=round(range_low, 4))
+
                 events.append(StructureEvent(
                     symbol=context.symbol,
                     timestamp=context.timestamp,
                     structure_type='discount_zone_long',
                     side='long',
-                    confidence=self._calculate_institutional_strength(context, (self.discount_threshold - range_position) * 10, "discount_zone", "long", range_position, 0),
-                    levels={'entry': current_price, 'range_high': range_high, 'range_low': range_low},
+                    confidence=self._calculate_institutional_strength(
+                        context,
+                        (self.discount_threshold - range_position) * 10,
+                        "discount_zone", "long", range_position, confluence_count
+                    ),
+                    # FIX (B-1): expose range_low as 'support' so MainDetector extracts it as
+                    # detected_level for long setups → level_pipeline.calculate_quality uses
+                    # structural range (not PDL/ORL) as target level.
+                    levels={'entry': current_price, 'resistance': range_high, 'support': range_low,
+                            'range_high': range_high, 'range_low': range_low},
                     context={
-                        'range_high': range_high,
-                        'range_low': range_low,
-                        'range_position_pct': range_position * 100,
                         'zone_type': 'discount',
-                        'pattern_type': 'discount_zone_positioning'
+                        'pattern_type': 'discount_zone_positioning',
+                        'pdz_range_high': round(range_high, 4),
+                        'pdz_range_low': round(range_low, 4),
+                        'pdz_range_size_pct': round(range_size_pct * 100, 4),
+                        'pdz_range_size_atr': round(range_size_atr, 4),
+                        'pdz_range_position': round(range_position, 4),
+                        'pdz_atr14': round(atr_14, 4) if atr_14 else None,
+                        'pdz_has_mss_confluence': has_bullish_mss,
+                        'pdz_has_fvg_confluence': has_bullish_fvg,
+                        'pdz_has_ob_confluence': has_bullish_ob,
+                        'pdz_confluence_count': confluence_count,
+                        'pdz_htf_bullish': htf_bullish_trend,
+                        'pdz_htf_bearish': htf_bearish_trend,
+                        'pdz_structural_range_source': structural_range_source,
+                        'pdz_minute_of_day': mod,
                     },
                     price=current_price
                 ))
+            else:
+                # In equilibrium (between thresholds) — no signal
+                _tel("none", range_position, "rejected_equilibrium",
+                     range_high=round(range_high, 4), range_low=round(range_low, 4))
 
         except Exception as e:
             logger.exception(f"Premium/Discount zone detection error: {e}")

@@ -79,6 +79,7 @@ from pipelines import process_setup_candidates
 from services.orders.order_queue import OrderQueue
 from services.scan.energy_scanner import EnergyScanner
 from diagnostics.diag_event_log import diag_event_log, mint_trade_id
+from utils.perf_timer import perf, mark
 from services.state.orb_cache_persistence import ORBCachePersistence
 import uuid
 
@@ -109,6 +110,25 @@ def _init_worker(config_dict):
         worker_logger = get_agent_logger()
         if worker_logger and worker_logger.level == logging.WARNING:
             worker_logger.setLevel(logging.INFO)  # Enable INFO messages in worker
+
+        # Initialize timing logger in worker process so per-symbol gate timings
+        # (detect_setups, regime_compute, hcet_features, allow_setup) are emitted
+        # to the parent's timing.jsonl file. Required on Windows (spawn mode) where
+        # workers don't inherit the parent's _timing_logger singleton via fork.
+        # On Linux/OCI (fork mode) inheritance works automatically, but this code
+        # is harmless there too — it just rebinds the singleton to a fresh handle.
+        _log_dir = config_dict.get("_log_dir")
+        if _log_dir:
+            try:
+                from pathlib import Path
+                from config.logging_config import JSONLLogger
+                import config.logging_config as _lc
+                _lc._timing_logger = JSONLLogger(Path(_log_dir) / "timing.jsonl", "timing")
+                # Also wire screening.jsonl logger so worker-side decisions write through
+                # via the buffered fork-safe path (consistent with other JSONL output)
+                _lc._screener_logger = JSONLLogger(Path(_log_dir) / "screening.jsonl", "screener")
+            except Exception:
+                pass  # never let logger init break worker startup
 
         # Apply structure caching in worker process (if enabled via config flag)
         if config_dict.get("_enable_structure_cache", False):
@@ -597,12 +617,34 @@ class ScreenerLive:
         if local_override is not None and not os.environ.get("OCI_RESOURCE_PRINCIPAL_VERSION"):
             structure_workers = int(local_override)
         self._structure_workers = structure_workers
+
+        # Pass log_dir into worker init so structure workers can write to timing.jsonl
+        # (Required on Windows where ProcessPoolExecutor uses spawn, not fork — workers
+        # don't inherit the parent's logger singletons.)
+        worker_cfg = dict(self.raw_cfg)
+        from config.logging_config import get_log_directory
+        _wd = get_log_directory()
+        if _wd:
+            worker_cfg["_log_dir"] = str(_wd)
+
         self._executor = ProcessPoolExecutor(
             max_workers=structure_workers,
             initializer=_init_worker,
-            initargs=(self.raw_cfg,)
+            initargs=(worker_cfg,)
         )
         self._daily_cache_seeded = False
+
+        # Last-scan cutoff (parsed once). Backtest and paper both honor this — skips scans
+        # after this time, leaving exit_executor running for the remaining ticks until EOD.
+        self._last_scan_time = None
+        try:
+            from datetime import time as _dt_time
+            _ls_str = str(self.raw_cfg["last_scan_hhmm"])
+            _lh, _lm = _ls_str.split(":")
+            self._last_scan_time = _dt_time(int(_lh), int(_lm))
+        except Exception as _e:
+            logger.warning("ScreenerLive: failed to parse last_scan_hhmm; backtest scans will run until EOD: %s", _e)
+
         logger.info("ScreenerLive: Persistent worker pool created (%d workers)", structure_workers)
 
         # Create Stage-0 worker pool (1 worker — GIL-free compute_features + filter + shortlist)
@@ -798,7 +840,8 @@ class ScreenerLive:
                     reasons=updated_reasons,
                     orh=getattr(candidate, 'orh', None),
                     orl=getattr(candidate, 'orl', None),
-                    detected_level=getattr(candidate, 'detected_level', None)
+                    detected_level=getattr(candidate, 'detected_level', None),
+                    extras=getattr(candidate, 'extras', None),  # preserve detector context
                 )
 
             enhanced.append(adjusted_candidate)
@@ -1028,6 +1071,18 @@ class ScreenerLive:
                 self._handle_eod(now)
             return
 
+        # Last-scan cutoff: skip new scans after last_scan_hhmm (e.g., 14:50).
+        # This was originally only enforced in the paper timer loop. Backtest scans were
+        # firing all the way to 15:15 EOD which wastes work and corrupts analysis (some
+        # scans drift past entry_cutoff_hhmm anyway). Exit executor still receives ticks
+        # for bars between last_scan_hhmm and eod_squareoff_hhmm — only the SCAN is skipped.
+        try:
+            now_t = now.time() if hasattr(now, 'time') else now
+            if self._last_scan_time is not None and now_t > self._last_scan_time:
+                return
+        except Exception:
+            pass
+
         # Throttle production if last run was too recent (config-driven).
         if not self._should_produce(now):
             return
@@ -1042,24 +1097,28 @@ class ScreenerLive:
 
         # ---------- Seed daily_df cache in workers (once per session) ----------
         if not self._daily_cache_seeded:
-            _t_seed_start = time.perf_counter()
-            daily_dict = {}
-            for sym in self.core_symbols:
-                dd = self.sdk.get_daily(sym, days=210)
-                if dd is not None and not dd.empty:
-                    daily_dict[sym] = dd
-            _t_seed_fetch = time.perf_counter()
-            seed_futures = []
-            for _ in range(self._structure_workers):
-                seed_futures.append(self._executor.submit(_seed_worker_daily_cache, daily_dict))
-            for f in seed_futures:
-                f.result(timeout=60)
-            self._daily_cache_seeded = True
-            _t_seed_done = time.perf_counter()
-            logger.info("DAILY_CACHE_SEEDED | %d symbols to %d workers | fetch=%.2fs send=%.2fs total=%.2fs",
-                       len(daily_dict), self._structure_workers,
-                       _t_seed_fetch - _t_seed_start, _t_seed_done - _t_seed_fetch,
-                       _t_seed_done - _t_seed_start)
+            with perf("scan", "daily_seed_total", n_symbols=len(self.core_symbols)):
+                _t_seed_start = time.perf_counter()
+                daily_dict = {}
+                with perf("scan", "daily_seed_fetch", n_symbols=len(self.core_symbols)):
+                    for sym in self.core_symbols:
+                        dd = self.sdk.get_daily(sym, days=210)
+                        if dd is not None and not dd.empty:
+                            daily_dict[sym] = dd
+                _t_seed_fetch = time.perf_counter()
+                with perf("scan", "daily_seed_broadcast", n_workers=self._structure_workers,
+                          n_symbols=len(daily_dict)):
+                    seed_futures = []
+                    for _ in range(self._structure_workers):
+                        seed_futures.append(self._executor.submit(_seed_worker_daily_cache, daily_dict))
+                    for f in seed_futures:
+                        f.result(timeout=60)
+                self._daily_cache_seeded = True
+                _t_seed_done = time.perf_counter()
+                logger.info("DAILY_CACHE_SEEDED | %d symbols to %d workers | fetch=%.2fs send=%.2fs total=%.2fs",
+                           len(daily_dict), self._structure_workers,
+                           _t_seed_fetch - _t_seed_start, _t_seed_done - _t_seed_fetch,
+                           _t_seed_done - _t_seed_start)
 
         # ---------- Stage-0: EnergyScanner (single unified path) ----------
         shortlist: List[str] = []
@@ -1161,43 +1220,47 @@ class ScreenerLive:
 
         try:
             # Build df5_by_symbol from enriched data (API for paper, precomputed for backtest)
-            df5_by_symbol: Dict[str, pd.DataFrame] = {}
-            for s in self.core_symbols:
-                # Data source:
-                #  Paper/live: api_df5_cache (V3 Intraday API + enrichment)
-                #  Backtest:   _precomputed_5m (enriched feather cache)
-                if s in api_df5_cache:
-                    df5 = api_df5_cache[s]
-                elif self._precomputed_5m and s in self._precomputed_5m:
-                    df5 = self._get_precomputed_5m(s, now, self.cfg.screener_store_5m_max)
-                else:
-                    continue  # No data source available — skip symbol
+            with perf("scan", "build_df5_map", n_core=len(self.core_symbols)):
+                df5_by_symbol: Dict[str, pd.DataFrame] = {}
+                for s in self.core_symbols:
+                    # Data source:
+                    #  Paper/live: api_df5_cache (V3 Intraday API + enrichment)
+                    #  Backtest:   _precomputed_5m (enriched feather cache)
+                    if s in api_df5_cache:
+                        df5 = api_df5_cache[s]
+                    elif self._precomputed_5m and s in self._precomputed_5m:
+                        df5 = self._get_precomputed_5m(s, now, self.cfg.screener_store_5m_max)
+                    else:
+                        continue  # No data source available — skip symbol
 
-                if validate_df(df5, min_rows=min_bars_for_processing):
-                    df5_by_symbol[s] = df5
+                    if validate_df(df5, min_rows=min_bars_for_processing):
+                        df5_by_symbol[s] = df5
             if df5_by_symbol:
                 # Compute ORB levels once at 09:40 and cache for entire day
-                levels_by_symbol = self._compute_orb_levels_once(now, df5_by_symbol)
+                with perf("scan", "compute_orb_levels", n=len(df5_by_symbol)):
+                    levels_by_symbol = self._compute_orb_levels_once(now, df5_by_symbol)
 
                 # GIL FIX: Trim to 20-bar tails before pickling (55MB → 2.2MB)
                 # compute_features only needs lookback_bars=20, not the full 500
-                df5_tails = {
-                    sym: df.tail(20).copy()
-                    for sym, df in df5_by_symbol.items()
-                }
+                with perf("scan", "stage0_pickle_prep", n=len(df5_by_symbol)):
+                    df5_tails = {
+                        sym: df.tail(20).copy()
+                        for sym, df in df5_by_symbol.items()
+                    }
 
                 # Submit Stage-0 to separate process (GIL released during wait)
                 # future.result() is a C-level wait on pipe — subscriber thread runs freely
-                stage0_future = self._stage0_executor.submit(
-                    _run_stage0_in_process,
-                    df5_tails,
-                    levels_by_symbol,
-                    now,
-                    in_opening_bell,
-                    bool(env.DRY_RUN),
-                )
-                _, shortlist_dict, stage0_timing = stage0_future.result(timeout=60)
-                shortlist = shortlist_dict.get("long", []) + shortlist_dict.get("short", [])
+                with perf("scan", "stage0_execute", n_in=len(df5_tails)):
+                    stage0_future = self._stage0_executor.submit(
+                        _run_stage0_in_process,
+                        df5_tails,
+                        levels_by_symbol,
+                        now,
+                        in_opening_bell,
+                        bool(env.DRY_RUN),
+                    )
+                    _, shortlist_dict, stage0_timing = stage0_future.result(timeout=60)
+                    shortlist = shortlist_dict.get("long", []) + shortlist_dict.get("short", [])
                 logger.info(
                     "STAGE0_PROCESS | compute=%.2fs filter=%.2fs shortlist=%.2fs total=%.2fs | "
                     "filtered=%d long=%d short=%d",
@@ -1264,39 +1327,40 @@ class ScreenerLive:
 
         # Prepare data for parallel processing
         # daily_df is cached in worker processes (seeded once at session start)
-        symbol_data_map = {}
-        for sym in shortlist:
-            # Data source:
-            #  Paper/live: api_df5_cache
-            #  Backtest:   _precomputed_5m
-            if sym in api_df5_cache:
-                df5 = api_df5_cache[sym]
-            elif self._precomputed_5m and sym in self._precomputed_5m:
-                df5 = self._get_precomputed_5m(sym, now, self.cfg.screener_store_5m_max)
-            else:
-                continue  # No enriched 5m data available
-            if not validate_df(df5, min_rows=min_bars_for_processing):
-                continue
-            # PERFORMANCE FIX: Use cached ORB levels if available
-            if levels_by_symbol and sym in levels_by_symbol:
-                # Symbol was in cache - use cached levels
-                lvl = levels_by_symbol[sym]
-            elif levels_by_symbol is not None:
-                # Cache was computed but symbol not in it (started trading late)
-                # Use empty levels - don't try to compute ORB from incomplete data
-                lvl = {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
-                       "ORH": float("nan"), "ORL": float("nan")}
-            else:
-                # OPENING BELL FIX: Before 09:40 - cache not ready yet
-                # During opening bell (09:20-09:30) with <3 bars, use empty levels to avoid warnings
-                if in_opening_bell and len(df5) < 3:
+        with perf("scan", "structure_prep", n_shortlist=len(shortlist)):
+            symbol_data_map = {}
+            for sym in shortlist:
+                # Data source:
+                #  Paper/live: api_df5_cache
+                #  Backtest:   _precomputed_5m
+                if sym in api_df5_cache:
+                    df5 = api_df5_cache[sym]
+                elif self._precomputed_5m and sym in self._precomputed_5m:
+                    df5 = self._get_precomputed_5m(sym, now, self.cfg.screener_store_5m_max)
+                else:
+                    continue  # No enriched 5m data available
+                if not validate_df(df5, min_rows=min_bars_for_processing):
+                    continue
+                # PERFORMANCE FIX: Use cached ORB levels if available
+                if levels_by_symbol and sym in levels_by_symbol:
+                    # Symbol was in cache - use cached levels
+                    lvl = levels_by_symbol[sym]
+                elif levels_by_symbol is not None:
+                    # Cache was computed but symbol not in it (started trading late)
+                    # Use empty levels - don't try to compute ORB from incomplete data
                     lvl = {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
                            "ORH": float("nan"), "ORL": float("nan")}
                 else:
-                    # Enough bars to compute levels normally
-                    lvl = self._levels_for(sym, df5, now)
+                    # OPENING BELL FIX: Before 09:40 - cache not ready yet
+                    # During opening bell (09:20-09:30) with <3 bars, use empty levels to avoid warnings
+                    if in_opening_bell and len(df5) < 3:
+                        lvl = {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
+                               "ORH": float("nan"), "ORL": float("nan")}
+                    else:
+                        # Enough bars to compute levels normally
+                        lvl = self._levels_for(sym, df5, now)
 
-            symbol_data_map[sym] = (df5, lvl)
+                symbol_data_map[sym] = (df5, lvl)
 
         if not symbol_data_map:
             logger.info("GATES_COMPLETE | No symbols with sufficient data")
@@ -1316,14 +1380,16 @@ class ScreenerLive:
         batches = [all_items[i:i + BATCH_SIZE] for i in range(0, len(all_items), BATCH_SIZE)]
         _t_submit_start = time.perf_counter()
         futures = []
-        for batch in batches:
-            future = self._executor.submit(_worker_process_batch, batch, index_df5, now)
-            futures.append((future, {s for s, _, _ in batch}))
+        with perf("scan", "structure_submit", n_batches=len(batches), n_symbols=len(all_items)):
+            for batch in batches:
+                future = self._executor.submit(_worker_process_batch, batch, index_df5, now)
+                futures.append((future, {s for s, _, _ in batch}))
         _t_submit_end = time.perf_counter()
         logger.info("BATCH_SUBMIT | %d batches (%d symbols, batch_size=%d) | submit_time=%.2fs",
                    len(batches), len(all_items), BATCH_SIZE, _t_submit_end - _t_submit_start)
 
         # Collect results from batch futures
+        _t_collect_start = time.perf_counter()
         try:
             for future, expected_syms in futures:
                 try:
@@ -1392,6 +1458,25 @@ class ScreenerLive:
         except Exception as e:
             logger.exception(f"Worker pool processing failed: {e}")
 
+        # Emit structure_collect timing event (manual because the loop body is huge and
+        # re-indenting it under a `with perf():` would be a large mechanical change).
+        _t_collect_end = time.perf_counter()
+        try:
+            from config.logging_config import get_timing_logger
+            _lg = get_timing_logger()
+            if _lg is not None:
+                from utils.perf_timer import is_enabled as _perf_enabled
+                if _perf_enabled():
+                    _lg.log_event(
+                        ts=time.time(), pid=os.getpid(),
+                        stage="scan", substage="structure_collect",
+                        duration_ms=round((_t_collect_end - _t_collect_start) * 1000.0, 3),
+                        n_batches=len(futures), n_symbols=len(all_items),
+                        n_accepted=len(decisions),
+                    )
+        except Exception:
+            pass
+
         # DATA INTEGRITY CHECK: Verify all accepted symbols are in original shortlist
         accepted_symbols = {sym for sym, _ in decisions}
         assert accepted_symbols.issubset(set(shortlist)), \
@@ -1427,58 +1512,63 @@ class ScreenerLive:
 
         eligible_plans: List[Tuple[str, Dict, float]] = []  # (symbol, plan, score)
 
-        for sym, decision in decisions:
-            df5 = symbol_data_map.get(sym, (None,))[0]
-            lvl = symbol_data_map.get(sym, (None, {}))[1]
-            # daily_df only needed for ~5-20 accepted symbols (not 800), fetch from sdk cache
-            daily_df = self.sdk.get_daily(sym, days=210)
+        with perf("scan", "orchestrator_loop", n_decisions=len(decisions)):
+            for sym, decision in decisions:
+                df5 = symbol_data_map.get(sym, (None,))[0]
+                lvl = symbol_data_map.get(sym, (None, {}))[1]
+                # daily_df only needed for ~5-20 accepted symbols (not 800), fetch from sdk cache
+                with perf("orch", "sdk_get_daily", sym=sym):
+                    daily_df = self.sdk.get_daily(sym, days=210)
 
-            if df5 is None:
-                continue
+                if df5 is None:
+                    continue
 
-            setup_candidates = getattr(decision, 'setup_candidates', None)
-            if not setup_candidates:
-                continue
+                setup_candidates = getattr(decision, 'setup_candidates', None)
+                if not setup_candidates:
+                    continue
 
-            # Build HTF context from 15m data (aggregated from 5m enriched bars)
-            htf_context = self._build_htf_context(sym, df5=df5)
+                # Build HTF context from 15m data (aggregated from 5m enriched bars)
+                with perf("orch", "build_htf_context", sym=sym):
+                    htf_context = self._build_htf_context(sym, df5=df5)
 
-            # Compute daily_score from daily_df for daily/intraday score weighting
-            daily_score = 0.0
-            if daily_df is not None and len(daily_df) >= 20:
+                # Compute daily_score from daily_df for daily/intraday score weighting
+                daily_score = 0.0
+                if daily_df is not None and len(daily_df) >= 20:
+                    try:
+                        _d_close = float(daily_df["close"].iloc[-1])
+                        _d_sma20 = float(daily_df["close"].tail(20).mean())
+                        _d_atr = float((daily_df["high"] - daily_df["low"]).tail(14).mean())
+                        if _d_atr > 0:
+                            daily_score = max(-1.0, min(1.0, (_d_close - _d_sma20) / _d_atr))
+                    except Exception:
+                        daily_score = 0.0
+
                 try:
-                    _d_close = float(daily_df["close"].iloc[-1])
-                    _d_sma20 = float(daily_df["close"].tail(20).mean())
-                    _d_atr = float((daily_df["high"] - daily_df["low"]).tail(14).mean())
-                    if _d_atr > 0:
-                        daily_score = max(-1.0, min(1.0, (_d_close - _d_sma20) / _d_atr))
-                except Exception:
-                    daily_score = 0.0
+                    with perf("orch", "process_setup_candidates", sym=sym,
+                              n_candidates=len(setup_candidates)):
+                        plan = process_setup_candidates(
+                            symbol=sym,
+                            df5m=df5,
+                            levels=lvl,
+                            regime=decision.regime,
+                            now=now,
+                            candidates=setup_candidates,
+                            daily_df=daily_df,
+                            htf_context=htf_context,
+                            regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
+                            daily_score=daily_score
+                        )
+                except Exception as e:
+                    logger.exception("orchestrator failed for %s: %s", sym, e)
+                    continue
 
-            try:
-                plan = process_setup_candidates(
-                    symbol=sym,
-                    df5m=df5,
-                    levels=lvl,
-                    regime=decision.regime,
-                    now=now,
-                    candidates=setup_candidates,
-                    daily_df=daily_df,
-                    htf_context=htf_context,
-                    regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
-                    daily_score=daily_score
-                )
-            except Exception as e:
-                logger.exception("orchestrator failed for %s: %s", sym, e)
-                continue
-
-            if plan and plan.get("eligible", False):
-                score = plan.get("ranking", {}).get("score", 0.0)
-                eligible_plans.append((sym, plan, score, decision))
-                logger.debug(f"ORCHESTRATOR:ELIGIBLE {sym} score={score:.3f}")
-            else:
-                reason = plan.get("reason", "no_plan") if plan else "no_plan"
-                logger.debug(f"ORCHESTRATOR:REJECT {sym} reason={reason}")
+                if plan and plan.get("eligible", False):
+                    score = plan.get("ranking", {}).get("score", 0.0)
+                    eligible_plans.append((sym, plan, score, decision))
+                    logger.debug(f"ORCHESTRATOR:ELIGIBLE {sym} score={score:.3f}")
+                else:
+                    reason = plan.get("reason", "no_plan") if plan else "no_plan"
+                    logger.debug(f"ORCHESTRATOR:REJECT {sym} reason={reason}")
 
         # Sort by score descending
         eligible_plans.sort(key=lambda x: x[2], reverse=True)

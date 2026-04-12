@@ -2,6 +2,9 @@
     "_comment": "BASE Pipeline Configuration - Universal settings applied to ALL categories",
     "_description": "Risk management, sizing, and quality filter settings shared across all pipelines",
 
+    "wide_open_mode": true,
+    "_wide_open_comment": "MASTER FLAG: when true, all historical-PnL filters are bypassed so raw detector edge can be measured on a 3-year backtest. Disables: trade_quality_gates, apply_setup_filters, _check_validated_combinations, ICT sweep/MSS prerequisite, _validate_htf_trend/premium_discount hard-coded calls in BOS/CHoCH/FVG, event_policy_gate session/expiry policy, news_spike_gate size penalties, directional_bias multipliers, dedupe cooloff. PRESERVED: risk math, exit logic (T1/T2/SL/trailing/EOD), MIS eligibility, timing infrastructure, detector firing conditions themselves. Set to false for normal production operation after 3yr wide-open analysis.",
+
     "range_compression": {
         "_comment": "From trade_decision_gate.py - Reject during volatility expansion",
         "_evidence": "Volatility expansion invalidates support/resistance levels",
@@ -134,8 +137,9 @@
 
     "trade_quality_gates": {
         "_comment": "DATA-DRIVEN (Feb 2026): Pipeline-aware A (28,472 trades, 754 sessions, FY2022-26). 13.9 T/day, WR 58.6%, Avg Rs 299, PF 1.81, Total Rs 31.4L. All 4 FYs profitable with growing edge.",
-        "enabled": true,
-        "blocked_hours": [10],
+        "_wide_open_note": "feat/premium-zone-ict-fix: DISABLED for wide-open edge rediscovery (Apr 2026). Evidence was collected on the OLD codebase pre-parity-work, pre-detector-fixes, pre-buffered-logger. Will rebuild from scratch after wide-open 3yr run.",
+        "enabled": false,
+        "blocked_hours": [],
         "_blocked_hours_evidence": "hour=10: 9,468 trades removed. Remaining WR 56.5% -> 58.6% after quality gates.",
         "category_thresholds": {
             "BREAKOUT": {
@@ -157,6 +161,21 @@
                 "min_structural_rr": 2.0,
                 "min_t1_rr": 1.5,
                 "_evidence": "No data in 3yr backtest. Using BREAKOUT thresholds as fallback."
+            }
+        },
+        "setup_thresholds": {
+            "_comment": "Per-setup overrides. Used for ICT zones in wide-open edge discovery mode — every filter is relaxed so raw detector edge can be measured. Will tighten based on data from deep_edge_analysis/edge_optimizer.",
+            "premium_zone_short": {
+                "min_structural_rr": 0.5,
+                "min_t1_rr": 0.5,
+                "bypass_blocked_hours": true,
+                "_note": "WIDE-OPEN MODE: floors set to 0.5 (permissive). Features (pdz_range_position, pdz_confluence_count, etc.) flow to trade_report.csv for edge analysis."
+            },
+            "discount_zone_long": {
+                "min_structural_rr": 0.5,
+                "min_t1_rr": 0.5,
+                "bypass_blocked_hours": true,
+                "_note": "WIDE-OPEN MODE: symmetric with premium_zone_short."
             }
         }
     },
@@ -313,6 +332,13 @@
             "breakout_long": [
                 {"name": "bb_width_mid", "conditions": [{"feature": "bb_width_proxy", "min": 0.0011, "max": 0.0023}], "_edge": "N=343, Rs 464, lift Rs 210, IMPROVING"},
                 {"name": "vol_or_high", "conditions": [{"feature": "vol_or_ratio", "min": 11.39}], "_edge": "N=343, Rs 377, lift Rs 123, IMPROVING"}
+            ],
+
+            "premium_zone_short": [
+                {"name": "wide_open", "conditions": [], "_note": "WIDE-OPEN MODE: unconditional pass for edge discovery. Features (pdz_has_mss_confluence, pdz_has_fvg_confluence, pdz_has_ob_confluence, pdz_htf_bullish, pdz_range_position, etc.) flow into trade_report.csv via plan.extras — use deep_edge_analysis.py / edge_optimizer.py to find which combinations have edge, then add rules here."}
+            ],
+            "discount_zone_long": [
+                {"name": "wide_open", "conditions": [], "_note": "WIDE-OPEN MODE: unconditional pass. See premium_zone_short note."}
             ]
         },
 

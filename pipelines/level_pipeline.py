@@ -107,9 +107,15 @@ class LevelPipeline(BasePipeline):
         orl = safe_level_get(levels, "ORL", current_close)
         pdh = safe_level_get(levels, "PDH", orh)
         pdl = safe_level_get(levels, "PDL", orl)
+        # FIX (B-3): Include detected_level in proximity search.
+        # Detectors that produce their own structural range (ICT premium/discount zones,
+        # range_bounce, etc.) set levels["detected_level"] via detect_setups_comprehensive.
+        # Without this, ICT zone entries fail the proximity check because they're measured
+        # against classical ORH/PDH/ORL/PDL which can be far from the structural range.
+        detected_level = safe_level_get(levels, "detected_level", 0.0)
 
         # Find nearest level
-        candidate_levels = [orh, orl, vwap, pdh, pdl]
+        candidate_levels = [orh, orl, vwap, pdh, pdl, detected_level]
         candidate_levels = [l for l in candidate_levels if l > 0]
 
         if candidate_levels:

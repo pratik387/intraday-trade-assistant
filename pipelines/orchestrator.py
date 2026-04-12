@@ -581,6 +581,7 @@ class PipelineOrchestrator:
             strength = getattr(candidate, 'strength', 0.5)
             cap_segment = getattr(candidate, 'cap_segment', None)
             detected_level = getattr(candidate, 'detected_level', None)
+            extras = getattr(candidate, 'extras', None)  # Detector context for trade_report.csv
 
             # Merge detected_level into levels dict for quality calculation
             # Pro trader approach: use the actual detected level, not hardcoded PDH/PDL
@@ -601,6 +602,13 @@ class PipelineOrchestrator:
                 daily_score=daily_score,
                 cap_segment=cap_segment
             )
+
+            # Propagate detector extras into plan so they flow into events.jsonl DECISION
+            # event and from there into trade_report.csv via diagnostics_report_builder.
+            # Existing edge analysis tools (deep_edge_analysis, edge_optimizer, filter_simulation)
+            # auto-discover any new columns in trade_report.csv.
+            if plan and extras:
+                plan["extras"] = extras
 
             if plan and plan.get("eligible", False):
                 category = plan.get("category", "UNKNOWN")
@@ -770,6 +778,7 @@ class PipelineOrchestrator:
             for candidate in candidates:
                 setup_type = str(candidate.setup_type) if hasattr(candidate, 'setup_type') else str(candidate)
                 detected_level = getattr(candidate, 'detected_level', None)
+                extras = getattr(candidate, 'extras', None)  # Detector context for trade_report.csv
 
                 # Merge detected_level into levels dict for quality calculation
                 candidate_levels = dict(levels)  # Copy to avoid mutating original
@@ -788,6 +797,10 @@ class PipelineOrchestrator:
                     regime_diagnostics=symbol_regime_diag,
                     daily_score=symbol_daily_score
                 )
+
+                # Propagate detector extras into plan (see process_candidates for rationale)
+                if plan and extras:
+                    plan["extras"] = extras
 
                 if plan and plan.get("eligible", False):
                     category = plan.get("category", "UNKNOWN")
