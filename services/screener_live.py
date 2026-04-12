@@ -2353,29 +2353,73 @@ class ScreenerLive:
 
     # ---------- Precomputed enriched 5m bars (backtest) ----------
     def _load_precomputed_5m(self) -> None:
-        """Load precomputed enriched 5m bars from feather cache (backtest only)."""
+        """Load precomputed enriched 5m bars from feather cache (backtest only).
+
+        Two data sources (tried in order):
+        1. Monthly consolidated file: backtest-cache-download/monthly/{year_month}_5m_enriched.feather
+           (OCI pods only have this — fast path, one file for all symbols)
+        2. Per-symbol files: cache/ohlcv_archive/{SYMBOL}/{SYMBOL}_5minutes_enriched.feather
+           (Local dev has these — slower, one file per symbol)
+        """
         from pathlib import Path
-        cache_dir = Path("cache/ohlcv_archive")
         loaded = 0
         single_day_count = 0
-        for sym in self.core_symbols:
-            tsym = sym.split(":", 1)[-1].strip().upper()
-            for suffix in [f"{tsym}.NS", tsym]:
-                path = cache_dir / suffix / f"{suffix}_5minutes_enriched.feather"
-                if path.exists():
-                    try:
-                        df = pd.read_feather(path)
-                        df["date"] = pd.to_datetime(df["date"])
-                        if getattr(df["date"].dt, "tz", None) is not None:
-                            df["date"] = df["date"].dt.tz_localize(None)
-                        df = df.set_index("date").sort_index()
-                        self._precomputed_5m[sym] = df
-                        loaded += 1
-                        if len(set(df.index.date)) < 2:
-                            single_day_count += 1
-                    except Exception:
-                        pass
-                    break
+
+        # Path 1: Try monthly consolidated file (OCI fast path)
+        # Same file MockBroker._load_enriched_5m uses (backtest-cache-download/monthly/)
+        monthly_dir = Path("backtest-cache-download/monthly")
+        if monthly_dir.exists():
+            try:
+                # Get session date from MockBroker (set by --session-date CLI arg)
+                _session_date = getattr(self.sdk, '_dry_session_date', None)
+                if _session_date is None:
+                    _session_date = self.raw_cfg.get("session_date")
+                from_dt = pd.to_datetime(_session_date) if _session_date else None
+                if from_dt is None:
+                    raise ValueError("No session_date for monthly file lookup")
+                year_month = f"{from_dt.year}_{from_dt.month:02d}"
+                monthly_file = monthly_dir / f"{year_month}_5m_enriched.feather"
+                if monthly_file.exists():
+                    df_all = pd.read_feather(monthly_file)
+                    df_all["date"] = pd.to_datetime(df_all["date"])
+                    if df_all["date"].dt.tz is not None:
+                        df_all["date"] = df_all["date"].dt.tz_localize(None)
+                    for sym_raw, group in df_all.groupby("symbol"):
+                        sym = f"NSE:{sym_raw}"
+                        df_sym = group.drop(columns=["symbol"]).set_index("date").sort_index()
+                        if sym in self.core_symbols or f"NSE:{sym_raw}" in self.core_symbols:
+                            self._precomputed_5m[sym] = df_sym
+                            loaded += 1
+                            if len(set(df_sym.index.date)) < 2:
+                                single_day_count += 1
+                    if loaded > 0:
+                        logger.info("PRECOMPUTED_5M | Loaded %d symbols from monthly file %s",
+                                    loaded, monthly_file.name)
+            except Exception as e:
+                logger.warning("PRECOMPUTED_5M | Monthly file load failed: %s", e)
+
+        # Path 2: Per-symbol files (local dev fallback)
+        if loaded == 0:
+            cache_dir = Path("cache/ohlcv_archive")
+            for sym in self.core_symbols:
+                tsym = sym.split(":", 1)[-1].strip().upper()
+                for suffix in [f"{tsym}.NS", tsym]:
+                    path = cache_dir / suffix / f"{suffix}_5minutes_enriched.feather"
+                    if path.exists():
+                        try:
+                            df = pd.read_feather(path)
+                            df["date"] = pd.to_datetime(df["date"])
+                            if getattr(df["date"].dt, "tz", None) is not None:
+                                df["date"] = df["date"].dt.tz_localize(None)
+                            df = df.set_index("date").sort_index()
+                            self._precomputed_5m[sym] = df
+                            loaded += 1
+                            if len(set(df.index.date)) < 2:
+                                single_day_count += 1
+                        except Exception:
+                            pass
+                        break
+
         logger.info("PRECOMPUTED_5M | Loaded %d/%d symbols from enriched feather cache | single_day_only=%d (no warmup)",
                     loaded, len(self.core_symbols), single_day_count)
 
