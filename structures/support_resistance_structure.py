@@ -100,6 +100,10 @@ class SupportResistanceStructure(BaseStructure):
         self.retest_entry_zone_width_atr = config["retest_entry_zone_width_atr"]
         self.retest_timeout_minutes = config["retest_timeout_minutes"]
 
+        # Config-driven cap blocking (default empty — no cap blocks unless explicitly set).
+        # Mirrors RangeStructure pattern (commit 12910a0). Per audit/03 P2 #5.
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
+
         # Target structure type filter - each instance only detects its specific structure
         # Valid values: "support_bounce_long", "resistance_bounce_short", "support_breakdown_short", "resistance_breakout_long", or "all"
         # Also derive from _setup_name if target_structure_type is not explicitly set
@@ -447,6 +451,12 @@ class SupportResistanceStructure(BaseStructure):
         events = []
         quality_score = 0.0
 
+        # Config-driven cap blocking (mirrors RangeStructure; audit/03 P2 #5)
+        cap_segment = getattr(context, 'cap_segment', None)
+        if cap_segment in self.blocked_cap_segments:
+            logger.debug(f"SR_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping support_bounce")
+            return events, quality_score
+
         if not sr_info.nearest_support or sr_info.support_touches < self.min_touches:
             logger.debug(f"SR_DETECT: {context.symbol} - Support bounce REJECTED: No valid support (touches={sr_info.support_touches}, need {self.min_touches})")
             return events, quality_score
@@ -509,7 +519,8 @@ class SupportResistanceStructure(BaseStructure):
                     "support_strength": sr_info.support_strength,
                     "distance_pct": distance_pct,
                     "volume_confirmation": volume_ok,
-                    "candle_conviction": True,
+                    # candle_conviction key removed per audit/03 P2 #4 (asymmetric
+                    # with other 3 setups). Reject-gate at line 475-478 still fires.
                     "entry_mode": actual_entry_mode,
                     "retest_zone": retest_zone
                 },
@@ -526,6 +537,12 @@ class SupportResistanceStructure(BaseStructure):
 
         events = []
         quality_score = 0.0
+
+        # Config-driven cap blocking (mirrors RangeStructure; audit/03 P2 #5)
+        cap_segment = getattr(context, 'cap_segment', None)
+        if cap_segment in self.blocked_cap_segments:
+            logger.debug(f"SR_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping resistance_rejection")
+            return events, quality_score
 
         if not sr_info.nearest_resistance or sr_info.resistance_touches < self.min_touches:
             logger.debug(f"S/R: {context.symbol} - No valid resistance for rejection: touches {sr_info.resistance_touches}")
@@ -600,6 +617,12 @@ class SupportResistanceStructure(BaseStructure):
         events = []
         quality_score = 0.0
 
+        # Config-driven cap blocking (mirrors RangeStructure; audit/03 P2 #5)
+        cap_segment = getattr(context, 'cap_segment', None)
+        if cap_segment in self.blocked_cap_segments:
+            logger.debug(f"SR_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping support_breakdown")
+            return events, quality_score
+
         if not sr_info.nearest_support or sr_info.support_touches < self.min_touches:
             logger.debug(f"S/R: {context.symbol} - No valid support for breakdown")
             return events, quality_score
@@ -666,6 +689,12 @@ class SupportResistanceStructure(BaseStructure):
 
         events = []
         quality_score = 0.0
+
+        # Config-driven cap blocking (mirrors RangeStructure; audit/03 P2 #5)
+        cap_segment = getattr(context, 'cap_segment', None)
+        if cap_segment in self.blocked_cap_segments:
+            logger.debug(f"SR_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping resistance_breakout")
+            return events, quality_score
 
         if not sr_info.nearest_resistance or sr_info.resistance_touches < self.min_touches:
             logger.debug(f"S/R: {context.symbol} - No valid resistance for breakout")
