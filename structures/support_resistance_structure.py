@@ -268,10 +268,18 @@ class SupportResistanceStructure(BaseStructure):
         try:
             levels = {'support': [], 'resistance': []}
 
-            # Use recent high/low for pivot calculation
-            recent_high = df['high'].tail(20).max()
-            recent_low = df['low'].tail(20).min()
-            recent_close = df['close'].iloc[-1]
+            # Drop NaN before computing pivot boundaries - NaN inputs produce NaN pivots
+            # which silently contaminate level extraction downstream.
+            high_clean = df['high'].tail(20).dropna()
+            low_clean = df['low'].tail(20).dropna()
+            if high_clean.empty or low_clean.empty:
+                return {'support': [], 'resistance': []}
+            recent_high = high_clean.max()
+            recent_low = low_clean.min()
+            recent_close_series = df['close'].dropna()
+            if recent_close_series.empty:
+                return {'support': [], 'resistance': []}
+            recent_close = recent_close_series.iloc[-1]
 
             # Classic pivot calculation
             pivot = (recent_high + recent_low + recent_close) / 3
