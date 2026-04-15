@@ -129,6 +129,14 @@ def test_order_block_emits_flat_confluence_features():
 
     cfg = make_ict_config()
     detector = ICTStructure(cfg)
+    # Force-relax filters so we reliably exercise the event-creation path; this test
+    # validates the event-shape contract, not the filter logic (covered elsewhere).
+    detector.ob_min_block_size_pct = 0.0
+    detector.ob_min_volume_ratio = 0.0
+    detector.ob_swing_tolerance_pct = 1.0
+    detector.ob_min_rejection_wick_pct = 0.0
+    detector.ob_test_tolerance = 1.0  # very wide so current price is "in zone"
+
     ctx = make_context(df)
 
     event = detector._create_order_block_event(

@@ -622,12 +622,12 @@ class ICTStructure(BaseStructure):
                         'move_pct': move_pct * 100,
                         'bars_since_formation': bars_since_ob,
                         'pattern_type': 'bearish_order_block',
-                        'professional_filters': {
-                            'has_liquidity_sweep': has_sweep,
-                            'has_mss_confirmation': has_mss,
-                            'confluence_count': len(confluence_factors),
-                            'confluence_factors': confluence_factors
-                        }
+                        # Flattened confluence features so main_detector's scalar filter
+                        # lets them through to extras / trade_report.csv.
+                        'ob_has_liquidity_sweep': bool(has_sweep),
+                        'ob_has_mss_confirmation': bool(has_mss),
+                        'ob_confluence_count': int(len(confluence_factors)),
+                        'ob_confluence_factors': ','.join(confluence_factors) if confluence_factors else '',
                     },
                     price=context.current_price,
                     volume=None,
@@ -656,12 +656,11 @@ class ICTStructure(BaseStructure):
                         'move_pct': move_pct * 100,
                         'bars_since_formation': bars_since_ob,
                         'pattern_type': 'bullish_order_block',
-                        'professional_filters': {
-                            'has_liquidity_sweep': has_sweep,
-                            'has_mss_confirmation': has_mss,
-                            'confluence_count': len(confluence_factors),
-                            'confluence_factors': confluence_factors
-                        }
+                        # Flattened confluence features (see bearish branch above).
+                        'ob_has_liquidity_sweep': bool(has_sweep),
+                        'ob_has_mss_confirmation': bool(has_mss),
+                        'ob_confluence_count': int(len(confluence_factors)),
+                        'ob_confluence_factors': ','.join(confluence_factors) if confluence_factors else '',
                     },
                     price=ob_low
                 )
