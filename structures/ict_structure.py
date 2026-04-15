@@ -2002,11 +2002,21 @@ class ICTStructure(BaseStructure):
         )
 
     def _get_atr(self, context: MarketContext) -> float:
-        """Get ATR from context - must exist, no default."""
-        if context.indicators and 'atr' in context.indicators:
-            return context.indicators['atr']
-        # Fallback: estimate ATR as 1% of price (better than crashing for missing indicator)
-        return context.current_price * 0.01
+        """Get ATR from context - must exist, fail loud if not.
+
+        Per mandatory coding rule (CLAUDE.md): no hardcoded defaults. ATR is a
+        required indicator; if it is missing or invalid the caller must surface
+        the problem rather than silently substituting a made-up value.
+        """
+        indicators = context.indicators or {}
+        atr = indicators.get('atr14')
+        if atr is None:
+            atr = indicators.get('atr')
+        if atr is None or pd.isna(atr) or atr <= 0:
+            raise ValueError(
+                f"ATR unavailable in indicators for {context.symbol} at {context.timestamp}"
+            )
+        return float(atr)
 
     def rank_setup_quality(self, context: MarketContext) -> float:
         """Rank the quality of ICT setups."""
