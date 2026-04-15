@@ -305,6 +305,10 @@ class RangeStructure(BaseStructure):
 
         if context.indicators and 'vol_z' in context.indicators:
             vol_z = context.indicators['vol_z']
+            # NaN vol_z -> same behavior as missing key (permissive). "Unknown" is not
+            # a rejection signal; only a concrete sub-threshold reading rejects.
+            if pd.isna(vol_z):
+                return True
             return vol_z >= self.min_volume_mult
 
         return True  # Default to true if no volume data

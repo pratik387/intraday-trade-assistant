@@ -200,3 +200,23 @@ def test_detect_range_returns_none_on_nan_levels():
     detector = RangeStructure(cfg)
     result = detector._detect_range(df)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: P2 — vol_z NaN consistency
+# ---------------------------------------------------------------------------
+
+def test_validate_volume_confirmation_permissive_on_nan_vol_z():
+    """Regression: NaN vol_z must behave consistently with missing vol_z key (permissive)."""
+    df = make_df([(100, 100.5, 99.5, 100, 1000)] * 25)
+    cfg = make_range_config()
+    cfg['require_volume_confirmation'] = True
+    cfg['min_volume_mult'] = 1.5
+    detector = RangeStructure(cfg)
+    # Missing key → True (permissive path exists)
+    ctx_missing = make_context(df, indicators={'atr': 0.5})
+    assert detector._validate_volume_confirmation(ctx_missing) is True
+    # NaN vol_z → should also be True (consistent permissive behavior)
+    ctx_nan = make_context(df, indicators={'atr': 0.5, 'vol_z': float('nan')})
+    assert detector._validate_volume_confirmation(ctx_nan) is True, \
+        "NaN vol_z must match missing-key behavior (permissive)"
