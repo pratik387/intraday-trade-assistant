@@ -181,7 +181,17 @@
         },
         "setup_filters": {
             "_comment": "GATES-OFF RUN: All filters disabled for raw detection quality test",
-            "_active_profile": "GATES_OFF"
+            "_active_profile": "GATES_OFF",
+            "trend_continuation_long": {
+                "enabled": false,
+                "_audit_decision": "DISABLED - see audit/04-momentum_structure.md P1 #2",
+                "_audit_rationale": "11 trades in 3yr backtest, chase-the-extension entry with no EMA/VWAP pullback reference, weak canonical NSE edge"
+            },
+            "trend_continuation_short": {
+                "enabled": false,
+                "_audit_decision": "DISABLED - see audit/04-momentum_structure.md P1 #2",
+                "_audit_rationale": "same as trend_continuation_long - no structural edge, chase-entry semantics"
+            }
         },
         "global_filters": {
             "_comment": "UNIFIED GLOBAL FILTERS - Applied to all setups before setup-specific filters",
