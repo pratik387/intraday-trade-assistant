@@ -85,6 +85,8 @@ class ICTStructure(BaseStructure):
 
         # Change of Character parameters - will crash with KeyError if missing
         self.choch_momentum_periods = config["choch_momentum_periods"]
+        if not self.choch_momentum_periods:
+            raise ValueError("choch_momentum_periods must be a non-empty list")
         self.choch_min_momentum_change = config["choch_min_momentum_change_pct"] / 100.0
         self.choch_volume_threshold = config["choch_volume_threshold"]
 
