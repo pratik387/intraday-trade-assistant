@@ -188,6 +188,7 @@ class MomentumStructure(BaseStructure):
                     context={
                         "momentum_3bar_pct": last_bar['returns_3'] * 100,
                         "momentum_1bar_pct": last_bar['returns_1'] * 100,
+                        "two_bar_sum_pct": float(df['returns_1'].tail(2).sum() * 100),
                         "vol_z": last_bar.get('vol_z', 1.0),
                         "vol_surge": last_bar.get('vol_surge', 1.0),
                         "pattern_type": "momentum_breakout"
@@ -211,6 +212,7 @@ class MomentumStructure(BaseStructure):
                     context={
                         "momentum_3bar_pct": last_bar['returns_3'] * 100,
                         "momentum_1bar_pct": last_bar['returns_1'] * 100,
+                        "two_bar_sum_pct": float(df['returns_1'].tail(2).sum() * 100),
                         "vol_z": last_bar.get('vol_z', 1.0),
                         "vol_surge": last_bar.get('vol_surge', 1.0),
                         "pattern_type": "momentum_breakout"
