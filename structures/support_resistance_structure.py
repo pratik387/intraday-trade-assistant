@@ -96,7 +96,7 @@ class SupportResistanceStructure(BaseStructure):
 
         # Dual-mode entry configuration (Professional S/R Trading)
         self.entry_mode = config["entry_mode"]  # "immediate", "retest", or "conditional"
-        self.immediate_entry_distance_pct = config.get("immediate_entry_distance_pct", 0.3)  # For conditional mode
+        self.immediate_entry_distance_pct = config["immediate_entry_distance_pct"]  # For conditional mode
         self.retest_entry_zone_width_atr = config["retest_entry_zone_width_atr"]
         self.retest_timeout_minutes = config["retest_timeout_minutes"]
 
