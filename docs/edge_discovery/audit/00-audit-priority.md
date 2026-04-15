@@ -36,8 +36,8 @@
 |------|----------|------|-------------------------|----------------|--------|
 | 01 | ICTStructure | structures/ict_structure.py | discount_zone_long (542,744) | 2 | DONE-FIXED-AND-TRUSTED |
 | 02 | RangeStructure | structures/range_structure.py | range_bounce_short (190,453) | 6 | DONE-FIXED-AND-TRUSTED |
-| 03 | SupportResistanceStructure | structures/support_resistance_structure.py | resistance_bounce_short (75,926) | 0 | NOT_STARTED |
-| 04 | MomentumStructure | structures/momentum_structure.py | momentum_breakout_long (7,585) | 0 | NOT_STARTED |
+| 03 | SupportResistanceStructure | structures/support_resistance_structure.py | resistance_bounce_short (75,926) | 4 | DONE-FIXED-AND-TRUSTED |
+| 04 | MomentumStructure | structures/momentum_structure.py | momentum_breakout_long (7,585) | 0 | DONE-FIXED-AND-TRUSTED (split: momentum_breakout_* FIXED, trend_continuation_* DISABLED) |
 | 05 | LevelBreakoutStructure | structures/level_breakout_structure.py | breakout_long (3,294) | 0 | NOT_STARTED |
 | 06 | VolumeStructure | structures/volume_structure.py | volume_spike_reversal_long (457) | 1 | NOT_STARTED |
 | 07 | VolumeBreakoutStructure | structures/volume_breakout_structure.py | — (0) | 1 | NOT_STARTED |
