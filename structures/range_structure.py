@@ -41,6 +41,9 @@ class RangeStructure(BaseStructure):
         self.min_range_height_pct = config["min_range_height_pct"]
         self.bounce_tolerance_pct = config["bounce_tolerance_pct"]
         self.breakout_confirmation_pct = config["breakout_confirmation_pct"]
+        # Minimum touches required on each boundary to confirm a range.
+        # Config-driven; default 2 for backward compat. Pros recommend 3+ for stronger levels.
+        self.min_touches_per_side = int(config.get("min_touches_per_side", 2))
         self.require_volume_confirmation = config["require_volume_confirmation"]
         self.min_volume_mult = config["min_volume_mult"]
 
@@ -166,8 +169,8 @@ class RangeStructure(BaseStructure):
             if abs(row['low'] - support) / support * 100 <= self.bounce_tolerance_pct:
                 touches_support += 1
 
-        # Need at least 2 touches on each level to confirm range
-        if touches_resistance >= 2 and touches_support >= 2:
+        # Need at least min_touches_per_side touches on each level to confirm range
+        if touches_resistance >= self.min_touches_per_side and touches_support >= self.min_touches_per_side:
             return {
                 "support": support,
                 "resistance": resistance,
@@ -177,7 +180,7 @@ class RangeStructure(BaseStructure):
                 "duration_bars": lookback_bars
             }
 
-        logger.debug(f"RANGE_DETECT: Insufficient touches - Support: {touches_support}, Resistance: {touches_resistance} (need 2+ each)")
+        logger.debug(f"RANGE_DETECT: Insufficient touches - Support: {touches_support}, Resistance: {touches_resistance} (need {self.min_touches_per_side}+ each)")
         return None
 
     def _detect_range_bounce(self, context: MarketContext, range_info: Dict[str, Any]) -> List[StructureEvent]:

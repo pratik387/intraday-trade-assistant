@@ -220,3 +220,49 @@ def test_validate_volume_confirmation_permissive_on_nan_vol_z():
     ctx_nan = make_context(df, indicators={'atr': 0.5, 'vol_z': float('nan')})
     assert detector._validate_volume_confirmation(ctx_nan) is True, \
         "NaN vol_z must match missing-key behavior (permissive)"
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: P2 — touches >= 2 -> min_touches_per_side config
+# ---------------------------------------------------------------------------
+
+def _make_exact_n_touches_bars(n_each_side: int):
+    """Build 30 bars with exactly n touches per side in the lookback window (last 12)."""
+    # Filler: mid-range bars 101.0 (no boundary touch within 0.2%)
+    bars = [(101.0, 101.2, 100.8, 101.0, 1000)] * 30
+    # Place touches starting at idx 18 (start of lookback window of 12)
+    # Resistance touches at idx 18, 20, 22 ... ; Support touches at idx 19, 21, 23 ...
+    r_positions = [18 + 2 * i for i in range(n_each_side)]
+    s_positions = [19 + 2 * i for i in range(n_each_side)]
+    for i in r_positions:
+        bars[i] = (101.5, 101.95, 101.4, 101.8, 1500)
+    for i in s_positions:
+        bars[i] = (100.3, 100.6, 100.0, 100.4, 1500)
+    # Last bar — keep away from resistance so the touch count isn't inflated
+    bars[29] = (101.0, 101.2, 100.8, 101.0, 1000)
+    return bars
+
+
+def test_min_touches_per_side_config_default_two_detects_with_two_touches():
+    """Default min_touches_per_side=2: exactly 2 touches each side -> range detected."""
+    bars = _make_exact_n_touches_bars(2)
+    df = make_df(bars)
+    cfg = make_range_config()
+    cfg['min_touches_per_side'] = 2
+    detector = RangeStructure(cfg)
+    result = detector._detect_range(df)
+    assert result is not None, "With min_touches=2 and 2 touches each side, range should detect"
+
+
+def test_min_touches_per_side_config_three_rejects_with_two_touches():
+    """min_touches_per_side=3 with only 2 touches per side must reject range."""
+    bars = _make_exact_n_touches_bars(2)
+    df = make_df(bars)
+    cfg = make_range_config()
+    cfg['min_touches_per_side'] = 3
+    detector = RangeStructure(cfg)
+    result = detector._detect_range(df)
+    assert result is None, (
+        "With min_touches=3 and only 2 touches per side, range must be rejected "
+        "(currently hardcoded >= 2 ignores the config)"
+    )
