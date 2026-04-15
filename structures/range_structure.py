@@ -141,6 +141,11 @@ class RangeStructure(BaseStructure):
         support_candidates = lows.rolling(window=5).min()
         support = support_candidates.quantile(0.05)
 
+        # Guard against invalid levels (NaN or non-positive) before any pct division
+        if pd.isna(resistance) or pd.isna(support) or resistance <= 0 or support <= 0:
+            logger.debug(f"RANGE_DETECT: Invalid range levels (support={support}, resistance={resistance})")
+            return None
+
         # Validate range
         range_height_pct = (resistance - support) / support * 100
 

@@ -169,3 +169,34 @@ def test_calculate_institutional_strength_uses_actual_duration_bars():
         f"short range (10 bars) {conf_short}. Currently the code reads 'duration' "
         f"(wrong key) so the default 20 is always returned → bonuses never differ."
     )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: P2 — Div-by-zero guards on support/resistance
+# ---------------------------------------------------------------------------
+
+def test_detect_range_returns_none_on_zero_support():
+    """Regression: zero support must produce clean None return, with no div-by-zero warning."""
+    import warnings
+    # Every bar has low=0 → support quantile(0.05) will be 0 → div-by-zero in pct calc
+    bars = [(0.01, 0.5, 0.0, 0.1, 1000)] * 30
+    df = make_df(bars)
+    cfg = make_range_config()
+    detector = RangeStructure(cfg)
+    # Must return None cleanly without a divide-by-zero RuntimeWarning
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        result = detector._detect_range(df)
+    assert result is None
+
+
+def test_detect_range_returns_none_on_nan_levels():
+    """Regression: NaN support/resistance (from empty quantile) must produce clean None."""
+    # All-NaN OHLC → quantile returns NaN
+    import numpy as np
+    bars = [(np.nan, np.nan, np.nan, np.nan, 1000)] * 30
+    df = make_df(bars)
+    cfg = make_range_config()
+    detector = RangeStructure(cfg)
+    result = detector._detect_range(df)
+    assert result is None
