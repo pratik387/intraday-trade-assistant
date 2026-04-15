@@ -1386,10 +1386,13 @@ class ICTStructure(BaseStructure):
     def _find_swing_points(self, df: pd.DataFrame, price_type: str) -> List[float]:
         """Find swing highs or lows in the data."""
         swing_points = []
-        lookback = min(self.bos_min_structure_bars, len(df) - 2)
+        warmup = self.bos_min_structure_bars
 
         for i in range(2, len(df) - 2):
-            if i < lookback:
+            # Apply warmup only when the dataframe is long enough to support it;
+            # on short frames (opening-bell, warmup phase) we must still evaluate swings
+            # rather than silently aborting the whole loop.
+            if len(df) > warmup + 4 and i < warmup:
                 continue
 
             window = df.iloc[i-2:i+3]
