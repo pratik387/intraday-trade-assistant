@@ -618,7 +618,7 @@ class SupportResistanceStructure(BaseStructure):
         logger.debug(f"S/R: {context.symbol} - Breakdown volume confirmation: {volume_ok}")
 
         if volume_ok:
-            confidence = self._calculate_institutional_strength(context, sr_info, "support_breakout", "long", True)
+            confidence = self._calculate_institutional_strength(context, sr_info, "support_breakdown", "short", True)
             quality_score = min(90.0, sr_info.support_strength * 0.8 + (confidence * 25))
 
             # Distance from broken support level
@@ -1082,10 +1082,10 @@ class SupportResistanceStructure(BaseStructure):
                     strength_multiplier *= 1.2  # 20% bonus for clean level interaction
                     logger.debug(f"S/R: Clean level interaction bonus applied")
 
-            elif "breakout" in setup_type:
-                # Strong breakout bonus (significant move through level)
+            elif "breakout" in setup_type or "breakdown" in setup_type:
+                # Strong breakout/breakdown bonus (significant move through level)
                 # This would need breakout distance data from context
-                strength_multiplier *= 1.1  # 10% base bonus for breakout patterns
+                strength_multiplier *= 1.1  # 10% base bonus for breakout/breakdown patterns
 
             # Market timing bonus (S/R levels work throughout the session)
             current_hour = pd.to_datetime(context.timestamp).hour
