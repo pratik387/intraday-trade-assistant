@@ -306,7 +306,7 @@ class ICTStructure(BaseStructure):
             recent_data = trend_df.tail(20)
 
             # Method 1: ADX-based trend validation (if available)
-            if adx is not None and adx > 20:
+            if adx is not None and not pd.isna(adx) and adx > 20:
                 # Strong trend exists (ADX > 20)
                 # Check direction alignment
                 if 'ema20' in recent_data.columns:
