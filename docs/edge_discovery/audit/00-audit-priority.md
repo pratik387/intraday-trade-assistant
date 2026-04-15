@@ -35,7 +35,7 @@
 | Rank | Detector | File | Top setup (trade count) | Recent commits | Status |
 |------|----------|------|-------------------------|----------------|--------|
 | 01 | ICTStructure | structures/ict_structure.py | discount_zone_long (542,744) | 2 | DONE-FIXED-AND-TRUSTED |
-| 02 | RangeStructure | structures/range_structure.py | range_bounce_short (190,453) | 0 | NOT_STARTED |
+| 02 | RangeStructure | structures/range_structure.py | range_bounce_short (190,453) | 6 | DONE-FIXED-AND-TRUSTED |
 | 03 | SupportResistanceStructure | structures/support_resistance_structure.py | resistance_bounce_short (75,926) | 0 | NOT_STARTED |
 | 04 | MomentumStructure | structures/momentum_structure.py | momentum_breakout_long (7,585) | 0 | NOT_STARTED |
 | 05 | LevelBreakoutStructure | structures/level_breakout_structure.py | breakout_long (3,294) | 0 | NOT_STARTED |
