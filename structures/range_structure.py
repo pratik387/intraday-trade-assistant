@@ -56,8 +56,9 @@ class RangeStructure(BaseStructure):
         self.breakout_sl_buffer_atr = config["breakout_sl_buffer_atr"]  # ATR buffer inside level for breakout SL
         self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
 
-        # DATA-DRIVEN: Blocked cap segments from 6-month backtest analysis
-        # range_bounce_short large_cap: 92 trades, 9.8% WR, Rs -10,197 PnL, 52.2% hard_sl
+        # DATA-DRIVEN: Blocked cap segments from 6-month backtest analysis.
+        # Applied uniformly to ALL range setups (bounce long/short + breakout long/short).
+        # Example: range_bounce_short large_cap historically showed 9.8% WR → blocked via config.
         self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
 
         logger.debug(f"RANGE: Initialized with range duration: {self.min_range_duration} bars, height: {self.min_range_height_pct}-{self.max_range_height_pct}%")
@@ -177,6 +178,11 @@ class RangeStructure(BaseStructure):
     def _detect_range_bounce(self, context: MarketContext, range_info: Dict[str, Any]) -> List[StructureEvent]:
         """Detect range bounce opportunities."""
         events = []
+        cap_segment = context.cap_segment
+        # Config-driven cap blocking — applies to all range bounce setups (long + short)
+        if cap_segment in self.blocked_cap_segments:
+            logger.debug(f"RANGE_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping range bounce")
+            return events
         current_price = context.current_price
         support = range_info["support"]
         resistance = range_info["resistance"]
@@ -209,12 +215,7 @@ class RangeStructure(BaseStructure):
         if resistance_distance_pct <= self.bounce_tolerance_pct:
             # Check if we're coming from below (bounce setup)
             if current_price <= resistance:
-                # DATA-DRIVEN: Block large_cap for range_bounce_short (6-month backtest: 9.8% WR, Rs -10,197)
-                # HARDCODED: This block applies regardless of which RangeStructure instance detects it
-                cap_segment = context.cap_segment
-                if cap_segment == "large_cap":
-                    logger.debug(f"RANGE_BLOCK: {context.symbol} | Cap=large_cap blocked for range_bounce_short")
-                elif self._validate_volume_confirmation(context):
+                if self._validate_volume_confirmation(context):
                     event = StructureEvent(
                         symbol=context.symbol,
                         timestamp=context.timestamp,
@@ -237,6 +238,11 @@ class RangeStructure(BaseStructure):
     def _detect_range_breakout(self, context: MarketContext, range_info: Dict[str, Any]) -> List[StructureEvent]:
         """Detect range breakout opportunities."""
         events = []
+        cap_segment = context.cap_segment
+        # Config-driven cap blocking — applies to all range breakout/breakdown setups
+        if cap_segment in self.blocked_cap_segments:
+            logger.debug(f"RANGE_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping range breakout")
+            return events
         current_price = context.current_price
         support = range_info["support"]
         resistance = range_info["resistance"]

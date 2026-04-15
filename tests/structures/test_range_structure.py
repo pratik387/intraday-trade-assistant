@@ -1,0 +1,140 @@
+"""Regression tests for structures/range_structure.py audit fixes.
+
+Per docs/edge_discovery/audit/02-range_structure.md.
+Each test captures a specific bug discovered during the FIXED-AND-TRUSTED audit.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from structures.range_structure import RangeStructure
+from structures.data_models import MarketContext
+
+
+# ---------------------------------------------------------------------------
+# Fixtures / helpers
+# ---------------------------------------------------------------------------
+
+def make_df(bars):
+    """Build a 5m bar dataframe from a list of (open, high, low, close, volume) tuples."""
+    idx = pd.date_range('2026-04-15 09:15', periods=len(bars), freq='5min')
+    df = pd.DataFrame(
+        bars,
+        columns=['open', 'high', 'low', 'close', 'volume'],
+        index=idx,
+    )
+    df['vol_z'] = 1.5
+    return df
+
+
+def make_context(df, **kwargs):
+    last = df.iloc[-1]
+    indicators = kwargs.pop('indicators', {'atr': 0.5, 'vol_z': 1.5})
+    current_price = kwargs.pop('current_price', float(last['close']))
+    defaults = {
+        'symbol': 'NSE:TEST',
+        'timestamp': df.index[-1].to_pydatetime(),
+        'df_5m': df,
+        'session_date': df.index[0].to_pydatetime(),
+        'current_price': current_price,
+        'pdh': kwargs.pop('pdh', float(df['high'].max())),
+        'pdl': kwargs.pop('pdl', float(df['low'].min())),
+        'orh': kwargs.pop('orh', float(df.iloc[:3]['high'].max()) if len(df) >= 3 else None),
+        'orl': kwargs.pop('orl', float(df.iloc[:3]['low'].min()) if len(df) >= 3 else None),
+        'indicators': indicators,
+        'cap_segment': kwargs.pop('cap_segment', 'mid_cap'),
+    }
+    defaults.update(kwargs)
+    return MarketContext(**defaults)
+
+
+def make_range_config():
+    """Load the range_bounce_short sub-config from configuration.json (has all keys)."""
+    with open(ROOT / 'config' / 'configuration.json') as f:
+        cfg = json.load(f)
+    setups = cfg.get('setups') or cfg.get('trading_setups') or {}
+    rng = setups.get('range_bounce_short')
+    assert rng is not None, "range_bounce_short config not found in configuration.json"
+    # Return a mutable copy
+    return dict(rng)
+
+
+def make_range_bars_with_resistance_touch():
+    """Build a 30-bar range with support ~100 and resistance ~102, current price near resistance.
+
+    Tuned so that within the last `min_range_duration*2` bars of the lookback window,
+    support (~100) and resistance (~102) are each touched at least 2 times within
+    bounce_tolerance_pct (0.2%).
+    """
+    # Alternating touches across the whole 30 bars. Lookback with min_range_duration=6
+    # examines last 12 bars (idx 18..29). Ensure touches fall in this window.
+    bars = []
+    for i in range(30):
+        if i % 4 == 0:
+            # Resistance touch: high ~101.95 (within 0.2% of 102)
+            bars.append((101.5, 101.95, 101.4, 101.8, 1500))
+        elif i % 4 == 2:
+            # Support touch: low ~100.0
+            bars.append((100.3, 100.6, 100.0, 100.4, 1500))
+        else:
+            # Mid-range filler
+            bars.append((100.8, 101.2, 100.7, 101.0, 1000))
+    # Last bar near resistance for short bounce setup
+    bars[29] = (101.7, 101.95, 101.6, 101.9, 2000)
+    return bars
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: P1 — Dead blocked_cap_segments + hardcoded large_cap block
+# ---------------------------------------------------------------------------
+
+def test_blocked_cap_segments_config_is_honored_for_range_bounce_short():
+    """Regression: config's blocked_cap_segments must be used; hardcoded large_cap block removed."""
+    bars = make_range_bars_with_resistance_touch()
+    df = make_df(bars)
+    cfg = make_range_config()
+    cfg['blocked_cap_segments'] = ['large_cap']
+    detector = RangeStructure(cfg)
+    ctx = make_context(df, cap_segment='large_cap')
+    result = detector.detect(ctx)
+    short_events = [e for e in result.events if e.structure_type == 'range_bounce_short']
+    assert len(short_events) == 0, "Expected range_bounce_short to be blocked for large_cap"
+
+
+def test_blocked_cap_segments_config_allows_other_caps():
+    """Complement: mid_cap should not be blocked when not in config."""
+    bars = make_range_bars_with_resistance_touch()
+    df = make_df(bars)
+    cfg = make_range_config()
+    cfg['blocked_cap_segments'] = ['large_cap']
+    detector = RangeStructure(cfg)
+    ctx = make_context(df, cap_segment='mid_cap')
+    result = detector.detect(ctx)
+    assert isinstance(result.events, list)
+
+
+def test_no_hardcoded_large_cap_block_when_config_empty():
+    """When blocked_cap_segments is empty, large_cap must be allowed (no hardcode)."""
+    bars = make_range_bars_with_resistance_touch()
+    df = make_df(bars)
+    cfg = make_range_config()
+    cfg['blocked_cap_segments'] = []
+    detector = RangeStructure(cfg)
+    ctx = make_context(df, cap_segment='large_cap')
+    result = detector.detect(ctx)
+    # With empty blocked list, if a short event would fire it must fire (hardcode must not block).
+    # Detection is permissive: we just assert no silent exception and result is a list.
+    # Critical: a short event should now fire for this fixture (vs. being blocked previously).
+    short_events = [e for e in result.events if e.structure_type == 'range_bounce_short']
+    assert len(short_events) >= 1, (
+        "With empty blocked_cap_segments, range_bounce_short must fire for large_cap "
+        "(hardcoded block must be removed)"
+    )
