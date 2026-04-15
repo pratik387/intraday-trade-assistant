@@ -198,7 +198,10 @@ class RangeStructure(BaseStructure):
         # Support bounce (long)
         support_distance_pct = abs(current_price - support) / support * 100
         if support_distance_pct <= self.bounce_tolerance_pct:
-            # Check if we're coming from above (bounce setup)
+            # Price must be at or above support (not below, which would indicate breakdown).
+            # Note: this does NOT verify approach direction from prior bars — canonical
+            # ICT/SMC bounce requires prior bars above support. See audit/02-range_structure.md
+            # Observation A for deferred canonical upgrade.
             if current_price >= support:
                 if self._validate_volume_confirmation(context):
                     event = StructureEvent(
@@ -221,7 +224,9 @@ class RangeStructure(BaseStructure):
         # Resistance bounce (short)
         resistance_distance_pct = abs(current_price - resistance) / resistance * 100
         if resistance_distance_pct <= self.bounce_tolerance_pct:
-            # Check if we're coming from below (bounce setup)
+            # Price must be at or below resistance (not above, which would indicate breakout).
+            # Note: this does NOT verify approach direction from prior bars. See audit/
+            # 02-range_structure.md Observation A for deferred canonical upgrade.
             if current_price <= resistance:
                 if self._validate_volume_confirmation(context):
                     event = StructureEvent(
