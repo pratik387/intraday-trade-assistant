@@ -464,7 +464,7 @@ class RangeStructure(BaseStructure):
 
             # Base strength from range quality and duration
             range_height_pct = range_info.get("range_height_pct", 1.0)
-            range_duration = range_info.get("duration", 20)
+            range_duration = range_info.get("duration_bars", 20)
             range_quality = min(3.0, (range_duration / 10) * (2.0 / range_height_pct))  # Quality from duration/tightness
             base_strength = max(1.4, vol_z * range_quality * 0.3)
 

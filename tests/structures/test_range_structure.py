@@ -138,3 +138,34 @@ def test_no_hardcoded_large_cap_block_when_config_empty():
         "With empty blocked_cap_segments, range_bounce_short must fire for large_cap "
         "(hardcoded block must be removed)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: P1 — duration vs duration_bars key mismatch
+# ---------------------------------------------------------------------------
+
+def test_calculate_institutional_strength_uses_actual_duration_bars():
+    """Regression: confidence must scale with actual range duration_bars, not default 20."""
+    bars = make_range_bars_with_resistance_touch()
+    df = make_df(bars)
+    cfg = make_range_config()
+    detector = RangeStructure(cfg)
+    ctx = make_context(df, cap_segment='mid_cap',
+                       indicators={'vol_z': 1.5, 'atr': 0.5})
+    range_info = detector._detect_range(df)
+    assert range_info is not None, "Range must be detected for this test"
+
+    # Mature range (50 bars) should trigger both "established" (>=30) and "mature" (>=50) bonuses
+    range_info_mature = dict(range_info)
+    range_info_mature['duration_bars'] = 50
+    range_info_short = dict(range_info)
+    range_info_short['duration_bars'] = 10
+
+    conf_mature = detector._calculate_institutional_strength(ctx, range_info_mature, "breakout", "short")
+    conf_short = detector._calculate_institutional_strength(ctx, range_info_short, "breakout", "short")
+
+    assert conf_mature > conf_short, (
+        f"Mature range (50 bars) confidence {conf_mature} should exceed "
+        f"short range (10 bars) {conf_short}. Currently the code reads 'duration' "
+        f"(wrong key) so the default 20 is always returned → bonuses never differ."
+    )
