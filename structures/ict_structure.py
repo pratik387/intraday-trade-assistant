@@ -397,7 +397,7 @@ class ICTStructure(BaseStructure):
             pdh = context.pdh
             pdl = context.pdl
 
-            if pdh is None or pdl is None or pdh <= pdl:
+            if pdh is None or pdl is None or pd.isna(pdh) or pd.isna(pdl) or pdh <= pdl:
                 logger.debug(f"P/D validation skipped: invalid PDH/PDL (PDH={pdh}, PDL={pdl})")
                 return True  # Skip validation if daily levels unavailable
 
