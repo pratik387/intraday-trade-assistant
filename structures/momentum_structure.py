@@ -316,6 +316,11 @@ class MomentumStructure(BaseStructure):
 
             # 5. Volume surge
             vol_surge = last_bar.get('vol_surge', 1.0)
+            # NaN vol_surge indicates missing/invalid volume data — fail the gate
+            # (stricter than treating NaN as "pass by default"). Per audit/04 P1 #1.
+            if vol_surge is None or pd.isna(vol_surge):
+                logger.debug("MOMENTUM_DETECT: Breakout long REJECTED: vol_surge is NaN/None")
+                return False
             if vol_surge < self.min_volume_surge_ratio:
                 logger.debug(f"MOMENTUM_DETECT: Breakout long REJECTED: vol_surge {vol_surge:.2f} < {self.min_volume_surge_ratio}")
                 return False
@@ -355,6 +360,11 @@ class MomentumStructure(BaseStructure):
 
             # 5. Volume surge
             vol_surge = last_bar.get('vol_surge', 1.0)
+            # NaN vol_surge indicates missing/invalid volume data — fail the gate
+            # (stricter than treating NaN as "pass by default"). Per audit/04 P1 #1.
+            if vol_surge is None or pd.isna(vol_surge):
+                logger.debug("MOMENTUM_DETECT: Breakout short REJECTED: vol_surge is NaN/None")
+                return False
             if vol_surge < self.min_volume_surge_ratio:
                 logger.debug(f"MOMENTUM_DETECT: Breakout short REJECTED: vol_surge {vol_surge:.2f} < {self.min_volume_surge_ratio}")
                 return False
