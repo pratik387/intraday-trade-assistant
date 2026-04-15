@@ -770,7 +770,8 @@ class ICTStructure(BaseStructure):
                 return None
 
         # FILTER 4: Must be at key level (from config)
-        vwap = context.indicators.get('vwap', current_price)
+        vwap_raw = context.indicators.get('vwap')
+        vwap = vwap_raw if vwap_raw is not None and not pd.isna(vwap_raw) and vwap_raw > 0 else current_price
         gap_center = (fvg_top + fvg_bottom) / 2
         distance_from_vwap_pct = abs(gap_center - vwap) / vwap
 
