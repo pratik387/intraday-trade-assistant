@@ -428,9 +428,14 @@ class VolumeStructure(BaseStructure):
                 strength_multiplier *= self.multi_bar_exhaustion_bonus
                 logger.debug(f"VOLUME: Multi-bar exhaustion bonus ({self.multi_bar_exhaustion_bonus}x)")
 
-            # Market timing bonus (volume patterns work best during active hours)
+            # Market timing bonus — active windows per canonical NSE research
+            # (audit/06-volume_structure.md Item 1 + P2 #5 fix):
+            #   10:00-11:00 (post-opening fade) and 14:00-15:00 (EOD flow) = HIGH edge
+            #   12:00-13:00 (lunch chop) = LOW edge — no bonus there
+            # Old code applied 1.1x uniformly across 10-14, boosting the
+            # lunch window. Narrowed to the two high-edge windows.
             current_hour = pd.to_datetime(context.timestamp).hour
-            if 10 <= current_hour <= 14:
+            if (10 <= current_hour < 11) or (14 <= current_hour < 15):
                 strength_multiplier *= 1.1
 
             # Apply multipliers and ensure institutional minimum
