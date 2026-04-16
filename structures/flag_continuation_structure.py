@@ -59,6 +59,14 @@ class FlagContinuationStructure(BaseStructure):
         self.confidence_strong_flag = config["confidence_strong_flag"]
         self.confidence_weak_flag = config["confidence_weak_flag"]
 
+        # Cap-segment block list (parity with other detectors).
+        # Accept BOTH list ([..]) and dict-with-segments ({"segments": [..]}) for backward compat.
+        blocked_cfg = config.get("blocked_cap_segments", [])
+        if isinstance(blocked_cfg, dict):
+            self.blocked_cap_segments = set(blocked_cfg.get("segments", []))
+        else:
+            self.blocked_cap_segments = set(blocked_cfg)
+
         logger.debug(f"FLAG_CONTINUATION: Initialized with consolidation: {self.min_consolidation_bars}-{self.max_consolidation_bars} bars, trend strength: {self.min_trend_strength}%")
 
 
@@ -74,6 +82,17 @@ class FlagContinuationStructure(BaseStructure):
                     events=[],
                     quality_score=0.0,
                     rejection_reason=f"Insufficient data for flag analysis (need {min_required_data} bars, have {len(df)})"
+                )
+
+            # Cap-segment block (parity with other detectors).
+            cap_segment = getattr(context, "cap_segment", None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"FLAG_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
                 )
 
             events = []
@@ -106,17 +125,37 @@ class FlagContinuationStructure(BaseStructure):
                 # Calculate confidence based on pattern quality
                 confidence = self._calculate_institutional_strength(context, trend_strength_pct, consolidation_info, side)
 
+                # Side-aware level keys for main_detector lookup (P1 fix):
+                # main_detector reads support (long) / resistance (short) / broken_level for `detected_level`.
+                # For flag continuation: the broken consolidation boundary is the structural reference.
+                #   long: broke above flag_high — flag_high becomes new support
+                #   short: broke below flag_low — flag_low becomes new resistance
+                if side == "long":
+                    broken = float(consolidation_info["high"])
+                    levels_dict = {
+                        "flag_high": consolidation_info["high"],
+                        "flag_low": consolidation_info["low"],
+                        "trend_start": consolidation_info["trend_start_price"],
+                        "broken_level": broken,
+                        "support": broken,
+                    }
+                else:
+                    broken = float(consolidation_info["low"])
+                    levels_dict = {
+                        "flag_high": consolidation_info["high"],
+                        "flag_low": consolidation_info["low"],
+                        "trend_start": consolidation_info["trend_start_price"],
+                        "broken_level": broken,
+                        "resistance": broken,
+                    }
+
                 event = StructureEvent(
                     symbol=context.symbol,
                     timestamp=context.timestamp,
                     structure_type=structure_type,
                     side=side,
                     confidence=confidence,
-                    levels={
-                        "flag_high": consolidation_info["high"],
-                        "flag_low": consolidation_info["low"],
-                        "trend_start": consolidation_info["trend_start_price"]
-                    },
+                    levels=levels_dict,
                     context={
                         "trend_strength_pct": trend_strength_pct,
                         "consolidation_bars": consol_period,

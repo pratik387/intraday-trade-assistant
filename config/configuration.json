@@ -942,8 +942,9 @@
       "confidence_weak_expansion": 0.6
     },
     "flag_continuation_long": {
-      "enabled": false,
-      "_disabled_reason": "blocked_entirely in pipeline config",
+      "enabled": true,
+      "_audit_re_enable_note": "Re-enabled per audit/14-flag_continuation_structure.md (2026-04-15). Pre-rebuild evidence (Rs -305 avg, 34 trades) too small a sample to keep blocked. P1 levels-dict fix means detected_level was always None historically — fresh OOS deserves the chance.",
+      "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 3yr deep_edge Rs -305 avg, 34 trades. Negative overall on tiny sample.",
       "min_consolidation_bars": 3,
       "max_consolidation_bars": 12,
       "min_trend_strength": 1.5,
