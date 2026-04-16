@@ -66,6 +66,11 @@ class VolumeStructure(BaseStructure):
         self.multi_bar_lookback = config["multi_bar_lookback"]
         self.multi_bar_exhaustion_bonus = config["multi_bar_exhaustion_bonus"]
 
+        # Config-driven cap blocking (default empty — no cap blocks unless explicitly set).
+        # Mirrors RangeStructure / SupportResistanceStructure / FHMStructure pattern.
+        # Per audit/06-volume_structure.md P1 #1.
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
+
         logger.debug(f"VOLUME: Initialized with min spike: {self.min_volume_spike_mult}x")
         logger.debug(f"VOLUME: SL params - spike_buffer: {self.spike_sl_buffer_atr}ATR, min_distance: {self.min_stop_distance_pct}%")
         logger.debug(f"VOLUME: Wick filter: min_ratio={self.min_rejection_wick_ratio}, S/R proximity: {self.sr_proximity_atr_mult} ATR")
@@ -80,6 +85,18 @@ class VolumeStructure(BaseStructure):
                     events=[],
                     quality_score=0.0,
                     rejection_reason="Insufficient volume data"
+                )
+
+            # Config-driven cap blocking — applies to all volume-spike-reversal setups.
+            # Per audit/06-volume_structure.md P1 #1.
+            cap_segment = getattr(context, 'cap_segment', None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"VOLUME_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
                 )
 
             events = []
