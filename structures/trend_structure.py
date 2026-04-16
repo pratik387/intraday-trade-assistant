@@ -100,6 +100,11 @@ class TrendStructure(BaseStructure):
         # Continuation-specific thresholds
         self.continuation_momentum_boost = config["continuation_momentum_boost"]
 
+        # Config-driven cap blocking (default empty — no cap blocks unless explicitly set).
+        # Mirrors RangeStructure / SR / FHM / VolumeStructure / VolumeBreakoutStructure pattern.
+        # Per audit/08-trend_structure.md P2.
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
+
         logger.debug(f"TREND: Initialized with min strength: {self.min_trend_strength}, pullback range: {self.min_pullback_pct}-{self.max_pullback_pct}%")
         logger.debug(f"TREND: SL params - swing_buffer: {self.swing_sl_buffer_atr}ATR, lookback: {self.swing_lookback_bars} bars")
 
@@ -109,6 +114,17 @@ class TrendStructure(BaseStructure):
         logger.debug(f"TREND: Starting detection for {context.symbol}")
 
         try:
+            # Config-driven cap blocking — fast fail before trend analysis.
+            cap_segment = getattr(context, 'cap_segment', None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"TREND_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
+                )
+
             trend_info = self._analyze_trend(context)
             if not trend_info:
                 return StructureAnalysis(
@@ -311,7 +327,13 @@ class TrendStructure(BaseStructure):
                 structure_type=structure_type,
                 side=side,
                 confidence=confidence,
-                levels={"trend_level": context.current_price},
+                # Add side-aware support/resistance key so main_detector's detected_level
+                # extraction populates correctly (main_detector.py:540-544).
+                # Per audit/08-trend_structure.md P1 #1.
+                levels={
+                    "trend_level": context.current_price,
+                    **({"support": float(context.current_price)} if side == "long" else {"resistance": float(context.current_price)})
+                },
                 context={
                     "trend_direction": trend_info.trend_direction,
                     "trend_strength": trend_info.trend_strength,
@@ -359,7 +381,11 @@ class TrendStructure(BaseStructure):
                 structure_type=structure_type,
                 side=side,
                 confidence=confidence,
-                levels={"trend_level": context.current_price},
+                # Side-aware levels key for detected_level flow (audit/08 P1 #1).
+                levels={
+                    "trend_level": context.current_price,
+                    **({"support": float(context.current_price)} if side == "long" else {"resistance": float(context.current_price)})
+                },
                 context={
                     "trend_direction": trend_info.trend_direction,
                     "trend_strength": trend_info.trend_strength,
