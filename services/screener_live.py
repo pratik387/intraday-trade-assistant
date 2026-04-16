@@ -127,6 +127,17 @@ def _init_worker(config_dict):
                 # Also wire screening.jsonl logger so worker-side decisions write through
                 # via the buffered fork-safe path (consistent with other JSONL output)
                 _lc._screener_logger = JSONLLogger(Path(_log_dir) / "screening.jsonl", "screener")
+                # Per-event detector accept/reject loggers (audit/14 + audit/15 logging
+                # infra). MainDetector runs inside this worker; without explicit wiring
+                # on Windows spawn mode, get_detector_rejections_logger() returns None
+                # and the per-event JSONL is silently empty. Same buffered fork-safe
+                # path as screener/timing loggers above.
+                _lc._detector_rejections_logger = JSONLLogger(
+                    Path(_log_dir) / "detector_rejections.jsonl", "detector_reject"
+                )
+                _lc._detector_accepts_logger = JSONLLogger(
+                    Path(_log_dir) / "detector_accepts.jsonl", "detector_accept"
+                )
             except Exception:
                 pass  # never let logger init break worker startup
 
@@ -2367,7 +2378,16 @@ class ScreenerLive:
 
         # Path 1: Try monthly consolidated file (OCI fast path)
         # Same file MockBroker._load_enriched_5m uses (backtest-cache-download/monthly/)
+        # Also check /app/backtest-cache-download/monthly/ for OCI absolute path
         monthly_dir = Path("backtest-cache-download/monthly")
+        if not monthly_dir.exists():
+            # OCI pods run from /app — try absolute path
+            monthly_dir = Path("/app/backtest-cache-download/monthly")
+        if not monthly_dir.exists():
+            # Also try relative to cache/ (some setups)
+            monthly_dir = Path("cache/preaggregate")
+        logger.info("PRECOMPUTED_5M | monthly_dir=%s exists=%s cwd=%s",
+                     monthly_dir, monthly_dir.exists(), Path.cwd())
         if monthly_dir.exists():
             try:
                 # Get session date from MockBroker (set by --session-date CLI arg)
@@ -2379,6 +2399,7 @@ class ScreenerLive:
                     raise ValueError("No session_date for monthly file lookup")
                 year_month = f"{from_dt.year}_{from_dt.month:02d}"
                 monthly_file = monthly_dir / f"{year_month}_5m_enriched.feather"
+                logger.info("PRECOMPUTED_5M | Looking for %s exists=%s", monthly_file, monthly_file.exists())
                 if monthly_file.exists():
                     df_all = pd.read_feather(monthly_file)
                     df_all["date"] = pd.to_datetime(df_all["date"])
