@@ -594,6 +594,8 @@ class MainDetector(BaseStructure):
             # Level breakouts
             'level_breakout_long': 'breakout_long',
             'level_breakout_short': 'breakout_short',
+            'orb_level_breakout_long': 'orb_level_breakout_long',
+            'orb_level_breakout_short': 'orb_level_breakout_short',
 
             # Failure fades
             'failure_fade_long': 'failure_fade_long',
