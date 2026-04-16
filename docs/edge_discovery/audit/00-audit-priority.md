@@ -39,7 +39,7 @@
 | 03 | SupportResistanceStructure | structures/support_resistance_structure.py | resistance_bounce_short (75,926) | 4 | DONE-FIXED-AND-TRUSTED |
 | 04 | MomentumStructure | structures/momentum_structure.py | momentum_breakout_long (7,585) | 0 | DONE-FIXED-AND-TRUSTED (split: momentum_breakout_* FIXED, trend_continuation_* DISABLED) |
 | 05 | LevelBreakoutStructure | structures/level_breakout_structure.py | breakout_long (3,294) | 0 | DONE-FIXED-AND-TRUSTED |
-| 06 | VolumeStructure | structures/volume_structure.py | volume_spike_reversal_long (457) | 1 | NOT_STARTED |
+| 06 | VolumeStructure | structures/volume_structure.py | volume_spike_reversal_long (457) | 1 | DONE-FIXED-AND-TRUSTED |
 | 07 | VolumeBreakoutStructure | structures/volume_breakout_structure.py | — (0) | 1 | NOT_STARTED |
 | 08 | TrendStructure | structures/trend_structure.py | — (0) | 1 | NOT_STARTED |
 | 09 | FailureFadeStructure | structures/failure_fade_structure.py | failure_fade_short (257) | 0 | NOT_STARTED |
