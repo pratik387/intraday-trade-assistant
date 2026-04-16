@@ -45,13 +45,28 @@ class FailureFadeStructure(BaseStructure):
         self.target_mult_t1 = config["target_mult_t1"]
         self.target_mult_t2 = config["target_mult_t2"]
         self.stop_mult = config["stop_mult"]
-        # Removed deprecated confidence parameters - now using institutional strength calculations
+
+        # Config-driven cap blocking (default empty — no cap blocks unless explicitly set).
+        # Mirrors RangeStructure / SR / FHM / VolumeStructure / VolumeBreakout / Trend pattern.
+        # Per audit/09-failure_fade_structure.md P2.
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
 
         logger.debug(f"FAILURE_FADE: Initialized with pierce range: {self.min_pierce_size_pct}-{self.max_pierce_size_pct}%, confirmation: {self.fade_confirmation_bars} bars")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect failure fade structures."""
         try:
+            # Config-driven cap blocking — fast fail (audit/09 P2)
+            cap_segment = getattr(context, 'cap_segment', None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"FAILURE_FADE_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
+                )
+
             df = context.df_5m
             if len(df) < max(2, self.fade_confirmation_bars + 1):
                 return StructureAnalysis(
@@ -186,7 +201,9 @@ class FailureFadeStructure(BaseStructure):
             structure_type="failure_fade_short",
             side="short",
             confidence=confidence,
-            levels={level_name: level_value},
+            # Add 'resistance' key so main_detector's detected_level extraction populates
+            # correctly (main_detector.py:540-544). Per audit/09-failure_fade_structure.md P1 #1.
+            levels={level_name: level_value, "resistance": float(level_value)},
             context={
                 "level_name": level_name,
                 "level_value": level_value,
@@ -274,7 +291,8 @@ class FailureFadeStructure(BaseStructure):
             structure_type="failure_fade_long",
             side="long",
             confidence=confidence,
-            levels={level_name: level_value},
+            # Add 'support' key for detected_level flow (audit/09 P1 #1).
+            levels={level_name: level_value, "support": float(level_value)},
             context={
                 "level_name": level_name,
                 "level_value": level_value,

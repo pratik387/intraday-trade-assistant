@@ -192,8 +192,8 @@
             },
             "failure_fade_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "3yr deep_edge: Rs -1,137 avg, 48 trades. Negative ALL FYs."
+                "_audit_re_enable_note": "Re-enabled per audit/09-failure_fade_structure.md (2026-04-15). Pre-rebuild evidence may be contaminated by old levels-dict bug + no cap-block. Plus structural NSE long-bias makes spring (long fade) ~10pp weaker than upthrust (short fade) — known canonical asymmetry, not detector bug. Letting wide-open gauntlet decide on regenerated post-fix data.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 3yr deep_edge Rs -1,137 avg, 48 trades, negative ALL FYs. Generated under no OOS protocol with bugs in detector and contaminated by absence of cap-block."
             },
             "vwap_mean_reversion_short": {
                 "enabled": true,
