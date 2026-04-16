@@ -303,11 +303,28 @@ class MainDetector(BaseStructure):
 
             # Trivial rejection reasons that get filtered out (no analysis value).
             # Emitted on most bars; logging them would balloon file size.
+            # The list captures every "detector ran but no pattern matched"
+            # generic message observed in 1-day backtest analysis. Specific
+            # diagnostic Tier-A rejections (lowercase "no breakout", "weak
+            # trend", "wide consolidation", "volume did not decline...") are
+            # NOT in this list — they remain logged for analysis.
             _TRIVIAL_REJECTION_PREFIXES = (
                 "Insufficient data",
                 "No significant gaps detected",
                 "No flag continuation patterns detected",
                 "No structure event",
+                "No valid range patterns detected",
+                "No valid level breakouts detected",
+                "No S/R setups detected",
+                "No trend setups detected",
+                "No volume breakout patterns detected",
+                "No volume patterns detected",
+                "No momentum patterns detected",
+                "No VWAP setups detected",
+                "No failure fade patterns detected",
+                "No squeeze release pattern detected",
+                "Trend analysis not available",
+                "Could not calculate",
             )
             def _is_trivial(reason):
                 if not reason:

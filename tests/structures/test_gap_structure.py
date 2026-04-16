@@ -389,6 +389,31 @@ def test_per_session_dedup_resets_on_new_session():
     assert analysis2.structure_detected, f"Got: {analysis2.rejection_reason}"
 
 
+def test_configured_setup_type_mismatch_returns_no_rejection_reason():
+    """Bug fix: detector instances configured for one setup_type must NOT log
+    rejection_reasons for other setup_types' Tier-A filter failures.
+
+    Without this early-return, all 4 gap detector instances each emit a Tier-A
+    rejection (e.g., "gap_fill_long requires bullish reversal candle") for
+    every bar where ANY gap pattern computes — inflating reject counts 4x.
+
+    The fix: when computed structure_type doesn't match configured_setup_type,
+    return rejection_reason=None (filtered as trivial by main_detector)."""
+    # Configure detector for gap_breakout_short
+    detector = GapStructure(_config("gap_breakout_short"))
+    # Build bars where structure_type computes to gap_fill_short (gap-up + price below open)
+    df = make_gap_up_bars(open_price=102.0, current_price=101.5)
+    analysis = detector.detect(_ctx(df))
+    assert not analysis.structure_detected
+    # CRITICAL: must NOT emit a misleading rejection_reason for the wrong setup
+    assert analysis.rejection_reason is None, (
+        f"Expected None (filtered as trivial); got: {analysis.rejection_reason}. "
+        f"Without this fix, gap_breakout_short would log 'gap_fill_short requires "
+        f"bearish reversal candle' style rejections for the OTHER setup type, "
+        f"inflating reject counts 4x."
+    )
+
+
 def test_per_session_dedup_per_symbol():
     """Tier-A #4: dedup is per-symbol, not global."""
     detector = GapStructure(_config("gap_fill_short"))

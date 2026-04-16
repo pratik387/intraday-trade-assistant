@@ -126,6 +126,24 @@ class GapStructure(BaseStructure):
                             structure_type = "gap_breakout_short"
                             side = "short"
 
+                    # CRITICAL: configured_setup_type early-return BEFORE Tier-A filters.
+                    # Each gap detector instance is configured for ONE setup_type
+                    # (gap_fill_long, gap_fill_short, gap_breakout_long, gap_breakout_short).
+                    # Without this early-return, all 4 instances apply Tier-A filters to
+                    # the SAME computed structure_type, generating 4x duplicate rejections
+                    # (e.g., gap_breakout_short instance logging "gap_fill_long requires
+                    # bullish reversal candle" for a bar where the actual computed type was
+                    # gap_fill_long). rejection_reason=None signals "not my setup type" —
+                    # filtered by main_detector trivial-reason check, no JSONL pollution.
+                    if (self.configured_setup_type is not None
+                            and structure_type != self.configured_setup_type):
+                        return StructureAnalysis(
+                            structure_detected=False,
+                            events=[],
+                            quality_score=0.0,
+                            rejection_reason=None,
+                        )
+
                     # Per-session dedup (audit/15 Tier-A fix #4): one signal per setup per
                     # symbol per session. Without this, detector emits a fresh event every
                     # 5-min bar where conditions match (over-firing).

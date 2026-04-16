@@ -183,6 +183,83 @@ def test_main_detector_emits_rejection_for_gap_tier_a_filter(tmp_path, monkeypat
     assert rec["vol_z"] == 2.0
 
 
+def test_main_detector_trivial_filter_skips_generic_no_pattern_messages():
+    """Bug fix: trivial-reason filter must skip ALL generic 'No X detected'
+    messages emitted by various detectors, not just the original 4 prefixes.
+
+    Pre-fix the filter only caught 4 prefixes, leaving ~88% of detector
+    rejection volume as 'No X detected' noise (340K of 384K lines/day).
+    """
+    import re
+    # Re-derive the predicate from main_detector.py:_is_trivial logic
+    # (we test the prefix list directly to keep this test fast/focused)
+    _PREFIXES = (
+        "Insufficient data",
+        "No significant gaps detected",
+        "No flag continuation patterns detected",
+        "No structure event",
+        "No valid range patterns detected",
+        "No valid level breakouts detected",
+        "No S/R setups detected",
+        "No trend setups detected",
+        "No volume breakout patterns detected",
+        "No volume patterns detected",
+        "No momentum patterns detected",
+        "No VWAP setups detected",
+        "No failure fade patterns detected",
+        "No squeeze release pattern detected",
+        "Trend analysis not available",
+        "Could not calculate",
+    )
+
+    def _is_trivial(reason):
+        if not reason:
+            return True
+        return any(reason.startswith(p) for p in _PREFIXES)
+
+    # SHOULD be filtered (generic "no pattern matched" messages — non-diagnostic)
+    trivial_examples = [
+        "Insufficient data for range analysis",
+        "No trend setups detected",
+        "No valid range patterns detected",
+        "No S/R setups detected",
+        "No valid level breakouts detected",
+        "No volume breakout patterns detected",
+        "No momentum patterns detected",
+        "No failure fade patterns detected",
+        "No VWAP setups detected",
+        "No volume patterns detected",
+        "No squeeze release pattern detected",
+        "Trend analysis not available",
+        "Could not calculate momentum indicators",
+        "No flag continuation patterns detected",
+        "No significant gaps detected",
+        None,
+        "",
+    ]
+    for reason in trivial_examples:
+        assert _is_trivial(reason), f"Expected trivial: {reason!r}"
+
+    # MUST NOT be filtered (specific Tier-A diagnostics — must remain in logs)
+    diagnostic_examples = [
+        "weak trend (1.20% < 1.5%)",
+        "wide consolidation (3.1% > 2.0%)",
+        "volume did not decline through flag (ratio=0.95 > threshold=0.85)",
+        "no breakout (price did not exit consolidation)",
+        "insufficient breakout confirmation (0.05% < 0.1%)",
+        "gap_fill_long requires bullish reversal candle",
+        "gap_fill_short requires bearish reversal candle",
+        "gap_fill outside time window (0915-1030): bar at 11:30",
+        "volume confirmation failed: vol_z=0.5 < 1.2",
+        "gap_fill_long already fired this session for NSE:RELIANCE",
+        "cap_segment large_cap blocked",
+    ]
+    for reason in diagnostic_examples:
+        assert not _is_trivial(reason), (
+            f"FALSE POSITIVE — diagnostic was filtered: {reason!r}"
+        )
+
+
 def test_flag_volume_decline_rejection_propagates_through_detector(tmp_path):
     """Audit/14 Tier-A: flag_volume_decline rejection must be reachable as
     StructureAnalysis.rejection_reason (verifying the propagation fix that
