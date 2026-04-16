@@ -177,18 +177,18 @@
                 "_evidence": "3yr backtest: trend_down N=212, WR 52%, Avg -Rs 98. Other regimes profitable (chop 59%, trend_up 59%)."
             },
             "gap_fill_short": {
-                "enabled": false,
+                "enabled": true,
+                "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). Pre-rebuild was net positive (+Rs 3.68L on 266 trades). Selective blocked_regimes preserved as starting state pending fresh OOS.",
                 "blocked_regimes": ["trend_down"],
-                "_evidence": "266 trades, Rs +3.68L. trend_down WR 48% Rs -204.",
-                "_disabled_reason": "VC whitelist gate is the primary filter now"
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 266 trades, Rs +3.68L. trend_down WR 48% Rs -204."
             },
             "gap_fill_long": {
-                "enabled": false,
+                "enabled": true,
+                "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). Pre-rebuild evidence likely contaminated by levels-dict bug + over-firing. Selective blocks preserved as starting state pending fresh OOS.",
                 "blocked_regimes": ["trend_up"],
                 "blocked_hours": [10],
                 "blocked_caps": ["mid_cap"],
-                "_evidence": "244 trades. trend_up WR 42% Rs -880. hour 10 WR 48% Rs -495. mid_cap WR 45% Rs -182.",
-                "_disabled_reason": "VC whitelist gate is the primary filter now"
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 244 trades. trend_up WR 42% Rs -880. hour 10 WR 48% Rs -495. mid_cap WR 45% Rs -182."
             },
             "failure_fade_long": {
                 "enabled": true,

@@ -49,6 +49,14 @@ class GapStructure(BaseStructure):
         self.gap_sl_buffer_atr = config["gap_sl_buffer_atr"]  # ATR buffer beyond gap edge
         self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
 
+        # Cap-segment block list (parity with other detectors).
+        # Accept BOTH list ([..]) and dict-with-segments ({"segments": [..]}) for backward compat.
+        blocked_cfg = config.get("blocked_cap_segments", [])
+        if isinstance(blocked_cfg, dict):
+            self.blocked_cap_segments = set(blocked_cfg.get("segments", []))
+        else:
+            self.blocked_cap_segments = set(blocked_cfg)
+
         logger.debug(f"GAP: Initialized with gap range: {self.min_gap_pct}-{self.max_gap_pct}%")
         logger.debug(f"GAP: SL params - gap_buffer: {self.gap_sl_buffer_atr}ATR, min_distance: {self.min_stop_distance_pct}%")
 
@@ -62,6 +70,17 @@ class GapStructure(BaseStructure):
                     events=[],
                     quality_score=0.0,
                     rejection_reason="Insufficient data for gap analysis"
+                )
+
+            # Cap-segment block (parity with other detectors).
+            cap_segment = getattr(context, "cap_segment", None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"GAP_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
                 )
 
             events = []
@@ -90,13 +109,43 @@ class GapStructure(BaseStructure):
                             structure_type = "gap_breakout_short"
                             side = "short"
 
+                    # Side-aware level keys for main_detector lookup (P1 fix):
+                    # main_detector reads support (long) / resistance (short) / broken_level for `detected_level`.
+                    # For gap setups, the structural reference depends on setup type:
+                    #   gap_fill_long  : playing recovery from gap-down → support = current_open (gap low to defend)
+                    #   gap_fill_short : playing rejection from gap-up  → resistance = current_open (gap high to fail)
+                    #   gap_breakout_long : continuation up → support = pdc (gap edge to hold above)
+                    #   gap_breakout_short: continuation down → resistance = pdc (gap edge to stay below)
+                    if side == "long":
+                        if "gap_fill" in structure_type:
+                            structural_level = float(current_open)
+                        else:
+                            structural_level = float(context.pdc)
+                        levels_dict = {
+                            "gap_level": context.pdc,
+                            "gap_open": current_open,
+                            "broken_level": structural_level,
+                            "support": structural_level,
+                        }
+                    else:
+                        if "gap_fill" in structure_type:
+                            structural_level = float(current_open)
+                        else:
+                            structural_level = float(context.pdc)
+                        levels_dict = {
+                            "gap_level": context.pdc,
+                            "gap_open": current_open,
+                            "broken_level": structural_level,
+                            "resistance": structural_level,
+                        }
+
                     event = StructureEvent(
                         symbol=context.symbol,
                         timestamp=context.timestamp,
                         structure_type=structure_type,
                         side=side,
                         confidence=self._calculate_institutional_strength(context, gap_pct, structure_type, side),
-                        levels={"gap_level": context.pdc, "gap_open": current_open},
+                        levels=levels_dict,
                         context={
                             "gap_size_pct": gap_pct,
                             "gap_direction": "up" if current_open > context.pdc else "down"

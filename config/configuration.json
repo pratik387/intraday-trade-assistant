@@ -443,8 +443,9 @@
       "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "gap_fill_long": {
-      "enabled": false,
-      "_comment": "Quick Win: Disabled per Audit Task 4 - 12 signals, 0 executions (waste of compute)",
+      "enabled": true,
+      "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). Pre-rebuild evidence (244 trades, negative trend_up regime) was contaminated by levels-dict bug + over-firing (no time window, fires every bar). Letting wide-open gauntlet decide on regenerated post-fix data. Detector has documented canonical drifts (no time window, no fill confirmation reversal, dead require_volume_confirmation key) deferred for post-OOS substantive rewrite.",
+      "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 244 trades. trend_up WR 42% Rs -880. hour 10 WR 48% Rs -495. mid_cap WR 45% Rs -182.",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
       "require_volume_confirmation": true,
@@ -453,8 +454,9 @@
       "confidence_level": 0.7
     },
     "gap_fill_short": {
-      "enabled": false,
-      "_comment": "Quick Win: Disabled per Audit Task 4 - 12 signals, 0 executions (waste of compute)",
+      "enabled": true,
+      "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). Pre-rebuild evidence was actually NET POSITIVE (+Rs 3.68L on 266 trades) — disable was premature. Letting wide-open gauntlet decide on regenerated post-fix data.",
+      "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 266 trades, Rs +3.68L overall. trend_down WR 48% Rs -204 (only weak regime).",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
       "require_volume_confirmation": true,
@@ -678,7 +680,8 @@
       "confidence_level": 0.75
     },
     "gap_breakout_long": {
-      "enabled": false,
+      "enabled": true,
+      "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). No prior pre-rebuild evidence cited. Letting wide-open gauntlet decide on regenerated post-fix data. Gap breakout long aligns with NSE retail momentum bias — expected ~50-55% WR with proper filters.",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
       "require_volume_confirmation": true,
@@ -687,7 +690,8 @@
       "confidence_level": 0.75
     },
     "gap_breakout_short": {
-      "enabled": false,
+      "enabled": true,
+      "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). No prior pre-rebuild evidence cited. Letting wide-open gauntlet decide on regenerated post-fix data. Gap breakout short fights NSE long-bias — expected ~40-45% WR; document the structural asymmetry.",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
       "require_volume_confirmation": true,
