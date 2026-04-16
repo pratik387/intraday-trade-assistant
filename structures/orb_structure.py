@@ -79,6 +79,11 @@ class ORBStructure(BaseStructure):
         # Longs must be above VWAP, shorts below - trading with institutional flow
         self.require_vwap_alignment = config["require_vwap_alignment"]
 
+        # Config-driven cap blocking (default empty — no cap blocks unless explicitly set).
+        # Mirrors RangeStructure / SR / FHM / VolumeStructure / VolumeBreakout / Trend /
+        # FailureFade / VWAP pattern. Per audit/11-orb_structure.md P2.
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
+
         logger.debug(f"ORB: Initialized with config - Buffer: {self.breakout_buffer_pct:.3f}%, Stop: {self.min_stop_distance_pct:.3f}%, Targets: {self.target_mult_t1}x/{self.target_mult_t2}x, MinBars: {self.min_bars_required}, CandleClose: {self.require_candle_close}, NR7: {self.require_nr7_day}, VWAP: {self.require_vwap_alignment}")
 
         # Session timing
@@ -100,6 +105,17 @@ class ORBStructure(BaseStructure):
         logger.debug(f"ORB: Starting detection for {symbol}")
 
         try:
+            # Config-driven cap blocking — fast fail (audit/11 P2)
+            cap_segment = getattr(market_context, 'cap_segment', None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"ORB_BLOCK: {symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
+                )
+
             df = market_context.df_5m
             if df is None:
                 logger.debug(f"ORB: {symbol} - No 5m data available")
@@ -208,7 +224,9 @@ class ORBStructure(BaseStructure):
                         structure_type="orb_breakout_long",
                         side="long",
                         confidence=confidence,
-                        levels={"orh": orh, "orl": orl, "entry": current_price, "candle_close": candle_close},
+                        # Add 'support' key (= broken ORH, now support after break) for detected_level
+                        # flow (main_detector.py:540-544). Per audit/11-orb_structure.md P1.
+                        levels={"orh": orh, "orl": orl, "entry": current_price, "candle_close": candle_close, "support": float(orh)},
                         context={"range_pct": orb_range_pct, "volume_confirmed": volume_confirmed, "candle_close_confirmed": self.require_candle_close, "vwap_aligned": vwap_aligned},
                         price=current_price
                     )
@@ -236,7 +254,9 @@ class ORBStructure(BaseStructure):
                         structure_type="orb_breakdown_short",
                         side="short",
                         confidence=confidence,
-                        levels={"orh": orh, "orl": orl, "entry": current_price, "candle_close": candle_close},
+                        # Add 'resistance' key (= broken ORL, now resistance after break) for detected_level
+                        # flow. Per audit/11-orb_structure.md P1.
+                        levels={"orh": orh, "orl": orl, "entry": current_price, "candle_close": candle_close, "resistance": float(orl)},
                         context={"range_pct": orb_range_pct, "volume_confirmed": volume_confirmed, "candle_close_confirmed": self.require_candle_close, "vwap_aligned": vwap_aligned},
                         price=current_price
                     )

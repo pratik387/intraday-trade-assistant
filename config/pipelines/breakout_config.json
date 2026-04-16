@@ -200,8 +200,8 @@
             },
             "orb_breakout_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "11,756 trades, WR 34.3%, Rs -12.70L loss, negative ALL 4 FYs."
+                "_audit_re_enable_note": "Re-enabled per audit/11-orb_structure.md (2026-04-15). Pre-rebuild evidence (11,756 trades = ~16/day) suggests detector was OVER-FIRING on noise — canonical ORB is 1-2 stocks/day. Current filter stack (NR7 + VWAP + candle close + range minimum) should drop trade count 85-95% to ~500-1,500/3yr. Edge on filtered trades may be very different. Letting wide-open gauntlet decide on regenerated post-fix data.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 11,756 trades, WR 34.3%, Rs -12.70L loss, negative ALL 4 FYs. Generated under no OOS protocol with detector likely missing NR7/VWAP filters at the time."
             },
             "gap_breakout_long": {
                 "enabled": false,
