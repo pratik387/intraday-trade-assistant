@@ -365,7 +365,8 @@
       "aggressive_min_conviction": 0.7,
       "retest_entry_zone_width_atr": 0.5,
       "retest_timeout_minutes": 30,
-      "allow_both_modes": true
+      "allow_both_modes": true,
+      "_kill_evidence": "RESCINDED: 3yr wide-open shows large_cap (N=708, WR 51.0%, Avg+86, ALL 4 FYs positive). Filtered via validated_combinations."
     },
     "breakout_short": {
       "enabled": false,
@@ -438,7 +439,8 @@
       "target_mult_t1": 1.2,
       "target_mult_t2": 2.0,
       "confidence_strong_signal": 0.8,
-      "confidence_weak_signal": 0.6
+      "confidence_weak_signal": 0.6,
+      "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "gap_fill_long": {
       "enabled": false,
@@ -608,11 +610,11 @@
       "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "volume_spike_reversal_long": {
-      "enabled": true,
+      "enabled": false,
       "min_volume_spike_mult": 1.2,
-      "_comment_vol_z": "FIXED: 3.0 → 1.2 - Professional NSE standard: 1.2-1.5x volume surge = institutional participation",
+      "_comment_vol_z": "FIXED: 3.0 \u00e2\u2020\u2019 1.2 - Professional NSE standard: 1.2-1.5x volume surge = institutional participation",
       "min_body_size_pct": 0.8,
-      "_comment_body": "FIXED: 1.0 → 0.8% - Realistic 5-min reversal candles on NSE",
+      "_comment_body": "FIXED: 1.0 \u00e2\u2020\u2019 0.8% - Realistic 5-min reversal candles on NSE",
       "reversal_threshold_pct": 2.0,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
@@ -621,26 +623,27 @@
       "min_stop_distance_pct": 0.3,
       "min_rejection_wick_ratio": 0.15,
       "_comment_wick": "P2: Min wick ratio (wick/range) to confirm exhaustion. 0.15 = lenient, filters only full-body momentum candles",
-      "wick_bonus_threshold": 0.40,
+      "wick_bonus_threshold": 0.4,
       "_comment_wick_bonus": "P2: Strong wick threshold for confidence bonus (hammer/shooting star pattern)",
       "sr_proximity_atr_mult": 0.5,
       "_comment_sr": "P3: Within 0.5 ATR of PDH/PDL/ORH/ORL/VWAP = at key level",
       "sr_confluence_bonus": 1.3,
       "_comment_sr_bonus": "P3: 30% confidence boost when spike is at a key structural level",
       "min_volume_ratio": 1.5,
-      "_comment_vol_ratio": "P5: Min volume vs 20-bar median — prevents illiquid z-score noise",
+      "_comment_vol_ratio": "P5: Min volume vs 20-bar median \u00e2\u20ac\u201d prevents illiquid z-score noise",
       "multi_bar_vol_threshold": 0.8,
       "_comment_multi_bar": "P6: Per-bar vol_z threshold for multi-bar exhaustion (lower since sustained)",
       "multi_bar_lookback": 3,
       "multi_bar_exhaustion_bonus": 1.4,
-      "_comment_multi_bar_bonus": "P6: 40% confidence boost for 2-3 consecutive elevated-volume bars"
+      "_comment_multi_bar_bonus": "P6: 40% confidence boost for 2-3 consecutive elevated-volume bars",
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative"
     },
     "volume_spike_reversal_short": {
       "enabled": true,
       "min_volume_spike_mult": 1.5,
-      "_comment_vol_z": "FIXED: 3.0 → 1.5 - Stricter than longs, aligns with short-bias caution",
+      "_comment_vol_z": "FIXED: 3.0 \u00e2\u2020\u2019 1.5 - Stricter than longs, aligns with short-bias caution",
       "min_body_size_pct": 0.8,
-      "_comment_body": "FIXED: 1.0 → 0.8% - Same as longs, realistic 5-min reversal candles",
+      "_comment_body": "FIXED: 1.0 \u00e2\u2020\u2019 0.8% - Same as longs, realistic 5-min reversal candles",
       "reversal_threshold_pct": 2.0,
       "target_mult_t1": 1.0,
       "target_mult_t2": 2.0,
@@ -648,7 +651,7 @@
       "spike_sl_buffer_atr": 0.3,
       "min_stop_distance_pct": 0.3,
       "min_rejection_wick_ratio": 0.15,
-      "wick_bonus_threshold": 0.40,
+      "wick_bonus_threshold": 0.4,
       "sr_proximity_atr_mult": 0.5,
       "sr_confluence_bonus": 1.3,
       "min_volume_ratio": 1.5,
@@ -657,7 +660,8 @@
       "multi_bar_exhaustion_bonus": 1.4
     },
     "volume_breakout_long": {
-      "enabled": false,
+      "enabled": true,
+      "_audit_re_enable_note": "Re-enabled per audit/07-volume_breakout_structure.md (2026-04-15). Pre-rebuild evidence (491 trades, -0.88L) was from old code under no OOS protocol with overfit filter response. Letting wide-open gauntlet decide on regenerated data.",
       "min_volume_spike_mult": 2.5,
       "min_breakout_pct": 0.5,
       "target_mult_t1": 1.5,
@@ -665,7 +669,8 @@
       "confidence_level": 0.75
     },
     "volume_breakout_short": {
-      "enabled": false,
+      "enabled": true,
+      "_audit_re_enable_note": "Re-enabled per audit/07. Same rationale as long.",
       "min_volume_spike_mult": 2.5,
       "min_breakout_pct": 0.5,
       "target_mult_t1": 1.5,
@@ -994,7 +999,9 @@
       "min_stop_distance_pct": 0.3,
       "_comment_min_stop": "Minimum stop loss distance as percentage of price",
       "swing_lookback_bars": 8,
-      "_comment_swing_lookback": "Number of bars to look back for swing points"
+      "_comment_swing_lookback": "Number of bars to look back for swing points",
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
+      "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "momentum_breakout_short": {
       "enabled": true,
@@ -1200,7 +1207,7 @@
       "require_vwap_alignment": true
     },
     "orb_breakdown_short": {
-      "enabled": true,
+      "enabled": false,
       "orb_minutes": 15,
       "min_bars_required": 4,
       "min_range_pct": 0.5,
@@ -1221,11 +1228,12 @@
       "require_candle_close": true,
       "require_nr7_day": false,
       "nr7_lookback_days": 7,
-      "require_vwap_alignment": true
+      "require_vwap_alignment": true,
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative"
     },
     "orb_breakout": {
       "enabled": false,
-      "_disabled_reason": "Dead code: generic orb_breakout filters for structure_type 'orb_breakout' but events are typed 'orb_breakout_long'/'orb_breakdown_short' — zero events ever pass the filter",
+      "_disabled_reason": "Dead code: generic orb_breakout filters for structure_type 'orb_breakout' but events are typed 'orb_breakout_long'/'orb_breakdown_short' \u00e2\u20ac\u201d zero events ever pass the filter",
       "orb_minutes": 15,
       "min_bars_required": 4,
       "min_range_pct": 0.5,
@@ -1250,7 +1258,7 @@
     },
     "orb_breakdown": {
       "enabled": false,
-      "_disabled_reason": "Dead code: same filtering bug as orb_breakout generic — events never match configured_setup_type",
+      "_disabled_reason": "Dead code: same filtering bug as orb_breakout generic \u00e2\u20ac\u201d events never match configured_setup_type",
       "orb_minutes": 15,
       "min_bars_required": 4,
       "min_range_pct": 0.5,
@@ -1300,7 +1308,7 @@
       "require_vwap_alignment": true
     },
     "orb_pullback_short": {
-      "enabled": true,
+      "enabled": false,
       "orb_minutes": 15,
       "min_bars_required": 4,
       "min_range_pct": 0.5,
@@ -1322,7 +1330,8 @@
       "require_candle_close": true,
       "require_nr7_day": false,
       "nr7_lookback_days": 7,
-      "require_vwap_alignment": true
+      "require_vwap_alignment": true,
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative"
     },
     "first_hour_momentum_long": {
       "_comment": "OPTIMIZED: squeeze + adx>=35 + vol>=100k = 20 trades, +2,073 Rs, +104 Rs/trade, 60% WR",
@@ -1664,19 +1673,25 @@
     },
     "fair_value_gap_long": {
       "enabled": true,
-      "_comment": "ADDED: ICT Fair Value Gap long pattern - inherits ict_comprehensive params"
+      "_comment": "ADDED: ICT Fair Value Gap long pattern - inherits ict_comprehensive params",
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
+      "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "fair_value_gap_short": {
       "enabled": true,
-      "_comment": "ADDED: ICT Fair Value Gap short pattern - inherits ict_comprehensive params"
+      "_comment": "ADDED: ICT Fair Value Gap short pattern - inherits ict_comprehensive params",
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
+      "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "liquidity_sweep_long": {
-      "enabled": true,
-      "_comment": "ADDED: ICT Liquidity Sweep long pattern - inherits ict_comprehensive params"
+      "enabled": false,
+      "_comment": "ADDED: ICT Liquidity Sweep long pattern - inherits ict_comprehensive params",
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative"
     },
     "liquidity_sweep_short": {
       "enabled": true,
-      "_comment": "ADDED: ICT Liquidity Sweep short pattern - inherits ict_comprehensive params"
+      "_comment": "ADDED: ICT Liquidity Sweep short pattern - inherits ict_comprehensive params",
+      "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "premium_zone_short": {
       "enabled": true,
@@ -1685,11 +1700,14 @@
     "discount_zone_long": {
       "enabled": true,
       "_branch_note": "feat/premium-zone-ict-fix: enabled to test ICT-faithful filters. Originally blocked based on 3yr evidence (40961 trades, WR 39.6%, Rs -278L). Hypothesis: new filters (HTF bias, structural range, OTE 0.21, MSS+FVG+OB confluence) rescue the edge.",
-      "_comment": "ADDED: ICT Discount Zone long pattern - inherits ict_comprehensive params"
+      "_comment": "ADDED: ICT Discount Zone long pattern - inherits ict_comprehensive params",
+      "_kill_evidence": "RESCINDED: 3yr wide-open shows hour=9+vol_low (N=2222, WR 52.8%, Avg+59, 3/4 FYs positive). Filtered via validated_combinations."
     },
     "break_of_structure_long": {
       "enabled": true,
-      "_comment": "ADDED: ICT Break of Structure long pattern - inherits ict_comprehensive params"
+      "_comment": "ADDED: ICT Break of Structure long pattern - inherits ict_comprehensive params",
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
+      "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "break_of_structure_short": {
       "enabled": true,
@@ -1697,11 +1715,14 @@
     },
     "change_of_character_long": {
       "enabled": true,
-      "_comment": "ADDED: ICT Change of Character long pattern - inherits ict_comprehensive params"
+      "_comment": "ADDED: ICT Change of Character long pattern - inherits ict_comprehensive params",
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
+      "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "change_of_character_short": {
-      "enabled": true,
-      "_comment": "ADDED: ICT Change of Character short pattern - inherits ict_comprehensive params"
+      "enabled": false,
+      "_comment": "ADDED: ICT Change of Character short pattern - inherits ict_comprehensive params",
+      "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative"
     },
     "trend_reversal_long": {
       "enabled": false,
@@ -1886,7 +1907,7 @@
   "exit_score_drop_enabled": true,
   "exit_score_drop_bpct": 30.0,
   "exit_t1_min_partial_r": 0.3,
-  "_comment_t1_min_r": "Skip T1 partial if profit < 0.3R — charges eat 87%+ of gross at <0.3R on NSE",
+  "_comment_t1_min_r": "Skip T1 partial if profit < 0.3R \u00e2\u20ac\u201d charges eat 87%+ of gross at <0.3R on NSE",
   "or_kill_enabled": false,
   "or_kill_time_adaptive": true,
   "or_kill_volume_confirmation": true,
@@ -1898,7 +1919,7 @@
   "or_kill_mid_buffer_mult": 0.75,
   "or_kill_late_buffer_mult": 0.25,
   "or_kill_major_break_mult": 2.0,
-  "_comment_or_kill": "OR kill exit: DISABLED — not in working run. Keys kept for code compatibility.",
+  "_comment_or_kill": "OR kill exit: DISABLED \u00e2\u20ac\u201d not in working run. Keys kept for code compatibility.",
   "breakout_short_risk_control": true,
   "eod_scale_out": true,
   "entry_cutoff_hhmm": "14:45",
@@ -1952,7 +1973,9 @@
   "ws_batch_size": 100,
   "ws_flush_enabled": true,
   "quality_filters": {
-    "blocked_quality_statuses": ["fair"],
+    "blocked_quality_statuses": [
+      "fair"
+    ],
     "enabled": true,
     "min_structural_rr": 1.2,
     "_comment_momentum_quality": "INSTITUTIONAL FIX (exit-opt-004-phase2c): Momentum-based quality metric for breakouts. Replaces distance-based structural R:R with volume*breakout_strength/risk. Root cause analysis revealed distance-based R:R is inversely correlated with breakout quality - strong breakouts enter above ORH and had LOW structural R:R. Momentum quality measures what actually matters: volume confirmation + breakout strength + risk efficiency.",
@@ -2380,10 +2403,26 @@
     "hard_block_mult": 0.0,
     "chop_max_flips": 4,
     "category_overrides": {
-      "BREAKOUT":  {"with_trend_mult": 1.2, "against_trend_mult": 1.0, "hard_block_mult": 0.0},
-      "MOMENTUM":  {"with_trend_mult": 1.2, "against_trend_mult": 1.0, "hard_block_mult": 0.0},
-      "REVERSION": {"with_trend_mult": 1.2, "against_trend_mult": 1.0, "hard_block_mult": 0.0},
-      "LEVEL":     {"with_trend_mult": 1.2, "against_trend_mult": 1.0, "hard_block_mult": 0.0}
+      "BREAKOUT": {
+        "with_trend_mult": 1.2,
+        "against_trend_mult": 1.0,
+        "hard_block_mult": 0.0
+      },
+      "MOMENTUM": {
+        "with_trend_mult": 1.2,
+        "against_trend_mult": 1.0,
+        "hard_block_mult": 0.0
+      },
+      "REVERSION": {
+        "with_trend_mult": 1.2,
+        "against_trend_mult": 1.0,
+        "hard_block_mult": 0.0
+      },
+      "LEVEL": {
+        "with_trend_mult": 1.2,
+        "against_trend_mult": 1.0,
+        "hard_block_mult": 0.0
+      }
     },
     "exit_modifiers": {
       "against_trend": {
@@ -2402,26 +2441,23 @@
   "_comment_backtest_mis": "=== BACKTEST MIS FILTERING (Reject non-MIS stocks in backtest to match live) ===",
   "backtest_mis_filtering": {
     "enabled": true,
-    "_comment": "Filter non-MIS stocks in backtest using nse_all.json mis_enabled field. Large/mid cap MIS is 98.9% stable over 3 years. No capital restrictions applied — backtest tests signals/filters, not capital management."
+    "_comment": "Filter non-MIS stocks in backtest using nse_all.json mis_enabled field. Large/mid cap MIS is 98.9% stable over 3 years. No capital restrictions applied \u00e2\u20ac\u201d backtest tests signals/filters, not capital management."
   },
   "_comment_early_mis_filter": "=== EARLY MIS UNIVERSE FILTER (Reduce live/paper universe to MIS-eligible stocks) ===",
-
   "api_5m_bars": {
     "enabled": true,
     "min_delay_after_bar_close_sec": 60,
     "rps": 15,
     "concurrency": 30,
     "fetch_all_symbols": true,
-    "_note": "Fetch V3 intraday 5m bars for ALL core_symbols BEFORE Stage-0. Uses Historical API pipeline — guarantees backtest-live parity for both energy scoring and structure detection. Only active in live/paper mode (not backtest). 1500 symbols at 40 RPS = ~37s. Set fetch_all_symbols=false to revert to old behavior (fetch shortlisted only, after Stage-0)."
+    "_note": "Fetch V3 intraday 5m bars for ALL core_symbols BEFORE Stage-0. Uses Historical API pipeline \u00e2\u20ac\u201d guarantees backtest-live parity for both energy scoring and structure detection. Only active in live/paper mode (not backtest). 1500 symbols at 40 RPS = ~37s. Set fetch_all_symbols=false to revert to old behavior (fetch shortlisted only, after Stage-0)."
   },
-
   "bar_density_gate": {
     "enabled": true,
     "min_density_pct": 70.0,
     "min_bars_before_check": 30,
     "_note": "Filters illiquid symbols where WebSocket doesnt deliver all 1m candles. Density = closed_1m_bars / elapsed_minutes. Symbols below min_density_pct are excluded from screening. min_bars_before_check prevents false positives in early session."
   },
-
   "early_mis_universe_filter": {
     "enabled": true,
     "fetch_timeout_sec": 30,

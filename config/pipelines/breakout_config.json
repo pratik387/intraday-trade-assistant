@@ -212,12 +212,12 @@
                 "_disabled_reason": "VC whitelist gate is the primary filter now"
             },
             "volume_breakout_long": {
-                "enabled": false,
-                "blocked_regimes": ["chop", "squeeze", "trend_up"],
-                "blocked_hours": [10, 11],
-                "blocked_caps": ["mid_cap", "small_cap", "unknown"],
-                "_evidence": "491 trades, Rs -0.88L. Only profitable in trend_down.",
-                "_disabled_reason": "VC whitelist gate is the primary filter now"
+                "enabled": true,
+                "blocked_regimes": [],
+                "blocked_hours": [],
+                "blocked_caps": [],
+                "_audit_re_enable_note": "Re-enabled per audit/07-volume_breakout_structure.md (2026-04-15). Aggressive blocks reset — those were the old overfit response. Let the wide-open gauntlet decide cap/regime/time conditioning from fresh OOS evidence.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 491 trades, Rs -0.88L. Only profitable in trend_down regime. From old code with no OOS protocol — superseded by fresh gauntlet methodology."
             },
             "breakout_long": {
                 "enabled": true,
