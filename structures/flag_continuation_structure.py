@@ -102,6 +102,14 @@ class FlagContinuationStructure(BaseStructure):
                     rejection_reason=f"cap_segment {cap_segment} blocked"
                 )
 
+            # Reset per-call rejection state. _analyze_flag_pattern updates this
+            # when an iteration fails a specific filter; final detect() surfaces
+            # the MOST SPECIFIC rejection (highest priority) reached across all
+            # consol_period iterations. This ensures the diagnostic JSONL gets
+            # the actual filter that killed the pattern, not "no patterns found".
+            self._last_rejection = None
+            self._last_rejection_priority = 0
+
             events = []
 
             # Try different consolidation periods within the allowed range
@@ -184,11 +192,21 @@ class FlagContinuationStructure(BaseStructure):
 
             quality_score = self._calculate_quality_score(events, df) if events else 0.0
 
+            # Surface the most-specific rejection encountered (Tier-A diagnostic).
+            # If no iteration produced events AND we tracked a specific failure,
+            # use that; otherwise fall back to the generic "no patterns" message.
+            if events:
+                final_reason = None
+            elif self._last_rejection:
+                final_reason = self._last_rejection
+            else:
+                final_reason = "No flag continuation patterns detected"
+
             return StructureAnalysis(
                 structure_detected=len(events) > 0,
                 events=events,
                 quality_score=quality_score,
-                rejection_reason=None if events else "No flag continuation patterns detected"
+                rejection_reason=final_reason
             )
 
         except Exception as e:
@@ -199,6 +217,16 @@ class FlagContinuationStructure(BaseStructure):
                 quality_score=0.0,
                 rejection_reason=f"Detection error: {e}"
             )
+
+    def _record_rejection(self, reason: str, priority: int) -> None:
+        """Update _last_rejection if this rejection is more specific than prior.
+        Priority order (low->high): trend(1), consol_range(2), volume_decline(3),
+        no_breakout(4), insufficient_breakout_pct(5). Highest wins.
+        Used by detect() to surface the deepest filter reached across all
+        consol_period iterations for the post-OCI gauntlet diagnostic."""
+        if priority > self._last_rejection_priority:
+            self._last_rejection = reason
+            self._last_rejection_priority = priority
 
     def _analyze_flag_pattern(self, df: pd.DataFrame, consol_period: int) -> Optional[Tuple[str, float, Dict[str, Any], Dict[str, Any]]]:
         """Analyze potential flag pattern with given consolidation period."""
@@ -228,6 +256,10 @@ class FlagContinuationStructure(BaseStructure):
             # Check if trend meets minimum strength requirement
             if abs(trend_strength_pct) < self.min_trend_strength:
                 logger.debug(f"FLAG_ANALYZE: REJECTED - Weak trend ({abs(trend_strength_pct):.2f}% < {self.min_trend_strength}%)")
+                self._record_rejection(
+                    f"weak trend ({abs(trend_strength_pct):.2f}% < {self.min_trend_strength}%)",
+                    priority=1,
+                )
                 return None
 
             # Determine trend direction
@@ -246,6 +278,10 @@ class FlagContinuationStructure(BaseStructure):
             # Check if consolidation is tight enough
             if consol_range_pct > self.max_consolidation_range_pct:
                 logger.debug(f"FLAG_ANALYZE: REJECTED - Wide consolidation ({consol_range_pct:.2f}% > {self.max_consolidation_range_pct}%)")
+                self._record_rejection(
+                    f"wide consolidation ({consol_range_pct:.2f}% > {self.max_consolidation_range_pct}%)",
+                    priority=2,
+                )
                 return None
 
             # Volume-DECLINE-through-flag canonical filter (audit/14 Tier-A):
@@ -263,6 +299,11 @@ class FlagContinuationStructure(BaseStructure):
                         logger.debug(
                             f"FLAG_ANALYZE: REJECTED - Volume did not decline through flag "
                             f"(ratio={vol_ratio:.2f} > threshold={self.flag_volume_decline_ratio})"
+                        )
+                        self._record_rejection(
+                            f"volume did not decline through flag "
+                            f"(ratio={vol_ratio:.2f} > threshold={self.flag_volume_decline_ratio})",
+                            priority=3,
                         )
                         return None
 
@@ -303,6 +344,14 @@ class FlagContinuationStructure(BaseStructure):
             # Check if breakout has sufficient confirmation
             if breakout_direction is None or confirmation_pct < self.breakout_confirmation_pct:
                 logger.debug(f"FLAG_ANALYZE: REJECTED - Insufficient breakout (direction={breakout_direction}, conf={confirmation_pct:.2f}% < {self.breakout_confirmation_pct}%)")
+                if breakout_direction is None:
+                    self._record_rejection("no breakout (price did not exit consolidation)", priority=4)
+                else:
+                    self._record_rejection(
+                        f"insufficient breakout confirmation "
+                        f"({confirmation_pct:.2f}% < {self.breakout_confirmation_pct}%)",
+                        priority=5,
+                    )
                 return None
 
             breakout_info = {

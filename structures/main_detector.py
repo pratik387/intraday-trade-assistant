@@ -253,6 +253,70 @@ class MainDetector(BaseStructure):
 
             logger.debug(f"MAIN_DETECTOR: {symbol} starting detector loop with {len(self.detectors)} detectors")
 
+            # Compute bar context ONCE per scan (not per detector) for the
+            # detector_rejections / detector_accepts JSONL emission below.
+            # Skip the lookup entirely if neither logger is enabled (e.g.,
+            # test/import context with no run_prefix).
+            _det_ts_iso = None
+            _bar_context = None
+            try:
+                from config.logging_config import (
+                    get_detector_rejections_logger as _grl,
+                    get_detector_accepts_logger as _gal,
+                )
+                _det_rej_log = _grl()
+                _det_acc_log = _gal()
+                if _det_rej_log is not None or _det_acc_log is not None:
+                    _det_ts_iso = pd.Timestamp(context.timestamp).isoformat() if context.timestamp is not None else None
+                    _hour = context.timestamp.hour if context.timestamp is not None else None
+                    _minute = context.timestamp.minute if context.timestamp is not None else None
+                    _hhmm = (_hour or 0) * 100 + (_minute or 0)
+                    if _hhmm < 1000:
+                        _hour_bucket = "0915-1000"
+                    elif _hhmm < 1100:
+                        _hour_bucket = "1000-1100"
+                    elif _hhmm < 1300:
+                        _hour_bucket = "1100-1300"
+                    elif _hhmm < 1430:
+                        _hour_bucket = "1300-1430"
+                    else:
+                        _hour_bucket = "1430-1530"
+                    _vol_z = None
+                    _atr = None
+                    if context.indicators:
+                        _vol_z = context.indicators.get('vol_z')
+                        _atr = context.indicators.get('atr')
+                    _bar_context = {
+                        "ts": _det_ts_iso,
+                        "symbol": symbol,
+                        "regime": getattr(context, "regime", None),
+                        "cap_segment": getattr(context, "cap_segment", None),
+                        "hour_bucket": _hour_bucket,
+                        "vol_z": round(_vol_z, 3) if _vol_z is not None else None,
+                        "atr": round(_atr, 3) if _atr is not None else None,
+                    }
+            except Exception:
+                # Logging must never break detection
+                _bar_context = None
+                _det_rej_log = None
+                _det_acc_log = None
+
+            # Trivial rejection reasons that get filtered out (no analysis value).
+            # Emitted on most bars; logging them would balloon file size.
+            _TRIVIAL_REJECTION_PREFIXES = (
+                "Insufficient data",
+                "No significant gaps detected",
+                "No flag continuation patterns detected",
+                "No structure event",
+            )
+            def _is_trivial(reason):
+                if not reason:
+                    return True
+                for prefix in _TRIVIAL_REJECTION_PREFIXES:
+                    if reason.startswith(prefix):
+                        return True
+                return False
+
             for detector_name, detector in self.detectors.items():
                 try:
                     # Check if detector should run at this time (time-based blacklisting)
@@ -274,8 +338,34 @@ class MainDetector(BaseStructure):
                         }
                         logger.debug(f"DETECTOR_RESULT: {symbol} | {detector_name} | ACCEPTED | "
                                    f"events={len(analysis.events)} quality={analysis.quality_score:.2f}")
+                        # Per-event accept logging (one line per emitted event)
+                        if _det_acc_log is not None and _bar_context is not None:
+                            try:
+                                for _ev in analysis.events:
+                                    _det_acc_log.log_event(
+                                        **_bar_context,
+                                        detector=detector_name,
+                                        setup_type=getattr(_ev, "structure_type", detector_name),
+                                        side=getattr(_ev, "side", None),
+                                        confidence=round(float(getattr(_ev, "confidence", 0.0)), 3),
+                                        quality_score=round(float(analysis.quality_score), 3),
+                                    )
+                            except Exception:
+                                pass
                     else:
                         logger.debug(f"DETECTOR_RESULT: {symbol} | {detector_name} | REJECTED | no_events")
+                        # Per-event reject logging (skip trivial reasons)
+                        if _det_rej_log is not None and _bar_context is not None:
+                            _reason = getattr(analysis, "rejection_reason", None)
+                            if not _is_trivial(_reason):
+                                try:
+                                    _det_rej_log.log_event(
+                                        **_bar_context,
+                                        detector=detector_name,
+                                        reason=_reason,
+                                    )
+                                except Exception:
+                                    pass
                 except Exception as e:
                     logger.error(f"DETECTOR_ERROR: {symbol} | {detector_name} | ERROR | {str(e)}")
                     logger.exception(f"MAIN_DETECTOR: Error in {detector_name} for {symbol}: {e}")

@@ -23,6 +23,11 @@ _ranking_logger = None
 _planning_logger = None
 _events_decision_logger = None
 _timing_logger = None
+# Per-event detector decision loggers (for post-OCI gauntlet analysis).
+# Capture every non-trivial detector accept / reject with full bar context
+# so the 5-stage funnel can be reconstructed offline. See main_detector.py.
+_detector_rejections_logger = None
+_detector_accepts_logger = None
 _current_log_month = None
 _session_id = None
 dir_path = None
@@ -147,7 +152,7 @@ def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     """Initialize all loggers (internal function)"""
     global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path, _global_run_prefix
     global _scanner_logger, _screener_logger, _ranking_logger, _planning_logger, _events_decision_logger
-    global _timing_logger
+    global _timing_logger, _detector_rejections_logger, _detector_accepts_logger
 
     # Quick check - if ANY logger is initialized, reuse the existing session
     # UNLESS force_reinit is True (allows re-initialization with different run_prefix)
@@ -228,6 +233,12 @@ def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     # Timing logger — only used when TRADING_PERF_TIMER=1 in the environment.
     # Always created (cheap) so get_timing_logger() never returns None.
     _timing_logger = JSONLLogger(log_dir / "timing.jsonl", "timing")
+
+    # Per-event detector decision loggers (for post-OCI gauntlet analysis).
+    # Trivial rejections (insufficient data, no pattern matched) are filtered
+    # out at the call site; only diagnostically useful events are logged.
+    _detector_rejections_logger = JSONLLogger(log_dir / "detector_rejections.jsonl", "detector_reject")
+    _detector_accepts_logger = JSONLLogger(log_dir / "detector_accepts.jsonl", "detector_accept")
 
 def get_agent_logger(run_prefix: str = "", force_reinit: bool = False):
     """Get the agent logger for general application logging"""
@@ -351,6 +362,33 @@ def get_timing_logger():
     return _timing_logger
 
 
+def get_detector_rejections_logger():
+    """Get the per-event detector rejection logger (detector_rejections.jsonl).
+
+    Captures every non-trivial detector rejection with full bar context
+    (symbol, timestamp, detector, reason, regime, cap_segment, hour, vol_z).
+    For post-OCI gauntlet funnel reconstruction. Returns None if not
+    initialized (e.g., test/import contexts without a run_prefix).
+    """
+    global _detector_rejections_logger
+    if _detector_rejections_logger is None:
+        _initialize_loggers()
+    return _detector_rejections_logger
+
+
+def get_detector_accepts_logger():
+    """Get the per-event detector accept logger (detector_accepts.jsonl).
+
+    Mirror of detector_rejections.jsonl for accepted detections. Lets
+    post-hoc analysis directly compare reject vs accept distributions
+    per (regime, cap_segment, hour) without joining tables.
+    """
+    global _detector_accepts_logger
+    if _detector_accepts_logger is None:
+        _initialize_loggers()
+    return _detector_accepts_logger
+
+
 # -------------------- Child Process Logger Initialization --------------------
 
 def initialize_child_loggers(log_dir: Path, process_tag: str):
@@ -380,6 +418,7 @@ def initialize_child_loggers(log_dir: Path, process_tag: str):
     """
     global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path
     global _events_decision_logger, _timing_logger
+    global _detector_rejections_logger, _detector_accepts_logger
 
     dir_path = log_dir
     _session_id = log_dir.name  # Reuse parent's session ID from directory name
@@ -416,3 +455,8 @@ def initialize_child_loggers(log_dir: Path, process_tag: str):
     # Timing logger — exec child writes to same timing.jsonl as parent
     # (each process has its own file handle; O_APPEND atomicity handles interleaving)
     _timing_logger = JSONLLogger(log_dir / "timing.jsonl", "timing")
+
+    # Per-event detector decision loggers (exec child writes to same files
+    # as parent; O_APPEND atomicity handles interleaving across processes)
+    _detector_rejections_logger = JSONLLogger(log_dir / "detector_rejections.jsonl", "detector_reject")
+    _detector_accepts_logger = JSONLLogger(log_dir / "detector_accepts.jsonl", "detector_accept")

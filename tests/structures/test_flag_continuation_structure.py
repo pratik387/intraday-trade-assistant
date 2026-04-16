@@ -226,13 +226,19 @@ def test_volume_decline_filter_accepts_canonical_flag():
 
 
 def test_volume_decline_filter_rejects_non_canonical_flag():
-    """Tier-A: flag WITHOUT volume decline (consol vol == trend vol) is rejected."""
+    """Tier-A: flag WITHOUT volume decline (consol vol == trend vol) is rejected
+    AND the specific volume-decline reason surfaces in rejection_reason
+    (audit/14 Tier-A diagnostic — must be visible to OCI gauntlet analysis)."""
     detector = FlagContinuationStructure(_config(flag_volume_decline_ratio=0.85))
     df = _make_flag_long_without_decline()
     analysis = detector.detect(_ctx(df))
     assert not analysis.structure_detected
-    # Detector tries multiple consol_periods, all should fail volume check;
-    # final rejection_reason is the no-pattern message (not the per-period reason)
+    # Specific volume-decline rejection must propagate (was previously buried
+    # in _analyze_flag_pattern returning None and lost as generic message)
+    assert analysis.rejection_reason is not None
+    assert "volume did not decline" in analysis.rejection_reason.lower(), (
+        f"Expected volume-decline rejection; got: {analysis.rejection_reason}"
+    )
 
 
 def test_volume_decline_filter_disabled_at_ratio_one():
