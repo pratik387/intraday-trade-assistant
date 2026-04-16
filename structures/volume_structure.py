@@ -237,7 +237,21 @@ class VolumeStructure(BaseStructure):
                 structure_type=structure_type,
                 side=side,
                 confidence=confidence,
-                levels={"reversal_level": current_price},
+                # Emit 'support' (long) / 'resistance' (short) keys so
+                # main_detector's detected_level extraction populates correctly
+                # (main_detector.py:540-544). Per audit/06-volume_structure.md P1 #2.
+                # For LONG reversal (down spike), the spike bar's LOW is the
+                # rejected support. For SHORT reversal (up spike), the spike
+                # bar's HIGH is the rejected resistance. 'reversal_level'
+                # preserved for backward compatibility.
+                levels={
+                    "reversal_level": current_price,
+                    **(
+                        {"support": float(low_price)}
+                        if side == "long"
+                        else {"resistance": float(high_price)}
+                    ),
+                },
                 context=event_context,
                 price=current_price
             )
