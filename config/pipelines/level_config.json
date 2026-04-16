@@ -137,15 +137,15 @@
             },
             "vwap_reclaim_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "3yr deep_edge: Rs -204 avg, 1,631 trades. Negative ALL FYs. Previously restricted to near-zero."
+                "_audit_re_enable_note": "Re-enabled per audit/10-vwap_structure.md (2026-04-15). Pre-rebuild evidence likely contaminated by old levels-dict bug + no cap-block. Letting wide-open gauntlet decide on regenerated post-fix data.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 3yr deep_edge Rs -204 avg, 1,631 trades, negative ALL FYs. Generated under no OOS protocol with detector bugs."
             },
             "vwap_lose_short": {
-                "enabled": false,
-                "blocked_regimes": ["trend_down"],
-                "blocked_caps": ["micro_cap"],
-                "_evidence": "1,871 trades, Rs +8.88L overall. trend_down WR 47% Rs -5. micro_cap WR 43% Rs -173.",
-                "_disabled_reason": "VC whitelist gate is the primary filter now"
+                "enabled": true,
+                "blocked_regimes": [],
+                "blocked_caps": [],
+                "_audit_re_enable_note": "Per audit/10. Selective blocks (blocked_regimes/caps) reset — those were the same overfit response we've removed in other audits. Let gauntlet rediscover any conditional edge from regenerated data.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 1,871 trades, Rs +8.88L overall, trend_down WR 47% Rs -5, micro_cap WR 43% Rs -173."
             },
             "premium_zone_short": {
                 "enabled": true,

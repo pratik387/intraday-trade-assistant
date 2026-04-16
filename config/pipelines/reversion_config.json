@@ -147,8 +147,8 @@
             "_active_profile": "OPTIMIZED",
             "vwap_mean_reversion_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "124 trades, WR 43.5%, Rs -0.86L loss, negative ALL FYs with data."
+                "_audit_re_enable_note": "Re-enabled per audit/10-vwap_structure.md (2026-04-15). Pre-rebuild evidence likely contaminated by old levels-dict bug + no cap-block. Mean reversion is canonically WEAKER in NSE (trends persist) — let gauntlet decide on regenerated data.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 124 trades, WR 43.5%, Rs -0.86L."
             },
             "volume_spike_reversal_long": {
                 "enabled": true,
@@ -197,8 +197,8 @@
             },
             "vwap_mean_reversion_short": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "3yr deep_edge: Rs -231 avg, 74 trades. Negative overall."
+                "_audit_re_enable_note": "Re-enabled per audit/10. Same fresh-OOS rationale as long.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 3yr deep_edge Rs -231 avg, 74 trades, negative overall."
             }
         },
         "global_filters": {

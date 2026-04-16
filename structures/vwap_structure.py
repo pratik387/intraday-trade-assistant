@@ -94,6 +94,11 @@ class VWAPStructure(BaseStructure):
         self.confidence_strong_signal = config["confidence_strong_signal"]
         self.confidence_weak_signal = config["confidence_weak_signal"]
 
+        # Config-driven cap blocking (default empty — no cap blocks unless explicitly set).
+        # Mirrors RangeStructure / SR / FHM / VolumeStructure / VolumeBreakout / Trend / FailureFade pattern.
+        # Per audit/10-vwap_structure.md P2.
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
+
         logger.debug(f"VWAP: Initialized with mean reversion distance: {self.min_distance_bps}-{self.max_distance_bps} bps")
         logger.debug(f"VWAP: Reclaim requirements - bars above: {self.min_bars_above_vwap}, volume conf: {self.reclaim_volume_confirmation}")
 
@@ -104,6 +109,17 @@ class VWAPStructure(BaseStructure):
         logger.debug(f"VWAP_DETECT: Starting detection for {context.symbol}")
 
         try:
+            # Config-driven cap blocking — fast fail (audit/10 P2)
+            cap_segment = getattr(context, 'cap_segment', None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"VWAP_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
+                )
+
             # Extract VWAP levels and context
             vwap_info = self._extract_vwap_levels(context)
             if not vwap_info:
@@ -341,7 +357,8 @@ class VWAPStructure(BaseStructure):
                     structure_type="vwap_mean_reversion_long",
                     side="long",
                     confidence=strength,
-                    levels={"vwap": vwap_info.current_vwap},
+                    # Add 'support' key for detected_level flow (audit/10 P1).
+                    levels={"vwap": vwap_info.current_vwap, "support": float(vwap_info.current_vwap)},
                     context={
                         "distance_bps": vwap_info.price_distance_bps,
                         "volume_confirmation": vwap_info.volume_confirmation,
@@ -379,7 +396,8 @@ class VWAPStructure(BaseStructure):
                     structure_type="vwap_mean_reversion_short",
                     side="short",
                     confidence=strength,
-                    levels={"vwap": vwap_info.current_vwap},
+                    # Add 'resistance' key for detected_level flow (audit/10 P1).
+                    levels={"vwap": vwap_info.current_vwap, "resistance": float(vwap_info.current_vwap)},
                     context={
                         "distance_bps": vwap_info.price_distance_bps,
                         "volume_confirmation": vwap_info.volume_confirmation,
@@ -446,7 +464,8 @@ class VWAPStructure(BaseStructure):
                 structure_type="vwap_reclaim_long",
                 side="long",
                 confidence=strength,
-                levels={"vwap": vwap_info.current_vwap},
+                # Add 'support' key for detected_level flow (audit/10 P1).
+                levels={"vwap": vwap_info.current_vwap, "support": float(vwap_info.current_vwap)},
                 context={
                     "above_vwap_bars": vwap_info.above_vwap_bars,
                     "volume_confirmation": vwap_info.volume_confirmation,
@@ -513,7 +532,8 @@ class VWAPStructure(BaseStructure):
                 structure_type="vwap_lose_short",
                 side="short",
                 confidence=strength,
-                levels={"vwap": vwap_info.current_vwap},
+                # Add 'resistance' key for detected_level flow (audit/10 P1).
+                levels={"vwap": vwap_info.current_vwap, "resistance": float(vwap_info.current_vwap)},
                 context={
                     "below_vwap_bars": vwap_info.below_vwap_bars,
                     "volume_confirmation": vwap_info.volume_confirmation,
