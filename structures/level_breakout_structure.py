@@ -68,8 +68,11 @@ class LevelBreakoutStructure(BaseStructure):
         self.sl_atr_multiplier = config["sl_atr_multiplier"]  # ATR multiplier for stop loss
         self.min_stop_distance_pct = config["min_stop_distance_pct"]  # Minimum SL distance as % of price
 
-        # Track traded breakouts to prevent double exposure
-        self.traded_breakouts_today = set()
+        # Track traded breakouts to prevent double exposure.
+        # Dict keyed by session date -> set of breakout keys, so entries from
+        # prior sessions don't accumulate and don't interfere with today's
+        # dedupe logic (auto-scopes to session).
+        self.traded_breakouts_today: Dict[Any, set] = {}
 
         logger.debug(f"LEVEL_BREAKOUT: Initialized with DUAL-MODE CONFIG: entry_mode={self.entry_mode}, aggressive_vol_z={self.aggressive_min_volume_z}, aggressive_conviction={self.aggressive_min_conviction}, allow_both_modes={self.allow_both_modes}, retest_zone_width={self.retest_entry_zone_width_atr}ATR")
 
@@ -885,10 +888,14 @@ class LevelBreakoutStructure(BaseStructure):
             "retest" - Wait for pullback to level (retest mode)
             "pending" - Legacy mode (tight entry zone around current price)
         """
-        # Check if this breakout was already traded today
-        breakout_key = f"{symbol}_{level_name}_{timestamp.date()}"
+        # Check if this breakout was already traded today.
+        # Dedupe set is scoped per session_date so prior-session entries
+        # neither collide with today's keys nor accumulate unbounded memory.
+        session_date = timestamp.date()
+        breakout_key = f"{symbol}_{level_name}"  # date is implicit in the bucket
+        session_bucket = self.traded_breakouts_today.get(session_date, set())
 
-        if breakout_key in self.traded_breakouts_today:
+        if breakout_key in session_bucket:
             logger.debug(f"LEVEL_BREAKOUT: {symbol} - {level_name} already traded today, skipping")
             return None  # Signal to skip this detection
 
@@ -897,7 +904,7 @@ class LevelBreakoutStructure(BaseStructure):
             # Aggressive mode: Check if meets high-conviction criteria
             if vol_z >= self.aggressive_min_volume_z and confidence >= self.aggressive_min_conviction:
                 logger.debug(f"LEVEL_BREAKOUT: {symbol} - AGGRESSIVE mode (vol_z={vol_z:.2f}, conf={confidence:.2f})")
-                self.traded_breakouts_today.add(breakout_key)
+                self.traded_breakouts_today.setdefault(session_date, set()).add(breakout_key)
                 return "immediate"
             elif self.allow_both_modes:
                 # Doesn't meet aggressive criteria, try retest mode

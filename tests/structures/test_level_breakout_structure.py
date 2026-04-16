@@ -268,13 +268,18 @@ def test_traded_breakouts_today_scopes_to_session_date():
         "traded_breakouts_today must scope to session date."
     )
 
-    # Additional sanity: the dedupe store should be dict-keyed by date so it
-    # doesn't grow unboundedly across sessions.
-    # (Test only checks size-stability: each session stores its own bucket.)
+    # Bound-check: dedupe store must be dict-keyed by session date (not a
+    # single set that grows unboundedly across days). With two distinct
+    # sessions, exactly two buckets should exist.
     tracked = detector.traded_breakouts_today
-    if isinstance(tracked, dict):
-        # Two distinct dates should produce at most two buckets
-        assert len(tracked) <= 2
+    assert isinstance(tracked, dict), (
+        "traded_breakouts_today must be a dict keyed by session date "
+        "(not a flat set that accumulates forever across sessions)"
+    )
+    assert len(tracked) == 2, (
+        f"Expected exactly 2 session buckets after Day 1+Day 2 detections; "
+        f"got {len(tracked)} buckets: {list(tracked.keys())}"
+    )
 
 
 # ---------------------------------------------------------------------------
