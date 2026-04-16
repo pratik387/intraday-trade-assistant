@@ -1846,8 +1846,10 @@
     },
     "main_detector": {
       "enabled": true,
-      "max_detections_per_symbol": 5,
-      "conflict_resolution_enabled": true,
+      "max_detections_per_symbol": 50,
+      "_comment_max_detections": "WIDE-OPEN: bumped 5 -> 50 so non-ICT detectors aren't silently dropped by per-symbol cap. ICT alone can produce 5+ events per symbol (BOS, CHoCH, FVG, OB, premium/discount); cap of 5 starved gap/FHM/squeeze/etc. of representation in the candidate list.",
+      "conflict_resolution_enabled": false,
+      "_comment_conflict_resolution": "WIDE-OPEN: disabled. _resolve_directional_conflicts grouped events within 0.5% and kept only the HIGHEST-confidence event per group. ICT detectors return confidence ~5.0 while gap/FHM/squeeze/failure_fade return ~1.7-2.5, so ICT silently won every conflict — gap_fill_long had 205 accepts but 0 trades because of this. priority_weights below are DEAD code (resolver uses raw confidence). For wide-open gauntlet analysis we need every detector's signals to flow through to measure per-detector edge. Set to true once detectors are calibrated and we want production deduplication.",
       "priority_weights": {
         "ict": 1.0,
         "level_breakout_long": 0.9,

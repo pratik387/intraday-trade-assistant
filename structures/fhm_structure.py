@@ -311,13 +311,16 @@ class FHMStructure(BaseStructure):
 
             if price_move_pct > 0:
                 # Long candidate
-                # DIRECTION RESTRICTION: Skip if this detector is configured for shorts only
+                # DIRECTION RESTRICTION: silent skip when this FHM instance is configured
+                # for shorts but a long opportunity surfaces. rejection_reason=None signals
+                # "not my setup type" to main_detector's trivial filter (same fix pattern
+                # as gap_structure.py:138).
                 if self.detect_direction == "short":
                     return StructureAnalysis(
                         structure_detected=False,
                         events=[],
                         quality_score=0.0,
-                        rejection_reason=f"Detector configured for short only, but price move is positive"
+                        rejection_reason=None,
                     )
 
                 vwap_check = not self.long_requires_above_vwap or vwap is None or current_price > vwap
@@ -441,13 +444,15 @@ class FHMStructure(BaseStructure):
 
             else:
                 # Short candidate
-                # DIRECTION RESTRICTION: Skip if this detector is configured for longs only
+                # DIRECTION RESTRICTION: silent skip when this FHM instance is configured
+                # for longs but a short opportunity surfaces. rejection_reason=None signals
+                # "not my setup type" (same fix pattern as gap_structure.py:138).
                 if self.detect_direction == "long":
                     return StructureAnalysis(
                         structure_detected=False,
                         events=[],
                         quality_score=0.0,
-                        rejection_reason=f"Detector configured for long only, but price move is negative"
+                        rejection_reason=None,
                     )
 
                 vwap_check = not self.short_requires_below_vwap or vwap is None or current_price < vwap

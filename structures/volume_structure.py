@@ -133,12 +133,15 @@ class VolumeStructure(BaseStructure):
                 structure_type = "volume_spike_reversal_long"
                 side = "long"
 
-            # Setup type filter
+            # Setup type filter — silent skip when this detector instance is configured
+            # for a different setup_type than what the bar's price action implies.
+            # rejection_reason=None signals "not my setup type" to main_detector's trivial
+            # filter, preventing inflated log volume (same fix as gap_structure.py:138).
             if self.configured_setup_type and structure_type != self.configured_setup_type:
                 logger.debug(f"VOLUME: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
                 return StructureAnalysis(
                     structure_detected=False, events=[], quality_score=0.0,
-                    rejection_reason=f"Direction mismatch: {structure_type} != {self.configured_setup_type}"
+                    rejection_reason=None,
                 )
 
             # --- P5: Volume ratio dual check (prevent illiquid z-score noise) ---
