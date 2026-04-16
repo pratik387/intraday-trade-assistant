@@ -103,7 +103,10 @@ class VolumeStructure(BaseStructure):
 
             # Volume spike reversal detection
             current_vol_z = float(df['vol_z'].iloc[-1])
-            if current_vol_z < self.min_volume_spike_mult:
+            # NaN guard: float(NaN) = NaN, NaN < threshold is False, so NaN
+            # vol_z silently passes the spike gate. Explicit reject.
+            # Per audit/06-volume_structure.md P2 #3.
+            if pd.isna(current_vol_z) or current_vol_z < self.min_volume_spike_mult:
                 return StructureAnalysis(
                     structure_detected=False, events=[], quality_score=0.0,
                     rejection_reason="No volume patterns detected"
