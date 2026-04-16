@@ -64,6 +64,10 @@ class SqueezeReleaseStructure(BaseStructure):
         self.confidence_strong_expansion = config["confidence_strong_expansion"]
         self.confidence_weak_expansion = config["confidence_weak_expansion"]
 
+        # Config-driven cap blocking (default empty). 10th detector with this parity.
+        # Per audit/12-squeeze_release_structure.md P2.
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
+
         logger.debug(f"SQUEEZE_RELEASE: Initialized with width_window: {self.width_window}, expansion_ratio: {self.expansion_ratio}")
 
 
@@ -71,6 +75,18 @@ class SqueezeReleaseStructure(BaseStructure):
         """Detect squeeze release structures."""
         try:
             logger.debug(f"SQUEEZE_DETECT: Starting detection for {context.symbol}")
+
+            # Config-driven cap blocking — fast fail (audit/12 P2)
+            cap_segment = getattr(context, 'cap_segment', None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"SQUEEZE_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
+                )
+
             df = context.df_5m
             min_required_bars = self.width_window + self.recent_width_bars + self.width_calculation_period
             logger.debug(f"SQUEEZE_DETECT: {context.symbol} - Checking bars: have {len(df)}, need {min_required_bars} (width_window={self.width_window})")
@@ -160,7 +176,12 @@ class SqueezeReleaseStructure(BaseStructure):
                 structure_type=structure_type,
                 side=side,
                 confidence=confidence,
-                levels={"squeeze_level": context.current_price},
+                # Add side-aware support/resistance key for detected_level flow
+                # (main_detector.py:540-544). Per audit/12-squeeze_release_structure.md P1.
+                levels={
+                    "squeeze_level": context.current_price,
+                    **({"support": float(context.current_price)} if side == "long" else {"resistance": float(context.current_price)})
+                },
                 context={
                     "expansion_ratio": expansion_ratio_actual,
                     "momentum": momentum,

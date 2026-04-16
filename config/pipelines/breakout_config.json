@@ -251,8 +251,8 @@
             },
             "squeeze_release_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "3yr deep_edge: Rs -67 avg. Negative overall."
+                "_audit_re_enable_note": "Re-enabled per audit/12-squeeze_release_structure.md (2026-04-15). Pre-rebuild small-sample negative evidence not strong enough to keep blocked. Letting wide-open gauntlet decide on regenerated post-fix data.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 3yr deep_edge Rs -67 avg, negative overall. No specific trade count cited — likely small sample."
             }
         },
         "global_filters": {
