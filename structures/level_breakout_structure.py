@@ -359,6 +359,13 @@ class LevelBreakoutStructure(BaseStructure):
             level_name=level_name
         )
 
+        # Determine entry mode based on configuration and breakdown quality (mirror long path)
+        entry_mode = self._determine_entry_mode(vol_z_current, confidence, context.symbol, level_name, context.timestamp)
+
+        # Skip if already traded or doesn't meet criteria
+        if entry_mode is None:
+            return None
+
         # Use orb_level_breakout_* for ORH/ORL to ensure is_orb check passes in breakout_pipeline
         # This allows ORB-related level breakouts to use relaxed chop regime filtering
         structure_type = "orb_level_breakout_short" if level_name in ("ORH", "ORL") else "level_breakout_short"
@@ -369,17 +376,20 @@ class LevelBreakoutStructure(BaseStructure):
             structure_type=structure_type,
             side="short",
             confidence=confidence,
-            levels={level_name: level_value, "breakdown_size": breakdown_size},
+            levels={level_name: level_value, "breakout_size": breakdown_size},
             context={
                 "level_name": level_name,
-                "breakdown_size_atr": breakdown_size / atr,
+                "breakout_size_atr": breakdown_size / atr,
                 "volume_z": vol_z_current,
-                "smc_strength": final_strength
+                "smc_strength": final_strength,
+                "entry_mode": entry_mode,  # Mirror long path
+                "retest_zone": [level_value - (self.retest_entry_zone_width_atr * atr),
+                               level_value + (self.retest_entry_zone_width_atr * atr)] if entry_mode == "retest" else None
             },
             price=current_price
         )
 
-        logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Short breakdown {level_name} at {current_price:.2f}, strength: {final_strength:.2f}")
+        logger.debug(f"LEVEL_BREAKOUT: {context.symbol} - Short breakdown {level_name} at {current_price:.2f}, strength: {final_strength:.2f}, entry_mode: {entry_mode}")
         return event
 
     def _get_available_levels(self, context: MarketContext) -> Dict[str, float]:
