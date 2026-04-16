@@ -345,9 +345,60 @@ def run_backtest(date_str):
         }
 
 
+# Whitelist of FILENAMES safe to gzip before upload. Restricted to:
+#  1. NEW detector logs that no existing post-processing reads
+#  2. agent.log (only consumed for human reading, not as input)
+#
+# Explicitly NOT gzipped (existing post-processing reads these as plain
+# text via process_backtest_run.py + trading_logger.py + comprehensive_run_analyzer.py):
+#  - events.jsonl       (consumed by trading_logger to build analytics.jsonl)
+#  - analytics.jsonl    (consumed by comprehensive_run_analyzer)
+#  - screening.jsonl    (consumed by analysis tools)
+#  - planning.jsonl, scanning.jsonl, ranking.jsonl, events_decisions.jsonl
+#  - trade_logs.log, timing.jsonl
+#  - any .csv (potential analyzer input)
+#  - any .json (config dumps; potential metadata)
+#
+# DuckDB and pandas read .gz files natively, so the gzipped files cause
+# no friction for downstream analysis when consumed via those tools.
+_GZIP_FILENAMES = {
+    "detector_rejections.jsonl",
+    "detector_accepts.jsonl",
+    "agent.log",
+}
+
+
+def _gzip_file_in_place(file_path: Path) -> Path:
+    """Compress a file with gzip and remove the original.
+
+    Returns the new .gz path on success, or the original path if compression
+    fails or the file is empty (gzipping empty files is wasteful).
+    """
+    import gzip
+    import shutil
+
+    try:
+        if file_path.stat().st_size == 0:
+            return file_path
+        gz_path = file_path.with_suffix(file_path.suffix + ".gz")
+        with open(file_path, "rb") as f_in, gzip.open(gz_path, "wb", compresslevel=6) as f_out:
+            shutil.copyfileobj(f_in, f_out, length=64 * 1024)
+        file_path.unlink()
+        return gz_path
+    except Exception as e:
+        log(f"WARNING: gzip failed for {file_path.name}: {e}")
+        return file_path
+
+
 def upload_results(date_str):
     """
     Upload results to OCI Object Storage.
+
+    Text-format files (.jsonl/.log/.csv/.json/.txt) are gzipped in-place
+    before upload to cut transfer time + storage cost ~10x for the
+    detector_rejections.jsonl + detector_accepts.jsonl files (which can
+    be 30-100MB per pod uncompressed). Total bandwidth saved across 120
+    pods × 3-yr backtest: ~10-12GB → ~1-2GB.
 
     Args:
         date_str: Date in YYYY-MM-DD format
@@ -379,10 +430,42 @@ def upload_results(date_str):
     session_dir = session_dirs[-1]  # Latest session
     log(f"Found session: {session_dir.name}")
 
+    # Pre-pass: gzip whitelisted files in place. Whitelist limited to NEW
+    # detector logs + agent.log to avoid breaking existing post-processing
+    # (process_backtest_run.py + trading_logger.py read events.jsonl /
+    # analytics.jsonl / screening.jsonl as plain text).
+    _t_gzip_start = datetime.now()
+    bytes_before = 0
+    bytes_after = 0
+    gzipped_count = 0
+    file_paths_to_upload = []
+    for file_path in list(session_dir.rglob('*')):
+        if not file_path.is_file():
+            continue
+        size_before = file_path.stat().st_size
+        bytes_before += size_before
+        if file_path.name in _GZIP_FILENAMES:
+            new_path = _gzip_file_in_place(file_path)
+            if new_path != file_path:
+                gzipped_count += 1
+            file_paths_to_upload.append(new_path)
+            bytes_after += new_path.stat().st_size if new_path.exists() else 0
+        else:
+            file_paths_to_upload.append(file_path)
+            bytes_after += size_before
+    gzip_secs = (datetime.now() - _t_gzip_start).total_seconds()
+    if bytes_before > 0:
+        ratio = bytes_after / bytes_before
+        log(
+            f"Gzipped {gzipped_count} whitelisted files in {gzip_secs:.1f}s | "
+            f"{bytes_before / (1024 * 1024):.1f}MB -> {bytes_after / (1024 * 1024):.1f}MB "
+            f"(ratio {ratio:.2f})"
+        )
+
     uploaded = 0
 
     # Upload all files in session directory
-    for file_path in session_dir.rglob('*'):
+    for file_path in file_paths_to_upload:
         if file_path.is_file():
             relative_path = file_path.relative_to(session_dir)
             object_name = f"{run_id}/{date_str}/{relative_path}"
