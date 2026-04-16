@@ -52,6 +52,13 @@ class FlagContinuationStructure(BaseStructure):
         self.require_volume_confirmation = config["require_volume_confirmation"]
         self.min_volume_mult = config["min_volume_mult"]
 
+        # Volume DECLINE through flag (audit/14 Tier-A): canonical flag REQUIRES
+        # volume to decline through the consolidation portion vs the flagpole.
+        # Without this filter, "flags" can be low-volume drifts with random spikes.
+        # Threshold = consol_avg_vol / trend_avg_vol; values < threshold confirm decline.
+        # 1.0 = "no decline required" (off); 0.85 = require 15% decline.
+        self.flag_volume_decline_ratio = config["flag_volume_decline_ratio"]
+
         # Risk management
         self.target_mult_t1 = config["target_mult_t1"]
         self.target_mult_t2 = config["target_mult_t2"]
@@ -240,6 +247,24 @@ class FlagContinuationStructure(BaseStructure):
             if consol_range_pct > self.max_consolidation_range_pct:
                 logger.debug(f"FLAG_ANALYZE: REJECTED - Wide consolidation ({consol_range_pct:.2f}% > {self.max_consolidation_range_pct}%)")
                 return None
+
+            # Volume-DECLINE-through-flag canonical filter (audit/14 Tier-A):
+            # A canonical flag REQUIRES volume to decline through the consolidation
+            # vs the flagpole. Without this, "flags" can be low-volume drifts with
+            # random spikes — not genuine institutional pause-and-continue patterns.
+            # Threshold ratio = consol_avg_vol / trend_avg_vol; reject if ratio is
+            # NOT below threshold (1.0 = filter off; 0.85 = require 15% decline).
+            if self.flag_volume_decline_ratio < 1.0:
+                trend_avg_vol = float(trend_data['volume'].mean())
+                consol_avg_vol = float(consol_data['volume'].mean())
+                if trend_avg_vol > 0:
+                    vol_ratio = consol_avg_vol / trend_avg_vol
+                    if vol_ratio > self.flag_volume_decline_ratio:
+                        logger.debug(
+                            f"FLAG_ANALYZE: REJECTED - Volume did not decline through flag "
+                            f"(ratio={vol_ratio:.2f} > threshold={self.flag_volume_decline_ratio})"
+                        )
+                        return None
 
             # Calculate consolidation tightness (higher is better)
             tightness = max(0.0, (self.max_consolidation_range_pct - consol_range_pct) / self.max_consolidation_range_pct)

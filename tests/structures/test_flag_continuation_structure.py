@@ -27,7 +27,9 @@ def _build_df(bars, start='2026-04-15 09:30', freq='5min'):
     )
 
 
-def _config(setup_name="flag_continuation_long"):
+def _config(setup_name="flag_continuation_long", flag_volume_decline_ratio=1.0):
+    """Build a default config. flag_volume_decline_ratio=1.0 disables the
+    Tier-A volume-decline filter (existing tests use flat volume)."""
     return {
         "_setup_name": setup_name,
         "min_consolidation_bars": 3,
@@ -38,6 +40,7 @@ def _config(setup_name="flag_continuation_long"):
         "breakout_confirmation_pct": 0.1,
         "require_volume_confirmation": False,
         "min_volume_mult": 1.5,
+        "flag_volume_decline_ratio": flag_volume_decline_ratio,
         "target_mult_t1": 1.5,
         "target_mult_t2": 2.5,
         "stop_mult": 1.0,
@@ -167,3 +170,74 @@ def test_blocked_cap_segments_does_not_block_other_caps():
     df = make_flag_long_bars()
     analysis = detector.detect(_ctx(df, cap_segment="mid_cap"))
     assert analysis.structure_detected, f"Should detect for mid_cap, got: {analysis.rejection_reason}"
+
+
+# =============================================================================
+# Tier-A: missing config keys must FAIL FAST (CLAUDE.md)
+# =============================================================================
+
+def test_missing_flag_volume_decline_ratio_fails_fast():
+    """Audit/14 Tier-A: flag_volume_decline_ratio is required (no silent default)."""
+    cfg = _config()
+    del cfg["flag_volume_decline_ratio"]
+    with pytest.raises(KeyError, match="flag_volume_decline_ratio"):
+        FlagContinuationStructure(cfg)
+
+
+# =============================================================================
+# Tier-A: volume-DECLINE-through-flag canonical filter
+# =============================================================================
+
+def _make_flag_long_with_decline():
+    """24-bar flag long where consol volume DECLINED (canonical flag)."""
+    bars = []
+    # Trend bars 0-13 with HIGH volume (the flagpole)
+    for i in range(14):
+        p = 100.0 + i * 0.7
+        bars.append((p, p + 0.2, p - 0.2, p + 0.4, 5000))
+    # Consol bars 14-22 with LOW volume (volume dries up — canonical flag)
+    for _ in range(9):
+        bars.append((110.0, 110.2, 109.8, 110.0, 1000))  # 1000 / 5000 = 0.2 ratio
+    # Breakout bar
+    bars.append((110.0, 110.8, 109.95, 110.6, 6000))
+    return _build_df(bars)
+
+
+def _make_flag_long_without_decline():
+    """24-bar flag long where consol volume did NOT decline (not canonical)."""
+    bars = []
+    # Trend bars with same volume as consol — no decline
+    for i in range(14):
+        p = 100.0 + i * 0.7
+        bars.append((p, p + 0.2, p - 0.2, p + 0.4, 1000))
+    # Consol bars with SAME volume (no decline)
+    for _ in range(9):
+        bars.append((110.0, 110.2, 109.8, 110.0, 1000))  # ratio 1.0
+    bars.append((110.0, 110.8, 109.95, 110.6, 2000))
+    return _build_df(bars)
+
+
+def test_volume_decline_filter_accepts_canonical_flag():
+    """Tier-A: flag with volume DECLINE through consol is accepted."""
+    detector = FlagContinuationStructure(_config(flag_volume_decline_ratio=0.85))
+    df = _make_flag_long_with_decline()
+    analysis = detector.detect(_ctx(df))
+    assert analysis.structure_detected, f"Got: {analysis.rejection_reason}"
+
+
+def test_volume_decline_filter_rejects_non_canonical_flag():
+    """Tier-A: flag WITHOUT volume decline (consol vol == trend vol) is rejected."""
+    detector = FlagContinuationStructure(_config(flag_volume_decline_ratio=0.85))
+    df = _make_flag_long_without_decline()
+    analysis = detector.detect(_ctx(df))
+    assert not analysis.structure_detected
+    # Detector tries multiple consol_periods, all should fail volume check;
+    # final rejection_reason is the no-pattern message (not the per-period reason)
+
+
+def test_volume_decline_filter_disabled_at_ratio_one():
+    """Tier-A: flag_volume_decline_ratio=1.0 disables the filter (back-compat)."""
+    detector = FlagContinuationStructure(_config(flag_volume_decline_ratio=1.0))
+    df = _make_flag_long_without_decline()
+    analysis = detector.detect(_ctx(df))
+    assert analysis.structure_detected, f"Filter should be off; got: {analysis.rejection_reason}"

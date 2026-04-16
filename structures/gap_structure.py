@@ -39,6 +39,9 @@ class GapStructure(BaseStructure):
         self.min_gap_pct = config["min_gap_pct"]
         self.max_gap_pct = config["max_gap_pct"]
         self.require_volume_confirmation = config["require_volume_confirmation"]
+        # Volume threshold (vol_z multiplier) used when require_volume_confirmation is true.
+        # Required when require_volume_confirmation=true (fail-fast per CLAUDE.md).
+        self.min_volume_mult = config["min_volume_mult"]
 
         # Risk management - will crash with KeyError if missing
         self.target_mult_t1 = config["target_mult_t1"]
@@ -57,8 +60,22 @@ class GapStructure(BaseStructure):
         else:
             self.blocked_cap_segments = set(blocked_cfg)
 
+        # Time-of-day window for gap_fill setups (canonical NSE: 9:15-10:30 fill window).
+        # Required for fill setups; ignored for gap_breakout (which can fire any time).
+        # HHMM strings (e.g., "0915", "1030").
+        self.gap_fill_start_hhmm = config["gap_fill_start_hhmm"]
+        self.gap_fill_end_hhmm = config["gap_fill_end_hhmm"]
+        self._fill_start_minutes = int(self.gap_fill_start_hhmm[:2]) * 60 + int(self.gap_fill_start_hhmm[2:])
+        self._fill_end_minutes = int(self.gap_fill_end_hhmm[:2]) * 60 + int(self.gap_fill_end_hhmm[2:])
+
+        # Per-symbol per-session dedup state. One signal per setup_type per symbol per session.
+        # Bounded by symbol count (typically 200-500 active symbols); reset on session change.
+        # Maps symbol -> (session_date, set_of_fired_setup_types)
+        self._last_session_per_symbol: Dict[str, Tuple[Any, set]] = {}
+
         logger.debug(f"GAP: Initialized with gap range: {self.min_gap_pct}-{self.max_gap_pct}%")
         logger.debug(f"GAP: SL params - gap_buffer: {self.gap_sl_buffer_atr}ATR, min_distance: {self.min_stop_distance_pct}%")
+        logger.debug(f"GAP: Fill window: {self.gap_fill_start_hhmm}-{self.gap_fill_end_hhmm}, vol_mult: {self.min_volume_mult}")
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect gap-based structures."""
@@ -109,6 +126,99 @@ class GapStructure(BaseStructure):
                             structure_type = "gap_breakout_short"
                             side = "short"
 
+                    # Per-session dedup (audit/15 Tier-A fix #4): one signal per setup per
+                    # symbol per session. Without this, detector emits a fresh event every
+                    # 5-min bar where conditions match (over-firing).
+                    session_date_key = (
+                        context.session_date.date()
+                        if context.session_date is not None and hasattr(context.session_date, "date")
+                        else context.session_date
+                    )
+                    last_session, fired_setups = self._last_session_per_symbol.get(
+                        context.symbol, (None, set())
+                    )
+                    if last_session != session_date_key:
+                        # New session — reset fired set
+                        fired_setups = set()
+                        self._last_session_per_symbol[context.symbol] = (session_date_key, fired_setups)
+                    if structure_type in fired_setups:
+                        return StructureAnalysis(
+                            structure_detected=False,
+                            events=[],
+                            quality_score=0.0,
+                            rejection_reason=f"{structure_type} already fired this session for {context.symbol}",
+                        )
+
+                    # Time-of-day window for fills (audit/15 Tier-A fix #2): gap_fill is
+                    # canonically a 9:15-10:30 phenomenon. Fill setups outside this window
+                    # are noise. Breakouts can fire any time (continuation pattern).
+                    if "gap_fill" in structure_type:
+                        ts = context.timestamp
+                        bar_minutes = ts.hour * 60 + ts.minute
+                        if not (self._fill_start_minutes <= bar_minutes <= self._fill_end_minutes):
+                            return StructureAnalysis(
+                                structure_detected=False,
+                                events=[],
+                                quality_score=0.0,
+                                rejection_reason=(
+                                    f"gap_fill outside time window "
+                                    f"({self.gap_fill_start_hhmm}-{self.gap_fill_end_hhmm}): "
+                                    f"bar at {ts.hour:02d}:{ts.minute:02d}"
+                                ),
+                            )
+
+                    # Reversal confirmation for fills (audit/15 Tier-A fix #3): canonical
+                    # gap_fill requires a reversal CANDLE (current bar moves in fill direction).
+                    # Without this, "fill" trades are just "price crossed open once" trades.
+                    if "gap_fill" in structure_type:
+                        cur_open = float(df['open'].iloc[-1])
+                        cur_close = float(df['close'].iloc[-1])
+                        if side == "long" and cur_close <= cur_open:
+                            return StructureAnalysis(
+                                structure_detected=False,
+                                events=[],
+                                quality_score=0.0,
+                                rejection_reason="gap_fill_long requires bullish reversal candle",
+                            )
+                        if side == "short" and cur_close >= cur_open:
+                            return StructureAnalysis(
+                                structure_detected=False,
+                                events=[],
+                                quality_score=0.0,
+                                rejection_reason="gap_fill_short requires bearish reversal candle",
+                            )
+
+                    # Volume confirmation (audit/15 Tier-A fix #1): wire up the previously
+                    # DEAD `require_volume_confirmation` config key. When true, the breakout/
+                    # reversal bar must show institutional volume (vol_z >= min_volume_mult).
+                    if self.require_volume_confirmation:
+                        if 'vol_z' in df.columns:
+                            current_vol_z = df['vol_z'].iloc[-1]
+                            if pd.isna(current_vol_z) or current_vol_z < self.min_volume_mult:
+                                return StructureAnalysis(
+                                    structure_detected=False,
+                                    events=[],
+                                    quality_score=0.0,
+                                    rejection_reason=(
+                                        f"volume confirmation failed: "
+                                        f"vol_z={current_vol_z} < {self.min_volume_mult}"
+                                    ),
+                                )
+                        else:
+                            # Fallback: simple ratio vs rolling mean
+                            avg_vol = df['volume'].rolling(20, min_periods=5).mean().iloc[-1]
+                            cur_vol = float(df['volume'].iloc[-1])
+                            if avg_vol and cur_vol / avg_vol < self.min_volume_mult:
+                                return StructureAnalysis(
+                                    structure_detected=False,
+                                    events=[],
+                                    quality_score=0.0,
+                                    rejection_reason=(
+                                        f"volume confirmation failed: "
+                                        f"ratio={cur_vol / avg_vol if avg_vol else 0:.2f} < {self.min_volume_mult}"
+                                    ),
+                                )
+
                     # Side-aware level keys for main_detector lookup (P1 fix):
                     # main_detector reads support (long) / resistance (short) / broken_level for `detected_level`.
                     # For gap setups, the structural reference depends on setup type:
@@ -155,6 +265,8 @@ class GapStructure(BaseStructure):
                     # Only add event if it matches configured setup type
                     if self.configured_setup_type is None or structure_type == self.configured_setup_type:
                         events.append(event)
+                        # Mark fired for per-session dedup (audit/15 Tier-A fix #4)
+                        fired_setups.add(structure_type)
                         logger.debug(f"GAP: {context.symbol} - {structure_type} detected: {gap_pct:.1f}% gap")
                     else:
                         logger.debug(f"GAP: {context.symbol} - Skipping {structure_type} (configured for {self.configured_setup_type})")
