@@ -40,15 +40,15 @@
 | 04 | MomentumStructure | structures/momentum_structure.py | momentum_breakout_long (7,585) | 0 | DONE-FIXED-AND-TRUSTED (split: momentum_breakout_* FIXED, trend_continuation_* DISABLED) |
 | 05 | LevelBreakoutStructure | structures/level_breakout_structure.py | breakout_long (3,294) | 0 | DONE-FIXED-AND-TRUSTED |
 | 06 | VolumeStructure | structures/volume_structure.py | volume_spike_reversal_long (457) | 1 | DONE-FIXED-AND-TRUSTED |
-| 07 | VolumeBreakoutStructure | structures/volume_breakout_structure.py | — (0) | 1 | NOT_STARTED |
-| 08 | TrendStructure | structures/trend_structure.py | — (0) | 1 | NOT_STARTED |
-| 09 | FailureFadeStructure | structures/failure_fade_structure.py | failure_fade_short (257) | 0 | NOT_STARTED |
-| 10 | VWAPStructure | structures/vwap_structure.py | vwap_lose_short (219) | 0 | NOT_STARTED |
-| 11 | ORBStructure | structures/orb_structure.py | orb_breakdown_short (40) | 0 | NOT_STARTED |
-| 12 | SqueezeReleaseStructure | structures/squeeze_release_structure.py | squeeze_release_short (46) | 0 | NOT_STARTED |
-| 13 | FHMStructure | structures/fhm_structure.py | — (0) | 0 | NOT_STARTED |
-| 14 | FlagContinuationStructure | structures/flag_continuation_structure.py | flag_continuation_short (1) | 0 | NOT_STARTED |
-| 15 | GapStructure | structures/gap_structure.py | — (0) | 0 | NOT_STARTED |
+| 07 | VolumeBreakoutStructure | structures/volume_breakout_structure.py | — (0) | 3 | DONE-FIXED-AND-TRUSTED (re-enabled per fresh-OOS methodology; gauntlet decides) |
+| 08 | TrendStructure | structures/trend_structure.py | — (0) | 2 | DONE-FIXED-AND-TRUSTED (split: trend_pullback_* FIXED, trend_continuation_* DISABLED via audit/04) |
+| 09 | FailureFadeStructure | structures/failure_fade_structure.py | failure_fade_short (257) | 1 | DONE-FIXED-AND-TRUSTED + RE-ENABLED long (per fresh-OOS) |
+| 10 | VWAPStructure | structures/vwap_structure.py | vwap_lose_short (219) | 1 | DONE-FIXED-AND-TRUSTED + RE-ENABLED 3 setups (per fresh-OOS) |
+| 11 | ORBStructure | structures/orb_structure.py | orb_breakdown_short (40) | 1 | DONE-FIXED-AND-TRUSTED + RE-ENABLED orb_breakout_long (per fresh-OOS) |
+| 12 | SqueezeReleaseStructure | structures/squeeze_release_structure.py | squeeze_release_short (46) | 1 | DONE-FIXED-AND-TRUSTED + RE-ENABLED long |
+| 13 | FHMStructure | structures/fhm_structure.py | — (0) | 1 | DONE-FIXED-AND-TRUSTED + RE-ENABLED both (per fresh-OOS) |
+| 14 | FlagContinuationStructure | structures/flag_continuation_structure.py | flag_continuation_short (1) | 0 | DONE-FIXED-AND-TRUSTED + RE-ENABLE long + cap-block parity added |
+| 15 | GapStructure | structures/gap_structure.py | — (0) | 0 | DONE-FIXED-AND-TRUSTED + RE-ENABLE all 4 + cap-block parity (substantive canonical rewrite deferred to post-OOS — see audit/15) |
 
 ## Rationale notes
 - **Rank 01 (ICTStructure):** Top by trade count (~928K trades aggregated across 12 setup types) AND highest recent commit activity (2 in 3 months, including the in-flight `feat/premium-zone-ict-fix` branch). Both rule #1 and rule #2 point here.
