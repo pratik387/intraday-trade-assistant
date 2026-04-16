@@ -86,8 +86,16 @@ class FHMStructure(BaseStructure):
         }
 
         # SALVAGE FIX: Blocked cap segments (e.g., block small/micro for FHM Short)
-        blocked_cfg = config.get("blocked_cap_segments", {})
-        self.blocked_cap_segments = set(blocked_cfg.get("segments", []))
+        # Per audit/13-fhm_structure.md P2: normalize schema to accept both:
+        # (a) legacy FHM-specific: `"blocked_cap_segments": {"segments": ["large_cap"]}`
+        # (b) standard list (parity with other detectors): `"blocked_cap_segments": ["large_cap"]`
+        blocked_cfg = config.get("blocked_cap_segments", [])
+        if isinstance(blocked_cfg, dict):
+            # Legacy schema: dict with 'segments' key
+            self.blocked_cap_segments = set(blocked_cfg.get("segments", []))
+        else:
+            # Standard schema: bare list (matches RangeStructure/SR/Volume/etc.)
+            self.blocked_cap_segments = set(blocked_cfg)
 
         # DATA-DRIVEN: Regime filter from 6-month backtest analysis
         # FHM Long ONLY profitable in squeeze regime (24 trades, +1,453 Rs vs 396 trades, -26,921 Rs)
@@ -413,7 +421,11 @@ class FHMStructure(BaseStructure):
                         "entry_zone_high": entry_price + entry_zone_buffer,
                         # PRO TRADER: Stop below VWAP
                         "stop_loss": stop_loss,
-                        "atr": atr
+                        "atr": atr,
+                        # Add 'support' key (= VWAP entry pullback level for long FHM) so
+                        # main_detector's detected_level extraction populates correctly
+                        # (main_detector.py:540-544). Per audit/13-fhm_structure.md P1.
+                        "support": float(entry_price)
                     },
                     context={
                         "rvol": rvol,
@@ -561,7 +573,11 @@ class FHMStructure(BaseStructure):
                         "entry_zone_high": entry_price + entry_zone_buffer,
                         # PRO TRADER: Stop above VWAP for shorts
                         "stop_loss": stop_loss,
-                        "atr": atr
+                        "atr": atr,
+                        # Add 'resistance' key (= VWAP entry pullback level for short FHM) so
+                        # main_detector's detected_level extraction populates correctly.
+                        # Per audit/13-fhm_structure.md P1.
+                        "resistance": float(entry_price)
                     },
                     context={
                         "rvol": rvol,

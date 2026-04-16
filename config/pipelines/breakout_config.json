@@ -195,8 +195,8 @@
             "_active_profile": "OPTIMIZED",
             "first_hour_momentum_long": {
                 "enabled": true,
-                "blocked_entirely": true,
-                "_evidence": "5,694 trades, WR 37.9%, Rs -19.15L loss, negative ALL 4 FYs."
+                "_audit_re_enable_note": "Re-enabled per audit/13-fhm_structure.md (2026-04-15). Pre-rebuild 5,694 trades = ~7.5/day = WAY too many for canonical FHM (real FHM is 1-2/day). Detector was likely missing several of the current filters (cap-RVOL, multi-bar, vol continuation, VWAP hold, regime). Current filter stack should drop trade count 80-90% with very different edge profile. Letting wide-open gauntlet decide.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 5,694 trades, WR 37.9%, Rs -19.15L loss, negative ALL 4 FYs. Generated under no OOS protocol with detector likely under-filtered."
             },
             "orb_breakout_long": {
                 "enabled": true,
@@ -232,11 +232,11 @@
                 "_evidence": "3yr backtest (28K trades): 83 trades, WR 30.1%, Avg -Rs 2,453, negative ALL FYs. Edge optimizer: KILL."
             },
             "first_hour_momentum_short": {
-                "enabled": false,
+                "enabled": true,
                 "blocked_regimes": ["trend_up"],
                 "blocked_caps": ["large_cap"],
-                "_evidence": "622 trades, Rs +1.31L. trend_up WR 39% Rs -437. large_cap WR 44% Rs -27.",
-                "_disabled_reason": "VC whitelist gate is the primary filter now"
+                "_audit_re_enable_note": "Re-enabled per audit/13-fhm_structure.md (2026-04-15). Pre-rebuild evidence (+1.31L overall, conditional weakness in trend_up regime + large_cap) is the SAME OVERFIT pattern we've removed elsewhere — but kept selective blocks here as starting state since pre-rebuild evidence at least pointed direction. NSE long-bias structurally limits short edge (~45-50% expected WR). Letting fresh-OOS gauntlet validate.",
+                "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 622 trades, Rs +1.31L overall. trend_up WR 39% Rs -437; large_cap WR 44% Rs -27."
             },
             "break_of_structure_long": {
                 "enabled": false,

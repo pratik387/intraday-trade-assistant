@@ -1334,11 +1334,9 @@
       "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative"
     },
     "first_hour_momentum_long": {
-      "_comment": "OPTIMIZED: squeeze + adx>=35 + vol>=100k = 20 trades, +2,073 Rs, +104 Rs/trade, 60% WR",
-      "_research": "6-month backtest: 396 trades, -26,921 Rs baseline. Best 100+ Rs/trade filter found.",
-      "_fix_details": "REGIME=SQUEEZE + ADX>=35 + Vol>=100k = highest avg profit per trade",
-      "enabled": false,
-      "_disabled_reason": "blocked_entirely in pipeline config",
+      "_audit_re_enable_note": "Re-enabled per audit/13-fhm_structure.md (2026-04-15). Pre-rebuild 5,694 trades / 37.9% WR / -19.15L was over-firing on noise (~7.5/day vs canonical 1-2/day). Current filter stack (cap-RVOL + multi-bar + vol continuation + VWAP hold + ADX) should drop trade count 80-90% with very different edge profile.",
+      "_pre_rebuild_evidence": "PRE-REBUILD (informational only): squeeze + adx>=35 + vol>=100k = 20 trades, +2,073 Rs, +104 Rs/trade, 60% WR (small-sample optimization). Baseline 5,694 trades, 37.9% WR, -19.15L over 4 FYs.",
+      "enabled": true,
       "detect_direction": "long",
       "min_bars_required": 5,
       "require_vwap_hold": false,
@@ -1418,10 +1416,9 @@
       "high_rvol_threshold": 3.0
     },
     "first_hour_momentum_short": {
-      "_comment": "DISABLED: FHM Short thesis doesn't work in Indian markets",
-      "_research": "Deep analysis Dec 2024: -4,269 Rs loss, rejected trades simulated = -7,654 Rs more. Only 6 trades with slip<100bps were profitable.",
-      "_fix_details": "Disabled entirely. Gap-down momentum shorting not viable. Focus on FHM Long instead.",
-      "enabled": false,
+      "_audit_re_enable_note": "Re-enabled per audit/13-fhm_structure.md (2026-04-15). NSE long-bias makes FHM Short structurally weaker than FHM Long (~45-50% expected WR vs ~60% for long). Pre-rebuild 622 trades / +1.31L overall is actually neutral-to-positive on small sample. Selective blocks (small/micro caps, trend_up regime) preserved as starting state. Letting fresh-OOS gauntlet decide.",
+      "_pre_rebuild_evidence": "PRE-REBUILD (informational only): Deep analysis Dec 2024: 622 trades, Rs +1.31L overall but trend_up WR 39% Rs -437; large_cap WR 44% Rs -27. Small sample.",
+      "enabled": true,
       "detect_direction": "short",
       "min_bars_required": 4,
       "require_vwap_hold": false,
