@@ -78,6 +78,11 @@ class VolumeBreakoutStructure(BaseStructure):
         self.target_mult_t1 = config["target_mult_t1"]
         self.target_mult_t2 = config["target_mult_t2"]
 
+        # Config-driven cap blocking (default empty — no cap blocks unless explicitly set).
+        # Mirrors RangeStructure / SR / FHM / VolumeStructure pattern.
+        # Per audit/07-volume_breakout_structure.md P2.
+        self.blocked_cap_segments = set(config.get("blocked_cap_segments", []))
+
         logger.debug(f"VOLUME_BREAKOUT: Initialized — vol surge: {self.min_volume_surge_mult}x, "
                      f"swing lookback: {self.swing_lookback_bars} bars, "
                      f"breakout distance: {self.min_breakout_distance_atr} ATR, "
@@ -86,6 +91,17 @@ class VolumeBreakoutStructure(BaseStructure):
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect volume breakout structures."""
         try:
+            # Config-driven cap blocking — applies first (fast fail before data work)
+            cap_segment = getattr(context, 'cap_segment', None)
+            if cap_segment in self.blocked_cap_segments:
+                logger.debug(f"VOLUME_BREAKOUT_BLOCK: {context.symbol} | Cap={cap_segment} in blocked_cap_segments, skipping")
+                return StructureAnalysis(
+                    structure_detected=False,
+                    events=[],
+                    quality_score=0.0,
+                    rejection_reason=f"cap_segment {cap_segment} blocked"
+                )
+
             df = context.df_5m
             min_required = self.swing_lookback_bars + self.swing_fractal_right_bars + 2
             if len(df) < min_required:
@@ -257,7 +273,10 @@ class VolumeBreakoutStructure(BaseStructure):
             structure_type="volume_breakout_long",
             side="long",
             confidence=confidence,
-            levels={"swing_high": swing_high, "breakout_distance": breakout_distance},
+            # Add 'resistance' key (= broken swing high) so main_detector's detected_level
+            # extraction populates correctly (main_detector.py:540-544).
+            # Per audit/07-volume_breakout_structure.md P1.
+            levels={"swing_high": swing_high, "breakout_distance": breakout_distance, "resistance": float(swing_high)},
             context={
                 "swing_level": swing_high,
                 "swing_bar_index": swing_idx,
@@ -337,7 +356,9 @@ class VolumeBreakoutStructure(BaseStructure):
             structure_type="volume_breakout_short",
             side="short",
             confidence=confidence,
-            levels={"swing_low": swing_low, "breakdown_distance": breakdown_distance},
+            # Add 'support' key (= broken swing low) for symmetric detected_level flow.
+            # Per audit/07-volume_breakout_structure.md P1.
+            levels={"swing_low": swing_low, "breakdown_distance": breakdown_distance, "support": float(swing_low)},
             context={
                 "swing_level": swing_low,
                 "swing_bar_index": swing_idx,
@@ -418,9 +439,11 @@ class VolumeBreakoutStructure(BaseStructure):
             elif breakout_atr >= 0.3:
                 multiplier *= 1.05
 
-            # Timing bonus (institutional hours)
+            # Timing bonus — narrow to high-edge windows per audit/07 Item 1 canonical research:
+            # 10:00-11:00 (post-opening fade) and 14:00-15:00 (EOD flow) are HIGH edge.
+            # Lunch 12:00-13:00 was getting an unearned bonus in old code (10 <= h <= 14).
             hour = context.timestamp.hour
-            if 10 <= hour <= 14:
+            if (10 <= hour < 11) or (14 <= hour < 15):
                 multiplier *= 1.1
 
             final = base * multiplier
