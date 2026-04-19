@@ -21,8 +21,8 @@ from diagnostics.diagnostics_report_builder import build_csv_from_events  # noqa
 from config.filters_setup import load_filters  # noqa: E402
 
 # ====== SETTINGS ======
-START_DATE = "2023-04-11"   # YYYY-MM-DD - Full backtest range (130 sessions like original)
-END_DATE   = "2023-04-11"  # YYYY-MM-DD (inclusive) - Same date range as backtest_20251128-154021
+START_DATE = "2026-04-07"   # YYYY-MM-DD - Kite data validation run
+END_DATE   = "2026-04-07"  # YYYY-MM-DD (inclusive) - Matches paper trading period
 MAIN_PATH  = ROOT / "main.py"
 
 # Hardcoded time windows for engine runs
@@ -31,7 +31,7 @@ TO_HHMM = "15:15"    # Afternoon trading end
 
 # parallelism: 2–4 is usually safe (6+ may cause OOM on Windows with large datasets)
 # With pre-aggregated cache, memory usage is optimized - 6 workers is safe
-MAX_WORKERS = 6
+MAX_WORKERS = 4
 # per-task start stagger (sec) to prevent same-second logger run_id collisions
 STAGGER_SEC = 5
 # ======================
@@ -50,6 +50,7 @@ def _build_cmd(py_exe: str, day: date, run_prefix: str = "") -> List[str]:
     cmd = [
         py_exe, "-c",
         f"import sys; sys.path.insert(0, r'{root_path}'); "
+        f"__file__ = r'{main_path}'; "
         f"exec(open(r'{main_path}').read())",
         "--dry-run",
         "--session-date", day.isoformat(),
@@ -179,7 +180,7 @@ def _process_run_sessions(run_prefix: str) -> int:
             analyzer_path = str(ROOT / "comprehensive_run_analyzer.py")
             result = subprocess.run([
                 sys.executable, analyzer_path, run_prefix
-            ], capture_output=True, text=True, cwd=str(ROOT), timeout=300)
+            ], capture_output=True, text=True, cwd=str(ROOT), timeout=300, encoding='utf-8', errors='replace')
 
             if result.returncode == 0:
                 print(f"[+] Comprehensive analysis completed successfully")

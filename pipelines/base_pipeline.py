@@ -598,6 +598,8 @@ class BasePipeline(ABC):
                 return False
             if "max" in cond and val > cond["max"]:
                 return False
+            if "equals" in cond and str(val) != str(cond["equals"]):
+                return False
         return True
 
     # ======================== UNIFIED FILTER SYSTEM ========================
@@ -1224,6 +1226,21 @@ class BasePipeline(ABC):
         if cap_segment is None:
             cap_segment = get_cap_segment(symbol)
         features["cap_segment"] = cap_segment
+
+        # --- Additional features for VC rules (hour, regime, adx5, vwap_dist_signed) ---
+        # Hour from bar timestamp for time-based VC combos
+        bar_ts = df5m.index[-1]
+        features["hour"] = int(bar_ts.hour) if hasattr(bar_ts, 'hour') else None
+        # Regime for regime-based VC combos
+        features["regime"] = regime
+        # Alias: enhanced_edge_analysis uses adx5, pipeline computes adx
+        features["adx5"] = features.get("adx")
+        # Signed VWAP distance (positive = above VWAP, negative = below)
+        if vwap_for_dist and vwap_for_dist > 0:
+            features["vwap_dist_signed"] = (current_close - vwap_for_dist) / vwap_for_dist * 100
+        else:
+            features["vwap_dist_signed"] = None
+
         mis_info = get_mis_info(symbol)
         cap_passed, cap_reason = self._check_cap_strategy_blocking(symbol, setup_type, cap_segment)
         if not cap_passed:
