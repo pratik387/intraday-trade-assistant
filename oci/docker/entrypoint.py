@@ -516,6 +516,21 @@ def main():
     # Run backtest
     result = run_backtest(date_str)
 
+    # Free disk BEFORE upload — cache files are no longer needed after backtest
+    # completes. Each pod downloads ~200-500MB of feather cache; with 16-39
+    # concurrent pods per node this causes DiskPressure evictions (~60% first-
+    # attempt failure rate historically). Deleting cache here reclaims the
+    # dominant disk consumer before upload adds more I/O.
+    import shutil
+    for cache_dir in ['/app/cache', '/app/backtest-cache-download']:
+        try:
+            if Path(cache_dir).exists():
+                size_mb = sum(f.stat().st_size for f in Path(cache_dir).rglob('*') if f.is_file()) / (1024 * 1024)
+                shutil.rmtree(cache_dir)
+                log(f"DISK_CLEANUP: Deleted {cache_dir} ({size_mb:.0f} MB freed)")
+        except Exception as e:
+            log(f"WARNING: Failed to clean {cache_dir}: {e}")
+
     # Upload results
     upload_results(date_str)
 
