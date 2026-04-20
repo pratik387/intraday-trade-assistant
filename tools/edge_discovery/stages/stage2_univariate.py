@@ -42,6 +42,12 @@ def run_stage2(
         survivors_json: JSON output path
 
     Returns list of per-setup result dicts.
+
+    Sub-period consistency: if a sub-period has zero trades, its PF is 0.0,
+    which fails the >= 1.0 sub-period gate. This is the intended behavior —
+    a setup with no evidence in one half of Discovery cannot be trusted. The
+    h1_n / h2_n fields in the output make empty sub-periods explicitly visible
+    in the audit trail.
     """
     (h1_start, h1_end), (h2_start, h2_end) = get_discovery_subperiods(cfg)
 
@@ -71,6 +77,8 @@ def run_stage2(
         rows.append({
             "setup": setup,
             "n": full["n"],
+            "h1_n": len(h1_pnl),
+            "h2_n": len(h2_pnl),
             "pf_full": round(full["pf"], 3) if full["pf"] != float("inf") else 999.0,
             "pf_h1": round(pf_h1, 3) if pf_h1 != float("inf") else 999.0,
             "pf_h2": round(pf_h2, 3) if pf_h2 != float("inf") else 999.0,

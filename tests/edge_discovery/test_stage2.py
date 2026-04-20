@@ -82,3 +82,36 @@ def test_stage2_only_evaluates_input_survivors(tmp_path):
         survivors_json=tmp_path / "s2.json",
     )
     assert {r["setup"] for r in result} == {"keeper"}
+
+
+def test_stage2_output_contains_h1_n_and_h2_n(tmp_path):
+    """h1_n and h2_n exposed in result so empty-subperiod is visible in audit trail."""
+    df = _trades("w", [100, 100, -50] * 50, [100, 100, -50] * 60)
+    # h1 has 150 trades, h2 has 180
+    result = run_stage2(
+        df, cfg=_cfg(),
+        survivors_input=["w"],
+        report_path=tmp_path / "02.md",
+        survivors_json=tmp_path / "s2.json",
+    )
+    row = result[0]
+    assert "h1_n" in row
+    assert "h2_n" in row
+    assert row["h1_n"] == 150
+    assert row["h2_n"] == 180
+    assert row["n"] == 330
+
+
+def test_stage2_empty_subperiod_is_treated_as_fail(tmp_path):
+    """Empty sub-period → PF=0.0 → fails sub-period gate. h2_n=0 makes it transparent."""
+    df = _trades("h1_only", [100, 100, -50] * 100, [])
+    result = run_stage2(
+        df, cfg=_cfg(),
+        survivors_input=["h1_only"],
+        report_path=tmp_path / "02.md",
+        survivors_json=tmp_path / "s2.json",
+    )
+    row = result[0]
+    assert row["h2_n"] == 0
+    assert row["pf_h2"] == 0.0
+    assert row["passed"] is False
