@@ -14,10 +14,13 @@ Hour bucket mapping (from minute_of_day):
 from dataclasses import dataclass
 from datetime import date
 import json
+import logging
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from tools.edge_discovery.periods import assign_fy
 
@@ -26,6 +29,10 @@ def _hour_bucket(minute_of_day):
     if minute_of_day is None or pd.isna(minute_of_day):
         return None
     m = int(minute_of_day)
+    # NSE market opens at 9:15 IST (minute 555). Bars before this (pre-market,
+    # or malformed data) return None — they're not a valid trading bucket.
+    if m < 555:
+        return None
     if m < 600:
         return "opening"
     if m < 720:
@@ -105,8 +112,14 @@ def load_run(run_dir: Path) -> GauntletData:
                     usecols=lambda c: c in {"trade_id", "cap_segment", "minute_of_day"},
                 )
                 df = df.merge(tr, on="trade_id", how="left", suffixes=("", "_tr"))
-            except Exception:
-                pass
+            except Exception as e:
+                # Silent failure would mean the whole session loses cap_segment +
+                # minute_of_day. Log so operators notice during a gauntlet run.
+                logger.warning(
+                    "Failed to join trade_report.csv for session %s: %s. "
+                    "cap_segment / hour_bucket will be null for this session.",
+                    session, e,
+                )
 
         if "cap_segment" not in df.columns:
             df["cap_segment"] = None
