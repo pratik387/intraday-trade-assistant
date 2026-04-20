@@ -20,7 +20,7 @@ Per spec Section 3.3 Stage 3.
 """
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
@@ -99,7 +99,13 @@ def run_stage3(
     return all_cells
 
 
-def _evaluate_cell(sub: pd.DataFrame, setup: str, dims, h1_range, h2_range) -> Dict[str, Any]:
+def _evaluate_cell(
+    sub: pd.DataFrame,
+    setup: str,
+    dims: List[Tuple[str, Any]],
+    h1_range: Tuple[Any, Any],
+    h2_range: Tuple[Any, Any],
+) -> Dict[str, Any]:
     pnl = sub["total_trade_pnl"]
     stats = summary_stats(pnl)
     h1 = sub[(sub["session_date_dt"] >= h1_range[0]) & (sub["session_date_dt"] <= h1_range[1])]
