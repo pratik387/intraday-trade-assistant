@@ -21,7 +21,7 @@ def test_write_stage_report_creates_file(tmp_path):
             {"setup": "b_short", "n": 300, "pf": 0.5, "passed": False},
         ],
     )
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "Stage 1" in text
     assert "N ≥ 500" in text
     assert "a_long" in text
@@ -31,9 +31,9 @@ def test_write_stage_report_creates_file(tmp_path):
 
 def test_append_section(tmp_path):
     path = tmp_path / "stage2.md"
-    path.write_text("# Existing header\n")
+    path.write_text("# Existing header\n", encoding="utf-8")
     append_section(path, "## New Section", "Some content")
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "# Existing header" in text
     assert "## New Section" in text
     assert "Some content" in text
@@ -43,5 +43,5 @@ def test_write_json_artifact(tmp_path):
     path = tmp_path / "survivors.json"
     data = {"survivors": ["a_long"], "killed": ["b_short"]}
     write_json_artifact(path, data)
-    loaded = json.loads(path.read_text())
+    loaded = json.loads(path.read_text(encoding="utf-8"))
     assert loaded == data
