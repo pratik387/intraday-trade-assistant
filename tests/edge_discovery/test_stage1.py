@@ -62,3 +62,46 @@ def test_stage1_edge_case_exactly_500(tmp_path):
     })
     result = run_stage1(df, report_path=tmp_path / "r.md", survivors_json=tmp_path / "s.json")
     assert result[0]["passed"] is True
+
+
+def test_stage1_all_winners_inf_pf(tmp_path):
+    """All-winners setup produces PF=inf internally; must serialize as 999.0 in JSON and mark passed=True."""
+    import json
+    df = _synth_trades({
+        "all_winners": [100] * 600,  # N=600, zero losers → PF=inf
+    })
+    out_md = tmp_path / "01.md"
+    out_json = tmp_path / "s.json"
+    result = run_stage1(df, report_path=out_md, survivors_json=out_json)
+    assert result[0]["passed"] is True
+    assert result[0]["pf"] == 999.0  # inf clamped to 999 for JSON
+    # JSON file must be valid and contain the expected schema
+    loaded = json.loads(out_json.read_text(encoding="utf-8"))
+    assert loaded["stage"] == "1"
+    assert "all_winners" in loaded["survivors"]
+    assert loaded["details"][0]["pf"] == 999.0
+
+
+def test_stage1_pf_exactly_at_threshold(tmp_path):
+    """PF exactly 0.8 must pass (>= is inclusive, symmetric with N=500 boundary)."""
+    # 250 winners at +80 Rs, 500 losers at -50 Rs → winners=20000, losers=25000, PF=0.8
+    df = _synth_trades({
+        "pf_edge": [80] * 250 + [-50] * 500,  # N=750, PF=20000/25000=0.8
+    })
+    result = run_stage1(df, report_path=tmp_path / "r.md", survivors_json=tmp_path / "s.json")
+    assert result[0]["passed"] is True
+    assert result[0]["pf"] == 0.8
+
+
+def test_stage1_sort_order_pass_before_fail_then_n_desc(tmp_path):
+    """Passed setups come before failed; within each group, sorted by N descending."""
+    df = _synth_trades({
+        "small_pass": [100] * 400 + [-50] * 200,  # N=600, PF=4.0 PASS
+        "big_pass":   [100] * 600 + [-50] * 200,  # N=800, PF=6.0 PASS
+        "big_fail":   [10]  * 900 + [-100] * 200, # N=1100, PF=0.45 FAIL
+        "small_fail": [10]  * 400 + [-100] * 100, # N=500, PF=0.4 FAIL
+    })
+    result = run_stage1(df, report_path=tmp_path / "r.md", survivors_json=tmp_path / "s.json")
+    setups_in_order = [r["setup"] for r in result]
+    # Pass group first, sorted by N desc within group
+    assert setups_in_order == ["big_pass", "small_pass", "big_fail", "small_fail"]
