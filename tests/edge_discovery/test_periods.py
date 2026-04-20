@@ -37,8 +37,37 @@ def test_discovery_config_lock():
         holdout_end=date(2026, 3, 31),
     )
     # Dataclass must be frozen — mutation raises
-    with pytest.raises(Exception):  # FrozenInstanceError
+    # FrozenInstanceError is a subclass of AttributeError (dataclasses stdlib).
+    # Using AttributeError keeps the test precise — a broad Exception catch
+    # would mask unrelated errors.
+    with pytest.raises(AttributeError):
         cfg.discovery_end = date(2024, 6, 30)
+
+
+def test_discovery_config_rejects_overlapping_validation():
+    """Validation start must strictly follow discovery end — overlap is rejected."""
+    with pytest.raises(ValueError, match="Discovery must end before Validation starts"):
+        DiscoveryConfig(
+            discovery_start=date(2023, 1, 1),
+            discovery_end=date(2025, 6, 1),
+            validation_start=date(2025, 1, 1),
+            validation_end=date(2025, 9, 30),
+            holdout_start=date(2025, 10, 1),
+            holdout_end=date(2026, 3, 31),
+        )
+
+
+def test_discovery_config_rejects_overlapping_holdout():
+    """Holdout start must strictly follow validation end."""
+    with pytest.raises(ValueError, match="Validation must end before Holdout starts"):
+        DiscoveryConfig(
+            discovery_start=date(2023, 1, 1),
+            discovery_end=date(2024, 12, 31),
+            validation_start=date(2025, 1, 1),
+            validation_end=date(2025, 12, 31),
+            holdout_start=date(2025, 10, 1),
+            holdout_end=date(2026, 3, 31),
+        )
 
 
 def test_discovery_subperiods_yields_two_halves():
