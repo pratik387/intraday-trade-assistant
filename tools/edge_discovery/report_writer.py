@@ -6,7 +6,7 @@ written alongside for machine readability (e.g., stage1_survivors.json).
 """
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
 
 def write_stage_report(
@@ -48,8 +48,10 @@ def write_stage_report(
 
 
 def append_section(path: Path, heading: str, body: str) -> None:
-    """Append a markdown section to an existing report file."""
+    """Append a markdown section to an existing report file. Creates the
+    parent directory if it doesn't exist (defensive — matches write_stage_report)."""
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write("\n")
         f.write(heading + "\n\n")
@@ -67,14 +69,19 @@ def write_json_artifact(path: Path, data: Dict[str, Any]) -> None:
 def _fmt(v: Any) -> str:
     if v is None:
         return "—"
+    # Check bool BEFORE float/int: Python bool is a subclass of int,
+    # and numpy.bool_ is neither (but has .__bool__). Handle both paths.
+    if v is True or v is False:
+        return "YES" if v else "NO"
+    # numpy.bool_ check (without forcing numpy import)
+    if type(v).__name__ == "bool_":
+        return "YES" if bool(v) else "NO"
     if isinstance(v, float):
         if v != v:  # NaN
             return "—"
         if abs(v) >= 1e6 or (abs(v) < 0.01 and v != 0):
             return f"{v:.2e}"
         return f"{v:.2f}"
-    if isinstance(v, bool):
-        return "YES" if v else "NO"
     return str(v)
 
 
