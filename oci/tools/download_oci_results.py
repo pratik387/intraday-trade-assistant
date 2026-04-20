@@ -68,16 +68,28 @@ class OCIResultsDownloader:
         print(f"Listing objects in oci://{self.results_bucket}/{run_id}/...")
 
         try:
-            list_response = self.os_client.list_objects(
-                namespace_name=self.namespace,
-                bucket_name=self.results_bucket,
-                prefix=f"{run_id}/"
-            )
+            # Paginate through ALL objects (default page size is 1000)
+            all_objects = []
+            next_start = None
+            while True:
+                kwargs = dict(
+                    namespace_name=self.namespace,
+                    bucket_name=self.results_bucket,
+                    prefix=f"{run_id}/",
+                    limit=1000,
+                )
+                if next_start:
+                    kwargs["start"] = next_start
+                list_response = self.os_client.list_objects(**kwargs)
+                all_objects.extend(list_response.data.objects)
+                next_start = list_response.data.next_start_with
+                if not next_start:
+                    break
 
-            objects = list_response.data.objects
+            objects = all_objects
 
             if not objects:
-                print(f"❌ No results found for run: {run_id}")
+                print(f"No results found for run: {run_id}")
                 return
 
             # Filter out directory markers
