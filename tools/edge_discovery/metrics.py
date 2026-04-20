@@ -45,11 +45,17 @@ def sharpe_ratio(pnl: pd.Series) -> float:
 
 
 def max_drawdown_pct(pnl: pd.Series) -> float:
-    """Max drawdown in rupees, expressed as PERCENT of total gross profit.
+    """Max drawdown in rupees, expressed as PERCENT of total NET profit.
 
-    Cumulative equity curve → trough-to-peak absolute drop. Convention per spec:
-    'Max DD < 30% of total profit' → we return the percentage.
-    Returns 0.0 for empty or monotonically increasing series.
+    Cumulative equity curve → trough-to-peak absolute drop. Denominator is
+    net PnL (pnl.sum()), NOT gross winners, so a strategy that nearly gives
+    back all its gains fails the 30% filter aggressively. Per spec criterion:
+    'Max DD < 30% of total profit' where total profit = net realized.
+
+    Edge cases:
+      - Empty series → 0.0
+      - No drawdown (monotonically increasing equity) → 0.0
+      - Net PnL ≤ 0 → inf if any drawdown exists, else 0.0
     """
     if len(pnl) == 0:
         return 0.0

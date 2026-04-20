@@ -55,10 +55,11 @@ def test_sharpe_mixed():
 
 
 def test_max_drawdown_pct():
-    # Cumulative: 100, 300, 200, 400, 100 → Peak 400, trough 100, DD = 300/400 = 75%
+    # Equity curve: cumsum = [100, 300, 200, 400, 100]
+    # Running peak:           [100, 300, 300, 400, 400]
+    # Drawdown:               [  0,   0,-100,   0,-300]  → max_dd_abs = 300
+    # Net PnL = sum = 100  → max_dd_pct = 300 / 100 * 100 = 300%
     pnl = pd.Series([100, 200, -100, 200, -300])
-    # Total profit = 100, |max_dd| in Rs = 300
-    # As pct of total profit: 300/100 = 300%
     assert max_drawdown_pct(pnl) == pytest.approx(300.0)
 
 
