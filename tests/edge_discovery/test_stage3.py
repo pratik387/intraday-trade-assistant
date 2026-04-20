@@ -37,12 +37,19 @@ def _make_df(rows):
 def test_stage3_finds_regime_specific_edge(tmp_path):
     """Setup positive in trend_down, negative in chop — trend_down cell should pass."""
     rows = []
-    for _ in range(150):
+    # trend_down cell should PASS: strong positive in BOTH halves
+    for _ in range(75):
         rows.append({"regime": "trend_down", "cap_segment": "mid_cap",
-                     "hour_bucket": "morning", "pnl": 100, "date": "2023-06-01"})
+                     "hour_bucket": "morning", "pnl": 100, "date": "2023-06-01"})  # H1 winner
         rows.append({"regime": "trend_down", "cap_segment": "mid_cap",
-                     "hour_bucket": "morning", "pnl": -50, "date": "2024-06-01"})
-    for _ in range(100):
+                     "hour_bucket": "morning", "pnl": 100, "date": "2024-06-01"})  # H2 winner
+    for _ in range(25):
+        rows.append({"regime": "trend_down", "cap_segment": "mid_cap",
+                     "hour_bucket": "morning", "pnl": -50, "date": "2023-06-01"})  # H1 loser
+        rows.append({"regime": "trend_down", "cap_segment": "mid_cap",
+                     "hour_bucket": "morning", "pnl": -50, "date": "2024-06-01"})  # H2 loser
+    # chop cell should FAIL: negative in both halves
+    for _ in range(50):
         rows.append({"regime": "chop", "cap_segment": "mid_cap",
                      "hour_bucket": "morning", "pnl": -50, "date": "2023-06-01"})
         rows.append({"regime": "chop", "cap_segment": "mid_cap",
@@ -80,11 +87,17 @@ def test_stage3_skips_cells_below_min_n(tmp_path):
 def test_stage3_runs_2way_only_for_1way_passing(tmp_path):
     """2-way combos only evaluated where 1-way passed."""
     rows = []
-    for _ in range(150):
+    # Distribute winners and losers across BOTH halves so sub-period PF gates pass.
+    for _ in range(75):
         rows.append({"regime": "trend_down", "cap_segment": "mid_cap",
-                     "hour_bucket": "morning", "pnl": 200, "date": "2023-06-01"})
+                     "hour_bucket": "morning", "pnl": 200, "date": "2023-06-01"})  # H1 winner
         rows.append({"regime": "trend_down", "cap_segment": "mid_cap",
-                     "hour_bucket": "morning", "pnl": -50, "date": "2024-06-01"})
+                     "hour_bucket": "morning", "pnl": 200, "date": "2024-06-01"})  # H2 winner
+    for _ in range(25):
+        rows.append({"regime": "trend_down", "cap_segment": "mid_cap",
+                     "hour_bucket": "morning", "pnl": -50, "date": "2023-06-01"})  # H1 loser
+        rows.append({"regime": "trend_down", "cap_segment": "mid_cap",
+                     "hour_bucket": "morning", "pnl": -50, "date": "2024-06-01"})  # H2 loser
     df = _make_df(rows)
     result = run_stage3(
         df, cfg=_cfg(),

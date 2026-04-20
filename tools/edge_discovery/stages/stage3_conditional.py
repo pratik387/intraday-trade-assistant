@@ -107,14 +107,11 @@ def _evaluate_cell(sub: pd.DataFrame, setup: str, dims, h1_range, h2_range) -> D
     pf_h1 = profit_factor(h1["total_trade_pnl"])
     pf_h2 = profit_factor(h2["total_trade_pnl"])
 
-    # Sub-period PF is computed for audit trail but NOT gated at the cell level.
-    # Stage 3 cells are slices of an already-surviving setup; the sub-period
-    # consistency check ran at Stage 2 on the full setup. Requiring both halves
-    # to be positive on a narrow conditional slice would over-fit on N and reject
-    # structurally valid edges due to random date imbalances in sparse cells.
     passed = (
         stats["n"] >= MIN_N
         and stats["pf"] >= MIN_PF
+        and pf_h1 >= MIN_PF_SUBPERIOD
+        and pf_h2 >= MIN_PF_SUBPERIOD
     )
 
     if len(dims) == 1:
