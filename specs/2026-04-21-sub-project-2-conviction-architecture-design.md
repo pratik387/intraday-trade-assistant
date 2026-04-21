@@ -200,11 +200,23 @@ All of these are legitimate advanced techniques. They belong in sub-project #5 (
 
 Same protocol as sub-project #1 gauntlet:
 
-- **Train:** Discovery (Jan 2023 – Dec 2024), 178K trades, split into 80% train / 20% validation fold for XGBoost early-stopping
-- **Validate:** 2025 Q1-Q3 (Jan – Sep 2025), ~70K trades, used to measure OOS generalization + pick final hyperparameters (NOT to tune feature set or target — those stay locked)
-- **Holdout:** 2025 Q4 – Mar 2026 (Oct 2025 – Mar 2026), ~27K trades, one-shot final check, no peeking during training/validation
+- **Train:** Discovery (Jan 2023 – Dec 2024), split into 80% train / 20% validation fold for XGBoost early-stopping
+- **Validate:** 2025 Q1-Q3 (Jan – Sep 2025), used to measure OOS generalization + pick final hyperparameters (NOT to tune feature set or target — those stay locked)
+- **Holdout:** 2025 Q4 – Mar 2026 (Oct 2025 – Mar 2026), one-shot final check, no peeking during training/validation
 
 XGBoost hyperparameter tuning via time-series cross-validation within Discovery (walk-forward, never peeking forward), NOT via validation fold peeking.
+
+**Training-data rule-membership: validation-gate survivors only.**
+
+Sub-project #1's Validation gate (Task 12 in its plan) runs BEFORE #2 training begins. It applies each of the 90 narrative-approved rules to wide-open 2025 data and kills rules failing per-rule criteria (PF ≥ 1.0, WR within ±10pp of Discovery, N ≥ 50). The survivor-count is empirical — we don't know yet if it'll be 40 rules, 60, or 80.
+
+**#2 training dataset = Discovery trades matching ONLY validation-gate-surviving rules.** Not all 178K Discovery trades. Reasoning:
+- Trades from rules that failed OOS validation are noise for training (their features don't actually predict outcomes that generalize)
+- Training on "surviving rules only" gives the ML cleaner signal
+- The ML's job is ranking among CANDIDATES that would fire in live — and in live, only surviving rules fire candidates
+- Training distribution must match inference distribution
+
+If validation gate kills many rules (e.g., <40 survive), re-examine whether #2 is still the right next step — perhaps the 90-rule set itself needs reconsideration first.
 
 ### 3.10 Daily trade cap
 
