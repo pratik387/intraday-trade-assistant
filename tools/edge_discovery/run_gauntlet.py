@@ -20,6 +20,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict
 
+import pandas as pd
+
 from tools.edge_discovery.data_loader import load_run
 from tools.edge_discovery.periods import DiscoveryConfig
 from tools.edge_discovery.stages.stage1_universe_prune import run_stage1
@@ -27,6 +29,9 @@ from tools.edge_discovery.stages.stage2_univariate import run_stage2
 from tools.edge_discovery.stages.stage3_conditional import run_stage3
 from tools.edge_discovery.stages.stage5_narrative import generate_narrative_templates
 from tools.edge_discovery.stages.stage5b_ruleset_simulation import run_stage5b
+from tools.edge_discovery.stages.stage5c_cross_sectional_simulation import run_stage5c
+
+ROOT = Path(__file__).parent.parent.parent
 
 
 def run_gauntlet_all(
@@ -128,12 +133,85 @@ def run_gauntlet_all(
     else:
         print("[gauntlet]   Skipped — no approved rules to simulate")
 
+    # Stage 5c: cross-sectional filter simulation (F1+F2)
+    stage5c_run = False
+    print("[gauntlet] Stage 5c: Cross-sectional filter simulation ...")
+    try:
+        cfg_path = ROOT / "config" / "configuration.json"
+        full_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cs_cfg = full_cfg.get("cross_sectional_gate")
+        if cs_cfg and cs_cfg.get("enabled") and approved_rules:
+            # Normalize column names to what Stage 5c expects:
+            # - `setup` (stage5c) vs `setup_type` (data_loader)
+            # - `symbol_raw` (stage5c) vs `symbol` with "NSE:" prefix (data_loader)
+            trades_5c = trades.copy()
+            if "setup" not in trades_5c.columns and "setup_type" in trades_5c.columns:
+                trades_5c["setup"] = trades_5c["setup_type"]
+            if "symbol_raw" not in trades_5c.columns:
+                trades_5c["symbol_raw"] = trades_5c["symbol"].astype(str).str.replace(
+                    "NSE:", "", regex=False
+                )
+
+            # Restrict to approved-filter trades (match Stage 5b universe)
+            from tools.edge_discovery.stages.stage5b_ruleset_simulation import apply_filter
+            filtered_trades = apply_filter(trades_5c, approved_rules)
+
+            # Synthesize decision_ts if missing (data_loader emits session_date_dt +
+            # minute_of_day; derive timestamp at bar-close)
+            if "decision_ts" not in filtered_trades.columns:
+                filtered_trades = filtered_trades.copy()
+                filtered_trades["decision_ts"] = (
+                    pd.to_datetime(filtered_trades["session_date_dt"])
+                    + pd.to_timedelta(filtered_trades["minute_of_day"].astype(int), unit="m")
+                ).dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            # Load OHLCV from monthly feathers — same source as probe
+            monthly_dir = ROOT / "backtest-cache-download" / "monthly"
+            trade_syms = set(filtered_trades["symbol_raw"].unique())
+            ohlcv_parts = []
+            for f in sorted(monthly_dir.glob("*_5m_enriched.feather")):
+                df = pd.read_feather(f, columns=["date", "symbol", "volume"])
+                df = df[df["symbol"].isin(trade_syms)]
+                ohlcv_parts.append(df)
+            if ohlcv_parts:
+                ohlcv_big = pd.concat(ohlcv_parts, ignore_index=True)
+                if ohlcv_big["date"].dt.tz is not None:
+                    ohlcv_big["ts"] = ohlcv_big["date"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+                else:
+                    ohlcv_big["ts"] = ohlcv_big["date"]
+                ohlcv_big["mod"] = (ohlcv_big["ts"].dt.hour * 60 + ohlcv_big["ts"].dt.minute).astype("int16")
+                ohlcv_big["date_only"] = ohlcv_big["ts"].dt.date
+                ohlcv_big = ohlcv_big[["symbol", "date_only", "mod", "volume"]]
+            else:
+                ohlcv_big = pd.DataFrame(columns=["symbol", "date_only", "mod", "volume"])
+
+            print(f"[gauntlet]   Stage 5c inputs: trades={len(filtered_trades):,} "
+                  f"ohlcv_rows={len(ohlcv_big):,} symbols={len(trade_syms):,}")
+            run_stage5c(
+                trades=filtered_trades,
+                ohlcv=ohlcv_big,
+                cfg=cs_cfg,
+                report_path=output_dir / "07-cross-sectional-simulation.md",
+                summary_json=output_dir / "stage5c_simulation.json",
+            )
+            stage5c_run = True
+            print("[gauntlet]   Stage 5c complete")
+        elif not cs_cfg or not cs_cfg.get("enabled"):
+            print("[gauntlet]   Stage 5c skipped (cross_sectional_gate disabled in config)")
+        else:
+            print("[gauntlet]   Stage 5c skipped (no approved rules)")
+    except Exception as e:
+        print(f"[gauntlet]   Stage 5c ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+
     return {
         "stage1_count": len(s1_survivors),
         "stage2_count": len(s2_survivors),
         "stage3_count": len(s3_pass_cells),
         "narrative_templates_generated": len(narrative_paths),
         "stage5b_rules_simulated": len(approved_rules),
+        "stage5c_run": stage5c_run,
     }
 
 

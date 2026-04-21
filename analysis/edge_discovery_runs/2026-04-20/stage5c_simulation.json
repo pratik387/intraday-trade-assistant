@@ -1,0 +1,92 @@
+{
+  "stage": "5c",
+  "cfg": {
+    "enabled": true,
+    "f1_rvol_enabled": true,
+    "f1_rvol_threshold_pct": 70.0,
+    "f1_applicable_caps": [
+      "small_cap",
+      "mid_cap",
+      "micro_cap"
+    ],
+    "f1_skip_hour_buckets": [
+      "late"
+    ],
+    "f1_min_history_sessions": 5,
+    "f1_rolling_window_sessions": 20,
+    "f2_crowdedness_enabled": true,
+    "f2_crowdedness_threshold": 40,
+    "f2_crowdedness_window_min": 5
+  },
+  "before": {
+    "scenario": "Before CrossSectionalGate",
+    "n_trades": 178151,
+    "n_sessions": 484,
+    "trades_per_day": 368.1,
+    "total_pnl": 32087340.0,
+    "pf": 1.363,
+    "wr_pct": 55.5,
+    "session_sharpe": 0.745,
+    "losing_days_pct": 16.7
+  },
+  "after": {
+    "scenario": "After CrossSectionalGate (F1+F2)",
+    "n_trades": 99891,
+    "n_sessions": 484,
+    "trades_per_day": 206.4,
+    "total_pnl": 19381751.0,
+    "pf": 1.397,
+    "wr_pct": 56.5,
+    "session_sharpe": 0.699,
+    "losing_days_pct": 19.0
+  },
+  "delta": {
+    "n_trades_delta": -78260,
+    "trades_per_day_delta": -161.7,
+    "pf_delta": 0.034,
+    "session_sharpe_delta": -0.046,
+    "losing_days_pct_delta": 2.3
+  },
+  "rejection_reasons_top": [
+    {
+      "reason": "f1_rvol_pct=100.0>=70.0",
+      "count": 543
+    },
+    {
+      "reason": "f2_crowded_count=40>=40",
+      "count": 435
+    },
+    {
+      "reason": "f2_crowded_count=43>=40",
+      "count": 412
+    },
+    {
+      "reason": "f2_crowded_count=41>=40",
+      "count": 412
+    },
+    {
+      "reason": "f2_crowded_count=44>=40",
+      "count": 409
+    },
+    {
+      "reason": "f2_crowded_count=42>=40",
+      "count": 399
+    },
+    {
+      "reason": "f2_crowded_count=45>=40",
+      "count": 383
+    },
+    {
+      "reason": "f2_crowded_count=47>=40",
+      "count": 380
+    },
+    {
+      "reason": "f2_crowded_count=46>=40",
+      "count": 373
+    },
+    {
+      "reason": "f2_crowded_count=48>=40",
+      "count": 369
+    }
+  ]
+}
