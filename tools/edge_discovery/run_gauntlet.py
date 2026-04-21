@@ -26,6 +26,7 @@ from tools.edge_discovery.stages.stage1_universe_prune import run_stage1
 from tools.edge_discovery.stages.stage2_univariate import run_stage2
 from tools.edge_discovery.stages.stage3_conditional import run_stage3
 from tools.edge_discovery.stages.stage5_narrative import generate_narrative_templates
+from tools.edge_discovery.stages.stage5b_ruleset_simulation import run_stage5b
 
 
 def run_gauntlet_all(
@@ -112,12 +113,53 @@ def run_gauntlet_all(
     )
     print(f"[gauntlet]   Templates generated: {len(narrative_paths)}")
 
+    # Stage 5b: ruleset simulation — aggregate behavior of approved rules.
+    # Approved = Stage 3 survivors minus narrative-gate REJECTED_RULES (if present).
+    print("[gauntlet] Stage 5b: Ruleset simulation ...")
+    approved_rules = _load_approved_rules(s3_json)
+    if approved_rules:
+        run_stage5b(
+            trades=trades,
+            approved_rules=approved_rules,
+            report_path=output_dir / "06-ruleset-simulation.md",
+            summary_json=output_dir / "stage5b_simulation.json",
+        )
+        print(f"[gauntlet]   Simulated {len(approved_rules)} approved rules as union filter")
+    else:
+        print("[gauntlet]   Skipped — no approved rules to simulate")
+
     return {
         "stage1_count": len(s1_survivors),
         "stage2_count": len(s2_survivors),
         "stage3_count": len(s3_pass_cells),
         "narrative_templates_generated": len(narrative_paths),
+        "stage5b_rules_simulated": len(approved_rules),
     }
+
+
+def _load_approved_rules(s3_json: Dict[str, Any]) -> list:
+    """Build the list of approved rules for Stage 5b.
+
+    Approved = every Stage 3 passing cell, minus any rule_id listed in
+    `tools.edge_discovery.fill_narratives.REJECTED_RULES` (the narrative
+    gate's rejection registry). If fill_narratives is unavailable, all
+    Stage 3 survivors are treated as approved (fail-open).
+    """
+    try:
+        from tools.edge_discovery.fill_narratives import REJECTED_RULES
+        rejected = REJECTED_RULES
+    except Exception:
+        rejected = set()
+    rules = []
+    for cell in s3_json.get("details", []):
+        if not cell.get("passed"):
+            continue
+        rule_id = f"{cell['setup']}__{cell['conditioner']}={cell['cell_value']}"
+        if rule_id in rejected:
+            continue
+        conditions = list(zip(cell["conditioner"].split("+"), cell["cell_value"].split("+")))
+        rules.append({"rule_id": rule_id, "setup": cell["setup"], "conditions": conditions})
+    return rules
 
 
 def main():

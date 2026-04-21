@@ -1,0 +1,150 @@
+{
+  "stage": "5b",
+  "n_approved_rules": 90,
+  "scenarios": [
+    {
+      "scenario": "Baseline (raw wide-open, no filter)",
+      "n_trades": 389535,
+      "n_sessions": 484,
+      "trades_per_day": 804.8,
+      "total_pnl": 18750051.0,
+      "pf": 1.092,
+      "wr_pct": 52.5,
+      "session_sharpe": 0.536,
+      "losing_days_pct": 25.0,
+      "median_daily_pnl": 41876.0
+    },
+    {
+      "scenario": "All approved rules (union filter)",
+      "n_trades": 178151,
+      "n_sessions": 484,
+      "trades_per_day": 368.1,
+      "total_pnl": 32087340.0,
+      "pf": 1.363,
+      "wr_pct": 55.5,
+      "session_sharpe": 0.745,
+      "losing_days_pct": 16.7,
+      "median_daily_pnl": 67001.0
+    },
+    {
+      "scenario": "Exclude opening+morning entries",
+      "n_trades": 16578,
+      "n_sessions": 481,
+      "trades_per_day": 34.5,
+      "total_pnl": 2861214.0,
+      "pf": 1.439,
+      "wr_pct": 56.4,
+      "session_sharpe": 0.373,
+      "losing_days_pct": 28.1,
+      "median_daily_pnl": 4546.0
+    },
+    {
+      "scenario": "Late-hour entries only",
+      "n_trades": 946,
+      "n_sessions": 354,
+      "trades_per_day": 2.7,
+      "total_pnl": 142265.0,
+      "pf": 1.566,
+      "wr_pct": 54.9,
+      "session_sharpe": 0.216,
+      "losing_days_pct": 37.9,
+      "median_daily_pnl": 270.0
+    },
+    {
+      "scenario": "Afternoon+late entries only",
+      "n_trades": 14807,
+      "n_sessions": 480,
+      "trades_per_day": 30.8,
+      "total_pnl": 2548163.0,
+      "pf": 1.451,
+      "wr_pct": 56.3,
+      "session_sharpe": 0.346,
+      "losing_days_pct": 27.9,
+      "median_daily_pnl": 3913.0
+    }
+  ],
+  "per_hour": [
+    {
+      "hour_bucket": "afternoon",
+      "n": 13861,
+      "total_pnl": 2405898.0,
+      "avg_pnl": 173.6,
+      "pf": 1.446,
+      "wr_pct": 56.4
+    },
+    {
+      "hour_bucket": "late",
+      "n": 946,
+      "total_pnl": 142265.0,
+      "avg_pnl": 150.4,
+      "pf": 1.566,
+      "wr_pct": 54.9
+    },
+    {
+      "hour_bucket": "lunch",
+      "n": 1771,
+      "total_pnl": 313051.0,
+      "avg_pnl": 176.8,
+      "pf": 1.361,
+      "wr_pct": 57.0
+    },
+    {
+      "hour_bucket": "morning",
+      "n": 104177,
+      "total_pnl": 18897984.0,
+      "avg_pnl": 181.4,
+      "pf": 1.353,
+      "wr_pct": 55.6
+    },
+    {
+      "hour_bucket": "opening",
+      "n": 57396,
+      "total_pnl": 10328142.0,
+      "avg_pnl": 179.9,
+      "pf": 1.364,
+      "wr_pct": 54.9
+    }
+  ],
+  "per_setup": [
+    {
+      "setup": "order_block_short",
+      "n": 6825,
+      "total_pnl": 1331449.0,
+      "avg_pnl": 195.1,
+      "pf": 1.398,
+      "wr_pct": 58.2
+    },
+    {
+      "setup": "premium_zone_short",
+      "n": 104583,
+      "total_pnl": 17321099.0,
+      "avg_pnl": 165.6,
+      "pf": 1.336,
+      "wr_pct": 54.8
+    },
+    {
+      "setup": "range_bounce_short",
+      "n": 57812,
+      "total_pnl": 11836129.0,
+      "avg_pnl": 204.7,
+      "pf": 1.398,
+      "wr_pct": 55.9
+    },
+    {
+      "setup": "resistance_bounce_short",
+      "n": 7998,
+      "total_pnl": 1445512.0,
+      "avg_pnl": 180.7,
+      "pf": 1.423,
+      "wr_pct": 58.4
+    },
+    {
+      "setup": "vwap_lose_short",
+      "n": 933,
+      "total_pnl": 153151.0,
+      "avg_pnl": 164.1,
+      "pf": 1.363,
+      "wr_pct": 58.0
+    }
+  ]
+}
