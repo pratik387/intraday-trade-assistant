@@ -4,10 +4,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from datetime import date
+
 from tools.edge_discovery.metrics import (
     profit_factor,
     win_rate_pct,
     sharpe_ratio,
+    session_sharpe_ratio,
     max_drawdown_pct,
     expectancy,
     summary_stats,
@@ -91,3 +94,57 @@ def test_summary_stats_empty():
     assert s["n"] == 0
     assert s["pf"] == 0.0
     assert s["wr_pct"] == 0.0
+
+
+def test_session_sharpe_aggregates_per_day_before_computing():
+    """Session Sharpe sums pnl per session date, then computes mean/std on the
+    daily series. For a setup that trades every day with consistent daily PnL
+    but high per-trade variance, per-trade Sharpe is low but session Sharpe is
+    high — this is the whole point of the metric."""
+    # 3 sessions × 100 trades each. Per-trade: [+100, -50] cycle → high variance.
+    # Daily sum: 100*(50*100 - 50*50) = 2500 per session. Zero std → inf.
+    pnl = pd.Series([100, -50] * 150)
+    sessions = pd.Series(
+        [date(2023, 1, 1)] * 100 + [date(2023, 1, 2)] * 100 + [date(2023, 1, 3)] * 100
+    )
+    assert session_sharpe_ratio(pnl, sessions) == float("inf")
+
+
+def test_session_sharpe_varied_daily_pnl():
+    # Daily sums: [+1000, +500, +1500]. mean=1000, std=500 (ddof=1). Sharpe=2.0
+    pnl = pd.Series([1000, 500, 1500])
+    sessions = pd.Series([date(2023, 1, 1), date(2023, 1, 2), date(2023, 1, 3)])
+    assert session_sharpe_ratio(pnl, sessions) == pytest.approx(2.0)
+
+
+def test_session_sharpe_single_session_returns_zero():
+    """Single-session data has undefined daily std (n=1, ddof=1) → return 0.0."""
+    pnl = pd.Series([100, -50, 200])
+    sessions = pd.Series([date(2023, 1, 1)] * 3)
+    assert session_sharpe_ratio(pnl, sessions) == 0.0
+
+
+def test_session_sharpe_empty():
+    assert session_sharpe_ratio(pd.Series([], dtype=float), pd.Series([], dtype=object)) == 0.0
+
+
+def test_session_sharpe_length_mismatch_raises():
+    with pytest.raises(ValueError):
+        session_sharpe_ratio(pd.Series([1, 2, 3]), pd.Series([date(2023, 1, 1)]))
+
+
+def test_summary_stats_with_session_dates_adds_session_sharpe():
+    pnl = pd.Series([1000, 500, 1500])
+    sessions = pd.Series([date(2023, 1, 1), date(2023, 1, 2), date(2023, 1, 3)])
+    s = summary_stats(pnl, session_dates=sessions)
+    assert "session_sharpe" in s
+    assert s["session_sharpe"] == pytest.approx(2.0)
+    # Per-trade sharpe still present for reference
+    assert "sharpe" in s
+
+
+def test_summary_stats_without_session_dates_omits_session_sharpe():
+    """Backwards compat: callers that don't pass session_dates get no
+    session_sharpe key (Stage 1 / Stage 3 informational use)."""
+    s = summary_stats(pd.Series([100, -50, 200]))
+    assert "session_sharpe" not in s

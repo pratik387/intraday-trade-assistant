@@ -20,19 +20,30 @@ def _cfg():
 
 
 def _trades(setup: str, h1_pnls: list, h2_pnls: list) -> pd.DataFrame:
+    """Spreads trades across multiple distinct session dates so session_sharpe
+    is computable (needs >= 2 distinct dates)."""
+    from datetime import timedelta
     rows = []
-    for p in h1_pnls:
+    # H1 trades span Jan-Jun 2023, one trade per date cycling through 10 dates
+    h1_dates = [date(2023, 1, 1) + timedelta(days=30 * i) for i in range(10)]
+    for i, p in enumerate(h1_pnls):
         rows.append({"setup_type": setup, "total_trade_pnl": p,
-                     "session_date_dt": date(2023, 6, 1)})
-    for p in h2_pnls:
+                     "session_date_dt": h1_dates[i % len(h1_dates)]})
+    # H2 trades span Jul-Dec 2024, one trade per date cycling through 10 dates
+    h2_dates = [date(2024, 3, 1) + timedelta(days=30 * i) for i in range(10)]
+    for i, p in enumerate(h2_pnls):
         rows.append({"setup_type": setup, "total_trade_pnl": p,
-                     "session_date_dt": date(2024, 6, 1)})
+                     "session_date_dt": h2_dates[i % len(h2_dates)]})
     return pd.DataFrame(rows)
 
 
 def test_stage2_passes_when_all_criteria_met(tmp_path):
-    """Both sub-periods positive, PF full > 1.2, Sharpe > 0.7, DD < 30%."""
-    # [100, 100, -50] cycle: PF=4.0, Sharpe~0.71, DD<1%. Both halves identical.
+    """Both sub-periods positive, PF full > 1.2, session_sharpe > 0.7, DD < 30%.
+
+    With trades spread across 20 distinct dates (10 per half) and the
+    [100, 100, -50] cycle giving consistent positive daily PnL, session Sharpe
+    is very high (low daily variance).
+    """
     df = _trades("winner", [100, 100, -50] * 100, [100, 100, -50] * 100)
     result = run_stage2(
         df, cfg=_cfg(),
@@ -41,6 +52,7 @@ def test_stage2_passes_when_all_criteria_met(tmp_path):
         survivors_json=tmp_path / "s2.json",
     )
     assert result[0]["passed"] is True
+    assert result[0]["session_sharpe"] >= 0.7
 
 
 def test_stage2_fails_when_h1_positive_h2_negative(tmp_path):
@@ -115,3 +127,40 @@ def test_stage2_empty_subperiod_is_treated_as_fail(tmp_path):
     assert row["h2_n"] == 0
     assert row["pf_h2"] == 0.0
     assert row["passed"] is False
+
+
+def test_stage2_gates_on_session_sharpe_not_per_trade_sharpe(tmp_path):
+    """Regression guard: Stage 2 must use session_sharpe (daily-aggregated),
+    not per-trade sharpe. A setup with ~300 trades/day at +₹25 avg and high
+    per-trade variance has per-trade Sharpe ~0.24 (would FAIL old 0.7 gate)
+    but session Sharpe is infinite because daily PnL is constant (stable edge
+    emerges at the session level)."""
+    from datetime import timedelta
+    # Per-trade: alternating [+100, -50] → mean=25, std≈106, sharpe≈0.24
+    # PF = 100/50 = 2.0
+    # Each session: 150 × 100 + 150 × -50 = +₹7,500 (constant daily PnL)
+    # Session sharpe → inf (zero daily std)
+    rows = []
+    for d_offset in range(20):
+        sd = date(2023, 3, 1) + timedelta(days=d_offset * 7)
+        for p in [100, -50] * 150:  # 300 trades/session
+            rows.append({"setup_type": "high_volume", "total_trade_pnl": p,
+                         "session_date_dt": sd})
+    for d_offset in range(20):
+        sd = date(2024, 3, 1) + timedelta(days=d_offset * 7)
+        for p in [100, -50] * 150:
+            rows.append({"setup_type": "high_volume", "total_trade_pnl": p,
+                         "session_date_dt": sd})
+    df = pd.DataFrame(rows)
+    result = run_stage2(
+        df, cfg=_cfg(),
+        survivors_input=["high_volume"],
+        report_path=tmp_path / "02.md",
+        survivors_json=tmp_path / "s2.json",
+    )
+    row = result[0]
+    # Per-trade sharpe well below 0.7 — proves we would have FAILED with the old metric
+    assert row["sharpe_per_trade"] < 0.5
+    # Session sharpe passes — proves the new metric credits real edge
+    assert row["session_sharpe"] >= 0.7
+    assert row["passed"] is True

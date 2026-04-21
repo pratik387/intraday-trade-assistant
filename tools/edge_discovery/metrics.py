@@ -3,7 +3,7 @@
 All functions accept a Series and return scalar floats. None handle missing
 values — caller is responsible for pre-cleaning (drop NaN, filter is_final_exit).
 """
-from typing import Dict
+from typing import Dict, Optional
 import math
 import pandas as pd
 
@@ -30,7 +30,13 @@ def win_rate_pct(pnl: pd.Series) -> float:
 def sharpe_ratio(pnl: pd.Series) -> float:
     """Per-trade Sharpe = mean / std (ddof=1). No annualization — scale is
     per-trade risk units. Returns inf for zero-std positive series, -inf for
-    zero-std negative series, 0.0 for empty."""
+    zero-std negative series, 0.0 for empty.
+
+    Informational only. For edge gating, use `session_sharpe_ratio` — intraday
+    systems have per-trade variance that makes per-trade Sharpe structurally
+    0.1-0.3 even for genuinely profitable strategies. Session-aggregated Sharpe
+    is the finance-convention meaning of 'Sharpe'.
+    """
     if len(pnl) == 0:
         return 0.0
     std = pnl.std(ddof=1)
@@ -42,6 +48,43 @@ def sharpe_ratio(pnl: pd.Series) -> float:
             return float("-inf")
         return 0.0
     return float(pnl.mean() / std)
+
+
+def session_sharpe_ratio(pnl: pd.Series, session_dates: pd.Series) -> float:
+    """Session-aggregated Sharpe (finance-convention).
+
+    Sums per-trade pnl by session_date, then computes mean/std of the resulting
+    daily PnL series (ddof=1). No annualization — scale is per-session risk
+    units. This is what 'Sharpe ≥ X' conventionally means for an intraday
+    system: daily PnL variability, not per-trade variability.
+
+    Edge cases:
+      - Empty pnl → 0.0
+      - All days profitable, zero std → inf (finite std of zero)
+      - Single session → 0.0 (std undefined with ddof=1, n=1 is meaningless)
+
+    Args:
+        pnl: per-trade realized PnL series
+        session_dates: aligned series of session dates (same length as pnl)
+    """
+    if len(pnl) == 0:
+        return 0.0
+    if len(pnl) != len(session_dates):
+        raise ValueError(
+            f"pnl length ({len(pnl)}) must match session_dates length ({len(session_dates)})"
+        )
+    daily = pnl.groupby(session_dates.values).sum()
+    if len(daily) < 2:
+        return 0.0
+    std = daily.std(ddof=1)
+    if std == 0 or math.isnan(std):
+        mean = daily.mean()
+        if mean > 0:
+            return float("inf")
+        if mean < 0:
+            return float("-inf")
+        return 0.0
+    return float(daily.mean() / std)
 
 
 def max_drawdown_pct(pnl: pd.Series) -> float:
@@ -78,9 +121,13 @@ def expectancy(pnl: pd.Series) -> float:
     return float(pnl.mean())
 
 
-def summary_stats(pnl: pd.Series) -> Dict[str, float]:
-    """Full stat dict used by all stages."""
-    return {
+def summary_stats(pnl: pd.Series, session_dates: Optional[pd.Series] = None) -> Dict[str, float]:
+    """Full stat dict used by all stages.
+
+    If `session_dates` is provided, adds `session_sharpe` (daily-aggregated).
+    The per-trade `sharpe` is always present for reference.
+    """
+    stats = {
         "n": int(len(pnl)),
         "total_pnl": float(pnl.sum()) if len(pnl) else 0.0,
         "avg_pnl": expectancy(pnl),
@@ -89,3 +136,6 @@ def summary_stats(pnl: pd.Series) -> Dict[str, float]:
         "sharpe": sharpe_ratio(pnl),
         "max_dd_pct": max_drawdown_pct(pnl),
     }
+    if session_dates is not None:
+        stats["session_sharpe"] = session_sharpe_ratio(pnl, session_dates)
+    return stats

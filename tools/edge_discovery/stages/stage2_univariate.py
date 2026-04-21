@@ -4,10 +4,12 @@ sub-period consistency check.
 Pass criteria (ALL required):
   - PF >= 1.2 on full Discovery
   - PF >= 1.0 in BOTH Discovery halves
-  - Sharpe >= 0.7 on full Discovery
+  - Session Sharpe >= 0.7 on full Discovery (daily-aggregated, finance-convention)
   - Max DD < 30% of total profit
 
-Per spec Section 3.3.
+Per spec Section 3.3. Sharpe is session-aggregated (daily PnL), not per-trade —
+per-trade Sharpe is structurally 0.1-0.3 for intraday systems and would reject
+every real edge candidate. The 0.7 threshold corresponds to daily PnL stability.
 """
 from pathlib import Path
 from typing import Any, Dict, List
@@ -63,15 +65,16 @@ def run_stage2(
         h1_pnl = grp[_in_range(grp["session_date_dt"], h1_start, h1_end)]["total_trade_pnl"]
         h2_pnl = grp[_in_range(grp["session_date_dt"], h2_start, h2_end)]["total_trade_pnl"]
 
-        full = summary_stats(all_pnl)
+        full = summary_stats(all_pnl, session_dates=grp["session_date_dt"])
         pf_h1 = profit_factor(h1_pnl)
         pf_h2 = profit_factor(h2_pnl)
+        sess_sharpe = full["session_sharpe"]
 
         passed = (
             full["pf"] >= MIN_PF_FULL
             and pf_h1 >= MIN_PF_SUBPERIOD
             and pf_h2 >= MIN_PF_SUBPERIOD
-            and full["sharpe"] >= MIN_SHARPE
+            and sess_sharpe >= MIN_SHARPE
             and full["max_dd_pct"] < MAX_DD_PCT
         )
         rows.append({
@@ -82,7 +85,8 @@ def run_stage2(
             "pf_full": round(full["pf"], 3) if full["pf"] != float("inf") else 999.0,
             "pf_h1": round(pf_h1, 3) if pf_h1 != float("inf") else 999.0,
             "pf_h2": round(pf_h2, 3) if pf_h2 != float("inf") else 999.0,
-            "sharpe": round(full["sharpe"], 3) if full["sharpe"] != float("inf") else 999.0,
+            "session_sharpe": round(sess_sharpe, 3) if sess_sharpe != float("inf") else 999.0,
+            "sharpe_per_trade": round(full["sharpe"], 3) if full["sharpe"] != float("inf") else 999.0,
             "max_dd_pct": round(full["max_dd_pct"], 2) if full["max_dd_pct"] != float("inf") else 999.0,
             "wr_pct": round(full["wr_pct"], 2),
             "passed": bool(passed),
@@ -94,7 +98,7 @@ def run_stage2(
         stage_name="Stage 2 — Univariate Setup Screening",
         criteria=(
             f"PF_full >= {MIN_PF_FULL} AND PF_h1 >= {MIN_PF_SUBPERIOD} AND "
-            f"PF_h2 >= {MIN_PF_SUBPERIOD} AND Sharpe >= {MIN_SHARPE} AND "
+            f"PF_h2 >= {MIN_PF_SUBPERIOD} AND session_sharpe >= {MIN_SHARPE} AND "
             f"max_DD < {MAX_DD_PCT}%"
         ),
         summary_rows=rows,
