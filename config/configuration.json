@@ -464,7 +464,7 @@
     },
     "gap_fill_short": {
       "enabled": true,
-      "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). Pre-rebuild evidence was actually NET POSITIVE (+Rs 3.68L on 266 trades) — disable was premature. Tier-A audit fixes applied: time window 9:15-10:30, reversal candle requirement, volume confirmation wired up, per-session dedup.",
+      "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). Pre-rebuild evidence was actually NET POSITIVE (+Rs 3.68L on 266 trades) \u00e2\u20ac\u201d disable was premature. Tier-A audit fixes applied: time window 9:15-10:30, reversal candle requirement, volume confirmation wired up, per-session dedup.",
       "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 266 trades, Rs +3.68L overall. trend_down WR 48% Rs -204 (only weak regime).",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
@@ -1849,7 +1849,7 @@
       "max_detections_per_symbol": 50,
       "_comment_max_detections": "WIDE-OPEN: bumped 5 -> 50 so non-ICT detectors aren't silently dropped by per-symbol cap. ICT alone can produce 5+ events per symbol (BOS, CHoCH, FVG, OB, premium/discount); cap of 5 starved gap/FHM/squeeze/etc. of representation in the candidate list.",
       "conflict_resolution_enabled": false,
-      "_comment_conflict_resolution": "WIDE-OPEN: disabled. _resolve_directional_conflicts grouped events within 0.5% and kept only the HIGHEST-confidence event per group. ICT detectors return confidence ~5.0 while gap/FHM/squeeze/failure_fade return ~1.7-2.5, so ICT silently won every conflict — gap_fill_long had 205 accepts but 0 trades because of this. priority_weights below are DEAD code (resolver uses raw confidence). For wide-open gauntlet analysis we need every detector's signals to flow through to measure per-detector edge. Set to true once detectors are calibrated and we want production deduplication.",
+      "_comment_conflict_resolution": "WIDE-OPEN: disabled. _resolve_directional_conflicts grouped events within 0.5% and kept only the HIGHEST-confidence event per group. ICT detectors return confidence ~5.0 while gap/FHM/squeeze/failure_fade return ~1.7-2.5, so ICT silently won every conflict \u00e2\u20ac\u201d gap_fill_long had 205 accepts but 0 trades because of this. priority_weights below are DEAD code (resolver uses raw confidence). For wide-open gauntlet analysis we need every detector's signals to flow through to measure per-detector edge. Set to true once detectors are calibrated and we want production deduplication.",
       "priority_weights": {
         "ict": 1.0,
         "level_breakout_long": 0.9,
@@ -2531,5 +2531,24 @@
     "fetch_timeout_sec": 30,
     "fallback_to_full_universe": true,
     "_comment": "Filter core_symbols to MIS-eligible stocks early in startup. Reduces ~2385 -> ~1500 symbols. Saves WS slots, prewarm time, Stage-0 compute. Uses ZerodhaMISFetcher (Google Sheets CSV). Required for Upstox hybrid mode (2000 instrument limit)."
+  },
+  "_comment_cross_sectional_gate": "=== CROSS-SECTIONAL GATE (sub-project #3) ===",
+  "cross_sectional_gate": {
+    "enabled": true,
+    "f1_rvol_enabled": true,
+    "f1_rvol_threshold_pct": 70.0,
+    "f1_applicable_caps": [
+      "small_cap",
+      "mid_cap",
+      "micro_cap"
+    ],
+    "f1_skip_hour_buckets": [
+      "late"
+    ],
+    "f1_min_history_sessions": 5,
+    "f1_rolling_window_sessions": 20,
+    "f2_crowdedness_enabled": true,
+    "f2_crowdedness_threshold": 40,
+    "f2_crowdedness_window_min": 5
   }
 }
