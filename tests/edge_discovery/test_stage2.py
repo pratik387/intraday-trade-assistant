@@ -129,38 +129,23 @@ def test_stage2_empty_subperiod_is_treated_as_fail(tmp_path):
     assert row["passed"] is False
 
 
-def test_stage2_gates_on_session_sharpe_not_per_trade_sharpe(tmp_path):
-    """Regression guard: Stage 2 must use session_sharpe (daily-aggregated),
-    not per-trade sharpe. A setup with ~300 trades/day at +₹25 avg and high
-    per-trade variance has per-trade Sharpe ~0.24 (would FAIL old 0.7 gate)
-    but session Sharpe is infinite because daily PnL is constant (stable edge
-    emerges at the session level)."""
-    from datetime import timedelta
-    # Per-trade: alternating [+100, -50] → mean=25, std≈106, sharpe≈0.24
-    # PF = 100/50 = 2.0
-    # Each session: 150 × 100 + 150 × -50 = +₹7,500 (constant daily PnL)
-    # Session sharpe → inf (zero daily std)
-    rows = []
-    for d_offset in range(20):
-        sd = date(2023, 3, 1) + timedelta(days=d_offset * 7)
-        for p in [100, -50] * 150:  # 300 trades/session
-            rows.append({"setup_type": "high_volume", "total_trade_pnl": p,
-                         "session_date_dt": sd})
-    for d_offset in range(20):
-        sd = date(2024, 3, 1) + timedelta(days=d_offset * 7)
-        for p in [100, -50] * 150:
-            rows.append({"setup_type": "high_volume", "total_trade_pnl": p,
-                         "session_date_dt": sd})
-    df = pd.DataFrame(rows)
+def test_stage2_reports_session_sharpe_but_does_not_gate_on_it(tmp_path):
+    """Session Sharpe is computed and reported in the output for audit trail,
+    but is NOT part of the pass criterion. A setup with excellent PF,
+    sub-period consistency, and low DD passes even when session_sharpe is
+    well below historical 0.7 threshold (intra-session trade correlation
+    makes session Sharpe structurally lower than naive sqrt(N) scaling
+    would predict)."""
+    df = _trades("winner", [100, 100, -50] * 100, [100, 100, -50] * 100)
     result = run_stage2(
         df, cfg=_cfg(),
-        survivors_input=["high_volume"],
+        survivors_input=["winner"],
         report_path=tmp_path / "02.md",
         survivors_json=tmp_path / "s2.json",
     )
     row = result[0]
-    # Per-trade sharpe well below 0.7 — proves we would have FAILED with the old metric
-    assert row["sharpe_per_trade"] < 0.5
-    # Session sharpe passes — proves the new metric credits real edge
-    assert row["session_sharpe"] >= 0.7
+    # session_sharpe is reported
+    assert "session_sharpe" in row
+    assert "sharpe_per_trade" in row
+    # passed is gated on PF + sub-period + DD only — not Sharpe
     assert row["passed"] is True
