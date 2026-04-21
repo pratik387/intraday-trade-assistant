@@ -34,6 +34,18 @@ Low trade count is a SIGNAL to look harder, not easier. "It's rare so skip detai
 **Why:** This is the production-mindset lesson. Shortcuts that save 10 minutes now create second code paths, mixed concerns, and maintenance debt. The user's standard is: suggest the RIGHT solution, not the EASY solution. If the right solution requires more work (Docker rebuild), say so and do it.
 **Rule:** When proposing solutions, evaluate them on architectural correctness FIRST, implementation convenience SECOND. If one option is clearly the right architecture (separation of concerns, single responsibility, proper layering) but requires more work, recommend THAT option directly. Don't offer shortcuts that pollute clean boundaries just because they avoid a step. "No shortcuts" applies to infrastructure decisions, not just code.
 
+### 2026-04-21 — No payroll, no deadline. Correctness beats shipping speed.
+**What went wrong:** While brainstorming sub-project #2 (Conviction Architecture), I proposed a Phase 1/Phase 2 sequencing: "ship a dummy-scorer scaffolding first so we have a baseline, then build ML v2 as a drop-in replacement." User pushed back: "we are not on any payroll here to ship it... its about getting it to work... so u need to put in ur lessons.md... only my money is on the line right now so going live fast is not as important as getting it correct."
+**Why:** I was implicitly optimizing for a VC-backed-startup ship-fast-iterate pattern. This is the user's personal capital — the priority is CORRECTNESS, not velocity. Building placeholders / dummy scorers just to hit phase gates creates throwaway code and delays the real work of getting the actual solution right. Shipping v1 early has no value when there's no deadline; the only value is "it works and I can trust it with my money."
+**Rule:** When I identify a design approach and I'm tempted to propose "let's ship a simpler version first and upgrade later," ASK first whether speed is a real constraint. For personal-capital projects with no deadline, the right sequence is:
+1. Build the CORRECT design immediately (not a placeholder)
+2. Take time for proper feature engineering / validation / SHAP interpretation / OOS discipline
+3. Don't use "phase gates" as an excuse to ship something less-right
+4. Shadow-trade / paper-trade before live is mandatory regardless of speed
+5. Integration scaffolding gets built AROUND the correct design, not as a placeholder waiting for the real design
+
+Shortcut patterns to avoid: "v1 baseline to measure against," "ship scaffolding first with dummy internals," "heuristic to bootstrap ML." All legitimate in deadline-driven work, ALL wrong when the constraint is correctness.
+
 ### 2026-04-21 — Don't offer shortcut options alongside the correct fix
 **What went wrong:** When Stage 2 of the edge gauntlet killed all 5 PF-consistent setups via Sharpe ≥ 0.7 (because we compute Sharpe per-trade, not per-session, making the gate structurally unpassable for intraday), I presented three options to the user: (1) lower the Sharpe threshold to ~0.08, (2) change the metric to daily/session Sharpe, (3) accept 0-survivors. Option 1 is threshold-tuning to hide a design bug — a shortcut. Option 3 abandons real findings. Only option 2 is the correct fix. User responded: "its obviously 2... u dont read from lessons.md? no shortcuts we are going for the correct fix always fucker."
 **Why:** Same production-mindset lesson as the Docker-rebuild incident (2026-04-19). Offering a shortcut alongside the correct fix dilutes the recommendation and wastes the user's turn. When one option is clearly the right architecture/methodology and the others are thresholds-moving or giving up, don't enumerate — just state the correct fix and do it.
