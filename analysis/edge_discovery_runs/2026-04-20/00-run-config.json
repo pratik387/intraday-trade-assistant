@@ -1,0 +1,9 @@
+{
+  "backtest_dir": "cloud_results\\20260419_discovery",
+  "discovery_start": "2023-01-01",
+  "discovery_end": "2024-12-31",
+  "validation_start": "2025-01-01",
+  "validation_end": "2025-09-30",
+  "holdout_start": "2025-10-01",
+  "holdout_end": "2026-03-31"
+}

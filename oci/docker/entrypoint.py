@@ -274,6 +274,44 @@ def download_index_ohlcv():
         raise
 
 
+def generate_analytics(date_str):
+    """Regenerate analytics.jsonl from events.jsonl for the given date.
+
+    main.py --dry-run emits events.jsonl but does NOT call populate_analytics_from_events
+    at EOD. Without this step, analytics.jsonl contains only inline real-time writes
+    which miss every multi-exit trade (T1-partial → trailing-stop), dropping ~50% of
+    real trades — specifically, the half that includes winners with aggregated PnL.
+    """
+    log(f"Generating analytics from events.jsonl for {date_str}...")
+
+    logs_dir = Path('/app/logs')
+    session_dirs = sorted(logs_dir.glob(f'bt_{date_str}_*'))
+    if not session_dirs:
+        log(f"WARNING: No session logs found for analytics generation: {date_str}")
+        return
+
+    session_dir = session_dirs[-1]
+    session_id = session_dir.name
+    events_file = session_dir / 'events.jsonl'
+
+    if not events_file.exists() or events_file.stat().st_size == 0:
+        log(f"WARNING: No events.jsonl for analytics generation: {date_str}")
+        return
+
+    try:
+        sys.path.insert(0, '/app')
+        from services.logging.trading_logger import TradingLogger
+        logger = TradingLogger(session_id, str(session_dir))
+        logger.populate_analytics_from_events()
+        analytics_file = session_dir / 'analytics.jsonl'
+        size_kb = analytics_file.stat().st_size // 1024 if analytics_file.exists() else 0
+        log(f"Analytics generated: {analytics_file.name} ({size_kb} KB)")
+    except Exception as e:
+        log(f"ERROR generating analytics for {date_str}: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def run_backtest(date_str):
     """
     Run backtest for the given date.
@@ -515,6 +553,12 @@ def main():
 
     # Run backtest
     result = run_backtest(date_str)
+
+    # Regenerate analytics.jsonl from events.jsonl.
+    # main.py --dry-run writes events.jsonl but does NOT call populate_analytics_from_events
+    # at EOD. Without this step, analytics.jsonl misses every multi-exit trade
+    # (T1-partial → trailing-stop), biasing the dataset by ~50% (~7K / 13K trades/session).
+    generate_analytics(date_str)
 
     # Free disk BEFORE upload — cache files are no longer needed after backtest
     # completes. Each pod downloads ~200-500MB of feather cache; with 16-39
