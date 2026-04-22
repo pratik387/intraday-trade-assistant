@@ -2553,7 +2553,7 @@
   },
   "_comment_conviction_gate": "=== CONVICTION GATE (sub-project #2) ===",
   "conviction_gate": {
-    "enabled": false,
+    "enabled": true,
     "model_artifact": "models/conviction/2026-04-22-universal-xgboost.json",
     "feature_spec_path": "models/conviction/2026-04-22-feature-spec.json",
     "calibration_path": "models/conviction/2026-04-22-calibration.json",
