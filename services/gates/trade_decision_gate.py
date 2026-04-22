@@ -144,16 +144,6 @@ class RegimeGate(Protocol):  # pragma: no cover (interface only)
     def compute_regime(self, index_df5m: pd.DataFrame) -> Tuple[str, float]:
         ...
 
-    def allow_setup(
-        self,
-        setup_type: SetupType,
-        regime: str,
-        strength: float,
-        adx_5m: float,
-        vol_mult_5m: float,
-    ) -> bool:
-        ...
-
     # Optional sizing bias by regime
     def size_multiplier(self, regime: str) -> float:  # noqa: D401 (docstring not required)
         ...
@@ -262,13 +252,11 @@ class TradeDecisionGate:
         Check if setup is HARD BLOCKED for this regime (cannot be bypassed by HCET).
 
         Hard blocks are centralized in regime_gate.py - single source of truth.
-        This is the ONLY blocking check here - all other regime-based filtering
-        is handled by regime_gate.allow_setup() with evidence-based thresholds.
+        This is the ONLY regime-based blocking check in this gate.
 
         ARCHITECTURE SIMPLIFICATION (Dec 2024):
-        - Removed config whitelist check (was redundant with allow_setup())
-        - regime_gate.py is now the single source of truth for regime decisions
-        - Config whitelists are kept for documentation only
+        - regime_gate.py is the single source of truth for regime decisions
+        - allow_setup() was removed (always returned True since Dec 2024)
         """
         # Normalize regime names
         regime_key = regime
@@ -727,7 +715,7 @@ class TradeDecisionGate:
         _is_orb = best.setup_type.startswith("orb_")
         _min_bars = 4 if _is_orb else 10
         insufficient_bars = (df5m_tail is None or len(df5m_tail) < _min_bars)
-        # Always compute HCET - allow_setup() may block and HCET can bypass (unless hard blocked)
+        # Compute HCET features - needed if time window is blocked (HCET can bypass time blocks)
         regime_blocked = not self._is_hard_blocked(best.setup_type, regime)  # True = might need HCET
         time_blocked_check = time_blocked  # from earlier time window check
 
@@ -788,43 +776,15 @@ class TradeDecisionGate:
         # ========================================================================
         # REGIME FILTERING (Simplified Dec 2024)
         # Single source of truth: regime_gate.py
-        # 1. Hard blocks - cannot be bypassed by HCET
-        # 2. allow_setup() - evidence-based thresholds (can be bypassed by HCET)
+        # Hard blocks only - cannot be bypassed by HCET
+        # (allow_setup was hardcoded True since Dec 2024 and has been removed)
         # ========================================================================
 
-        # Step 1: Check hard blocks (CANNOT be bypassed)
+        # Check hard blocks (CANNOT be bypassed)
         hard_blocked = self._is_hard_blocked(best.setup_type, regime)
         if hard_blocked:
             reasons.append(f"hard_block:{regime}:{best.setup_type}")
             return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
-
-        # Step 2: Check evidence-based thresholds via allow_setup()
-        # Priority 2: Get cap_segment for cap-aware strategy filtering
-        cap_segment = "unknown"
-        try:
-            import json
-            from pathlib import Path
-            nse_file = Path(__file__).parent.parent.parent / "nse_all.json"
-            if nse_file.exists():
-                with nse_file.open() as f:
-                    data = json.load(f)
-                cap_map = {item["symbol"]: item.get("cap_segment", "unknown") for item in data}
-                cap_segment = cap_map.get(symbol, "unknown")
-        except Exception:
-            cap_segment = "unknown"
-
-        base_allow = False
-        if hasattr(self.regime_gate, "allow_setup"):
-            with perf("gate", "allow_setup", sym=symbol):
-                base_allow = bool(self.regime_gate.allow_setup(
-                    best.setup_type, regime, strength, adx_5m, vol_mult_5m, cap_segment=cap_segment
-                ))
-
-        if not base_allow and not hc_ok:
-            reasons.append(f"regime_block:{regime}[str={strength:.2f},adx={adx_5m:.2f},volx={vol_mult_5m:.2f},cap={cap_segment}]")
-            return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
-        elif not base_allow and hc_ok:
-            reasons.append(f"hcet_bypass_regime:{','.join(hc_reasons)}")
 
         # NO SIZE_MULT PENALTIES - Pro Trader Approach (Van Tharp CPR)
         # If setup doesn't qualify, BLOCK it (hard gate). No soft penalties.

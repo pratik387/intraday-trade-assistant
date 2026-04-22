@@ -12,7 +12,6 @@ Expected input DataFrame (IST‑aligned, 5‑minute close index):
 Public API
 ----------
 MarketRegimeGate.compute_regime(df5) -> (regime: str, confidence: float)
-MarketRegimeGate.allow_setup(setup_type: str, regime: str) -> bool
 MarketRegimeGate.size_multiplier(regime: str, counter_trend: bool=False) -> float
 
 Regime labels
@@ -70,12 +69,11 @@ class RegimeMetrics:
 
 class MarketRegimeGate:
     """
-    Computes regime from 5m index bars and decides if a setup is allowed
-    using config-driven, evidence-based thresholds.
+    Computes regime from 5m index bars and hard-blocks setups that are
+    incompatible with the current regime.
 
     Public:
       compute_regime(df5) -> (regime, metrics_dict)
-      allow_setup(setup_type, regime, strength, adx_5m, vol_mult_5m) -> bool
       size_multiplier(regime, counter_trend=False) -> float
     """
 
@@ -303,30 +301,6 @@ class MarketRegimeGate:
             if self.log:
                 self.log.error(f"Multi-TF regime error for {symbol}: {e}, falling back to 5m")
             return regime_5m, conf_5m, None
-
-    # ---------------- Evidence-based permissioning ----------------
-    def allow_setup(
-        self,
-        setup_type: str,
-        regime: str,
-        strength: float,
-        adx_5m: float,
-        vol_mult_5m: float,
-        cap_segment: str = "unknown",
-    ) -> bool:
-        """
-        SIMPLIFIED (Dec 2024): Always returns True.
-
-        All setup-specific filtering is now handled in Pipeline's apply_setup_filters().
-        HARD_BLOCKS are checked via is_hard_blocked() in base_pipeline.py.
-
-        This method is kept for backwards compatibility with trade_decision_gate.py.
-        It will be removed in a future cleanup.
-
-        Philosophy: Gates are for general-purpose filtering (regime classification,
-        event policy, news spikes). Setup-specific filtering belongs in pipelines.
-        """
-        return True
 
     # ---------------- Hard Block Check ----------------
     def is_hard_blocked(self, setup_type: str, regime: str) -> bool:
