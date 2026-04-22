@@ -192,15 +192,22 @@ def run_gauntlet_all(
 
             print(f"[gauntlet]   Stage 5c inputs: trades={len(filtered_trades):,} "
                   f"ohlcv_rows={len(ohlcv_big):,} symbols={len(trade_syms):,}")
-            run_stage5c(
+            stage5c_result = run_stage5c(
                 trades=filtered_trades,
                 ohlcv=ohlcv_big,
                 cfg=cs_cfg,
                 report_path=output_dir / "07-cross-sectional-simulation.md",
                 summary_json=output_dir / "stage5c_simulation.json",
             )
+            # Chain Stage 5c -> Stage 5d: replace `filtered_trades` with the
+            # subset that passed F1+F2 so Stage 5d sees the production stack
+            # (rule filter -> cross-sectional -> conviction).
+            stage5c_filtered = stage5c_result["filtered_trades"]
+            allowed_mask = stage5c_filtered["allowed"].astype(bool)
+            filtered_trades = stage5c_filtered[allowed_mask].reset_index(drop=True)
             stage5c_run = True
-            print("[gauntlet]   Stage 5c complete")
+            print(f"[gauntlet]   Stage 5c complete -> {len(filtered_trades):,} trades "
+                  f"pass F1+F2 (chained into Stage 5d)")
         elif not cs_cfg or not cs_cfg.get("enabled"):
             print("[gauntlet]   Stage 5c skipped (cross_sectional_gate disabled in config)")
         else:
@@ -209,6 +216,25 @@ def run_gauntlet_all(
         print(f"[gauntlet]   Stage 5c ERROR: {e}")
         import traceback
         traceback.print_exc()
+
+    # Enrich filtered_trades with trade_report.csv columns needed by Stage 5d
+    # (features for scoring) and Stage 5e (plan_notional, volume5, close5,
+    # last_exit_ts).  Merge is additive — existing columns unchanged.
+    if filtered_trades is not None:
+        try:
+            from tools.conviction.build_training_dataset import load_trade_report_features
+            tr_features = load_trade_report_features(backtest_dir)
+            # Pull only what 5e needs (5d already pulls features via build_training_dataset earlier)
+            extra_cols = [c for c in ["plan_notional", "volume5", "close5", "last_exit_ts"]
+                          if c in tr_features.columns and c not in filtered_trades.columns]
+            if extra_cols:
+                filtered_trades = filtered_trades.merge(
+                    tr_features[["trade_id"] + extra_cols],
+                    on="trade_id", how="left"
+                )
+                print(f"[gauntlet]   Enriched filtered_trades with {extra_cols}")
+        except Exception as e:
+            print(f"[gauntlet]   WARN: trade_report enrichment failed for Stage 5e: {e}")
 
     # Stage 5d: conviction gate (ML scorer + top-50 + threshold)
     print("[gauntlet] Stage 5d: Conviction gate simulation ...")
@@ -244,6 +270,37 @@ def run_gauntlet_all(
         print(f"[gauntlet]   Stage 5d ERROR: {e}")
         import traceback; traceback.print_exc()
 
+    # Stage 5e: illiquid-aware Budgeted Selector (6 constraints replacing FIFO cap)
+    print("[gauntlet] Stage 5e: Budgeted Selector simulation ...")
+    stage5e_run = False
+    try:
+        from tools.edge_discovery.stages.stage5e_budgeted_selector import run_stage5e
+        adv_parquet = ROOT / "models" / "gauntlet" / "stage5e_adv_rupees.parquet"
+        if filtered_trades is not None and adv_parquet.exists():
+            adv_df = pd.read_parquet(adv_parquet)
+            adv_map = {
+                (row.symbol, row.date_only): float(row.adv_rupees_20d)
+                for row in adv_df.itertuples()
+                if pd.notna(row.adv_rupees_20d)
+            }
+            bs_cfg = full_cfg.get("budgeted_selector", {})
+            run_stage5e(
+                trades=filtered_trades,
+                adv_map=adv_map,
+                cfg=bs_cfg,
+                report_path=output_dir / "09-budgeted-selector-simulation.md",
+                summary_json=output_dir / "stage5e_simulation.json",
+            )
+            stage5e_run = True
+            print("[gauntlet]   Stage 5e complete")
+        elif filtered_trades is None:
+            print("[gauntlet]   Stage 5e skipped (no Stage 5c output)")
+        else:
+            print(f"[gauntlet]   Stage 5e skipped (ADV parquet not found: {adv_parquet})")
+    except Exception as e:
+        print(f"[gauntlet]   Stage 5e ERROR: {e}")
+        import traceback; traceback.print_exc()
+
     return {
         "stage1_count": len(s1_survivors),
         "stage2_count": len(s2_survivors),
@@ -252,6 +309,7 @@ def run_gauntlet_all(
         "stage5b_rules_simulated": len(approved_rules),
         "stage5c_run": stage5c_run,
         "stage5d_run": stage5d_run,
+        "stage5e_run": stage5e_run,
     }
 
 
