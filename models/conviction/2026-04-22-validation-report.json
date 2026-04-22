@@ -1,0 +1,52 @@
+{
+  "model": "2026-04-22-universal-xgboost.json",
+  "oos_period": "2025-01-01 to 2025-09-30",
+  "n_trades_evaluated": 73245,
+  "test1_oos_pf_lift": {
+    "pf_ml": 8.331130879432024,
+    "pf_random": 6.288995130333772,
+    "passed": true
+  },
+  "test2_calibration_monotonicity": {
+    "n_non_decreasing_transitions": 5,
+    "required_min": 7,
+    "passed": false
+  },
+  "test3_shap_stability": {
+    "overlap_top10": 10,
+    "required_min": 7,
+    "top_train_features": [
+      "bb_width_proxy",
+      "volume5",
+      "pdz_range_position",
+      "pdz_range_size_pct",
+      "pdz_range_size_atr",
+      "pdz_atr14",
+      "minute_of_day",
+      "regime_trend_up",
+      "cap_segment_small_cap",
+      "day_of_week_Tuesday"
+    ],
+    "top_val_features": [
+      "bb_width_proxy",
+      "volume5",
+      "pdz_range_position",
+      "pdz_range_size_pct",
+      "pdz_range_size_atr",
+      "pdz_atr14",
+      "minute_of_day",
+      "regime_trend_up",
+      "cap_segment_small_cap",
+      "day_of_week_Tuesday"
+    ],
+    "passed": true
+  },
+  "test4_per_session_spearman": {
+    "median_rho": 0.018247318214755837,
+    "n_sessions": 181,
+    "n_positive": 102,
+    "sign_test_p": 0.05086649160903904,
+    "passed": false
+  },
+  "all_passed": false
+}
