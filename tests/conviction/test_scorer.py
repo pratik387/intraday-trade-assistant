@@ -58,16 +58,24 @@ def test_scorer_predict_returns_float(tiny_model_artifacts):
 
 
 def test_scorer_predict_handles_missing_features_as_zero(tiny_model_artifacts):
-    """If a feature in the spec isn't in the dict, substitute 0.0."""
+    """A missing feature must produce the same prediction as one explicitly set to 0.0."""
     model_path, feature_spec_path, features = tiny_model_artifacts
     scorer = XGBoostScorer(model_path, feature_spec_path)
-    # deliberately incomplete feat_dict (missing vol_z, pdz_confluence_count)
-    feat_dict = {
+    incomplete = {
         "momentum_3bar_pct": 0.5,
         "setup_type_premium_zone_short": 1,
+        # deliberately missing: vol_z, pdz_confluence_count
     }
-    pred = scorer.predict(feat_dict)
-    assert isinstance(pred, float)
+    explicit_zeros = {
+        "momentum_3bar_pct": 0.5,
+        "vol_z": 0.0,
+        "pdz_confluence_count": 0.0,
+        "setup_type_premium_zone_short": 1,
+    }
+    pred_incomplete = scorer.predict(incomplete)
+    pred_explicit = scorer.predict(explicit_zeros)
+    assert isinstance(pred_incomplete, float)
+    assert pred_incomplete == pytest.approx(pred_explicit, abs=1e-6)
 
 
 def test_scorer_feature_order_preserved(tiny_model_artifacts):
