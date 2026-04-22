@@ -528,6 +528,95 @@ The work is DONE when:
 - Holdout-period gauntlet (Oct 2025-Mar 2026) — needs OCI rebuild + run first
 - Profiling the 2-min detector loop — separate work
 
+---
+
+## Appendix A: LW-10 Reservoir-with-replacement ConvictionGate (conditional)
+
+**Status:** Planned, conditional on LW-9 multi-session backtest showing material PnL gap vs gauntlet projection due to FIFO selection.
+
+### Problem
+
+Current `ConvictionGate` uses FIFO + threshold + cap. On high-volume days (e.g., opening-bell clusters with 280+ candidates in the first bar), the cap binds immediately and afternoon signals — even ones with much higher `predicted_r` — get `conv_drop: cap_reached`. This mirrors the gauntlet's own Stage 5d logic (same code path, verified), so it's not a live/backtest gap. But it IS a known ceiling on edge capture that's orthogonal to model quality.
+
+### Proposed architecture
+
+Replace the flat admitted-counter with a min-heap keyed by `predicted_r`. When cap is full and a new candidate arrives with `predicted_r > worst_admitted`:
+
+1. Evict the worst-admitted candidate from the heap.
+2. Call `order_cancel_callback(evicted.order_id)` — cancels the pending order if unfilled.
+3. Admit the new candidate.
+4. Submit its order via the normal enqueue path.
+
+### Mechanics
+
+```python
+import heapq
+
+class ConvictionGate:
+    def __init__(self, cfg, order_cancel_cb=None):
+        self.cfg = cfg
+        self._current_session = None
+        self._admitted_heap = []  # min-heap: (predicted_r, seq_id, order_id)
+        self._seq = 0  # tiebreaker to avoid heap comparing order_id strings
+        self._cancel_cb = order_cancel_cb
+
+    def evaluate(self, cand, predicted_r):
+        sess = cand["session_date"]
+        if sess != self._current_session:
+            self._current_session = sess
+            self._admitted_heap = []
+            self._seq = 0
+
+        if predicted_r < self.cfg["min_predicted_r"]:
+            return False, "below_threshold", None
+
+        cap = int(self.cfg["daily_cap"])
+        if len(self._admitted_heap) < cap:
+            # Room available — admit
+            self._seq += 1
+            heapq.heappush(self._admitted_heap, (predicted_r, self._seq, cand.get("order_id")))
+            return True, "admitted", None
+
+        # Cap full — compare to worst
+        worst_r, worst_seq, worst_order_id = self._admitted_heap[0]
+        if predicted_r > worst_r:
+            # Replace worst
+            heapq.heapreplace(self._admitted_heap, (predicted_r, self._seq + 1, cand.get("order_id")))
+            self._seq += 1
+            if self._cancel_cb and worst_order_id:
+                self._cancel_cb(worst_order_id)
+            return True, "admitted_by_replacement", worst_order_id  # return evicted order_id for logging
+        else:
+            return False, "cap_reached_worse_than_heap_min", None
+```
+
+### Integration points
+
+- `LiveGateChain.__init__` passes an order-cancel callback to `ConvictionGate` — wired to `order_queue.cancel(order_id)` or equivalent.
+- `LiveGateChain.evaluate` handles the new return tuple `(ok, reason, evicted_order_id)` — logs evictions as a new `gate_reject_reason` category for the victim.
+- Order dispatch path in `screener_live._run_5m_scan` must support post-hoc cancellation — check whether enqueued orders can be cancelled before fill (they can; `order_queue` supports expiry). If the broker already filled, cancellation is a no-op and we now hold a position we wanted to evict. Two sub-options:
+  - (A) Accept the fill, let it run. Gate's admitted_heap tracks intent, not reality. Simplest.
+  - (B) If filled, immediately enqueue a market exit to flatten. More aggressive, riskier.
+
+Recommend (A): evictions are intent-level. In practice, orders submitted during opening-bell chaos often haven't filled yet when afternoon replacements arrive — so (A) gets most of the win without execution complexity.
+
+### Cost
+
+~4-6 hours implementation + tests:
+- Modify `ConvictionGate` (heap state + replacement path)
+- Update `tests/conviction/test_gate.py` to cover replacement + eviction
+- Modify `LiveGateChain.evaluate` to pass cancel callback + handle new return shape
+- Update `tests/gate_chain/test_live_gate_chain.py`
+- Wire `order_queue.cancel` callback in `screener_live`
+- Backtest verification — rerun LW-9 with replacement enabled, compare PnL.
+
+### When to trigger LW-10
+
+- LW-9 2023+2024 (in-sample) shows negative PnL → implement LW-10 immediately; in-sample should at least be positive
+- LW-9 2023+2024 is positive but materially below gauntlet projection (e.g., >30% worse) → implement LW-10, re-run
+- LW-9 2023+2024 matches gauntlet projection → skip LW-10, proceed to 2025 OOS with FIFO
+
+
 ## 9. Sequencing
 
 ```
