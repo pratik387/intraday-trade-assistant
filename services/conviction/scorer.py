@@ -28,3 +28,17 @@ class XGBoostScorer:
         vec = np.array([[float(feat.get(f, 0.0)) for f in self.features]], dtype=np.float32)
         pred = self.model.predict(vec)
         return float(pred[0])
+
+    def predict_batch(self, feat_list: List[Dict[str, float]]) -> np.ndarray:
+        """Vectorize predict over many feature dicts. Returns 1D array of predictions.
+
+        Assembles a (len(feat_list), n_features) matrix in training feature order,
+        calls XGBoost predict once, returns the resulting array. Empty input → empty array.
+        """
+        if not feat_list:
+            return np.array([], dtype=np.float32)
+        matrix = np.array(
+            [[float(feat.get(f, 0.0)) for f in self.features] for feat in feat_list],
+            dtype=np.float32,
+        )
+        return self.model.predict(matrix)

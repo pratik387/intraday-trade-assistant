@@ -99,3 +99,44 @@ def test_scorer_feature_order_preserved(tiny_model_artifacts):
     p1 = scorer.predict(feat_1)
     p2 = scorer.predict(feat_2)
     assert p1 == pytest.approx(p2, abs=1e-6)
+
+
+def test_predict_batch_matches_per_call_predict_within_tolerance(tiny_model_artifacts):
+    """Batched and per-call predictions must agree numerically."""
+    model_path, feature_spec_path, features = tiny_model_artifacts
+    scorer = XGBoostScorer(model_path, feature_spec_path)
+    feat_dicts = [
+        {"momentum_3bar_pct": 0.5, "vol_z": 0.0, "pdz_confluence_count": 2, "setup_type_premium_zone_short": 1},
+        {"momentum_3bar_pct": -0.2, "vol_z": 1.5, "pdz_confluence_count": 0, "setup_type_premium_zone_short": 0},
+        {"momentum_3bar_pct": 1.0, "vol_z": -0.5, "pdz_confluence_count": 1, "setup_type_premium_zone_short": 1},
+    ]
+    batched = scorer.predict_batch(feat_dicts)
+    individual = np.array([scorer.predict(f) for f in feat_dicts])
+    assert batched.shape == (3,)
+    np.testing.assert_allclose(batched, individual, atol=1e-5)
+
+
+def test_predict_batch_empty_input_returns_empty(tiny_model_artifacts):
+    model_path, feature_spec_path, _ = tiny_model_artifacts
+    scorer = XGBoostScorer(model_path, feature_spec_path)
+    out = scorer.predict_batch([])
+    assert out.shape == (0,)
+
+
+def test_predict_batch_handles_missing_features_per_dict(tiny_model_artifacts):
+    """Each dict's missing features become 0.0, independently per candidate."""
+    model_path, feature_spec_path, _ = tiny_model_artifacts
+    scorer = XGBoostScorer(model_path, feature_spec_path)
+    incomplete = [
+        {"momentum_3bar_pct": 0.5, "setup_type_premium_zone_short": 1},
+        {"vol_z": 0.3, "pdz_confluence_count": 2},
+    ]
+    explicit = [
+        {"momentum_3bar_pct": 0.5, "vol_z": 0.0, "pdz_confluence_count": 0.0, "setup_type_premium_zone_short": 1},
+        {"momentum_3bar_pct": 0.0, "vol_z": 0.3, "pdz_confluence_count": 2, "setup_type_premium_zone_short": 0},
+    ]
+    np.testing.assert_allclose(
+        scorer.predict_batch(incomplete),
+        scorer.predict_batch(explicit),
+        atol=1e-6,
+    )
