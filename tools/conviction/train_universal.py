@@ -4,6 +4,17 @@ Loads training dataset (from build_training_dataset.py), chronologically splits
 80/20 (early-stop validation within Discovery), trains XGBoost regressor on
 r_multiple target.
 
+Target transform: R-multiple is heavy-tailed (min=-1 hard SL, max ~+350 from
+MIS-leveraged runners). Squared-error on raw R lets extreme winners dominate
+the gradient, producing a model that over-predicts for trades that SL-out in
+OOS. Fix:
+  1. Winsorize target at R=5 (clip extreme winners).
+  2. Pseudo-Huber objective — quadratic near zero, linear in tails.
+
+Both are standard Winsorization+robust-regression techniques for heavy-tailed
+financial ML targets. They don't change the relative ranking of outcomes —
+just limit how much any single outlier can steer the loss.
+
 Output: models/conviction/2026-04-22-universal-xgboost.json
 """
 from __future__ import annotations
@@ -19,6 +30,8 @@ ROOT = Path(__file__).parent.parent.parent
 PARQUET = ROOT / "models" / "conviction" / "2026-04-22-training-dataset.parquet"
 MODEL_OUT = ROOT / "models" / "conviction" / "2026-04-22-universal-xgboost.json"
 METRICS_OUT = ROOT / "models" / "conviction" / "2026-04-22-training-metrics.json"
+
+R_CLIP_MAX = 5.0  # Winsorize target upper tail (t2 RR max ~2.5, so 5R is ~2x highest planned exit)
 
 
 def main():
@@ -36,11 +49,17 @@ def main():
 
     feature_cols = [c for c in df.columns if not c.startswith("_")]
     X_train = train_df[feature_cols].values
-    y_train = train_df["_label_r_multiple"].values
+    y_train_raw = train_df["_label_r_multiple"].values
     X_val = val_df[feature_cols].values
-    y_val = val_df["_label_r_multiple"].values
+    y_val_raw = val_df["_label_r_multiple"].values
 
-    # XGBoost hyperparameters — modest, regularized
+    y_train = np.clip(y_train_raw, a_min=-1.0, a_max=R_CLIP_MAX)
+    y_val = np.clip(y_val_raw, a_min=-1.0, a_max=R_CLIP_MAX)
+    n_clipped_train = int((y_train_raw > R_CLIP_MAX).sum())
+    n_clipped_val = int((y_val_raw > R_CLIP_MAX).sum())
+    print(f"Winsorized target: clipped {n_clipped_train} train rows, {n_clipped_val} val rows at R={R_CLIP_MAX}")
+
+    # XGBoost hyperparameters — pseudo-Huber for robustness to heavy tails.
     model = xgb.XGBRegressor(
         n_estimators=500,
         max_depth=6,
@@ -50,7 +69,9 @@ def main():
         reg_alpha=0.1,
         reg_lambda=1.0,
         early_stopping_rounds=30,
-        eval_metric="rmse",
+        objective="reg:pseudohubererror",
+        huber_slope=1.0,
+        eval_metric="mae",
         random_state=42,
     )
     print("Training...")
@@ -58,12 +79,17 @@ def main():
     best_iter = model.best_iteration
     print(f"Best iteration: {best_iter}")
 
-    # Evaluate on val fold
+    # Evaluate on val fold (against clipped targets for consistency with training loss)
     y_val_pred = model.predict(X_val)
     rmse_val = float(np.sqrt(np.mean((y_val_pred - y_val) ** 2)))
+    mae_val = float(np.mean(np.abs(y_val_pred - y_val)))
     corr_val = float(np.corrcoef(y_val_pred, y_val)[0, 1])
-    print(f"Validation RMSE: {rmse_val:.4f}")
-    print(f"Validation Pearson: {corr_val:.4f}")
+    # Also report correlation vs raw (uncapped) realized R — this is the one that matters for ranking
+    corr_val_raw = float(np.corrcoef(y_val_pred, y_val_raw)[0, 1])
+    print(f"Validation MAE (vs clipped): {mae_val:.4f}")
+    print(f"Validation RMSE (vs clipped): {rmse_val:.4f}")
+    print(f"Validation Pearson (vs clipped target): {corr_val:.4f}")
+    print(f"Validation Pearson (vs RAW target): {corr_val_raw:.4f}")
 
     MODEL_OUT.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(str(MODEL_OUT))
@@ -74,9 +100,13 @@ def main():
         "model_path": str(MODEL_OUT.relative_to(ROOT)),
         "n_train": len(train_df),
         "n_val": len(val_df),
+        "n_clipped_train": n_clipped_train,
+        "n_clipped_val": n_clipped_val,
         "best_iteration": best_iter,
+        "mae_val": mae_val,
         "rmse_val": rmse_val,
-        "pearson_val": corr_val,
+        "pearson_val_clipped": corr_val,
+        "pearson_val_raw": corr_val_raw,
         "features": feature_cols,
         "hyperparameters": {
             "n_estimators": 500,
@@ -87,6 +117,10 @@ def main():
             "reg_alpha": 0.1,
             "reg_lambda": 1.0,
             "early_stopping_rounds": 30,
+            "objective": "reg:pseudohubererror",
+            "huber_slope": 1.0,
+            "eval_metric": "mae",
+            "target_clip_max": R_CLIP_MAX,
         },
     }, indent=2), encoding="utf-8")
     print(f"Saved metrics: {METRICS_OUT}")
