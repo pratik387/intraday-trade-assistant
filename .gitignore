@@ -77,3 +77,4 @@ docs/*
 .claude/
 .claude/settings.local.json
 state/closed_trades.json
+models/conviction/*.parquet
