@@ -2550,5 +2550,14 @@
     "f2_crowdedness_enabled": true,
     "f2_crowdedness_threshold": 40,
     "f2_crowdedness_window_min": 5
+  },
+  "_comment_conviction_gate": "=== CONVICTION GATE (sub-project #2) ===",
+  "conviction_gate": {
+    "enabled": false,
+    "model_artifact": "models/conviction/2026-04-22-universal-xgboost.json",
+    "feature_spec_path": "models/conviction/2026-04-22-feature-spec.json",
+    "calibration_path": "models/conviction/2026-04-22-calibration.json",
+    "daily_cap": 50,
+    "min_predicted_r": 0.3
   }
 }
