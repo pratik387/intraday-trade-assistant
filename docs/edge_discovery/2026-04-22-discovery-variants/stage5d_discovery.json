@@ -1,0 +1,77 @@
+{
+  "stage": "5d",
+  "cfg": {
+    "enabled": true,
+    "daily_cap": 50,
+    "min_predicted_r": 0.3
+  },
+  "before": {
+    "scenario": "Before ConvictionGate",
+    "n_trades": 99891,
+    "n_sessions": 484,
+    "trades_per_day": 206.4,
+    "total_pnl": 19381751.0,
+    "pf": 1.397,
+    "wr_pct": 56.5,
+    "session_sharpe": 0.699,
+    "losing_days_pct": 19.0
+  },
+  "after": {
+    "scenario": "After ConvictionGate",
+    "n_trades": 24156,
+    "n_sessions": 484,
+    "trades_per_day": 49.9,
+    "total_pnl": 6323156.0,
+    "pf": 1.551,
+    "wr_pct": 59.4,
+    "session_sharpe": 0.798,
+    "losing_days_pct": 21.5
+  },
+  "delta": {
+    "n_trades_delta": -75735,
+    "pf_delta": 0.154,
+    "sharpe_delta": 0.099
+  },
+  "rejections": [
+    {
+      "reason": "daily_cap_reached count=50>=50",
+      "count": 36307
+    },
+    {
+      "reason": "below_threshold predicted_r=0.286<0.3",
+      "count": 340
+    },
+    {
+      "reason": "below_threshold predicted_r=0.287<0.3",
+      "count": 310
+    },
+    {
+      "reason": "below_threshold predicted_r=0.288<0.3",
+      "count": 279
+    },
+    {
+      "reason": "below_threshold predicted_r=0.296<0.3",
+      "count": 268
+    },
+    {
+      "reason": "below_threshold predicted_r=0.284<0.3",
+      "count": 267
+    },
+    {
+      "reason": "below_threshold predicted_r=0.285<0.3",
+      "count": 265
+    },
+    {
+      "reason": "below_threshold predicted_r=0.280<0.3",
+      "count": 261
+    },
+    {
+      "reason": "below_threshold predicted_r=0.293<0.3",
+      "count": 260
+    },
+    {
+      "reason": "below_threshold predicted_r=0.274<0.3",
+      "count": 258
+    }
+  ]
+}

@@ -11,6 +11,16 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-04-22 — Never run architecture/variant comparisons on OOS data; reserve OOS for ONE confirmation check on the chosen winner
+**What went wrong:** After the chained gauntlet showed Stage 5e (Budgeted Selector) beat Stage 5d (FIFO) on Discovery 2023-24, I ran a head-to-head on 2025 OOS. Then, when the user asked to also test a simplified variant (5e without ADV/bar/rate/concurrency caps), I started to run the variant comparison ALSO on 2025. User caught it: "why not on 23 24 data? isn't it the whole point? also the split checks? shouldn't we do all this on 23 24 data only?"
+**Why:** This is the standard ML train/validation/holdout discipline. Every evaluation on OOS data consumes its informational value. If you keep running variants on OOS until one looks good, you've implicitly overfitted selection choices to the "holdout" set and lost the ability to claim OOS generalization. The correct sequence is: all architecture + hyperparameter + variant selection happens on IN-SAMPLE data, then you validate the ONE chosen winner on OOS (single check, no shopping), then final holdout gate before deploy.
+**Rule:**
+1. Architecture decisions / variant comparisons / hyperparameter tuning → IN-SAMPLE only (Discovery 2023-24 in this project)
+2. Validation period (2025 Q1-Q3) → used ONCE per major design decision to confirm the chosen architecture generalizes. Not for A/B variant shopping.
+3. Holdout period (Oct 2025 - Mar 2026) → untouched until final deploy gate
+4. Before running ANY backtest variant on validation/holdout data, ask: "am I choosing between options here, or confirming a pre-chosen winner?" If choosing, you're on the wrong dataset.
+5. If you have a bunch of variants to compare, build a variant-comparison script that runs them ALL on in-sample in one pass, not one-at-a-time on OOS.
+
 ### 2026-04-15 — Don't ask permission for fixes you've already identified
 **What went wrong:** I identified a quality issue (canonical research drifting to recycled generalities across Tasks 8-10 audit Item 1), listed 7 specific missing research points, then asked the user "A/B/C — which do you want?". User called this out: "if you've identified it as a problem and know the fix, just fix it — don't ask permission."
 **Rule:** When I identify a real problem AND know the right fix AND the scope is clearly within the current task, just DO the fix. Asking "A/B/C" when the honest answer is obviously A wastes the user's turn and signals ceremony-over-substance. Save questions for genuine decisions where multiple paths are defensible.

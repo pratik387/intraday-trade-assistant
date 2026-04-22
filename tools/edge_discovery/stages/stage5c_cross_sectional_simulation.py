@@ -234,4 +234,12 @@ def run_stage5c(
         "delta": delta,
         "rejection_reasons_top": reject_reasons_top,
     })
-    return {"before": before, "after": after, "delta": delta, "rejection_reasons_top": reject_reasons_top}
+    return {
+        "before": before,
+        "after": after,
+        "delta": delta,
+        "rejection_reasons_top": reject_reasons_top,
+        # Filtered trade frame (with `allowed`/`reject_reason` columns) so the
+        # gauntlet can chain Stage 5c -> Stage 5d on the same in-process data.
+        "filtered_trades": filtered,
+    }

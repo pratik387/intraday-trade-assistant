@@ -2562,7 +2562,7 @@
   },
   "_comment_live_gate_chain": "=== LIVE GATE CHAIN (sub-project #6 wiring of #1+#2+#3) ===",
   "live_gate_chain": {
-    "enabled": false,
+    "enabled": true,
     "_comment": "Master switch for the composed gate stack. When false, ScreenerLive instantiates the chain in passthrough mode."
   },
   "rule_filter_gate": {

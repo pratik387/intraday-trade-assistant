@@ -95,6 +95,13 @@ def simulate_budgeted_selector(
         "embargo_caps": ["micro_cap", "unknown"],
         "embargo_start_mod": 555,
         "embargo_end_mod": 570,
+        # Per-constraint enable flags (default all on; set any to False to skip that check)
+        "enable_embargo": True,
+        "enable_bucket_quota": True,
+        "enable_adv_cap": True,
+        "enable_bar_cap": True,
+        "enable_rate_limit": True,
+        "enable_concurrency_cap": True,
         **cfg,
     }
 
@@ -109,6 +116,12 @@ def simulate_budgeted_selector(
     embargo_caps = set(cfg["embargo_caps"])
     embargo_start = int(cfg["embargo_start_mod"])
     embargo_end = int(cfg["embargo_end_mod"])
+    en_embargo = bool(cfg["enable_embargo"])
+    en_bucket = bool(cfg["enable_bucket_quota"])
+    en_adv = bool(cfg["enable_adv_cap"])
+    en_bar = bool(cfg["enable_bar_cap"])
+    en_rate = bool(cfg["enable_rate_limit"])
+    en_conc = bool(cfg["enable_concurrency_cap"])
 
     # Normalize timestamps
     t = trades.copy()
@@ -155,36 +168,39 @@ def simulate_budgeted_selector(
             open_by_cap[cap] = [e for e in open_by_cap[cap] if pd.notna(e) and e > ts]
 
         # [1] Opening-bell embargo
-        if cap in embargo_caps and embargo_start <= mod < embargo_end:
+        if en_embargo and cap in embargo_caps and embargo_start <= mod < embargo_end:
             reasons.append("embargo:opening_micro_unknown")
             admitted.append(False)
             continue
 
         # [2] Time-bucket quota
-        bucket_quota = int(total_daily_budget * bucket_fracs.get(bucket, 0))
-        if bucket_counts[bucket] >= bucket_quota:
-            reasons.append(f"bucket_quota:{bucket}_{bucket_counts[bucket]}_of_{bucket_quota}")
-            admitted.append(False)
-            continue
-
-        # [3] ADV_rupees size cap
-        adv = adv_map.get((sym_raw, sess))
-        if adv is not None and adv > 0 and notional > 0:
-            cap_pct = adv_cap_micro if cap in ("micro_cap", "unknown") else adv_cap_large
-            if notional > cap_pct * adv:
-                reasons.append(f"adv_cap:notional_{int(notional)}_vs_{cap_pct*100:.1f}pct_adv_{int(adv)}")
+        if en_bucket:
+            bucket_quota = int(total_daily_budget * bucket_fracs.get(bucket, 0))
+            if bucket_counts[bucket] >= bucket_quota:
+                reasons.append(f"bucket_quota:{bucket}_{bucket_counts[bucket]}_of_{bucket_quota}")
                 admitted.append(False)
                 continue
 
+        # [3] ADV_rupees size cap
+        if en_adv:
+            adv = adv_map.get((sym_raw, sess))
+            if adv is not None and adv > 0 and notional > 0:
+                cap_pct = adv_cap_micro if cap in ("micro_cap", "unknown") else adv_cap_large
+                if notional > cap_pct * adv:
+                    reasons.append(f"adv_cap:notional_{int(notional)}_vs_{cap_pct*100:.1f}pct_adv_{int(adv)}")
+                    admitted.append(False)
+                    continue
+
         # [4] 5m bar participation cap
-        bar_rupee = vol5 * close5
-        if bar_rupee > 0 and notional > bar_cap_pct * bar_rupee:
-            reasons.append(f"bar_cap:notional_{int(notional)}_vs_{int(bar_cap_pct*bar_rupee)}")
-            admitted.append(False)
-            continue
+        if en_bar:
+            bar_rupee = vol5 * close5
+            if bar_rupee > 0 and notional > bar_cap_pct * bar_rupee:
+                reasons.append(f"bar_cap:notional_{int(notional)}_vs_{int(bar_cap_pct*bar_rupee)}")
+                admitted.append(False)
+                continue
 
         # [5] Per-symbol rate limit (micro/unknown only)
-        if cap in rate_limit_caps and pd.notna(ts):
+        if en_rate and cap in rate_limit_caps and pd.notna(ts):
             cutoff = ts - pd.Timedelta(seconds=60)
             symbol_entries[sym_raw] = [e for e in symbol_entries[sym_raw] if e > cutoff]
             if len(symbol_entries[sym_raw]) >= rate_limit:
@@ -193,17 +209,19 @@ def simulate_budgeted_selector(
                 continue
 
         # [6] Per-cap-segment concurrency
-        max_c = int(max_concurrent_by_cap.get(cap, 100))
-        if len(open_by_cap[cap]) >= max_c:
-            reasons.append(f"cap_concurrency:{cap}_{len(open_by_cap[cap])}_of_{max_c}")
-            admitted.append(False)
-            continue
+        if en_conc:
+            max_c = int(max_concurrent_by_cap.get(cap, 100))
+            if len(open_by_cap[cap]) >= max_c:
+                reasons.append(f"cap_concurrency:{cap}_{len(open_by_cap[cap])}_of_{max_c}")
+                admitted.append(False)
+                continue
 
         # ADMIT
-        bucket_counts[bucket] += 1
-        if cap in rate_limit_caps and pd.notna(ts):
+        if en_bucket:
+            bucket_counts[bucket] += 1
+        if en_rate and cap in rate_limit_caps and pd.notna(ts):
             symbol_entries[sym_raw].append(ts)
-        if pd.notna(exit_ts):
+        if en_conc and pd.notna(exit_ts):
             open_by_cap[cap].append(exit_ts)
         admitted.append(True)
         reasons.append("admitted")

@@ -217,24 +217,27 @@ def run_gauntlet_all(
         import traceback
         traceback.print_exc()
 
-    # Enrich filtered_trades with trade_report.csv columns needed by Stage 5d
-    # (features for scoring) and Stage 5e (plan_notional, volume5, close5,
-    # last_exit_ts).  Merge is additive — existing columns unchanged.
+    # Enrich filtered_trades with ALL trade_report.csv columns.  Stage 5d's
+    # XGBoostScorer reads ~20 feature columns (pdz_*, bb_width_proxy, vol_z,
+    # etc.) that live in trade_report.csv but NOT in analytics.jsonl — without
+    # them the scorer produces uniform near-zero predictions and downstream
+    # admit decisions become garbage.  Merge is additive — existing columns
+    # preserved via suffixes=("", "_tr").
     if filtered_trades is not None:
         try:
             from tools.conviction.build_training_dataset import load_trade_report_features
             tr_features = load_trade_report_features(backtest_dir)
-            # Pull only what 5e needs (5d already pulls features via build_training_dataset earlier)
-            extra_cols = [c for c in ["plan_notional", "volume5", "close5", "last_exit_ts"]
-                          if c in tr_features.columns and c not in filtered_trades.columns]
+            # Only bring in columns not already present (avoid dup suffixes).
+            extra_cols = [c for c in tr_features.columns
+                          if c != "trade_id" and c not in filtered_trades.columns]
             if extra_cols:
                 filtered_trades = filtered_trades.merge(
                     tr_features[["trade_id"] + extra_cols],
                     on="trade_id", how="left"
                 )
-                print(f"[gauntlet]   Enriched filtered_trades with {extra_cols}")
+                print(f"[gauntlet]   Enriched filtered_trades with {len(extra_cols)} trade_report columns")
         except Exception as e:
-            print(f"[gauntlet]   WARN: trade_report enrichment failed for Stage 5e: {e}")
+            print(f"[gauntlet]   WARN: trade_report enrichment failed: {e}")
 
     # Stage 5d: conviction gate (ML scorer + top-50 + threshold)
     print("[gauntlet] Stage 5d: Conviction gate simulation ...")

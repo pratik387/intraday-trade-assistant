@@ -1,0 +1,89 @@
+{
+  "stage": "5e",
+  "cfg": {},
+  "before": {
+    "scenario": "Before BudgetedSelector",
+    "n_trades": 41573,
+    "n_sessions": 181,
+    "trades_per_day": 229.7,
+    "total_pnl": 6424324.0,
+    "pf": 1.298,
+    "wr_pct": 54.5,
+    "session_sharpe": 0.432,
+    "losing_days_pct": 29.8
+  },
+  "after": {
+    "scenario": "After BudgetedSelector",
+    "n_trades": 7424,
+    "n_sessions": 181,
+    "trades_per_day": 41.0,
+    "total_pnl": 1223111.0,
+    "pf": 1.325,
+    "wr_pct": 53.7,
+    "session_sharpe": 0.454,
+    "losing_days_pct": 33.1
+  },
+  "delta": {
+    "pf_delta": 0.027,
+    "sharpe_delta": 0.022,
+    "trades_per_day_delta": -188.7
+  },
+  "rejections": [
+    {
+      "reason": "bucket_quota:morning_25_of_25",
+      "count": 24886
+    },
+    {
+      "reason": "bucket_quota:lunch_7_of_7",
+      "count": 4436
+    },
+    {
+      "reason": "bucket_quota:opening_0_of_0",
+      "count": 3605
+    },
+    {
+      "reason": "embargo:opening_micro_unknown",
+      "count": 743
+    },
+    {
+      "reason": "bucket_quota:afternoon_15_of_15",
+      "count": 479
+    }
+  ],
+  "admitted_by_bucket": [
+    {
+      "bucket": "morning",
+      "admitted_count": 4525
+    },
+    {
+      "bucket": "afternoon",
+      "admitted_count": 1635
+    },
+    {
+      "bucket": "lunch",
+      "admitted_count": 1264
+    }
+  ],
+  "admitted_by_cap": [
+    {
+      "cap_segment": "small_cap",
+      "admitted_count": 2907
+    },
+    {
+      "cap_segment": "mid_cap",
+      "admitted_count": 1645
+    },
+    {
+      "cap_segment": "large_cap",
+      "admitted_count": 1425
+    },
+    {
+      "cap_segment": "unknown",
+      "admitted_count": 1250
+    },
+    {
+      "cap_segment": "micro_cap",
+      "admitted_count": 197
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "stage": "5e",
+  "cfg": {
+    "enable_embargo": true,
+    "enable_bucket_quota": true,
+    "enable_adv_cap": false,
+    "enable_bar_cap": false,
+    "enable_rate_limit": false,
+    "enable_concurrency_cap": false
+  },
+  "before": {
+    "scenario": "Before BudgetedSelector",
+    "n_trades": 99891,
+    "n_sessions": 484,
+    "trades_per_day": 206.4,
+    "total_pnl": 19381751.0,
+    "pf": 1.397,
+    "wr_pct": 56.5,
+    "session_sharpe": 0.699,
+    "losing_days_pct": 19.0
+  },
+  "after": {
+    "scenario": "After BudgetedSelector",
+    "n_trades": 21145,
+    "n_sessions": 484,
+    "trades_per_day": 43.7,
+    "total_pnl": 4123729.0,
+    "pf": 1.407,
+    "wr_pct": 55.6,
+    "session_sharpe": 0.63,
+    "losing_days_pct": 25.4
+  },
+  "delta": {
+    "pf_delta": 0.01,
+    "sharpe_delta": -0.069,
+    "trades_per_day_delta": -162.7
+  },
+  "rejections": [
+    {
+      "reason": "bucket_quota:morning_25_of_25",
+      "count": 52394
+    },
+    {
+      "reason": "bucket_quota:lunch_7_of_7",
+      "count": 11856
+    },
+    {
+      "reason": "bucket_quota:opening_0_of_0",
+      "count": 11138
+    },
+    {
+      "reason": "bucket_quota:afternoon_15_of_15",
+      "count": 1797
+    },
+    {
+      "reason": "embargo:opening_micro_unknown",
+      "count": 1561
+    }
+  ],
+  "admitted_by_bucket": [
+    {
+      "bucket": "morning",
+      "admitted_count": 12094
+    },
+    {
+      "bucket": "afternoon",
+      "admitted_count": 5665
+    },
+    {
+      "bucket": "lunch",
+      "admitted_count": 3386
+    }
+  ],
+  "admitted_by_cap": [
+    {
+      "cap_segment": "small_cap",
+      "admitted_count": 8869
+    },
+    {
+      "cap_segment": "mid_cap",
+      "admitted_count": 5369
+    },
+    {
+      "cap_segment": "large_cap",
+      "admitted_count": 3471
+    },
+    {
+      "cap_segment": "unknown",
+      "admitted_count": 3001
+    },
+    {
+      "cap_segment": "micro_cap",
+      "admitted_count": 435
+    }
+  ]
+}
