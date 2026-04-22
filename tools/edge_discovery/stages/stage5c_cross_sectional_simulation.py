@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from datetime import datetime, time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
 
 from services.cross_sectional.crowdedness_counter import CrowdednessCounter
@@ -42,15 +43,47 @@ def simulate_filter(trades: pd.DataFrame, ohlcv: pd.DataFrame, cfg: Dict[str, An
     trades["decision_ts_parsed"] = pd.to_datetime(trades["decision_ts"], errors="coerce")
     trades = trades.sort_values("decision_ts_parsed").reset_index(drop=True)
 
-    # Pre-index ohlcv by (date_only, mod) -> {symbol -> volume} for efficiency.
-    # Keys are sorted chronologically so historical bars are replayed to warm
-    # UniverseRVOLState before we evaluate the current trade's bar.
-    ohlcv_by_bar: Dict[tuple, Dict[str, int]] = {}
+    # Index ohlcv by (date_only, mod) -> (start_idx, end_idx).  All naive
+    # approaches OOM at ~70M ohlcv rows on a 16GB box:
+    #   - dict-of-dicts: ~14GB Python overhead
+    #   - pandas.groupby([...]).indices: 1GB object array of tuple keys
+    #   - df.sort_values([k1, k2]): 1GB lexsort intermediate
+    # Strategy: factorize symbol+date once (object -> int64), drop the original
+    # object columns, then sort/group entirely on int64 numpy arrays.
+    bar_to_slice: Dict[Tuple, Tuple[int, int]] = {}
+    ohlcv_symbol = None
+    ohlcv_volume = None
     if len(ohlcv):
-        for (date_only, mod), grp in ohlcv.groupby(["date_only", "mod"]):
-            ohlcv_by_bar[(date_only, mod)] = dict(zip(grp["symbol"], grp["volume"].astype(int)))
+        # Extract numpy arrays from the (potentially huge) DataFrame, then drop
+        # the DataFrame to free ~9GB.  date_only_codes/symbol_codes are int64.
+        date_only_codes, date_only_uniques = pd.factorize(ohlcv["date_only"].to_numpy(), sort=True)
+        symbol_codes, symbol_uniques = pd.factorize(ohlcv["symbol"].to_numpy(), sort=False)
+        mod_arr = ohlcv["mod"].to_numpy(dtype="int64")
+        vol_arr = ohlcv["volume"].to_numpy(dtype="int64")
+        del ohlcv  # free DataFrame memory before sorting
+        # Composite int64 key: date_code * 1500 + mod (mod < 1440 always).
+        composite = date_only_codes.astype("int64") * 1500 + mod_arr
+        # np.argsort on a single int64 array is O(N log N) with O(N) extra memory.
+        order = np.argsort(composite, kind="stable")
+        composite = composite[order]
+        mod_arr = mod_arr[order]
+        symbol_codes_sorted = symbol_codes[order]
+        vol_arr = vol_arr[order]
+        del order
+        # Boundaries: positions where composite key changes
+        change_points = np.concatenate(([0], np.flatnonzero(np.diff(composite)) + 1, [len(composite)]))
+        for i in range(len(change_points) - 1):
+            start = int(change_points[i])
+            stop = int(change_points[i + 1])
+            date_code = composite[start] // 1500
+            key = (date_only_uniques[date_code], int(mod_arr[start]))
+            bar_to_slice[key] = (start, stop)
+        # Decode symbol codes back to strings only at lookup time (downstream
+        # consumers expect string symbols).
+        ohlcv_symbol = symbol_uniques[symbol_codes_sorted]
+        ohlcv_volume = vol_arr
     # Sort historical bars chronologically (by date, then mod-of-day)
-    sorted_bar_keys = sorted(ohlcv_by_bar.keys())
+    sorted_bar_keys = sorted(bar_to_slice.keys())
 
     # Maintain cap_segment lookup from trades themselves (ohlcv doesn't have it)
     symbol_caps = dict(zip(trades["symbol_raw"], trades["cap_segment"]))
@@ -77,9 +110,12 @@ def simulate_filter(trades: pd.DataFrame, ohlcv: pd.DataFrame, cfg: Dict[str, An
     for bar_key in all_bar_keys:
         date_only, mod = bar_key
         bar_ts = datetime.combine(date_only, time(hour=mod // 60, minute=mod % 60))
-        # On-bar-close update
-        bar_vols = ohlcv_by_bar.get(bar_key)
-        if bar_vols:
+        # On-bar-close update — materialize the per-bar {sym: vol} dict on
+        # demand from the pre-sorted ohlcv arrays + slice boundaries.
+        slice_bounds = bar_to_slice.get(bar_key)
+        if slice_bounds is not None and ohlcv_symbol is not None:
+            start, stop = slice_bounds
+            bar_vols = dict(zip(ohlcv_symbol[start:stop], ohlcv_volume[start:stop]))
             rvol_state.on_bar_close(
                 ts=bar_ts,
                 bar_volumes=bar_vols,
