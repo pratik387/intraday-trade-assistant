@@ -106,7 +106,7 @@ def _safe_float(v: Any) -> float:
     """Convert to float, handling None / NaN / bool / string numerics."""
     if v is None:
         return 0.0
-    if isinstance(v, bool):
+    if isinstance(v, (bool, np.bool_)):
         return 1.0 if v else 0.0
     try:
         f = float(v)
