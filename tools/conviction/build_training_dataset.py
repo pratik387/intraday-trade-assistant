@@ -32,6 +32,82 @@ OUT_DIR = ROOT / "models" / "conviction"
 OUT_PARQUET = OUT_DIR / "2026-04-22-training-dataset.parquet"
 FEATURE_SPEC_PATH = OUT_DIR / "2026-04-22-feature-spec.json"
 
+# Feature columns to pull from trade_report.csv — any ALLOWED_FEATURES that live
+# there and not in analytics.jsonl. vwap_distance_pct is absent from trade_report;
+# it stays NaN→0 in extract_features (handled silently by the filter below).
+_TRADE_REPORT_FEATURE_COLS = [
+    "pdz_confluence_count",
+    "pdz_range_position",
+    "pdz_range_size_pct",
+    "pdz_range_size_atr",
+    "pdz_atr14",
+    "pdz_has_mss_confluence",
+    "pdz_has_fvg_confluence",
+    "pdz_has_ob_confluence",
+    "pdz_htf_bullish",
+    "pdz_htf_bearish",
+    "ob_confluence_count",
+    "ob_has_liquidity_sweep",
+    "ob_has_mss_confirmation",
+    "resistance_touches",
+    "resistance_strength",
+    "bb_width_proxy",
+    "volume5",
+    "size_mult",
+    "pattern_age_mins",
+    "vol_z",
+    "vol_ratio",
+    "body_size_pct",
+    "wick_ratio",
+    "momentum_3bar_pct",
+    "momentum_1bar_pct",
+    "vwap_distance_pct",  # absent from trade_report.csv — filtered gracefully below
+]
+
+
+def load_trade_report_features(run_dir: Path) -> pd.DataFrame:
+    """Load rich detector feature columns from all session trade_report.csv files.
+
+    Iterates every session directory under run_dir (dirs whose names start with a
+    digit that contain a trade_report.csv), reads only trade_id + the feature
+    columns defined in _TRADE_REPORT_FEATURE_COLS (gracefully skipping any column
+    absent in a particular session's CSV), and returns a single concatenated
+    DataFrame keyed by trade_id.
+    """
+    wanted = set(["trade_id"] + _TRADE_REPORT_FEATURE_COLS)
+    frames = []
+    for session_dir in sorted(run_dir.iterdir()):
+        if not session_dir.is_dir():
+            continue
+        if not session_dir.name[0].isdigit():
+            continue
+        csv_path = session_dir / "trade_report.csv"
+        if not csv_path.exists():
+            continue
+        try:
+            df = pd.read_csv(
+                csv_path,
+                usecols=lambda c: c in wanted,
+                low_memory=False,
+            )
+            if "trade_id" not in df.columns:
+                continue
+            frames.append(df)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  WARNING: could not read {csv_path}: {exc}")
+
+    if not frames:
+        print("WARNING: no trade_report.csv files found — feature enrichment skipped")
+        return pd.DataFrame(columns=["trade_id"])
+
+    combined = pd.concat(frames, ignore_index=True)
+    # Keep first occurrence per trade_id (should be unique but be defensive)
+    combined = combined.drop_duplicates(subset=["trade_id"], keep="first")
+    print(f"Loaded trade_report features: {len(combined):,} rows, "
+          f"{len(combined.columns) - 1} feature columns from "
+          f"{len(frames)} session files")
+    return combined
+
 
 def load_survivor_rules():
     data = json.loads(SURVIVORS.read_text(encoding="utf-8"))
@@ -60,6 +136,18 @@ def main():
     data = load_run(BACKTEST_DIR)
     trades = data.trades
     print(f"Loaded {len(trades):,} trades")
+
+    # Enrich with rich detector features from trade_report.csv files.
+    # analytics.jsonl (via data_loader) contains outcome/timing fields but NOT
+    # the ICT/structural detector features — those live in trade_report.csv.
+    print("Loading rich detector features from trade_report.csv files...")
+    features_df = load_trade_report_features(BACKTEST_DIR)
+    pre_merge = len(trades)
+    trades = trades.merge(features_df, on="trade_id", how="left", suffixes=("", "_tr"))
+    assert len(trades) == pre_merge, (
+        f"Merge changed row count: {pre_merge} → {len(trades)} (duplicate trade_ids?)"
+    )
+    print(f"After feature enrichment: {len(trades):,} trades")
 
     # Filter to Discovery range (2023-01-01 to 2024-12-31) and is_final_exit (already done by loader)
     from datetime import date
