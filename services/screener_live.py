@@ -78,6 +78,7 @@ from pipelines import process_setup_candidates
 # orders & execution
 from services.orders.order_queue import OrderQueue
 from services.scan.energy_scanner import EnergyScanner
+from services.gate_chain.live_gate_chain import LiveGateChain
 from diagnostics.diag_event_log import diag_event_log, mint_trade_id
 from utils.perf_timer import perf, mark
 from services.state.orb_cache_persistence import ORBCachePersistence
@@ -676,6 +677,15 @@ class ScreenerLive:
         self._scan_thread: Optional[threading.Thread] = None
         self._scan_running = False
 
+        # Live gate chain (composed RuleFilter + CrossSectional + Conviction).
+        # When disabled (live_gate_chain.enabled=false in config), evaluate() is a
+        # passthrough — no model load, no state. Flip to true in config for LW-8.
+        from pathlib import Path as _Path
+        self.live_gate_chain = LiveGateChain(self.raw_cfg, project_root=_Path(__file__).parent.parent)
+        # State for per-bar volume accumulation (fed to RVOL on bar transition)
+        self._pending_bar_ts = None
+        self._pending_bar_vols: Dict[str, int] = {}
+
         logger.debug(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
             len(self.core_symbols),
@@ -1066,6 +1076,29 @@ class ScreenerLive:
     # ----- 5m scan dispatch (backtest only) --------------------------------
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
         """Backtest-only scan dispatch. Paper uses timer thread."""
+        # Accumulate per-symbol bar volumes for RVOL state. When the timestamp
+        # advances to a new bar, flush the previous bar's accumulated volumes
+        # to live_gate_chain.on_bar_close (no-op if chain is disabled).
+        try:
+            bar_ts = bar_5m.name if hasattr(bar_5m, "name") else None
+            vol = float(bar_5m.get("volume", 0)) if hasattr(bar_5m, "get") else 0
+            if bar_ts is not None:
+                if self._pending_bar_ts is not None and bar_ts != self._pending_bar_ts:
+                    # Bar transition — flush previous bar's accumulated volumes
+                    cap_map = self._load_cap_mapping()
+                    sym_caps = {s: cap_map.get(s, {}).get("cap_segment", "unknown")
+                                for s in self._pending_bar_vols.keys()}
+                    self.live_gate_chain.on_bar_close(
+                        bar_ts=self._pending_bar_ts,
+                        bar_volumes=self._pending_bar_vols,
+                        symbol_caps=sym_caps,
+                    )
+                    self._pending_bar_vols = {}
+                self._pending_bar_ts = bar_ts
+                self._pending_bar_vols[symbol] = int(vol)
+        except Exception as e:
+            logger.warning("LIVE_GATE_CHAIN | bar-volume accumulator error: %s", e)
+
         if env.DRY_RUN:
             self._run_5m_scan(symbol, bar_5m)
 
@@ -1593,6 +1626,65 @@ class ScreenerLive:
         _t_orch_end = time.perf_counter()
         logger.info("ORCHESTRATOR_COMPLETE | %d eligible plans from %d decisions | TIME: %.2fs",
                    len(eligible_plans), len(decisions), _t_orch_end - _t_orch_start)
+
+        # ---------- Live Gate Chain (RuleFilter → CrossSectional → Conviction) ----------
+        # When disabled (live_gate_chain.enabled=false), evaluate() is passthrough.
+        # Adapter: plan dicts have nested fields; flatten to the flat-key dict that
+        # LiveGateChain.evaluate() expects, then map admitted dicts back to tuples.
+        if self.live_gate_chain.enabled and eligible_plans:
+            # Derive hour_bucket from the bar timestamp using edge_discovery convention
+            _mod = now.hour * 60 + now.minute  # minute-of-day
+            if _mod < 600:
+                _hour_bucket = "opening"  # pre-market and 9:15-9:59
+            elif _mod < 720:
+                _hour_bucket = "morning"
+            elif _mod < 780:
+                _hour_bucket = "lunch"
+            elif _mod < 870:
+                _hour_bucket = "afternoon"
+            else:
+                _hour_bucket = "late"
+
+            _day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+            # Build (candidate_dict, original_tuple) pairs
+            _cand_tuples = []
+            for _ep in eligible_plans:
+                _sym, _plan, _score, _dec = _ep
+                _extras = _plan.get("extras") or {}
+                _cand = {
+                    # Required gate keys
+                    "symbol": _sym,
+                    "setup_type": _plan.get("strategy", ""),
+                    "regime": _plan.get("regime", ""),
+                    "cap_segment": (_plan.get("sizing") or {}).get("cap_segment", "unknown"),
+                    "hour_bucket": _hour_bucket,
+                    "decision_ts": now,
+                    "session_date_dt": now.date(),
+                    # Numeric / boolean features from detector extras (flattened)
+                    "minute_of_day": _mod,
+                    "day_of_week": _day_names[now.weekday()] if now.weekday() < 7 else "Monday",
+                    "size_mult": (_plan.get("sizing") or {}).get("size_mult", 1.0),
+                    # Passthrough all extras keys (pdz_*, ob_*, etc.)
+                    **{k: v for k, v in _extras.items()
+                       if isinstance(v, (int, float, bool, str)) or v is None},
+                }
+                _cand_tuples.append((_cand, _ep))
+
+            _cand_dicts = [c for c, _ in _cand_tuples]
+            _admitted_dicts = self.live_gate_chain.evaluate(_cand_dicts)
+
+            # Map admitted dicts back to original tuples by identity (object id)
+            _admitted_ids = {id(c) for c in _admitted_dicts}
+            _before = len(eligible_plans)
+            eligible_plans = [_ep for _cand, _ep in _cand_tuples if id(_cand) in _admitted_ids]
+            _dropped = _before - len(eligible_plans)
+            if _dropped > 0 or _before > 0:
+                logger.info(
+                    "LIVE_GATE_CHAIN | %d→%d plans | dropped=%d | stats=%s",
+                    _before, len(eligible_plans), _dropped,
+                    self.live_gate_chain.stats(),
+                )
 
         # ---------- Process eligible plans → Execution ----------
         for i, (sym, plan, score, decision) in enumerate(eligible_plans):

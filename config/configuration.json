@@ -2559,5 +2559,13 @@
     "calibration_path": "models/conviction/2026-04-22-calibration.json",
     "daily_cap": 50,
     "min_predicted_r": 0.3
+  },
+  "_comment_live_gate_chain": "=== LIVE GATE CHAIN (sub-project #6 wiring of #1+#2+#3) ===",
+  "live_gate_chain": {
+    "enabled": false,
+    "_comment": "Master switch for the composed gate stack. When false, ScreenerLive instantiates the chain in passthrough mode."
+  },
+  "rule_filter_gate": {
+    "survivors_path": "analysis/edge_discovery_runs/2026-04-22-validation-gate/stage6_validation_survivors.json"
   }
 }
