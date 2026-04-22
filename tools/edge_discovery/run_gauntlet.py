@@ -30,6 +30,8 @@ from tools.edge_discovery.stages.stage3_conditional import run_stage3
 from tools.edge_discovery.stages.stage5_narrative import generate_narrative_templates
 from tools.edge_discovery.stages.stage5b_ruleset_simulation import run_stage5b
 from tools.edge_discovery.stages.stage5c_cross_sectional_simulation import run_stage5c
+from tools.edge_discovery.stages.stage5d_conviction_simulation import run_stage5d
+from services.conviction.scorer import XGBoostScorer
 
 ROOT = Path(__file__).parent.parent.parent
 
@@ -133,12 +135,15 @@ def run_gauntlet_all(
     else:
         print("[gauntlet]   Skipped — no approved rules to simulate")
 
+    # Load full config once — shared by Stage 5c and Stage 5d
+    cfg_path = ROOT / "config" / "configuration.json"
+    full_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+
     # Stage 5c: cross-sectional filter simulation (F1+F2)
     stage5c_run = False
+    filtered_trades = None  # hoisted — Stage 5d reuses this
     print("[gauntlet] Stage 5c: Cross-sectional filter simulation ...")
     try:
-        cfg_path = ROOT / "config" / "configuration.json"
-        full_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         cs_cfg = full_cfg.get("cross_sectional_gate")
         if cs_cfg and cs_cfg.get("enabled") and approved_rules:
             # Normalize column names to what Stage 5c expects:
@@ -205,6 +210,40 @@ def run_gauntlet_all(
         import traceback
         traceback.print_exc()
 
+    # Stage 5d: conviction gate (ML scorer + top-50 + threshold)
+    print("[gauntlet] Stage 5d: Conviction gate simulation ...")
+    stage5d_run = False
+    try:
+        cv_cfg = full_cfg.get("conviction_gate", {})
+        if cv_cfg and cv_cfg.get("enabled") and filtered_trades is not None:
+            model_path = ROOT / cv_cfg["model_artifact"]
+            feature_spec_path = ROOT / cv_cfg["feature_spec_path"]
+            if not model_path.exists() or not feature_spec_path.exists():
+                print(f"[gauntlet]   Stage 5d skipped (model artifact not found: {model_path})")
+            else:
+                scorer = XGBoostScorer(model_path, feature_spec_path)
+                gate_cfg = {
+                    "enabled": True,
+                    "daily_cap": int(cv_cfg["daily_cap"]),
+                    "min_predicted_r": float(cv_cfg["min_predicted_r"]),
+                }
+                run_stage5d(
+                    trades=filtered_trades,
+                    scorer=scorer,
+                    cfg=gate_cfg,
+                    report_path=output_dir / "08-conviction-simulation.md",
+                    summary_json=output_dir / "stage5d_simulation.json",
+                )
+                stage5d_run = True
+                print("[gauntlet]   Stage 5d complete")
+        elif filtered_trades is None:
+            print("[gauntlet]   Stage 5d skipped (no Stage 5c output)")
+        else:
+            print("[gauntlet]   Stage 5d skipped (conviction_gate disabled)")
+    except Exception as e:
+        print(f"[gauntlet]   Stage 5d ERROR: {e}")
+        import traceback; traceback.print_exc()
+
     return {
         "stage1_count": len(s1_survivors),
         "stage2_count": len(s2_survivors),
@@ -212,6 +251,7 @@ def run_gauntlet_all(
         "narrative_templates_generated": len(narrative_paths),
         "stage5b_rules_simulated": len(approved_rules),
         "stage5c_run": stage5c_run,
+        "stage5d_run": stage5d_run,
     }
 
 
