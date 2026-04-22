@@ -78,3 +78,5 @@ docs/*
 .claude/settings.local.json
 state/closed_trades.json
 models/conviction/*.parquet
+models/conviction/*-xgboost.json
+models/conviction/*-training-metrics.json
