@@ -1134,7 +1134,14 @@ class ScreenerLive:
             self._last_logged_timestamp = current_time_str
 
         # ---------- Seed daily_df cache in workers (once per session) ----------
+        # FAIL-FAST: flag is set BEFORE broadcast so a BrokenProcessPool on the
+        # broadcast doesn't cause every subsequent bar to retry forever on a
+        # dead pool.  If the broadcast fails, the flag still flips, workers
+        # proceed without daily cache (degraded but responsive), and the run
+        # exits gracefully at EOD instead of generating hundreds of identical
+        # error tracebacks.
         if not self._daily_cache_seeded:
+            self._daily_cache_seeded = True  # set BEFORE work so retries are bounded
             with perf("scan", "daily_seed_total", n_symbols=len(self.core_symbols)):
                 _t_seed_start = time.perf_counter()
                 daily_dict = {}
@@ -1144,19 +1151,28 @@ class ScreenerLive:
                         if dd is not None and not dd.empty:
                             daily_dict[sym] = dd
                 _t_seed_fetch = time.perf_counter()
-                with perf("scan", "daily_seed_broadcast", n_workers=self._structure_workers,
-                          n_symbols=len(daily_dict)):
-                    seed_futures = []
-                    for _ in range(self._structure_workers):
-                        seed_futures.append(self._executor.submit(_seed_worker_daily_cache, daily_dict))
-                    for f in seed_futures:
-                        f.result(timeout=60)
-                self._daily_cache_seeded = True
-                _t_seed_done = time.perf_counter()
-                logger.info("DAILY_CACHE_SEEDED | %d symbols to %d workers | fetch=%.2fs send=%.2fs total=%.2fs",
-                           len(daily_dict), self._structure_workers,
-                           _t_seed_fetch - _t_seed_start, _t_seed_done - _t_seed_fetch,
-                           _t_seed_done - _t_seed_start)
+                try:
+                    with perf("scan", "daily_seed_broadcast", n_workers=self._structure_workers,
+                              n_symbols=len(daily_dict)):
+                        seed_futures = []
+                        for _ in range(self._structure_workers):
+                            seed_futures.append(self._executor.submit(_seed_worker_daily_cache, daily_dict))
+                        for f in seed_futures:
+                            f.result(timeout=120)
+                    _t_seed_done = time.perf_counter()
+                    logger.info("DAILY_CACHE_SEEDED | %d symbols to %d workers | fetch=%.2fs send=%.2fs total=%.2fs",
+                               len(daily_dict), self._structure_workers,
+                               _t_seed_fetch - _t_seed_start, _t_seed_done - _t_seed_fetch,
+                               _t_seed_done - _t_seed_start)
+                except Exception as seed_exc:
+                    logger.error(
+                        "DAILY_CACHE_SEED_FAILED | %s | continuing without worker daily cache "
+                        "(workers will operate with reduced context). This is typically "
+                        "BrokenProcessPool from pickle-IPC of a large daily_dict; fix by "
+                        "reducing structure_detection_workers_local to 1 in config or "
+                        "switching to file-based sharing.",
+                        seed_exc,
+                    )
 
         # ---------- Stage-0: EnergyScanner (single unified path) ----------
         shortlist: List[str] = []
