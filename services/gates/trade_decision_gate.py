@@ -20,7 +20,6 @@ class TradeDecisionGate:
 Required component protocols (duck-typed):
 - structure_detector.detect_setups(symbol, df5m_tail, levels) -> list[SetupCandidate]
 - regime_gate.compute_regime(index_df5m) -> tuple[str, float]  # (regime, confidence 0..1)
-- regime_gate.allow_setup(setup_type: str, regime: str, strength: float, adx_5m: float, vol_mult_5m: float) -> bool
 - regime_gate.size_multiplier(regime: str) -> float  # optional; if missing, treated as 1.0
 - event_policy_gate.decide_policy(now, symbol) -> (Policy, dict)  # Policy is defined in event_policy_gate
 - news_spike_gate.has_symbol_spike(df5m_tail) -> (bool, NewsSignal)  # NewsSignal in news_spike_gate
@@ -37,7 +36,6 @@ import pandas as pd
 
 from .event_policy_gate import EventPolicyGate
 from .news_spike_gate import NewsSpikeGate
-from .market_sentiment_gate import MarketSentimentGate
 from services.features import compute_hcet_features
 from services.indicators.indicators import calculate_rsi
 from collections import defaultdict
@@ -229,14 +227,12 @@ class TradeDecisionGate:
         regime_gate: RegimeGate,
         event_policy_gate: EventPolicyGate,
         news_spike_gate: NewsSpikeGate,
-        market_sentiment_gate=None,
         quality_filters: Optional[dict] = None,
     ) -> None:
         self.structure = structure_detector
         self.regime_gate = regime_gate
         self.event_gate = event_policy_gate
         self.news_gate = news_spike_gate
-        self.sentiment_gate = market_sentiment_gate
         # NOTE: regime_allowed_setups removed (Dec 2024) - regime_gate.py is single source of truth
 
         # Setup sequencing tracker - Enhancement 3
@@ -913,26 +909,6 @@ class TradeDecisionGate:
             min_hold += int(adj.require_hold_bars)  # Keep hold bars for caution
             # REMOVED: size_mult *= float(adj.size_mult) - no penalty, use hold bars instead
             reasons.append("news_spike:" + ";".join(sig.reasons))
-
-        # ---------------- SENTIMENT --------------------
-        if self.sentiment_gate is not None:
-            try:
-                banknifty_df = None  # can be wired from caller if available
-                sentiment = self.sentiment_gate.analyze_sentiment(
-                    nifty_df5=index_df5m,
-                    banknifty_df5=banknifty_df,
-                    breadth_data=None,
-                    vix_level=None
-                )
-                if not self.sentiment_gate.should_trade_setup(best.setup_type, sentiment):
-                    reasons.append(f"sentiment_block:{sentiment.sentiment_level.value}")
-                    return GateDecision(accept=False, reasons=reasons, setup_type=best.setup_type, regime=regime)
-                sentiment_bias = self.sentiment_gate.get_setup_bias(best.setup_type, sentiment)
-                # REMOVED: size_mult *= sentiment_bias - no penalty, sentiment gate already blocks if needed
-                reasons.append(f"sentiment:{sentiment.sentiment_level.value}_{sentiment.market_trend.value}")
-                reasons.append(f"sentiment_bias_info:{sentiment_bias:.2f}")
-            except Exception as e:
-                reasons.append(f"sentiment_error:{getattr(e, '__class__', type('E', (), {})).__name__}")
 
         # ---------------- ENTRY VALIDATION ------------
         entry_validation = self.quality_filters.get('entry_validation', {})

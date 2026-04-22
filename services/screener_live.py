@@ -64,7 +64,6 @@ from market_data.shared_ltp import SharedLTPCache
 from services.gates.regime_gate import MarketRegimeGate
 from services.gates.event_policy_gate import EventPolicyGate
 from services.gates.news_spike_gate import NewsSpikeGate
-from services.gates.market_sentiment_gate import MarketSentimentGate
 from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision as Decision
 
 # planning & ranking
@@ -153,7 +152,6 @@ def _init_worker(config_dict):
         from services.gates.regime_gate import MarketRegimeGate
         from services.gates.event_policy_gate import EventPolicyGate
         from services.gates.news_spike_gate import NewsSpikeGate
-        from services.gates.market_sentiment_gate import MarketSentimentGate
         from structures.main_detector import MainDetector
         from config.logging_config import get_agent_logger
 
@@ -167,7 +165,6 @@ def _init_worker(config_dict):
             ret_z_thresh=news_cfg.get("ret_z_thresh"),
             body_atr_ratio_thresh=news_cfg.get("body_atr_ratio_thresh"),
         )
-        sentiment_gate = MarketSentimentGate(cfg=config_dict, log=get_agent_logger())
         structure_detector = MainDetector(config_dict)
 
         _worker_decision_gate = TradeDecisionGate(
@@ -175,7 +172,6 @@ def _init_worker(config_dict):
             regime_gate=regime_gate,
             event_policy_gate=event_gate,
             news_spike_gate=news_gate,
-            market_sentiment_gate=sentiment_gate,
             quality_filters=config_dict.get('quality_filters', {}),
         )
     except Exception as e:
@@ -559,13 +555,11 @@ class ScreenerLive:
             ret_z_thresh=news_cfg.get("ret_z_thresh"),
             body_atr_ratio_thresh=news_cfg.get("body_atr_ratio_thresh"),
         )
-        self.sentiment_gate = MarketSentimentGate(cfg=raw, log=logger)
         self.decision_gate = TradeDecisionGate(
             structure_detector=self.detector,
             regime_gate=self.regime_gate,
             event_policy_gate=self.event_gate,
             news_spike_gate=self.news_gate,
-            market_sentiment_gate=self.sentiment_gate,
             quality_filters=raw.get("quality_filters", {}),
         )
 
