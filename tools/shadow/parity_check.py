@@ -13,6 +13,7 @@ import argparse
 import csv
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Set, Tuple
 
@@ -67,6 +68,41 @@ def _run_parity(live_path: Path, sim_path: Path) -> int:
     return 1
 
 
+def _hour_of(ts: str) -> str:
+    # ts is ISO; "2025-01-02T09:20:00" -> "09"
+    try:
+        return ts.split("T", 1)[1][:2]
+    except (IndexError, AttributeError):
+        return "??"
+
+
+def _run_ab(baseline_path: Path, variant_path: Path) -> int:
+    base = _load_sim_admits(baseline_path)
+    var = _load_sim_admits(variant_path)
+
+    print(f"admit count: {len(base)} -> {len(var)} (delta {len(var) - len(base):+d})")
+
+    base_setups = Counter(s for _, _, s in base)
+    var_setups = Counter(s for _, _, s in var)
+    all_setups = sorted(set(base_setups) | set(var_setups))
+    print("\nsetup mix:")
+    print(f"  {'setup':<30s}  baseline  variant  delta")
+    for s in all_setups:
+        b, v = base_setups.get(s, 0), var_setups.get(s, 0)
+        print(f"  {s:<30s}  {b:>8d}  {v:>7d}  {v-b:+d}")
+
+    base_hours = Counter(_hour_of(ts) for ts, _, _ in base)
+    var_hours = Counter(_hour_of(ts) for ts, _, _ in var)
+    all_hours = sorted(set(base_hours) | set(var_hours))
+    print("\nhourly distribution:")
+    print(f"  {'hour':<6s}  baseline  variant  delta")
+    for h in all_hours:
+        b, v = base_hours.get(h, 0), var_hours.get(h, 0)
+        print(f"  {h:<6s}  {b:>8d}  {v:>7d}  {v-b:+d}")
+
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--live", help="Path to events_decisions.jsonl (parity mode)")
@@ -78,7 +114,7 @@ def main():
     if args.live and args.sim:
         sys.exit(_run_parity(Path(args.live), Path(args.sim)))
     if args.baseline and args.variant:
-        raise NotImplementedError("Task 8 implements A/B mode")
+        sys.exit(_run_ab(Path(args.baseline), Path(args.variant)))
     p.error("specify either (--live + --sim) or (--baseline + --variant)")
 
 

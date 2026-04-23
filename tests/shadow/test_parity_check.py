@@ -70,3 +70,28 @@ def test_parity_mode_divergence_exits_one():
         assert "DIVERGENCE" in result.stdout
         assert "NSE:B" in result.stdout  # in live, missing from sim
         assert "NSE:C" in result.stdout  # in sim, missing from live
+
+
+def test_ab_mode_reports_deltas():
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        baseline = td / "baseline.csv"
+        variant = td / "variant.csv"
+        _write_sim_csv(baseline, [
+            {"ts": "2025-01-02T09:20:00", "symbol": "NSE:A", "setup_type": "premium_zone_short", "stage": "admitted"},
+            {"ts": "2025-01-02T09:25:00", "symbol": "NSE:B", "setup_type": "premium_zone_short", "stage": "admitted"},
+        ])
+        _write_sim_csv(variant, [
+            {"ts": "2025-01-02T09:20:00", "symbol": "NSE:A", "setup_type": "premium_zone_short", "stage": "admitted"},
+            {"ts": "2025-01-02T10:30:00", "symbol": "NSE:C", "setup_type": "range_bounce_short", "stage": "admitted"},
+            {"ts": "2025-01-02T13:05:00", "symbol": "NSE:D", "setup_type": "range_bounce_short", "stage": "admitted"},
+        ])
+        result = subprocess.run(
+            [sys.executable, "tools/shadow/parity_check.py",
+             "--baseline", str(baseline), "--variant", str(variant)],
+            capture_output=True, text=True, cwd=REPO_ROOT,
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "admit count: 2 -> 3" in result.stdout
+        assert "premium_zone_short" in result.stdout
+        assert "range_bounce_short" in result.stdout
