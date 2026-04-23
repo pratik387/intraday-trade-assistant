@@ -91,3 +91,56 @@ def test_on_bar_close_receives_datetime_not_string():
     call_kwargs = chain.on_bar_close.call_args.kwargs
     assert isinstance(call_kwargs["bar_ts"], datetime), \
         f"on_bar_close received {type(call_kwargs['bar_ts']).__name__} for bar_ts; expected datetime"
+
+
+def test_multi_session_chronological_order(tmp_path):
+    """Multi-session input dir must be processed in chronological order
+    so RVOL state warms correctly. Sim instantiates ONE chain across
+    sessions; conviction daily_cap resets via session_date change detection."""
+    # Build two session subfolders out of order on disk
+    sess_b = tmp_path / "2025-01-03"
+    sess_a = tmp_path / "2025-01-02"
+    sess_a.mkdir()
+    sess_b.mkdir()
+
+    def _row(ts, sess):
+        return json.dumps({
+            "ts": ts, "session_date": sess,
+            "candidates": [{
+                "symbol": "NSE:SYM1", "setup_type": "premium_zone_short",
+                "regime": "trend_up", "cap_segment": "small_cap",
+                "hour_bucket": "morning", "decision_ts": ts,
+                "session_date_dt": sess, "minute_of_day": 600,
+                "bb_width_proxy": 0.05, "volume5": 1000, "vol_z": 1.5,
+                "vol_ratio": 1.2, "body_size_pct": 0.3, "wick_ratio": 0.2,
+                "momentum_3bar_pct": 0.4, "momentum_1bar_pct": 0.1,
+                "vwap_distance_pct": 0.5,
+            }],
+            "bar_volumes": {"NSE:SYM1": 1000},
+            "symbol_caps": {"NSE:SYM1": "small_cap"},
+        })
+
+    (sess_a / "gate_input.jsonl").write_text(_row("2025-01-02T10:00:00", "2025-01-02") + "\n")
+    (sess_b / "gate_input.jsonl").write_text(_row("2025-01-03T10:00:00", "2025-01-03") + "\n")
+
+    cfg = _build_minimal_config(FIXTURES / "minimal_survivors.json")
+    cfg["conviction_gate"]["daily_cap"] = 1
+    cfg_path = tmp_path / "cfg.json"
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    out_csv = tmp_path / "sim_admits.csv"
+
+    result = subprocess.run(
+        [sys.executable, "tools/shadow/parity_simulator.py",
+         "--gate-input", str(tmp_path),
+         "--config", str(cfg_path),
+         "--output", str(out_csv)],
+        capture_output=True, text=True, cwd=REPO_ROOT,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    rows = list(csv.DictReader(out_csv.open()))
+    admits = [r for r in rows if r["stage"] == "admitted"]
+    # cap=1 per session × 2 sessions = 2 admits (cap resets between sessions)
+    assert len(admits) == 2, f"expected 2 admits across 2 sessions, got {len(admits)}: {admits}"
+    # Sessions must appear in chronological order in output
+    assert admits[0]["session_date"] == "2025-01-02"
+    assert admits[1]["session_date"] == "2025-01-03"

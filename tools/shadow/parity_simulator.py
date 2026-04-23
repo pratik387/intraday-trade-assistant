@@ -118,12 +118,32 @@ def main():
 
     gi_path = Path(args.gate_input)
     if gi_path.is_dir():
-        # Multi-session: gather session subfolders chronologically (Task 6)
-        raise NotImplementedError("Task 6 implements multi-session mode")
-
-    rows = list(_read_jsonl(gi_path))
-    chain = LiveGateChain(cfg, project_root=project_root)
-    decisions = _replay_one_session(rows, chain)
+        # Multi-session: discover session subfolders, sort chronologically,
+        # process with ONE chain instance so RVOL state warms across sessions.
+        # Conviction daily_cap resets internally via session_date change.
+        session_files = sorted(gi_path.glob("*/gate_input.jsonl"))
+        if not session_files:
+            session_files = sorted(gi_path.glob("gate_input.jsonl"))  # fallback: single file in dir
+        if not session_files:
+            raise SystemExit(f"[parity_simulator] no gate_input.jsonl found under {gi_path}")
+        chain = LiveGateChain(cfg, project_root=project_root)
+        decisions: List[Dict[str, Any]] = []
+        prev_session = None
+        for sess_file in session_files:
+            session_rows = list(_read_jsonl(sess_file))
+            if not session_rows:
+                continue
+            this_session = session_rows[0].get("session_date")
+            if prev_session is not None and this_session <= prev_session:
+                raise SystemExit(
+                    f"[parity_simulator] session out of order: {this_session} after {prev_session}"
+                )
+            decisions.extend(_replay_one_session(session_rows, chain))
+            prev_session = this_session
+    else:
+        rows = list(_read_jsonl(gi_path))
+        chain = LiveGateChain(cfg, project_root=project_root)
+        decisions = _replay_one_session(rows, chain)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
