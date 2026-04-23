@@ -2560,6 +2560,13 @@
     "daily_cap": 50,
     "min_predicted_r": 0.3
   },
+  "_comment_dedup_gate": "=== DEDUP GATE (sub-project #4 refactor) ===",
+  "dedup_gate": {
+    "enabled": true,
+    "cooloff_bars": 6,
+    "require_setup_change": true,
+    "_comment": "Replaces ScreenerLive._dedupe_ok. Enforces same-symbol cooloff + setup-change + score-beats-max(pctl,last) rules. Legacy keys dedupe_cooloff_bars / dedupe_require_setup_change in filters config will be removed in T14."
+  },
   "_comment_gate_input_logging": "=== GATE INPUT LOGGING (sub-project #4 parity loop) ===",
   "gate_input_logging": {
     "enabled": true,
