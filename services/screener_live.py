@@ -1723,10 +1723,22 @@ class ScreenerLive:
                 _bar_vols = dict(self._pending_bar_vols) if self._pending_bar_vols else {}
                 _sym_caps = {s: _cap_map.get(s, {}).get("cap_segment", "unknown")
                              for s in _bar_vols.keys()}
+                # Cand dicts contain pd.Timestamp + datetime.date which are not
+                # JSON-serializable. Stringify them per-cand so json.dumps doesn't
+                # raise. Simulator's _parse_dt converts back to datetime on read.
+                _serializable_cands = []
+                for _c in _cand_dicts:
+                    _safe = {}
+                    for _k, _v in _c.items():
+                        if hasattr(_v, "isoformat"):  # pd.Timestamp, datetime, date
+                            _safe[_k] = _v.isoformat()
+                        else:
+                            _safe[_k] = _v
+                    _serializable_cands.append(_safe)
                 _gi_logger.log_event(
                     ts=now.isoformat(),
                     session_date=str(now.date()),
-                    candidates=_cand_dicts,
+                    candidates=_serializable_cands,
                     bar_volumes=_bar_vols,
                     symbol_caps=_sym_caps,
                 )
