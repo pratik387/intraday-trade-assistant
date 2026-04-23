@@ -22,6 +22,7 @@ _screener_logger = None
 _ranking_logger = None
 _planning_logger = None
 _events_decision_logger = None
+_gate_input_logger = None
 _timing_logger = None
 # Per-event detector decision loggers (for post-OCI gauntlet analysis).
 # Capture every non-trivial detector accept / reject with full bar context
@@ -151,7 +152,7 @@ def set_global_run_prefix(run_prefix: str):
 def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     """Initialize all loggers (internal function)"""
     global _agent_logger, _trade_logger, _trading_logger, _session_id, dir_path, _global_run_prefix
-    global _scanner_logger, _screener_logger, _ranking_logger, _planning_logger, _events_decision_logger
+    global _scanner_logger, _screener_logger, _ranking_logger, _planning_logger, _events_decision_logger, _gate_input_logger
     global _timing_logger, _detector_rejections_logger, _detector_accepts_logger
 
     # Quick check - if ANY logger is initialized, reuse the existing session
@@ -229,6 +230,7 @@ def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     _ranking_logger = JSONLLogger(log_dir / "ranking.jsonl", "ranking")
     _planning_logger = JSONLLogger(log_dir / "planning.jsonl", "planning")
     _events_decision_logger = JSONLLogger(log_dir / "events_decisions.jsonl", "events_decision")
+    _gate_input_logger = JSONLLogger(log_dir / "gate_input.jsonl", "gate_input")
 
     # Timing logger — only used when TRADING_PERF_TIMER=1 in the environment.
     # Always created (cheap) so get_timing_logger() never returns None.
@@ -348,6 +350,14 @@ def get_events_decision_logger():
     if _events_decision_logger is None:
         _initialize_loggers()
     return _events_decision_logger
+
+
+def get_gate_input_logger():
+    """Get the gate_input logger for sub-project #4 parity simulator."""
+    global _gate_input_logger
+    if _gate_input_logger is None:
+        _initialize_loggers()
+    return _gate_input_logger
 
 
 def get_timing_logger():
