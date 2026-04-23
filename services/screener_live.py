@@ -1624,8 +1624,13 @@ class ScreenerLive:
                     reason = plan.get("reason", "no_plan") if plan else "no_plan"
                     logger.debug(f"ORCHESTRATOR:REJECT {sym} reason={reason}")
 
-        # Sort by score descending
-        eligible_plans.sort(key=lambda x: x[2], reverse=True)
+        # NOTE: sort is deferred to AFTER LiveGateChain.evaluate so the gate
+        # sees candidates in arrival order (insertion = symbol iteration order
+        # within bar), matching the gauntlet's chronological FIFO behavior.
+        # Pre-sorting by rank_score caused premium_zone_short (typically
+        # higher structural_rr) to fill the daily_cap first, locking out
+        # range_bounce/resistance_bounce candidates from same bar — observed
+        # 2026-04-23 as the third bug in live-vs-gauntlet parity gap.
 
         # Compute percentile for logging
         if eligible_plans:
@@ -1704,6 +1709,11 @@ class ScreenerLive:
                     _before, len(eligible_plans), _dropped,
                     self.live_gate_chain.stats(),
                 )
+
+        # Sort admitted plans by rank_score desc for execution priority.
+        # (Was previously sorted before the gate; moved here so the gate
+        # sees arrival-order FIFO and doesn't bias toward higher-score setups.)
+        eligible_plans.sort(key=lambda x: x[2], reverse=True)
 
         # ---------- Process eligible plans → Execution ----------
         for i, (sym, plan, score, decision) in enumerate(eligible_plans):
