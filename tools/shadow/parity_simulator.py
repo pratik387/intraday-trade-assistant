@@ -72,7 +72,7 @@ def _replay_one_session(
         # RVOL warmup: feed bar volumes for this bar's universe BEFORE evaluation
         if bar_vols:
             try:
-                chain.on_bar_close(bar_ts=ts, bar_volumes=bar_vols, symbol_caps=sym_caps)
+                chain.on_bar_close(bar_ts=_parse_dt(ts), bar_volumes=bar_vols, symbol_caps=sym_caps)
             except Exception:
                 pass  # F1 disabled in tests; OK if no-op
         admitted = chain.evaluate(cands)
