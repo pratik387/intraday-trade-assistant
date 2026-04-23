@@ -596,10 +596,6 @@ class ScreenerLive:
         self._orb_cache_persistence = ORBCachePersistence()
         self._load_orb_cache_from_disk()
 
-        # NEW: de-dupe memory (per symbol last accepted)
-        # stores: {symbol: {"ts": pd.Timestamp, "setup": str|None, "score": float}}
-        self._last_entry: Dict[str, Dict[str, object]] = {}
-
         self._eod_done: bool = False
         self._request_exit: bool = False
 
@@ -1647,12 +1643,6 @@ class ScreenerLive:
         # range_bounce/resistance_bounce candidates from same bar — observed
         # 2026-04-23 as the third bug in live-vs-gauntlet parity gap.
 
-        # Compute percentile for logging
-        if eligible_plans:
-            pctl_score = self._compute_percentile_cut([(s, sc) for s, _, sc, _ in eligible_plans], self.cfg.rank_pctl_min)
-        else:
-            pctl_score = 0.0
-
         _t_orch_end = time.perf_counter()
         logger.info("ORCHESTRATOR_COMPLETE | %d eligible plans from %d decisions | TIME: %.2fs",
                    len(eligible_plans), len(decisions), _t_orch_end - _t_orch_start)
@@ -1817,21 +1807,10 @@ class ScreenerLive:
             if "trade_id" not in plan:
                 plan["trade_id"] = mint_trade_id(sym, token=uuid.uuid4().hex[:8])
 
-            # --- de-dupe check (cooloff, setup change, second-entry strength) ---
+            # De-dupe (cooloff, setup change, second-entry strength) now enforced
+            # by DedupGate inside LiveGateChain — candidates that fail dedup are
+            # filtered out before reaching this loop.
             decision_obj = dec_map.get(sym)
-            setup_type = getattr(decision_obj, "setup_type", None) if decision_obj is not None else None
-            if not self._dedupe_ok(sym=sym, now_ts=now, setup_type=setup_type, score=score, pctl_score=pctl_score):
-                logger.info("DEDUPE:SKIP sym=%s reason=cooloff/setup_not_stronger", sym)
-                if events_logger is not None:
-                    events_logger.log_reject(
-                        sym,
-                        "deduplication_block",
-                        timestamp=now.isoformat(),
-                        strategy_type=strategy_type or "unknown",
-                        score=score,
-                        pctl_score=pctl_score
-                    )
-                continue
 
             # Minimal bar5/features snapshot for diagnostics
             last5 = safe_get_last(df5, "close") if validate_df(df5) else None
@@ -1942,8 +1921,6 @@ class ScreenerLive:
                     max_trades_per_cycle=max_trades_per_cycle
                 )
 
-            # Update de-dupe memory only when we actually enqueue
-            self._last_entry[sym] = {"ts": now, "setup": setup_type, "score": float(score)}
             self.oq.enqueue(exec_item)
 
             # Subscribe to this symbol's ticks for execution layer (entry zone, SL, targets)
@@ -2513,14 +2490,6 @@ class ScreenerLive:
                 return d.reasons
         return []
 
-    def _compute_percentile_cut(self, ranked: List[Tuple[str, float]], pctl: float) -> float:
-        """Return score threshold at the given percentile over the ranked batch."""
-        try:
-            scores = pd.Series([sc for _, sc in ranked], dtype=float)
-            return float(scores.quantile(max(0.0, min(1.0, pctl))))
-        except Exception:
-            return float("-inf")
-
     def _should_produce(self, now: datetime) -> bool:
         lp = self._last_produced_at
         if lp is None:
@@ -2690,39 +2659,6 @@ class ScreenerLive:
             is_dry_run=bool(env.DRY_RUN),
         )
 
-    # ---------- De-dupe ----------
-    def _bars_since(self, older: pd.Timestamp, newer: pd.Timestamp) -> int:
-        try:
-            return int(max(0, (newer - older).total_seconds() // 300))
-        except Exception:
-            return 9999
-
-    def _dedupe_ok(self, *, sym: str, now_ts: pd.Timestamp, setup_type: Optional[str],
-                   score: float, pctl_score: float) -> bool:
-        """
-        Allow re-entry only if:
-          • >= dedupe_cooloff_bars have passed since last acceptance, AND
-          • (if required) setup_type changed, AND
-          • current score >= max(pctl_score, last_score)  (second entry must be stronger than both the day’s cut and last attempt)
-        """
-        cfg = load_filters()
-        cool = int(cfg.get("dedupe_cooloff_bars", 6))
-        need_change = bool(cfg.get("dedupe_require_setup_change", True))
-        last = self._last_entry.get(sym)
-        if not last:
-            return True  # no prior accept → allow
-
-        bars_gap = self._bars_since(last["ts"], now_ts) if isinstance(last.get("ts"), pd.Timestamp) else 9999
-        if bars_gap < cool:
-            return False
-
-        if need_change and (setup_type is not None) and (last.get("setup") == setup_type):
-            return False
-
-        last_score = float(last.get("score") or float("-inf"))
-        required = max(pctl_score, last_score)
-        return float(score) >= required
-    
     def _blocked_by_time_policy(self, now: datetime) -> bool:
         hhmm = f"{now.hour:02d}:{now.minute:02d}"
 
