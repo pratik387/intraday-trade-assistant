@@ -1696,6 +1696,9 @@ class ScreenerLive:
                     "minute_of_day": _mod,
                     "day_of_week": _day_names[now.weekday()] if now.weekday() < 7 else "Monday",
                     "size_mult": (_plan.get("sizing") or {}).get("size_mult", 1.0),
+                    # Rank score — required by DedupGate (stage D) to compute
+                    # the per-bar percentile cut and enforce score-beats-pctl rule.
+                    "rank_score": float(_score),
                     # Passthrough all extras keys (pdz_*, ob_*, etc.)
                     **{k: v for k, v in _extras.items()
                        if isinstance(v, (int, float, bool, str)) or v is None},

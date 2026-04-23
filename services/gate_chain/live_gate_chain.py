@@ -20,6 +20,7 @@ from services.cross_sectional.universe_rvol import UniverseRVOLState
 from services.conviction.feature_spec import extract_features
 from services.conviction.gate import ConvictionGate
 from services.conviction.scorer import XGBoostScorer
+from services.gate_chain.dedup_gate import DedupGate
 from services.gate_chain.rule_filter import RuleFilterGate
 
 from config.logging_config import get_agent_logger
@@ -30,9 +31,14 @@ class LiveGateChain:
     """Composed three-stage gate. Stateful (RVOL + crowdedness counters)."""
 
     def __init__(self, full_cfg: Dict[str, Any], project_root: Path):
+        # Keep a reference to the *full* config so evaluate() can read top-level
+        # keys like `rank_pctl_min` at bar-time (DedupGate pctl computation).
+        self.full_cfg = full_cfg
         self.cfg = full_cfg.get("live_gate_chain", {})
         self.enabled = bool(self.cfg.get("enabled", False))
-        self._stats = {"in": 0, "rule_drop": 0, "cs_drop": 0, "conv_drop": 0, "admitted": 0}
+        # NOTE: dedup_drop inserted BEFORE admitted — admitted is kept last for
+        # readability of the running chain counters.
+        self._stats = {"in": 0, "rule_drop": 0, "cs_drop": 0, "conv_drop": 0, "dedup_drop": 0, "admitted": 0}
 
         if not self.enabled:
             log.info("LiveGateChain disabled in config — evaluate() is passthrough")
@@ -70,6 +76,10 @@ class LiveGateChain:
             "daily_cap": int(cv_cfg["daily_cap"]),
             "min_predicted_r": float(cv_cfg["min_predicted_r"]),
         })
+
+        # [D] Dedup — sub-project #4 gate chain stage D. Replaces the historical
+        # ScreenerLive._dedupe_ok. Operates on candidates that passed conviction.
+        self.dedup = DedupGate(full_cfg["dedup_gate"])
 
     def on_bar_close(self, bar_ts, bar_volumes: Dict[str, int], symbol_caps: Dict[str, str]) -> None:
         """Forward to UniverseRVOLState; called by ScreenerLive on each 5-min close."""
@@ -116,6 +126,12 @@ class LiveGateChain:
                 decision_ts=c["decision_ts"],
             )
             ok, reason = self.cross_sectional.evaluate(cs_cand)
+            # F2 parity with Stage 5c: record EVERY rule-filter-surviving
+            # candidate regardless of accept/reject. Without this, the
+            # crowdedness sliding window stays empty in live and F2 never
+            # binds — causing 250+ same-setup candidates per bar to flood
+            # ConvictionGate (gauntlet sim records at stage5c line 149).
+            self.crowdedness.record(c["setup_type"], c["decision_ts"])
             if ok:
                 passed_b.append(c)
             else:
@@ -142,7 +158,43 @@ class LiveGateChain:
                     c["gate_reject_reason"] = f"conviction:{reason}"
                     self._stats["conv_drop"] += 1
 
-        return admitted
+        # [D] Dedup — final per-symbol cooloff / setup-change / score-strength
+        # check. Replaces the historical screener_live._dedupe_ok. Dedup processes
+        # admitted candidates in rank_score-desc order so higher-score admit wins
+        # the cooloff slot when multiple same-symbol candidates pass earlier stages.
+        if not admitted:
+            return admitted
+        # Sort admitted by rank_score desc (previously done post-chain in screener)
+        admitted.sort(key=lambda c: float(c.get("rank_score", 0.0)), reverse=True)
+        # Compute pctl_score from the ORIGINAL chain input pool (cands entering
+        # the chain before any drops). Matches screener_live._compute_percentile_cut.
+        pctl = float(self.full_cfg["rank_pctl_min"])
+        _scores = [float(c.get("rank_score", 0.0)) for c in candidates]
+        try:
+            import pandas as pd
+            bar_pctl = float(pd.Series(_scores, dtype=float).quantile(max(0.0, min(1.0, pctl))))
+        except Exception:
+            bar_pctl = float("-inf")
+        final: List[Dict[str, Any]] = []
+        for c in admitted:
+            ok, reason = self.dedup.evaluate(
+                sym=str(c["symbol"]).replace("NSE:", ""),
+                now_ts=c["decision_ts"],
+                setup_type=c.get("setup_type"),
+                score=float(c.get("rank_score", 0.0)),
+                pctl_score=bar_pctl,
+                session_date=c.get("session_date_dt"),
+            )
+            if ok:
+                final.append(c)
+            else:
+                c["gate_reject_reason"] = f"dedup:{reason}"
+                self._stats["dedup_drop"] += 1
+                # Correct the admitted counter — conviction bumped it on pass,
+                # but dedup has now rejected. Keep "admitted" meaning "fully
+                # admitted through all chain stages" in stats().
+                self._stats["admitted"] -= 1
+        return final
 
     def stats(self) -> Dict[str, int]:
         return dict(self._stats)

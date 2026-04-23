@@ -41,6 +41,8 @@ def _build_minimal_config(survivors_path: Path) -> dict:
             "feature_spec_path": "models/conviction/2026-04-22-feature-spec.json",
             "daily_cap": 50, "min_predicted_r": -100.0,
         },
+        "dedup_gate": {"enabled": False, "cooloff_bars": 6, "require_setup_change": True},
+        "rank_pctl_min": 0.80,
     }
 
 
