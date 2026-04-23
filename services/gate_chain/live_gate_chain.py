@@ -22,7 +22,8 @@ from services.conviction.gate import ConvictionGate
 from services.conviction.scorer import XGBoostScorer
 from services.gate_chain.rule_filter import RuleFilterGate
 
-log = logging.getLogger(__name__)
+from config.logging_config import get_agent_logger
+log = get_agent_logger()
 
 
 class LiveGateChain:

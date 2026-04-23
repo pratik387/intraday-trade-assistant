@@ -1662,6 +1662,7 @@ class ScreenerLive:
             for _ep in eligible_plans:
                 _sym, _plan, _score, _dec = _ep
                 _extras = _plan.get("extras") or {}
+                _model_features = _plan.get("model_features") or {}
                 _cand = {
                     # Required gate keys
                     "symbol": _sym,
@@ -1678,6 +1679,14 @@ class ScreenerLive:
                     # Passthrough all extras keys (pdz_*, ob_*, etc.)
                     **{k: v for k, v in _extras.items()
                        if isinstance(v, (int, float, bool, str)) or v is None},
+                    # Bar-level ML features (bb_width_proxy, volume5, vol_z, etc.)
+                    # so the conviction scorer matches its training-time inputs.
+                    # base_pipeline writes these into plan["model_features"]; without
+                    # this passthrough range_bounce/resistance_bounce candidates score
+                    # near-zero and get below_threshold rejected (live-vs-gauntlet
+                    # parity bug found 2026-04-23).
+                    **{k: v for k, v in _model_features.items()
+                       if isinstance(v, (int, float, bool))},
                 }
                 _cand_tuples.append((_cand, _ep))
 

@@ -1699,6 +1699,22 @@ class BasePipeline(ABC):
                 "vwap": round(vwap_val, 2) if vwap_val else None,
             },
 
+            # ML model feature parity (conviction gate scorer reads these).
+            # Without this, the LW-7 adapter sees only detector extras and
+            # zero-fills bar-level features -> sparse predictions -> below_threshold.
+            # Same field names as services/conviction/feature_spec.ALLOWED_FEATURES.
+            "model_features": {
+                "bb_width_proxy": float(features.get("bb_width_proxy", 0) or 0),
+                "volume5": float(features.get("volume5", 0) or 0),
+                "vol_z": float(features.get("vol_z", 0) or 0),
+                "vol_ratio": float(features.get("vol_ratio", 0) or 0),
+                "body_size_pct": float(features.get("body_size_pct", 0) or 0),
+                "wick_ratio": float(features.get("wick_ratio", 0) or 0),
+                "momentum_3bar_pct": float(features.get("momentum_3bar_pct", 0) or 0),
+                "momentum_1bar_pct": float(features.get("momentum_1bar_pct", 0) or 0),
+                "vwap_distance_pct": float(features.get("vwap_distance_pct", 0) or 0),
+            },
+
             "vc_reason": vc_reason,
 
             "levels": levels,
