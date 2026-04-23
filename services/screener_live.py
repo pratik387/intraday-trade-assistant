@@ -1711,6 +1711,26 @@ class ScreenerLive:
                 _cand_tuples.append((_cand, _ep))
 
             _cand_dicts = [c for c, _ in _cand_tuples]
+
+            # Sub-project #4: log the exact gate input for offline parity replay.
+            # Writes one JSONL row per bar with the candidate dicts, bar_volumes,
+            # and symbol_caps — everything the gate consumes. Disabled in
+            # production trading via config.gate_input_logging.enabled.
+            if self.raw_cfg.get("gate_input_logging", {}).get("enabled", False):
+                from config.logging_config import get_gate_input_logger
+                _gi_logger = get_gate_input_logger()
+                _cap_map = self._load_cap_mapping()
+                _bar_vols = dict(self._pending_bar_vols) if self._pending_bar_vols else {}
+                _sym_caps = {s: _cap_map.get(s, {}).get("cap_segment", "unknown")
+                             for s in _bar_vols.keys()}
+                _gi_logger.log_event(
+                    ts=now.isoformat(),
+                    session_date=str(now.date()),
+                    candidates=_cand_dicts,
+                    bar_volumes=_bar_vols,
+                    symbol_caps=_sym_caps,
+                )
+
             _admitted_dicts = self.live_gate_chain.evaluate(_cand_dicts)
 
             # Map admitted dicts back to original tuples by identity (object id)

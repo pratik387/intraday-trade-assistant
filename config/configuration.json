@@ -2560,6 +2560,11 @@
     "daily_cap": 50,
     "min_predicted_r": 0.3
   },
+  "_comment_gate_input_logging": "=== GATE INPUT LOGGING (sub-project #4 parity loop) ===",
+  "gate_input_logging": {
+    "enabled": true,
+    "_comment": "When true, screener_live writes per-bar candidate dicts + bar_volumes to gate_input.jsonl. Required for parity_simulator. Disable in production trading."
+  },
   "_comment_live_gate_chain": "=== LIVE GATE CHAIN (sub-project #6 wiring of #1+#2+#3) ===",
   "live_gate_chain": {
     "enabled": true,
