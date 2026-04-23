@@ -545,13 +545,20 @@ class PipelineOrchestrator:
         daily_df: Optional[pd.DataFrame] = None,
         htf_context: Optional[Dict[str, Any]] = None,
         regime_diagnostics: Optional[Dict[str, Any]] = None,
-        daily_score: float = 0.0
+        daily_score: float = 0.0,
+        return_all_eligible: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
-        Process candidates for a SINGLE symbol - returns best plan.
+        Process candidates for a SINGLE symbol - returns best plan (default)
+        or List[plan] of all eligible plans across categories (return_all_eligible=True).
 
         For single-symbol processing, we still use category-specific ranking
         but select the best from the highest-budget category that has candidates.
+
+        When return_all_eligible=True, the per-symbol-category dedupe is bypassed
+        — caller (e.g., LiveGateChain) sees every eligible plan and applies its
+        own selection logic. This matches gauntlet behavior where every executed
+        trade is a separate row, not deduped per symbol-category.
 
         Args:
             symbol: Trading symbol
@@ -617,11 +624,22 @@ class PipelineOrchestrator:
 
         if not category_plans:
             logger.debug(f"[ORCHESTRATOR] {symbol}: No eligible plans from {len(candidates)} candidates")
-            return None
+            return [] if return_all_eligible else None
 
         # Sort each category by rank score (within-category ranking)
         for cat in category_plans:
             category_plans[cat].sort(key=lambda x: x[1], reverse=True)
+
+        # SHORT-CIRCUIT: when caller wants ALL eligible plans (LiveGateChain
+        # parity path), skip the per-symbol-category dedupe and return every
+        # eligible plan flat. The downstream gate sees the full candidate
+        # population and decides — matches gauntlet's no-dedupe behavior.
+        if return_all_eligible:
+            all_plans = []
+            for cat_plans in category_plans.values():
+                for plan, _score in cat_plans:
+                    all_plans.append(plan)
+            return all_plans
 
         # Apply ORB priority window boost (if applicable)
         # Convert to (plan, score, symbol) format for _apply_orb_priority
@@ -964,7 +982,8 @@ def process_setup_candidates(
     daily_df: Optional[pd.DataFrame] = None,
     htf_context: Optional[Dict[str, Any]] = None,
     regime_diagnostics: Optional[Dict[str, Any]] = None,
-    daily_score: float = 0.0
+    daily_score: float = 0.0,
+    return_all_eligible: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Convenience function for single-symbol processing.
@@ -995,7 +1014,8 @@ def process_setup_candidates(
         daily_df=daily_df,
         htf_context=htf_context,
         regime_diagnostics=regime_diagnostics,
-        daily_score=daily_score
+        daily_score=daily_score,
+        return_all_eligible=return_all_eligible,
     )
 
 

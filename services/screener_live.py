@@ -1600,7 +1600,16 @@ class ScreenerLive:
                 try:
                     with perf("orch", "process_setup_candidates", sym=sym,
                               n_candidates=len(setup_candidates)):
-                        plan = process_setup_candidates(
+                        # return_all_eligible=True: get every eligible plan
+                        # (one per setup) instead of the orchestrator's
+                        # per-symbol-category-best dedupe. The LiveGateChain
+                        # downstream applies its own selection — this matches
+                        # gauntlet's no-dedupe behavior (every executed trade
+                        # is a separate row in analytics.jsonl). Without this,
+                        # range_bounce/resistance_bounce candidates that share
+                        # a symbol with a higher-RR premium_zone_short never
+                        # reach the gate (live-vs-gauntlet parity bug 2026-04-23).
+                        plans = process_setup_candidates(
                             symbol=sym,
                             df5m=df5,
                             levels=lvl,
@@ -1610,19 +1619,25 @@ class ScreenerLive:
                             daily_df=daily_df,
                             htf_context=htf_context,
                             regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
-                            daily_score=daily_score
+                            daily_score=daily_score,
+                            return_all_eligible=True,
                         )
                 except Exception as e:
                     logger.exception("orchestrator failed for %s: %s", sym, e)
                     continue
 
-                if plan and plan.get("eligible", False):
-                    score = plan.get("ranking", {}).get("score", 0.0)
-                    eligible_plans.append((sym, plan, score, decision))
-                    logger.debug(f"ORCHESTRATOR:ELIGIBLE {sym} score={score:.3f}")
-                else:
-                    reason = plan.get("reason", "no_plan") if plan else "no_plan"
-                    logger.debug(f"ORCHESTRATOR:REJECT {sym} reason={reason}")
+                # `plans` is now a List[Dict] — one entry per eligible plan
+                # across all categories for this symbol-bar.
+                if not plans:
+                    logger.debug(f"ORCHESTRATOR:REJECT {sym} reason=no_eligible_plans")
+                    continue
+                for plan in plans:
+                    if plan and plan.get("eligible", False):
+                        score = plan.get("ranking", {}).get("score", 0.0)
+                        eligible_plans.append((sym, plan, score, decision))
+                        logger.debug(
+                            f"ORCHESTRATOR:ELIGIBLE {sym} {plan.get('strategy', '?')} score={score:.3f}"
+                        )
 
         # NOTE: sort is deferred to AFTER LiveGateChain.evaluate so the gate
         # sees candidates in arrival order (insertion = symbol iteration order
