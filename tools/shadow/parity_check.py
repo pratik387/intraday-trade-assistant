@@ -54,7 +54,7 @@ def _run_parity(live_path: Path, sim_path: Path) -> int:
     only_sim = sim - live
 
     if not only_live and not only_sim:
-        print(f"MATCH {len(common)}/{len(live)} admits - bit-exact parity")
+        print(f"MATCH {len(common)}/{len(live)} admits — bit-exact parity")
         return 0
 
     print(f"DIVERGENCE: {len(common)}/{max(len(live), len(sim))} match")
