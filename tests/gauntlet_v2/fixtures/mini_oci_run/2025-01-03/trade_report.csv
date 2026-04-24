@@ -1,0 +1,3 @@
+symbol,decision_ts,setup_type,realized_pnl,r_multiple,gross_exit_qty
+NSE:A,2025-01-03T11:05:00,order_block_short,300.0,3.0,8
+NSE:D,2025-01-03T13:20:00,premium_zone_short,-100.0,-1.0,12

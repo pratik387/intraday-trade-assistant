@@ -1,0 +1,4 @@
+symbol,decision_ts,setup_type,realized_pnl,r_multiple,gross_exit_qty
+NSE:A,2025-01-02T09:20:00,premium_zone_short,150.0,1.5,10
+NSE:B,2025-01-02T09:20:00,premium_zone_short,-80.0,-0.8,10
+NSE:C,2025-01-02T10:30:00,range_bounce_short,200.0,2.0,5
