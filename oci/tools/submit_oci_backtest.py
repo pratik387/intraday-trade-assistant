@@ -185,7 +185,13 @@ class OCIBacktestSubmitter:
             'nse_all.json',
             'requirements.txt',
             '.env.development',
-            '.env.production'
+            '.env.production',
+            # Sub-project #2 conviction model artifacts (XGBoostScorer load)
+            # and Sub-project #1 validation-gate survivors (RuleFilterGate load).
+            # Both gitignored locally; bundled here so LiveGateChain.__init__
+            # works in OCI even when wide_open_mode=false.
+            'models/conviction/*.json',
+            'analysis/edge_discovery_runs/**/stage6_validation_survivors.json',
         ]
 
         tarball_path = temp_dir / 'code.tar.gz'
