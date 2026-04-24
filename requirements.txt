@@ -28,3 +28,4 @@ lightgbm>=4.0
 xgboost>=2.1
 shap>=0.46
 optuna>=3.6,<4
+tabulate>=0.9
