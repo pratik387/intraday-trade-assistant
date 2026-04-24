@@ -45,6 +45,16 @@ from utils.perf_timer import perf
 
 logger = get_agent_logger()
 
+# Sub-project #5 (gauntlet v2): wide_open_mode is the master kill-switch
+# for edge measurement. The gate doesn't carry full config; load it lazily.
+def _get_wide_open_mode() -> bool:
+    """Return top-level wide_open_mode flag from base config, defaulting to False."""
+    try:
+        from pipelines.base_pipeline import load_base_config
+        return bool(load_base_config().get("wide_open_mode", False))
+    except Exception:
+        return False
+
 SetupType = Literal[
     "breakout_long",
     "breakout_short",
@@ -606,34 +616,40 @@ class TradeDecisionGate:
 
         # OPENING BELL FILTERING: Only allow specific setups during opening bell window
         if in_opening_bell_window and opening_bell_enabled:
-            allowed_setups = opening_bell_config.get('allowed_setups', [])
-            if allowed_setups:
-                original_count = len(setups)
-                setups = [s for s in setups if s.setup_type in allowed_setups]
-                if len(setups) < original_count:
-                    filtered = original_count - len(setups)
-                    logger.debug(f"OPENING_BELL: {symbol} - Filtered {filtered} setup(s) not allowed during opening bell")
+            if _get_wide_open_mode():
+                # Sub-project #5 (gauntlet v2): wide_open_mode bypasses opening_bell
+                # filters (allowed_setups + volume_confirmation) so OCI capture has
+                # the maximal pre-gate candidate pool. Production default: flag off.
+                reasons.append("wide_open_mode:opening_bell_bypass")
+            else:
+                allowed_setups = opening_bell_config.get('allowed_setups', [])
+                if allowed_setups:
+                    original_count = len(setups)
+                    setups = [s for s in setups if s.setup_type in allowed_setups]
+                    if len(setups) < original_count:
+                        filtered = original_count - len(setups)
+                        logger.debug(f"OPENING_BELL: {symbol} - Filtered {filtered} setup(s) not allowed during opening bell")
 
-                if not setups:
-                    logger.debug(f"OPENING_BELL: {symbol} - No allowed setups during opening bell window")
-                    return GateDecision(accept=False, reasons=["opening_bell:no_allowed_setups"])
+                    if not setups:
+                        logger.debug(f"OPENING_BELL: {symbol} - No allowed setups during opening bell window")
+                        return GateDecision(accept=False, reasons=["opening_bell:no_allowed_setups"])
 
-            # OPENING BELL VOLUME CONFIRMATION: Require 2.0x volume
-            if opening_bell_config.get('require_volume_confirmation', False) and df5m_tail is not None and len(df5m_tail) >= 5:
-                try:
-                    current_volume = df5m_tail["volume"].iloc[-1]
-                    avg_volume = df5m_tail["volume"].tail(20).mean() if len(df5m_tail) >= 20 else df5m_tail["volume"].mean()
-                    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
-                    min_volume_ratio = opening_bell_config.get('min_volume_ratio', 2.0)
+                # OPENING BELL VOLUME CONFIRMATION: Require 2.0x volume
+                if opening_bell_config.get('require_volume_confirmation', False) and df5m_tail is not None and len(df5m_tail) >= 5:
+                    try:
+                        current_volume = df5m_tail["volume"].iloc[-1]
+                        avg_volume = df5m_tail["volume"].tail(20).mean() if len(df5m_tail) >= 20 else df5m_tail["volume"].mean()
+                        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+                        min_volume_ratio = opening_bell_config.get('min_volume_ratio', 2.0)
 
-                    if volume_ratio < min_volume_ratio:
-                        logger.debug(f"OPENING_BELL: {symbol} - Volume confirmation failed: {volume_ratio:.2f}x < {min_volume_ratio}x")
-                        return GateDecision(accept=False, reasons=[f"opening_bell:volume_too_low:{volume_ratio:.2f}x<{min_volume_ratio}x"])
-                    else:
-                        logger.debug(f"OPENING_BELL: {symbol} - Volume confirmed: {volume_ratio:.2f}x >= {min_volume_ratio}x (institutional participation)")
-                        reasons.append(f"opening_bell:volume_confirmed:{volume_ratio:.2f}x")
-                except Exception as e:
-                    logger.warning(f"OPENING_BELL: {symbol} - Volume confirmation error: {e}")
+                        if volume_ratio < min_volume_ratio:
+                            logger.debug(f"OPENING_BELL: {symbol} - Volume confirmation failed: {volume_ratio:.2f}x < {min_volume_ratio}x")
+                            return GateDecision(accept=False, reasons=[f"opening_bell:volume_too_low:{volume_ratio:.2f}x<{min_volume_ratio}x"])
+                        else:
+                            logger.debug(f"OPENING_BELL: {symbol} - Volume confirmed: {volume_ratio:.2f}x >= {min_volume_ratio}x (institutional participation)")
+                            reasons.append(f"opening_bell:volume_confirmed:{volume_ratio:.2f}x")
+                    except Exception as e:
+                        logger.warning(f"OPENING_BELL: {symbol} - Volume confirmation error: {e}")
 
         # Priority-based structure selection (Professional approach)
         # During ORB window (9:30-10:30 AM), prioritize ORB structures over others
