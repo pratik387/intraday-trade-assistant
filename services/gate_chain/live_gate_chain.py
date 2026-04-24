@@ -44,6 +44,15 @@ class LiveGateChain:
             log.info("LiveGateChain disabled in config — evaluate() is passthrough")
             return
 
+        # Sub-project #5 (gauntlet v2): when wide_open_mode is set, evaluate()
+        # short-circuits to passthrough (T3). Skip ALL gate dependency loads
+        # (XGBoost model, survivors json, RVOL state) so OCI wide-open captures
+        # don't need those artifacts in the code tarball — they're produced by
+        # Sub-project #1 outputs that are gitignored and not packaged.
+        if full_cfg.get("wide_open_mode"):
+            log.info("LiveGateChain init skipped — wide_open_mode forces passthrough")
+            return
+
         # [A] Rule filter
         rf_cfg = full_cfg.get("rule_filter_gate", {})
         survivors_path = Path(project_root) / rf_cfg.get(
