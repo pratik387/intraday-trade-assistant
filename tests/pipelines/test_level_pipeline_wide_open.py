@@ -1,11 +1,24 @@
 """level_pipeline.screen() wide_open_mode bypass (sub5-T1)."""
 import pandas as pd
 
-from pipelines.level_pipeline import LevelPipeline
 
-
-def _make_pipe(wide_open: bool) -> LevelPipeline:
+def _make_pipe(wide_open: bool):
     """Construct a LevelPipeline and inject wide_open_mode into cfg."""
+    import sys
+    from pathlib import Path
+    import importlib
+
+    # Ensure project root is in sys.path BEFORE attempting import
+    project_root = str(Path(__file__).parent.parent.parent)
+    sys.path.insert(0, project_root)
+
+    # Clear any cached imports that might be blocking
+    if 'pipelines' in sys.modules:
+        del sys.modules['pipelines']
+    if 'pipelines.level_pipeline' in sys.modules:
+        del sys.modules['pipelines.level_pipeline']
+
+    from pipelines.level_pipeline import LevelPipeline
     pipe = LevelPipeline()
     pipe.cfg = dict(pipe.cfg)  # don't mutate the cached config
     pipe.cfg["wide_open_mode"] = wide_open
