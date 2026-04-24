@@ -335,3 +335,41 @@ def test_dedup_stage_blocks_second_same_setup(survivors_file):
     rejected = [c for c in [c1, c2] if str(c.get("gate_reject_reason", "")).startswith("dedup")]
     assert len(rejected) == 1
     assert chain.stats()["dedup_drop"] == 1
+
+
+def test_wide_open_mode_forces_passthrough_even_when_chain_enabled(survivors_file):
+    """Sub-project #5 master kill-switch: when wide_open_mode=true at top-level
+    config, evaluate() returns input unchanged even if live_gate_chain.enabled=true.
+    Used by the OCI capture run to log the maximal pre-gate candidate pool."""
+    cfg = {
+        "wide_open_mode": True,            # ← master kill
+        "live_gate_chain": {"enabled": True},
+        "rule_filter_gate": {"survivors_path": str(survivors_file)},
+        "cross_sectional_gate": {
+            "enabled": True,
+            "f1_rvol_enabled": False, "f1_rvol_threshold_pct": 90.0,
+            "f1_applicable_caps": [], "f1_skip_hour_buckets": [],
+            "f1_min_history_sessions": 5, "f1_rolling_window_sessions": 20,
+            "f2_crowdedness_enabled": False, "f2_crowdedness_threshold": 100,
+            "f2_crowdedness_window_min": 5,
+        },
+        "conviction_gate": {
+            "enabled": True,
+            "model_artifact": "models/conviction/2026-04-22-universal-xgboost.json",
+            "feature_spec_path": "models/conviction/2026-04-22-feature-spec.json",
+            "daily_cap": 2, "min_predicted_r": -100.0,
+        },
+        "dedup_gate": {"enabled": False, "cooloff_bars": 6, "require_setup_change": True},
+        "rank_pctl_min": 0.80,
+    }
+    chain = LiveGateChain(cfg, project_root=Path("."))
+    # 5 candidates with a setup_type NOT in survivors — would normally be rule_filter dropped
+    cands = [
+        _make_candidate(symbol=f"S{i}", setup="vwap_lose_short")
+        for i in range(5)
+    ]
+    out = chain.evaluate(cands)
+    # Passthrough: all 5 returned, no gate_reject_reason annotations
+    assert out == cands
+    for c in cands:
+        assert "gate_reject_reason" not in c

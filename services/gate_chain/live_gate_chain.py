@@ -98,6 +98,13 @@ class LiveGateChain:
         (caller can inspect for logging). Admitted candidates also get
         `predicted_r` annotated.
         """
+        # Sub-project #5 (gauntlet v2): wide_open_mode is the master kill-switch.
+        # When set at top-level config, force passthrough even if the chain is
+        # enabled. Used for the OCI wide-open capture so gate_input.jsonl carries
+        # the maximal candidate pool for offline config iteration.
+        if self.full_cfg.get("wide_open_mode"):
+            return candidates
+
         if not self.enabled:
             return candidates
         if not candidates:
