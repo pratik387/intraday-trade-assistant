@@ -75,6 +75,13 @@ class LevelPipeline(BasePipeline):
         # features reserved for future use
         _ = features
 
+        # Sub-project #5 (gauntlet v2): wide_open_mode is the master kill-switch
+        # for edge measurement. Bypass level_proximity + time_window checks so
+        # the OCI wide-open capture has the maximal pre-gate candidate pool.
+        # Production default: wide_open_mode=false (flag absent → no bypass).
+        if self.cfg.get("wide_open_mode"):
+            return ScreeningResult(passed=True, reasons=["wide_open_mode:bypass"], features=features)
+
         logger.debug(f"[LEVEL] Screening {symbol} at {now}")
 
         reasons = []
