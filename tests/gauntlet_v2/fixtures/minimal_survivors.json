@@ -1,0 +1,5 @@
+{
+  "survivors": [
+    {"setup": "premium_zone_short", "rule_id": "premium_zone_short__cap_segment+hour_bucket=small_cap+morning"}
+  ]
+}
