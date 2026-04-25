@@ -161,8 +161,65 @@ class MISUnwindShortStructure(BaseStructure):
 
     def plan_short_strategy(self, context: MarketContext,
                             event: Optional[StructureEvent] = None) -> Optional[TradePlan]:
-        """Placeholder — implemented in Task 3."""
-        return None
+        """Generate a TradePlan for the MIS unwind short setup.
+
+        Entry: at current close price (immediate).
+        Stop: above recent intraday high + ATR buffer.
+        Target: VWAP or PDC (config target_type).
+        """
+        analysis = self.detect(context)
+        if not analysis.structure_detected:
+            return None
+
+        df = context.df_5m
+        last = df.iloc[-1]
+        close = float(last["close"])
+        atr_val = self._get_atr(context)
+        recent_high = float(df["high"].max())
+
+        # Stop: ABOVE recent intraday high + ATR buffer
+        hard_sl = recent_high + atr_val * self.stop_atr_buffer
+        risk_per_share = hard_sl - close
+
+        # Target: VWAP or PDC (config target_type)
+        vwap = float(last.get("vwap", close))
+        levels = context.indicators or {}  # levels dict is separate; use pdc from context attrs
+        pdc = float(context.pdc) if context.pdc is not None else vwap
+        target_level = vwap if self.target_type == "vwap" else pdc
+        # Ensure target makes sense for short (target < entry)
+        if target_level >= close:
+            target_level = vwap  # fallback
+
+        rr = (close - target_level) / max(risk_per_share, 1e-6)
+        targets = [{"name": "T1", "level": target_level, "rr": rr,
+                    "qty_pct": 1.0, "action": "exit_full"}]
+
+        risk_params = self.calculate_risk_params(close, context)
+        exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
+
+        # Use first detected event if available, else build minimal one
+        if analysis.events:
+            evt = analysis.events[0]
+            confidence = evt.confidence
+            notes = evt.context
+            structure_type = evt.structure_type
+        else:
+            confidence = analysis.quality_score / 100.0
+            notes = {}
+            structure_type = self.structure_type
+
+        return TradePlan(
+            symbol=context.symbol,
+            side="short",
+            structure_type=structure_type,
+            entry_price=close,
+            risk_params=risk_params,
+            exit_levels=exit_levels,
+            qty=0,           # Pipeline overrides with proper sizing
+            notional=0.0,
+            confidence=confidence,
+            notes=notes,
+        )
 
     def calculate_risk_params(self, entry_price: float,
                               market_context: MarketContext) -> RiskParams:

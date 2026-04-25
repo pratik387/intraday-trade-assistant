@@ -106,3 +106,28 @@ def test_does_not_fire_in_disallowed_cap_segment():
     ctx = _make_ctx(df, cap_segment="large_cap", rvol=1.5)
     result = det.detect(ctx)
     assert result.structure_detected is False
+
+
+def test_plan_short_strategy_returns_valid_plan():
+    cfg = _cfg()
+    det = MISUnwindShortStructure(cfg)
+    df = _build_df("15:00:00", last_close=105.0, vwap=100.0)
+    ctx = _make_ctx(df, cap_segment="small_cap", rvol=1.5, atr=1.0)
+    plan = det.plan_short_strategy(ctx)
+    assert plan is not None
+    assert plan.side == "short"
+    assert plan.structure_type == "mis_unwind_short"
+    # Entry price should be at or near current close (105.0)
+    assert 104.0 <= plan.entry_price <= 106.0
+    # Stop should be ABOVE entry (short)
+    assert plan.risk_params.hard_sl > plan.entry_price
+    # Target should be at or near VWAP (100.0)
+    assert plan.exit_levels.targets[0]["level"] <= 102.0
+
+
+def test_plan_long_strategy_returns_none():
+    cfg = _cfg()
+    det = MISUnwindShortStructure(cfg)
+    df = _build_df("15:00:00")
+    ctx = _make_ctx(df, cap_segment="small_cap", rvol=1.5)
+    assert det.plan_long_strategy(ctx) is None

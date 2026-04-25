@@ -31,6 +31,7 @@ from .volume_structure import VolumeStructure
 from .volume_breakout_structure import VolumeBreakoutStructure
 from .range_structure import RangeStructure
 from .fhm_structure import FHMStructure
+from .mis_unwind_short_structure import MISUnwindShortStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -141,7 +142,8 @@ class MainDetector(BaseStructure):
             ("vwap", VWAPStructure, "vwap"),
             ("gap", GapStructure, "gap"),
             ("range", RangeStructure, "range"),
-            ("support_resistance", SupportResistanceStructure, "support_resistance")
+            ("support_resistance", SupportResistanceStructure, "support_resistance"),
+            ("mis_unwind_short", MISUnwindShortStructure, "mis_unwind_short"),
         ]
 
         # ICT setups that should inherit params from ict_comprehensive
