@@ -73,6 +73,13 @@ class ReversionPipeline(BasePipeline):
         - Look for exhaustion signals
         - Volume spike preferred
         """
+        # Sub-project #7 (gauntlet v2): wide_open_mode is the master kill-switch
+        # for edge measurement. Bypass VWAP extension + RSI checks so sub7 detections
+        # have the maximal pre-gate candidate pool.
+        # Production default: wide_open_mode=false (flag absent → no bypass).
+        if self.cfg.get("wide_open_mode"):
+            return ScreeningResult(passed=True, reasons=["wide_open_mode:bypass"], features=features)
+
         reasons = []
         passed = True
 
@@ -238,6 +245,11 @@ class ReversionPipeline(BasePipeline):
         - Extremes are the SIGNAL, not a penalty condition
         - Rejection candle is confirmation, not requirement
         """
+
+        # Sub-project #7: wide_open_mode bypasses all REVERSION gate filters for
+        # edge measurement. Mirrors the screen() bypass above.
+        if self.cfg.get("wide_open_mode"):
+            return GateResult(passed=True, reasons=["wide_open_mode:bypass"], size_mult=1.0, min_hold_bars=0)
 
         reasons = []
         passed = True

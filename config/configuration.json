@@ -344,7 +344,7 @@
   "lunch_end": "13:15",
   "setups": {
     "breakout_long": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "Generic breakout_long - uses same params as level_breakout_long",
       "k_atr": 0.15,
       "min_breakout_atr_mult": 0.2,
@@ -418,7 +418,7 @@
       "confidence_weak_signal": 0.65
     },
     "vwap_lose_short": {
-      "enabled": true,
+      "enabled": false,
       "min_distance_bps": 30,
       "_comment_min": "VWAP OPTIMIZATION: 50 \u2192 30 bps (0.30%) - Trend reversal needs tight entry at VWAP loss. Symmetrical to vwap_reclaim_long.",
       "max_distance_bps": 200,
@@ -443,7 +443,7 @@
       "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "gap_fill_long": {
-      "enabled": true,
+      "enabled": false,
       "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). Pre-rebuild evidence (244 trades, negative trend_up regime) was contaminated by levels-dict bug + over-firing (no time window, fires every bar). Tier-A audit fixes applied: time window 9:15-10:30, reversal candle requirement, volume confirmation wired up, per-session dedup.",
       "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 244 trades. trend_up WR 42% Rs -880. hour 10 WR 48% Rs -495. mid_cap WR 45% Rs -182.",
       "min_gap_pct": 0.3,
@@ -463,7 +463,7 @@
       "confidence_level": 0.7
     },
     "gap_fill_short": {
-      "enabled": true,
+      "enabled": false,
       "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). Pre-rebuild evidence was actually NET POSITIVE (+Rs 3.68L on 266 trades) \u00e2\u20ac\u201d disable was premature. Tier-A audit fixes applied: time window 9:15-10:30, reversal candle requirement, volume confirmation wired up, per-session dedup.",
       "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 266 trades, Rs +3.68L overall. trend_down WR 48% Rs -204 (only weak regime).",
       "min_gap_pct": 0.3,
@@ -481,7 +481,7 @@
       "confidence_level": 0.7
     },
     "trend_pullback_long": {
-      "enabled": true,
+      "enabled": false,
       "ema_trend_buffer": 0.005,
       "_comment_ema_buffer": "0.5% buffer for EMA crossover trend classification",
       "ema_separation_scale": 50,
@@ -523,7 +523,7 @@
       "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "trend_pullback_short": {
-      "enabled": true,
+      "enabled": false,
       "ema_trend_buffer": 0.005,
       "ema_separation_scale": 50,
       "continuation_momentum_boost": 10,
@@ -562,7 +562,7 @@
       "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "trend_continuation_long": {
-      "enabled": true,
+      "enabled": false,
       "ema_trend_buffer": 0.005,
       "ema_separation_scale": 50,
       "continuation_momentum_boost": 10,
@@ -595,7 +595,7 @@
       "_comment_swing_lookback": "Number of bars to look back for swing points"
     },
     "trend_continuation_short": {
-      "enabled": true,
+      "enabled": false,
       "ema_trend_buffer": 0.005,
       "ema_separation_scale": 50,
       "continuation_momentum_boost": 10,
@@ -657,7 +657,7 @@
       "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative"
     },
     "volume_spike_reversal_short": {
-      "enabled": true,
+      "enabled": false,
       "min_volume_spike_mult": 1.5,
       "_comment_vol_z": "FIXED: 3.0 \u00e2\u2020\u2019 1.5 - Stricter than longs, aligns with short-bias caution",
       "min_body_size_pct": 0.8,
@@ -678,7 +678,7 @@
       "multi_bar_exhaustion_bonus": 1.4
     },
     "volume_breakout_long": {
-      "enabled": true,
+      "enabled": false,
       "_audit_re_enable_note": "Re-enabled per audit/07-volume_breakout_structure.md (2026-04-15). Pre-rebuild evidence (491 trades, -0.88L) was from old code under no OOS protocol with overfit filter response. Letting wide-open gauntlet decide on regenerated data.",
       "_config_fix_note": "Re-enable surfaced 13 missing detector keys (latent bug hidden by enabled:false). Defaults from tests/structures/test_volume_breakout_structure.py:87-103 fixture which the detector author chose for canonical wide-open behavior.",
       "min_volume_surge_mult": 2.0,
@@ -704,7 +704,7 @@
       "confidence_level": 0.75
     },
     "volume_breakout_short": {
-      "enabled": true,
+      "enabled": false,
       "_audit_re_enable_note": "Re-enabled per audit/07. Same rationale as long.",
       "_config_fix_note": "Re-enable surfaced 13 missing detector keys (latent bug). Same defaults as long, mirrored.",
       "min_volume_surge_mult": 2.0,
@@ -726,7 +726,7 @@
       "confidence_level": 0.75
     },
     "gap_breakout_long": {
-      "enabled": true,
+      "enabled": false,
       "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). No prior pre-rebuild evidence cited. Tier-A audit fixes applied: volume confirmation wired up, per-session dedup. Time window NOT applied to breakouts (continuation pattern can fire any time).",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
@@ -743,7 +743,7 @@
       "confidence_level": 0.75
     },
     "gap_breakout_short": {
-      "enabled": true,
+      "enabled": false,
       "_audit_re_enable_note": "Re-enabled per audit/15-gap_structure.md (2026-04-15). No prior pre-rebuild evidence cited. Tier-A audit fixes applied: volume confirmation wired up, per-session dedup.",
       "min_gap_pct": 0.3,
       "max_gap_pct": 2.5,
@@ -780,7 +780,7 @@
       "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "range_bounce_short": {
-      "enabled": true,
+      "enabled": false,
       "min_range_duration": 6,
       "max_range_height_pct": 3.0,
       "min_range_height_pct": 0.5,
@@ -827,7 +827,7 @@
       "confidence_level": 0.7
     },
     "level_breakout_long": {
-      "enabled": true,
+      "enabled": false,
       "k_atr": 0.15,
       "_comment_k_atr": "FIXED: 0.25 \u2192 0.15 - Professional NSE standard for early breakout entry. 0.25 ATR was missing 60-70% of valid breakouts",
       "min_breakout_atr_mult": 0.2,
@@ -881,7 +881,7 @@
       "confidence_weak_breakout": 0.65
     },
     "orb_level_breakout_long": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ORB-related level breakouts (at ORH/ORL) - uses same params as level_breakout_long",
       "k_atr": 0.15,
       "min_breakout_atr_mult": 0.2,
@@ -945,7 +945,7 @@
       "confidence_weak_fade": 0.6
     },
     "failure_fade_short": {
-      "enabled": true,
+      "enabled": false,
       "min_pierce_size_pct": 0.1,
       "max_pierce_size_pct": 1.0,
       "fade_confirmation_bars": 1,
@@ -984,7 +984,7 @@
       "confidence_weak_expansion": 0.6
     },
     "squeeze_release_short": {
-      "enabled": true,
+      "enabled": false,
       "width_window": 12,
       "_comment_width_window": "AGGRESSIVE FIX: 40 \u2192 12 bars (60min). Professional traders use hourly reference for 5min squeeze detection. Can revert to 24 (120min) if too many bad trades.",
       "expansion_ratio": 1.25,
@@ -1006,7 +1006,7 @@
       "confidence_weak_expansion": 0.6
     },
     "flag_continuation_long": {
-      "enabled": true,
+      "enabled": false,
       "_audit_re_enable_note": "Re-enabled per audit/14-flag_continuation_structure.md (2026-04-15). Pre-rebuild evidence (Rs -305 avg, 34 trades) too small a sample to keep blocked. Tier-A audit fix: volume-DECLINE-through-flag canonical filter applied (consol vol must be < 0.85 of trend vol).",
       "_pre_rebuild_evidence": "PRE-REBUILD (informational only): 3yr deep_edge Rs -305 avg, 34 trades. Negative overall on tiny sample.",
       "min_consolidation_bars": 3,
@@ -1026,7 +1026,7 @@
       "confidence_weak_flag": 0.65
     },
     "flag_continuation_short": {
-      "enabled": true,
+      "enabled": false,
       "min_consolidation_bars": 3,
       "max_consolidation_bars": 12,
       "min_trend_strength": 1.5,
@@ -1044,7 +1044,7 @@
       "confidence_weak_flag": 0.65
     },
     "momentum_breakout_long": {
-      "enabled": true,
+      "enabled": false,
       "min_momentum_3bar_pct": 0.8,
       "_comment_3bar": "FIXED: 1.5 \u2192 0.8% - Professional NSE intraday momentum range is 0.5-1.5%, was rejecting most valid setups at upper end only",
       "min_momentum_1bar_pct": 0.3,
@@ -1073,7 +1073,7 @@
       "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "momentum_breakout_short": {
-      "enabled": true,
+      "enabled": false,
       "min_momentum_3bar_pct": 0.8,
       "_comment_3bar": "FIXED: 1.5 \u2192 0.8% - Professional NSE intraday momentum range is 0.5-1.5%, was rejecting most valid setups at upper end only",
       "min_momentum_1bar_pct": 0.3,
@@ -1133,7 +1133,7 @@
       "_comment_retest_timeout": "OPTIMIZED: 45 \u2192 60 min - More time for retest entries."
     },
     "resistance_bounce_short": {
-      "enabled": true,
+      "enabled": false,
       "target_structure_type": "resistance_bounce_short",
       "min_touches": 2,
       "bounce_tolerance_pct": 0.8,
@@ -1168,7 +1168,7 @@
       "_comment_retest_timeout": "OPTIMIZED: 45 \u2192 60 min - More time for retest entries. Regime won't change significantly in extra 15 min."
     },
     "support_breakdown_short": {
-      "enabled": true,
+      "enabled": false,
       "target_structure_type": "support_breakdown_short",
       "min_touches": 2,
       "bounce_tolerance_pct": 0.3,
@@ -1197,7 +1197,7 @@
       "retest_timeout_minutes": 45
     },
     "resistance_breakout_long": {
-      "enabled": true,
+      "enabled": false,
       "target_structure_type": "resistance_breakout_long",
       "min_touches": 2,
       "bounce_tolerance_pct": 0.3,
@@ -1252,7 +1252,7 @@
       "require_vwap_alignment": true
     },
     "orb_breakout_short": {
-      "enabled": true,
+      "enabled": false,
       "orb_minutes": 15,
       "min_bars_required": 4,
       "min_range_pct": 0.5,
@@ -1405,7 +1405,7 @@
     "first_hour_momentum_long": {
       "_audit_re_enable_note": "Re-enabled per audit/13-fhm_structure.md (2026-04-15). Pre-rebuild 5,694 trades / 37.9% WR / -19.15L was over-firing on noise (~7.5/day vs canonical 1-2/day). Current filter stack (cap-RVOL + multi-bar + vol continuation + VWAP hold + ADX) should drop trade count 80-90% with very different edge profile.",
       "_pre_rebuild_evidence": "PRE-REBUILD (informational only): squeeze + adx>=35 + vol>=100k = 20 trades, +2,073 Rs, +104 Rs/trade, 60% WR (small-sample optimization). Baseline 5,694 trades, 37.9% WR, -19.15L over 4 FYs.",
-      "enabled": true,
+      "enabled": false,
       "detect_direction": "long",
       "min_bars_required": 5,
       "require_vwap_hold": false,
@@ -1487,7 +1487,7 @@
     "first_hour_momentum_short": {
       "_audit_re_enable_note": "Re-enabled per audit/13-fhm_structure.md (2026-04-15). NSE long-bias makes FHM Short structurally weaker than FHM Long (~45-50% expected WR vs ~60% for long). Pre-rebuild 622 trades / +1.31L overall is actually neutral-to-positive on small sample. Selective blocks (small/micro caps, trend_up regime) preserved as starting state. Letting fresh-OOS gauntlet decide.",
       "_pre_rebuild_evidence": "PRE-REBUILD (informational only): Deep analysis Dec 2024: 622 trades, Rs +1.31L overall but trend_up WR 39% Rs -437; large_cap WR 44% Rs -27. Small sample.",
-      "enabled": true,
+      "enabled": false,
       "detect_direction": "short",
       "min_bars_required": 4,
       "require_vwap_hold": false,
@@ -1620,7 +1620,7 @@
       "confidence_weak_signal": 0.6
     },
     "range_rejection_long": {
-      "enabled": true,
+      "enabled": false,
       "min_range_duration": 6,
       "max_range_height_pct": 3.0,
       "min_range_height_pct": 0.5,
@@ -1639,7 +1639,7 @@
       "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "range_rejection_short": {
-      "enabled": true,
+      "enabled": false,
       "min_range_duration": 6,
       "max_range_height_pct": 3.0,
       "min_range_height_pct": 0.5,
@@ -1658,7 +1658,7 @@
       "_comment_min_stop": "Minimum stop loss distance as percentage of price"
     },
     "ict_comprehensive": {
-      "enabled": true,
+      "enabled": false,
       "order_block_min_move_pct": 0.5,
       "order_block_min_volume_surge": 1.5,
       "order_block_lookback": 20,
@@ -1734,17 +1734,17 @@
       "_comment": "ADDED: ICT Order Block long pattern - inherits ict_comprehensive params"
     },
     "order_block_short": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ADDED: ICT Order Block short pattern - inherits ict_comprehensive params"
     },
     "fair_value_gap_long": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ADDED: ICT Fair Value Gap long pattern - inherits ict_comprehensive params",
       "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
       "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "fair_value_gap_short": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ADDED: ICT Fair Value Gap short pattern - inherits ict_comprehensive params",
       "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
       "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
@@ -1755,32 +1755,32 @@
       "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative"
     },
     "liquidity_sweep_short": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ADDED: ICT Liquidity Sweep short pattern - inherits ict_comprehensive params",
       "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "premium_zone_short": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ADDED: ICT Premium Zone short pattern - inherits ict_comprehensive params"
     },
     "discount_zone_long": {
-      "enabled": true,
+      "enabled": false,
       "_branch_note": "feat/premium-zone-ict-fix: enabled to test ICT-faithful filters. Originally blocked based on 3yr evidence (40961 trades, WR 39.6%, Rs -278L). Hypothesis: new filters (HTF bias, structural range, OTE 0.21, MSS+FVG+OB confluence) rescue the edge.",
       "_comment": "ADDED: ICT Discount Zone long pattern - inherits ict_comprehensive params",
       "_kill_evidence": "RESCINDED: 3yr wide-open shows hour=9+vol_low (N=2222, WR 52.8%, Avg+59, 3/4 FYs positive). Filtered via validated_combinations."
     },
     "break_of_structure_long": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ADDED: ICT Break of Structure long pattern - inherits ict_comprehensive params",
       "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
       "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
     },
     "break_of_structure_short": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ADDED: ICT Break of Structure short pattern - inherits ict_comprehensive params"
     },
     "change_of_character_long": {
-      "enabled": true,
+      "enabled": false,
       "_comment": "ADDED: ICT Change of Character long pattern - inherits ict_comprehensive params",
       "_kill_evidence": "3yr wide-open (20260413-102859): negative ALL FYs or net negative",
       "_rescue_note": "Enhanced edge analysis: statistically significant combo found, CI excludes 0"
@@ -1845,7 +1845,7 @@
       "swing_lookback_bars": 10
     },
     "main_detector": {
-      "enabled": true,
+      "enabled": false,
       "max_detections_per_symbol": 50,
       "_comment_max_detections": "WIDE-OPEN: bumped 5 -> 50 so non-ICT detectors aren't silently dropped by per-symbol cap. ICT alone can produce 5+ events per symbol (BOS, CHoCH, FVG, OB, premium/discount); cap of 5 starved gap/FHM/squeeze/etc. of representation in the candidate list.",
       "conflict_resolution_enabled": false,
@@ -1861,25 +1861,32 @@
         "flag_continuation_long": 0.6,
         "flag_continuation_short": 0.6,
         "momentum_breakout_long": 0.5,
-        "momentum_breakout_short": 0.5
+        "momentum_breakout_short": 0.5,
+        "mis_unwind_short": 0.85,
+        "gap_fade_short": 0.85,
+        "cpr_mean_revert": 0.80
       }
     },
     "mis_unwind_short": {
-      "enabled": false,
+      "enabled": true,
       "active_window_start": "14:55",
       "active_window_end": "15:15",
       "min_distance_above_vwap_pct": 0.5,
       "min_intraday_high_recency_min": 30,
       "max_momentum_3bar_pct": 0.0,
       "min_rvol": 1.2,
-      "allowed_cap_segments": ["small_cap", "mid_cap", "micro_cap"],
+      "allowed_cap_segments": [
+        "small_cap",
+        "mid_cap",
+        "micro_cap"
+      ],
       "stop_atr_buffer": 0.8,
       "target_type": "vwap",
       "time_stop_min_before_close": 5,
       "min_bars_required": 30
     },
     "gap_fade_short": {
-      "enabled": false,
+      "enabled": true,
       "active_window_start": "09:15",
       "active_window_end": "09:30",
       "min_gap_pct_above_pdc": 1.5,
@@ -1887,21 +1894,33 @@
       "min_upper_wick_ratio": 0.5,
       "max_body_size_pct": 30.0,
       "require_volume_decline_after_gap": true,
-      "allowed_cap_segments": ["small_cap", "mid_cap", "micro_cap"],
+      "allowed_cap_segments": [
+        "small_cap",
+        "mid_cap",
+        "micro_cap"
+      ],
       "stop_above_gap_high_atr": 0.3,
       "target_type": "pdc_or_open",
       "time_stop_at": "10:00",
       "min_bars_required": 1
     },
     "cpr_mean_revert": {
-      "enabled": false,
+      "enabled": true,
       "active_window_start": "11:30",
       "active_window_end": "13:30",
       "min_distance_atr_from_cpr": 1.0,
       "max_volume_pct_of_intraday_avg": 30.0,
       "require_reversion_candle": true,
-      "reversion_patterns": ["hammer", "doji", "shooting_star"],
-      "allowed_cap_segments": ["small_cap", "mid_cap", "large_cap"],
+      "reversion_patterns": [
+        "hammer",
+        "doji",
+        "shooting_star"
+      ],
+      "allowed_cap_segments": [
+        "small_cap",
+        "mid_cap",
+        "large_cap"
+      ],
       "stop_at_extreme_atr_buffer": 0.2,
       "target_type": "cpr_midpoint",
       "time_stop_at": "13:45",
@@ -2041,7 +2060,7 @@
   "structure_detection_workers": 2,
   "structure_detection_workers_local": 1,
   "screener_store_5m_max": 120,
-  "max_trades_per_cycle": 100,
+  "max_trades_per_cycle": 10000,
   "producer_min_interval_sec": 5,
   "rank_exec_threshold": 1.0,
   "rank_pctl_min": 0.6,
@@ -2617,7 +2636,7 @@
   },
   "_comment_live_gate_chain": "=== LIVE GATE CHAIN (sub-project #6 wiring of #1+#2+#3) ===",
   "live_gate_chain": {
-    "enabled": true,
+    "enabled": false,
     "_comment": "Master switch for the composed gate stack. When false, ScreenerLive instantiates the chain in passthrough mode."
   },
   "rule_filter_gate": {

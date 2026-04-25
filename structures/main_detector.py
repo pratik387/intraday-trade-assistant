@@ -806,7 +806,12 @@ class MainDetector(BaseStructure):
 
             # First Hour Momentum (FHM) structures
             'first_hour_momentum_long': 'first_hour_momentum_long',
-            'first_hour_momentum_short': 'first_hour_momentum_short'
+            'first_hour_momentum_short': 'first_hour_momentum_short',
+
+            # Sub-project #7 — Indian-native setups
+            'mis_unwind_short': 'mis_unwind_short',
+            'gap_fade_short': 'gap_fade_short',
+            'cpr_mean_revert': 'cpr_mean_revert',
         }
 
         return direct_mappings.get(structure_type)
