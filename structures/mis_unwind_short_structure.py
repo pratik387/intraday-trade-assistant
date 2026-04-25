@@ -164,17 +164,17 @@ class MISUnwindShortStructure(BaseStructure):
         """Placeholder — implemented in Task 3."""
         return None
 
-    def calculate_risk_params(self, context: MarketContext,
-                              event: Optional[StructureEvent] = None,
-                              side: str = "short") -> RiskParams:
-        """Stop above current price by ATR * stop_atr_buffer (short trade)."""
-        entry_price = context.current_price
-        atr = self._get_atr(context)
-        hard_sl = entry_price + atr * self.stop_atr_buffer
-        risk_per_share = atr * self.stop_atr_buffer
+    def calculate_risk_params(self, entry_price: float,
+                              market_context: MarketContext) -> RiskParams:
+        """Compute risk params for a SHORT entry at entry_price.
+
+        Stop is ABOVE entry (since shorting). Stop distance = ATR * stop_atr_buffer.
+        """
+        atr = self._get_atr(market_context)
+        stop_distance = atr * self.stop_atr_buffer
         return RiskParams(
-            hard_sl=hard_sl,
-            risk_per_share=risk_per_share,
+            hard_sl=entry_price + stop_distance,
+            risk_per_share=stop_distance,
             atr=atr,
         )
 
