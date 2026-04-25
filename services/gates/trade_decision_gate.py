@@ -816,8 +816,15 @@ class TradeDecisionGate:
         # REMOVED: regime_gate.size_multiplier penalty
         reasons.append(f"regime:{regime}")
 
-        # If time window blocked, allow only HCET to proceed
-        if time_blocked and not hc_ok:
+        # Sub-project #7: wide_open_mode bypasses time_window_block. Sub7 detectors
+        # define their own active windows (mis_unwind 14:55-15:15, cpr 11:30-13:30
+        # spans lunch); the legacy morning/afternoon split rejects them. wide_open
+        # is the master kill-switch for all such gates per sub5 cascade design.
+        if _get_wide_open_mode():
+            if time_blocked:
+                reasons.append(f"wide_open_mode:time_window_bypass:{minute_of_day}")
+            # fall through — don't return
+        elif time_blocked and not hc_ok:
             return GateDecision(accept=False, reasons=[f"time_window_block:{minute_of_day}"])
         elif time_blocked and hc_ok:
             reasons.append(f"hcet_bypass_time_window:{minute_of_day}")
