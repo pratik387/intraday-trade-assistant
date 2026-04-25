@@ -35,7 +35,21 @@ from pipelines.breakout_pipeline import BreakoutPipeline
 from pipelines.level_pipeline import LevelPipeline
 from pipelines.reversion_pipeline import ReversionPipeline
 from pipelines.momentum_pipeline import MomentumPipeline
-from pipelines.base_pipeline import BasePipeline, ConfigurationError
+from pipelines.base_pipeline import BasePipeline, ConfigurationError, get_mis_info, get_cap_segment
+
+# Sub-project #7: detector classes for fast-path routing (bypass SMC category pipelines)
+from structures.mis_unwind_short_structure import MISUnwindShortStructure
+from structures.gap_fade_short_structure import GapFadeShortStructure
+from structures.cpr_mean_revert_structure import CPRMeanRevertStructure
+from structures.data_models import MarketContext
+
+# Setup types that use Sub7 fast path — detector emits complete TradePlan,
+# so SMC category pipeline must NOT override entry/stop/target.
+SUB7_SETUPS: frozenset = frozenset({
+    "mis_unwind_short",
+    "gap_fade_short",
+    "cpr_mean_revert",
+})
 
 logger = get_agent_logger()
 
@@ -135,6 +149,10 @@ class PipelineOrchestrator:
         self._init_errors: Dict[SetupCategory, str] = {}
         self._config = _load_risk_budget_config()
 
+        # Sub7 detector instances — instantiated lazily on first use.
+        # Keyed by setup_type so _build_plan_from_sub7_detector can look them up.
+        self._sub7_detectors: Dict[str, Any] = {}
+
         logger.debug("PipelineOrchestrator initialized with risk budget allocation")
 
     def _get_config(self, *keys: str) -> Any:
@@ -202,6 +220,307 @@ class PipelineOrchestrator:
             self._init_errors[category] = str(e)
             logger.exception(f"[ORCHESTRATOR] Unexpected error initializing {category.value}: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # Sub-project #7 fast path
+    # ------------------------------------------------------------------
+
+    def _get_sub7_detector(self, setup_type: str) -> Optional[Any]:
+        """Return the sub7 detector for *setup_type*, instantiating lazily.
+
+        Config is loaded from the root configuration.json ``setups`` block (same
+        source MainDetector uses, so parameter parity is guaranteed).
+        """
+        if setup_type in self._sub7_detectors:
+            return self._sub7_detectors[setup_type]
+
+        # Load full config once to get the setups sub-section
+        try:
+            import json as _json
+            _cfg_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                "config", "configuration.json"
+            )
+            with open(_cfg_path) as _f:
+                _full_cfg = _json.load(_f)
+            setups_cfg = _full_cfg.get("setups", {})
+            setup_cfg = setups_cfg.get(setup_type, {})
+            if not setup_cfg.get("enabled", False):
+                logger.warning(f"[SUB7] {setup_type} not enabled in configuration.json — skipping")
+                return None
+
+            # Inject _setup_name so detector can identify itself (same as MainDetector)
+            setup_cfg = {**setup_cfg, "_setup_name": setup_type}
+
+            _cls_map = {
+                "mis_unwind_short": MISUnwindShortStructure,
+                "gap_fade_short": GapFadeShortStructure,
+                "cpr_mean_revert": CPRMeanRevertStructure,
+            }
+            cls = _cls_map.get(setup_type)
+            if cls is None:
+                logger.warning(f"[SUB7] No detector class mapped for {setup_type}")
+                return None
+
+            det = cls(setup_cfg)
+            self._sub7_detectors[setup_type] = det
+            logger.debug(f"[SUB7] Instantiated {setup_type} detector")
+            return det
+
+        except Exception as exc:
+            logger.exception(f"[SUB7] Failed to instantiate {setup_type} detector: {exc}")
+            return None
+
+    def _build_plan_from_sub7_detector(
+        self,
+        symbol: str,
+        setup_type: str,
+        df5m: pd.DataFrame,
+        levels: Dict[str, float],
+        regime: str,
+        now: pd.Timestamp,
+        cap_segment: Optional[str] = None,
+        daily_df: Optional[pd.DataFrame] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build a plan dict directly from a sub7 detector, bypassing category pipelines.
+
+        Returns an orchestrator-compatible plan dict (same shape as base_pipeline.run_pipeline),
+        or None if the detector rejects the setup.
+        """
+        detector = self._get_sub7_detector(setup_type)
+        if detector is None:
+            return None
+
+        # Build MarketContext — mirrors main_detector._build_market_context()
+        try:
+            if df5m is None or len(df5m) == 0:
+                return None
+
+            atr_val = None
+            if "atr" in df5m.columns and not pd.isna(df5m["atr"].iloc[-1]):
+                atr_val = float(df5m["atr"].iloc[-1])
+            else:
+                atr_val = float((df5m["high"] - df5m["low"]).tail(14).mean())
+
+            vol_z_val = 0.0
+            if "vol_z" in df5m.columns and not pd.isna(df5m["vol_z"].iloc[-1]):
+                vol_z_val = float(df5m["vol_z"].iloc[-1])
+
+            indicators = {"atr": atr_val, "vol_z": vol_z_val}
+
+            # Populate any vwap/rsi columns into indicators for detector use
+            for col in ("vwap", "rsi", "adx"):
+                if col in df5m.columns and not pd.isna(df5m[col].iloc[-1]):
+                    indicators[col] = float(df5m[col].iloc[-1])
+
+            bar_timestamp = pd.to_datetime(df5m.index[-1])
+            current_price = float(df5m["close"].iloc[-1])
+
+            if cap_segment is None:
+                cap_segment = get_cap_segment(symbol)
+
+            context = MarketContext(
+                symbol=symbol,
+                current_price=current_price,
+                timestamp=bar_timestamp,
+                df_5m=df5m,
+                session_date=bar_timestamp.date(),
+                df_daily=daily_df,
+                orh=levels.get("ORH"),
+                orl=levels.get("ORL"),
+                pdh=levels.get("PDH"),
+                pdl=levels.get("PDL"),
+                pdc=levels.get("PDC"),
+                regime=regime,
+                cap_segment=cap_segment,
+                indicators=indicators,
+            )
+        except Exception as exc:
+            logger.exception(f"[SUB7] {symbol} {setup_type}: failed to build MarketContext: {exc}")
+            return None
+
+        # Determine direction from setup_type suffix or detector convention
+        bias = "long" if setup_type.endswith("_long") else "short"
+
+        # Call appropriate plan method
+        try:
+            if bias == "short":
+                trade_plan = detector.plan_short_strategy(context)
+            else:
+                trade_plan = detector.plan_long_strategy(context)
+        except Exception as exc:
+            logger.exception(f"[SUB7] {symbol} {setup_type}: plan_{bias}_strategy raised: {exc}")
+            return None
+
+        if trade_plan is None:
+            logger.debug(f"[SUB7] {symbol} {setup_type}: detector returned None — conditions not met")
+            return {"eligible": False, "reason": "sub7_detector_rejected", "strategy": setup_type, "bias": bias}
+
+        # --- Convert TradePlan → plan dict (orchestrator-compatible shape) ---
+        entry = trade_plan.entry_price
+        hard_sl = trade_plan.risk_params.hard_sl
+        rps = trade_plan.risk_params.risk_per_share
+        atr_for_plan = trade_plan.risk_params.atr or atr_val
+
+        # targets: list[dict] with at least "level" and "rr" keys
+        raw_targets = trade_plan.exit_levels.targets if trade_plan.exit_levels else []
+        targets = []
+        for t in raw_targets:
+            t_level = t.get("level", 0.0)
+            t_rr = t.get("rr", 0.0)
+            if t_rr <= 0.0 and rps > 0.0:
+                if bias == "short":
+                    t_rr = round((entry - t_level) / rps, 2) if entry > t_level else 0.0
+                else:
+                    t_rr = round((t_level - entry) / rps, 2) if t_level > entry else 0.0
+            targets.append({
+                "level": round(t_level, 2),
+                "rr": round(t_rr, 2),
+                "qty_pct": t.get("qty_pct", 1.0),
+                "action": t.get("action", "exit_full"),
+                "name": t.get("name", "T1"),
+            })
+
+        # Structural RR from first target
+        structural_rr = targets[0]["rr"] if targets else 0.0
+
+        # Position sizing (Van Tharp CPR — same formula as base_pipeline)
+        try:
+            import json as _json2
+            _cfg_path2 = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                "config", "configuration.json"
+            )
+            with open(_cfg_path2) as _f2:
+                _root_cfg = _json2.load(_f2)
+            risk_per_trade_rupees = float(_root_cfg["risk_per_trade_rupees"])
+        except Exception:
+            raise RiskBudgetConfigError(
+                "risk_per_trade_rupees missing from config/configuration.json — cannot size sub7 trade"
+            )
+
+        qty = int(risk_per_trade_rupees / rps) if rps > 0 else 0
+        notional = round(qty * entry, 2)
+
+        # MIS info for leverage tracking
+        mis_info = get_mis_info(symbol)
+
+        # entry_zone: for sub7 immediate entries use a ±0.1% zone around entry
+        entry_zone_half = entry * 0.001
+        if bias == "short":
+            entry_zone = [round(entry - entry_zone_half, 2), round(entry + entry_zone_half, 2)]
+        else:
+            entry_zone = [round(entry - entry_zone_half, 2), round(entry + entry_zone_half, 2)]
+
+        # Directional bias multiplier (same as base_pipeline)
+        dir_bias_mult = 1.0
+        dir_bias_reason = "dir_bias:neutral"
+        try:
+            from services.gates.directional_bias import get_tracker
+            db_tracker = get_tracker()
+            if db_tracker is not None:
+                dir_bias_mult, dir_bias_reason = db_tracker.get_size_mult(bias, category="sub7")
+        except Exception:
+            pass
+
+        vwap_val = indicators.get("vwap")
+        rsi_val = indicators.get("rsi")
+        adx_val = indicators.get("adx")
+
+        plan = {
+            "symbol": symbol,
+            "eligible": True,
+            "strategy": setup_type,
+            "bias": bias,
+            "regime": regime,
+            "category": "sub7",
+
+            "entry_ref_price": round(entry, 2),
+            "entry_zone": entry_zone,
+            "entry": {
+                "reference": round(entry, 2),
+                "zone": entry_zone,
+                "trigger": "immediate",
+                "mode": "immediate",
+            },
+
+            "stop": {
+                "hard": round(hard_sl, 2),
+                "risk_per_share": round(rps, 2),
+                "target_risk": round(rps, 2),
+            },
+
+            "targets": targets,
+            "trail": None,
+
+            "quality": {
+                "structural_rr": round(structural_rr, 2),
+                "status": "good",
+                "metrics": {
+                    "entry": round(entry, 2),
+                    "hard_sl": round(hard_sl, 2),
+                    "rps": round(rps, 2),
+                },
+                "t1_feasible": structural_rr >= 1.0,
+                "t2_feasible": len(targets) > 1,
+                "rejection_reason": None,
+            },
+
+            "ranking": {
+                "score": round(structural_rr, 3),
+            },
+
+            "sizing": {
+                "qty": qty,
+                "notional": notional,
+                "risk_rupees": risk_per_trade_rupees,
+                "risk_per_share": round(rps, 2),
+                "size_mult": round(dir_bias_mult, 2),
+                "base_mult": 1.0,
+                "volatility_mult": 1.0,
+                "cap_size_mult": 1.0,
+                "dir_bias_mult": round(dir_bias_mult, 2),
+                "dir_bias_reason": dir_bias_reason,
+                "dir_bias_alignment": "neutral",
+                "cap_segment": cap_segment,
+                "cap_sl_mult": 1.0,
+                "min_hold_bars": 0,
+                "mis_enabled": mis_info.get("mis_enabled", False),
+                "mis_leverage": mis_info.get("mis_leverage") or 1.0,
+            },
+
+            "indicators": {
+                "atr": round(atr_for_plan, 2) if atr_for_plan else None,
+                "adx": round(adx_val, 1) if adx_val else None,
+                "rsi": round(rsi_val, 1) if rsi_val else None,
+                "vwap": round(vwap_val, 2) if vwap_val else None,
+            },
+
+            "model_features": {
+                "bb_width_proxy": 0.0,
+                "volume5": float(df5m["volume"].iloc[-1]) if "volume" in df5m.columns else 0.0,
+                "vol_z": vol_z_val,
+                "vol_ratio": 0.0,
+                "body_size_pct": 0.0,
+                "wick_ratio": 0.0,
+                "momentum_3bar_pct": 0.0,
+                "momentum_1bar_pct": 0.0,
+                "vwap_distance_pct": (
+                    abs(current_price - vwap_val) / vwap_val * 100 if vwap_val else 0.0
+                ),
+            },
+
+            "vc_reason": "sub7_fast_path",
+            "levels": levels,
+            "pipeline_reasons": ["sub7_fast_path"],
+            "cautions": [],
+        }
+
+        logger.info(
+            f"[SUB7] {symbol} {setup_type} APPROVED: entry={entry:.2f} sl={hard_sl:.2f} "
+            f"rr={structural_rr:.2f} qty={qty}"
+        )
+        return plan
 
     def get_category_for_setup(self, setup_type: str) -> Optional[SetupCategory]:
         """Determine the category for a setup type."""
@@ -454,6 +773,29 @@ class PipelineOrchestrator:
 
         Returns plan dict with category info, or None if rejected.
         """
+        # --- Sub-project #7 fast path ---
+        # Sub7 detectors emit complete TradePlans (entry/stop/target).
+        # Routing through SMC category pipelines (especially ReversionPipeline)
+        # overwrites those levels via pattern-matching, causing 93% expiry.
+        # Fast path bypasses category pipelines entirely for sub7 setups.
+        if setup_type in SUB7_SETUPS:
+            logger.debug(f"[SUB7] {symbol} {setup_type}: fast-path (bypass SMC pipeline)")
+            plan = self._build_plan_from_sub7_detector(
+                symbol=symbol,
+                setup_type=setup_type,
+                df5m=df5m,
+                levels=levels,
+                regime=regime,
+                now=now,
+                cap_segment=cap_segment,
+                daily_df=daily_df,
+            )
+            if plan and plan.get("eligible", False):
+                plan["category"] = "sub7"
+                plan["strategy"] = setup_type
+            return plan
+        # --- End sub7 fast path ---
+
         category = self.get_category_for_setup(setup_type)
         if category is None:
             logger.warning(f"[ORCHESTRATOR] No category mapping for: {setup_type}")
@@ -882,6 +1224,32 @@ class PipelineOrchestrator:
                     f"[ORCHESTRATOR] {category}: selected {selected_from_cat}/{num_slots} slots "
                     f"from {len(candidates_list)} candidates"
                 )
+
+        # Step 4b: Sub7 fast-path plans get their own pass.
+        # The SMC slot-allocation loop only iterates over the 4 SMC categories from config;
+        # "sub7" is not in that list, so sub7 plans would be silently dropped.
+        # Drain sub7 plans here, respecting max_positions cap and skip_duplicates.
+        sub7_candidates = category_plans.get("sub7", [])
+        sub7_selected = 0
+        for plan, score, symbol in sub7_candidates:
+            if len(selected_plans) >= max_positions:
+                break
+            if skip_duplicates and symbol in selected_symbols:
+                logger.debug(f"[SUB7] Skipping {symbol} — already selected")
+                continue
+            selected_plans.append(plan)
+            selected_symbols.add(symbol)
+            sub7_selected += 1
+            if self._should_log("log_selection_details"):
+                logger.info(
+                    f"ORCHESTRATOR_SELECT: {symbol} {plan.get('strategy')} "
+                    f"from sub7 (slot {sub7_selected}) score={score:.3f}"
+                )
+        if sub7_selected and self._should_log("log_budget_summary"):
+            logger.info(
+                f"[ORCHESTRATOR] sub7: selected {sub7_selected} plans "
+                f"from {len(sub7_candidates)} candidates"
+            )
 
         # Log summary
         timestamp = now.isoformat() if hasattr(now, 'isoformat') else str(now)
