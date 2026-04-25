@@ -24,9 +24,16 @@ def _cfg():
 
 
 def _build_df(now_time, n_bars=40, last_close=105.0, vwap=100.0,
-              recent_high_offset_min=15, momentum_3bar_pct=-0.3):
+              recent_high_offset_min=15, momentum_3bar_pct=-0.3,
+              last_bar_volume=15000, prior_bar_volume=10000):
     """Build a minimal df where the last bar is at `now_time`,
-    with a fresh intraday high `recent_high_offset_min` ago and weakening momentum."""
+    with a fresh intraday high `recent_high_offset_min` ago and weakening momentum.
+
+    Volume is controlled via last_bar_volume and prior_bar_volume so the
+    detector-computed RVOL = last_bar_volume / mean(prior 20 bars) matches
+    the test intent (detector now computes RVOL from df['volume'] directly).
+    Default: last=15000, prior=10000 → RVOL=1.5 (passes min_rvol=1.2).
+    """
     end = pd.Timestamp(f"2025-01-02 {now_time}")
     idx = pd.date_range(end - pd.Timedelta(minutes=5*(n_bars-1)), periods=n_bars, freq="5min")
     closes = [vwap] * n_bars
@@ -37,18 +44,24 @@ def _build_df(now_time, n_bars=40, last_close=105.0, vwap=100.0,
     closes[-1] = last_close             # current close above VWAP
     # Momentum_3bar_pct calculated from closes[-4] to closes[-1]
     closes[-4] = last_close - (momentum_3bar_pct / 100.0) * last_close
+    volumes = [prior_bar_volume] * n_bars
+    volumes[-1] = last_bar_volume       # last bar volume drives RVOL computation
     df = pd.DataFrame({
         "open": closes, "high": highs,
         "low": [c - 0.5 for c in closes], "close": closes,
-        "volume": [10000] * n_bars,
+        "volume": volumes,
         "vwap": [vwap] * n_bars,
     }, index=idx)
     return df
 
 
-def _make_ctx(df, cap_segment="small_cap", rvol=1.5, atr=1.0):
+def _make_ctx(df, cap_segment="small_cap", atr=1.0):
     """Build a MarketContext compatible with the actual data_models signature.
-    rvol and atr are passed via the indicators dict."""
+
+    RVOL is no longer passed via indicators — the detector computes it from
+    df['volume'] directly (production MarketContext only populates 'vol_z'
+    and 'atr' in indicators). Set volumes in the df to control RVOL.
+    """
     last_ts = df.index[-1]
     return MarketContext(
         symbol="NSE:SYM",
@@ -58,61 +71,71 @@ def _make_ctx(df, cap_segment="small_cap", rvol=1.5, atr=1.0):
         session_date=last_ts.to_pydatetime().replace(hour=0, minute=0, second=0),
         cap_segment=cap_segment,
         regime="trend_up",
-        indicators={"rvol": rvol, "atr": atr},
+        indicators={"atr": atr},
     )
 
 
 def test_fires_in_window_with_valid_setup():
+    """RVOL computed from volume: last=15000, prior=10000 → rvol=1.5 (>= min 1.2)."""
     cfg = _cfg()
     det = MISUnwindShortStructure(cfg)
-    df = _build_df("15:00:00", recent_high_offset_min=15, momentum_3bar_pct=-0.5)
-    ctx = _make_ctx(df, cap_segment="small_cap", rvol=1.5)
+    df = _build_df("15:00:00", recent_high_offset_min=15, momentum_3bar_pct=-0.5,
+                   last_bar_volume=15000, prior_bar_volume=10000)
+    ctx = _make_ctx(df, cap_segment="small_cap")
     result = det.detect(ctx)
     assert result.structure_detected is True
     assert any(e.structure_type == "mis_unwind_short" for e in result.events)
 
 
 def test_does_not_fire_outside_window():
+    """Outside window check — volume passes rvol so only window blocks."""
     cfg = _cfg()
     det = MISUnwindShortStructure(cfg)
-    df = _build_df("11:00:00")  # well before active window
-    ctx = _make_ctx(df, cap_segment="small_cap", rvol=1.5)
+    df = _build_df("11:00:00", last_bar_volume=15000, prior_bar_volume=10000)  # well before active window
+    ctx = _make_ctx(df, cap_segment="small_cap")
     result = det.detect(ctx)
     assert result.structure_detected is False
 
 
 def test_does_not_fire_below_vwap():
+    """Price below VWAP — volume passes rvol so only VWAP condition blocks."""
     cfg = _cfg()
     det = MISUnwindShortStructure(cfg)
-    df = _build_df("15:00:00", last_close=99.0, vwap=100.0)  # below VWAP
-    ctx = _make_ctx(df, cap_segment="small_cap", rvol=1.5)
+    df = _build_df("15:00:00", last_close=99.0, vwap=100.0,
+                   last_bar_volume=15000, prior_bar_volume=10000)  # below VWAP
+    ctx = _make_ctx(df, cap_segment="small_cap")
     result = det.detect(ctx)
     assert result.structure_detected is False
 
 
 def test_does_not_fire_with_positive_momentum():
+    """Positive momentum — volume passes rvol so only momentum condition blocks."""
     cfg = _cfg()
     det = MISUnwindShortStructure(cfg)
-    df = _build_df("15:00:00", momentum_3bar_pct=+0.5)  # still going up
-    ctx = _make_ctx(df, cap_segment="small_cap", rvol=1.5)
+    df = _build_df("15:00:00", momentum_3bar_pct=+0.5,
+                   last_bar_volume=15000, prior_bar_volume=10000)  # still going up
+    ctx = _make_ctx(df, cap_segment="small_cap")
     result = det.detect(ctx)
     assert result.structure_detected is False
 
 
 def test_does_not_fire_in_disallowed_cap_segment():
+    """Disallowed cap segment — volume passes rvol so only cap check blocks."""
     cfg = _cfg()
     det = MISUnwindShortStructure(cfg)
-    df = _build_df("15:00:00")
-    ctx = _make_ctx(df, cap_segment="large_cap", rvol=1.5)
+    df = _build_df("15:00:00", last_bar_volume=15000, prior_bar_volume=10000)
+    ctx = _make_ctx(df, cap_segment="large_cap")
     result = det.detect(ctx)
     assert result.structure_detected is False
 
 
 def test_plan_short_strategy_returns_valid_plan():
+    """Volume set to produce rvol=1.5, all other conditions satisfied."""
     cfg = _cfg()
     det = MISUnwindShortStructure(cfg)
-    df = _build_df("15:00:00", last_close=105.0, vwap=100.0)
-    ctx = _make_ctx(df, cap_segment="small_cap", rvol=1.5, atr=1.0)
+    df = _build_df("15:00:00", last_close=105.0, vwap=100.0,
+                   last_bar_volume=15000, prior_bar_volume=10000)
+    ctx = _make_ctx(df, cap_segment="small_cap", atr=1.0)
     plan = det.plan_short_strategy(ctx)
     assert plan is not None
     assert plan.side == "short"
@@ -126,8 +149,9 @@ def test_plan_short_strategy_returns_valid_plan():
 
 
 def test_plan_long_strategy_returns_none():
+    """Short-only setup — long always returns None."""
     cfg = _cfg()
     det = MISUnwindShortStructure(cfg)
-    df = _build_df("15:00:00")
-    ctx = _make_ctx(df, cap_segment="small_cap", rvol=1.5)
+    df = _build_df("15:00:00", last_bar_volume=15000, prior_bar_volume=10000)
+    ctx = _make_ctx(df, cap_segment="small_cap")
     assert det.plan_long_strategy(ctx) is None

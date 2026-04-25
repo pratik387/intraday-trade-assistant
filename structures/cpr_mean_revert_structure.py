@@ -62,20 +62,41 @@ class CPRMeanRevertStructure(BaseStructure):
             return float((df["high"] - df["low"]).tail(14).mean())
         return context.current_price * 0.01
 
+    @staticmethod
+    def _compute_cpr(pdh, pdl, pdc) -> Optional[tuple]:
+        """Standard CPR formula (Frank Ochoa / Zerodha Varsity reference).
+
+        Pivot = (H + L + C) / 3
+        BC    = (H + L) / 2
+        TC    = 2 * Pivot - BC
+
+        TC and BC can be in either order — always normalize via max/min.
+
+        Returns (cpr_top, cpr_bottom, cpr_mid) or None if inputs are None.
+        """
+        if pdh is None or pdl is None or pdc is None:
+            return None
+        pivot = (pdh + pdl + pdc) / 3.0
+        bc = (pdh + pdl) / 2.0
+        tc = 2.0 * pivot - bc
+        cpr_top = max(tc, bc)
+        cpr_bottom = min(tc, bc)
+        cpr_mid = pivot  # = (cpr_top + cpr_bottom) / 2 by construction
+        return cpr_top, cpr_bottom, cpr_mid
+
     def _get_cpr_levels(self, context: MarketContext) -> Optional[tuple]:
-        """Extract CPR_TOP and CPR_BOTTOM from indicators dict.
+        """Compute CPR levels from previous-day pdh/pdl/pdc on MarketContext.
+
+        Production MarketContext provides pdh, pdl, pdc as direct fields (set in
+        main_detector.py). We compute CPR from those rather than from indicators
+        (which only populate 'vol_z' and 'atr' in production).
 
         Returns (cpr_top, cpr_bottom, cpr_mid) or None if unavailable.
         """
-        ind = context.indicators or {}
-        cpr_top = ind.get("CPR_TOP")
-        cpr_bot = ind.get("CPR_BOTTOM")
-        if cpr_top is None or cpr_bot is None:
-            return None
-        cpr_top = float(cpr_top)
-        cpr_bot = float(cpr_bot)
-        cpr_mid = (cpr_top + cpr_bot) / 2.0
-        return cpr_top, cpr_bot, cpr_mid
+        pdh = getattr(context, 'pdh', None)
+        pdl = getattr(context, 'pdl', None)
+        pdc = getattr(context, 'pdc', None)
+        return self._compute_cpr(pdh, pdl, pdc)
 
     @staticmethod
     def _candle_pattern(bar) -> str:

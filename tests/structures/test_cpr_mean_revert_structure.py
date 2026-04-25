@@ -98,10 +98,18 @@ def _build_lull_df(
     return df
 
 
-def _make_ctx(df, cpr_top=101.0, cpr_bottom=99.0, cap_segment="small_cap", atr=1.0):
+def _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=1.0):
     """Build a MarketContext for CPR mean revert tests.
 
-    CPR levels are passed via indicators dict (CPR_TOP, CPR_BOTTOM, atr).
+    CPR levels are now computed by the detector from pdh/pdl/pdc (production
+    MarketContext provides these as direct fields; indicators only has 'vol_z'
+    and 'atr' in production).
+
+    Default PDH=103, PDL=98, PDC=100 gives:
+      pivot = (103+98+100)/3 = 100.33
+      bc    = (103+98)/2     = 100.5
+      tc    = 2*100.33-100.5 = 100.17
+      CPR_TOP=100.5, CPR_BOTTOM=100.17, CPR_MID=100.33
     """
     last_ts = df.index[-1]
     return MarketContext(
@@ -112,11 +120,10 @@ def _make_ctx(df, cpr_top=101.0, cpr_bottom=99.0, cap_segment="small_cap", atr=1
         session_date=last_ts.to_pydatetime().replace(hour=0, minute=0, second=0),
         cap_segment=cap_segment,
         regime="chop",
-        indicators={
-            "atr": atr,
-            "CPR_TOP": cpr_top,
-            "CPR_BOTTOM": cpr_bottom,
-        },
+        pdh=pdh,
+        pdl=pdl,
+        pdc=pdc,
+        indicators={"atr": atr},
     )
 
 
@@ -125,24 +132,29 @@ def _make_ctx(df, cpr_top=101.0, cpr_bottom=99.0, cap_segment="small_cap", atr=1
 # ---------------------------------------------------------------------------
 
 def test_fires_short_reversion_above_cpr():
-    """close=102 (1.0 ATR above cpr_mid=101), low volume, hammer → fires short."""
+    """close=102 above CPR_MID≈100.33 by 1.67 ATR (>= 1.0), low volume, hammer → fires short.
+
+    PDH=103, PDL=98, PDC=100 → pivot=100.33, bc=100.5, tc=100.17
+    CPR_TOP=100.5, CPR_BOTTOM=100.17, CPR_MID=100.33
+    dist = |102 - 100.33| / 1.0 = 1.67 ATR >= min 1.0 → passes.
+    """
     cfg = _cfg()
     det = CPRMeanRevertStructure(cfg)
 
-    cpr_top, cpr_bot = 101.0, 99.0   # cpr_mid = 100.0
     atr = 1.0
-    last_close = 102.0  # 2 ATR above cpr_mid... wait, mid=100, dist=2 >= 1.0 ok
+    last_close = 102.0  # above CPR_MID=100.33 by 1.67 ATR
 
     df = _build_lull_df(
         now_time="12:00:00",
         last_close=last_close,
-        cpr_mid=100.0,
+        cpr_mid=100.33,  # visual guide for df builder (prior bars), not used by detector
         atr=atr,
         cur_volume=2000,
         intraday_avg_volume=10000,
         candle_pattern="hammer",
     )
-    ctx = _make_ctx(df, cpr_top=cpr_top, cpr_bottom=cpr_bot, cap_segment="small_cap", atr=atr)
+    # PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
+    ctx = _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=atr)
 
     result = det.detect(ctx)
     assert result.structure_detected is True, f"Expected fire, got: {result.rejection_reason}"
@@ -156,7 +168,7 @@ def test_fires_short_reversion_above_cpr():
     assert plan.notes.get("bias") == "short"
     # Stop should be ABOVE entry (short)
     assert plan.risk_params.hard_sl > plan.entry_price
-    # Target should be at or near CPR midpoint (100.0), below entry (102.0)
+    # Target should be at CPR midpoint (~100.33), below entry (102.0)
     assert plan.exit_levels.targets[0]["level"] < plan.entry_price
 
 
@@ -165,24 +177,31 @@ def test_fires_short_reversion_above_cpr():
 # ---------------------------------------------------------------------------
 
 def test_fires_long_reversion_below_cpr():
-    """close=98 (2.0 ATR below cpr_mid=100), low volume, shooting_star → fires long."""
+    """close=98 below CPR_MID≈100.33 by 2.33 ATR (>= 1.0), low volume, shooting_star → fires long.
+
+    PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
+    dist = |98 - 100.33| / 1.0 = 2.33 ATR >= min 1.0 → passes.
+
+    Note: shooting_star builder uses last_close as base, and the actual close
+    on the bar is last_close + 0.1*atr = 98.1. Still well below CPR_MID=100.33.
+    """
     cfg = _cfg()
     det = CPRMeanRevertStructure(cfg)
 
-    cpr_top, cpr_bot = 101.0, 99.0   # cpr_mid = 100.0
     atr = 1.0
-    last_close = 98.0  # 2 ATR below cpr_mid
+    last_close = 98.0  # below CPR_MID=100.33 by 2.33 ATR
 
     df = _build_lull_df(
         now_time="12:00:00",
         last_close=last_close,
-        cpr_mid=100.0,
+        cpr_mid=100.33,  # visual guide for df builder, not used by detector
         atr=atr,
         cur_volume=2000,
         intraday_avg_volume=10000,
         candle_pattern="shooting_star",
     )
-    ctx = _make_ctx(df, cpr_top=cpr_top, cpr_bottom=cpr_bot, cap_segment="small_cap", atr=atr)
+    # PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
+    ctx = _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=atr)
 
     result = det.detect(ctx)
     assert result.structure_detected is True, f"Expected fire, got: {result.rejection_reason}"
@@ -196,7 +215,7 @@ def test_fires_long_reversion_below_cpr():
     assert plan.notes.get("bias") == "long"
     # Stop should be BELOW entry (long)
     assert plan.risk_params.hard_sl < plan.entry_price
-    # Target should be at or near CPR midpoint (100.0), above entry (98.0)
+    # Target should be at CPR midpoint (~100.33), above entry (~98.1)
     assert plan.exit_levels.targets[0]["level"] > plan.entry_price
 
 
@@ -209,20 +228,20 @@ def test_does_not_fire_outside_window():
     cfg = _cfg()
     det = CPRMeanRevertStructure(cfg)
 
-    cpr_top, cpr_bot = 101.0, 99.0
     atr = 1.0
     last_close = 102.0
 
     df = _build_lull_df(
         now_time="10:00:00",
         last_close=last_close,
-        cpr_mid=100.0,
+        cpr_mid=100.33,
         atr=atr,
         cur_volume=2000,
         intraday_avg_volume=10000,
         candle_pattern="hammer",
     )
-    ctx = _make_ctx(df, cpr_top=cpr_top, cpr_bottom=cpr_bot, cap_segment="small_cap", atr=atr)
+    # PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
+    ctx = _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=atr)
 
     result = det.detect(ctx)
     assert result.structure_detected is False
@@ -234,24 +253,28 @@ def test_does_not_fire_outside_window():
 # ---------------------------------------------------------------------------
 
 def test_does_not_fire_close_to_cpr():
-    """close=100.5 (only 0.5 ATR above cpr_mid=100), < min 1.0 ATR → no fire."""
+    """close=100.6 only 0.27 ATR from CPR_MID=100.33, < min 1.0 ATR → no fire.
+
+    PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
+    dist = |100.6 - 100.33| / 1.0 = 0.27 ATR < min 1.0 → rejected.
+    """
     cfg = _cfg()
     det = CPRMeanRevertStructure(cfg)
 
-    cpr_top, cpr_bot = 101.0, 99.0   # cpr_mid = 100.0
     atr = 1.0
-    last_close = 100.5  # 0.5 ATR above cpr_mid — below threshold
+    last_close = 100.6  # only 0.27 ATR from CPR_MID=100.33 — below threshold
 
     df = _build_lull_df(
         now_time="12:00:00",
         last_close=last_close,
-        cpr_mid=100.0,
+        cpr_mid=100.33,
         atr=atr,
         cur_volume=2000,
         intraday_avg_volume=10000,
         candle_pattern="hammer",
     )
-    ctx = _make_ctx(df, cpr_top=cpr_top, cpr_bottom=cpr_bot, cap_segment="small_cap", atr=atr)
+    # PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
+    ctx = _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=atr)
 
     result = det.detect(ctx)
     assert result.structure_detected is False
@@ -267,20 +290,20 @@ def test_does_not_fire_with_high_volume():
     cfg = _cfg()
     det = CPRMeanRevertStructure(cfg)
 
-    cpr_top, cpr_bot = 101.0, 99.0
     atr = 1.0
     last_close = 102.0
 
     df = _build_lull_df(
         now_time="12:00:00",
         last_close=last_close,
-        cpr_mid=100.0,
+        cpr_mid=100.33,
         atr=atr,
         cur_volume=8000,       # 80% of avg — well above 30% max
         intraday_avg_volume=10000,
         candle_pattern="hammer",
     )
-    ctx = _make_ctx(df, cpr_top=cpr_top, cpr_bottom=cpr_bot, cap_segment="small_cap", atr=atr)
+    # PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
+    ctx = _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=atr)
 
     result = det.detect(ctx)
     assert result.structure_detected is False

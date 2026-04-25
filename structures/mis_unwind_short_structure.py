@@ -48,10 +48,22 @@ class MISUnwindShortStructure(BaseStructure):
         return time(int(h), int(m))
 
     def _get_rvol(self, context: MarketContext) -> float:
-        """Extract rvol from indicators dict (stored there since MarketContext has no rvol field)."""
-        if context.indicators and "rvol" in context.indicators:
-            return float(context.indicators["rvol"])
-        return 0.0
+        """Compute RVOL from df_5m volume: last bar / mean of prior N bars.
+
+        Production MarketContext only populates indicators['vol_z'] and indicators['atr'],
+        so we compute RVOL directly from the volume column.
+        """
+        df = context.df_5m
+        if df is None or len(df) < 2:
+            return 1.0  # insufficient data, neutral
+        last_vol = float(df['volume'].iloc[-1])
+        lookback = min(20, len(df) - 1)
+        if lookback < 5:
+            return 1.0  # insufficient data, neutral
+        avg_vol = float(df['volume'].iloc[-1 - lookback: -1].mean())
+        if avg_vol <= 0:
+            return 1.0
+        return last_vol / avg_vol
 
     def _get_atr(self, context: MarketContext) -> float:
         """Extract ATR from indicators dict with fallback."""
