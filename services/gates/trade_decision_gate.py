@@ -775,7 +775,15 @@ class TradeDecisionGate:
                                            "orb_pullback_long", "orb_pullback_short")
         is_fhm_setup = best.setup_type in ("first_hour_momentum_long", "first_hour_momentum_short")
         early_window_min_bars = 4  # Pro trader standard: 15-min range (3 bars) + 1 bar for breakout
-        min_bars_required = early_window_min_bars if (is_orb_setup or is_fhm_setup) else 10
+        # Sub-project #7 (gauntlet v2): wide_open_mode bypasses setup-type whitelist for min_bars.
+        # Sets min to 1 so detector's own min_bars_required is the sole gatekeeper.
+        if _get_wide_open_mode():
+            min_bars_required = 1
+            reasons.append("wide_open_mode:min_bars_bypass")
+        elif is_orb_setup or is_fhm_setup:
+            min_bars_required = early_window_min_bars
+        else:
+            min_bars_required = 10
 
         if df5m_tail is None or len(df5m_tail) < min_bars_required:
             if hc_ok:
