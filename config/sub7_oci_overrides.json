@@ -67,15 +67,6 @@
     "volume_spike_reversal_long": {"enabled": false},
     "volume_spike_reversal_short": {"enabled": false},
     "volume_breakout_long": {"enabled": false},
-    "volume_breakout_short": {"enabled": false},
-    "breakout_long": {"enabled": false},
-    "breakout_short": {"enabled": false},
-    "ict_comprehensive": {"enabled": false},
-    "main_detector": {"enabled": false},
-    "orb_breakdown": {"enabled": false},
-    "orb_breakdown_short": {"enabled": false},
-    "orb_breakout": {"enabled": false},
-    "trend_reversal_long": {"enabled": false},
-    "trend_reversal_short": {"enabled": false}
+    "volume_breakout_short": {"enabled": false}
   }
 }
