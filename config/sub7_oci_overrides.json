@@ -1,5 +1,8 @@
 {
   "wide_open_mode": true,
+  "entry_cutoff_hhmm": "15:20",
+  "last_scan_hhmm": "15:25",
+  "eod_squareoff_hhmm": "15:25",
   "max_trades_per_cycle": 10000,
   "gate_input_logging": {
     "enabled": true

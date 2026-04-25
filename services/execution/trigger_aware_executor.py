@@ -211,13 +211,19 @@ class TriggerAwareExecutor:
 
             # Pre-order R:R gate: reject if trigger price already compresses R:R
             # Pure arithmetic (~microseconds) — avoids placing orders that will immediately exit
-            pre_ok, pre_reason = self._check_fill_quality(plan, price, side)
-            if not pre_ok:
-                logger.warning(
-                    f"PRE_ORDER_RR_REJECT | {symbol} | Skipping entry | "
-                    f"Price: {price:.2f} | Reason: {pre_reason}"
-                )
-                return False
+            # Sub-project #7: wide_open_mode bypasses RR floor — sub7 detectors (gap_fade etc.)
+            # set their own RR logic; system-wide 0.3 floor blocks them legitimately.
+            _wide_open = bool(self.cfg.get("wide_open_mode", False))
+            if _wide_open:
+                pass  # Skip RR check — let detector-defined RR be the source of truth
+            else:
+                pre_ok, pre_reason = self._check_fill_quality(plan, price, side)
+                if not pre_ok:
+                    logger.warning(
+                        f"PRE_ORDER_RR_REJECT | {symbol} | Skipping entry | "
+                        f"Price: {price:.2f} | Reason: {pre_reason}"
+                    )
+                    return False
 
             # Check if this is a shadow trade (simulated, no capital consumed)
             is_shadow = plan.get("shadow", False)

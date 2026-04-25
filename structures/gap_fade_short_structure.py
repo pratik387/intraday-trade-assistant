@@ -215,8 +215,13 @@ class GapFadeShortStructure(BaseStructure):
         gap_open = float(opening_bar["open"])
 
         # Stop: ABOVE opening gap high (short, so stop is above entry)
-        hard_sl = gap_high + atr_val * self.stop_atr_buffer
-        risk_per_share = hard_sl - close
+        # Research: max(gap_high + 0.25% buffer, entry + 1.5×ATR) for gap fade shorts
+        # Source: StockManiacs, TrueData, ChartSchool — small caps with tiny ATR get
+        # stopped on noise without absolute % floor
+        stop_a = gap_high * 1.0025                    # gap_high + 0.25%
+        stop_b = close + atr_val * 1.5                # entry + 1.5 ATR
+        hard_sl = max(stop_a, stop_b)
+        risk_per_share = max(hard_sl - close, atr_val * 0.1)
 
         # Target: PDC or opening price
         pdc = float(context.pdc) if context.pdc is not None else close
@@ -273,8 +278,10 @@ class GapFadeShortStructure(BaseStructure):
         atr = self._get_atr(market_context)
         df = market_context.df_5m
         gap_high = float(df.iloc[0]["high"]) if df is not None and len(df) >= 1 else entry_price
-        hard_sl = gap_high + atr * self.stop_atr_buffer
-        stop_distance = hard_sl - entry_price
+        stop_a = gap_high * 1.0025
+        stop_b = entry_price + atr * 1.5
+        hard_sl = max(stop_a, stop_b)
+        stop_distance = max(hard_sl - entry_price, atr * 0.1)
         return RiskParams(
             hard_sl=hard_sl,
             risk_per_share=stop_distance,

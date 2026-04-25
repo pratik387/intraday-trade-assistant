@@ -17,7 +17,7 @@ def _cfg():
         "max_body_size_pct": 30.0,
         "require_volume_decline_after_gap": True,
         "allowed_cap_segments": ["small_cap", "mid_cap", "micro_cap"],
-        "stop_above_gap_high_atr": 0.3,
+        "stop_above_gap_high_atr": 0.25,
         "target_type": "pdc_or_open",
         "time_stop_at": "10:00",
         "min_bars_required": 1,

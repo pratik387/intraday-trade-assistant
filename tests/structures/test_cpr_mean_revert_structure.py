@@ -15,9 +15,10 @@ def _cfg():
         "require_reversion_candle": True,
         "reversion_patterns": ["hammer", "doji", "shooting_star"],
         "allowed_cap_segments": ["small_cap", "mid_cap", "large_cap"],
-        "stop_at_extreme_atr_buffer": 0.2,
+        "stop_at_extreme_atr_buffer": 0.5,
         "target_type": "cpr_midpoint",
-        "time_stop_at": "13:45",
+        "time_stop_at": "14:00",
+        "min_cpr_width_pct": 0.0,
         "min_bars_required": 30,
     }
 

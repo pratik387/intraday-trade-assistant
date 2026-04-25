@@ -47,6 +47,7 @@ class CPRMeanRevertStructure(BaseStructure):
         self.stop_atr_buffer = float(config["stop_at_extreme_atr_buffer"])
         self.target_type = str(config["target_type"])
         self.min_bars_required = int(config["min_bars_required"])
+        self.min_cpr_width_pct = float(config.get("min_cpr_width_pct", 0.0))
 
     @staticmethod
     def _parse_time(s: str) -> time:
@@ -161,6 +162,14 @@ class CPRMeanRevertStructure(BaseStructure):
         if cpr_result is None:
             return _empty("CPR levels (CPR_TOP/CPR_BOTTOM) unavailable")
         cpr_top, cpr_bot, cpr_mid = cpr_result
+
+        # --- CPR width filter (research: Wright Research, Groww) ---
+        # Mean reversion only works on wide-CPR days (CPR width > X% of price).
+        # Narrow CPR = trending day → fade fails systematically.
+        if self.min_cpr_width_pct > 0:
+            cpr_width_pct = ((cpr_top - cpr_bot) / max(cpr_mid, 1e-6)) * 100.0
+            if cpr_width_pct < self.min_cpr_width_pct:
+                return _empty(f"cpr_too_narrow:{cpr_width_pct:.2f}%<{self.min_cpr_width_pct}%")
 
         last = df.iloc[-1]
         close = float(last["close"])
