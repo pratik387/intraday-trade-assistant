@@ -73,10 +73,8 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "range_deviation": SetupCategory.REVERSION,       # Range deviation mean reversion
     "range_mean_reversion": SetupCategory.REVERSION,  # Range-based mean reversion
 
-    # Sub-project #7 — Indian-native setups (all REVERSION-flavored)
-    "mis_unwind": SetupCategory.REVERSION,
+    # Sub-project #7 — Indian-native setups (gap_fade surviving)
     "gap_fade": SetupCategory.REVERSION,
-    "cpr_mean_revert": SetupCategory.REVERSION,
 
     # MOMENTUM: Trend continuation
     # Quality = ADX (trend strength) + trend alignment
