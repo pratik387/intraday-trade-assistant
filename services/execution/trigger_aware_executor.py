@@ -72,8 +72,12 @@ class TriggerAwareExecutor:
                     return False
 
             # Block duplicate — position may have been opened by another plan
-            # between _add_pending_trade and now
-            if trade.symbol in self.risk.open_positions:
+            # between _add_pending_trade and now.
+            # Sub-project #7: wide_open_mode bypasses (mirror of the bypass at L1192-1195
+            # in _add_pending_trade). Without this, the same 171 cpr decisions that the
+            # add-time bypass let through get blocked here at execution time.
+            if (trade.symbol in self.risk.open_positions
+                    and not bool(self.cfg.get("wide_open_mode", False))):
                 logger.warning(f"DUPLICATE_BLOCKED | {trade.symbol} | Position already open at execution time")
                 trade.state = TradeState.EXPIRED
                 return False
@@ -194,20 +198,26 @@ class TriggerAwareExecutor:
             logger.info(f"VALIDATION CHECK: {symbol} entry={price:.2f} hard_sl={hard_sl} side={side}")
     
             if hard_sl is not None:
-                # Check minimum distance - configurable to avoid hardcoded trading rules
-                from config.filters_setup import load_filters
-                filters_config = load_filters()
-                # KeyError if missing trading parameters
-                min_distance_pct = filters_config["min_entry_sl_distance_pct"]
-                min_distance_abs = filters_config["min_entry_sl_distance_abs"]
-                min_distance = max(price * min_distance_pct, min_distance_abs)
+                # Sub-project #7: wide_open_mode bypasses min-entry-SL-distance floor.
+                # Sub7 mean-reversion detectors (cpr_mean_revert) place stops within
+                # ~0.3% of entry (just past pivot); the system-wide 0.3% safety floor
+                # blocks 200+/day of them. Same kill-switch rationale as S8.10/S8.11.
+                _wide_open = bool(self.cfg.get("wide_open_mode", False))
+                if not _wide_open:
+                    # Check minimum distance - configurable to avoid hardcoded trading rules
+                    from config.filters_setup import load_filters
+                    filters_config = load_filters()
+                    # KeyError if missing trading parameters
+                    min_distance_pct = filters_config["min_entry_sl_distance_pct"]
+                    min_distance_abs = filters_config["min_entry_sl_distance_abs"]
+                    min_distance = max(price * min_distance_pct, min_distance_abs)
 
-                if side == "BUY" and price <= (hard_sl + min_distance):
-                    logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
-                    return False
-                elif side == "SELL" and price >= (hard_sl - min_distance):
-                    logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
-                    return False
+                    if side == "BUY" and price <= (hard_sl + min_distance):
+                        logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
+                        return False
+                    elif side == "SELL" and price >= (hard_sl - min_distance):
+                        logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
+                        return False
 
             # Pre-order R:R gate: reject if trigger price already compresses R:R
             # Pure arithmetic (~microseconds) — avoids placing orders that will immediately exit
@@ -273,10 +283,17 @@ class TriggerAwareExecutor:
                         logger.warning(f"Failed to reconcile position for {symbol}: {e}")
 
                 # Fill Quality Gate: Exit immediately if fill degrades R:R below threshold
-                can_proceed, fq_reason = self._check_fill_quality(plan, price, side)
-                if not can_proceed:
-                    self._immediate_exit_bad_fill(symbol, side, qty, price, order_id, fq_reason, plan)
-                    return False
+                # Sub-project #7: wide_open_mode also bypasses post-fill RR check (same
+                # rationale as the pre-order bypass at L217). Without this, sub7 detector
+                # plans whose risk:target geometry sits below the system-wide 0.3 floor get
+                # immediately exited at fill price (PnL=0), masking the real outcome.
+                if _wide_open:
+                    pass
+                else:
+                    can_proceed, fq_reason = self._check_fill_quality(plan, price, side)
+                    if not can_proceed:
+                        self._immediate_exit_bad_fill(symbol, side, qty, price, order_id, fq_reason, plan)
+                        return False
 
             # Log TRIGGER to events.jsonl (single writer: diag_event_log)
             try:
@@ -1012,6 +1029,16 @@ class TriggerAwareExecutor:
 
                 entry_min, entry_max = sorted(entry_zone)
 
+                # Sub-project #7: under wide_open_mode, fire on the first available price
+                # without zone-membership check. The earlier wide_open bypasses skipped the
+                # must_conditions zone check and _is_price_in_entry_zone, but THIS poll path
+                # still gated triggers on `entry_min <= price <= entry_max`. With sub7 cpr's
+                # close±0.1% zone, the next 1m bar's cached close almost never lands in zone
+                # → 171/339 cpr decisions silently expired without ever attempting to trigger.
+                if bool(self.cfg.get("wide_open_mode", False)):
+                    self._try_trigger_on_tick(trade, price, current_ts)
+                    continue
+
                 # Check if price is in or near entry zone
                 in_strict_zone = entry_min <= price <= entry_max
                 tolerance = 0.0005 * price  # 0.05% tolerance
@@ -1086,6 +1113,16 @@ class TriggerAwareExecutor:
             bias = trade.plan.get("bias", "long")
             strategy = trade.plan.get("strategy", "unknown")
 
+            # Sub-project #7: under wide_open_mode, fire on the first tick without
+            # zone-membership check. Mirror of the bypass in _poll_all_pending_trades.
+            if bool(self.cfg.get("wide_open_mode", False)):
+                logger.info(
+                    f"WIDE_OPEN_TICK_TRIGGER: {symbol} {strategy} {bias} "
+                    f"price={price:.2f} ts={ts.strftime('%H:%M:%S')} trade_id={trade.trade_id}"
+                )
+                self._try_trigger_on_tick(trade, price, ts)
+                continue
+
             # Check if returned price is in entry zone
             in_strict_zone = entry_min <= price <= entry_max
 
@@ -1155,8 +1192,12 @@ class TriggerAwareExecutor:
                 logger.info(f"PLAN_SKIP | {symbol} | Previously rejected by fill quality gate, ignoring")
                 return
 
-            # Block duplicate entry — symbol already has an open position
-            if symbol in self.risk.open_positions:
+            # Block duplicate entry — symbol already has an open position.
+            # Sub-project #7: wide_open_mode bypasses this guard so every detection
+            # produces its own trade outcome for the gauntlet. In live this guard is
+            # correct (don't double-stack a stock); under capture mode it silently
+            # drops repeat detections (smoke 13 saw 171 cpr decisions skipped here).
+            if symbol in self.risk.open_positions and not bool(self.cfg.get("wide_open_mode", False)):
                 logger.info(f"PLAN_SKIP | {symbol} | Already has open position, ignoring duplicate plan")
                 return
 
@@ -1185,10 +1226,16 @@ class TriggerAwareExecutor:
             )
             
             with self._lock:
-                # Cancel any existing pending trades for same symbol if configured
-                if self.cfg.get("cancel_existing_pending", True):
+                # Cancel any existing pending trades for same symbol if configured.
+                # Sub-project #7: wide_open_mode skips the cancel — under capture mode,
+                # EVERY detection must produce its own trade outcome for the gauntlet
+                # (cpr fires across 24 lunch bars, would otherwise leave only the last
+                # per symbol; smoke 12 saw 339 decisions collapse to 168 triggers from
+                # 186 unique syms, the 153 superseded ones silently cancelled).
+                _wide_open = bool(self.cfg.get("wide_open_mode", False))
+                if not _wide_open and self.cfg.get("cancel_existing_pending", True):
                     self._cancel_pending_for_symbol(symbol)
-                
+
                 self.pending_trades[trade_id] = pending_trade
             
             logger.info(
@@ -1285,6 +1332,13 @@ class TriggerAwareExecutor:
         """
         if not entry_zone or len(entry_zone) != 2:
             # No entry zone defined - allow trigger (fallback behavior)
+            return True
+
+        # Sub-project #7: wide_open_mode bypasses zone check (mirrors the must_conditions
+        # bypass in trigger_validation_engine). Every plan with conditions met triggers
+        # at LTP — the zone discipline is intentionally suspended so the filter-search
+        # downstream sees outcomes for every detector signal.
+        if bool(self.cfg.get("wide_open_mode", False)):
             return True
 
         min_price, max_price = sorted(entry_zone)  # Ensure min < max

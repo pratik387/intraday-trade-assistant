@@ -339,8 +339,25 @@ class PipelineOrchestrator:
             logger.exception(f"[SUB7] {symbol} {setup_type}: failed to build MarketContext: {exc}")
             return None
 
-        # Determine direction from setup_type suffix or detector convention
-        bias = "long" if setup_type.endswith("_long") else "short"
+        # Determine direction. Setups with explicit suffix (_long/_short) are unambiguous.
+        # Bidirectional detectors (e.g. cpr_mean_revert) decide bias inside detect() based
+        # on price geometry; calling the wrong plan_*_strategy() returns None and silently
+        # drops the signal. So for those, run detect() to read the bias, then dispatch.
+        if setup_type.endswith("_long"):
+            bias = "long"
+        elif setup_type.endswith("_short"):
+            bias = "short"
+        else:
+            try:
+                analysis = detector.detect(context)
+            except Exception as exc:
+                logger.exception(f"[SUB7] {symbol} {setup_type}: detect() raised: {exc}")
+                return None
+            evts = getattr(analysis, "events", []) or []
+            bias_from_detect = evts[0].context.get("bias") if evts else None
+            if bias_from_detect not in ("long", "short"):
+                return None
+            bias = bias_from_detect
 
         # Call appropriate plan method
         try:

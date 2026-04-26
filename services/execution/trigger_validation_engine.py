@@ -67,16 +67,23 @@ class FastTriggerConditionFactory:
         breakout_immediate = self.cfg.get("breakout_immediate_execution", False)
         is_breakout = 'breakout' in strategy.lower()
 
+        # Sub-project #7: wide_open_mode skips entry_zone_check entirely so EVERY plan
+        # gets executed on the next 1m bar regardless of where price is. The whole point
+        # of wide_open_mode is to capture every detector signal as a real trade so the
+        # downstream filter-search has actual outcomes (PnL) for every admit. Without this,
+        # tight zones (e.g. cpr_mean_revert close±0.1%) make ~75% of plans expire unfilled.
+        wide_open = bool(self.cfg.get("wide_open_mode", False))
+
         # BREAKOUT STRATEGIES: Immediate execution, NO entry zone wait
         # Professional standard: Execute within <2 min, not 8 min delay
-        if is_breakout and breakout_immediate:
+        if (is_breakout and breakout_immediate) or wide_open:
             must_conditions = [
                 TriggerCondition(
                     ConditionType.TIME_BASED,
                     {"type": "market_hours"},
                     "Market hours check"
                 )
-                # NO entry_zone_check for breakouts - execute immediately on decision
+                # NO entry_zone_check for breakouts / wide_open — execute immediately on decision
             ]
         # FADE & OTHER STRATEGIES: Keep existing entry zone logic (35% trigger rate proves it works)
         else:
