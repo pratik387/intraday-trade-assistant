@@ -1862,8 +1862,39 @@
         "flag_continuation_short": 0.6,
         "momentum_breakout_long": 0.5,
         "momentum_breakout_short": 0.5,
-        "gap_fade_short": 0.85
+        "gap_fade_short": 0.85,
+        "mis_unwind_short": 0.85,
+        "cpr_mean_revert": 0.80
       }
+    },
+    "mis_unwind_short": {
+      "enabled": true,
+      "active_window_start": "14:55",
+      "active_window_end": "15:15",
+      "min_distance_above_vwap_pct": 0.5,
+      "min_intraday_high_recency_min": 30,
+      "max_momentum_3bar_pct": 0.0,
+      "min_rvol": 1.2,
+      "allowed_cap_segments": ["small_cap", "mid_cap"],
+      "stop_atr_buffer": 1.5,
+      "target_type": "vwap",
+      "time_stop_min_before_close": 5,
+      "min_bars_required": 30
+    },
+    "cpr_mean_revert": {
+      "enabled": true,
+      "active_window_start": "11:30",
+      "active_window_end": "13:30",
+      "tc_bc_touch_tolerance_pct": 0.1,
+      "max_volume_pct_of_intraday_avg": 30.0,
+      "require_reversion_candle": true,
+      "reversion_patterns": ["hammer", "doji", "shooting_star"],
+      "allowed_cap_segments": ["small_cap", "mid_cap", "large_cap"],
+      "stop_at_extreme_atr_buffer": 0.75,
+      "target_type": "cpr_midpoint",
+      "time_stop_at": "14:00",
+      "min_cpr_width_pct": 0.0,
+      "min_bars_required": 30
     },
     "gap_fade_short": {
       "enabled": true,

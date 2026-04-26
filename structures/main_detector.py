@@ -32,6 +32,8 @@ from .volume_breakout_structure import VolumeBreakoutStructure
 from .range_structure import RangeStructure
 from .fhm_structure import FHMStructure
 from .gap_fade_short_structure import GapFadeShortStructure
+from .mis_unwind_short_structure import MISUnwindShortStructure
+from .cpr_mean_revert_structure import CPRMeanRevertStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -144,6 +146,8 @@ class MainDetector(BaseStructure):
             ("range", RangeStructure, "range"),
             ("support_resistance", SupportResistanceStructure, "support_resistance"),
             ("gap_fade_short", GapFadeShortStructure, "gap_fade_short"),
+            ("mis_unwind_short", MISUnwindShortStructure, "mis_unwind_short"),
+            ("cpr_mean_revert", CPRMeanRevertStructure, "cpr_mean_revert"),
         ]
 
         # ICT setups that should inherit params from ict_comprehensive
@@ -804,8 +808,10 @@ class MainDetector(BaseStructure):
             'first_hour_momentum_long': 'first_hour_momentum_long',
             'first_hour_momentum_short': 'first_hour_momentum_short',
 
-            # Sub-project #7 — Indian-native setups (gap_fade_short surviving)
+            # Sub-project #7 — Indian-native setups
             'gap_fade_short': 'gap_fade_short',
+            'mis_unwind_short': 'mis_unwind_short',
+            'cpr_mean_revert': 'cpr_mean_revert',
         }
 
         return direct_mappings.get(structure_type)

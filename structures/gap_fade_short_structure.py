@@ -45,8 +45,19 @@ class GapFadeShortStructure(BaseStructure):
         self.require_vol_decline = bool(config["require_volume_decline_after_gap"])
         self.allowed_caps = set(config.get("allowed_cap_segments", []))
         self.stop_atr_buffer = float(config["stop_above_gap_high_atr"])
+        # Cap-aware buffer above gap_high. Indian sources (StockManiacs, smallcase):
+        # micro-caps need wider buffer than small/mid because of illiquid spreads.
+        self.stop_buffer_above_gap_high_pct_small_mid = float(
+            config.get("stop_buffer_above_gap_high_pct_small_mid", 0.0025)
+        )
+        self.stop_buffer_above_gap_high_pct_micro = float(
+            config.get("stop_buffer_above_gap_high_pct_micro", 0.005)
+        )
         self.target_type = str(config["target_type"])
         self.min_bars_required = int(config["min_bars_required"])
+        # T1 partial exit at 50% gap fill (TradingQnA: small-cap gap-close rate
+        # only 50-60%; capture half-fill at ~1R, let runners go to PDC).
+        self.t1_partial_qty_pct = float(config.get("t1_partial_qty_pct", 0.5))
 
     @staticmethod
     def _parse_time(s: str) -> time:
@@ -215,31 +226,49 @@ class GapFadeShortStructure(BaseStructure):
         gap_open = float(opening_bar["open"])
 
         # Stop: ABOVE opening gap high (short, so stop is above entry)
-        # Research: max(gap_high + 0.25% buffer, entry + 1.5×ATR) for gap fade shorts
-        # Source: StockManiacs, TrueData, ChartSchool — small caps with tiny ATR get
-        # stopped on noise without absolute % floor
-        stop_a = gap_high * 1.0025                    # gap_high + 0.25%
+        # Cap-segment-aware buffer: micro_cap needs wider buffer (0.5%) than
+        # small/mid_cap (0.25%) due to higher noise.
+        # Source: TradingQnA, StockManiacs — micro-cap gap fades stopped on normal
+        # intrabar spikes at 0.25%; 0.5% provides research-aligned cushion.
+        cap_seg = getattr(context, "cap_segment", None) or ""
+        if cap_seg == "micro_cap":
+            stop_a = gap_high * 1.005                 # gap_high + 0.5% for micro_cap
+        else:
+            stop_a = gap_high * 1.0025                # gap_high + 0.25% for small/mid_cap
         stop_b = close + atr_val * 1.5                # entry + 1.5 ATR
         hard_sl = max(stop_a, stop_b)
         risk_per_share = max(hard_sl - close, atr_val * 0.1)
 
-        # Target: PDC or opening price
+        # Tiered targets: T1 at 50% gap fill, T2 at full PDC.
+        # Research: TradingQnA — small-cap gap-close rate only 50-60%; tiered
+        # exits capture half-fills that never reach PDC.
         pdc = float(context.pdc) if context.pdc is not None else close
-        target_level = pdc if self.target_type == "pdc_or_open" else gap_open
+        t1_level = (close + pdc) / 2.0                # 50% gap fill
+        t2_level = pdc                                 # full PDC
 
-        # Ensure target makes sense for short (target < entry)
-        if target_level >= close:
-            target_level = pdc  # fallback
+        # Ensure targets are below entry for short
+        if t1_level >= close:
+            t1_level = close - risk_per_share * 0.5
+        if t2_level >= close:
+            t2_level = close - risk_per_share
 
-        rr = (close - target_level) / max(risk_per_share, 1e-6)
+        rr_t1 = (close - t1_level) / max(risk_per_share, 1e-6)
+        rr_t2 = (close - t2_level) / max(risk_per_share, 1e-6)
         targets = [
             {
                 "name": "T1",
-                "level": target_level,
-                "rr": rr,
-                "qty_pct": 1.0,
+                "level": t1_level,
+                "rr": rr_t1,
+                "qty_pct": 0.5,
+                "action": "partial_exit",
+            },
+            {
+                "name": "T2",
+                "level": t2_level,
+                "rr": rr_t2,
+                "qty_pct": 0.5,
                 "action": "exit_full",
-            }
+            },
         ]
 
         risk_params = self.calculate_risk_params(close, context)
@@ -278,7 +307,9 @@ class GapFadeShortStructure(BaseStructure):
         atr = self._get_atr(market_context)
         df = market_context.df_5m
         gap_high = float(df.iloc[0]["high"]) if df is not None and len(df) >= 1 else entry_price
-        stop_a = gap_high * 1.0025
+        cap_seg = getattr(market_context, "cap_segment", None) or ""
+        gap_buf = 1.005 if cap_seg == "micro_cap" else 1.0025
+        stop_a = gap_high * gap_buf
         stop_b = entry_price + atr * 1.5
         hard_sl = max(stop_a, stop_b)
         stop_distance = max(hard_sl - entry_price, atr * 0.1)

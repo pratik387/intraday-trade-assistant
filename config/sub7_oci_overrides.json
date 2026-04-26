@@ -13,6 +13,8 @@
   "_comment_setups": "Disable ALL existing setups; enable only sub-project #7 detectors",
   "setups": {
     "gap_fade_short": {"enabled": true},
+    "mis_unwind_short": {"enabled": true},
+    "cpr_mean_revert": {"enabled": true},
     "discount_zone_long": {"enabled": false},
     "premium_zone_short": {"enabled": false},
     "range_bounce_long": {"enabled": false},

@@ -39,13 +39,16 @@ from pipelines.base_pipeline import BasePipeline, ConfigurationError, get_mis_in
 
 # Sub-project #7: detector classes for fast-path routing (bypass SMC category pipelines)
 from structures.gap_fade_short_structure import GapFadeShortStructure
+from structures.mis_unwind_short_structure import MISUnwindShortStructure
+from structures.cpr_mean_revert_structure import CPRMeanRevertStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
 # so SMC category pipeline must NOT override entry/stop/target.
-# (mis_unwind_short and cpr_mean_revert dropped after Phase 1 OOS failed.)
 SUB7_SETUPS: frozenset = frozenset({
     "gap_fade_short",
+    "mis_unwind_short",
+    "cpr_mean_revert",
 })
 
 logger = get_agent_logger()
@@ -251,6 +254,8 @@ class PipelineOrchestrator:
 
             _cls_map = {
                 "gap_fade_short": GapFadeShortStructure,
+                "mis_unwind_short": MISUnwindShortStructure,
+                "cpr_mean_revert": CPRMeanRevertStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:
