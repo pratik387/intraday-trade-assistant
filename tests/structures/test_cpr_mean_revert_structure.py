@@ -10,7 +10,7 @@ def _cfg():
         "enabled": True,
         "active_window_start": "11:30",
         "active_window_end": "13:30",
-        "min_distance_atr_from_cpr": 1.0,
+        "tc_bc_touch_tolerance_pct": 0.1,
         "max_volume_pct_of_intraday_avg": 30.0,
         "require_reversion_candle": True,
         "reversion_patterns": ["hammer", "doji", "shooting_star"],
@@ -133,17 +133,17 @@ def _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=1
 # ---------------------------------------------------------------------------
 
 def test_fires_short_reversion_above_cpr():
-    """close=102 above CPR_MID≈100.33 by 1.67 ATR (>= 1.0), low volume, hammer → fires short.
+    """Bar high touches TC + shooting_star (bearish rejection) → fires short.
 
     PDH=103, PDL=98, PDC=100 → pivot=100.33, bc=100.5, tc=100.17
-    CPR_TOP=100.5, CPR_BOTTOM=100.17, CPR_MID=100.33
-    dist = |102 - 100.33| / 1.0 = 1.67 ATR >= min 1.0 → passes.
+    Normalized: CPR_TOP=100.5, CPR_BOTTOM=100.17, CPR_MID=100.33
+    shooting_star with last_close=102 → high=105.0 >= TC=100.5 → short trigger.
     """
     cfg = _cfg()
     det = CPRMeanRevertStructure(cfg)
 
     atr = 1.0
-    last_close = 102.0  # above CPR_MID=100.33 by 1.67 ATR
+    last_close = 102.0
 
     df = _build_lull_df(
         now_time="12:00:00",
@@ -152,7 +152,7 @@ def test_fires_short_reversion_above_cpr():
         atr=atr,
         cur_volume=2000,
         intraday_avg_volume=10000,
-        candle_pattern="hammer",
+        candle_pattern="shooting_star",
     )
     # PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
     ctx = _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=atr)
@@ -178,19 +178,16 @@ def test_fires_short_reversion_above_cpr():
 # ---------------------------------------------------------------------------
 
 def test_fires_long_reversion_below_cpr():
-    """close=98 below CPR_MID≈100.33 by 2.33 ATR (>= 1.0), low volume, shooting_star → fires long.
+    """Bar low touches BC + hammer (bullish rejection) → fires long.
 
-    PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
-    dist = |98 - 100.33| / 1.0 = 2.33 ATR >= min 1.0 → passes.
-
-    Note: shooting_star builder uses last_close as base, and the actual close
-    on the bar is last_close + 0.1*atr = 98.1. Still well below CPR_MID=100.33.
+    PDH=103, PDL=98, PDC=100 → CPR_MID=100.33, CPR_BOTTOM=100.17, CPR_TOP=100.5
+    hammer with last_close=98 → low=95.0 <= BC=100.17 → long trigger.
     """
     cfg = _cfg()
     det = CPRMeanRevertStructure(cfg)
 
     atr = 1.0
-    last_close = 98.0  # below CPR_MID=100.33 by 2.33 ATR
+    last_close = 98.0
 
     df = _build_lull_df(
         now_time="12:00:00",
@@ -199,7 +196,7 @@ def test_fires_long_reversion_below_cpr():
         atr=atr,
         cur_volume=2000,
         intraday_avg_volume=10000,
-        candle_pattern="shooting_star",
+        candle_pattern="hammer",
     )
     # PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
     ctx = _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=atr)
@@ -250,36 +247,48 @@ def test_does_not_fire_outside_window():
 
 
 # ---------------------------------------------------------------------------
-# Test 4: does not fire when close is too close to CPR midpoint
+# Test 4: does not fire when bar is entirely inside the CPR band
 # ---------------------------------------------------------------------------
 
-def test_does_not_fire_close_to_cpr():
-    """close=100.6 only 0.27 ATR from CPR_MID=100.33, < min 1.0 ATR → no fire.
+def test_does_not_fire_when_neither_boundary_touched():
+    """Last bar entirely inside CPR [BC=100.17, TC=100.5] → no boundary touch → no fire.
 
-    PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
-    dist = |100.6 - 100.33| / 1.0 = 0.27 ATR < min 1.0 → rejected.
+    PDH=103, PDL=98, PDC=100 → CPR_BOTTOM=100.17, CPR_TOP=100.5.
+    Build a bar with high=100.45, low=100.25 — both inside CPR.
+    Industry-standard CPR mean-revert REQUIRES touching TC or BC; a bar that
+    just oscillates inside the band is not a fade signal.
     """
     cfg = _cfg()
     det = CPRMeanRevertStructure(cfg)
 
     atr = 1.0
-    last_close = 100.6  # only 0.27 ATR from CPR_MID=100.33 — below threshold
-
-    df = _build_lull_df(
-        now_time="12:00:00",
-        last_close=last_close,
-        cpr_mid=100.33,
-        atr=atr,
-        cur_volume=2000,
-        intraday_avg_volume=10000,
-        candle_pattern="hammer",
+    end = pd.Timestamp("2025-01-02 12:00:00")
+    n_bars = 40
+    idx = pd.date_range(
+        end - pd.Timedelta(minutes=5 * (n_bars - 1)), periods=n_bars, freq="5min"
     )
-    # PDH=103, PDL=98, PDC=100 → CPR_MID=100.33
+
+    # Prior bars: warmup, normal volume; last bar: tight inside-CPR, low volume.
+    # Tolerance band: TC*(1-0.001)=100.3995, BC*(1+0.001)=100.2667.
+    # Bar must stay strictly inside [100.2667, 100.3995] to avoid triggering.
+    opens = [100.30] * n_bars
+    highs = [100.35] * n_bars
+    lows = [100.28] * n_bars
+    closes = [100.31] * n_bars
+    volumes = [10000] * (n_bars - 1) + [2000]
+    opens[-1] = 100.30
+    highs[-1] = 100.35   # < TC*(1-tol) = 100.3995
+    lows[-1] = 100.28    # > BC*(1+tol) = 100.2667
+    closes[-1] = 100.32
+    df = pd.DataFrame(
+        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes},
+        index=idx,
+    )
     ctx = _make_ctx(df, pdh=103.0, pdl=98.0, pdc=100.0, cap_segment="small_cap", atr=atr)
 
     result = det.detect(ctx)
     assert result.structure_detected is False
-    assert "distance" in (result.rejection_reason or "").lower()
+    assert "boundary" in (result.rejection_reason or "").lower()
 
 
 # ---------------------------------------------------------------------------

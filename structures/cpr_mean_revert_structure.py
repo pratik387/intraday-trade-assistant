@@ -39,7 +39,9 @@ class CPRMeanRevertStructure(BaseStructure):
 
         self.active_start = self._parse_time(config["active_window_start"])
         self.active_end = self._parse_time(config["active_window_end"])
-        self.min_distance_atr = float(config["min_distance_atr_from_cpr"])
+        # Industry-standard CPR mean-reversion trigger: TC/BC boundary touch.
+        # Tolerance lets the touch include marginal exceedance (wick slippage).
+        self.tc_bc_touch_tolerance_pct = float(config["tc_bc_touch_tolerance_pct"])
         self.max_volume_pct = float(config["max_volume_pct_of_intraday_avg"])
         self.require_reversion_candle = bool(config["require_reversion_candle"])
         self.reversion_patterns = list(config["reversion_patterns"])
@@ -127,13 +129,21 @@ class CPRMeanRevertStructure(BaseStructure):
     def detect(self, context: MarketContext) -> StructureAnalysis:
         """Detect CPR mean revert setups in the 11:30-13:30 window.
 
+        Industry-standard CPR boundary-rejection trigger (Frank Ochoa / GTF /
+        Zerodha Varsity / OptionX): the bar TOUCHES TC (top central) and shows
+        a bearish rejection candle → SHORT; or TOUCHES BC (bottom central) and
+        shows a bullish rejection candle → LONG. Target is pivot (cpr_mid).
+
         All conditions must be true:
         1. Current bar is within active_window_start..active_window_end
         2. Cap segment is in allowed_cap_segments
         3. CPR_TOP and CPR_BOTTOM levels are available
-        4. abs(close - cpr_mid) / atr >= min_distance_atr_from_cpr
-        5. current bar volume / mean(intraday volume excl. last bar) <= max_volume_pct / 100
-        6. (If require_reversion_candle) current bar candle pattern is in reversion_patterns
+        4. CPR width >= min_cpr_width_pct (wide-CPR / range day only)
+        5. last.high >= cpr_top * (1 - tol)  → SHORT trigger candidate, OR
+           last.low  <= cpr_bot * (1 + tol)  → LONG  trigger candidate
+        6. current bar volume / mean(intraday volume excl. last bar) <= max_volume_pct / 100
+        7. (If require_reversion_candle) candle pattern matches the trigger side:
+             SHORT needs shooting_star or doji; LONG needs hammer or doji.
         """
         def _empty(reason: str = "") -> StructureAnalysis:
             return StructureAnalysis(
@@ -172,19 +182,25 @@ class CPRMeanRevertStructure(BaseStructure):
                 return _empty(f"cpr_too_narrow:{cpr_width_pct:.2f}%<{self.min_cpr_width_pct}%")
 
         last = df.iloc[-1]
+        high = float(last["high"])
+        low = float(last["low"])
         close = float(last["close"])
         atr = self._get_atr(context)
 
-        # --- Condition 4: Distance from CPR midpoint ---
         if atr <= 0:
             return _empty("ATR is zero or negative")
-        dist_atr = abs(close - cpr_mid) / atr
-        if dist_atr < self.min_distance_atr:
+
+        # --- Condition 5: TC/BC boundary-touch trigger (industry standard) ---
+        tol_frac = self.tc_bc_touch_tolerance_pct / 100.0
+        short_trigger = high >= cpr_top * (1.0 - tol_frac)
+        long_trigger = low <= cpr_bot * (1.0 + tol_frac)
+        if not short_trigger and not long_trigger:
             return _empty(
-                f"distance from CPR mid={dist_atr:.2f} ATR < min={self.min_distance_atr}"
+                f"no_cpr_boundary_touch: high={high:.2f} TC={cpr_top:.2f} "
+                f"low={low:.2f} BC={cpr_bot:.2f}"
             )
 
-        # --- Condition 5: Volume filter ---
+        # --- Condition 6: Volume filter ---
         if len(df) < 2:
             return _empty("Need at least 2 bars for volume comparison")
         intraday_vols = df["volume"].iloc[:-1]
@@ -199,22 +215,41 @@ class CPRMeanRevertStructure(BaseStructure):
                     f"volume ratio={vol_ratio_pct:.1f}% > max={self.max_volume_pct}% (high volume)"
                 )
 
-        # --- Condition 6: Reversion candle pattern ---
+        # --- Condition 7: Rejection candle disambiguates direction ---
+        # Standard pairing: TC touch + bearish rejection (shooting_star/doji) = SHORT;
+        # BC touch + bullish rejection (hammer/doji) = LONG. Without the candle
+        # requirement, fall back to whichever boundary was touched (or larger
+        # excursion if both touched).
+        pattern = self._candle_pattern(last)
+
         if self.require_reversion_candle:
-            pattern = self._candle_pattern(last)
-            if pattern not in self.reversion_patterns:
+            short_ok = short_trigger and pattern in ("shooting_star", "doji")
+            long_ok = long_trigger and pattern in ("hammer", "doji")
+            if short_ok and not long_ok:
+                bias = "short"
+            elif long_ok and not short_ok:
+                bias = "long"
+            elif short_ok and long_ok:
+                # Doji that touches both boundaries — pick larger excursion
+                bias = "short" if (high - cpr_top) >= (cpr_bot - low) else "long"
+            else:
                 return _empty(
-                    f"Candle pattern={pattern!r} not in reversion_patterns={self.reversion_patterns}"
+                    f"no_rejection_candle_at_boundary: pattern={pattern!r} "
+                    f"short_trig={short_trigger} long_trig={long_trigger}"
                 )
         else:
-            pattern = self._candle_pattern(last)
+            if short_trigger and not long_trigger:
+                bias = "short"
+            elif long_trigger and not short_trigger:
+                bias = "long"
+            else:
+                bias = "short" if (high - cpr_top) >= (cpr_bot - low) else "long"
 
-        # --- Determine bias direction ---
-        bias = "short" if close > cpr_mid else "long"
         side = bias
 
-        # Confidence: distance from CPR scaled (more distance = stronger revert setup)
-        confidence = min(1.0, dist_atr / (self.min_distance_atr * 2.0))
+        # Confidence: scaled by how far the trigger exceeded the boundary, normalized by ATR.
+        excursion = (high - cpr_top) if bias == "short" else (cpr_bot - low)
+        confidence = float(min(1.0, max(0.1, excursion / max(atr, 1e-6))))
 
         evt = StructureEvent(
             symbol=context.symbol,
@@ -230,7 +265,7 @@ class CPRMeanRevertStructure(BaseStructure):
             },
             context={
                 "bias": bias,
-                "dist_atr": dist_atr,
+                "boundary_excursion_atr": float(excursion / max(atr, 1e-6)),
                 "candle_pattern": pattern,
                 "cur_vol": cur_vol,
                 "mean_vol": mean_vol,
