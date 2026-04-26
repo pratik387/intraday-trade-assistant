@@ -1,0 +1,250 @@
+{
+  "baseline": {
+    "n_trades": 6723,
+    "net_pnl": 210279.63,
+    "pf": 1.153,
+    "sharpe": 0.092,
+    "wr": 0.47
+  },
+  "top10_single": [
+    {
+      "n_trades": 6,
+      "net_pnl": 756.09,
+      "pf": 999.0,
+      "sharpe": 0.645,
+      "wr": 0.333,
+      "filter": "minute=15",
+      "dim": "minute",
+      "val": 15
+    },
+    {
+      "n_trades": 1,
+      "net_pnl": 646.05,
+      "pf": 999.0,
+      "sharpe": 0.0,
+      "wr": 1.0,
+      "filter": "minute=35",
+      "dim": "minute",
+      "val": 35
+    },
+    {
+      "n_trades": 148,
+      "net_pnl": 14982.61,
+      "pf": 1.591,
+      "sharpe": 0.135,
+      "wr": 0.385,
+      "filter": "cap_segment=micro_cap",
+      "dim": "cap_segment",
+      "val": "micro_cap"
+    },
+    {
+      "n_trades": 2038,
+      "net_pnl": 115819.04,
+      "pf": 1.334,
+      "sharpe": 0.153,
+      "wr": 0.461,
+      "filter": "minute=25",
+      "dim": "minute",
+      "val": 25
+    },
+    {
+      "n_trades": 1546,
+      "net_pnl": 79919.02,
+      "pf": 1.293,
+      "sharpe": 0.15,
+      "wr": 0.486,
+      "filter": "dow=1",
+      "dim": "dow",
+      "val": 1
+    },
+    {
+      "n_trades": 876,
+      "net_pnl": 38016.08,
+      "pf": 1.254,
+      "sharpe": 0.096,
+      "wr": 0.483,
+      "filter": "regime=squeeze",
+      "dim": "regime",
+      "val": "squeeze"
+    },
+    {
+      "n_trades": 1395,
+      "net_pnl": 65418.87,
+      "pf": 1.234,
+      "sharpe": 0.181,
+      "wr": 0.481,
+      "filter": "dow=4",
+      "dim": "dow",
+      "val": 4
+    },
+    {
+      "n_trades": 3244,
+      "net_pnl": 163455.14,
+      "pf": 1.232,
+      "sharpe": 0.14,
+      "wr": 0.483,
+      "filter": "regime=trend_up",
+      "dim": "regime",
+      "val": "trend_up"
+    },
+    {
+      "n_trades": 1208,
+      "net_pnl": 50547.17,
+      "pf": 1.206,
+      "sharpe": 0.12,
+      "wr": 0.494,
+      "filter": "dow=3",
+      "dim": "dow",
+      "val": 3
+    },
+    {
+      "n_trades": 3762,
+      "net_pnl": 147149.66,
+      "pf": 1.187,
+      "sharpe": 0.104,
+      "wr": 0.477,
+      "filter": "cap_segment=small_cap",
+      "dim": "cap_segment",
+      "val": "small_cap"
+    }
+  ],
+  "top10_2dim": [
+    {
+      "n_trades": 479,
+      "net_pnl": 51243.77,
+      "pf": 1.78,
+      "sharpe": 0.26,
+      "wr": 0.493,
+      "filter": "dow=1 & minute=25",
+      "dim_a": "dow",
+      "val_a": "1",
+      "dim_b": "minute",
+      "val_b": "25"
+    },
+    {
+      "n_trades": 317,
+      "net_pnl": 30418.48,
+      "pf": 1.576,
+      "sharpe": 0.196,
+      "wr": 0.47,
+      "filter": "dow=4 & minute=20",
+      "dim_a": "dow",
+      "val_a": "4",
+      "dim_b": "minute",
+      "val_b": "20"
+    },
+    {
+      "n_trades": 258,
+      "net_pnl": 20444.56,
+      "pf": 1.531,
+      "sharpe": 0.155,
+      "wr": 0.477,
+      "filter": "regime=squeeze & minute=25",
+      "dim_a": "regime",
+      "val_a": "squeeze",
+      "dim_b": "minute",
+      "val_b": "25"
+    },
+    {
+      "n_trades": 218,
+      "net_pnl": 17619.59,
+      "pf": 1.531,
+      "sharpe": 0.138,
+      "wr": 0.514,
+      "filter": "regime=squeeze & dow=1",
+      "dim_a": "regime",
+      "val_a": "squeeze",
+      "dim_b": "dow",
+      "val_b": "1"
+    },
+    {
+      "n_trades": 366,
+      "net_pnl": 25203.41,
+      "pf": 1.48,
+      "sharpe": 0.212,
+      "wr": 0.473,
+      "filter": "dow=2 & minute=25",
+      "dim_a": "dow",
+      "val_a": "2",
+      "dim_b": "minute",
+      "val_b": "25"
+    },
+    {
+      "n_trades": 1147,
+      "net_pnl": 90638.53,
+      "pf": 1.472,
+      "sharpe": 0.169,
+      "wr": 0.473,
+      "filter": "cap_segment=small_cap & minute=25",
+      "dim_a": "cap_segment",
+      "val_a": "small_cap",
+      "dim_b": "minute",
+      "val_b": "25"
+    },
+    {
+      "n_trades": 716,
+      "net_pnl": 45020.75,
+      "pf": 1.333,
+      "sharpe": 0.209,
+      "wr": 0.476,
+      "filter": "regime=trend_up & dow=1",
+      "dim_a": "regime",
+      "val_a": "trend_up",
+      "dim_b": "dow",
+      "val_b": "1"
+    },
+    {
+      "n_trades": 705,
+      "net_pnl": 49762.65,
+      "pf": 1.332,
+      "sharpe": 0.228,
+      "wr": 0.501,
+      "filter": "regime=trend_up & dow=4",
+      "dim_a": "regime",
+      "val_a": "trend_up",
+      "dim_b": "dow",
+      "val_b": "4"
+    },
+    {
+      "n_trades": 835,
+      "net_pnl": 49197.94,
+      "pf": 1.326,
+      "sharpe": 0.159,
+      "wr": 0.496,
+      "filter": "cap_segment=small_cap & dow=1",
+      "dim_a": "cap_segment",
+      "val_a": "small_cap",
+      "dim_b": "dow",
+      "val_b": "1"
+    },
+    {
+      "n_trades": 462,
+      "net_pnl": 22305.22,
+      "pf": 1.324,
+      "sharpe": 0.105,
+      "wr": 0.496,
+      "filter": "regime=trend_down & dow=1",
+      "dim_a": "regime",
+      "val_a": "trend_down",
+      "dim_b": "dow",
+      "val_b": "1"
+    }
+  ],
+  "best_combined": {
+    "n_trades": 3244,
+    "net_pnl": 163455.14,
+    "pf": 1.232,
+    "sharpe": 0.14,
+    "wr": 0.483,
+    "filter_spec": {
+      "regime": "trend_up"
+    }
+  },
+  "phase2_verdict": {
+    "any_single_passes": false,
+    "any_2dim_passes": false,
+    "best_combined_passes": false,
+    "passing_single": [],
+    "passing_2dim": []
+  }
+}
