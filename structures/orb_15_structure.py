@@ -37,6 +37,15 @@ from .data_models import (
 logger = get_agent_logger()
 
 
+def _is_wide_open() -> bool:
+    """Read top-level wide_open_mode flag from base config."""
+    try:
+        from pipelines.base_pipeline import load_base_config
+        return bool(load_base_config().get("wide_open_mode", False))
+    except Exception:
+        return False
+
+
 class ORB15Structure(BaseStructure):
     """Opening Range Breakout, 15-min range, first close-outside-range fires."""
 
@@ -100,6 +109,9 @@ class ORB15Structure(BaseStructure):
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
 
+        # rev2: design-inferred filters bypass under wide_open_mode
+        _wide_open = _is_wide_open()
+
         # Compute opening range from bars in [range_start, range_end).
         # rev2: range_start defaults to 09:20 (skip pre-open call-auction wick).
         range_mask = df.index.to_series().apply(
@@ -131,7 +143,7 @@ class ORB15Structure(BaseStructure):
         bar_close = float(last["close"])
         bar_vol = float(last["volume"])
         median_vol = self._get_median_volume(ctx)
-        if median_vol > 0 and bar_vol < self.min_vol_x * median_vol:
+        if not _wide_open and median_vol > 0 and bar_vol < self.min_vol_x * median_vol:
             return _empty(f"volume {bar_vol:.0f} < {self.min_vol_x}× median {median_vol:.0f}")
 
         if bar_close > range_high:

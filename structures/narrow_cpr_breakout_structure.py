@@ -33,6 +33,15 @@ from .data_models import (
 logger = get_agent_logger()
 
 
+def _is_wide_open() -> bool:
+    """Read top-level wide_open_mode flag from base config."""
+    try:
+        from pipelines.base_pipeline import load_base_config
+        return bool(load_base_config().get("wide_open_mode", False))
+    except Exception:
+        return False
+
+
 class NarrowCPRBreakoutStructure(BaseStructure):
     """Trades WITH the narrow-CPR breakout (vs sub7 cpr_mean_revert which faded)."""
 
@@ -106,6 +115,9 @@ class NarrowCPRBreakoutStructure(BaseStructure):
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
 
+        # rev2: design-inferred filters bypass under wide_open_mode
+        _wide_open = _is_wide_open()
+
         if ctx.pdh is None or ctx.pdl is None or ctx.pdc is None:
             return _empty("PDH/PDL/PDC unavailable")
         cpr_top, cpr_bot, pivot = self._compute_cpr(float(ctx.pdh), float(ctx.pdl), float(ctx.pdc))
@@ -118,7 +130,7 @@ class NarrowCPRBreakoutStructure(BaseStructure):
         bar_close = float(last["close"])
         bar_vol = float(last["volume"])
         median_vol = self._get_median_volume(ctx)
-        if median_vol > 0 and bar_vol < self.min_vol_x * median_vol:
+        if not _wide_open and median_vol > 0 and bar_vol < self.min_vol_x * median_vol:
             return _empty(f"volume {bar_vol:.0f} < {self.min_vol_x}x median {median_vol:.0f}")
 
         if bar_close > cpr_top:
@@ -129,7 +141,7 @@ class NarrowCPRBreakoutStructure(BaseStructure):
             return _empty(f"close {bar_close:.2f} inside CPR [{cpr_bot:.2f},{cpr_top:.2f}]")
 
         # Anti-whipsaw: skip if previous N bars already had a TC/BC tag-and-reject
-        if self.anti_whipsaw_bars > 0 and len(df) > self.anti_whipsaw_bars:
+        if not _wide_open and self.anti_whipsaw_bars > 0 and len(df) > self.anti_whipsaw_bars:
             recent = df.iloc[-(self.anti_whipsaw_bars + 1):-1]
             for _, row in recent.iterrows():
                 if side == "long" and row["high"] >= cpr_top and row["close"] < cpr_top:

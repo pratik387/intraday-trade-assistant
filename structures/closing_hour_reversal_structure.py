@@ -35,6 +35,15 @@ from .data_models import (
 logger = get_agent_logger()
 
 
+def _is_wide_open() -> bool:
+    """Read top-level wide_open_mode flag from base config."""
+    try:
+        from pipelines.base_pipeline import load_base_config
+        return bool(load_base_config().get("wide_open_mode", False))
+    except Exception:
+        return False
+
+
 class ClosingHourReversalStructure(BaseStructure):
     """Bidirectional EOD exhaustion reversal in 14:30-15:15 window."""
 
@@ -92,6 +101,9 @@ class ClosingHourReversalStructure(BaseStructure):
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
 
+        # rev2: design-inferred filters bypass under wide_open_mode
+        _wide_open = _is_wide_open()
+
         # Compute intraday move from session bars 09:30-14:30
         session_bars = df[df.index.to_series().apply(
             lambda ts: ts.time() >= time(9, 30) and ts.time() <= time(14, 30)
@@ -125,7 +137,7 @@ class ClosingHourReversalStructure(BaseStructure):
         if rng <= 0:
             return _empty("zero-range bar")
         body_pct = body / rng
-        if body_pct < self.exhaustion_min_body_pct:
+        if not _wide_open and body_pct < self.exhaustion_min_body_pct:
             return _empty(f"body_pct={body_pct:.2f} < min={self.exhaustion_min_body_pct}")
 
         if side == "short" and bar_close >= bar_open:
@@ -134,7 +146,7 @@ class ClosingHourReversalStructure(BaseStructure):
             return _empty("long signal but bar is bearish")
 
         recent_vol = float(df["volume"].iloc[-6:-1].mean()) if len(df) >= 6 else bar_vol
-        if recent_vol > 0 and bar_vol < self.exhaustion_min_vol_x * recent_vol:
+        if not _wide_open and recent_vol > 0 and bar_vol < self.exhaustion_min_vol_x * recent_vol:
             return _empty(f"volume {bar_vol:.0f} < {self.exhaustion_min_vol_x}x recent {recent_vol:.0f}")
 
         confidence = min(1.0, body_pct)

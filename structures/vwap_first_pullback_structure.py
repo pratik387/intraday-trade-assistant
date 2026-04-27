@@ -35,6 +35,15 @@ from .data_models import (
 logger = get_agent_logger()
 
 
+def _is_wide_open() -> bool:
+    """Read top-level wide_open_mode flag from base config."""
+    try:
+        from pipelines.base_pipeline import load_base_config
+        return bool(load_base_config().get("wide_open_mode", False))
+    except Exception:
+        return False
+
+
 class VWAPFirstPullbackStructure(BaseStructure):
     """First pullback to VWAP after established trend = continuation entry."""
 
@@ -93,6 +102,9 @@ class VWAPFirstPullbackStructure(BaseStructure):
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
 
+        # rev2: design-inferred filters bypass under wide_open_mode
+        _wide_open = _is_wide_open()
+
         vwap = self._get_vwap(ctx)
         if vwap is None or vwap <= 0:
             return _empty("VWAP unavailable")
@@ -104,13 +116,15 @@ class VWAPFirstPullbackStructure(BaseStructure):
 
         bars_above_vwap = (trend_window["close"] > vwap).sum()
         bars_below_vwap = (trend_window["close"] < vwap).sum()
-        if bars_above_vwap >= self.trend_min_same:
+        # wide_open: any bar on the same side counts (bypass inferred trend_min_same threshold)
+        _trend_threshold = 1 if _wide_open else self.trend_min_same
+        if bars_above_vwap >= _trend_threshold:
             trend_side = "long"
-        elif bars_below_vwap >= self.trend_min_same:
+        elif bars_below_vwap >= _trend_threshold:
             trend_side = "short"
         else:
             return _empty(f"no_trend: above={bars_above_vwap} below={bars_below_vwap} "
-                          f"need {self.trend_min_same}/{self.trend_lookback}")
+                          f"need {_trend_threshold}/{self.trend_lookback}")
 
         # Pullback bar (second-to-last): touches VWAP within proximity
         prox_band = vwap * self.pullback_prox_pct
@@ -129,7 +143,7 @@ class VWAPFirstPullbackStructure(BaseStructure):
         bar_high = float(last["high"])
         bar_low = float(last["low"])
         bar_range_pct = (bar_high - bar_low) / max(bar_open, 1e-6)
-        if bar_range_pct < self.reversal_min_range_pct:
+        if not _wide_open and bar_range_pct < self.reversal_min_range_pct:
             return _empty(f"reversal range {bar_range_pct*100:.2f}% < min {self.reversal_min_range_pct*100:.2f}%")
 
         if trend_side == "long" and bar_close <= vwap:
@@ -138,7 +152,7 @@ class VWAPFirstPullbackStructure(BaseStructure):
             return _empty(f"reversal bar close {bar_close:.2f} not below vwap {vwap:.2f}")
 
         # Volume confirmation: reversal vol >= prior bar
-        if float(last["volume"]) < float(pullback["volume"]):
+        if not _wide_open and float(last["volume"]) < float(pullback["volume"]):
             return _empty("reversal volume < pullback volume")
 
         confidence = min(1.0, bar_range_pct / (self.reversal_min_range_pct * 2))

@@ -36,6 +36,15 @@ from .data_models import (
 logger = get_agent_logger()
 
 
+def _is_wide_open() -> bool:
+    """Read top-level wide_open_mode flag from base config."""
+    try:
+        from pipelines.base_pipeline import load_base_config
+        return bool(load_base_config().get("wide_open_mode", False))
+    except Exception:
+        return False
+
+
 class PDHPDLRejectStructure(BaseStructure):
     """Fade rejections at PDH (short) or PDL (long) with config-driven volume polarity."""
 
@@ -104,6 +113,9 @@ class PDHPDLRejectStructure(BaseStructure):
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
 
+        # rev2: design-inferred filters bypass under wide_open_mode
+        _wide_open = _is_wide_open()
+
         if ctx.pdh is None or ctx.pdl is None:
             return _empty("PDH/PDL unavailable")
         pdh = float(ctx.pdh)
@@ -130,12 +142,22 @@ class PDHPDLRejectStructure(BaseStructure):
         rejection_extreme: float = 0.0
         if abs(bar_high - pdh) <= pdh_band and bar_close < pdh:
             upper_wick = bar_high - max(bar_open, bar_close)
-            if body > 0 and upper_wick / body >= self.min_wick_x_body and body_pct < self.max_body_pct:
+            # wide_open: bypass inferred wick/body ratio and body% filters; keep body > 0
+            if _wide_open:
+                if body > 0:
+                    side = "short"
+                    rejection_extreme = bar_high
+            elif body > 0 and upper_wick / body >= self.min_wick_x_body and body_pct < self.max_body_pct:
                 side = "short"
                 rejection_extreme = bar_high
         elif abs(bar_low - pdl) <= pdl_band and bar_close > pdl:
             lower_wick = min(bar_open, bar_close) - bar_low
-            if body > 0 and lower_wick / body >= self.min_wick_x_body and body_pct < self.max_body_pct:
+            # wide_open: bypass inferred wick/body ratio and body% filters; keep body > 0
+            if _wide_open:
+                if body > 0:
+                    side = "long"
+                    rejection_extreme = bar_low
+            elif body > 0 and lower_wick / body >= self.min_wick_x_body and body_pct < self.max_body_pct:
                 side = "long"
                 rejection_extreme = bar_low
 
@@ -147,7 +169,7 @@ class PDHPDLRejectStructure(BaseStructure):
 
         # rev2: volume polarity branch (Indian sources contested on polarity).
         recent_vol = float(df["volume"].iloc[-6:-1].mean()) if len(df) >= 6 else bar_vol
-        if recent_vol > 0:
+        if not _wide_open and recent_vol > 0:
             ratio = bar_vol / recent_vol
             if self.volume_polarity == "absence":
                 if ratio > self.max_vol_x_recent_for_absence:
