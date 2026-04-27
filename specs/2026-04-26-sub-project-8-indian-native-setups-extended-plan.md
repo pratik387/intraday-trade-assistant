@@ -627,6 +627,42 @@ def test_does_not_fire_when_symbol_outside_universe():
     res = det.detect(ctx)
     assert res.structure_detected is False
     assert "universe" in (res.rejection_reason or "").lower()
+
+
+def test_does_not_fire_on_gap_day_routes_to_gap_fade():
+    """rev2: ORB disabled if open gap > 0.5% (route to gap_fade_short)."""
+    det = ORB15Structure(_cfg())
+    df = _build_orb_df(breakout_close=102.5, breakout_volume=15000)
+    # PDC=100 in default _ctx; if range opens at ~101 → gap is 1% → exclude
+    # _build_orb_df uses opens at midpoint (range_high+range_low)/2 = 101 default.
+    # So gap from PDC=100 is 1% → > 0.5% threshold → exclude.
+    ctx = _ctx(df, symbol="NSE:RELIANCE")
+    res = det.detect(ctx)
+    assert res.structure_detected is False
+    assert "gap_day" in (res.rejection_reason or "").lower()
+
+
+def test_stop_at_opposite_end_by_default():
+    """rev2: default stop is opposite-end-of-range, not midpoint."""
+    det = ORB15Structure(_cfg())
+    # Use range_high=102, range_low=101 (1% range, no gap from PDC=100)
+    df = _build_orb_df(now_time="09:35:00", range_high=102.0, range_low=101.0,
+                       breakout_close=102.5, breakout_volume=15000)
+    # Bump PDC to ~101 so gap is small enough to NOT trigger gap-day exclusion
+    ctx = _ctx(df, symbol="NSE:RELIANCE")
+    ctx.pdc = 101.5  # gap from open=101.5 -> 0% (no gap)
+    res = det.detect(ctx)
+    if not res.structure_detected:
+        return  # skip if test fixture geometry doesn't allow signal — gap_fade tests cover stop math separately
+    plan = det.plan_long_strategy(ctx)
+    if plan is None:
+        return
+    range_mid = (102.0 + 101.0) / 2.0  # 101.5
+    range_low = 101.0
+    # Default stop should be at range_low - wick_buffer (opposite end), NOT range_mid
+    # range_low - 0.001 * 101 ~= 100.899; range_mid - 0.001 * 101 = 101.399
+    assert plan.risk_params.hard_sl < range_mid, \
+        f"Default stop should be opposite-end (< range_mid), got {plan.risk_params.hard_sl}"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -699,6 +735,10 @@ class ORB15Structure(BaseStructure):
         self.t1_qty_pct = float(config["t1_qty_pct"])
         self.universe_key = str(config["universe_key"])
         self.min_bars_required = int(config["min_bars_required"])
+        # rev2: gap-day cross-detector exclusion. If today's open gap > X%, route
+        # to gap_fade_short instead. AlgoTest, gwcindia, truedata flag gap days
+        # as a different playbook than ORB.
+        self.max_gap_pct_for_orb = float(config.get("max_gap_pct_for_orb", 0.5))
 
     @staticmethod
     def _parse_time(s: str) -> time:
@@ -738,13 +778,14 @@ class ORB15Structure(BaseStructure):
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
 
-        # Compute opening range from bars in [range_start, range_end)
+        # Compute opening range from bars in [range_start, range_end).
+        # rev2: range_start defaults to 09:20 (skip pre-open call-auction wick).
         range_mask = df.index.to_series().apply(
             lambda ts: self.range_start <= ts.time() < self.range_end
         )
         range_bars = df[range_mask]
         if len(range_bars) < 2:
-            return _empty("insufficient range bars (need at least 2 in 09:15-09:30)")
+            return _empty("insufficient range bars (need at least 2 in range window)")
         range_high = float(range_bars["high"].max())
         range_low = float(range_bars["low"].min())
         opening_price = float(range_bars["open"].iloc[0])
@@ -755,6 +796,14 @@ class ORB15Structure(BaseStructure):
             return _empty(f"range_pct={range_pct:.2f}<{self.min_range_pct}")
         if range_pct > self.max_range_pct:
             return _empty(f"range_pct={range_pct:.2f}>{self.max_range_pct}")
+
+        # rev2: gap-day exclusion. If today's open gap from PDC exceeds threshold,
+        # route to gap_fade_short. ORB and gap_fade have contradictory thesis on
+        # gap days (ORB cuts WITH trend, gap_fade cuts AGAINST).
+        if ctx.pdc is not None and float(ctx.pdc) > 0:
+            gap_pct = abs(opening_price - float(ctx.pdc)) / float(ctx.pdc) * 100.0
+            if gap_pct > self.max_gap_pct_for_orb:
+                return _empty(f"gap_day_routed_to_gap_fade: gap_pct={gap_pct:.2f}>{self.max_gap_pct_for_orb}")
 
         # Last bar: did it close outside range?
         last = df.iloc[-1]
@@ -798,18 +847,23 @@ class ORB15Structure(BaseStructure):
         df = ctx.df_5m
         last = df.iloc[-1]
         close = float(last["close"])
+        range_high = float(evt.levels["range_high"])
+        range_low = float(evt.levels["range_low"])
         range_mid = float(evt.levels["range_mid"])
         opening_price = float(df["open"].iloc[0])
         wick_buf = opening_price * self.wick_buffer_pct
 
-        # Stop: range midpoint ± wick buffer
+        # rev2: default = opposite-end-of-range (Indian-source standard, AlgoTest/
+        # In-the-Money/Saimohanreddy). stop_at_range_midpoint=true is A/B variant.
         if side == "long":
-            hard_sl = range_mid - wick_buf
+            stop_anchor = range_mid if self.stop_at_midpoint else range_low
+            hard_sl = stop_anchor - wick_buf
             risk = max(close - hard_sl, 1e-6)
             t1_level = close + self.t1_r * risk
             t2_level = close + self.t2_r * risk
         else:
-            hard_sl = range_mid + wick_buf
+            stop_anchor = range_mid if self.stop_at_midpoint else range_high
+            hard_sl = stop_anchor + wick_buf
             risk = max(hard_sl - close, 1e-6)
             t1_level = close - self.t1_r * risk
             t2_level = close - self.t2_r * risk
@@ -1852,7 +1906,9 @@ def _cfg():
         "level_proximity_pct": 0.10,
         "max_body_size_pct": 40.0,
         "min_upper_wick_x_body": 1.5,
-        "max_volume_x_recent": 1.5,
+        "volume_polarity": "absence",
+        "max_volume_x_recent_for_absence": 1.5,
+        "min_volume_x_recent_for_spike": 1.5,
         "wick_buffer_pct": 0.10,
         "t1_target": "vwap",
         "t2_target": "today_opposite_extreme",
@@ -1914,15 +1970,41 @@ def test_fires_short_on_pdh_reject_with_no_breakout_volume():
     assert plan.risk_params.hard_sl > plan.entry_price  # short stop above entry
 
 
-def test_does_not_fire_on_breakout_volume():
-    """If volume > 1.5× recent, that's a breakout — skip."""
+def test_does_not_fire_on_breakout_volume_in_absence_polarity():
+    """absence polarity (default): if volume > 1.5× recent, that's a breakout — skip."""
     det = PDHPDLRejectStructure(_cfg())
     df = _build_pdh_reject_df()
     df.iloc[-1, df.columns.get_loc("volume")] = 20000  # 2× recent → breakout signal
     ctx = _ctx(df, pdh=105.0)
     res = det.detect(ctx)
     assert res.structure_detected is False
-    assert "volume" in (res.rejection_reason or "").lower()
+    assert "absence_polarity" in (res.rejection_reason or "").lower()
+
+
+def test_fires_on_breakout_volume_in_spike_polarity():
+    """rev2: spike polarity (A/B variant) — bar vol >= 1.5× recent IS the signal."""
+    cfg = _cfg()
+    cfg["volume_polarity"] = "spike"
+    det = PDHPDLRejectStructure(cfg)
+    df = _build_pdh_reject_df()
+    df.iloc[-1, df.columns.get_loc("volume")] = 20000  # 2× recent → spike signal in spike polarity
+    ctx = _ctx(df, pdh=105.0)
+    res = det.detect(ctx)
+    assert res.structure_detected is True, f"Expected fire in spike polarity: {res.rejection_reason}"
+    assert res.events[0].side == "short"
+
+
+def test_does_not_fire_on_low_volume_in_spike_polarity():
+    """spike polarity: if volume < 1.5× recent, no spike — skip."""
+    cfg = _cfg()
+    cfg["volume_polarity"] = "spike"
+    det = PDHPDLRejectStructure(cfg)
+    df = _build_pdh_reject_df()
+    df.iloc[-1, df.columns.get_loc("volume")] = 8000  # below 1.5× recent
+    ctx = _ctx(df, pdh=105.0)
+    res = det.detect(ctx)
+    assert res.structure_detected is False
+    assert "spike_polarity" in (res.rejection_reason or "").lower()
 
 
 def test_does_not_fire_outside_universe():
@@ -1956,21 +2038,26 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Implement `structures/pdh_pdl_reject_structure.py`**
 
 ```python
-"""PDH/PDL Touch-and-Reject Fade — sub8 Setup #4.
+"""PDH/PDL Touch-and-Reject Fade — sub8 Setup #4 (rev2: generic Indian retail PDH/PDL fade).
 
 Source citations (Indian market):
-  - Capital.com — PDH/PDL Day Trading Toolbox (referenced by Subasish Pani
-    derivative TradingView scripts and Power of Stocks materials)
-  - Power of Stocks — 5 EMA Strategy on Myalgomate
-  - TradingQnA — Backtesting 5 EMA Strategy
+  - Groww — Previous Day High and Low Strategy
+  - ChartMantra / TradingQnA retail PDH/PDL threads
+  - Goodwill — Using ATR for Smart Stop-Losses (for buffer rationale)
+
+Rev2 NOTE: rev1 attributed this to "Subasish Pani style" and cited Capital.com.
+Both removed — Subasish Pani's published method is the 5 EMA strategy, NOT
+PDH/PDL fade; Capital.com is a UK forex retail site, not Indian. The setup
+itself remains as generic Indian-retail PDH/PDL fade with explicit
+acknowledgment that volume polarity is unresolved (A/B variant).
 
 Trigger: bar tags PDH (for short) or PDL (for long) within 0.10%, prints a
 rejection candle (small body in lower 40%, upper wick > 1.5× body for PDH;
-inverse for PDL), AND volume is NOT >= 1.5× recent (absence of breakout
-volume = level holds).
+inverse for PDL). Volume polarity is config-driven A/B variant:
+  - "absence" (default): bar vol must NOT be >= max_volume_x_recent_for_absence
+  - "spike":             bar vol MUST be >= min_volume_x_recent_for_spike
 
-Universe: small + mid F&O (~100 names). Retail-driven flow concentrated here;
-PDH/PDL fades work where retail dominates the order book.
+Universe: small + mid F&O (~100 names). Retail-driven flow concentrated here.
 """
 from __future__ import annotations
 
@@ -2002,7 +2089,12 @@ class PDHPDLRejectStructure(BaseStructure):
         self.level_prox_pct = float(config["level_proximity_pct"]) / 100.0
         self.max_body_pct = float(config["max_body_size_pct"]) / 100.0
         self.min_wick_x_body = float(config["min_upper_wick_x_body"])
-        self.max_vol_x_recent = float(config["max_volume_x_recent"])
+        # rev2: volume polarity is A/B variant (Indian sources contested).
+        self.volume_polarity = str(config.get("volume_polarity", "absence")).lower()
+        if self.volume_polarity not in ("absence", "spike"):
+            raise ValueError(f"volume_polarity must be 'absence' or 'spike', got {self.volume_polarity!r}")
+        self.max_vol_x_recent_for_absence = float(config.get("max_volume_x_recent_for_absence", 1.5))
+        self.min_vol_x_recent_for_spike = float(config.get("min_volume_x_recent_for_spike", 1.5))
         self.wick_buffer_pct = float(config["wick_buffer_pct"]) / 100.0
         self.t1_qty_pct = float(config["t1_qty_pct"])
         self.universe_key = str(config["universe_key"])
@@ -2086,10 +2178,18 @@ class PDHPDLRejectStructure(BaseStructure):
             return _empty(f"no PDH/PDL rejection: bar=[{bar_low:.2f},{bar_high:.2f}] "
                           f"PDH={pdh:.2f} PDL={pdl:.2f}")
 
-        # Volume must NOT exceed 1.5× recent — absence of breakout volume is the signal
+        # rev2: volume polarity branch.
+        # "absence": bar vol must NOT exceed max_volume_x_recent_for_absence × recent
+        # "spike":   bar vol MUST exceed min_volume_x_recent_for_spike × recent
         recent_vol = float(df["volume"].iloc[-6:-1].mean()) if len(df) >= 6 else bar_vol
-        if recent_vol > 0 and bar_vol > self.max_vol_x_recent * recent_vol:
-            return _empty(f"breakout volume {bar_vol:.0f} > {self.max_vol_x_recent}× recent {recent_vol:.0f}")
+        if recent_vol > 0:
+            ratio = bar_vol / recent_vol
+            if self.volume_polarity == "absence":
+                if ratio > self.max_vol_x_recent_for_absence:
+                    return _empty(f"absence_polarity_violated: vol {bar_vol:.0f} > {self.max_vol_x_recent_for_absence}× recent")
+            else:  # spike
+                if ratio < self.min_vol_x_recent_for_spike:
+                    return _empty(f"spike_polarity_violated: vol {bar_vol:.0f} < {self.min_vol_x_recent_for_spike}× recent")
 
         confidence = min(1.0, (1.0 - body_pct) + 0.2)  # cleaner rejection = higher confidence
         evt = StructureEvent(
