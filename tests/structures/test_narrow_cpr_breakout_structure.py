@@ -93,11 +93,17 @@ def test_fires_short_on_close_below_bc_with_volume():
 
 
 def test_does_not_fire_on_wide_cpr():
-    """Wide CPR (width > 0.40%) should be rejected."""
+    """Wide CPR (width > 0.40%) should be rejected.
+
+    PDH=104, PDL=98, PDC=99:
+      pivot=(104+98+99)/3 = 100.33
+      bc=(104+98)/2 = 101.0
+      tc=2*100.33-101.0 = 99.67
+      width = (101.0-99.67)/100.33 * 100 = 1.33% > 0.40% → REJECTED
+    """
     det = NarrowCPRBreakoutStructure(_cfg())
     df = _build_df(breakout_close=101.0, breakout_volume=13000)
-    # Wider PDH/PDL → wider CPR
-    ctx = _ctx(df, pdh=102.0, pdl=98.0, pdc=100.0)  # width ~2%
+    ctx = _ctx(df, pdh=104.0, pdl=98.0, pdc=99.0)  # asymmetric → wide CPR
     res = det.detect(ctx)
     assert res.structure_detected is False
     assert "cpr_width" in (res.rejection_reason or "").lower()

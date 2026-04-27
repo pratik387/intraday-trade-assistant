@@ -111,14 +111,6 @@ class NarrowCPRBreakoutStructure(BaseStructure):
         cpr_top, cpr_bot, pivot = self._compute_cpr(float(ctx.pdh), float(ctx.pdl), float(ctx.pdc))
 
         cpr_width_pct = (cpr_top - cpr_bot) / max(pivot, 1e-6) * 100.0
-        # Secondary guard: reject wide prior-day range (volatile session) even when
-        # BC==TC (flat CPR, degenerate case where PDC == midpoint of PDH/PDL).
-        # Frank Ochoa's narrow-CPR setup requires a compressed, low-range prior day.
-        # Threshold: prior-day H-L range must be < 5× the max_cpr_width_pct.
-        session_range_pct = (float(ctx.pdh) - float(ctx.pdl)) / max(pivot, 1e-6) * 100.0
-        max_session_range_pct = self.max_cpr_width_pct * 5.0
-        if session_range_pct > max_session_range_pct:
-            return _empty(f"cpr_width={cpr_width_pct:.3f}% (session range {session_range_pct:.2f}% > {max_session_range_pct:.2f}%)")
         if cpr_width_pct > self.max_cpr_width_pct:
             return _empty(f"cpr_width={cpr_width_pct:.3f}% > max={self.max_cpr_width_pct}%")
 
