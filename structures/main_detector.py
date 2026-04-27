@@ -36,6 +36,7 @@ from .mis_unwind_short_structure import MISUnwindShortStructure
 from .cpr_mean_revert_structure import CPRMeanRevertStructure
 from .orb_15_structure import ORB15Structure
 from .narrow_cpr_breakout_structure import NarrowCPRBreakoutStructure
+from .vwap_first_pullback_structure import VWAPFirstPullbackStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -152,6 +153,7 @@ class MainDetector(BaseStructure):
             ("cpr_mean_revert", CPRMeanRevertStructure, "cpr_mean_revert"),
             ("orb_15", ORB15Structure, "orb_15"),
             ("narrow_cpr_breakout", NarrowCPRBreakoutStructure, "narrow_cpr_breakout"),
+            ("vwap_first_pullback", VWAPFirstPullbackStructure, "vwap_first_pullback"),
         ]
 
         # ICT setups that should inherit params from ict_comprehensive
@@ -820,6 +822,7 @@ class MainDetector(BaseStructure):
             # Sub-project #8 — Extended Indian-native setups
             'orb_15': 'orb_15',
             'narrow_cpr_breakout': 'narrow_cpr_breakout',
+            'vwap_first_pullback': 'vwap_first_pullback',
         }
 
         return direct_mappings.get(structure_type)
