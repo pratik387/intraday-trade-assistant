@@ -78,6 +78,9 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "mis_unwind": SetupCategory.REVERSION,
     "cpr_mean_revert": SetupCategory.REVERSION,
 
+    # Sub-project #8 — Extended Indian-native setups
+    "orb_15": SetupCategory.MOMENTUM,
+
     # MOMENTUM: Trend continuation
     # Quality = ADX (trend strength) + trend alignment
     "trend_continuation": SetupCategory.MOMENTUM,
