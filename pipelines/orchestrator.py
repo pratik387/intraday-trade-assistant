@@ -355,9 +355,11 @@ class PipelineOrchestrator:
             return None
 
         # Determine direction. Setups with explicit suffix (_long/_short) are unambiguous.
-        # Bidirectional detectors (e.g. cpr_mean_revert) decide bias inside detect() based
-        # on price geometry; calling the wrong plan_*_strategy() returns None and silently
-        # drops the signal. So for those, run detect() to read the bias, then dispatch.
+        # Bidirectional detectors decide bias inside detect() based on price geometry;
+        # calling the wrong plan_*_strategy() returns None and silently drops the signal.
+        # So for those, run detect() to read the bias, then dispatch.
+        # Sub-8 detectors set bias on `event.side` (not in event.context); sub-7
+        # cpr_mean_revert puts it in event.context["bias"]. Try both.
         if setup_type.endswith("_long"):
             bias = "long"
         elif setup_type.endswith("_short"):
@@ -369,7 +371,12 @@ class PipelineOrchestrator:
                 logger.exception(f"[SUB7] {symbol} {setup_type}: detect() raised: {exc}")
                 return None
             evts = getattr(analysis, "events", []) or []
-            bias_from_detect = evts[0].context.get("bias") if evts else None
+            evt0 = evts[0] if evts else None
+            bias_from_detect = None
+            if evt0 is not None:
+                # Prefer event.context["bias"] (sub7 cpr convention); fall back to event.side (sub8).
+                bias_from_detect = (evt0.context.get("bias") if isinstance(evt0.context, dict) else None) \
+                                   or getattr(evt0, "side", None)
             if bias_from_detect not in ("long", "short"):
                 return None
             bias = bias_from_detect
