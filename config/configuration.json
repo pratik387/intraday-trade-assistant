@@ -1864,12 +1864,12 @@
         "momentum_breakout_short": 0.5,
         "gap_fade_short": 0.85,
         "mis_unwind_short": 0.85,
-        "cpr_mean_revert": 0.80,
-        "orb_15": 0.80,
+        "cpr_mean_revert": 0.8,
+        "orb_15": 0.8,
         "narrow_cpr_breakout": 0.75,
-        "vwap_first_pullback": 0.80,
+        "vwap_first_pullback": 0.8,
         "pdh_pdl_reject": 0.75,
-        "closing_hour_reversal": 0.70
+        "closing_hour_reversal": 0.7
       }
     },
     "mis_unwind_short": {
@@ -1880,7 +1880,10 @@
       "min_intraday_high_recency_min": 30,
       "max_momentum_3bar_pct": 0.0,
       "min_rvol": 1.2,
-      "allowed_cap_segments": ["small_cap", "mid_cap"],
+      "allowed_cap_segments": [
+        "small_cap",
+        "mid_cap"
+      ],
       "stop_atr_buffer": 1.5,
       "target_type": "vwap",
       "time_stop_min_before_close": 5,
@@ -1893,8 +1896,16 @@
       "tc_bc_touch_tolerance_pct": 0.1,
       "max_volume_pct_of_intraday_avg": 30.0,
       "require_reversion_candle": true,
-      "reversion_patterns": ["hammer", "doji", "shooting_star"],
-      "allowed_cap_segments": ["small_cap", "mid_cap", "large_cap"],
+      "reversion_patterns": [
+        "hammer",
+        "doji",
+        "shooting_star"
+      ],
+      "allowed_cap_segments": [
+        "small_cap",
+        "mid_cap",
+        "large_cap"
+      ],
       "stop_at_extreme_atr_buffer": 0.75,
       "target_type": "cpr_midpoint",
       "time_stop_at": "14:00",
@@ -1921,7 +1932,7 @@
       "min_bars_required": 1
     },
     "orb_15": {
-      "enabled": false,
+      "enabled": true,
       "active_window_start": "09:30",
       "active_window_end": "11:15",
       "range_window_start": "09:20",
@@ -1930,7 +1941,7 @@
       "max_range_pct": 2.0,
       "min_volume_x_30d_median": 1.5,
       "stop_at_range_midpoint": false,
-      "wick_buffer_pct": 0.10,
+      "wick_buffer_pct": 0.1,
       "t1_r_multiple": 1.0,
       "t2_r_multiple": 2.0,
       "t1_qty_pct": 0.5,
@@ -1940,10 +1951,10 @@
       "_rev2_notes": "stop_at_range_midpoint=false is opposite-end-of-range (Indian-source default). range_window_start=09:20 skips pre-open call-auction wick. max_gap_pct_for_orb=0.5: skip ORB if today's open gap > 0.5% (route to gap_fade_short)."
     },
     "narrow_cpr_breakout": {
-      "enabled": false,
+      "enabled": true,
       "active_window_start": "09:30",
       "active_window_end": "14:00",
-      "max_cpr_width_pct": 0.40,
+      "max_cpr_width_pct": 0.4,
       "min_volume_x_20d_median": 1.3,
       "anti_whipsaw_lookback_bars": 2,
       "stop_at_pivot": true,
@@ -1954,13 +1965,13 @@
       "min_bars_required": 30
     },
     "vwap_first_pullback": {
-      "enabled": false,
+      "enabled": true,
       "active_window_start": "10:00",
       "active_window_end": "14:30",
       "trend_lookback_bars": 6,
       "trend_min_bars_same_side": 4,
-      "pullback_proximity_pct": 0.10,
-      "reversal_min_range_pct": 0.20,
+      "pullback_proximity_pct": 0.1,
+      "reversal_min_range_pct": 0.2,
       "max_stop_distance_pct": 0.6,
       "t1_target": "prev_swing_extreme",
       "t2_r_multiple": 2.0,
@@ -1969,25 +1980,25 @@
       "min_bars_required": 30
     },
     "pdh_pdl_reject": {
-      "enabled": false,
+      "enabled": true,
       "active_window_start": "10:00",
       "active_window_end": "14:30",
-      "level_proximity_pct": 0.10,
+      "level_proximity_pct": 0.1,
       "max_body_size_pct": 40.0,
       "min_upper_wick_x_body": 1.5,
       "volume_polarity": "absence",
       "max_volume_x_recent_for_absence": 1.5,
       "min_volume_x_recent_for_spike": 1.5,
-      "wick_buffer_pct": 0.10,
+      "wick_buffer_pct": 0.1,
       "t1_target": "vwap",
       "t2_target": "today_opposite_extreme",
       "t1_qty_pct": 0.5,
       "universe_key": "smallmid_fno",
       "min_bars_required": 30,
-      "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default — bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both."
+      "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default \u00e2\u20ac\u201d bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both."
     },
     "closing_hour_reversal": {
-      "enabled": false,
+      "enabled": true,
       "active_window_start": "14:30",
       "active_window_end": "15:15",
       "min_intraday_move_pct": 1.5,
