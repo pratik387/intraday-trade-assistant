@@ -956,7 +956,14 @@ class TradeDecisionGate:
 
         # PHASE 2 & 3 FIX: Breakout quality filters (volume surge + momentum candle)
         # Professional standard: Breakouts need volume confirmation and strong momentum candles
-        if best.setup_type and 'breakout' in best.setup_type.lower():
+        #
+        # Sub-project #8: wide_open_mode bypasses these filters for SUB7/SUB8 detectors
+        # (orb_15, narrow_cpr_breakout, etc.). Substring match 'breakout' in setup_type
+        # was catching narrow_cpr_breakout and rejecting it on the SMC-era 1.5x momentum
+        # ratio — duplicative because sub7/sub8 detectors run their own quality checks
+        # inside detect(). Production default (wide_open_mode=false) keeps the filter on.
+        if (best.setup_type and 'breakout' in best.setup_type.lower()
+                and not _get_wide_open_mode()):
             try:
                 # Determine if this is a SHORT breakout (stricter filters needed)
                 is_breakout_short = 'short' in best.setup_type.lower()
