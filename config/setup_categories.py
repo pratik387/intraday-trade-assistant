@@ -80,6 +80,7 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
 
     # Sub-project #8 — Extended Indian-native setups
     "orb_15": SetupCategory.MOMENTUM,
+    "narrow_cpr_breakout": SetupCategory.MOMENTUM,
 
     # MOMENTUM: Trend continuation
     # Quality = ADX (trend strength) + trend alignment

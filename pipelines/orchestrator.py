@@ -42,6 +42,7 @@ from structures.gap_fade_short_structure import GapFadeShortStructure
 from structures.mis_unwind_short_structure import MISUnwindShortStructure
 from structures.cpr_mean_revert_structure import CPRMeanRevertStructure
 from structures.orb_15_structure import ORB15Structure
+from structures.narrow_cpr_breakout_structure import NarrowCPRBreakoutStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
@@ -51,6 +52,7 @@ SUB7_SETUPS: frozenset = frozenset({
     "mis_unwind_short",
     "cpr_mean_revert",
     "orb_15",
+    "narrow_cpr_breakout",
 })
 
 logger = get_agent_logger()
@@ -259,6 +261,7 @@ class PipelineOrchestrator:
                 "mis_unwind_short": MISUnwindShortStructure,
                 "cpr_mean_revert": CPRMeanRevertStructure,
                 "orb_15": ORB15Structure,
+                "narrow_cpr_breakout": NarrowCPRBreakoutStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:

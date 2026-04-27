@@ -35,6 +35,7 @@ from .gap_fade_short_structure import GapFadeShortStructure
 from .mis_unwind_short_structure import MISUnwindShortStructure
 from .cpr_mean_revert_structure import CPRMeanRevertStructure
 from .orb_15_structure import ORB15Structure
+from .narrow_cpr_breakout_structure import NarrowCPRBreakoutStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -150,6 +151,7 @@ class MainDetector(BaseStructure):
             ("mis_unwind_short", MISUnwindShortStructure, "mis_unwind_short"),
             ("cpr_mean_revert", CPRMeanRevertStructure, "cpr_mean_revert"),
             ("orb_15", ORB15Structure, "orb_15"),
+            ("narrow_cpr_breakout", NarrowCPRBreakoutStructure, "narrow_cpr_breakout"),
         ]
 
         # ICT setups that should inherit params from ict_comprehensive
@@ -817,6 +819,7 @@ class MainDetector(BaseStructure):
 
             # Sub-project #8 — Extended Indian-native setups
             'orb_15': 'orb_15',
+            'narrow_cpr_breakout': 'narrow_cpr_breakout',
         }
 
         return direct_mappings.get(structure_type)
