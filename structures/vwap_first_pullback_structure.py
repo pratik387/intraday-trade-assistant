@@ -181,13 +181,26 @@ class VWAPFirstPullbackStructure(BaseStructure):
         pullback_low = float(evt.levels["pullback_low"])
         pullback_high = float(evt.levels["pullback_high"])
 
-        # Stop = pullback bar's low (long) or high (short) — Rupeezy verbatim
+        # Stop = pullback bar's low (long) or high (short) — Rupeezy verbatim.
+        # GEOMETRY GUARD: pullback bar's extreme must be on the correct side of
+        # the current bar's close. If pullback_low > close (long) or
+        # pullback_high < close (short), the bars are out of order — likely a
+        # weak/no reversal where current close didn't actually reclaim VWAP.
+        # This guard prevents:
+        #   (a) risk clamping to 1e-6 from max(neg, 1e-6) → qty=risk_rupees/rps
+        #       blowing up to ~1B shares downstream;
+        #   (b) T2 fallback `close + 2*risk` landing at close → 0-PnL exit.
+        # NOT bypassable under wide_open — invalid geometry is invalid in any mode.
         if side == "long":
+            if pullback_low >= close:
+                return None
             hard_sl = pullback_low
-            risk = max(close - hard_sl, 1e-6)
+            risk = close - hard_sl
         else:
+            if pullback_high <= close:
+                return None
             hard_sl = pullback_high
-            risk = max(hard_sl - close, 1e-6)
+            risk = hard_sl - close
 
         # Skip if stop too far (signal invalid)
         stop_pct = risk / close

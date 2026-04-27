@@ -439,6 +439,19 @@ class PipelineOrchestrator:
             )
 
         qty = int(risk_per_trade_rupees / rps) if rps > 0 else 0
+        # Defense-in-depth: cap qty at a sane intraday max. With rps tiny (e.g.
+        # detector geometry bug clamping rps to 1e-6), qty would blow up to
+        # billions and downstream exits show entry==exit at 0 PnL. Cap to
+        # implied notional <= 1Cr (1e7) per trade as a sanity ceiling — real
+        # risk_per_trade_rupees=1000 with rps=0.01 (0.01 of a Rs 100 stock)
+        # produces qty=100k = Rs 1Cr notional, which is the upper edge of
+        # plausible. Anything beyond that is a bug, not a strategy choice.
+        if qty * entry > 1e7:
+            logger.warning(
+                f"[SUB7] {symbol} {setup_type}: qty={qty} rps={rps} entry={entry} "
+                f"exceeds 1Cr notional cap — likely detector geometry bug; setting qty=0"
+            )
+            qty = 0
         notional = round(qty * entry, 2)
 
         # MIS info for leverage tracking
