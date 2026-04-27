@@ -45,6 +45,7 @@ from structures.orb_15_structure import ORB15Structure
 from structures.narrow_cpr_breakout_structure import NarrowCPRBreakoutStructure
 from structures.vwap_first_pullback_structure import VWAPFirstPullbackStructure
 from structures.pdh_pdl_reject_structure import PDHPDLRejectStructure
+from structures.closing_hour_reversal_structure import ClosingHourReversalStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
@@ -57,6 +58,7 @@ SUB7_SETUPS: frozenset = frozenset({
     "narrow_cpr_breakout",
     "vwap_first_pullback",
     "pdh_pdl_reject",
+    "closing_hour_reversal",
 })
 
 logger = get_agent_logger()
@@ -268,6 +270,7 @@ class PipelineOrchestrator:
                 "narrow_cpr_breakout": NarrowCPRBreakoutStructure,
                 "vwap_first_pullback": VWAPFirstPullbackStructure,
                 "pdh_pdl_reject": PDHPDLRejectStructure,
+                "closing_hour_reversal": ClosingHourReversalStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:

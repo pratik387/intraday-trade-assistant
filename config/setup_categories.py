@@ -83,6 +83,7 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "narrow_cpr_breakout": SetupCategory.MOMENTUM,
     "vwap_first_pullback": SetupCategory.MOMENTUM,
     "pdh_pdl_reject": SetupCategory.REVERSION,
+    "closing_hour_reversal": SetupCategory.REVERSION,
 
     # MOMENTUM: Trend continuation
     # Quality = ADX (trend strength) + trend alignment

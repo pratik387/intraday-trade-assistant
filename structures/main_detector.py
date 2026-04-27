@@ -38,6 +38,7 @@ from .orb_15_structure import ORB15Structure
 from .narrow_cpr_breakout_structure import NarrowCPRBreakoutStructure
 from .vwap_first_pullback_structure import VWAPFirstPullbackStructure
 from .pdh_pdl_reject_structure import PDHPDLRejectStructure
+from .closing_hour_reversal_structure import ClosingHourReversalStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -156,6 +157,7 @@ class MainDetector(BaseStructure):
             ("narrow_cpr_breakout", NarrowCPRBreakoutStructure, "narrow_cpr_breakout"),
             ("vwap_first_pullback", VWAPFirstPullbackStructure, "vwap_first_pullback"),
             ("pdh_pdl_reject", PDHPDLRejectStructure, "pdh_pdl_reject"),
+            ("closing_hour_reversal", ClosingHourReversalStructure, "closing_hour_reversal"),
         ]
 
         # ICT setups that should inherit params from ict_comprehensive
@@ -826,6 +828,7 @@ class MainDetector(BaseStructure):
             'narrow_cpr_breakout': 'narrow_cpr_breakout',
             'vwap_first_pullback': 'vwap_first_pullback',
             'pdh_pdl_reject': 'pdh_pdl_reject',
+            'closing_hour_reversal': 'closing_hour_reversal',
         }
 
         return direct_mappings.get(structure_type)
