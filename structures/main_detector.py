@@ -37,6 +37,7 @@ from .cpr_mean_revert_structure import CPRMeanRevertStructure
 from .orb_15_structure import ORB15Structure
 from .narrow_cpr_breakout_structure import NarrowCPRBreakoutStructure
 from .vwap_first_pullback_structure import VWAPFirstPullbackStructure
+from .pdh_pdl_reject_structure import PDHPDLRejectStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -154,6 +155,7 @@ class MainDetector(BaseStructure):
             ("orb_15", ORB15Structure, "orb_15"),
             ("narrow_cpr_breakout", NarrowCPRBreakoutStructure, "narrow_cpr_breakout"),
             ("vwap_first_pullback", VWAPFirstPullbackStructure, "vwap_first_pullback"),
+            ("pdh_pdl_reject", PDHPDLRejectStructure, "pdh_pdl_reject"),
         ]
 
         # ICT setups that should inherit params from ict_comprehensive
@@ -823,6 +825,7 @@ class MainDetector(BaseStructure):
             'orb_15': 'orb_15',
             'narrow_cpr_breakout': 'narrow_cpr_breakout',
             'vwap_first_pullback': 'vwap_first_pullback',
+            'pdh_pdl_reject': 'pdh_pdl_reject',
         }
 
         return direct_mappings.get(structure_type)
