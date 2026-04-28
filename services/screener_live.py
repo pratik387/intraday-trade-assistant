@@ -1647,11 +1647,18 @@ class ScreenerLive:
         logger.info("ORCHESTRATOR_COMPLETE | %d eligible plans from %d decisions | TIME: %.2fs",
                    len(eligible_plans), len(decisions), _t_orch_end - _t_orch_start)
 
-        # ---------- Live Gate Chain (RuleFilter → CrossSectional → Conviction) ----------
-        # When disabled (live_gate_chain.enabled=false), evaluate() is passthrough.
-        # Adapter: plan dicts have nested fields; flatten to the flat-key dict that
-        # LiveGateChain.evaluate() expects, then map admitted dicts back to tuples.
-        if self.live_gate_chain.enabled and eligible_plans:
+        # ---------- Build candidate dicts (needed by both gate chain + capture writer) ----------
+        # Two independent flags consume these candidates:
+        #   1. live_gate_chain.enabled — runs RuleFilter→CrossSectional→Conviction gates
+        #   2. gate_input_logging.enabled — captures gate_input.jsonl for parity_simulator
+        # Capture-mode (gates off + logging on) requires the writer to fire even when
+        # the gate chain is disabled. Coupling the two breaks gauntlet ingestion.
+        _gate_chain_on = self.live_gate_chain.enabled and bool(eligible_plans)
+        _gate_input_on = (
+            self.raw_cfg.get("gate_input_logging", {}).get("enabled", False)
+            and bool(eligible_plans)
+        )
+        if _gate_chain_on or _gate_input_on:
             # Derive hour_bucket from the bar timestamp using edge_discovery convention
             _mod = now.hour * 60 + now.minute  # minute-of-day
             if _mod < 600:
@@ -1709,7 +1716,7 @@ class ScreenerLive:
             # Writes one JSONL row per bar with the candidate dicts, bar_volumes,
             # and symbol_caps — everything the gate consumes. Disabled in
             # production trading via config.gate_input_logging.enabled.
-            if self.raw_cfg.get("gate_input_logging", {}).get("enabled", False):
+            if _gate_input_on:
                 from config.logging_config import get_gate_input_logger
                 _gi_logger = get_gate_input_logger()
                 _cap_map = self._load_cap_mapping()
@@ -1736,19 +1743,23 @@ class ScreenerLive:
                     symbol_caps=_sym_caps,
                 )
 
-            _admitted_dicts = self.live_gate_chain.evaluate(_cand_dicts)
+            # ---------- Live Gate Chain (RuleFilter → CrossSectional → Conviction) ----------
+            # When disabled (live_gate_chain.enabled=false), the chain block is skipped
+            # and eligible_plans passes through unchanged.
+            if _gate_chain_on:
+                _admitted_dicts = self.live_gate_chain.evaluate(_cand_dicts)
 
-            # Map admitted dicts back to original tuples by identity (object id)
-            _admitted_ids = {id(c) for c in _admitted_dicts}
-            _before = len(eligible_plans)
-            eligible_plans = [_ep for _cand, _ep in _cand_tuples if id(_cand) in _admitted_ids]
-            _dropped = _before - len(eligible_plans)
-            if _dropped > 0 or _before > 0:
-                logger.info(
-                    "LIVE_GATE_CHAIN | %d→%d plans | dropped=%d | stats=%s",
-                    _before, len(eligible_plans), _dropped,
-                    self.live_gate_chain.stats(),
-                )
+                # Map admitted dicts back to original tuples by identity (object id)
+                _admitted_ids = {id(c) for c in _admitted_dicts}
+                _before = len(eligible_plans)
+                eligible_plans = [_ep for _cand, _ep in _cand_tuples if id(_cand) in _admitted_ids]
+                _dropped = _before - len(eligible_plans)
+                if _dropped > 0 or _before > 0:
+                    logger.info(
+                        "LIVE_GATE_CHAIN | %d→%d plans | dropped=%d | stats=%s",
+                        _before, len(eligible_plans), _dropped,
+                        self.live_gate_chain.stats(),
+                    )
 
         # Sort admitted plans by rank_score desc for execution priority.
         # (Was previously sorted before the gate; moved here so the gate
@@ -1803,8 +1814,16 @@ class ScreenerLive:
 
             # --- DECISION: canonical payload (no fallbacks) ---
 
-            # 1) stable id
+            # 1) stable id — should already be set by orchestrator/detector via
+            # StructureEvent auto-mint. Falling back here means a code path
+            # bypassed that mint; log so we can find it. Safety mint stays so
+            # DECISION still gets a usable id rather than crashing.
             if "trade_id" not in plan:
+                logger.warning(
+                    "TRADE_ID_LATE_MINT | %s | strategy=%s — plan reached screener_live "
+                    "without trade_id; expected detection-time mint",
+                    sym, plan.get("strategy", "unknown"),
+                )
                 plan["trade_id"] = mint_trade_id(sym, token=uuid.uuid4().hex[:8])
 
             # De-dupe (cooloff, setup change, second-entry strength) now enforced

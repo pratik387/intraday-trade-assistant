@@ -3,6 +3,13 @@ PositionStore — thread-safe in-memory position store.
 
 Shared by TriggerAwareExecutor (writer) and ExitExecutor (reader/updater).
 Broadcasts position changes to WebSocket clients for real-time dashboard updates.
+
+Keyed by trade_id (not symbol) so wide_open_mode capture runs can hold multiple
+concurrent open positions on the same symbol without one overwriting another.
+Each plan carries its own trade_id from the orchestrator. Smoke 23 evidence:
+keying by symbol caused 88% of orb_15 / 78% of narrow_cpr_breakout positions to
+be silently overwritten by later same-symbol setups, leaving them untracked
+through SL/T1/T2/EOD-flat.
 """
 from __future__ import annotations
 
@@ -12,13 +19,23 @@ from typing import Optional
 from services.execution.models import Position
 
 
+def _trade_id_of(p: Position) -> str:
+    """Extract trade_id from a Position. Plans always carry one (orchestrator
+    sets `trade_id` in the plan). Fall back to symbol-only key as a last resort
+    so a missing trade_id reverts to legacy behaviour rather than crashing."""
+    tid = (p.plan or {}).get("trade_id") if hasattr(p, "plan") else None
+    return str(tid) if tid else f"sym:{p.symbol}"
+
+
 class PositionStore:
     """
     Thread-safe in-memory store shared by TriggerAwareExecutor (writer) and ExitExecutor (reader/updater).
     Broadcasts position changes to WebSocket clients for real-time dashboard updates.
     """
     def __init__(self, api_server=None) -> None:
-        self._by_sym: dict[str, Position] = {}
+        # Keyed by trade_id so multiple concurrent positions on the same symbol
+        # (sub7/sub8 wide_open_mode) coexist without overwrite.
+        self._by_tid: dict[str, Position] = {}
         self._lock = threading.RLock()
         self._api_server = api_server
 
@@ -28,39 +45,55 @@ class PositionStore:
 
     def upsert(self, p: Position) -> None:
         with self._lock:
-            self._by_sym[p.symbol] = p
+            self._by_tid[_trade_id_of(p)] = p
         self._broadcast_positions()
 
-    def get(self, sym: str) -> Optional[Position]:
+    def get_by_trade_id(self, trade_id: str) -> Optional[Position]:
         with self._lock:
-            return self._by_sym.get(sym)
+            return self._by_tid.get(str(trade_id))
+
+    def get(self, sym: str) -> Optional[Position]:
+        """Legacy lookup by symbol — returns the FIRST open position on `sym`.
+        Ambiguous when multiple positions exist on the same symbol; new code
+        should call `get_by_trade_id` or `list_open_by_symbol` instead."""
+        with self._lock:
+            for p in self._by_tid.values():
+                if p.symbol == sym:
+                    return p
+            return None
 
     def all(self) -> list[Position]:
         with self._lock:
-            return list(self._by_sym.values())
+            return list(self._by_tid.values())
 
     # --- required by ExitExecutor ---
     def list_open(self) -> dict[str, Position]:
+        """Return a snapshot of all open positions keyed by trade_id."""
         with self._lock:
-            return dict(self._by_sym)
+            return dict(self._by_tid)
 
-    def close(self, sym: str) -> None:
+    def list_open_by_symbol(self, sym: str) -> list[Position]:
+        """All open positions on a given symbol (may be multiple under wide_open_mode)."""
         with self._lock:
-            self._by_sym.pop(sym, None)
+            return [p for p in self._by_tid.values() if p.symbol == sym]
+
+    def close(self, trade_id: str) -> None:
+        with self._lock:
+            self._by_tid.pop(str(trade_id), None)
         self._broadcast_positions()
 
-    def reduce(self, sym: str, qty_exit: int) -> None:
+    def reduce(self, trade_id: str, qty_exit: int) -> None:
         """Reduce qty for partial exits; remove if goes to zero."""
         with self._lock:
-            p = self._by_sym.get(sym)
+            p = self._by_tid.get(str(trade_id))
             if not p:
                 return
             new_qty = int(p.qty) - int(qty_exit)
             if new_qty <= 0:
-                self._by_sym.pop(sym, None)
+                self._by_tid.pop(str(trade_id), None)
             else:
                 p.qty = new_qty
-                self._by_sym[sym] = p
+                self._by_tid[str(trade_id)] = p
         self._broadcast_positions()
 
     def _broadcast_positions(self):
@@ -71,7 +104,7 @@ class PositionStore:
             return
         positions = []
         with self._lock:
-            for p in self._by_sym.values():
+            for p in self._by_tid.values():
                 # Skip shadow trades - simulated positions that don't consume capital
                 if hasattr(p, 'plan') and p.plan and p.plan.get("shadow", False):
                     continue

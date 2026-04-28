@@ -215,10 +215,12 @@ class MISUnwindShortStructure(BaseStructure):
             confidence = evt.confidence
             notes = evt.context
             structure_type = evt.structure_type
+            event_trade_id = evt.trade_id
         else:
             confidence = analysis.quality_score / 100.0
             notes = {}
             structure_type = self.structure_type
+            event_trade_id = None
 
         return TradePlan(
             symbol=context.symbol,
@@ -231,6 +233,7 @@ class MISUnwindShortStructure(BaseStructure):
             notional=0.0,
             confidence=confidence,
             notes=notes,
+            trade_id=event_trade_id,
         )
 
     def calculate_risk_params(self, entry_price: float,

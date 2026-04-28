@@ -1201,8 +1201,19 @@ class TriggerAwareExecutor:
                 logger.info(f"PLAN_SKIP | {symbol} | Already has open position, ignoring duplicate plan")
                 return
 
-            # Create trade ID
-            trade_id = plan.get("trade_id") or f"{symbol}_{uuid.uuid4().hex[:8]}"
+            # Create trade ID — should always be set upstream (StructureEvent
+            # auto-mint → TradePlan → orchestrator plan dict → screener_live
+            # logs DECISION). Falling back here means a code path bypassed those
+            # mint sites; log loudly so the chain breakage is visible. Safety
+            # mint stays so the trade still has a usable id rather than crashing.
+            trade_id = plan.get("trade_id")
+            if not trade_id:
+                logger.error(
+                    "TRADE_ID_LATE_MINT | %s | strategy=%s — plan reached trigger_aware_executor "
+                    "without trade_id; this breaks event-chain traceability",
+                    symbol, plan.get("strategy", "unknown"),
+                )
+                trade_id = f"{symbol}_{uuid.uuid4().hex[:8]}"
             
             primary_triggers, must_conditions, should_conditions = \
                 self.trigger_factory.create_conditions_for_strategy(plan)

@@ -215,6 +215,7 @@ class ORB15Structure(BaseStructure):
             symbol=ctx.symbol, side=side, structure_type=self.structure_type,
             entry_price=close, risk_params=risk_params, exit_levels=exit_levels,
             qty=0, notional=0.0, confidence=evt.confidence, notes=evt.context,
+            trade_id=evt.trade_id,
         )
 
     def plan_long_strategy(self, ctx: MarketContext, event=None) -> Optional[TradePlan]:

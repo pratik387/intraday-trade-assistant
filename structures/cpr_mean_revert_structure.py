@@ -350,6 +350,7 @@ class CPRMeanRevertStructure(BaseStructure):
             notional=0.0,
             confidence=evt.confidence,
             notes=notes,
+            trade_id=evt.trade_id,
         )
 
     # ---------- Required abstract method implementations ----------

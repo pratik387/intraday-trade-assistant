@@ -4,10 +4,36 @@ Data models for the structure-centric trading system.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Union
 import pandas as pd
 from datetime import datetime
+
+
+def _mint_event_trade_id(
+    symbol: str,
+    timestamp: pd.Timestamp,
+    structure_type: str,
+    side: str,
+) -> str:
+    """Mint a deterministic trade_id from the detection's identity tuple
+    (symbol, timestamp, structure_type, side). DETERMINISTIC is required:
+    detect() is called multiple times per detection in the sub7 fast path
+    (main_detector → bias inference → plan_*_strategy each invoke detect()),
+    and all of them must produce the same id so detector_accepts.jsonl,
+    DECISION, TRIGGER, ENTRY, and EXIT all join on a single key.
+
+    Format mirrors diagnostics.diag_event_log.mint_trade_id (`SYMBOL_<8hex>`)
+    so downstream code can't distinguish detection-time mints from any legacy
+    runtime mints by string shape alone.
+
+    Collision math: 2^32 namespace per (sym, ts, setup, side) — a single
+    trading day has ~10^3 detections, so collision probability is ~10^-7.
+    """
+    key = f"{symbol}|{timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)}|{structure_type}|{side}"
+    h = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+    return f"{symbol}_{h}"
 
 
 @dataclass
@@ -28,6 +54,17 @@ class StructureEvent:
     price: float
     volume: Optional[float] = None
     indicators: Optional[Dict[str, float]] = None
+
+    # Trade identity. Auto-minted at event creation so the same id flows from
+    # detector_accepts.jsonl through DECISION → TRIGGER → ENTRY → EXIT. Detectors
+    # may override by passing trade_id=... if they need deterministic ids in tests.
+    trade_id: Optional[str] = None
+
+    def __post_init__(self):
+        if not self.trade_id:
+            self.trade_id = _mint_event_trade_id(
+                self.symbol, self.timestamp, self.structure_type, self.side,
+            )
 
 
 @dataclass

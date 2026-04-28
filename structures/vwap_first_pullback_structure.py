@@ -234,6 +234,7 @@ class VWAPFirstPullbackStructure(BaseStructure):
             entry_price=close, risk_params=risk_params,
             exit_levels=ExitLevels(hard_sl=hard_sl, targets=targets),
             qty=0, notional=0.0, confidence=evt.confidence, notes=evt.context,
+            trade_id=evt.trade_id,
         )
 
     def plan_long_strategy(self, ctx: MarketContext, event=None) -> Optional[TradePlan]:

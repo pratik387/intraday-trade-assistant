@@ -276,6 +276,7 @@ class PDHPDLRejectStructure(BaseStructure):
             notional=0.0,
             confidence=evt.confidence,
             notes=evt.context,
+            trade_id=evt.trade_id,
         )
 
     def plan_long_strategy(

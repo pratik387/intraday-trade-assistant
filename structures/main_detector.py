@@ -395,6 +395,10 @@ class MainDetector(BaseStructure):
                                         quality_score=round(float(analysis.quality_score), 3),
                                         price=round(float(getattr(_ev, "price", 0.0)), 2),
                                         levels=_levels_ser,
+                                        # Trade identity from StructureEvent auto-mint —
+                                        # lets us join detector_accepts back to DECISION/EXIT
+                                        # by id alone (not (sym, ts, setup) fragile tuple).
+                                        trade_id=getattr(_ev, "trade_id", None),
                                     )
                             except Exception:
                                 pass

@@ -23,6 +23,14 @@ logger, trade_logger = get_execution_loggers()
 # ---------- Helpers ----------
 
 
+def _pos_tid(pos: Position) -> str:
+    """Extract trade_id from a Position for PositionStore reduce/close/get calls.
+    Mirrors the trade_id resolution in services.state.position_store._trade_id_of
+    so identical positions hash to the same key in both modules."""
+    tid = (pos.plan or {}).get("trade_id") if hasattr(pos, "plan") else None
+    return str(tid) if tid else f"sym:{pos.symbol}"
+
+
 # ---------- ExitExecutor (LTP-only exits + tick-TS EOD) ----------
 
 class ExitExecutor:
@@ -205,61 +213,64 @@ class ExitExecutor:
             ts: Tick timestamp
         """
         try:
-            open_pos = self.positions.list_open()
-            pos = open_pos.get(symbol)
-            if not pos:
+            # Multi-position per symbol: tick price applies to ALL open positions
+            # on this symbol. Iterate each (e.g., concurrent orb_15 long + later
+            # vwap_first_pullback short on the same symbol under wide_open_mode).
+            positions_for_symbol = self.positions.list_open_by_symbol(symbol)
+            if not positions_for_symbol:
                 return  # No open position for this symbol
 
-            # Convert timestamp
+            # Convert timestamp once
             ts_pd = pd.Timestamp(ts) if not isinstance(ts, pd.Timestamp) else ts
 
-            # RACE CONDITION FIX: Check if full exit already in progress
-            st = pos.plan.get("_state") or {}
-            if st.get("exit_pending", False):
-                logger.debug(f"EXIT_SKIP | {symbol} | Exit already pending, skipping tick check")
-                return
+            for pos in positions_for_symbol:
+                # RACE CONDITION FIX: Check if full exit already in progress
+                st = pos.plan.get("_state") or {}
+                if st.get("exit_pending", False):
+                    logger.debug(f"EXIT_SKIP | {symbol} | Exit already pending, skipping tick check")
+                    continue
 
-            # Check SL using tick price directly
-            plan_sl = self._get_plan_sl(pos.plan)
-            if not math.isnan(plan_sl):
-                if self._breach_sl(pos.side, tick_price, plan_sl):
-                    # Set exit_pending BEFORE placing order to prevent race
-                    st["exit_pending"] = True
-                    pos.plan["_state"] = st
-                    # Match bar-level convention: sl_post_t2 > sl_post_t1 > tick_sl
-                    if st.get("t2_done"):
-                        sl_reason = "sl_post_t2"
-                    elif st.get("t1_done"):
-                        # T1 skipped (low R) = original SL still in place → this is a hard SL
-                        sl_reason = "hard_sl" if st.get("t1_skipped_low_r") else "sl_post_t1"
-                    else:
-                        sl_reason = "tick_sl"
-                    logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f} reason={sl_reason}")
-                    self._exit(symbol, pos, tick_price, ts_pd, sl_reason)
-                    return
+                # Check SL using tick price directly
+                plan_sl = self._get_plan_sl(pos.plan)
+                if not math.isnan(plan_sl):
+                    if self._breach_sl(pos.side, tick_price, plan_sl):
+                        # Set exit_pending BEFORE placing order to prevent race
+                        st["exit_pending"] = True
+                        pos.plan["_state"] = st
+                        # Match bar-level convention: sl_post_t2 > sl_post_t1 > tick_sl
+                        if st.get("t2_done"):
+                            sl_reason = "sl_post_t2"
+                        elif st.get("t1_done"):
+                            # T1 skipped (low R) = original SL still in place → this is a hard SL
+                            sl_reason = "hard_sl" if st.get("t1_skipped_low_r") else "sl_post_t1"
+                        else:
+                            sl_reason = "tick_sl"
+                        logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f} reason={sl_reason}")
+                        self._exit(symbol, pos, tick_price, ts_pd, sl_reason)
+                        continue
 
-            # Check targets using tick price directly
-            t1, t2 = self._get_targets(pos.plan)
-            # Re-read state (may have been updated by SL check above)
-            st = pos.plan.get("_state") or {}
-            t1_done = bool(st.get("t1_done", False))
+                # Check targets using tick price directly
+                t1, t2 = self._get_targets(pos.plan)
+                # Re-read state (may have been updated by SL check above)
+                st = pos.plan.get("_state") or {}
+                t1_done = bool(st.get("t1_done", False))
 
-            # T2 (full exit)
-            if not math.isnan(t2):
-                if self._target_hit(pos.side, tick_price, t2):
-                    # Set exit_pending BEFORE placing order to prevent race
-                    st["exit_pending"] = True
-                    pos.plan["_state"] = st
-                    logger.info(f"TICK_T2_HIT: {symbol} {pos.side} price={tick_price:.2f} t2={t2:.2f}")
-                    self._exit(symbol, pos, tick_price, ts_pd, "tick_target_t2")
-                    return
+                # T2 (full exit)
+                if not math.isnan(t2):
+                    if self._target_hit(pos.side, tick_price, t2):
+                        # Set exit_pending BEFORE placing order to prevent race
+                        st["exit_pending"] = True
+                        pos.plan["_state"] = st
+                        logger.info(f"TICK_T2_HIT: {symbol} {pos.side} price={tick_price:.2f} t2={t2:.2f}")
+                        self._exit(symbol, pos, tick_price, ts_pd, "tick_target_t2")
+                        continue
 
-            # T1 (partial exit)
-            if (not t1_done) and not math.isnan(t1):
-                if self._target_hit(pos.side, tick_price, t1):
-                    logger.info(f"TICK_T1_HIT: {symbol} {pos.side} price={tick_price:.2f} t1={t1:.2f}")
-                    self._partial_exit_t1(symbol, pos, tick_price, ts_pd)
-                    return
+                # T1 (partial exit)
+                if (not t1_done) and not math.isnan(t1):
+                    if self._target_hit(pos.side, tick_price, t1):
+                        logger.info(f"TICK_T1_HIT: {symbol} {pos.side} price={tick_price:.2f} t1={t1:.2f}")
+                        self._partial_exit_t1(symbol, pos, tick_price, ts_pd)
+                        continue
 
         except Exception as e:
             logger.exception(f"Tick exit check failed for {symbol}: {e}")
@@ -268,11 +279,16 @@ class ExitExecutor:
         # Process any pending API exit requests first
         self._process_api_exits()
 
+        # list_open() now returns {trade_id: Position}. We iterate by trade_id so
+        # multiple concurrent positions on the same symbol (wide_open_mode) each
+        # get their own SL/T1/T2/EOD-flat lifecycle. `sym` for tick lookup comes
+        # from the position itself.
         open_pos = self.positions.list_open()
         if not open_pos:
             return
 
-        for sym, pos in open_pos.items():
+        for _tid, pos in open_pos.items():
+            sym = pos.symbol
             try:
                 px, ts = self._get_px_ts(sym)
                 if px is None or ts is None:
@@ -589,12 +605,15 @@ class ExitExecutor:
                 qty = req.get("qty")  # None means full exit
                 reason = req.get("reason", "manual_exit")
 
-                # Get position
-                open_pos = self.positions.list_open()
-                pos = open_pos.get(symbol)
-                if not pos:
+                # Get position(s) for this symbol — under wide_open_mode there
+                # may be multiple. API exits operate on the FIRST open position
+                # for the symbol (ambiguous under multi-position; consider passing
+                # trade_id from the API for explicit targeting).
+                positions_for_symbol = self.positions.list_open_by_symbol(symbol)
+                if not positions_for_symbol:
                     logger.warning(f"[API_EXIT] Position not found: {symbol}")
                     continue
+                pos = positions_for_symbol[0]
 
                 # Get current price
                 px, ts = self._get_px_ts(symbol)
@@ -656,7 +675,7 @@ class ExitExecutor:
         logger.info(f"[API_EXIT] Partial profit stored: {sym} qty={qty_exit} profit=Rs.{partial_profit:.2f} (cumulative: Rs.{st['manual_partial_profit']:.2f})")
 
         # Reduce position qty
-        self.positions.reduce(sym, qty_exit)
+        self.positions.reduce(_pos_tid(pos), qty_exit)
 
         # Release partial margin
         new_qty = current_qty - qty_exit
@@ -1215,8 +1234,13 @@ class ExitExecutor:
                               price_break: float, buffer: float, plan: Dict[str, Any], ts=None) -> bool:
         """Handle graduated exit strategy for OR touches/minor breaks"""
 
-        # Get the current position
-        pos = self.positions.list_open().get(symbol)
+        # Resolve position via plan trade_id (multi-position safe). Falls back to
+        # the first open position on the symbol if trade_id is missing.
+        plan_tid = (plan or {}).get("trade_id")
+        pos = self.positions.get_by_trade_id(str(plan_tid)) if plan_tid else None
+        if pos is None:
+            sym_positions = self.positions.list_open_by_symbol(symbol)
+            pos = sym_positions[0] if sym_positions else None
         if not pos:
             # CRITICAL FIX: Don't default to kill when no position found - this masks tracking bugs
             logger.error(f"OR_KILL: No position found for {symbol} - possible position tracking error")
@@ -1256,7 +1280,7 @@ class ExitExecutor:
 
                     if exit_result:
                         logger.info(f"OR_KILL_PARTIAL | {symbol} | {pos.side} {partial_qty} @ {px:.2f} | remaining: {pos.qty - partial_qty}")
-                        self.positions.reduce(symbol, partial_qty)  # Update position quantity
+                        self.positions.reduce(_pos_tid(pos), partial_qty)  # Update position quantity
                         # Update persistence with new qty (crash recovery)
                         if self.persistence:
                             new_qty = pos.qty - partial_qty
@@ -1385,7 +1409,7 @@ class ExitExecutor:
 
     def _place_and_log_exit(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> float:
         try:
-            cur = self.positions.list_open().get(sym)
+            cur = self.positions.get_by_trade_id(_pos_tid(pos))
             if cur is not None:
                 # CRITICAL FIX: Don't default to 0 - log position tracking issues
                 cur_qty_raw = getattr(cur, "qty", None)
@@ -1549,7 +1573,7 @@ class ExitExecutor:
 
         # re-read current qty from store just before the full exit
         try:
-            cur = self.positions.list_open().get(sym)
+            cur = self.positions.get_by_trade_id(_pos_tid(pos))
             if cur is not None:
                 # CRITICAL FIX: Don't default to 0 - log position tracking issues
                 qty_raw = getattr(cur, "qty", None)
@@ -1610,7 +1634,7 @@ class ExitExecutor:
 
         # Capture actual broker fill price for API server logging
         actual_exit_px = self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
-        self.positions.close(sym)
+        self.positions.close(_pos_tid(pos))
 
         # Remove from persistence (crash recovery)
         if self.persistence:
@@ -1721,7 +1745,7 @@ class ExitExecutor:
 
         rem = 0
         try:
-            cur = self.positions.list_open().get(sym)
+            cur = self.positions.get_by_trade_id(_pos_tid(pos))
             if cur is not None:
                 # CRITICAL FIX: Log position tracking issues in remaining quantity check
                 rem_raw = getattr(cur, "qty", None)
@@ -1865,7 +1889,7 @@ class ExitExecutor:
             pos.plan["_state"] = st
 
         # Reduce position qty (triggers WebSocket broadcast with updated state)
-        self.positions.reduce(sym, int(qty_exit))
+        self.positions.reduce(_pos_tid(pos), int(qty_exit))
 
         # Release partial margin for the exited quantity
         if self.capital_manager:
@@ -1881,7 +1905,7 @@ class ExitExecutor:
         if self.eod_md is not None and ts is not None:
             try:
                 if _minute_of_day(ts) >= int(self.eod_md):
-                    cur = self.positions.list_open().get(sym)
+                    cur = self.positions.get_by_trade_id(_pos_tid(pos))
                     if cur and int(cur.qty) > 0:
                         self._exit(sym, cur, float(px), ts, f"eod_squareoff_{self.eod_hhmm}")
                         return
@@ -1987,7 +2011,7 @@ class ExitExecutor:
             pos.plan["_state"] = st
 
         # Reduce position qty (triggers WebSocket broadcast with updated state)
-        self.positions.reduce(sym, int(qty_exit))
+        self.positions.reduce(_pos_tid(pos), int(qty_exit))
 
         # Release partial margin for the exited quantity
         if self.capital_manager:
@@ -2019,11 +2043,12 @@ class ExitExecutor:
     def square_off_all_open_positions(self, reason_prefix: Optional[str] = None) -> None:
         reason = reason_prefix or f"eod_squareoff_{self.eod_hhmm}"
         try:
-            open_pos = self.positions.list_open()
+            open_pos = self.positions.list_open()  # {trade_id: Position}
         except Exception:
             open_pos = {}
 
-        for sym, pos in list(open_pos.items()):
+        for _tid, pos in list(open_pos.items()):
+            sym = pos.symbol
             try:
                 ltp, ts = (self.get_ltp_ts(sym) if callable(self.get_ltp_ts) else (None, None))
                 if ltp is None:
@@ -2037,29 +2062,28 @@ class ExitExecutor:
                 self._flatten_to_closed(sym, pos, use_px, ts_obj, use_reason)
             except Exception as e:
                 logger.warning("square_off_all_open_positions: sym=%s err=%s", sym, e)
-                
-    def _is_open(self, sym: str) -> bool:
+
+    def _is_open_tid(self, trade_id: str) -> bool:
+        """Check if a specific trade_id is still in the open positions store."""
         try:
-            open_map = self.positions.list_open() or {}
-            return sym in open_map
+            return self.positions.get_by_trade_id(trade_id) is not None
         except Exception:
-            try:
-                pos = self.positions.list_open().get(sym)
-            except Exception:
-                pos = None
-            return bool(pos is not None and getattr(pos, "qty", 0) > 0)
+            return False
 
     def _flatten_to_closed(self, sym: str, pos, px: float, ts, reason: str) -> None:
         intent_id = uuid.uuid4().hex[:8]
+        # _closing_state is keyed by symbol — fine since multiple symbols don't
+        # collide here; the retry loop targets a specific Position by trade_id.
         self._closing_state[sym] = {"state": "closing", "intent_id": intent_id, "reason": reason}
+        tid = _pos_tid(pos)
         attempts = 0
-        while self._is_open(sym):
+        while self._is_open_tid(tid):
             self._exit(sym, pos, float(px), ts, reason if attempts == 0 else f"{reason}_retry{attempts}")
             attempts += 1
             if attempts >= 12:
                 break
             try:
-                pos = self.positions.list_open().get(sym) or pos
+                pos = self.positions.get_by_trade_id(tid) or pos
             except Exception:
                 pass
         self._closing_state[sym] = {"state": "closed", "intent_id": intent_id, "reason": reason}
@@ -2130,7 +2154,7 @@ class ExitExecutor:
             if qty_exit > 0:
                 logger.info(f"BREAKOUT_SHORT_RISK: {sym} partial exit at {rr:.2f}R - booking {qty_exit}/{qty}")
                 self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"breakout_short_partial_{rr:.2f}R")
-                self.positions.reduce(sym, qty_exit)
+                self.positions.reduce(_pos_tid(pos), qty_exit)
 
                 # Move stop to -0.1R
                 try:
@@ -2207,7 +2231,7 @@ class ExitExecutor:
                 if qty_exit > 0:
                     logger.info(f"EOD_SCALE_OUT: {sym} first scale @ {self.eod_scale_out_time1} RR={rr:.2f} < {self.eod_scale_out_rr1} - exit {qty_exit}/{qty}")
                     actual_exit_px = self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"eod_scale_out_1st_{rr:.2f}R")
-                    self.positions.reduce(sym, qty_exit)
+                    self.positions.reduce(_pos_tid(pos), qty_exit)
 
                     # Track EOD partial profit (like T1/manual partials)
                     if pos.side.upper() == "BUY":
