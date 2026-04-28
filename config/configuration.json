@@ -1887,7 +1887,9 @@
       "stop_atr_buffer": 1.5,
       "target_type": "vwap",
       "time_stop_min_before_close": 5,
-      "min_bars_required": 30
+      "min_bars_required": 30,
+      "entry_zone_pct": 0.1,
+      "entry_zone_mode": "symmetric"
     },
     "cpr_mean_revert": {
       "enabled": true,
@@ -1910,7 +1912,9 @@
       "target_type": "cpr_midpoint",
       "time_stop_at": "14:00",
       "min_cpr_width_pct": 0.0,
-      "min_bars_required": 30
+      "min_bars_required": 30,
+      "entry_zone_pct": 0.1,
+      "entry_zone_mode": "symmetric"
     },
     "gap_fade_short": {
       "enabled": true,
@@ -1929,7 +1933,9 @@
       "stop_above_gap_high_atr": 0.25,
       "target_type": "pdc_or_open",
       "time_stop_at": "10:15",
-      "min_bars_required": 1
+      "min_bars_required": 1,
+      "entry_zone_pct": 0.1,
+      "entry_zone_mode": "symmetric"
     },
     "orb_15": {
       "enabled": true,
@@ -1948,7 +1954,9 @@
       "universe_key": "fno_liquid_200",
       "min_bars_required": 6,
       "max_gap_pct_for_orb": 0.5,
-      "_rev2_notes": "stop_at_range_midpoint=false is opposite-end-of-range (Indian-source default). range_window_start=09:20 skips pre-open call-auction wick. max_gap_pct_for_orb=0.5: skip ORB if today's open gap > 0.5% (route to gap_fade_short)."
+      "entry_zone_pct": 0.3,
+      "entry_zone_mode": "directional",
+      "_rev2_notes": "stop_at_range_midpoint=false is opposite-end-of-range (Indian-source default). range_window_start=09:20 skips pre-open call-auction wick. max_gap_pct_for_orb=0.5: skip ORB if today's open gap > 0.5% (route to gap_fade_short). entry_zone directional 0.3% \u2014 breakout continuation; smoke-22 showed \u00b10.1% symmetric starved fills to 11%."
     },
     "narrow_cpr_breakout": {
       "enabled": true,
@@ -1962,7 +1970,9 @@
       "t2_target": "r2_s2",
       "t1_qty_pct": 0.5,
       "universe_key": "nifty50_banknifty",
-      "min_bars_required": 30
+      "min_bars_required": 30,
+      "entry_zone_pct": 0.3,
+      "entry_zone_mode": "directional"
     },
     "vwap_first_pullback": {
       "enabled": true,
@@ -1977,7 +1987,9 @@
       "t2_r_multiple": 2.0,
       "t1_qty_pct": 0.5,
       "universe_key": "fno_liquid_200",
-      "min_bars_required": 30
+      "min_bars_required": 30,
+      "entry_zone_pct": 0.2,
+      "entry_zone_mode": "directional"
     },
     "pdh_pdl_reject": {
       "enabled": true,
@@ -1995,6 +2007,8 @@
       "t1_qty_pct": 0.5,
       "universe_key": "smallmid_fno",
       "min_bars_required": 30,
+      "entry_zone_pct": 0.15,
+      "entry_zone_mode": "symmetric",
       "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default \u00e2\u20ac\u201d bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both."
     },
     "closing_hour_reversal": {
@@ -2012,6 +2026,8 @@
       "universe_key": "fno_liquid_200",
       "min_bars_required": 60,
       "fail_fast_min_trades_first_100_sessions": 200,
+      "entry_zone_pct": 0.1,
+      "entry_zone_mode": "symmetric",
       "_rev2_notes": "stop_atr_multiplier=1.5 is Indian-source standard (Goodwill, Varsity); rev1 used 1.2x. hard_time_stop_hhmm=15:22 (was 15:18) leaves 3 min margin to Zerodha 15:25 auto square-off. fail-fast trip-wire: kill if n<200 in first 100 OCI sessions (sub-7 mis_unwind precedent)."
     }
   },
@@ -2701,14 +2717,15 @@
     "f2_crowdedness_threshold": 40,
     "f2_crowdedness_window_min": 5
   },
-  "_comment_conviction_gate": "=== CONVICTION GATE (sub-project #2) ===",
+  "_comment_conviction_gate": "=== CONVICTION GATE (sub-project #2, retrained on sub7+sub8 OCI 2026-04-28) ===",
   "conviction_gate": {
     "enabled": true,
-    "model_artifact": "models/conviction/2026-04-22-universal-xgboost.json",
-    "feature_spec_path": "models/conviction/2026-04-22-feature-spec.json",
+    "model_artifact": "models/conviction/2026-04-28-sub8-C-universal-xgboost.json",
+    "feature_spec_path": "models/conviction/2026-04-28-sub8-C-feature-spec.json",
     "calibration_path": "models/conviction/2026-04-22-calibration.json",
     "daily_cap": 50,
-    "min_predicted_r": 0.3
+    "min_predicted_r": 0.3,
+    "_comment_retrain": "Plan C model trained on all 281,795 sub7+sub8 trades from OCI 20260428-082149. Validation Pearson 0.11 (clipped) / 0.06 (raw). Plan A (Stage 3 cells only, n=7,310) collapsed to no signal — kept for reference at 2026-04-28-sub8-A-*.json."
   },
   "_comment_dedup_gate": "=== DEDUP GATE (sub-project #4 refactor) ===",
   "dedup_gate": {
@@ -2728,6 +2745,7 @@
     "_comment": "Master switch for the composed gate stack. When false, ScreenerLive instantiates the chain in passthrough mode."
   },
   "rule_filter_gate": {
-    "survivors_path": "analysis/edge_discovery_runs/2026-04-22-validation-gate/stage6_validation_survivors.json"
+    "survivors_path": "analysis/edge_discovery_runs/2026-04-28-sub8-validation-gate/stage6_validation_survivors_C_admit_all.json",
+    "_comment_retrain": "Plan C admit-all-per-setup survivors (8 tautology rules) — RuleFilterGate passes every sub7+sub8 candidate through to ConvictionGate, which is the actual discriminator. For Stage 3 cell enforcement, swap to stage6_validation_survivors_A_stage3_cells.json (14 rules)."
   }
 }

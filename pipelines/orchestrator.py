@@ -438,6 +438,17 @@ class PipelineOrchestrator:
                 "risk_per_trade_rupees missing from config/configuration.json — cannot size sub7 trade"
             )
 
+        # Pull the setup-specific entry-zone config from the same root cfg block.
+        # Required keys (no hardcoded defaults — fail fast on missing config):
+        #   entry_zone_pct (float, percent half-width or full directional width)
+        #   entry_zone_mode ("symmetric" | "directional")
+        _setup_cfg_for_zone = (_root_cfg.get("setups") or {}).get(setup_type) or {}
+        if "entry_zone_pct" not in _setup_cfg_for_zone or "entry_zone_mode" not in _setup_cfg_for_zone:
+            raise RiskBudgetConfigError(
+                f"setups.{setup_type}.entry_zone_pct / entry_zone_mode missing from "
+                f"config/configuration.json — cannot size sub7 entry zone"
+            )
+
         qty = int(risk_per_trade_rupees / rps) if rps > 0 else 0
         # Defense-in-depth: cap qty at a sane intraday max. With rps tiny (e.g.
         # detector geometry bug clamping rps to 1e-6), qty would blow up to
@@ -457,12 +468,32 @@ class PipelineOrchestrator:
         # MIS info for leverage tracking
         mis_info = get_mis_info(symbol)
 
-        # entry_zone: for sub7 immediate entries use a ±0.1% zone around entry
-        entry_zone_half = entry * 0.001
-        if bias == "short":
-            entry_zone = [round(entry - entry_zone_half, 2), round(entry + entry_zone_half, 2)]
+        # entry_zone: per-setup width + direction. Continuation/breakout setups
+        # (orb_15, narrow_cpr_breakout, vwap_first_pullback) use a "directional"
+        # zone — fills only if price moves further in trade direction (long →
+        # [entry, entry+pct%]; short → [entry-pct%, entry]). Mean-reverting
+        # setups (gap_fade_short, cpr_mean_revert, pdh_pdl_reject,
+        # closing_hour_reversal, mis_unwind_short) use a "symmetric" zone —
+        # [entry-pct%, entry+pct%] — to catch both small noise around entry and
+        # minor retests. Smoke-22 evidence: hardcoded ±0.1% symmetric starved
+        # orb_15 to 11% fill rate; per-setup configuration is required.
+        _zone_pct_frac = float(_setup_cfg_for_zone["entry_zone_pct"]) / 100.0
+        _zone_mode = str(_setup_cfg_for_zone["entry_zone_mode"])
+        if _zone_mode == "directional":
+            if bias == "long":
+                entry_zone = [round(entry, 2), round(entry * (1.0 + _zone_pct_frac), 2)]
+            else:
+                entry_zone = [round(entry * (1.0 - _zone_pct_frac), 2), round(entry, 2)]
+        elif _zone_mode == "symmetric":
+            entry_zone = [
+                round(entry * (1.0 - _zone_pct_frac), 2),
+                round(entry * (1.0 + _zone_pct_frac), 2),
+            ]
         else:
-            entry_zone = [round(entry - entry_zone_half, 2), round(entry + entry_zone_half, 2)]
+            raise RiskBudgetConfigError(
+                f"setups.{setup_type}.entry_zone_mode={_zone_mode!r} invalid — "
+                f"must be 'symmetric' or 'directional'"
+            )
 
         # Directional bias multiplier (same as base_pipeline)
         dir_bias_mult = 1.0
@@ -486,6 +517,12 @@ class PipelineOrchestrator:
             "bias": bias,
             "regime": regime,
             "category": "sub7",
+
+            # Trade identity propagates from the StructureEvent (auto-minted at
+            # detection in data_models.py) → TradePlan.trade_id → orchestrator
+            # plan dict → DECISION/TRIGGER/ENTRY/EXIT events. Single id from the
+            # moment a setup fires through to its final exit row.
+            "trade_id": trade_plan.trade_id,
 
             "entry_ref_price": round(entry, 2),
             "entry_zone": entry_zone,
