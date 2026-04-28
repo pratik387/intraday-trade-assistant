@@ -17,10 +17,8 @@ from .base_structure import BaseStructure
 from .data_models import StructureEvent, TradePlan, RiskParams, ExitLevels, MarketContext, StructureAnalysis
 from services.gates.trade_decision_gate import SetupCandidate
 from .gap_fade_short_structure import GapFadeShortStructure
-from .mis_unwind_short_structure import MISUnwindShortStructure
 from .orb_15_structure import ORB15Structure
 from .pdh_pdl_reject_structure import PDHPDLRejectStructure
-from .closing_hour_reversal_structure import ClosingHourReversalStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -51,19 +49,17 @@ class MainDetector(BaseStructure):
         self.detectors = {}
 
         # Define detector configurations with their classes.
-        # Post-cleanup (sub8 ship): only the 5 surviving sub7+sub8 detectors
-        # remain. The 60+ vestigial sub-project #1 entries (ICT, level_breakout,
-        # failure_fade, squeeze_release, flag_continuation, momentum, vwap,
-        # gap, orb (legacy), support_resistance, trend, volume, volume_breakout,
-        # range, fhm) were removed along with their detector source files —
-        # those setups never validated through Stage 3 / Phase 6 / Phase 7.
+        # Post-cleanup (sub8 phase 1): only 3 detectors remain — gap_fade_short
+        # is the validated live ship; orb_15 is pending redesign-or-drop probe;
+        # pdh_pdl_reject is borderline (mid_cap edge but n<500). The 60+
+        # vestigial sub-project #1 entries and the sub8 phase 1 dropouts
+        # (mis_unwind_short, closing_hour_reversal) were removed along with
+        # their detector source files — Phase 1 confirmed no salvageable cell.
         detector_configs = [
             # (setup_name, detector_class, detector_key)
             ("gap_fade_short", GapFadeShortStructure, "gap_fade_short"),
-            ("mis_unwind_short", MISUnwindShortStructure, "mis_unwind_short"),
             ("orb_15", ORB15Structure, "orb_15"),
             ("pdh_pdl_reject", PDHPDLRejectStructure, "pdh_pdl_reject"),
-            ("closing_hour_reversal", ClosingHourReversalStructure, "closing_hour_reversal"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -726,7 +722,6 @@ class MainDetector(BaseStructure):
 
             # Sub-project #7 — Indian-native setups
             'gap_fade_short': 'gap_fade_short',
-            'mis_unwind_short': 'mis_unwind_short',
             'cpr_mean_revert': 'cpr_mean_revert',
 
             # Sub-project #8 — Extended Indian-native setups
@@ -734,7 +729,6 @@ class MainDetector(BaseStructure):
             'narrow_cpr_breakout': 'narrow_cpr_breakout',
             'vwap_first_pullback': 'vwap_first_pullback',
             'pdh_pdl_reject': 'pdh_pdl_reject',
-            'closing_hour_reversal': 'closing_hour_reversal',
         }
 
         return direct_mappings.get(structure_type)

@@ -343,26 +343,6 @@
   "lunch_start": "12:15",
   "lunch_end": "13:15",
   "setups": {
-    "mis_unwind_short": {
-      "enabled": false,
-      "active_window_start": "14:55",
-      "active_window_end": "15:15",
-      "min_distance_above_vwap_pct": 0.5,
-      "min_intraday_high_recency_min": 30,
-      "max_momentum_3bar_pct": 0.0,
-      "min_rvol": 1.2,
-      "allowed_cap_segments": [
-        "small_cap",
-        "mid_cap"
-      ],
-      "stop_atr_buffer": 1.5,
-      "target_type": "vwap",
-      "time_stop_min_before_close": 5,
-      "min_bars_required": 30,
-      "entry_zone_pct": 0.1,
-      "entry_zone_mode": "symmetric",
-      "_live_status": "disabled \u2014 research only, not Phase 7 validated"
-    },
     "gap_fade_short": {
       "enabled": true,
       "active_window_start": "09:15",
@@ -425,26 +405,6 @@
       "entry_zone_pct": 0.15,
       "entry_zone_mode": "symmetric",
       "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default \u00e2\u20ac\u201d bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both.",
-      "_live_status": "disabled \u2014 research only, not Phase 7 validated"
-    },
-    "closing_hour_reversal": {
-      "enabled": false,
-      "active_window_start": "14:30",
-      "active_window_end": "15:15",
-      "min_intraday_move_pct": 1.5,
-      "exhaustion_min_body_pct_of_range": 60.0,
-      "exhaustion_min_volume_x_recent": 1.3,
-      "stop_atr_multiplier": 1.5,
-      "t1_target": "vwap",
-      "t2_target": "pivot_or_50pct_retrace",
-      "t1_qty_pct": 0.5,
-      "hard_time_stop_hhmm": "15:22",
-      "universe_key": "fno_liquid_200",
-      "min_bars_required": 60,
-      "fail_fast_min_trades_first_100_sessions": 200,
-      "entry_zone_pct": 0.1,
-      "entry_zone_mode": "symmetric",
-      "_rev2_notes": "stop_atr_multiplier=1.5 is Indian-source standard (Goodwill, Varsity); rev1 used 1.2x. hard_time_stop_hhmm=15:22 (was 15:18) leaves 3 min margin to Zerodha 15:25 auto square-off. fail-fast trip-wire: kill if n<200 in first 100 OCI sessions (sub-7 mis_unwind precedent).",
       "_live_status": "disabled \u2014 research only, not Phase 7 validated"
     }
   },
@@ -669,15 +629,12 @@
       "_volume_comment": "2.0x volume = institutional participation (same as ICT standard). Ensures quality opening moves, not retail noise.",
       "allowed_setups": [
         "gap_fade_short",
-        "mis_unwind_short",
         "orb_15_long",
         "orb_15_short",
         "pdh_pdl_reject_long",
-        "pdh_pdl_reject_short",
-        "closing_hour_reversal_long",
-        "closing_hour_reversal_short"
+        "pdh_pdl_reject_short"
       ],
-      "_allowed_setups_comment": "Sub7+sub8 surviving setups. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). Others listed for forward-compat when re-enabled — their detectors gate themselves on min_bars_required and active_window."
+      "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). orb_15 and pdh_pdl_reject listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
     },
     "pattern_filters_enabled": true,
     "momentum_consolidation_enabled": true,

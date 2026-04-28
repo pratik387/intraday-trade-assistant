@@ -41,12 +41,10 @@ class SetupCategory(Enum):
 SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     # Sub-project #7 — Indian-native setups (surviving)
     "gap_fade": SetupCategory.REVERSION,
-    "mis_unwind": SetupCategory.REVERSION,
 
     # Sub-project #8 — Extended Indian-native setups (surviving)
     "orb_15": SetupCategory.MOMENTUM,
     "pdh_pdl_reject": SetupCategory.REVERSION,
-    "closing_hour_reversal": SetupCategory.REVERSION,
 }
 
 

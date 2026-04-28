@@ -61,10 +61,10 @@ def _get_setup_min_bars(setup_type: str) -> Optional[int]:
 
     Why: the gate runs setup-agnostic checks but each detector knows its own
     bar requirement (e.g. gap_fade_short fires at 09:30 with only 4 bars,
-    min_bars_required=1; orb_15 needs 6; mis_unwind needs 30). Hard-coding a
-    blanket 10-bar floor here would block valid early-window entries.
+    min_bars_required=1; orb_15 needs 6; pdh_pdl_reject needs 30). Hard-coding
+    a blanket 10-bar floor here would block valid early-window entries.
     Configuration keys some setups by full name (gap_fade_short) and others
-    by base name (orb_15, pdh_pdl_reject, closing_hour_reversal) — try both.
+    by base name (orb_15, pdh_pdl_reject) — try both.
     """
     if not setup_type:
         return None

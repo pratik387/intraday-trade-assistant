@@ -39,22 +39,19 @@ from pipelines.base_pipeline import BasePipeline, ConfigurationError, get_mis_in
 
 # Sub-project #7: detector classes for fast-path routing (bypass SMC category pipelines)
 from structures.gap_fade_short_structure import GapFadeShortStructure
-from structures.mis_unwind_short_structure import MISUnwindShortStructure
 from structures.orb_15_structure import ORB15Structure
 from structures.pdh_pdl_reject_structure import PDHPDLRejectStructure
-from structures.closing_hour_reversal_structure import ClosingHourReversalStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
 # so SMC category pipeline must NOT override entry/stop/target.
-# Post-cleanup: 3 sub8 setups (cpr_mean_revert, narrow_cpr_breakout,
-# vwap_first_pullback) were removed after Phase 7 OOS confirmed no edge.
+# Post-cleanup: mis_unwind_short + closing_hour_reversal removed after Phase 1
+# confirmed unsalvageable failure (mis_unwind WR 9.2% with no inversion fix;
+# closing_hour PF 0.45 with no filter set reaching Phase 1 criteria).
 SUB7_SETUPS: frozenset = frozenset({
     "gap_fade_short",
-    "mis_unwind_short",
     "orb_15",
     "pdh_pdl_reject",
-    "closing_hour_reversal",
 })
 
 logger = get_agent_logger()
@@ -260,10 +257,8 @@ class PipelineOrchestrator:
 
             _cls_map = {
                 "gap_fade_short": GapFadeShortStructure,
-                "mis_unwind_short": MISUnwindShortStructure,
                 "orb_15": ORB15Structure,
                 "pdh_pdl_reject": PDHPDLRejectStructure,
-                "closing_hour_reversal": ClosingHourReversalStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:
@@ -482,14 +477,13 @@ class PipelineOrchestrator:
         mis_info = get_mis_info(symbol)
 
         # entry_zone: per-setup width + direction. Continuation/breakout setups
-        # (orb_15, narrow_cpr_breakout, vwap_first_pullback) use a "directional"
-        # zone — fills only if price moves further in trade direction (long →
-        # [entry, entry+pct%]; short → [entry-pct%, entry]). Mean-reverting
-        # setups (gap_fade_short, cpr_mean_revert, pdh_pdl_reject,
-        # closing_hour_reversal, mis_unwind_short) use a "symmetric" zone —
-        # [entry-pct%, entry+pct%] — to catch both small noise around entry and
-        # minor retests. Smoke-22 evidence: hardcoded ±0.1% symmetric starved
-        # orb_15 to 11% fill rate; per-setup configuration is required.
+        # (orb_15) use a "directional" zone — fills only if price moves further
+        # in trade direction (long → [entry, entry+pct%]; short → [entry-pct%,
+        # entry]). Mean-reverting setups (gap_fade_short, pdh_pdl_reject) use a
+        # "symmetric" zone — [entry-pct%, entry+pct%] — to catch both small
+        # noise around entry and minor retests. Smoke-22 evidence: hardcoded
+        # ±0.1% symmetric starved orb_15 to 11% fill rate; per-setup
+        # configuration is required.
         _zone_pct_frac = float(_setup_cfg_for_zone["entry_zone_pct"]) / 100.0
         _zone_mode = str(_setup_cfg_for_zone["entry_zone_mode"])
         if _zone_mode == "directional":
