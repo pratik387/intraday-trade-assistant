@@ -55,6 +55,30 @@ def _get_wide_open_mode() -> bool:
     except Exception:
         return False
 
+
+def _get_setup_min_bars(setup_type: str) -> Optional[int]:
+    """Return setup-specific min_bars_required from configuration.json.
+
+    Why: the gate runs setup-agnostic checks but each detector knows its own
+    bar requirement (e.g. gap_fade_short fires at 09:30 with only 4 bars,
+    min_bars_required=1; orb_15 needs 6; mis_unwind needs 30). Hard-coding a
+    blanket 10-bar floor here would block valid early-window entries.
+    Configuration keys some setups by full name (gap_fade_short) and others
+    by base name (orb_15, pdh_pdl_reject, closing_hour_reversal) — try both.
+    """
+    if not setup_type:
+        return None
+    try:
+        from config.filters_setup import load_filters
+        from config.setup_categories import get_base_setup_name
+        cfg = load_filters() or {}
+        setups_cfg = cfg.get("setups") or {}
+        setup_cfg = setups_cfg.get(setup_type) or setups_cfg.get(get_base_setup_name(setup_type)) or {}
+        v = setup_cfg.get("min_bars_required")
+        return int(v) if v is not None else None
+    except Exception:
+        return None
+
 SetupType = Literal[
     "breakout_long",
     "breakout_short",
@@ -775,11 +799,18 @@ class TradeDecisionGate:
                                            "orb_pullback_long", "orb_pullback_short")
         is_fhm_setup = best.setup_type in ("first_hour_momentum_long", "first_hour_momentum_short")
         early_window_min_bars = 4  # Pro trader standard: 15-min range (3 bars) + 1 bar for breakout
-        # Sub-project #7 (gauntlet v2): wide_open_mode bypasses setup-type whitelist for min_bars.
+        # Detector-declared minimum (e.g. gap_fade_short=1, orb_15=6, mis_unwind=30).
+        # Read once from configuration.json so the gate honours each setup's own
+        # bar requirement instead of applying a blanket 10-bar floor.
+        setup_min_bars = _get_setup_min_bars(best.setup_type)
+        # Sub-project #5 (gauntlet v2): wide_open_mode bypasses setup-type whitelist for min_bars.
         # Sets min to 1 so detector's own min_bars_required is the sole gatekeeper.
         if _get_wide_open_mode():
             min_bars_required = 1
             reasons.append("wide_open_mode:min_bars_bypass")
+        elif setup_min_bars is not None:
+            min_bars_required = setup_min_bars
+            reasons.append(f"setup_min_bars:{best.setup_type}={setup_min_bars}")
         elif is_orb_setup or is_fhm_setup:
             min_bars_required = early_window_min_bars
         else:

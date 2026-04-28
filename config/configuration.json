@@ -668,14 +668,16 @@
       "min_volume_ratio": 2.0,
       "_volume_comment": "2.0x volume = institutional participation (same as ICT standard). Ensures quality opening moves, not retail noise.",
       "allowed_setups": [
-        "premium_zone_short",
-        "discount_zone_long",
-        "order_block_long",
-        "order_block_short",
-        "orb_breakout_long",
-        "orb_breakout_short"
+        "gap_fade_short",
+        "mis_unwind_short",
+        "orb_15_long",
+        "orb_15_short",
+        "pdh_pdl_reject_long",
+        "pdh_pdl_reject_short",
+        "closing_hour_reversal_long",
+        "closing_hour_reversal_short"
       ],
-      "_allowed_setups_comment": "ICT setups + ORB work best at market open (designed for extremes/fresh moves). Other setups still require consolidation."
+      "_allowed_setups_comment": "Sub7+sub8 surviving setups. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). Others listed for forward-compat when re-enabled — their detectors gate themselves on min_bars_required and active_window."
     },
     "pattern_filters_enabled": true,
     "momentum_consolidation_enabled": true,
