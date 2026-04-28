@@ -1,0 +1,54 @@
+{
+  "orb_15": {
+    "minute_of_day": 0.061972230672836304,
+    "regime_trend_up": 0.028673920780420303,
+    "regime_squeeze": 0.02659144066274166,
+    "regime_chop": 0.02122485265135765,
+    "regime_trend_down": 0.014444584958255291,
+    "cap_segment_mid_cap": 0.007463885936886072,
+    "hour_bucket_morning": 0.006367682479321957,
+    "cap_segment_large_cap": 0.005341817159205675,
+    "cap_segment_unknown": 0.0032516629435122013,
+    "hour_bucket_opening": 0.0010520400246605277
+  },
+  "narrow_cpr_breakout": {
+    "minute_of_day": 0.08138416707515717,
+    "regime_squeeze": 0.0353664793074131,
+    "regime_trend_down": 0.025411048904061317,
+    "regime_trend_up": 0.020691586658358574,
+    "regime_chop": 0.01625746861100197,
+    "hour_bucket_morning": 0.013241459615528584,
+    "cap_segment_large_cap": 0.01105573121458292,
+    "hour_bucket_afternoon": 0.009752856567502022,
+    "hour_bucket_lunch": 0.008813168853521347,
+    "cap_segment_unknown": 0.003917762544006109,
+    "hour_bucket_opening": 0.0037246178835630417
+  },
+  "cpr_mean_revert": {
+    "regime_trend_down": 0.10441210120916367,
+    "minute_of_day": 0.07306722551584244,
+    "cap_segment_small_cap": 0.030020272359251976,
+    "cap_segment_large_cap": 0.02993040904402733,
+    "cap_segment_mid_cap": 0.01886899024248123,
+    "regime_squeeze": 0.016970572993159294,
+    "regime_trend_up": 0.013919597491621971,
+    "regime_chop": 0.012953786179423332,
+    "hour_bucket_morning": 0.010499760508537292,
+    "hour_bucket_lunch": 0.00960172526538372,
+    "hour_bucket_afternoon": 0.0077818953432142735
+  },
+  "vwap_first_pullback": {
+    "minute_of_day": 0.07596970349550247,
+    "regime_trend_up": 0.014843327924609184,
+    "regime_squeeze": 0.009975084103643894,
+    "hour_bucket_morning": 0.00913260132074356,
+    "regime_chop": 0.008410263806581497,
+    "regime_trend_down": 0.00755684170871973,
+    "hour_bucket_lunch": 0.005515118595212698,
+    "hour_bucket_afternoon": 0.004809212405234575,
+    "cap_segment_mid_cap": 0.004132256843149662,
+    "cap_segment_large_cap": 0.0024541481398046017,
+    "cap_segment_unknown": 0.001665199175477028,
+    "hour_bucket_late": 0.0008532303618267179
+  }
+}

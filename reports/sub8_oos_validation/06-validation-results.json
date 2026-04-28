@@ -1,0 +1,136 @@
+[
+  {
+    "id": "gap_fade_short__cap=small_cap",
+    "setup": "gap_fade_short",
+    "cell": {
+      "cap_segment": "small_cap"
+    },
+    "disc_pf": 1.496,
+    "disc_wr": 0.7027,
+    "disc_n": 3797,
+    "val_n": 1455,
+    "val_pf": 1.2602814244976495,
+    "val_wr": 0.6439862542955327,
+    "val_net_pnl": 63497.58999999985,
+    "wr_delta_pp": 5.87137457044673,
+    "pass_pf>=1.0": true,
+    "pass_n>=50": true,
+    "pass_wr_within_10pp": true,
+    "pass_all": true
+  },
+  {
+    "id": "gap_fade_short__regime=squeeze+cap=small_cap",
+    "setup": "gap_fade_short",
+    "cell": {
+      "regime": "squeeze",
+      "cap_segment": "small_cap"
+    },
+    "disc_pf": 1.556,
+    "disc_wr": 0.6954,
+    "disc_n": 499,
+    "val_n": 288,
+    "val_pf": 1.4319633136205925,
+    "val_wr": 0.6493055555555556,
+    "val_net_pnl": 18377.619999999944,
+    "wr_delta_pp": 4.609444444444444,
+    "pass_pf>=1.0": true,
+    "pass_n>=50": true,
+    "pass_wr_within_10pp": true,
+    "pass_all": true
+  },
+  {
+    "id": "gap_fade_short__regime=trend_up+cap=small_cap",
+    "setup": "gap_fade_short",
+    "cell": {
+      "regime": "trend_up",
+      "cap_segment": "small_cap"
+    },
+    "disc_pf": 1.584,
+    "disc_wr": 0.7217,
+    "disc_n": 1804,
+    "val_n": 440,
+    "val_pf": 1.0548697355624943,
+    "val_wr": 0.6590909090909091,
+    "val_net_pnl": 5070.5600000000295,
+    "wr_delta_pp": 6.260909090909095,
+    "pass_pf>=1.0": true,
+    "pass_n>=50": true,
+    "pass_wr_within_10pp": true,
+    "pass_all": true
+  },
+  {
+    "id": "gap_fade_short__regime=trend_down+cap=small_cap",
+    "setup": "gap_fade_short",
+    "cell": {
+      "regime": "trend_down",
+      "cap_segment": "small_cap"
+    },
+    "disc_pf": 1.427,
+    "disc_wr": 0.6908,
+    "disc_n": 1051,
+    "val_n": 607,
+    "val_pf": 1.3208781871692064,
+    "val_wr": 0.6309719934102141,
+    "val_net_pnl": 28127.19999999989,
+    "wr_delta_pp": 5.982800658978582,
+    "pass_pf>=1.0": true,
+    "pass_n>=50": true,
+    "pass_wr_within_10pp": true,
+    "pass_all": true
+  },
+  {
+    "id": "pdh_pdl_reject__cap=mid_cap",
+    "setup": "pdh_pdl_reject",
+    "cell": {
+      "cap_segment": "mid_cap"
+    },
+    "disc_pf": 2.546,
+    "disc_wr": 0.5862,
+    "disc_n": 174,
+    "val_n": 21,
+    "val_pf": 2.0268253520469135,
+    "val_wr": 0.5238095238095238,
+    "val_net_pnl": 9682.079999999898,
+    "wr_delta_pp": 6.239047619047621,
+    "pass_pf>=1.0": true,
+    "pass_n>=50": false,
+    "pass_wr_within_10pp": true,
+    "pass_all": false
+  },
+  {
+    "id": "closing_hour_reversal__cap=mid_cap",
+    "setup": "closing_hour_reversal",
+    "cell": {
+      "cap_segment": "mid_cap"
+    },
+    "disc_pf": 1.361,
+    "disc_wr": 0.4941,
+    "disc_n": 340,
+    "val_n": 164,
+    "val_pf": 0.8396061289161215,
+    "val_wr": 0.4329268292682927,
+    "val_net_pnl": -1928.939999999886,
+    "wr_delta_pp": 6.117317073170731,
+    "pass_pf>=1.0": false,
+    "pass_n>=50": true,
+    "pass_wr_within_10pp": true,
+    "pass_all": false
+  },
+  {
+    "id": "cpr_mean_revert__trend_up + Optuna#28",
+    "setup": "cpr_mean_revert",
+    "cell": "regime=trend_up + filter",
+    "disc_pf": 1.332,
+    "disc_wr": 0.34,
+    "disc_n": 1309,
+    "val_n": 165,
+    "val_pf": 0.786,
+    "val_wr": 0.297,
+    "val_net_pnl": -26553.709999999828,
+    "wr_delta_pp": 4.300000000000004,
+    "pass_pf>=1.0": false,
+    "pass_n>=50": true,
+    "pass_wr_within_10pp": true,
+    "pass_all": false
+  }
+]

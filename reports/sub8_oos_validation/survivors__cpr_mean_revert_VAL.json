@@ -1,0 +1,12 @@
+{
+  "stage": "phase6_validation_replay",
+  "criteria": {},
+  "n_passed": 1,
+  "n_failed": 0,
+  "survivors": [
+    {
+      "setup": "cpr_mean_revert",
+      "rule_id": "cpr_mean_revert__regime=trend_up"
+    }
+  ]
+}

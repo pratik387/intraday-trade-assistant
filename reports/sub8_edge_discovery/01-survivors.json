@@ -1,0 +1,78 @@
+{
+  "stage": "1",
+  "survivors": [
+    "vwap_first_pullback",
+    "cpr_mean_revert",
+    "orb_15",
+    "narrow_cpr_breakout",
+    "closing_hour_reversal",
+    "pdh_pdl_reject",
+    "gap_fade_short"
+  ],
+  "details": [
+    {
+      "setup": "vwap_first_pullback",
+      "n": 101773,
+      "pf": 0.964,
+      "avg_pnl": -23.18,
+      "total_pnl": -2359316.03,
+      "passed": true
+    },
+    {
+      "setup": "cpr_mean_revert",
+      "n": 72196,
+      "pf": 1.001,
+      "avg_pnl": 0.58,
+      "total_pnl": 41637.68,
+      "passed": true
+    },
+    {
+      "setup": "orb_15",
+      "n": 47754,
+      "pf": 1.052,
+      "avg_pnl": 11.8,
+      "total_pnl": 563446.96,
+      "passed": true
+    },
+    {
+      "setup": "narrow_cpr_breakout",
+      "n": 36534,
+      "pf": 1.028,
+      "avg_pnl": 10.25,
+      "total_pnl": 374410.31,
+      "passed": true
+    },
+    {
+      "setup": "closing_hour_reversal",
+      "n": 9197,
+      "pf": 1.07,
+      "avg_pnl": 5.14,
+      "total_pnl": 47263.99,
+      "passed": true
+    },
+    {
+      "setup": "pdh_pdl_reject",
+      "n": 7241,
+      "pf": 1.057,
+      "avg_pnl": 34.31,
+      "total_pnl": 248451.48,
+      "passed": true
+    },
+    {
+      "setup": "gap_fade_short",
+      "n": 6796,
+      "pf": 1.365,
+      "avg_pnl": 60.99,
+      "total_pnl": 414513.95,
+      "passed": true
+    },
+    {
+      "setup": "mis_unwind_short",
+      "n": 304,
+      "pf": 1.203,
+      "avg_pnl": 30.41,
+      "total_pnl": 9245.66,
+      "passed": false
+    }
+  ]
+}

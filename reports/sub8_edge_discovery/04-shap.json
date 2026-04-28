@@ -1,0 +1,37 @@
+{
+  "closing_hour_reversal": {
+    "minute_of_day": 0.7553423643112183,
+    "regime_trend_down": 0.048226356506347656,
+    "cap_segment_large_cap": 0.04455302283167839,
+    "regime_squeeze": 0.0416213683784008,
+    "regime_trend_up": 0.0347750261425972,
+    "regime_chop": 0.01769932545721531,
+    "cap_segment_unknown": 0.013209139928221703,
+    "cap_segment_mid_cap": 0.009943441487848759,
+    "hour_bucket_late": 0.0
+  },
+  "gap_fade_short": {
+    "minute_of_day": 0.09504884481430054,
+    "cap_segment_small_cap": 0.06293345987796783,
+    "regime_chop": 0.051719360053539276,
+    "regime_trend_down": 0.033924587070941925,
+    "cap_segment_mid_cap": 0.027834301814436913,
+    "regime_trend_up": 0.025791678577661514,
+    "cap_segment_micro_cap": 0.025728877633810043,
+    "regime_squeeze": 0.016742074862122536,
+    "hour_bucket_opening": 0.0
+  },
+  "pdh_pdl_reject": {
+    "minute_of_day": 0.1877662092447281,
+    "regime_chop": 0.09610059857368469,
+    "regime_squeeze": 0.060840118676424026,
+    "regime_trend_down": 0.05488084629178047,
+    "regime_trend_up": 0.03678619861602783,
+    "hour_bucket_lunch": 0.02223401516675949,
+    "cap_segment_large_cap": 0.02040703035891056,
+    "hour_bucket_afternoon": 0.019787436351180077,
+    "hour_bucket_morning": 0.01845770888030529,
+    "cap_segment_mid_cap": 0.011918963864445686,
+    "hour_bucket_late": 0.0026660736184567213
+  }
+}

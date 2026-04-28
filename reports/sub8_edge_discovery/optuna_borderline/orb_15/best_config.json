@@ -1,0 +1,16 @@
+{
+  "conviction_gate": {
+    "daily_cap": 69,
+    "min_predicted_r": 1.4014286128198323
+  },
+  "dedup_gate": {
+    "cooloff_bars": 9,
+    "require_setup_change": true
+  },
+  "cross_sectional_gate": {
+    "f1_rvol_threshold_pct": 57.01975341512912,
+    "f2_crowdedness_threshold": 14,
+    "f2_crowdedness_window_min": 14
+  },
+  "rank_pctl_min": 0.7005575058716045
+}

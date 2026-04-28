@@ -1,0 +1,16 @@
+{
+  "stage": "borderline_passthrough",
+  "criteria": {
+    "min_pf": 0.0,
+    "min_n": 0,
+    "max_wr_delta_pp": 999.0
+  },
+  "n_passed": 1,
+  "n_failed": 0,
+  "survivors": [
+    {
+      "setup": "narrow_cpr_breakout",
+      "rule_id": "narrow_cpr_breakout__regime=chop"
+    }
+  ]
+}
