@@ -105,7 +105,14 @@ def run_search(
             trial.set_user_attr("error", str(e))
             return float("-inf")
         trial.set_user_attr("metrics", metrics)
-        if metrics["n_trades"] < min_n_trades:
+        # Guardrails: reject configs that won't pass Phase 3/4 validation.
+        # Avoids wasting trials on configs that chase Sharpe by going ultra-
+        # selective with bad PF or high losing-day concentration.
+        if metrics.get("n_filled", metrics.get("n_admits", 0)) < min_n_trades:
+            return float("-inf")
+        if metrics.get("pf", 0.0) < 1.2:                  # Phase 3 PF floor
+            return float("-inf")
+        if metrics.get("losing_days_pct", 100.0) > 40.0:  # Phase 4 losing-days ceiling
             return float("-inf")
         return metrics["sharpe"]
 
@@ -159,7 +166,7 @@ def run_search(
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-cfg", required=True)
-    p.add_argument("--gate-input-dir", required=True)
+    p.add_argument("--gate-input-dir", required=True, help="Path or comma-separated paths (one per OCI run year)")
     p.add_argument("--pnl-index", required=True)
     p.add_argument("--output-dir", required=True)
     p.add_argument("--n-trials", type=int, default=500)
@@ -168,10 +175,23 @@ def main():
     args = p.parse_args()
 
     base_cfg = json.loads(Path(args.base_cfg).read_text(encoding="utf-8"))
+    # Force wide_open_mode=false for search: the OCI capture config bakes this
+    # flag in as true (so the data run was a passthrough capture), but Optuna
+    # trials need the gate chain ACTIVE to explore the 8-param search space.
+    # Without this override every trial would short-circuit to passthrough and
+    # return the same degenerate Sharpe regardless of params.
+    base_cfg["wide_open_mode"] = False
+    # Also force the chain ON. wide_open_mode=False alone keeps the chain in
+    # passthrough whenever live_gate_chain.enabled=False (which is the OCI/
+    # capture default). Without flipping this flag every trial returns the
+    # baseline (no-filter) metrics regardless of param choices, and the
+    # optimizer's PF >= 1.2 guardrail rejects them all as -inf.
+    base_cfg.setdefault("live_gate_chain", {})["enabled"] = True
     pnl_df = pd.read_parquet(args.pnl_index)
+    gate_dirs = [Path(p.strip()) for p in args.gate_input_dir.split(",") if p.strip()]
     run_search(
         base_cfg=base_cfg,
-        gate_input_dir=Path(args.gate_input_dir),
+        gate_input_dir=gate_dirs[0] if len(gate_dirs) == 1 else gate_dirs,
         pnl_index=pnl_df,
         output_dir=Path(args.output_dir),
         n_trials=args.n_trials,

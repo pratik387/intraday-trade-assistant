@@ -1,19 +1,29 @@
 """Build training dataset for sub-project #2 conviction model.
 
-Loads Discovery trades (2023-01 to 2024-12), filters to the 74 validation-
+Loads Discovery trades (2023-01 to 2024-12), filters to the validation-
 gate-surviving rules, extracts features per row, joins r_multiple as label.
 
-Output: models/conviction/2026-04-22-training-dataset.parquet
+Output: models/conviction/<run_id>-training-dataset.parquet
 
 Discipline:
 - Leakage audit: assert no BLOCKED_OUTCOME_COLUMNS in feature frame
 - Coverage audit: drop features with >40% missing or large Discovery vs 2025 KS
 - Survivor filter: only rules from stage6_validation_survivors.json
+
+Runs with hard-coded paths by default (sub-project #2 original artifacts);
+override via CLI for sub8 / new-OCI rebuilds.
 """
 from __future__ import annotations
 
+import argparse
 import json
+import sys
 from pathlib import Path
+
+# Repo root on sys.path so script-mode imports of tools.* / services.* succeed
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import pandas as pd
 
@@ -26,11 +36,21 @@ from services.conviction.feature_spec import (
 )
 
 ROOT = Path(__file__).parent.parent.parent
-BACKTEST_DIR = ROOT / "cloud_results" / "20260419_discovery"
-SURVIVORS = ROOT / "analysis" / "edge_discovery_runs" / "2026-04-22-validation-gate" / "stage6_validation_survivors.json"
-OUT_DIR = ROOT / "models" / "conviction"
-OUT_PARQUET = OUT_DIR / "2026-04-22-training-dataset.parquet"
-FEATURE_SPEC_PATH = OUT_DIR / "2026-04-22-feature-spec.json"
+
+# Defaults preserve sub-project #2 original behaviour. Override via CLI for
+# sub7/sub8 rebuilds (--backtest-dir, --survivors, --out-parquet, --feature-spec).
+DEFAULT_BACKTEST_DIR = ROOT / "cloud_results" / "20260419_discovery"
+DEFAULT_SURVIVORS = ROOT / "analysis" / "edge_discovery_runs" / "2026-04-22-validation-gate" / "stage6_validation_survivors.json"
+DEFAULT_OUT_DIR = ROOT / "models" / "conviction"
+DEFAULT_OUT_PARQUET = DEFAULT_OUT_DIR / "2026-04-22-training-dataset.parquet"
+DEFAULT_FEATURE_SPEC_PATH = DEFAULT_OUT_DIR / "2026-04-22-feature-spec.json"
+
+# Module-level paths used by main() — set via CLI in main(), or assigned by
+# external runners that import this module and want to reuse load_*/extract.
+BACKTEST_DIR: Path = DEFAULT_BACKTEST_DIR
+SURVIVORS: Path = DEFAULT_SURVIVORS
+OUT_PARQUET: Path = DEFAULT_OUT_PARQUET
+FEATURE_SPEC_PATH: Path = DEFAULT_FEATURE_SPEC_PATH
 
 # Feature columns to pull from trade_report.csv — any ALLOWED_FEATURES that live
 # there and not in analytics.jsonl. vwap_distance_pct is absent from trade_report;
@@ -189,7 +209,7 @@ def main():
     X["_label_r_multiple"] = y
     X["_session_date_dt"] = filtered["session_date_dt"].values  # for time-series CV later
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    OUT_PARQUET.parent.mkdir(parents=True, exist_ok=True)
     X.to_parquet(OUT_PARQUET, index=False)
     print(f"Wrote {OUT_PARQUET} ({len(X):,} rows x {len(X.columns)} columns)")
 
@@ -198,13 +218,28 @@ def main():
     FEATURE_SPEC_PATH.write_text(json.dumps({
         "features": features,
         "n_features": len(features),
-        "version": "2026-04-22",
         "source_rules": len(rules),
         "n_training_rows": len(X),
+        "backtest_dir": str(BACKTEST_DIR.relative_to(ROOT) if BACKTEST_DIR.is_relative_to(ROOT) else BACKTEST_DIR),
+        "survivors_path": str(SURVIVORS.relative_to(ROOT) if SURVIVORS.is_relative_to(ROOT) else SURVIVORS),
         "dropped_low_coverage": low_coverage_features,
     }, indent=2), encoding="utf-8")
     print(f"Wrote {FEATURE_SPEC_PATH} ({len(features)} features)")
 
 
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--backtest-dir", default=str(DEFAULT_BACKTEST_DIR), help="OCI run dir with per-session subdirs")
+    p.add_argument("--survivors", default=str(DEFAULT_SURVIVORS), help="stage6 validation survivors JSON")
+    p.add_argument("--out-parquet", default=str(DEFAULT_OUT_PARQUET), help="Output training dataset parquet")
+    p.add_argument("--feature-spec", default=str(DEFAULT_FEATURE_SPEC_PATH), help="Output feature spec JSON")
+    return p.parse_args()
+
+
 if __name__ == "__main__":
+    args = _parse_args()
+    BACKTEST_DIR = Path(args.backtest_dir)
+    SURVIVORS = Path(args.survivors)
+    OUT_PARQUET = Path(args.out_parquet)
+    FEATURE_SPEC_PATH = Path(args.feature_spec)
     main()

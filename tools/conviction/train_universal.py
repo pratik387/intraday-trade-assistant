@@ -15,10 +15,11 @@ Both are standard Winsorization+robust-regression techniques for heavy-tailed
 financial ML targets. They don't change the relative ranking of outcomes —
 just limit how much any single outlier can steer the loss.
 
-Output: models/conviction/2026-04-22-universal-xgboost.json
+Output: models/conviction/<run_id>-universal-xgboost.json
 """
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -27,9 +28,17 @@ import pandas as pd
 import xgboost as xgb
 
 ROOT = Path(__file__).parent.parent.parent
-PARQUET = ROOT / "models" / "conviction" / "2026-04-22-training-dataset.parquet"
-MODEL_OUT = ROOT / "models" / "conviction" / "2026-04-22-universal-xgboost.json"
-METRICS_OUT = ROOT / "models" / "conviction" / "2026-04-22-training-metrics.json"
+
+# Defaults preserve sub-project #2 original behaviour. Override via CLI for
+# sub7/sub8 rebuilds (--input-parquet, --model-out, --metrics-out).
+DEFAULT_PARQUET = ROOT / "models" / "conviction" / "2026-04-22-training-dataset.parquet"
+DEFAULT_MODEL_OUT = ROOT / "models" / "conviction" / "2026-04-22-universal-xgboost.json"
+DEFAULT_METRICS_OUT = ROOT / "models" / "conviction" / "2026-04-22-training-metrics.json"
+
+# Module-level paths — overridable from CLI block below.
+PARQUET: Path = DEFAULT_PARQUET
+MODEL_OUT: Path = DEFAULT_MODEL_OUT
+METRICS_OUT: Path = DEFAULT_METRICS_OUT
 
 R_CLIP_MAX = 5.0  # Winsorize target upper tail (t2 RR max ~2.5, so 5R is ~2x highest planned exit)
 
@@ -96,8 +105,15 @@ def main():
     print(f"Saved model: {MODEL_OUT}")
 
     # Training metrics artifact
+    _model_path_resolved = MODEL_OUT.resolve()
+    _model_rel = (
+        _model_path_resolved.relative_to(ROOT)
+        if _model_path_resolved.is_relative_to(ROOT)
+        else MODEL_OUT
+    )
+    METRICS_OUT.parent.mkdir(parents=True, exist_ok=True)
     METRICS_OUT.write_text(json.dumps({
-        "model_path": str(MODEL_OUT.relative_to(ROOT)),
+        "model_path": str(_model_rel),
         "n_train": len(train_df),
         "n_val": len(val_df),
         "n_clipped_train": n_clipped_train,
@@ -126,5 +142,17 @@ def main():
     print(f"Saved metrics: {METRICS_OUT}")
 
 
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--input-parquet", default=str(DEFAULT_PARQUET), help="Training dataset parquet")
+    p.add_argument("--model-out", default=str(DEFAULT_MODEL_OUT), help="Output XGBoost model JSON")
+    p.add_argument("--metrics-out", default=str(DEFAULT_METRICS_OUT), help="Output training metrics JSON")
+    return p.parse_args()
+
+
 if __name__ == "__main__":
+    args = _parse_args()
+    PARQUET = Path(args.input_parquet)
+    MODEL_OUT = Path(args.model_out)
+    METRICS_OUT = Path(args.metrics_out)
     main()

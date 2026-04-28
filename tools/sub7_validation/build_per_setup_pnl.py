@@ -58,14 +58,76 @@ def calc_fee(entry_price: float, exit_price: float, qty: int, side: str) -> floa
     return brok + stt + exch + sebi + ipft + stamp + gst
 
 
+# Sanity bounds for intraday equity trades on NSE small/mid/large caps.
+# Justification: NSE circuit-band ceilings are 5/10/20%; in extreme rare cases
+# a single intraday move beyond 15% in one direction is plausible (small-cap
+# upper-circuit chains) but anything beyond signals a data integrity bug
+# (corporate-action mismatch, stale price feed, fat-finger in source CSV,
+# split/bonus not adjusted in historical data). Trades crossing these bounds
+# are dropped, not clipped — the position size derived from a bad price is
+# itself wrong, so the whole row is unreliable.
+INTRADAY_PRICE_RATIO_LO = 0.85   # exit cannot be < 85% of entry intraday
+INTRADAY_PRICE_RATIO_HI = 1.15   # exit cannot be > 115% of entry intraday
+# With Rs 1,000 risk and tiered T1 partial / T2 full exits (max T2 ~2-3R for
+# most setups), legitimate winners cluster in [0R, 3R] = [0, Rs 3,000]. Rare
+# bar-level runners can extend to 5R = Rs 5,000. ANY trade beyond 10R = Rs 10,000
+# is a sizing bug (qty inflation from clamped risk_per_share) or data bug
+# (corporate-action mismatch, stale price feed, fat-finger). 10R is the
+# ABSOLUTE ceiling for legitimate trades — drop, don't clip.
+MAX_PNL_R_MULTIPLE = 10          # |realized_pnl| > 10R = data/sizing bug
+RISK_PER_TRADE_RUPEES = 1000     # mirrors config/configuration.json constant
+
+
+def _drop_bad_priced_trades(df: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
+    """Drop trades with corporate-action/stale-price corruption.
+
+    Returns (cleaned_df, n_dropped_ratio, n_dropped_pnl). Two-stage filter:
+      1. exit/entry price ratio outside [0.85, 1.15] — implies the trade
+         straddles a corporate action (split/bonus) or stale tick.
+      2. |realized_pnl| > Rs 50,000 = 50R given Rs 1,000 risk-per-trade —
+         independent floor catching qty-inflation bugs even when prices
+         look benign.
+
+    A trade hitting either condition has a sizing or pricing defect and
+    must not contribute to PF/Sharpe/Stage 3 cell statistics."""
+    n_before = len(df)
+    if "entry_price" in df.columns and "e1_price" in df.columns:
+        ep = df["entry_price"].astype(float)
+        xp = df["e1_price"].astype(float)
+        ratio = (xp / ep).where(ep > 0, 1.0)
+        bad_ratio = (ratio < INTRADAY_PRICE_RATIO_LO) | (ratio > INTRADAY_PRICE_RATIO_HI)
+    else:
+        bad_ratio = pd.Series([False] * n_before, index=df.index)
+
+    if "realized_pnl" in df.columns:
+        bad_pnl = df["realized_pnl"].astype(float).abs() > MAX_PNL_R_MULTIPLE * RISK_PER_TRADE_RUPEES
+    else:
+        bad_pnl = pd.Series([False] * n_before, index=df.index)
+
+    n_dropped_ratio = int(bad_ratio.sum())
+    n_dropped_pnl = int((bad_pnl & ~bad_ratio).sum())  # avoid double-counting
+    cleaned = df[~(bad_ratio | bad_pnl)].copy()
+    return cleaned, n_dropped_ratio, n_dropped_pnl
+
+
 def build_net_per_setup(df: pd.DataFrame) -> pd.DataFrame:
-    """Filter to executed trades, compute fee + net PnL per row, return."""
+    """Filter to executed trades, compute fee + net PnL per row, return.
+
+    Drops corporate-action/sizing-bug rows via _drop_bad_priced_trades —
+    these distort PF/Sharpe and don't represent tradeable outcomes."""
     if df.empty or "executed" not in df.columns:
         return pd.DataFrame()
     mask = df["executed"] == True
     sub = df[mask].copy()
     if sub.empty:
         return sub
+    # Sanity-clean before fee math — bad rows shouldn't bias the aggregates.
+    sub, n_ratio, n_pnl = _drop_bad_priced_trades(sub)
+    if n_ratio + n_pnl > 0:
+        # Log dropped count to stderr so the per-session driver can tally.
+        import sys as _sys
+        print(f"  [sanity-clean] dropped {n_ratio} bad-price-ratio + {n_pnl} bad-PnL rows",
+              file=_sys.stderr)
     sub["fee"] = sub.apply(
         lambda r: calc_fee(r.get("entry_price"), r.get("e1_price"),
                            int(r.get("qty", 0) or 0), r.get("side", "")),

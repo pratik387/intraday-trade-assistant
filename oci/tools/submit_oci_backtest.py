@@ -182,6 +182,13 @@ class OCIBacktestSubmitter:
             'api/**/*.py',
             'market_data/**/*.py',
             'assets/**/*.json',
+            # Universe membership CSVs consumed by services/universe_filter.py
+            # (sub8 detectors: orb_15/vwap → fno_liquid_200.csv, narrow_cpr →
+            # ind_nifty50list.csv + ind_niftybanklist.csv, pdh_pdl → smallmid_fno
+            # derived). Without these, in_universe() returns False for every
+            # symbol → 100% universe_filter rejections (OCI run 20260427-215557
+            # captured zero sub8 detections this way).
+            'assets/**/*.csv',
             'nse_all.json',
             'requirements.txt',
             '.env.development',
