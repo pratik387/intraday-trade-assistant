@@ -16,27 +16,9 @@ from config.logging_config import get_agent_logger
 from .base_structure import BaseStructure
 from .data_models import StructureEvent, TradePlan, RiskParams, ExitLevels, MarketContext, StructureAnalysis
 from services.gates.trade_decision_gate import SetupCandidate
-from .ict_structure import ICTStructure
-from .level_breakout_structure import LevelBreakoutStructure
-from .failure_fade_structure import FailureFadeStructure
-from .squeeze_release_structure import SqueezeReleaseStructure
-from .flag_continuation_structure import FlagContinuationStructure
-from .momentum_structure import MomentumStructure
-from .vwap_structure import VWAPStructure
-from .gap_structure import GapStructure
-from .orb_structure import ORBStructure
-from .support_resistance_structure import SupportResistanceStructure
-from .trend_structure import TrendStructure
-from .volume_structure import VolumeStructure
-from .volume_breakout_structure import VolumeBreakoutStructure
-from .range_structure import RangeStructure
-from .fhm_structure import FHMStructure
 from .gap_fade_short_structure import GapFadeShortStructure
 from .mis_unwind_short_structure import MISUnwindShortStructure
-from .cpr_mean_revert_structure import CPRMeanRevertStructure
 from .orb_15_structure import ORB15Structure
-from .narrow_cpr_breakout_structure import NarrowCPRBreakoutStructure
-from .vwap_first_pullback_structure import VWAPFirstPullbackStructure
 from .pdh_pdl_reject_structure import PDHPDLRejectStructure
 from .closing_hour_reversal_structure import ClosingHourReversalStructure
 from pipelines.base_pipeline import get_cap_segment
@@ -68,108 +50,25 @@ class MainDetector(BaseStructure):
         # Initialize sub-detectors
         self.detectors = {}
 
-        # Define detector configurations with their classes
+        # Define detector configurations with their classes.
+        # Post-cleanup (sub8 ship): only the 5 surviving sub7+sub8 detectors
+        # remain. The 60+ vestigial sub-project #1 entries (ICT, level_breakout,
+        # failure_fade, squeeze_release, flag_continuation, momentum, vwap,
+        # gap, orb (legacy), support_resistance, trend, volume, volume_breakout,
+        # range, fhm) were removed along with their detector source files —
+        # those setups never validated through Stage 3 / Phase 6 / Phase 7.
         detector_configs = [
             # (setup_name, detector_class, detector_key)
-            ("ict_comprehensive", ICTStructure, "ict"),
-            ("fvg", ICTStructure, "fvg"),
-            ("order_block", ICTStructure, "order_block"),
-            # ICT individual setups - these inherit params from ict_comprehensive
-            ("order_block_long", ICTStructure, "order_block_long"),
-            ("order_block_short", ICTStructure, "order_block_short"),
-            ("fair_value_gap_long", ICTStructure, "fair_value_gap_long"),
-            ("fair_value_gap_short", ICTStructure, "fair_value_gap_short"),
-            ("liquidity_sweep_long", ICTStructure, "liquidity_sweep_long"),
-            ("liquidity_sweep_short", ICTStructure, "liquidity_sweep_short"),
-            ("premium_zone_short", ICTStructure, "premium_zone_short"),
-            ("discount_zone_long", ICTStructure, "discount_zone_long"),
-            ("break_of_structure_long", ICTStructure, "break_of_structure_long"),
-            ("break_of_structure_short", ICTStructure, "break_of_structure_short"),
-            ("change_of_character_long", ICTStructure, "change_of_character_long"),
-            ("change_of_character_short", ICTStructure, "change_of_character_short"),
-            # NOTE: trend_reversal_long/short and breakout_long/short are NOT mapped here because:
-            # - TrendStructure only produces: trend_pullback_long/short, trend_continuation_long/short
-            # - LevelBreakoutStructure produces: level_breakout_long/short for PDH/PDL, orb_level_breakout_long/short for ORH/ORL
-            ("level_breakout_long", LevelBreakoutStructure, "level_breakout_long"),
-            ("level_breakout_short", LevelBreakoutStructure, "level_breakout_short"),
-            ("orb_level_breakout_long", LevelBreakoutStructure, "orb_level_breakout_long"),
-            ("orb_level_breakout_short", LevelBreakoutStructure, "orb_level_breakout_short"),
-            ("failure_fade_long", FailureFadeStructure, "failure_fade_long"),
-            ("failure_fade_short", FailureFadeStructure, "failure_fade_short"),
-            ("squeeze_release_long", SqueezeReleaseStructure, "squeeze_release_long"),
-            ("squeeze_release_short", SqueezeReleaseStructure, "squeeze_release_short"),
-            ("flag_continuation_long", FlagContinuationStructure, "flag_continuation_long"),
-            ("flag_continuation_short", FlagContinuationStructure, "flag_continuation_short"),
-            ("momentum_breakout_long", MomentumStructure, "momentum_breakout_long"),
-            ("momentum_breakout_short", MomentumStructure, "momentum_breakout_short"),
-            ("vwap_reclaim_long", VWAPStructure, "vwap_reclaim_long"),
-            ("vwap_lose_short", VWAPStructure, "vwap_lose_short"),
-            ("gap_fill_long", GapStructure, "gap_fill_long"),
-            ("gap_fill_short", GapStructure, "gap_fill_short"),
-            ("gap_breakout_long", GapStructure, "gap_breakout_long"),
-            ("gap_breakout_short", GapStructure, "gap_breakout_short"),
-            ("orb_breakout_long", ORBStructure, "orb_breakout_long"),
-            ("orb_breakout_short", ORBStructure, "orb_breakout_short"),
-            ("orb_breakdown_short", ORBStructure, "orb_breakdown_short"),
-            ("orb_breakout", ORBStructure, "orb_breakout"),
-            ("orb_breakdown", ORBStructure, "orb_breakdown"),
-            ("orb_pullback_long", ORBStructure, "orb_pullback_long"),
-            ("orb_pullback_short", ORBStructure, "orb_pullback_short"),
-            ("support_bounce_long", SupportResistanceStructure, "support_bounce_long"),
-            ("resistance_bounce_short", SupportResistanceStructure, "resistance_bounce_short"),
-            ("trend_pullback_long", TrendStructure, "trend_pullback_long"),
-            ("trend_pullback_short", TrendStructure, "trend_pullback_short"),
-            ("volume_spike_reversal_long", VolumeStructure, "volume_spike_reversal_long"),
-            ("volume_spike_reversal_short", VolumeStructure, "volume_spike_reversal_short"),
-            ("volume_breakout_long", VolumeBreakoutStructure, "volume_breakout_long"),
-            ("volume_breakout_short", VolumeBreakoutStructure, "volume_breakout_short"),
-            ("range_rejection_long", RangeStructure, "range_rejection_long"),
-            ("range_rejection_short", RangeStructure, "range_rejection_short"),
-            ("vwap_mean_reversion_long", VWAPStructure, "vwap_mean_reversion_long"),
-            ("vwap_mean_reversion_short", VWAPStructure, "vwap_mean_reversion_short"),
-            ("support_breakdown_short", SupportResistanceStructure, "support_breakdown_short"),
-            ("resistance_breakout_long", SupportResistanceStructure, "resistance_breakout_long"),
-            ("range_breakout_long", RangeStructure, "range_breakout_long"),
-            ("range_breakdown_short", RangeStructure, "range_breakdown_short"),
-            ("range_bounce_long", RangeStructure, "range_bounce_long"),
-            ("range_bounce_short", RangeStructure, "range_bounce_short"),
-            ("trend_continuation_long", TrendStructure, "trend_continuation_long"),
-            ("trend_continuation_short", TrendStructure, "trend_continuation_short"),
-            # First Hour Momentum (FHM) - captures big movers early
-            ("first_hour_momentum_long", FHMStructure, "first_hour_momentum_long"),
-            ("first_hour_momentum_short", FHMStructure, "first_hour_momentum_short"),
-            # Generic structure types (if needed for fallback)
-            ("level_breakout", LevelBreakoutStructure, "level_breakout"),
-            ("failure_fade", FailureFadeStructure, "failure_fade"),
-            ("flag_continuation", FlagContinuationStructure, "flag_continuation"),
-            ("squeeze_release", SqueezeReleaseStructure, "squeeze_release"),
-            ("momentum", MomentumStructure, "momentum"),
-            ("trend", TrendStructure, "trend"),
-            ("volume", VolumeStructure, "volume"),
-            ("vwap", VWAPStructure, "vwap"),
-            ("gap", GapStructure, "gap"),
-            ("range", RangeStructure, "range"),
-            ("support_resistance", SupportResistanceStructure, "support_resistance"),
             ("gap_fade_short", GapFadeShortStructure, "gap_fade_short"),
             ("mis_unwind_short", MISUnwindShortStructure, "mis_unwind_short"),
-            ("cpr_mean_revert", CPRMeanRevertStructure, "cpr_mean_revert"),
             ("orb_15", ORB15Structure, "orb_15"),
-            ("narrow_cpr_breakout", NarrowCPRBreakoutStructure, "narrow_cpr_breakout"),
-            ("vwap_first_pullback", VWAPFirstPullbackStructure, "vwap_first_pullback"),
             ("pdh_pdl_reject", PDHPDLRejectStructure, "pdh_pdl_reject"),
             ("closing_hour_reversal", ClosingHourReversalStructure, "closing_hour_reversal"),
         ]
 
-        # ICT setups that should inherit params from ict_comprehensive
-        ict_derived_setups = {
-            "order_block_long", "order_block_short",
-            "fair_value_gap_long", "fair_value_gap_short",
-            "liquidity_sweep_long", "liquidity_sweep_short",
-            "premium_zone_short", "discount_zone_long",
-            "break_of_structure_long", "break_of_structure_short",
-            "change_of_character_long", "change_of_character_short"
-        }
-        ict_base_config = setups_config.get("ict_comprehensive", {})
+        # ICT-derived setups + ict_base_config: removed alongside ICT detector.
+        ict_derived_setups: set = set()
+        ict_base_config: Dict[str, Any] = {}
 
         # WIDE-OPEN MODE: propagate root-level wide_open_mode into every setup_config so
         # detectors can bypass their hard-coded validation checks without a root-config lookup.

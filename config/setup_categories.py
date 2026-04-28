@@ -27,71 +27,26 @@ class SetupCategory(Enum):
 
 
 # Setup type → Category mapping
-# Note: Base name without _long/_short suffix is mapped
+# Note: Base name without _long/_short suffix is mapped.
+# Post-cleanup: only the 5 surviving sub7+sub8 setups remain. The vestigial
+# sub-project #1 entries (ICT, level_breakout, failure_fade, squeeze_release,
+# flag_continuation, momentum_breakout, vwap_reclaim/lose, gap_fill,
+# orb_breakout/breakdown/pullback, support/resistance bounce/breakdown/breakout,
+# trend_pullback/continuation/reversal, volume_*, range_*, first_hour_momentum,
+# fair_value_gap, premium/discount_zone, order_block, etc.) were removed
+# alongside their detector source files — those setups never validated through
+# Stage 3 / Phase 6 / Phase 7. The 3 sub8 setups (cpr_mean_revert,
+# narrow_cpr_breakout, vwap_first_pullback) were also removed after Phase 7
+# OOS confirmed no edge.
 SETUP_CATEGORIES: Dict[str, SetupCategory] = {
-    # BREAKOUT: Momentum breaks of levels
-    # Quality = volume_ratio * breakout_strength / normalized_risk
-    "breakout": SetupCategory.BREAKOUT,
-    "orb_breakout": SetupCategory.BREAKOUT,
-    "orb_breakdown": SetupCategory.BREAKOUT,
-    "flag_continuation": SetupCategory.BREAKOUT,
-    "squeeze_release": SetupCategory.BREAKOUT,
-    "momentum_breakout": SetupCategory.BREAKOUT,
-    "range_breakout": SetupCategory.BREAKOUT,
-    "range_breakdown": SetupCategory.BREAKOUT,
-    "gap_breakout": SetupCategory.BREAKOUT,
-    "resistance_breakout": SetupCategory.BREAKOUT,
-    "support_breakdown": SetupCategory.BREAKOUT,
-    "break_of_structure": SetupCategory.BREAKOUT,
-    "change_of_character": SetupCategory.BREAKOUT,
-    "level_breakout": SetupCategory.BREAKOUT,
-    "orb_level_breakout": SetupCategory.BREAKOUT,  # Level breakouts at ORH/ORL (ORB-related)
-    "volume_breakout": SetupCategory.BREAKOUT,      # Swing level breakout with institutional volume surge
-    "equilibrium_breakout": SetupCategory.BREAKOUT,  # Equilibrium zone breakout
-
-    # LEVEL: Bounce/rejection at levels
-    # Quality = retest_ok + hold_ok (level acceptance)
-    "support_bounce": SetupCategory.LEVEL,
-    "resistance_bounce": SetupCategory.LEVEL,
-    "range_bounce": SetupCategory.LEVEL,
-    "range_rejection": SetupCategory.LEVEL,
-    "vwap_reclaim": SetupCategory.LEVEL,
-    "vwap_lose": SetupCategory.LEVEL,
-    "premium_zone": SetupCategory.LEVEL,
-    "discount_zone": SetupCategory.LEVEL,
-    "orb_pullback": SetupCategory.LEVEL,
-    "order_block": SetupCategory.LEVEL,
-
-    # REVERSION: Mean reversion plays
-    # Quality = extension_from_vwap + exhaustion_signals
-    "failure_fade": SetupCategory.REVERSION,
-    "volume_spike_reversal": SetupCategory.REVERSION,
-    "gap_fill": SetupCategory.REVERSION,
-    "vwap_mean_reversion": SetupCategory.REVERSION,
-    "liquidity_sweep": SetupCategory.REVERSION,
-    "fair_value_gap": SetupCategory.REVERSION,
-    "range_deviation": SetupCategory.REVERSION,       # Range deviation mean reversion
-    "range_mean_reversion": SetupCategory.REVERSION,  # Range-based mean reversion
-
-    # Sub-project #7 — Indian-native setups
+    # Sub-project #7 — Indian-native setups (surviving)
     "gap_fade": SetupCategory.REVERSION,
     "mis_unwind": SetupCategory.REVERSION,
-    "cpr_mean_revert": SetupCategory.REVERSION,
 
-    # Sub-project #8 — Extended Indian-native setups
+    # Sub-project #8 — Extended Indian-native setups (surviving)
     "orb_15": SetupCategory.MOMENTUM,
-    "narrow_cpr_breakout": SetupCategory.MOMENTUM,
-    "vwap_first_pullback": SetupCategory.MOMENTUM,
     "pdh_pdl_reject": SetupCategory.REVERSION,
     "closing_hour_reversal": SetupCategory.REVERSION,
-
-    # MOMENTUM: Trend continuation
-    # Quality = ADX (trend strength) + trend alignment
-    "trend_continuation": SetupCategory.MOMENTUM,
-    "trend_pullback": SetupCategory.MOMENTUM,
-    "trend_reversal": SetupCategory.MOMENTUM,
-    "momentum_trend": SetupCategory.MOMENTUM,
-    "first_hour_momentum": SetupCategory.BREAKOUT,  # FHM is early-session breakout play, uses breakout_pipeline's _check_fhm_conditions()
 }
 
 

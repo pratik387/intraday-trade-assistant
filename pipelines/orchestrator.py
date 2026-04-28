@@ -40,23 +40,19 @@ from pipelines.base_pipeline import BasePipeline, ConfigurationError, get_mis_in
 # Sub-project #7: detector classes for fast-path routing (bypass SMC category pipelines)
 from structures.gap_fade_short_structure import GapFadeShortStructure
 from structures.mis_unwind_short_structure import MISUnwindShortStructure
-from structures.cpr_mean_revert_structure import CPRMeanRevertStructure
 from structures.orb_15_structure import ORB15Structure
-from structures.narrow_cpr_breakout_structure import NarrowCPRBreakoutStructure
-from structures.vwap_first_pullback_structure import VWAPFirstPullbackStructure
 from structures.pdh_pdl_reject_structure import PDHPDLRejectStructure
 from structures.closing_hour_reversal_structure import ClosingHourReversalStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
 # so SMC category pipeline must NOT override entry/stop/target.
+# Post-cleanup: 3 sub8 setups (cpr_mean_revert, narrow_cpr_breakout,
+# vwap_first_pullback) were removed after Phase 7 OOS confirmed no edge.
 SUB7_SETUPS: frozenset = frozenset({
     "gap_fade_short",
     "mis_unwind_short",
-    "cpr_mean_revert",
     "orb_15",
-    "narrow_cpr_breakout",
-    "vwap_first_pullback",
     "pdh_pdl_reject",
     "closing_hour_reversal",
 })
@@ -265,10 +261,7 @@ class PipelineOrchestrator:
             _cls_map = {
                 "gap_fade_short": GapFadeShortStructure,
                 "mis_unwind_short": MISUnwindShortStructure,
-                "cpr_mean_revert": CPRMeanRevertStructure,
                 "orb_15": ORB15Structure,
-                "narrow_cpr_breakout": NarrowCPRBreakoutStructure,
-                "vwap_first_pullback": VWAPFirstPullbackStructure,
                 "pdh_pdl_reject": PDHPDLRejectStructure,
                 "closing_hour_reversal": ClosingHourReversalStructure,
             }
