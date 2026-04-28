@@ -112,13 +112,16 @@ class MainDetector(BaseStructure):
             else:
                 logger.debug(f"MAIN_DETECTOR: {setup_name} disabled (enabled={setup_config.get('enabled', False)})")
 
-        # Detection parameters - read from main_detector section if available
+        # Detection parameters - read from main_detector section if available.
+        # priority_weights drives _resolve_directional_conflicts; with only one
+        # setup active (gap_fade_short post-cleanup) conflict resolution is
+        # moot, so default to empty dict if config block was removed.
         main_detector_config = setups_config.get("main_detector", {})
         self.max_detections_per_symbol = main_detector_config.get("max_detections_per_symbol",
                                                                 config.get("max_detections_per_symbol", 5))
         self.conflict_resolution_enabled = main_detector_config.get("conflict_resolution_enabled",
                                                                   config.get("conflict_resolution_enabled", True))
-        self.priority_weights = main_detector_config["priority_weights"]
+        self.priority_weights = main_detector_config.get("priority_weights", {})
 
         logger.debug(f"MAIN_DETECTOR: Initialization complete with {len(self.detectors)} active detectors: {list(self.detectors.keys())}")
 

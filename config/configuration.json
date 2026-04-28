@@ -344,7 +344,7 @@
   "lunch_end": "13:15",
   "setups": {
     "mis_unwind_short": {
-      "enabled": true,
+      "enabled": false,
       "active_window_start": "14:55",
       "active_window_end": "15:15",
       "min_distance_above_vwap_pct": 0.5,
@@ -360,7 +360,8 @@
       "time_stop_min_before_close": 5,
       "min_bars_required": 30,
       "entry_zone_pct": 0.1,
-      "entry_zone_mode": "symmetric"
+      "entry_zone_mode": "symmetric",
+      "_live_status": "disabled \u2014 research only, not Phase 7 validated"
     },
     "gap_fade_short": {
       "enabled": true,
@@ -372,19 +373,19 @@
       "max_body_size_pct": 30.0,
       "require_volume_decline_after_gap": true,
       "allowed_cap_segments": [
-        "small_cap",
-        "mid_cap",
-        "micro_cap"
+        "small_cap"
       ],
       "stop_above_gap_high_atr": 0.25,
       "target_type": "pdc_or_open",
       "time_stop_at": "10:15",
       "min_bars_required": 1,
       "entry_zone_pct": 0.1,
-      "entry_zone_mode": "symmetric"
+      "entry_zone_mode": "symmetric",
+      "_live_status": "PRIMARY \u2014 Phase 7 OOS PASS: PF=1.36, WR=70%, N=797 in 117-session Holdout. Restricted to small_cap (the validated cell). Mid/micro_cap not Phase-7 validated.",
+      "min_stop_distance_pct": 0.3
     },
     "orb_15": {
-      "enabled": true,
+      "enabled": false,
       "active_window_start": "09:30",
       "active_window_end": "11:15",
       "range_window_start": "09:20",
@@ -402,10 +403,11 @@
       "max_gap_pct_for_orb": 0.5,
       "entry_zone_pct": 0.3,
       "entry_zone_mode": "directional",
-      "_rev2_notes": "stop_at_range_midpoint=false is opposite-end-of-range (Indian-source default). range_window_start=09:20 skips pre-open call-auction wick. max_gap_pct_for_orb=0.5: skip ORB if today's open gap > 0.5% (route to gap_fade_short). entry_zone directional 0.3% \u2014 breakout continuation; smoke-22 showed \u00b10.1% symmetric starved fills to 11%."
+      "_rev2_notes": "stop_at_range_midpoint=false is opposite-end-of-range (Indian-source default). range_window_start=09:20 skips pre-open call-auction wick. max_gap_pct_for_orb=0.5: skip ORB if today's open gap > 0.5% (route to gap_fade_short). entry_zone directional 0.3% \u2014 breakout continuation; smoke-22 showed \u00b10.1% symmetric starved fills to 11%.",
+      "_live_status": "disabled \u2014 research only, not Phase 7 validated"
     },
     "pdh_pdl_reject": {
-      "enabled": true,
+      "enabled": false,
       "active_window_start": "10:00",
       "active_window_end": "14:30",
       "level_proximity_pct": 0.1,
@@ -422,10 +424,11 @@
       "min_bars_required": 30,
       "entry_zone_pct": 0.15,
       "entry_zone_mode": "symmetric",
-      "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default \u00e2\u20ac\u201d bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both."
+      "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default \u00e2\u20ac\u201d bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both.",
+      "_live_status": "disabled \u2014 research only, not Phase 7 validated"
     },
     "closing_hour_reversal": {
-      "enabled": true,
+      "enabled": false,
       "active_window_start": "14:30",
       "active_window_end": "15:15",
       "min_intraday_move_pct": 1.5,
@@ -441,7 +444,8 @@
       "fail_fast_min_trades_first_100_sessions": 200,
       "entry_zone_pct": 0.1,
       "entry_zone_mode": "symmetric",
-      "_rev2_notes": "stop_atr_multiplier=1.5 is Indian-source standard (Goodwill, Varsity); rev1 used 1.2x. hard_time_stop_hhmm=15:22 (was 15:18) leaves 3 min margin to Zerodha 15:25 auto square-off. fail-fast trip-wire: kill if n<200 in first 100 OCI sessions (sub-7 mis_unwind precedent)."
+      "_rev2_notes": "stop_atr_multiplier=1.5 is Indian-source standard (Goodwill, Varsity); rev1 used 1.2x. hard_time_stop_hhmm=15:22 (was 15:18) leaves 3 min margin to Zerodha 15:25 auto square-off. fail-fast trip-wire: kill if n<200 in first 100 OCI sessions (sub-7 mis_unwind precedent).",
+      "_live_status": "disabled \u2014 research only, not Phase 7 validated"
     }
   },
   "filters": {
@@ -583,7 +587,7 @@
   "rank_pctl_min": 0.6,
   "max_concurrent_positions": 999,
   "_comment_max_positions": "DIAGNOSTIC: Disabled limit (999) to see true setup performance without portfolio competition",
-  "wide_open_mode": true,
+  "wide_open_mode": false,
   "_comment_wide_open": "MASTER FLAG: when true, all historical-PnL filters are bypassed so raw detector edge can be measured on a 3-year backtest. Disables: trade_quality_gates (hour 10 block + category floors), _check_validated_combinations (VC whitelist), ICT sweep/MSS prerequisite in order_block detector, _validate_htf_trend hard-coded calls in BOS/CHoCH/FVG, _validate_premium_discount_zone calls, event_policy_gate session/expiry policy, news_spike_gate size penalties, directional_bias multipliers (neutralized to 1.0), dedupe cooloff, blocked_regimes/caps/entirely in all pipeline configs. PRESERVED: risk math, exit logic (T1/T2/SL/trailing/EOD), MIS eligibility, timing infrastructure, detector firing conditions themselves. Set to false for normal production operation.",
   "time_restricted_trading": true,
   "_comment_execution": "=== EXECUTION SETTINGS ===",

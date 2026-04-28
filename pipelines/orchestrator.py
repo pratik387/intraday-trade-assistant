@@ -442,6 +442,26 @@ class PipelineOrchestrator:
                 f"config/configuration.json — cannot size sub7 entry zone"
             )
 
+        # Defense-in-depth: minimum-stop-distance floor. Prevents qty inflation
+        # when a setup's hard_sl lands too close to entry (e.g., pivot-anchored
+        # stops on cpr_mean_revert / vwap / narrow_cpr / pdh_pdl_reject produced
+        # qty=99,999 / qty=19,999 in Discovery-Phase-1, with single-trade losses
+        # 5-10x configured Rs 1k risk). gap_fade_short's natural floor is
+        # ~0.25-0.5% (gap_high × 1.0025-1.005); 0.3% threshold catches any
+        # tighter-stopped setup before sizing math.
+        _min_stop_pct = _setup_cfg_for_zone.get("min_stop_distance_pct")
+        if _min_stop_pct is not None and entry > 0:
+            _stop_pct = (rps / entry) * 100.0 if rps > 0 else 0.0
+            if _stop_pct < float(_min_stop_pct):
+                logger.warning(
+                    f"[SUB7] {symbol} {setup_type}: stop {_stop_pct:.3f}% "
+                    f"< floor {_min_stop_pct}% (entry={entry} hard_sl={hard_sl} "
+                    f"rps={rps}) — rejecting plan to avoid qty inflation"
+                )
+                return {"eligible": False, "reason": "stop_too_tight",
+                        "strategy": setup_type, "bias": bias,
+                        "details": [f"stop_pct={_stop_pct:.3f}", f"min={_min_stop_pct}"]}
+
         qty = int(risk_per_trade_rupees / rps) if rps > 0 else 0
         # Defense-in-depth: cap qty at a sane intraday max. With rps tiny (e.g.
         # detector geometry bug clamping rps to 1e-6), qty would blow up to
