@@ -26,6 +26,7 @@ def force_wide_open_false(monkeypatch):
     import structures.gap_and_go_continuation_structure as _gap_and_go
     import structures.ema5_alert_pullback_structure as _ema5
     import structures.camarilla_l3_reversal_structure as _cam_l3
+    import structures.expiry_pin_strike_reversal_structure as _exp_pin
 
-    for mod in (_orb, _pdh, _pdh_sr, _gap_and_go, _ema5, _cam_l3):
+    for mod in (_orb, _pdh, _pdh_sr, _gap_and_go, _ema5, _cam_l3, _exp_pin):
         monkeypatch.setattr(mod, "_is_wide_open", lambda: False)
