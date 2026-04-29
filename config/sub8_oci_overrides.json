@@ -36,6 +36,9 @@
     "gap_and_go_continuation": {
       "enabled": false
     },
+    "ema5_alert_pullback": {
+      "enabled": false
+    },
     "discount_zone_long": {
       "enabled": false
     },

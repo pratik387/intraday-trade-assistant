@@ -465,6 +465,26 @@
       "min_stop_distance_pct": 0.3,
       "_research_notes": "Indian-pro gap-and-go continuation per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 5. Sources: Enrich Money, ICICI Direct, TrueData, GWC India, Motilal Oswal. REGIME-COMPLEMENT to live gap_fade_short \u2014 large-cap CONTINUES, small-cap FADES. Mutual exclusion with orb_15 enforced by gap_threshold_pct=1.0 vs max_gap_pct_for_orb=0.5 (the 0.5-1.0% band is intentionally dead). allowed_cap_segments=large_cap+mid_cap (opposite of gap_fade_short small_cap). Mechanic: bar 0 (09:15) qualifies on gap_pct + daily-trend (PDC vs 20SMA) + first-bar new-extreme + rising volume; bar 1+ tags bar 0 high/low to fire entry.",
       "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Phase 3 backtest"
+    },
+    "ema5_alert_pullback": {
+      "enabled": false,
+      "active_window_start": "09:30",
+      "active_window_end": "10:00",
+      "ema_period": 5,
+      "trend_lookback_bars": 10,
+      "trend_definition": "ema_slope_positive",
+      "target_rr": 3.0,
+      "t1_rr": 1.5,
+      "t1_qty_pct": 0.5,
+      "allowed_sides": ["long", "short"],
+      "allowed_cap_segments": ["large_cap", "mid_cap", "small_cap"],
+      "universe_key": "fno_liquid_200",
+      "min_bars_required": 12,
+      "entry_zone_pct": 0.1,
+      "entry_zone_mode": "directional",
+      "min_stop_distance_pct": 0.3,
+      "_research_notes": "Subasish Pani / Power of Stocks 5 EMA Alert-Candle Pullback per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 4. Sources: MyAlgomate, TradingQnA, TradersCarnival, Streak. Mechanic: in established 5m uptrend (ema_slope_positive over trend_lookback_bars=10), the FIRST candle whose entire body+wick HIGH closes BELOW the 5 EMA = Alert Candle; the next bar whose HIGH breaks the alert candle's HIGH fires LONG (continuation of uptrend after pullback). Mirror SHORT: established downtrend, first candle whose LOW > 5 EMA = alert; next bar breaking alert LOW fires SHORT. Subasish-published 1:3 RR target (t2_rr=3.0); T1 50% partial at 1.5R per project tiered-exit framework. Entry-by-10:00-AM is Subasish-specified time gate. trend_lookback_bars=10 + alert + confirm = 12 min_bars_required.",
+      "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Phase 3 backtest"
     }
   },
   "filters": {
@@ -695,7 +715,9 @@
         "pdh_pdl_sweep_reclaim_long",
         "pdh_pdl_sweep_reclaim_short",
         "gap_and_go_continuation_long",
-        "gap_and_go_continuation_short"
+        "gap_and_go_continuation_short",
+        "ema5_alert_pullback_long",
+        "ema5_alert_pullback_short"
       ],
       "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). orb_15, pdh_pdl_reject, and pdh_pdl_sweep_reclaim listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
     },
