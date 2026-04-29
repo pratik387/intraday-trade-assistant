@@ -45,6 +45,7 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     # Sub-project #8 — Extended Indian-native setups (surviving)
     "orb_15": SetupCategory.MOMENTUM,
     "pdh_pdl_reject": SetupCategory.REVERSION,
+    "pdh_pdl_sweep_reclaim": SetupCategory.REVERSION,
 }
 
 

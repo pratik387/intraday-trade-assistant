@@ -30,6 +30,9 @@
     "pdh_pdl_reject": {
       "enabled": true
     },
+    "pdh_pdl_sweep_reclaim": {
+      "enabled": false
+    },
     "discount_zone_long": {
       "enabled": false
     },

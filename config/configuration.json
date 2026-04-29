@@ -415,6 +415,33 @@
       "entry_zone_mode": "symmetric",
       "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default \u00e2\u20ac\u201d bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both.",
       "_live_status": "disabled \u2014 research only, not Phase 7 validated"
+    },
+    "pdh_pdl_sweep_reclaim": {
+      "enabled": false,
+      "active_window_start": "11:00",
+      "active_window_end": "14:00",
+      "sweep_penetration_pct": 0.10,
+      "reclaim_buffer_pct": 0.05,
+      "confirm_close_beyond_sweep_low": true,
+      "multi_day_confluence_enabled": false,
+      "multi_day_confluence_pct": 0.5,
+      "multi_day_lookback": 3,
+      "gap_context_enabled": true,
+      "gap_threshold_pct": 0.5,
+      "allowed_sides": ["long", "short"],
+      "allowed_cap_segments": ["large_cap", "mid_cap", "small_cap", "micro_cap"],
+      "universe_key": "fno_liquid_200",
+      "stop_atr_buffer": 0.5,
+      "wick_buffer_pct": 0.10,
+      "t1_target": "vwap",
+      "t2_target": "two_day_range_50pct_retrace",
+      "t1_qty_pct": 0.5,
+      "min_bars_required": 30,
+      "entry_zone_pct": 0.15,
+      "entry_zone_mode": "symmetric",
+      "min_stop_distance_pct": 0.3,
+      "_research_notes": "Indian-pro sweep+reclaim mechanic per specs/2026-04-28-research-pdh_pdl_reject-indian-pro-mechanics.md. M1 (sweep+reclaim core trigger) \u2014 Sahi.com / DailyPriceAction liquidity-sweep literature: bar t-1 PENETRATES the level (high > pdh*(1+pen) for shorts) AND closes back inside (close < pdh*(1-rec)); bar t confirms via close < pdh AND close < bar(t-1).low. M2 (multi-day confluence) \u2014 Phase 1 OFF, enable in Phase 2 if base mechanic underperforms. M8 (gap-context side selector) \u2014 on gap-up days prefer PDH-fade-short, gap-down prefer PDL-fade-long, flat-open allow both. Active window 11:00-14:00 confirmed in IPM\u00a74 mid_cap PF table (morning re-test of yesterday's extremes). fno_liquid_200 starting universe \u2014 research found edge concentrated in mid_cap with OLD trigger; new mechanic may have different cap-segment behavior, so cast wide net for Edge Discovery.",
+      "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Edge Discovery \u2192 Phase 1 backtest"
     }
   },
   "filters": {
@@ -641,9 +668,11 @@
         "orb_15_long",
         "orb_15_short",
         "pdh_pdl_reject_long",
-        "pdh_pdl_reject_short"
+        "pdh_pdl_reject_short",
+        "pdh_pdl_sweep_reclaim_long",
+        "pdh_pdl_sweep_reclaim_short"
       ],
-      "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). orb_15 and pdh_pdl_reject listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
+      "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). orb_15, pdh_pdl_reject, and pdh_pdl_sweep_reclaim listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
     },
     "pattern_filters_enabled": true,
     "momentum_consolidation_enabled": true,
