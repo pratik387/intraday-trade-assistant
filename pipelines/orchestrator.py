@@ -44,6 +44,7 @@ from structures.pdh_pdl_reject_structure import PDHPDLRejectStructure
 from structures.pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructure
 from structures.gap_and_go_continuation_structure import GapAndGoContinuationStructure
 from structures.ema5_alert_pullback_structure import EMA5AlertPullbackStructure
+from structures.camarilla_l3_reversal_structure import CamarillaL3ReversalStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
@@ -59,6 +60,9 @@ from structures.data_models import MarketContext
 # ema5_alert_pullback added 2026-04-29 — Subasish Pani 5 EMA Alert-Candle
 # Pullback method (trend-pullback continuation) — see
 # specs/2026-04-29-ema5_alert_pullback-plan.md.
+# camarilla_l3_reversal added 2026-04-29 — sweep+reclaim of canonical
+# Camarilla L3/H3 pivots, ADX-gated mean-reversion — see
+# specs/2026-04-29-camarilla_l3_reversal-plan.md.
 SUB7_SETUPS: frozenset = frozenset({
     "gap_fade_short",
     "orb_15",
@@ -66,6 +70,7 @@ SUB7_SETUPS: frozenset = frozenset({
     "pdh_pdl_sweep_reclaim",
     "gap_and_go_continuation",
     "ema5_alert_pullback",
+    "camarilla_l3_reversal",
 })
 
 logger = get_agent_logger()
@@ -276,6 +281,7 @@ class PipelineOrchestrator:
                 "pdh_pdl_sweep_reclaim": PDHPDLSweepReclaimStructure,
                 "gap_and_go_continuation": GapAndGoContinuationStructure,
                 "ema5_alert_pullback": EMA5AlertPullbackStructure,
+                "camarilla_l3_reversal": CamarillaL3ReversalStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:

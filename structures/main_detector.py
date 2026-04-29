@@ -22,6 +22,7 @@ from .pdh_pdl_reject_structure import PDHPDLRejectStructure
 from .pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructure
 from .gap_and_go_continuation_structure import GapAndGoContinuationStructure
 from .ema5_alert_pullback_structure import EMA5AlertPullbackStructure
+from .camarilla_l3_reversal_structure import CamarillaL3ReversalStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -66,6 +67,7 @@ class MainDetector(BaseStructure):
             ("pdh_pdl_sweep_reclaim", PDHPDLSweepReclaimStructure, "pdh_pdl_sweep_reclaim"),
             ("gap_and_go_continuation", GapAndGoContinuationStructure, "gap_and_go_continuation"),
             ("ema5_alert_pullback", EMA5AlertPullbackStructure, "ema5_alert_pullback"),
+            ("camarilla_l3_reversal", CamarillaL3ReversalStructure, "camarilla_l3_reversal"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -738,6 +740,7 @@ class MainDetector(BaseStructure):
             'pdh_pdl_sweep_reclaim': 'pdh_pdl_sweep_reclaim',
             'gap_and_go_continuation': 'gap_and_go_continuation',
             'ema5_alert_pullback': 'ema5_alert_pullback',
+            'camarilla_l3_reversal': 'camarilla_l3_reversal',
         }
 
         return direct_mappings.get(structure_type)
