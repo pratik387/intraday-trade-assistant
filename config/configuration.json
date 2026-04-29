@@ -442,6 +442,29 @@
       "min_stop_distance_pct": 0.3,
       "_research_notes": "Indian-pro sweep+reclaim mechanic per specs/2026-04-28-research-pdh_pdl_reject-indian-pro-mechanics.md. M1 (sweep+reclaim core trigger) \u2014 Sahi.com / DailyPriceAction liquidity-sweep literature: bar t-1 PENETRATES the level (high > pdh*(1+pen) for shorts) AND closes back inside (close < pdh*(1-rec)); bar t confirms via close < pdh AND close < bar(t-1).low. M2 (multi-day confluence) \u2014 Phase 1 OFF, enable in Phase 2 if base mechanic underperforms. M8 (gap-context side selector) \u2014 on gap-up days prefer PDH-fade-short, gap-down prefer PDL-fade-long, flat-open allow both. Active window 11:00-14:00 confirmed in IPM\u00a74 mid_cap PF table (morning re-test of yesterday's extremes). fno_liquid_200 starting universe \u2014 research found edge concentrated in mid_cap with OLD trigger; new mechanic may have different cap-segment behavior, so cast wide net for Edge Discovery.",
       "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Edge Discovery \u2192 Phase 1 backtest"
+    },
+    "gap_and_go_continuation": {
+      "enabled": false,
+      "active_window_start": "09:15",
+      "active_window_end": "09:30",
+      "gap_threshold_pct": 1.0,
+      "daily_trend_lookback_days": 20,
+      "daily_trend_min_distance_pct": 0.0,
+      "min_first_bar_volume_ratio": 1.2,
+      "volume_baseline_lookback_days": 14,
+      "t1_target_r": 1.0,
+      "t2_target_r": 2.0,
+      "t1_qty_pct": 0.5,
+      "stop_below_first_bar_low_buffer_pct": 0.05,
+      "allowed_sides": ["long", "short"],
+      "allowed_cap_segments": ["large_cap", "mid_cap"],
+      "universe_key": "fno_liquid_200",
+      "min_bars_required": 2,
+      "entry_zone_pct": 0.15,
+      "entry_zone_mode": "directional",
+      "min_stop_distance_pct": 0.3,
+      "_research_notes": "Indian-pro gap-and-go continuation per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 5. Sources: Enrich Money, ICICI Direct, TrueData, GWC India, Motilal Oswal. REGIME-COMPLEMENT to live gap_fade_short \u2014 large-cap CONTINUES, small-cap FADES. Mutual exclusion with orb_15 enforced by gap_threshold_pct=1.0 vs max_gap_pct_for_orb=0.5 (the 0.5-1.0% band is intentionally dead). allowed_cap_segments=large_cap+mid_cap (opposite of gap_fade_short small_cap). Mechanic: bar 0 (09:15) qualifies on gap_pct + daily-trend (PDC vs 20SMA) + first-bar new-extreme + rising volume; bar 1+ tags bar 0 high/low to fire entry.",
+      "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Phase 3 backtest"
     }
   },
   "filters": {
@@ -670,7 +693,9 @@
         "pdh_pdl_reject_long",
         "pdh_pdl_reject_short",
         "pdh_pdl_sweep_reclaim_long",
-        "pdh_pdl_sweep_reclaim_short"
+        "pdh_pdl_sweep_reclaim_short",
+        "gap_and_go_continuation_long",
+        "gap_and_go_continuation_short"
       ],
       "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). orb_15, pdh_pdl_reject, and pdh_pdl_sweep_reclaim listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
     },

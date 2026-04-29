@@ -46,6 +46,7 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "orb_15": SetupCategory.MOMENTUM,
     "pdh_pdl_reject": SetupCategory.REVERSION,
     "pdh_pdl_sweep_reclaim": SetupCategory.REVERSION,
+    "gap_and_go_continuation": SetupCategory.MOMENTUM,
 }
 
 

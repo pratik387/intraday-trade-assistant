@@ -33,6 +33,9 @@
     "pdh_pdl_sweep_reclaim": {
       "enabled": false
     },
+    "gap_and_go_continuation": {
+      "enabled": false
+    },
     "discount_zone_long": {
       "enabled": false
     },
