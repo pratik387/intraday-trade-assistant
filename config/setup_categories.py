@@ -48,6 +48,7 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "pdh_pdl_sweep_reclaim": SetupCategory.REVERSION,
     "gap_and_go_continuation": SetupCategory.MOMENTUM,
     "ema5_alert_pullback": SetupCategory.MOMENTUM,
+    "camarilla_l3_reversal": SetupCategory.REVERSION,
 }
 
 

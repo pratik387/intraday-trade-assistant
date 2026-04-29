@@ -39,6 +39,9 @@
     "ema5_alert_pullback": {
       "enabled": false
     },
+    "camarilla_l3_reversal": {
+      "enabled": false
+    },
     "discount_zone_long": {
       "enabled": false
     },
