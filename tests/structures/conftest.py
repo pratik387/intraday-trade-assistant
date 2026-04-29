@@ -17,12 +17,13 @@ def force_wide_open_false(monkeypatch):
     # narrow_cpr_breakout / vwap_first_pullback removed in earlier cleanup —
     # mis_unwind_short / closing_hour_reversal removed in Phase 1 cleanup
     # (no salvageable cell). Surviving sub8 detectors with _is_wide_open:
-    # orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim, gap_and_go_continuation.
-    # gap_fade_short uses a different mechanism.
+    # orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim, gap_and_go_continuation,
+    # ema5_alert_pullback. gap_fade_short uses a different mechanism.
     import structures.orb_15_structure as _orb
     import structures.pdh_pdl_reject_structure as _pdh
     import structures.pdh_pdl_sweep_reclaim_structure as _pdh_sr
     import structures.gap_and_go_continuation_structure as _gap_and_go
+    import structures.ema5_alert_pullback_structure as _ema5
 
-    for mod in (_orb, _pdh, _pdh_sr, _gap_and_go):
+    for mod in (_orb, _pdh, _pdh_sr, _gap_and_go, _ema5):
         monkeypatch.setattr(mod, "_is_wide_open", lambda: False)
