@@ -508,6 +508,29 @@
       "min_stop_distance_pct": 0.3,
       "_research_notes": "Camarilla L3/H3 mean-revert per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 1. Indian sources: market-pulse.in, Pivottrading.co.in, Bhaskar Das Medium, Jainam, Fisdom, OptionX. CANONICAL Camarilla formulas (NOT Floor Pivot): Range=PDH-PDL; P=(PDH+PDL+PDC)/3; H3=PDC+0.275*Range; L3=PDC-0.275*Range; H4/L4=PDC\u00b10.55*Range. Stop AT L4/H4 (no extra ATR buffer \u2014 L4/H4 is the wide stop per Camarilla literature). Active window 10:00-14:00 (skip first 30 min for level visibility, skip last 90 min closing volatility). max_adx_for_revert=25 \u2014 Camarilla literature explicit on trending days running through L3 to L4. Mutual-exclusion vs pdh_pdl_sweep_reclaim when L3 within 0.3% of PDL (or H3 within 0.3% of PDH) \u2014 cede to that detector to avoid double-trade. Bidirectional via single setup name: long side fires off L3, short side fires off H3.",
       "_live_status": "disabled \u2014 Phase 0 scaffolding; awaits Phase 1 backtest validation"
+    },
+    "expiry_pin_strike_reversal": {
+      "enabled": false,
+      "active_window_start": "13:30",
+      "active_window_end": "15:15",
+      "min_spot_distance_to_pin_pct": 0.3,
+      "pin_index": "NIFTY",
+      "expiry_types": ["weekly", "monthly"],
+      "nifty_heavyweights_csv": "assets/nifty_heavyweights.csv",
+      "rsi_period": 14,
+      "rsi_overbought": 70,
+      "rsi_oversold": 30,
+      "stop_atr_multiplier": 0.5,
+      "t1_qty_pct": 0.5,
+      "t1_target_frac": 0.5,
+      "allowed_sides": ["long", "short"],
+      "allowed_cap_segments": ["large_cap"],
+      "min_bars_required": 30,
+      "entry_zone_pct": 0.10,
+      "entry_zone_mode": "symmetric",
+      "min_stop_distance_pct": 0.3,
+      "_research_notes": "Calendar+OI driven pin-magnet reversal per specs/2026-04-29-research-new-indian-setup-candidates.md \u00a7Candidate 8. Sources: Wright Research, ICFM, OptionX, PL Capital. Mechanic: market-makers minimize gamma exposure by pulling spot to high-OI strike on Indian weekly+monthly expiry sessions post 13:30 IST. Detector fires only on expiry days (is_expiry_day true), only on NIFTY heavyweights (top 10 by weight \u2014 pin gravity is mediated through index basket constituents, not random F&O symbols), only when spot is \u22650.3% from pin (room for the magnet pull), and only after RSI extreme reading earlier in session (overbought \u2192 short towards pin from above; oversold \u2192 long towards pin from below). Stop = 0.5*ATR beyond entry. Tiered T1 50% qty at half-distance to pin; T2 100% qty at pin strike. First-trigger latch keyed on (symbol, side, session_date_iso). Monthly expiry uses last-Thursday-of-month rule via is_monthly_expiry; weekly is any other expiry day.",
+      "_live_status": "disabled \u2014 Phase 0 scaffolding; awaits Phase B3 backtest validation"
     }
   },
   "filters": {

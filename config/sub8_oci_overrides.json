@@ -42,6 +42,9 @@
     "camarilla_l3_reversal": {
       "enabled": false
     },
+    "expiry_pin_strike_reversal": {
+      "enabled": false
+    },
     "discount_zone_long": {
       "enabled": false
     },
