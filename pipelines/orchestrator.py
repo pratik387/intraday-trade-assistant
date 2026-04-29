@@ -41,6 +41,7 @@ from pipelines.base_pipeline import BasePipeline, ConfigurationError, get_mis_in
 from structures.gap_fade_short_structure import GapFadeShortStructure
 from structures.orb_15_structure import ORB15Structure
 from structures.pdh_pdl_reject_structure import PDHPDLRejectStructure
+from structures.pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
@@ -48,10 +49,13 @@ from structures.data_models import MarketContext
 # Post-cleanup: mis_unwind_short + closing_hour_reversal removed after Phase 1
 # confirmed unsalvageable failure (mis_unwind WR 9.2% with no inversion fix;
 # closing_hour PF 0.45 with no filter set reaching Phase 1 criteria).
+# pdh_pdl_sweep_reclaim added 2026-04-29 as Indian-pro-mechanic replacement
+# for the borderline-DROP pdh_pdl_reject — see specs/2026-04-29-pdh_pdl_sweep_reclaim-plan.md.
 SUB7_SETUPS: frozenset = frozenset({
     "gap_fade_short",
     "orb_15",
     "pdh_pdl_reject",
+    "pdh_pdl_sweep_reclaim",
 })
 
 logger = get_agent_logger()
@@ -259,6 +263,7 @@ class PipelineOrchestrator:
                 "gap_fade_short": GapFadeShortStructure,
                 "orb_15": ORB15Structure,
                 "pdh_pdl_reject": PDHPDLRejectStructure,
+                "pdh_pdl_sweep_reclaim": PDHPDLSweepReclaimStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:
