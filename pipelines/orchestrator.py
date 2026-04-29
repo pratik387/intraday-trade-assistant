@@ -45,6 +45,7 @@ from structures.pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructu
 from structures.gap_and_go_continuation_structure import GapAndGoContinuationStructure
 from structures.ema5_alert_pullback_structure import EMA5AlertPullbackStructure
 from structures.camarilla_l3_reversal_structure import CamarillaL3ReversalStructure
+from structures.expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
@@ -63,6 +64,10 @@ from structures.data_models import MarketContext
 # camarilla_l3_reversal added 2026-04-29 — sweep+reclaim of canonical
 # Camarilla L3/H3 pivots, ADX-gated mean-reversion — see
 # specs/2026-04-29-camarilla_l3_reversal-plan.md.
+# expiry_pin_strike_reversal added 2026-04-29 — calendar+OI driven pin-magnet
+# mean-revert on NIFTY heavyweights, gated on F&O expiry days post 13:30 IST
+# with RSI(14) decay confirmation — see
+# specs/2026-04-29-expiry_pin_strike_reversal-plan.md.
 SUB7_SETUPS: frozenset = frozenset({
     "gap_fade_short",
     "orb_15",
@@ -71,6 +76,7 @@ SUB7_SETUPS: frozenset = frozenset({
     "gap_and_go_continuation",
     "ema5_alert_pullback",
     "camarilla_l3_reversal",
+    "expiry_pin_strike_reversal",
 })
 
 logger = get_agent_logger()
@@ -282,6 +288,7 @@ class PipelineOrchestrator:
                 "gap_and_go_continuation": GapAndGoContinuationStructure,
                 "ema5_alert_pullback": EMA5AlertPullbackStructure,
                 "camarilla_l3_reversal": CamarillaL3ReversalStructure,
+                "expiry_pin_strike_reversal": ExpiryPinStrikeReversalStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:
