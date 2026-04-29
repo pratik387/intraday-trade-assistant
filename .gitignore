@@ -24,6 +24,10 @@ backtesting/
 data/sidecar/
 *.feather
 *.parquet
+# Option-chain OI store (sub8 expiry_pin_strike_reversal): parquet tree is
+# ~800 sessions × ~5MB; backfilled locally, not tracked. Keep .gitkeep + docs.
+data/option_chain/*.parquet
+data/option_chain/**/*.parquet
 
 # Results & Reports
 analysis_report*
