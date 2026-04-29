@@ -601,3 +601,19 @@ def test_wide_open_preserves_trigger_geometry(monkeypatch):
     assert res.structure_detected is False, (
         "trigger geometry must be enforced regardless of wide_open"
     )
+
+
+def test_wide_open_bypasses_universe_and_cap_segment(monkeypatch):
+    """Under wide_open, off-universe symbol AND off-cap-segment still fires —
+    gauntlet decides which slice the detector works in (lessons.md 2026-04-15)."""
+    import structures.pdh_pdl_sweep_reclaim_structure as mod
+    monkeypatch.setattr(mod, "_is_wide_open", lambda: True)
+    det = PDHPDLSweepReclaimStructure(_cfg())
+    df = _build_pdh_short_session()
+    # Both off-universe AND wrong cap_segment — without wide_open this rejects
+    # at the universe check; under wide_open, both gates skipped.
+    det.detect(_ctx(df.iloc[:-1], symbol="NSE:NONEXISTENT", cap_segment="micro_cap"))
+    res = det.detect(_ctx(df, symbol="NSE:NONEXISTENT", cap_segment="micro_cap"))
+    assert res.structure_detected is True, (
+        f"wide_open should bypass universe + cap_segment: {res.rejection_reason}"
+    )

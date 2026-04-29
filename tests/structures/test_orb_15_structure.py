@@ -549,3 +549,21 @@ def test_plan_short_emits_tiered_t1_t2():
     assert len(targets) == 2
     assert targets[0]["level"] > targets[1]["level"]  # T1 above T2 (short)
     assert targets[0]["level"] < plan.entry_price  # T1 below entry (short)
+
+
+# =============================================================================
+# Wide-open mode bypass — universe is a design-inferred filter
+# =============================================================================
+
+def test_wide_open_bypasses_universe_filter(monkeypatch):
+    """Under wide_open, an off-universe symbol still fires (gauntlet decides
+    which universe slice the detector works in — see lessons.md 2026-04-15)."""
+    import structures.orb_15_structure as mod
+    monkeypatch.setattr(mod, "_is_wide_open", lambda: True)
+    det = ORB15Structure(_cfg())
+    df = _build_sweep_reclaim_long_df()
+    ctx = _ctx(df, symbol="NSE:RANDOMSMALLCAP")   # not in fno_liquid_200
+    res = det.detect(ctx)
+    assert res.structure_detected is True, (
+        f"wide_open should bypass universe: {res.rejection_reason}"
+    )

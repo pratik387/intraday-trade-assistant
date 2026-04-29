@@ -241,10 +241,15 @@ class ORB15Structure(BaseStructure):
                 rejection_reason=reason or None,
             )
 
-        # ---- Universe + bars + active window (always enforced) ----
-        if not in_universe(ctx.symbol, self.universe_key):
+        _wide_open = _is_wide_open()
+
+        # ---- Universe (design-inferred — bypassed under wide_open) ----
+        # Per master plan: wide-open OCI capture must see ALL symbols so the
+        # gauntlet can decide which universe slice the detector works in.
+        if not _wide_open and not in_universe(ctx.symbol, self.universe_key):
             return _empty(f"universe_filter:{ctx.symbol} not in {self.universe_key}")
 
+        # ---- Bars + active window (always enforced — mechanical) ----
         df = ctx.df_5m
         if df is None or len(df) < self.min_bars_required:
             return _empty("Insufficient bars")
@@ -258,8 +263,6 @@ class ORB15Structure(BaseStructure):
         # session_date format: ISO date string (IST-naive — no tzinfo).
         session_date_iso = pd.Timestamp(ctx.session_date).strftime("%Y-%m-%d")
         self._maybe_reset_latch(session_date_iso)
-
-        _wide_open = _is_wide_open()
 
         # ---- DOW exclusion (design-inferred — bypassed under wide_open) ----
         # Use session_date.weekday() rather than last_ts.weekday() to be robust

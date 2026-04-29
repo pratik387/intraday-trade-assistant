@@ -475,3 +475,19 @@ def test_wide_open_preserves_trigger_geometry(monkeypatch):
     ctx = _make_ctx(df, df_daily=df_daily, pdc=100.0)
     res = det.detect(ctx)
     assert res.structure_detected is False
+
+
+def test_wide_open_bypasses_universe_and_cap_segment(monkeypatch):
+    """Under wide_open, off-universe symbol AND off-cap-segment still fires —
+    gauntlet decides which slice the detector works in (lessons.md 2026-04-15)."""
+    import structures.gap_and_go_continuation_structure as mod
+    monkeypatch.setattr(mod, "_is_wide_open", lambda: True)
+    det = GapAndGoContinuationStructure(_cfg())
+    df = _build_long_session(pdc=100.0, gap_pct=1.5)
+    df_daily = _build_daily_df(pdc=100.0, sma20=98.0)
+    ctx = _make_ctx(df, df_daily=df_daily, pdc=100.0,
+                    symbol="NSE:NONEXISTENT", cap_segment="micro_cap")
+    res = det.detect(ctx)
+    assert res.structure_detected is True, (
+        f"wide_open should bypass universe + cap_segment: {res.rejection_reason}"
+    )

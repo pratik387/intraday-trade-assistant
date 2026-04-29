@@ -278,13 +278,18 @@ class PDHPDLSweepReclaimStructure(BaseStructure):
                 rejection_reason=reason or None,
             )
 
-        # ---- Universe + cap_segment + bars + active window ----
-        if not in_universe(ctx.symbol, self.universe_key):
+        _wide_open = _is_wide_open()
+
+        # ---- Universe + cap_segment (design-inferred — bypassed under wide_open) ----
+        # Per master plan: wide-open OCI capture must see ALL symbols / cap
+        # segments so the gauntlet can decide which slice the detector works in.
+        if not _wide_open and not in_universe(ctx.symbol, self.universe_key):
             return _empty(f"universe_filter:{ctx.symbol} not in {self.universe_key}")
 
-        if ctx.cap_segment not in self.allowed_caps:
+        if not _wide_open and ctx.cap_segment not in self.allowed_caps:
             return _empty(f"cap_segment {ctx.cap_segment!r} not in allowed set")
 
+        # ---- Bars + active window (always enforced — mechanical) ----
         df = ctx.df_5m
         if df is None or len(df) < self.min_bars_required:
             return _empty("Insufficient bars")
@@ -320,7 +325,6 @@ class PDHPDLSweepReclaimStructure(BaseStructure):
         # Skipped under wide_open_mode — design-inferred filter, not trigger
         # geometry.
         allowed_sides_today = set(self.allowed_sides)
-        _wide_open = _is_wide_open()
         if self.gap_context_enabled and not _wide_open and ctx.pdc and float(ctx.pdc) > 0:
             open_today = float(df.iloc[0]["open"])
             gap_frac = (open_today - float(ctx.pdc)) / float(ctx.pdc)

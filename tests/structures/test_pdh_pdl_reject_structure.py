@@ -132,3 +132,21 @@ def test_does_not_fire_when_high_far_from_pdh():
     ctx = _ctx(df, pdh=105.0)
     res = det.detect(ctx)
     assert res.structure_detected is False
+
+
+# =============================================================================
+# Wide-open mode bypass — universe is a design-inferred filter
+# =============================================================================
+
+def test_wide_open_bypasses_universe_filter(monkeypatch):
+    """Under wide_open, off-universe Nifty50 major still fires (gauntlet
+    decides the cap slice — see lessons.md 2026-04-15)."""
+    import structures.pdh_pdl_reject_structure as mod
+    monkeypatch.setattr(mod, "_is_wide_open", lambda: True)
+    det = PDHPDLRejectStructure(_cfg())
+    df = _build_pdh_reject_df()
+    ctx = _ctx(df, symbol="NSE:RELIANCE", pdh=105.0)
+    res = det.detect(ctx)
+    assert res.structure_detected is True, (
+        f"wide_open should bypass universe: {res.rejection_reason}"
+    )

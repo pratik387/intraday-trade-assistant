@@ -101,7 +101,13 @@ class PDHPDLRejectStructure(BaseStructure):
                 rejection_reason=reason or None,
             )
 
-        if not in_universe(ctx.symbol, self.universe_key):
+        # rev2: design-inferred filters bypass under wide_open_mode
+        _wide_open = _is_wide_open()
+
+        # ---- Universe (design-inferred — bypassed under wide_open) ----
+        # Per master plan: wide-open OCI capture must see ALL symbols so the
+        # gauntlet can decide which universe slice the detector works in.
+        if not _wide_open and not in_universe(ctx.symbol, self.universe_key):
             return _empty(f"universe_filter:{ctx.symbol} not in {self.universe_key}")
 
         df = ctx.df_5m
@@ -112,9 +118,6 @@ class PDHPDLRejectStructure(BaseStructure):
         cur_t = last_ts.time() if hasattr(last_ts, "time") else last_ts
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
-
-        # rev2: design-inferred filters bypass under wide_open_mode
-        _wide_open = _is_wide_open()
 
         if ctx.pdh is None or ctx.pdl is None:
             return _empty("PDH/PDL unavailable")
