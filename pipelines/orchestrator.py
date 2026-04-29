@@ -42,6 +42,7 @@ from structures.gap_fade_short_structure import GapFadeShortStructure
 from structures.orb_15_structure import ORB15Structure
 from structures.pdh_pdl_reject_structure import PDHPDLRejectStructure
 from structures.pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructure
+from structures.gap_and_go_continuation_structure import GapAndGoContinuationStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
@@ -51,11 +52,15 @@ from structures.data_models import MarketContext
 # closing_hour PF 0.45 with no filter set reaching Phase 1 criteria).
 # pdh_pdl_sweep_reclaim added 2026-04-29 as Indian-pro-mechanic replacement
 # for the borderline-DROP pdh_pdl_reject — see specs/2026-04-29-pdh_pdl_sweep_reclaim-plan.md.
+# gap_and_go_continuation added 2026-04-29 as REGIME-COMPLEMENT to the live
+# gap_fade_short (large-cap continues, small-cap fades) — see
+# specs/2026-04-29-gap_and_go_continuation-plan.md.
 SUB7_SETUPS: frozenset = frozenset({
     "gap_fade_short",
     "orb_15",
     "pdh_pdl_reject",
     "pdh_pdl_sweep_reclaim",
+    "gap_and_go_continuation",
 })
 
 logger = get_agent_logger()
@@ -264,6 +269,7 @@ class PipelineOrchestrator:
                 "orb_15": ORB15Structure,
                 "pdh_pdl_reject": PDHPDLRejectStructure,
                 "pdh_pdl_sweep_reclaim": PDHPDLSweepReclaimStructure,
+                "gap_and_go_continuation": GapAndGoContinuationStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:

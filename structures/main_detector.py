@@ -20,6 +20,7 @@ from .gap_fade_short_structure import GapFadeShortStructure
 from .orb_15_structure import ORB15Structure
 from .pdh_pdl_reject_structure import PDHPDLRejectStructure
 from .pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructure
+from .gap_and_go_continuation_structure import GapAndGoContinuationStructure
 from pipelines.base_pipeline import get_cap_segment
 
 logger = get_agent_logger()
@@ -62,6 +63,7 @@ class MainDetector(BaseStructure):
             ("orb_15", ORB15Structure, "orb_15"),
             ("pdh_pdl_reject", PDHPDLRejectStructure, "pdh_pdl_reject"),
             ("pdh_pdl_sweep_reclaim", PDHPDLSweepReclaimStructure, "pdh_pdl_sweep_reclaim"),
+            ("gap_and_go_continuation", GapAndGoContinuationStructure, "gap_and_go_continuation"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -732,6 +734,7 @@ class MainDetector(BaseStructure):
             'vwap_first_pullback': 'vwap_first_pullback',
             'pdh_pdl_reject': 'pdh_pdl_reject',
             'pdh_pdl_sweep_reclaim': 'pdh_pdl_sweep_reclaim',
+            'gap_and_go_continuation': 'gap_and_go_continuation',
         }
 
         return direct_mappings.get(structure_type)
