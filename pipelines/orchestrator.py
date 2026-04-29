@@ -43,6 +43,7 @@ from structures.orb_15_structure import ORB15Structure
 from structures.pdh_pdl_reject_structure import PDHPDLRejectStructure
 from structures.pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructure
 from structures.gap_and_go_continuation_structure import GapAndGoContinuationStructure
+from structures.ema5_alert_pullback_structure import EMA5AlertPullbackStructure
 from structures.data_models import MarketContext
 
 # Setup types that use Sub7 fast path — detector emits complete TradePlan,
@@ -55,12 +56,16 @@ from structures.data_models import MarketContext
 # gap_and_go_continuation added 2026-04-29 as REGIME-COMPLEMENT to the live
 # gap_fade_short (large-cap continues, small-cap fades) — see
 # specs/2026-04-29-gap_and_go_continuation-plan.md.
+# ema5_alert_pullback added 2026-04-29 — Subasish Pani 5 EMA Alert-Candle
+# Pullback method (trend-pullback continuation) — see
+# specs/2026-04-29-ema5_alert_pullback-plan.md.
 SUB7_SETUPS: frozenset = frozenset({
     "gap_fade_short",
     "orb_15",
     "pdh_pdl_reject",
     "pdh_pdl_sweep_reclaim",
     "gap_and_go_continuation",
+    "ema5_alert_pullback",
 })
 
 logger = get_agent_logger()
@@ -270,6 +275,7 @@ class PipelineOrchestrator:
                 "pdh_pdl_reject": PDHPDLRejectStructure,
                 "pdh_pdl_sweep_reclaim": PDHPDLSweepReclaimStructure,
                 "gap_and_go_continuation": GapAndGoContinuationStructure,
+                "ema5_alert_pullback": EMA5AlertPullbackStructure,
             }
             cls = _cls_map.get(setup_type)
             if cls is None:
