@@ -76,3 +76,13 @@ Shortcut patterns to avoid: "v1 baseline to measure against," "ship scaffolding 
 3. "Treat each code change as important" means: read every line, verify against CLAUDE.md rules (no hardcoded defaults, IST-naive, live/backtest compat), verify against the plan, run tests, only THEN commit.
 4. If the agent has already done partial work, DON'T just accept its diff — read every line, verify, fix, then commit (or rewrite). Reviewing carefully is acceptable; rubber-stamping is not.
 5. Estimate scope realistically — "6 plans, ~120 tasks" is days of careful work, not one autonomous afternoon. Tell the user so they can decide cadence.
+
+### 2026-04-29 — Commit per logical phase, not per task
+**What went wrong:** While implementing pdh_pdl_sweep_reclaim with manual per-task discipline, I made 14 commits for one plan (one per task: config block, register category, sub8_oci, opening_bell, scaffold, fixture, state machine, mirror test, negative tests, gap-context, multi-day, plan_*_strategy, wide_open, register, wire). User pushed back: "this is not best way to commit". Compare to orb_15 which was 3 commits (Phase 0 + Phase 1 + lessons) and was cleaner.
+**Why:** Per-task commits create noisy git history. A reviewer reading `git log --oneline` for one plan sees 14 lines of "Task 1.4 / Task 1.5 / Task 1.6" instead of 3 meaningful units. Bisect / revert / squash all become harder. The plan's `commit per task` instruction was meant as a TDD-discipline cue (don't batch all changes into one mega-commit), not a literal "every task is its own commit." The real rule: commit per LOGICAL feature unit. For a detector implementation, that's typically ~3 commits: Phase 0 (configs + registry), Phase 1 (detector + tests + conftest), Phase 2 (wiring).
+**Rule:**
+1. For new detector / setup implementations, target ~3 commits per plan: Phase 0 (config scaffolding bundled), Phase 1 (TDD detector + tests as ONE coherent unit), Phase 2 (wiring + smoke).
+2. When the plan says "commit per task", read it as "commit per logical feature unit" — group related task commits if they share a coherent message.
+3. Sub-tasks of TDD development (write failing test → implement → make it pass) are part of ONE logical unit and should be ONE commit at the GREEN state. Don't commit RED states unless the plan explicitly requires them.
+4. If you've already over-committed, soft-reset and re-commit with the right cadence — the user's "no shortcuts" feedback applies to fixing past mistakes, not just future ones.
+5. Atomic per-task commits are appropriate for: (a) tightly-coupled bug fixes where each commit must be revertable in isolation, (b) plans that explicitly call for it.
