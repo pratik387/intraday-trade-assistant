@@ -387,7 +387,8 @@ class ExitExecutor:
                 original_sl = plan_sl  # Store original for logging
                 if not math.isnan(plan_sl):
                     atr_min_mult = float(load_filters()["exit_sl_atr_mult_min"])
-                    atr_cached = float(pos.plan.get("indicators", {}).get("atr", float("nan")))
+                    _atr_val = pos.plan.get("indicators", {}).get("atr")
+                    atr_cached = float(_atr_val) if _atr_val is not None else float("nan")
                     if (not math.isnan(atr_cached)) and atr_min_mult > 0:
                         # Calculate ATR-based minimum SL
                         if pos.side.upper() == "BUY":
@@ -765,7 +766,8 @@ class ExitExecutor:
             return plan_sl
 
         # Get ATR for widening calculation
-        atr_cached = float(pos.plan.get("indicators", {}).get("atr", float("nan")))
+        _atr_val = pos.plan.get("indicators", {}).get("atr")
+        atr_cached = float(_atr_val) if _atr_val is not None else float("nan")
         if math.isnan(atr_cached) or atr_cached <= 0:
             return plan_sl
 
@@ -1209,10 +1211,14 @@ class ExitExecutor:
             # Update cache
             self._last_momentum_check[cache_key] = current_time
 
-            # Get indicators from plan (these should be calculated elsewhere)
+            # Get indicators from plan (these should be calculated elsewhere).
+            # Guard against indicators[key]=None — `.get(k, default)` returns None
+            # when the key is present with a None value, not the default.
             indicators = plan.get("indicators", {})
-            rsi = float(indicators.get("rsi", 50))
-            adx = float(indicators.get("adx", 20))
+            _rsi = indicators.get("rsi")
+            _adx = indicators.get("adx")
+            rsi = float(_rsi) if _rsi is not None else 50.0
+            adx = float(_adx) if _adx is not None else 20.0
 
             # Momentum filter logic
             if side == "BUY":

@@ -57,7 +57,8 @@ _LEGACY_URL_TEMPLATE = (
     "{year}/{mon_upper}/fo{ddmmmyyyy}bhav.csv.zip"
 )
 _NEW_URL_TEMPLATE = (
-    "https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_{yyyymmdd}.csv.zip"
+    "https://nsearchives.nseindia.com/content/fo/"
+    "BhavCopy_NSE_FO_0_0_0_{yyyymmdd}_F_0000.csv.zip"
 )
 # A real browser User-Agent — NSE's archive endpoints reject curl/python-urllib defaults.
 _DEFAULT_HEADERS = {
