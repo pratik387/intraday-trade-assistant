@@ -347,6 +347,14 @@ class PipelineOrchestrator:
                     indicators[col] = float(df5m[col].iloc[-1])
 
             bar_timestamp = pd.to_datetime(df5m.index[-1])
+
+            # NIFTY 50 spot at this bar — needed by expiry_pin_strike_reversal
+            # for spot-vs-pin distance. None for non-expiry sessions / non-
+            # heavyweight symbols just means the detector returns no-fire.
+            from services.index_spot_loader import get_nifty_spot
+            nifty_spot = get_nifty_spot(bar_timestamp)
+            if nifty_spot is not None:
+                indicators["nifty_spot"] = nifty_spot
             current_price = float(df5m["close"].iloc[-1])
 
             if cap_segment is None:

@@ -205,29 +205,58 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
                 pass
         return None
 
+    # Walk-back cap when searching for the latest available bhavcopy.
+    # 7 calendar days handles weekend + a 4-5 day NSE holiday cluster (e.g.,
+    # Christmas, Diwali). If no bhavcopy is reachable within this window,
+    # the detector returns no-fire — better to skip than fire on stale data.
+    _MAX_LOOKBACK_DAYS = 7
+
     def _resolve_pin_strike(
         self,
         session_date,
     ) -> Optional[float]:
-        """Look up the pin strike via the OI loader.
+        """Look up the pin strike via the OI loader, using D-1 settlement OI.
 
-        Tries each expiry mode in `self.expiry_types` in order; returns the
-        first non-None result. None on any miss (so detect can reject cleanly).
+        Why D-1, not session_date: NSE publishes the F&O bhavcopy ~6 PM IST
+        AFTER market close. During an intraday trading session on date D, the
+        only OI snapshot a live trader can have read is D-1's settlement.
+        Backtest uses D-1 too so historical fills match what live would have
+        seen. (See docs/option_chain_data_source.md "Live OI fallback".)
+
+        Walks backward from session_date - 1 up to 7 calendar days to find the
+        latest available parquet — handles weekends + NSE holiday clusters.
+        Within each candidate date, falls through configured expiry modes:
+        FileNotFoundError = parquet missing for that date → step back another
+        day. ValueError = parquet exists but no contracts at this mode → try
+        the next mode at the same date.
         """
-        for expiry_mode in ("weekly", "monthly"):
-            if expiry_mode not in self.expiry_types:
-                continue
-            try:
-                strike = self.oi_loader.find_max_oi_strike(
-                    session_date, symbol=self.pin_index, expiry=expiry_mode,
-                )
-                return float(strike)
-            except FileNotFoundError:
-                # Snapshot missing → skip mode; might succeed under another
-                continue
-            except ValueError:
-                # No contracts at the chosen expiry; try next mode
-                continue
+        from datetime import datetime, timedelta
+        # Always coerce to a plain `date`. session_date may arrive as a date,
+        # datetime, pandas.Timestamp, or ISO string — pd.Timestamp(...).date()
+        # handles all four. Using date keeps the loader's parquet keys (also
+        # date-typed) directly comparable.
+        if isinstance(session_date, datetime):
+            sd = session_date.date()
+        else:
+            sd = pd.Timestamp(session_date).date()
+        for offset in range(1, self._MAX_LOOKBACK_DAYS + 1):
+            target = sd - timedelta(days=offset)
+            for expiry_mode in ("weekly", "monthly"):
+                if expiry_mode not in self.expiry_types:
+                    continue
+                try:
+                    strike = self.oi_loader.find_max_oi_strike(
+                        target, symbol=self.pin_index, expiry=expiry_mode,
+                    )
+                    return float(strike)
+                except FileNotFoundError:
+                    # No parquet for `target` — step back one more day; no
+                    # point trying other modes at the same missing date.
+                    break
+                except ValueError:
+                    # Parquet exists but no contracts at this expiry mode;
+                    # try the next mode at the same date.
+                    continue
         return None
 
     def _maybe_reset_state(self, session_date_iso: str) -> None:

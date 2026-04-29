@@ -67,24 +67,34 @@ def _cfg(**overrides):
 
 
 class _StubOILoader:
-    """Test stub: hard-coded pin strike + expiry calendar."""
+    """Test stub: hard-coded pin strike + expiry calendar.
+
+    Records every (session_date, expiry) pair queried in `self.queries`
+    so tests can assert which date the detector actually looked up.
+    """
 
     def __init__(
         self,
         pin_strike: Optional[float] = 23100.0,
         is_expiry: bool = True,
-        weekly_raises: bool = False,
+        weekly_unavailable: bool = False,
         monthly_pin: Optional[float] = None,
     ):
         self._pin_strike = pin_strike
         self._is_expiry = is_expiry
-        self._weekly_raises = weekly_raises
+        # weekly_unavailable raises ValueError (parquet exists, no weekly
+        # contracts at this expiry mode). For real "parquet missing for this
+        # date", a stub would raise FileNotFoundError instead — see the
+        # date-walk-back behavior tested in test_walks_back_when_parquet_missing.
+        self._weekly_unavailable = weekly_unavailable
         self._monthly_pin = monthly_pin
+        self.queries = []
 
     def find_max_oi_strike(self, session_date, symbol="NIFTY", expiry="weekly", oi_root=None):
+        self.queries.append((session_date, expiry))
         if expiry == "weekly":
-            if self._weekly_raises:
-                raise FileNotFoundError("no weekly snapshot")
+            if self._weekly_unavailable:
+                raise ValueError("no weekly contracts at this mode")
             if self._pin_strike is None:
                 raise ValueError("no contracts")
             return float(self._pin_strike)
@@ -426,7 +436,7 @@ def test_fires_on_monthly_expiry_when_weekly_absent():
     """Last Thursday of June 2024 — weekly snapshot raises, monthly returns 23100."""
     sd = date(2024, 6, 27)
     stub = _StubOILoader(
-        pin_strike=None, is_expiry=True, weekly_raises=True, monthly_pin=23100.0,
+        pin_strike=None, is_expiry=True, weekly_unavailable=True, monthly_pin=23100.0,
     )
     det = ExpiryPinStrikeReversalStructure(_cfg(), oi_loader=stub)
     df = _build_session_5m(
@@ -437,6 +447,99 @@ def test_fires_on_monthly_expiry_when_weekly_absent():
     assert res.structure_detected is True, f"expected fire: {res.rejection_reason}"
     assert res.events[0].side == "short"
     assert res.events[0].levels["pin_strike"] == 23100.0
+
+
+# =============================================================================
+# D-1 lookup (live-trading parity)
+# =============================================================================
+
+def test_uses_prior_session_oi_not_same_session():
+    """The detector must look up D-1's bhavcopy, NOT D's. Live traders don't
+    have today's settlement OI mid-session (NSE publishes ~6PM after close)."""
+    sd = date(2024, 6, 6)   # Thursday weekly expiry
+    stub = _StubOILoader(pin_strike=23100.0, is_expiry=True)
+    det = ExpiryPinStrikeReversalStructure(_cfg(), oi_loader=stub)
+    df = _build_session_5m(
+        sd, current_time="14:00:00", n_bars=40, close=1500.0,
+        rsi_target_prior=75.0, rsi_target_current=68.0,
+    )
+    res = det.detect(_ctx(df, sd, nifty_spot=23200.0))
+    assert res.structure_detected is True
+    # First query should be D-1 (2024-06-05), NEVER session_date itself.
+    queried_dates = {q[0] for q in stub.queries}
+    assert sd not in queried_dates, (
+        f"detector must not query same-day OI; queries={stub.queries}"
+    )
+    assert date(2024, 6, 5) in queried_dates, (
+        f"detector must query D-1; queries={stub.queries}"
+    )
+
+
+def test_walks_back_when_parquet_missing():
+    """If D-1's bhavcopy is missing (e.g., a holiday gap or backfill gap),
+    detector walks back day-by-day up to MAX_LOOKBACK_DAYS=7."""
+    sd = date(2024, 6, 10)   # Monday after a Thursday expiry
+
+    # Stub: raise FileNotFoundError for the first 3 days back, succeed at D-4.
+    class _GapStub:
+        def __init__(self):
+            self.queries = []
+        def find_max_oi_strike(self, session_date, symbol="NIFTY", expiry="weekly", oi_root=None):
+            self.queries.append((session_date, expiry))
+            from datetime import timedelta
+            offset_days = (sd - session_date).days
+            if offset_days <= 3:
+                raise FileNotFoundError(f"no parquet for {session_date}")
+            return 23100.0
+        def is_expiry_day(self, session_date):
+            # Monday isn't an expiry day in real life, but stub yes for the
+            # focused walk-back test.
+            return True
+
+    stub = _GapStub()
+    det = ExpiryPinStrikeReversalStructure(_cfg(), oi_loader=stub)
+    df = _build_session_5m(
+        sd, current_time="14:00:00", n_bars=40, close=1500.0,
+        rsi_target_prior=75.0, rsi_target_current=68.0,
+    )
+    res = det.detect(_ctx(df, sd, nifty_spot=23200.0))
+    assert res.structure_detected is True, (
+        f"detector should walk back to D-4: {res.rejection_reason}"
+    )
+    assert res.events[0].levels["pin_strike"] == 23100.0
+    # Should have queried D-1, D-2, D-3 (all FileNotFound) then D-4 (success).
+    queried_offsets = sorted({(sd - q[0]).days for q in stub.queries})
+    assert queried_offsets[:4] == [1, 2, 3, 4], (
+        f"expected D-1..D-4 queries, got offsets {queried_offsets}"
+    )
+
+
+def test_walk_back_caps_at_seven_days():
+    """If no parquet within 7 days back, return None — no fire."""
+    sd = date(2024, 6, 6)
+
+    class _AllMissingStub:
+        queries = []
+        def find_max_oi_strike(self, session_date, symbol="NIFTY", expiry="weekly", oi_root=None):
+            self.queries.append((session_date, expiry))
+            raise FileNotFoundError(f"no parquet anywhere")
+        def is_expiry_day(self, session_date):
+            return True
+
+    stub = _AllMissingStub()
+    det = ExpiryPinStrikeReversalStructure(_cfg(), oi_loader=stub)
+    df = _build_session_5m(
+        sd, current_time="14:00:00", n_bars=40, close=1500.0,
+        rsi_target_prior=75.0, rsi_target_current=68.0,
+    )
+    res = det.detect(_ctx(df, sd, nifty_spot=23200.0))
+    assert res.structure_detected is False
+    assert "pin strike unavailable" in (res.rejection_reason or "").lower()
+    # Should have stopped at D-7, not gone deeper.
+    queried_offsets = sorted({(sd - q[0]).days for q in stub.queries})
+    assert max(queried_offsets) == 7, (
+        f"expected walk-back to cap at 7 days, got max offset {max(queried_offsets)}"
+    )
 
 
 # =============================================================================

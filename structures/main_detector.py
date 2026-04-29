@@ -434,6 +434,14 @@ class MainDetector(BaseStructure):
             # BUGFIX: Use DataFrame timestamp instead of datetime.now() for backtesting compatibility
             bar_timestamp = pd.to_datetime(d.index[-1])
 
+            # NIFTY 50 spot at this bar — needed by expiry_pin_strike_reversal
+            # for spot-vs-pin distance computation. Same lazy-cached helper
+            # as the orchestrator path so both contexts agree.
+            from services.index_spot_loader import get_nifty_spot
+            nifty_spot = get_nifty_spot(bar_timestamp)
+            if nifty_spot is not None:
+                indicators['nifty_spot'] = nifty_spot
+
             return MarketContext(
                 symbol=symbol,
                 current_price=float(d['close'].iloc[-1]),
