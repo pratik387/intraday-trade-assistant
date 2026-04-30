@@ -281,8 +281,13 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
 
         _wide_open = _is_wide_open()
 
-        # ---- Heavyweight universe (mandatory; not bypassed by wide_open) ----
-        if ctx.symbol not in self._heavyweights:
+        # ---- Heavyweight universe (config bias; bypassed under wide_open) ----
+        # Pre-Phase-C this was hard-coded as "mandatory; not bypassed by wide_open".
+        # That contradicts the wide_open contract (let the gauntlet pick the
+        # universe — don't bake config biases into detection). Bringing it in
+        # line with the other 6 sub8 detectors. The expiry_day check below
+        # remains mandatory — that's setup definition, not a filter.
+        if not _wide_open and ctx.symbol not in self._heavyweights:
             return _empty(f"symbol {ctx.symbol} not in NIFTY heavyweights")
 
         # ---- Cap segment guard (design-inferred; bypassed under wide_open) ----
