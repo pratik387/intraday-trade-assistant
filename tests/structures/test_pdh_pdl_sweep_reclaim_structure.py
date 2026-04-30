@@ -356,12 +356,18 @@ def test_first_trigger_latch_prevents_double_fire():
     det.detect(_ctx(df1.iloc[:-1]))                        # latch sweep
     res1 = det.detect(_ctx(df1))                           # confirm fires
     assert res1.structure_detected is True, f"first fire failed: {res1.rejection_reason}"
+    # Plan-build registers the first-trigger latch (commit-on-success pattern).
+    plan1 = det.plan_short_strategy(_ctx(df1, vwap=103.0), event=res1.events[0])
+    assert plan1 is not None, "plan-build must succeed to register the latch"
 
-    # Build a second sweep+confirm later in the same session_date
+    # Build a second sweep+confirm later in the same session_date.
+    # _build_plan checks the latch and returns None even if detect() emits.
     df2 = _build_pdh_short_session(sweep_time="13:25:00", confirm_time="13:30:00")
-    det.detect(_ctx(df2.iloc[:-1]))                        # would latch — but is it blocked?
-    res2 = det.detect(_ctx(df2))
-    assert res2.structure_detected is False, "latch should block same-day second fire"
+    det.detect(_ctx(df2.iloc[:-1]))                        # sweep
+    res2 = det.detect(_ctx(df2))                           # confirm — detect can still fire
+    plan2 = (det.plan_short_strategy(_ctx(df2, vwap=103.0), event=res2.events[0])
+             if res2.events else None)
+    assert plan2 is None, "latch should block second plan-build same session"
 
 
 # =============================================================================
@@ -492,7 +498,8 @@ def test_plan_short_emits_hard_sl_t1_t2():
     df = _build_pdh_short_session()
     # Set VWAP slightly below entry so T1 = VWAP retest is direction-correct
     det.detect(_ctx(df.iloc[:-1], vwap=103.0))
-    plan = det.plan_short_strategy(_ctx(df, vwap=103.0))
+    res = det.detect(_ctx(df, vwap=103.0))
+    plan = det.plan_short_strategy(_ctx(df, vwap=103.0), event=res.events[0])
     assert plan is not None
     assert plan.side == "short"
     # Stop above entry for short
@@ -520,7 +527,8 @@ def test_plan_long_emits_hard_sl_t1_t2():
     df = _build_pdl_long_session()
     # Set VWAP above entry so T1 = VWAP retest is direction-correct (long)
     det.detect(_ctx(df.iloc[:-1], pdl=98.0, pdh=105.0, pdc=99.5, vwap=99.5))
-    plan = det.plan_long_strategy(_ctx(df, pdl=98.0, pdh=105.0, pdc=99.5, vwap=99.5))
+    res = det.detect(_ctx(df, pdl=98.0, pdh=105.0, pdc=99.5, vwap=99.5))
+    plan = det.plan_long_strategy(_ctx(df, pdl=98.0, pdh=105.0, pdc=99.5, vwap=99.5), event=res.events[0])
     assert plan is not None
     assert plan.side == "long"
     assert plan.risk_params.hard_sl < plan.entry_price, (
@@ -549,7 +557,8 @@ def test_plan_min_stop_distance_widens_tight_stops():
     det = PDHPDLSweepReclaimStructure(_cfg(min_stop_distance_pct=0.5))  # 0.5% floor
     df = _build_pdh_short_session()
     det.detect(_ctx(df.iloc[:-1]))
-    plan = det.plan_short_strategy(_ctx(df))
+    res = det.detect(_ctx(df))
+    plan = det.plan_short_strategy(_ctx(df), event=res.events[0])
     assert plan is not None
     entry = plan.entry_price
     risk = plan.risk_params.risk_per_share

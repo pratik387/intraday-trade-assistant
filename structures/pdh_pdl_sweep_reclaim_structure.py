@@ -376,7 +376,10 @@ class PDHPDLSweepReclaimStructure(BaseStructure):
             self._pending_sweeps.pop(latch_key, None)
 
             if fires:
-                self._fired_today.add(latch_key)
+                # NOTE: latch is NOT added here. detect() must remain
+                # idempotent — same (symbol, bar) re-invocation must return
+                # the same events. The latch is committed in _build_plan
+                # AFTER the TradePlan is constructed (commit-on-success).
                 evt = self._build_event(ctx, side, pending, bar_close)
                 return StructureAnalysis(
                     structure_detected=True,
@@ -456,13 +459,23 @@ class PDHPDLSweepReclaimStructure(BaseStructure):
         # Fallback: 2R from entry
         return close - 2.0 * risk if side == "short" else close + 2.0 * risk
 
-    def _build_plan(self, ctx: MarketContext, side: str) -> Optional[TradePlan]:
-        """Build a TradePlan after a confirmed sweep+reclaim+confirm fire."""
-        analysis = self.detect(ctx)
-        if not analysis.structure_detected or not analysis.events:
+    def _build_plan(self, ctx: MarketContext, side: str, event: Optional[StructureEvent] = None) -> Optional[TradePlan]:
+        """Build a TradePlan after a confirmed sweep+reclaim+confirm fire.
+
+        Architectural rule (2026-04-30): no re-detect inside _build_plan.
+        The StructureEvent emitted by detect() flows in via the orchestrator.
+        Latch is committed at the bottom of this method, AFTER the TradePlan
+        is built — commit-on-success keeps detect() idempotent.
+        """
+        if event is None:
             return None
-        evt = analysis.events[0]
+        evt = event
         if evt.side != side:
+            return None
+        # Re-entry guard: same (symbol, side, session) only once per session.
+        session_date_iso = pd.Timestamp(ctx.session_date).strftime("%Y-%m-%d")
+        latch_key = (ctx.symbol, side, session_date_iso)
+        if latch_key in self._fired_today:
             return None
 
         levels = evt.levels
@@ -526,6 +539,10 @@ class PDHPDLSweepReclaimStructure(BaseStructure):
         risk_params = RiskParams(hard_sl=hard_sl, risk_per_share=risk, atr=atr)
         exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
 
+        # Commit-on-success latch: same (symbol, side, session) won't
+        # produce another TradePlan today. detect() stays idempotent.
+        self._fired_today.add(latch_key)
+
         return TradePlan(
             symbol=ctx.symbol,
             side=side,
@@ -547,7 +564,7 @@ class PDHPDLSweepReclaimStructure(BaseStructure):
     ) -> Optional[TradePlan]:
         if "long" not in self.allowed_sides:
             return None
-        return self._build_plan(ctx, "long")
+        return self._build_plan(ctx, "long", event=event)
 
     def plan_short_strategy(
         self,
@@ -556,7 +573,7 @@ class PDHPDLSweepReclaimStructure(BaseStructure):
     ) -> Optional[TradePlan]:
         if "short" not in self.allowed_sides:
             return None
-        return self._build_plan(ctx, "short")
+        return self._build_plan(ctx, "short", event=event)
 
     def calculate_risk_params(
         self,

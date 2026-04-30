@@ -211,9 +211,15 @@ class GapFadeShortStructure(BaseStructure):
         Entry: at current close (0.1% slippage tolerance).
         Stop:  above opening gap high + ATR * stop_above_gap_high_atr.
         Target: PDC (if target_type == "pdc_or_open") else opening price.
+
+        Architectural rule (2026-04-30): no re-detect; event REQUIRED.
+        Caller (orchestrator → plan_short_strategy) MUST pass the
+        StructureEvent produced by MainDetector.
         """
-        analysis = self.detect(context)
-        if not analysis.structure_detected:
+        if event is None:
+            return None
+        evt = event
+        if evt.side != "short":
             return None
 
         df = context.df_5m
@@ -274,17 +280,10 @@ class GapFadeShortStructure(BaseStructure):
         risk_params = self.calculate_risk_params(close, context)
         exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
 
-        if analysis.events:
-            evt = analysis.events[0]
-            confidence = evt.confidence
-            notes = evt.context
-            structure_type = evt.structure_type
-            event_trade_id = evt.trade_id
-        else:
-            confidence = analysis.quality_score / 100.0
-            notes = {}
-            structure_type = self.structure_type
-            event_trade_id = None
+        confidence = evt.confidence
+        notes = evt.context
+        structure_type = evt.structure_type
+        event_trade_id = evt.trade_id
 
         return TradePlan(
             symbol=context.symbol,

@@ -385,11 +385,13 @@ class ORB15Structure(BaseStructure):
             structure_detected=True, events=[evt], quality_score=confidence * 100.0,
         )
 
-    def _build_plan(self, ctx: MarketContext, side: str) -> Optional[TradePlan]:
-        analysis = self.detect(ctx)
-        if not analysis.structure_detected:
+    def _build_plan(self, ctx: MarketContext, side: str, event: Optional[StructureEvent] = None) -> Optional[TradePlan]:
+        # Architectural rule (2026-04-30): no re-detect inside _build_plan.
+        # Caller (orchestrator → plan_*_strategy) MUST pass the StructureEvent
+        # produced by MainDetector. None is a programming bug — fail fast.
+        if event is None:
             return None
-        evt = analysis.events[0]
+        evt = event
         if evt.side != side:
             return None
 
@@ -444,11 +446,11 @@ class ORB15Structure(BaseStructure):
 
         return plan
 
-    def plan_long_strategy(self, ctx: MarketContext, event=None) -> Optional[TradePlan]:
-        return self._build_plan(ctx, "long")
+    def plan_long_strategy(self, ctx: MarketContext, event: Optional[StructureEvent] = None) -> Optional[TradePlan]:
+        return self._build_plan(ctx, "long", event=event)
 
-    def plan_short_strategy(self, ctx: MarketContext, event=None) -> Optional[TradePlan]:
-        return self._build_plan(ctx, "short")
+    def plan_short_strategy(self, ctx: MarketContext, event: Optional[StructureEvent] = None) -> Optional[TradePlan]:
+        return self._build_plan(ctx, "short", event=event)
 
     def calculate_risk_params(self, entry_price: float, ctx: MarketContext) -> RiskParams:
         atr = self._get_atr(ctx)

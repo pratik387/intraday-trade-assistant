@@ -388,13 +388,16 @@ def test_does_not_fire_when_cap_segment_micro():
 # =============================================================================
 
 def test_first_trigger_latch_prevents_double_fire():
-    """After L3-long fires once, a second canonical sequence later in the
-    same session is no-op."""
+    """After L3-long fires once + plan_long_strategy commits the latch, a
+    second canonical sequence later in the same session is a no-op."""
     det = CamarillaL3ReversalStructure(_cfg())
     df1 = _build_l3_long_session(sweep_time="11:25:00", confirm_time="11:30:00")
     det.detect(_ctx(df1.iloc[:-1]))
     res1 = det.detect(_ctx(df1))
     assert res1.structure_detected is True
+    # Plan-build registers the first-trigger latch (commit-on-success).
+    plan1 = det.plan_long_strategy(_ctx(df1), event=res1.events[0])
+    assert plan1 is not None
 
     df2 = _build_l3_long_session(sweep_time="13:25:00", confirm_time="13:30:00")
     det.detect(_ctx(df2.iloc[:-1]))
@@ -412,7 +415,8 @@ def test_plan_emits_hard_sl_l4_t1_pivot_t2_h3_for_long():
     det = CamarillaL3ReversalStructure(_cfg())
     df = _build_l3_long_session()
     det.detect(_ctx(df.iloc[:-1]))
-    plan = det.plan_long_strategy(_ctx(df))
+    res = det.detect(_ctx(df))
+    plan = det.plan_long_strategy(_ctx(df), event=res.events[0])
     assert plan is not None
     assert plan.side == "long"
     levels = _camarilla_levels(_PDH, _PDL, _PDC)
@@ -436,7 +440,8 @@ def test_plan_emits_hard_sl_h4_t1_pivot_t2_l3_for_short():
     det = CamarillaL3ReversalStructure(_cfg())
     df = _build_h3_short_session()
     det.detect(_ctx(df.iloc[:-1]))
-    plan = det.plan_short_strategy(_ctx(df))
+    res = det.detect(_ctx(df))
+    plan = det.plan_short_strategy(_ctx(df), event=res.events[0])
     assert plan is not None
     assert plan.side == "short"
     levels = _camarilla_levels(_PDH, _PDL, _PDC)

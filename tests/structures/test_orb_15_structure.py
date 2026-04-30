@@ -352,7 +352,7 @@ def test_first_trigger_latch_suppresses_subsequent_long_fires():
     ctx1 = _ctx(df1)
     res1 = det.detect(ctx1)
     assert res1.structure_detected is True
-    plan = det.plan_long_strategy(ctx1)  # plan_*_strategy registers the latch
+    plan = det.plan_long_strategy(ctx1, event=res1.events[0])  # plan_*_strategy registers the latch
     assert plan is not None
     # Now try a SECOND sweep+reclaim later in same session
     df2 = _build_sweep_reclaim_long_df(sweep_time="09:50:00", reclaim_time="09:55:00")
@@ -524,7 +524,8 @@ def test_plan_long_emits_tiered_t1_t2():
     det = ORB15Structure(_cfg())
     df = _build_sweep_reclaim_long_df()
     ctx = _ctx(df)
-    plan = det.plan_long_strategy(ctx)
+    res = det.detect(ctx)
+    plan = det.plan_long_strategy(ctx, event=res.events[0])
     assert plan is not None
     assert plan.side == "long"
     assert plan.risk_params.hard_sl < plan.entry_price  # stop below entry
@@ -541,7 +542,8 @@ def test_plan_short_emits_tiered_t1_t2():
     det = ORB15Structure(_cfg())
     df = _build_sweep_reclaim_short_df()
     ctx = _ctx(df)
-    plan = det.plan_short_strategy(ctx)
+    res = det.detect(ctx)
+    plan = det.plan_short_strategy(ctx, event=res.events[0])
     assert plan is not None
     assert plan.side == "short"
     assert plan.risk_params.hard_sl > plan.entry_price  # stop above entry

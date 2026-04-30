@@ -391,11 +391,16 @@ def test_first_trigger_latch_prevents_same_day_double_fire():
     )
     res1 = det.detect(_ctx(df, sd, nifty_spot=23200.0))
     assert res1.structure_detected is True
+    # Plan-build registers the first-trigger latch (commit-on-success).
+    plan1 = det.plan_short_strategy(_ctx(df, sd, nifty_spot=23200.0), event=res1.events[0])
+    assert plan1 is not None
 
     df2 = _build_session_5m(
         sd, current_time="14:30:00", n_bars=40, close=1500.0,
         rsi_target_prior=75.0, rsi_target_current=68.0,
     )
+    # detect() now returns empty because the latch CHECK in detect sees the
+    # post-plan-build commit. Same single-fire-per-session semantic.
     res2 = det.detect(_ctx(df2, sd, nifty_spot=23200.0))
     assert res2.structure_detected is False
     assert "latch" in (res2.rejection_reason or "").lower()
@@ -556,7 +561,8 @@ def test_plan_emits_hard_sl_and_tiered_t1_t2_for_short():
         sd, current_time="14:00:00", n_bars=40, close=1500.0,
         rsi_target_prior=75.0, rsi_target_current=68.0,
     )
-    plan = det.plan_short_strategy(_ctx(df, sd, nifty_spot=23200.0))
+    res = det.detect(_ctx(df, sd, nifty_spot=23200.0))
+    plan = det.plan_short_strategy(_ctx(df, sd, nifty_spot=23200.0), event=res.events[0])
     assert plan is not None
     assert plan.side == "short"
     entry = plan.entry_price
@@ -579,7 +585,8 @@ def test_plan_emits_hard_sl_and_tiered_t1_t2_for_long():
         sd, current_time="14:00:00", n_bars=40, close=1500.0,
         rsi_target_prior=28.0, rsi_target_current=32.0,
     )
-    plan = det.plan_long_strategy(_ctx(df, sd, nifty_spot=22900.0))
+    res = det.detect(_ctx(df, sd, nifty_spot=22900.0))
+    plan = det.plan_long_strategy(_ctx(df, sd, nifty_spot=22900.0), event=res.events[0])
     assert plan is not None
     assert plan.side == "long"
     entry = plan.entry_price

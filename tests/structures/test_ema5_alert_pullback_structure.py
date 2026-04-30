@@ -383,13 +383,16 @@ def test_does_not_fire_when_cap_segment_excluded():
 # =============================================================================
 
 def test_first_trigger_latch_prevents_double_fire():
-    """After first LONG fires, a second valid alert+confirm later in same
-    session is no-op."""
+    """After first LONG fires + plan_long_strategy commits the latch, a
+    second valid alert+confirm later in same session is a no-op."""
     det = EMA5AlertPullbackStructure(_cfg())
     df1 = _build_uptrend_long_session()
     det.detect(_ctx(df1.iloc[:-1]))
     res1 = det.detect(_ctx(df1))
     assert res1.structure_detected is True
+    # Plan-build registers the first-trigger latch (commit-on-success).
+    plan1 = det.plan_long_strategy(_ctx(df1), event=res1.events[0])
+    assert plan1 is not None
 
     # Build a second alert+confirm at a later 5m offset (still inside window)
     # by shifting timestamps forward by 5 min — confirm at 10:00 (boundary).
@@ -412,7 +415,8 @@ def test_plan_emits_hard_sl_t1_t2_for_long():
     det = EMA5AlertPullbackStructure(_cfg())
     df = _build_uptrend_long_session()
     det.detect(_ctx(df.iloc[:-1]))
-    plan = det.plan_long_strategy(_ctx(df))
+    res = det.detect(_ctx(df))
+    plan = det.plan_long_strategy(_ctx(df), event=res.events[0])
     assert plan is not None
     assert plan.side == "long"
     assert plan.risk_params.hard_sl < plan.entry_price
@@ -432,7 +436,8 @@ def test_plan_emits_hard_sl_t1_t2_for_short():
     det = EMA5AlertPullbackStructure(_cfg())
     df = _build_downtrend_short_session()
     det.detect(_ctx(df.iloc[:-1]))
-    plan = det.plan_short_strategy(_ctx(df))
+    res = det.detect(_ctx(df))
+    plan = det.plan_short_strategy(_ctx(df), event=res.events[0])
     assert plan is not None
     assert plan.side == "short"
     assert plan.risk_params.hard_sl > plan.entry_price

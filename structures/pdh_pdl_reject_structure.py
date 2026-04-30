@@ -214,11 +214,11 @@ class PDHPDLRejectStructure(BaseStructure):
             quality_score=confidence * 100.0,
         )
 
-    def _build_plan(self, ctx: MarketContext, side: str) -> Optional[TradePlan]:
-        analysis = self.detect(ctx)
-        if not analysis.structure_detected:
+    def _build_plan(self, ctx: MarketContext, side: str, event: Optional[StructureEvent] = None) -> Optional[TradePlan]:
+        # Architectural rule (2026-04-30): no re-detect; event REQUIRED.
+        if event is None:
             return None
-        evt = analysis.events[0]
+        evt = event
         if evt.side != side:
             return None
 
@@ -283,14 +283,14 @@ class PDHPDLRejectStructure(BaseStructure):
         )
 
     def plan_long_strategy(
-        self, ctx: MarketContext, event=None
+        self, ctx: MarketContext, event: Optional[StructureEvent] = None
     ) -> Optional[TradePlan]:
-        return self._build_plan(ctx, "long")
+        return self._build_plan(ctx, "long", event=event)
 
     def plan_short_strategy(
-        self, ctx: MarketContext, event=None
+        self, ctx: MarketContext, event: Optional[StructureEvent] = None
     ) -> Optional[TradePlan]:
-        return self._build_plan(ctx, "short")
+        return self._build_plan(ctx, "short", event=event)
 
     def calculate_risk_params(
         self, entry_price: float, ctx: MarketContext

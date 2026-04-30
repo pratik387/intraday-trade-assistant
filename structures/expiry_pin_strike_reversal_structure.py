@@ -351,8 +351,9 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
                         f"current={current_rsi:.1f})"
                     )
 
-        # ---- Build event + latch ----
-        self._fired_today.add(latch_key)
+        # ---- Build event ----
+        # NOTE: latch NOT added here. detect() must remain idempotent.
+        # _build_plan commits the latch on TradePlan-build success.
         evt = self._build_event(
             ctx, side, pin_strike, nifty_spot, spot_distance, session_date_iso,
         )
@@ -405,12 +406,17 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
             price=close,
         )
 
-    def _build_plan(self, ctx: MarketContext, side: str) -> Optional[TradePlan]:
-        analysis = self.detect(ctx)
-        if not analysis.structure_detected or not analysis.events:
+    def _build_plan(self, ctx: MarketContext, side: str, event: Optional[StructureEvent] = None) -> Optional[TradePlan]:
+        # Architectural rule (2026-04-30): no re-detect; event REQUIRED.
+        if event is None:
             return None
-        evt = analysis.events[0]
+        evt = event
         if evt.side != side:
+            return None
+        # Re-entry guard
+        session_date_iso = pd.Timestamp(ctx.session_date).strftime("%Y-%m-%d")
+        latch_key = (ctx.symbol, side, session_date_iso)
+        if latch_key in self._fired_today:
             return None
 
         levels = evt.levels
@@ -461,6 +467,10 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
         ]
         risk_params = RiskParams(hard_sl=hard_sl, risk_per_share=risk, atr=atr)
         exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
+
+        # Commit-on-success latch
+        self._fired_today.add(latch_key)
+
         return TradePlan(
             symbol=ctx.symbol,
             side=side,
@@ -482,7 +492,7 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
     ) -> Optional[TradePlan]:
         if "long" not in self.allowed_sides:
             return None
-        return self._build_plan(ctx, "long")
+        return self._build_plan(ctx, "long", event=event)
 
     def plan_short_strategy(
         self,
@@ -491,7 +501,7 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
     ) -> Optional[TradePlan]:
         if "short" not in self.allowed_sides:
             return None
-        return self._build_plan(ctx, "short")
+        return self._build_plan(ctx, "short", event=event)
 
     def calculate_risk_params(
         self,

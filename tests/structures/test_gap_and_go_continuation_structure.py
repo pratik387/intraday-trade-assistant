@@ -385,7 +385,7 @@ def test_first_trigger_latch_prevents_double_fire():
     # First call fires (and the plan registers the latch)
     res1 = det.detect(ctx)
     assert res1.structure_detected is True
-    plan = det.plan_long_strategy(ctx)
+    plan = det.plan_long_strategy(ctx, event=res1.events[0])
     assert plan is not None
     # Second call same session = blocked by latch
     res2 = det.detect(ctx)
@@ -403,7 +403,9 @@ def test_plan_emits_hard_sl_and_tiered_t1_t2_for_long():
     det = GapAndGoContinuationStructure(_cfg())
     df = _build_long_session(pdc=100.0, gap_pct=1.5)
     df_daily = _build_daily_df(pdc=100.0, sma20=98.0)
-    plan = det.plan_long_strategy(_make_ctx(df, df_daily=df_daily, pdc=100.0))
+    ctx = _make_ctx(df, df_daily=df_daily, pdc=100.0)
+    res = det.detect(ctx)
+    plan = det.plan_long_strategy(ctx, event=res.events[0])
     assert plan is not None
     assert plan.side == "long"
     assert plan.risk_params.hard_sl < plan.entry_price
@@ -423,7 +425,9 @@ def test_plan_emits_hard_sl_and_tiered_t1_t2_for_short():
     det = GapAndGoContinuationStructure(_cfg())
     df = _build_short_session(pdc=100.0, gap_pct=-1.5)
     df_daily = _build_daily_df(pdc=100.0, sma20=102.0)
-    plan = det.plan_short_strategy(_make_ctx(df, df_daily=df_daily, pdc=100.0))
+    ctx = _make_ctx(df, df_daily=df_daily, pdc=100.0)
+    res = det.detect(ctx)
+    plan = det.plan_short_strategy(ctx, event=res.events[0])
     assert plan is not None
     assert plan.side == "short"
     assert plan.risk_params.hard_sl > plan.entry_price

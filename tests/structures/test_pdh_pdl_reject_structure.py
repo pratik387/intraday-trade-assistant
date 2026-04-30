@@ -71,7 +71,7 @@ def test_fires_short_on_pdh_reject_with_no_breakout_volume():
     res = det.detect(ctx)
     assert res.structure_detected is True, f"Expected fire: {res.rejection_reason}"
     assert res.events[0].side == "short"
-    plan = det.plan_short_strategy(ctx)
+    plan = det.plan_short_strategy(ctx, event=res.events[0])
     assert plan is not None
     assert len(plan.exit_levels.targets) == 2
     assert plan.risk_params.hard_sl > plan.entry_price  # short: stop above entry

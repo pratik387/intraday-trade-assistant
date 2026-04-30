@@ -363,11 +363,11 @@ class GapAndGoContinuationStructure(BaseStructure):
             quality_score=confidence * 100.0,
         )
 
-    def _build_plan(self, ctx: MarketContext, side: str) -> Optional[TradePlan]:
-        analysis = self.detect(ctx)
-        if not analysis.structure_detected or not analysis.events:
+    def _build_plan(self, ctx: MarketContext, side: str, event: Optional[StructureEvent] = None) -> Optional[TradePlan]:
+        # Architectural rule (2026-04-30): no re-detect; event REQUIRED.
+        if event is None:
             return None
-        evt = analysis.events[0]
+        evt = event
         if evt.side != side:
             return None
 
@@ -440,7 +440,7 @@ class GapAndGoContinuationStructure(BaseStructure):
     ) -> Optional[TradePlan]:
         if "long" not in self.allowed_sides:
             return None
-        return self._build_plan(ctx, "long")
+        return self._build_plan(ctx, "long", event=event)
 
     def plan_short_strategy(
         self,
@@ -449,7 +449,7 @@ class GapAndGoContinuationStructure(BaseStructure):
     ) -> Optional[TradePlan]:
         if "short" not in self.allowed_sides:
             return None
-        return self._build_plan(ctx, "short")
+        return self._build_plan(ctx, "short", event=event)
 
     def calculate_risk_params(
         self,
