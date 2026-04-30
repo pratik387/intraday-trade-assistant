@@ -152,6 +152,15 @@ class TradePlan:
     market_context: Optional[MarketContext] = None
     notes: Optional[Dict[str, Any]] = None
 
+    # Target re-anchor semantics consumed by services/target_recalc.py at fill
+    # time. "structural" preserves target levels (price respects PDH/PDL/gap
+    # edge, not arithmetic distance from entry); "r_multiple" recomputes
+    # T1/T2 from actual_entry using the planned R multiples; "or_range"
+    # recomputes ORB-style from the opening range. Default is "structural"
+    # — the safe choice when a detector forgets to set it (preserves edge
+    # rather than re-anchoring around a possibly-bad fill).
+    target_anchor_type: str = "structural"
+
 
 @dataclass
 class StructureAnalysis:

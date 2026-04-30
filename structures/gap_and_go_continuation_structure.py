@@ -49,6 +49,12 @@ from typing import Any, Dict, Optional, Set, Tuple
 import pandas as pd
 
 from config.logging_config import get_agent_logger
+from services.plan_helpers import (
+    PlanRejected,
+    assert_sl_outside_entry_zone,
+    compute_entry_zone,
+    enforce_min_stop_distance,
+)
 from services.symbol_metadata import in_universe
 from .base_structure import BaseStructure
 from .data_models import (
@@ -413,6 +419,21 @@ class GapAndGoContinuationStructure(BaseStructure):
         risk_params = RiskParams(hard_sl=hard_sl, risk_per_share=risk, atr=atr)
         exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
 
+        # === Plan-geometry validation (Phase-C-Commit-2) ===
+        try:
+            _zone = compute_entry_zone(
+                entry=entry, bias=side,
+                zone_pct=float(self.config["entry_zone_pct"]),
+                zone_mode=str(self.config["entry_zone_mode"]),
+            )
+            assert_sl_outside_entry_zone(_zone, hard_sl, side)
+            enforce_min_stop_distance(entry, hard_sl, self.config.get("min_stop_distance_pct"))
+        except PlanRejected as e:
+            logger.warning(
+                f"[{ctx.symbol}] gap_and_go_continuation plan rejected: {e.reason} {e.details}"
+            )
+            return None
+
         # Latch on plan-build success (mirrors orb_15 pattern — keeps detect()
         # idempotent; only commit-to-trade actions register the latch).
         session_date_iso = evt.context.get("session_date_iso")
@@ -431,6 +452,10 @@ class GapAndGoContinuationStructure(BaseStructure):
             confidence=evt.confidence,
             notes=evt.context,
             trade_id=evt.trade_id,
+            # gap_and_go targets are gap_size-anchored (T1 = entry + 1×gap,
+            # T2 = entry + 2×gap). On a late fill the gap-anchored target is
+            # still the right level — don't push it further out.
+            target_anchor_type="structural",
         )
 
     def plan_long_strategy(

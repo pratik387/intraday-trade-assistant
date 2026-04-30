@@ -27,6 +27,12 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from config.logging_config import get_agent_logger
+from services.plan_helpers import (
+    PlanRejected,
+    assert_sl_outside_entry_zone,
+    compute_entry_zone,
+    enforce_min_stop_distance,
+)
 from services.symbol_metadata import in_universe
 from .base_structure import BaseStructure
 from .data_models import (
@@ -264,6 +270,21 @@ class PDHPDLRejectStructure(BaseStructure):
                 "action": "exit_full",
             },
         ]
+        # === Plan-geometry validation (Phase-C-Commit-2) ===
+        try:
+            _zone = compute_entry_zone(
+                entry=close, bias=side,
+                zone_pct=float(self.config["entry_zone_pct"]),
+                zone_mode=str(self.config["entry_zone_mode"]),
+            )
+            assert_sl_outside_entry_zone(_zone, hard_sl, side)
+            enforce_min_stop_distance(close, hard_sl, self.config.get("min_stop_distance_pct"))
+        except PlanRejected as e:
+            logger.warning(
+                f"[{ctx.symbol}] {self.structure_type} plan rejected: {e.reason} {e.details}"
+            )
+            return None
+
         return TradePlan(
             symbol=ctx.symbol,
             side=side,
@@ -280,6 +301,10 @@ class PDHPDLRejectStructure(BaseStructure):
             confidence=evt.confidence,
             notes=evt.context,
             trade_id=evt.trade_id,
+            # PDH/PDL targets are level-anchored (PDC for T1, opposite-day-
+            # extreme for T2). Late fills must keep those structural targets
+            # — price respects the level, not arithmetic distance.
+            target_anchor_type="structural",
         )
 
     def plan_long_strategy(

@@ -55,6 +55,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import pandas as pd
 
 from config.logging_config import get_agent_logger
+from services.plan_helpers import (
+    PlanRejected,
+    assert_sl_outside_entry_zone,
+    compute_entry_zone,
+    enforce_min_stop_distance,
+)
 from services.symbol_metadata import in_universe
 from .base_structure import BaseStructure
 from .data_models import (
@@ -430,11 +436,31 @@ class ORB15Structure(BaseStructure):
         )
         exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
 
+        # === Plan-geometry validation (Phase-C-Commit-2) ===
+        try:
+            _zone = compute_entry_zone(
+                entry=close, bias=side,
+                zone_pct=float(self.config["entry_zone_pct"]),
+                zone_mode=str(self.config["entry_zone_mode"]),
+            )
+            assert_sl_outside_entry_zone(_zone, hard_sl, side)
+            enforce_min_stop_distance(close, hard_sl, self.config.get("min_stop_distance_pct"))
+        except PlanRejected as e:
+            logger.warning(
+                f"[{ctx.symbol}] orb_15 plan rejected: {e.reason} {e.details}"
+            )
+            return None
+
         plan = TradePlan(
             symbol=ctx.symbol, side=side, structure_type=self.structure_type,
             entry_price=close, risk_params=risk_params, exit_levels=exit_levels,
             qty=0, notional=0.0, confidence=evt.confidence, notes=evt.context,
             trade_id=evt.trade_id,
+            # ORB targets are ORH/ORL ± k×OR_range — structurally meaningful
+            # levels, not arithmetic R-multiples. Preserve target levels on
+            # actual-entry re-anchor. Switch to "or_range" later if/when we
+            # decide to re-enable explicit OR-range recalc with config knobs.
+            target_anchor_type="structural",
         )
 
         # Latch registration on plan success — separated from detect() so

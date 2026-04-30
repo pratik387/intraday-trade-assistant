@@ -15,6 +15,12 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from config.logging_config import get_agent_logger
+from services.plan_helpers import (
+    PlanRejected,
+    assert_sl_outside_entry_zone,
+    compute_entry_zone,
+    enforce_min_stop_distance,
+)
 from .base_structure import BaseStructure
 from .data_models import (
     ExitLevels,
@@ -280,6 +286,29 @@ class GapFadeShortStructure(BaseStructure):
         risk_params = self.calculate_risk_params(close, context)
         exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
 
+        # === Plan-geometry validation (Phase-C-Commit-2) ===
+        # Reject geometrically-broken plans at the source. The orchestrator
+        # used to catch these LATE — Bugs A-E (NSIL/CAPLIPOINT class) all
+        # surfaced because by the time the orchestrator ran the SL-zone
+        # check, the detector had already minted a trade_id and emitted an
+        # accept event. Catching here = cleaner audit + earlier short-circuit.
+        try:
+            _zone = compute_entry_zone(
+                entry=close, bias="short",
+                zone_pct=float(self.config["entry_zone_pct"]),
+                zone_mode=str(self.config["entry_zone_mode"]),
+            )
+            assert_sl_outside_entry_zone(_zone, risk_params.hard_sl, "short")
+            enforce_min_stop_distance(
+                close, risk_params.hard_sl,
+                self.config.get("min_stop_distance_pct"),
+            )
+        except PlanRejected as e:
+            logger.warning(
+                f"[{context.symbol}] gap_fade_short plan rejected: {e.reason} {e.details}"
+            )
+            return None
+
         confidence = evt.confidence
         notes = evt.context
         structure_type = evt.structure_type
@@ -297,6 +326,10 @@ class GapFadeShortStructure(BaseStructure):
             confidence=confidence,
             notes=notes,
             trade_id=event_trade_id,
+            # gap_fade_short targets are anchored to gap structure (gap_low /
+            # PDC / VWAP). A late fill should NOT push targets further away —
+            # price respects the level, not arithmetic distance from entry.
+            target_anchor_type="structural",
         )
 
     def calculate_risk_params(

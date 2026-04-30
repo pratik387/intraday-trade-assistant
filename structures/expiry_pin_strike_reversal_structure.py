@@ -48,6 +48,12 @@ from typing import Any, Dict, Optional, Set, Tuple
 import pandas as pd
 
 from config.logging_config import get_agent_logger
+from services.plan_helpers import (
+    PlanRejected,
+    assert_sl_outside_entry_zone,
+    compute_entry_zone,
+    enforce_min_stop_distance,
+)
 from .base_structure import BaseStructure
 from .data_models import (
     ExitLevels,
@@ -468,6 +474,21 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
         risk_params = RiskParams(hard_sl=hard_sl, risk_per_share=risk, atr=atr)
         exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
 
+        # === Plan-geometry validation (Phase-C-Commit-2) ===
+        try:
+            _zone = compute_entry_zone(
+                entry=close, bias=side,
+                zone_pct=float(self.config["entry_zone_pct"]),
+                zone_mode=str(self.config["entry_zone_mode"]),
+            )
+            assert_sl_outside_entry_zone(_zone, hard_sl, side)
+            enforce_min_stop_distance(close, hard_sl, self.config.get("min_stop_distance_pct"))
+        except PlanRejected as e:
+            logger.warning(
+                f"[{ctx.symbol}] expiry_pin_strike_reversal plan rejected: {e.reason} {e.details}"
+            )
+            return None
+
         # Commit-on-success latch
         self._fired_today.add(latch_key)
 
@@ -483,6 +504,10 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
             confidence=evt.confidence,
             notes=evt.context,
             trade_id=evt.trade_id,
+            # Pin-strike targets are anchored to the magnet strike + opposite
+            # OI cluster. Late fills must still target the pin level —
+            # pushing it further out defeats the magnet thesis entirely.
+            target_anchor_type="structural",
         )
 
     def plan_long_strategy(
