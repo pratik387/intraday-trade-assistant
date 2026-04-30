@@ -647,6 +647,10 @@ class MainDetector(BaseStructure):
                         cap_segment=market_context.cap_segment,
                         detected_level=detected_level,
                         extras=extras_dict,
+                        # Carry the StructureEvent through to the orchestrator so
+                        # plan_*_strategy can use it directly without re-calling
+                        # detect(). Eliminates the double-detect bug class.
+                        structure_event=event,
                     ))
 
                     if entry_mode:

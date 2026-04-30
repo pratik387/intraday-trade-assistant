@@ -38,6 +38,7 @@ from .event_policy_gate import EventPolicyGate
 from .news_spike_gate import NewsSpikeGate
 from services.features import compute_hcet_features
 from services.indicators.indicators import calculate_rsi
+from structures.data_models import StructureEvent
 from collections import defaultdict
 from datetime import datetime, timedelta
 from config.logging_config import get_agent_logger
@@ -149,6 +150,18 @@ class SetupCandidate:
     cap_segment: Optional[str] = None  # Market cap segment passed from main_detector
     detected_level: Optional[float] = None  # Level detected by structure (e.g., nearest_support, range resistance)
     extras: Optional[Dict[str, Any]] = None  # Detector-emitted scalar features (has_mss, range_position, etc.) — auto-flowed to trade_report.csv via plan["extras"] for edge analysis tools
+
+    # Single source of truth for the structure detected by detect(). Carried
+    # in-process from MainDetector through the orchestrator into plan_*_strategy
+    # so downstream layers NEVER re-call detect(). Eliminates the prior
+    # double-detect bug class where (a) the orchestrator's bidirectional bias
+    # resolution and (b) each detector's _build_plan independently re-invoked
+    # detect(), exposing the latch placement to a fatal race (a latch added
+    # inside detect() killed the second call). See architectural fix in the
+    # 2026-04-30 commit. None means "not produced by a structure detector"
+    # (synthetic candidates from external pipelines), which the SUB7 fast path
+    # rejects fail-fast — no fallback re-detect.
+    structure_event: Optional[StructureEvent] = None
 
 
 @dataclass(frozen=True)

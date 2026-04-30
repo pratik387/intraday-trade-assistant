@@ -314,12 +314,28 @@ class PipelineOrchestrator:
         now: pd.Timestamp,
         cap_segment: Optional[str] = None,
         daily_df: Optional[pd.DataFrame] = None,
+        structure_event: Optional[Any] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build a plan dict directly from a sub7 detector, bypassing category pipelines.
 
         Returns an orchestrator-compatible plan dict (same shape as base_pipeline.run_pipeline),
         or None if the detector rejects the setup.
+
+        `structure_event` is the StructureEvent that this setup_type was
+        produced from in MainDetector. It MUST be provided — the orchestrator
+        no longer re-calls detect() to derive bias. Architecturally
+        detection happens once; the event flows through every layer.
         """
+        # Architectural fail-fast: SUB7 candidates without an event are a bug.
+        # No silent re-detect fallback (caller would never know detection
+        # ran twice — see 2026-04-30 root cause for the latch race).
+        if structure_event is None:
+            logger.warning(
+                f"[SUB7] {symbol} {setup_type}: structure_event missing — "
+                f"orchestrator must thread it through from MainDetector"
+            )
+            return None
+
         detector = self._get_sub7_detector(setup_type)
         if detector is None:
             return None
@@ -380,39 +396,36 @@ class PipelineOrchestrator:
             logger.exception(f"[SUB7] {symbol} {setup_type}: failed to build MarketContext: {exc}")
             return None
 
-        # Determine direction. Setups with explicit suffix (_long/_short) are unambiguous.
-        # Bidirectional detectors decide bias inside detect() based on price geometry;
-        # calling the wrong plan_*_strategy() returns None and silently drops the signal.
-        # So for those, run detect() to read the bias, then dispatch.
-        # Sub-8 detectors set bias on `event.side` (not in event.context); sub-7
-        # cpr_mean_revert puts it in event.context["bias"]. Try both.
+        # Determine direction from the StructureEvent — single source of truth.
+        # Setups with explicit suffix (_long/_short) are unambiguous; for the
+        # rest the event's `side` (sub8 convention) or context["bias"] (sub7
+        # cpr_mean_revert convention) is authoritative. NO re-detect.
         if setup_type.endswith("_long"):
             bias = "long"
         elif setup_type.endswith("_short"):
             bias = "short"
         else:
-            try:
-                analysis = detector.detect(context)
-            except Exception as exc:
-                logger.exception(f"[SUB7] {symbol} {setup_type}: detect() raised: {exc}")
+            evt_ctx = getattr(structure_event, "context", None)
+            bias_from_event = (
+                (evt_ctx.get("bias") if isinstance(evt_ctx, dict) else None)
+                or getattr(structure_event, "side", None)
+            )
+            if bias_from_event not in ("long", "short"):
+                logger.warning(
+                    f"[SUB7] {symbol} {setup_type}: event.side / "
+                    f"event.context['bias'] missing or invalid: {bias_from_event!r}"
+                )
                 return None
-            evts = getattr(analysis, "events", []) or []
-            evt0 = evts[0] if evts else None
-            bias_from_detect = None
-            if evt0 is not None:
-                # Prefer event.context["bias"] (sub7 cpr convention); fall back to event.side (sub8).
-                bias_from_detect = (evt0.context.get("bias") if isinstance(evt0.context, dict) else None) \
-                                   or getattr(evt0, "side", None)
-            if bias_from_detect not in ("long", "short"):
-                return None
-            bias = bias_from_detect
+            bias = bias_from_event
 
-        # Call appropriate plan method
+        # Call appropriate plan method, passing the event so the detector's
+        # _build_plan can construct the TradePlan WITHOUT re-calling detect().
+        # The latch is added inside plan_*_strategy on plan-build success.
         try:
             if bias == "short":
-                trade_plan = detector.plan_short_strategy(context)
+                trade_plan = detector.plan_short_strategy(context, event=structure_event)
             else:
-                trade_plan = detector.plan_long_strategy(context)
+                trade_plan = detector.plan_long_strategy(context, event=structure_event)
         except Exception as exc:
             logger.exception(f"[SUB7] {symbol} {setup_type}: plan_{bias}_strategy raised: {exc}")
             return None
@@ -887,7 +900,8 @@ class PipelineOrchestrator:
         htf_context: Optional[Dict[str, Any]] = None,
         regime_diagnostics: Optional[Dict[str, Any]] = None,
         daily_score: float = 0.0,
-        cap_segment: Optional[str] = None
+        cap_segment: Optional[str] = None,
+        structure_event: Optional[Any] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Process a single setup candidate through its category pipeline.
@@ -923,6 +937,7 @@ class PipelineOrchestrator:
                 now=now,
                 cap_segment=cap_segment,
                 daily_df=daily_df,
+                structure_event=structure_event,
             )
             if plan and plan.get("eligible", False):
                 plan["category"] = "sub7"
@@ -1065,6 +1080,7 @@ class PipelineOrchestrator:
             cap_segment = getattr(candidate, 'cap_segment', None)
             detected_level = getattr(candidate, 'detected_level', None)
             extras = getattr(candidate, 'extras', None)  # Detector context for trade_report.csv
+            structure_event = getattr(candidate, 'structure_event', None)
 
             # Merge detected_level into levels dict for quality calculation
             # Pro trader approach: use the actual detected level, not hardcoded PDH/PDL
@@ -1082,6 +1098,7 @@ class PipelineOrchestrator:
                 daily_df=daily_df,
                 htf_context=htf_context,
                 regime_diagnostics=regime_diagnostics,
+                structure_event=structure_event,
                 daily_score=daily_score,
                 cap_segment=cap_segment
             )
@@ -1273,6 +1290,7 @@ class PipelineOrchestrator:
                 setup_type = str(candidate.setup_type) if hasattr(candidate, 'setup_type') else str(candidate)
                 detected_level = getattr(candidate, 'detected_level', None)
                 extras = getattr(candidate, 'extras', None)  # Detector context for trade_report.csv
+                structure_event = getattr(candidate, 'structure_event', None)
 
                 # Merge detected_level into levels dict for quality calculation
                 candidate_levels = dict(levels)  # Copy to avoid mutating original
@@ -1288,6 +1306,7 @@ class PipelineOrchestrator:
                     now=now,
                     daily_df=daily_df,
                     htf_context=htf_context,
+                    structure_event=structure_event,
                     regime_diagnostics=symbol_regime_diag,
                     daily_score=symbol_daily_score
                 )
