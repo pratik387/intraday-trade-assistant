@@ -468,10 +468,10 @@
     },
     "ema5_alert_pullback": {
       "enabled": false,
-      "active_window_start": "09:30",
+      "active_window_start": "09:15",
       "active_window_end": "10:00",
       "ema_period": 5,
-      "trend_lookback_bars": 10,
+      "trend_lookback_bars": 3,
       "trend_definition": "ema_slope_positive",
       "target_rr": 3.0,
       "t1_rr": 1.5,
@@ -479,11 +479,11 @@
       "allowed_sides": ["long", "short"],
       "allowed_cap_segments": ["large_cap", "mid_cap", "small_cap"],
       "universe_key": "fno_liquid_200",
-      "min_bars_required": 12,
+      "min_bars_required": 5,
       "entry_zone_pct": 0.1,
       "entry_zone_mode": "directional",
       "min_stop_distance_pct": 0.3,
-      "_research_notes": "Subasish Pani / Power of Stocks 5 EMA Alert-Candle Pullback per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 4. Sources: MyAlgomate, TradingQnA, TradersCarnival, Streak. Mechanic: in established 5m uptrend (ema_slope_positive over trend_lookback_bars=10), the FIRST candle whose entire body+wick HIGH closes BELOW the 5 EMA = Alert Candle; the next bar whose HIGH breaks the alert candle's HIGH fires LONG (continuation of uptrend after pullback). Mirror SHORT: established downtrend, first candle whose LOW > 5 EMA = alert; next bar breaking alert LOW fires SHORT. Subasish-published 1:3 RR target (t2_rr=3.0); T1 50% partial at 1.5R per project tiered-exit framework. Entry-by-10:00-AM is Subasish-specified time gate. trend_lookback_bars=10 + alert + confirm = 12 min_bars_required.",
+      "_research_notes": "Subasish Pani / Power of Stocks 5 EMA Alert-Candle Pullback. Per canonical research (AlgoTest, Myalgomate, TradeWithTech, StockPathshala, EzQuant): the strategy is a ROLLING-ALERT-CANDLE mechanic with NO numeric trend-bar prerequisite — alerts can form ANY TIME after open, and the 10:00 AM gate is the ENTRY (fill) cutoff, not a setup-window cutoff. Initial production config (active_window 09:30-10:00, trend_lookback_bars=10) was over-constrained: trend_lookback_bars=10 + active_window=09:30-10:00 made the trend prerequisite mathematically unsatisfiable inside the window (need 11 prior bars; max 9 exist by 10:00 AM), so the detector could literally never fire. Phase-C calibration (2026-04-30): widened active_window to 09:15-10:00 (entry-cutoff semantics) and reduced trend_lookback_bars to 3 (minimal recent-uptrend confirmation; canonical has 0 — rolling alert). min_bars_required = trend_lookback_bars + alert + confirm = 5. Mechanic: in established 5m uptrend (ema_slope_positive over 3 increments), the FIRST candle whose entire body+wick HIGH closes BELOW 5 EMA = Alert Candle; the next bar whose HIGH breaks the alert candle's HIGH fires LONG. Mirror SHORT. Subasish-published 1:3 RR target (t2_rr=3.0); T1 50% partial at 1.5R per project tiered-exit framework.",
       "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Phase 3 backtest"
     },
     "camarilla_l3_reversal": {

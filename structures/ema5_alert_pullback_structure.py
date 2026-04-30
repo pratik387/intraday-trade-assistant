@@ -256,20 +256,23 @@ class EMA5AlertPullbackStructure(BaseStructure):
                         quality_score=evt.confidence * 100.0,
                     )
                 elif aborted:
-                    # Drop the pending — the trap thesis is invalidated.
+                    # Drop the pending — the opposite-extreme broke = the
+                    # trap thesis is invalidated. Fall through to alert-latch
+                    # so the same bar (rare) can also seed a fresh alert.
                     self._pending_alerts.pop(latch_key, None)
-                    # Continue to allow trend-prereq + alert-latch check on this
-                    # bar, in case the same bar is both an aborted-pending-target
-                    # and a fresh alert candidate.
-                # else: pending stays alive (neither fired nor aborted this bar)
-                else:
-                    continue
+                # else: consolidation (neither fired nor aborted). Fall through
+                # to the alert-latch step — per canonical Subasish "rolling
+                # alert candle" mechanic, if the current bar IS ALSO a same-
+                # side alert candle (fully on counter-trend side of EMA), the
+                # pending alert ROLLS FORWARD to this newer bar. The roll
+                # captures the latest pullback extreme = tighter stop on the
+                # eventual fire. AlgoTest / TradeWithTech / Myalgomate refs.
 
             # ---- Step B: Trend prerequisite ----
             if not self._check_trend_prerequisite(ema, df["close"], side):
                 continue
 
-            # ---- Step C: Alert candle latch ----
+            # ---- Step C: Alert candle latch (or roll) ----
             # Long: bar's entire HIGH must be < EMA at this bar (strict
             # separation — body+wick fully below EMA). Mirror short: LOW > EMA.
             if side == "long":
@@ -277,7 +280,10 @@ class EMA5AlertPullbackStructure(BaseStructure):
             else:
                 is_alert = bar_low > ema_at_last
 
-            if is_alert and latch_key not in self._pending_alerts:
+            if is_alert:
+                # Always overwrite — either we're seeding fresh (no prior
+                # pending) OR rolling the existing pending forward to the
+                # latest counter-trend bar. Both share the same latch state.
                 self._pending_alerts[latch_key] = {
                     "alert_bar_ts": last_ts,
                     "alert_high": bar_high,
