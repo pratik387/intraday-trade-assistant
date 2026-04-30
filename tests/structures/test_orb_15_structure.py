@@ -55,6 +55,12 @@ def _cfg(**overrides):
         "exclude_dow": [4],
         "allowed_regimes": ["trend_up", "trend_down", "chop", "squeeze"],
         "allowed_sides": ["long", "short"],
+        # Phase-C-Commit-2: detector validates plan geometry inline. Need
+        # the entry-zone params + min-stop floor in test fixtures so
+        # plan_*_strategy doesn't KeyError.
+        "entry_zone_pct": 0.10,
+        "entry_zone_mode": "directional",
+        "min_stop_distance_pct": 0.0,
     }
     cfg.update(overrides)
     return cfg

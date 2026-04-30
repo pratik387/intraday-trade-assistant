@@ -123,12 +123,16 @@ def test_find_max_oi_strike_returns_argmax(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# 3. is_expiry_day is the universe_filter export (no duplication)
+# 3. is_expiry_day is the symbol_metadata export (no duplication)
 # ---------------------------------------------------------------------------
-def test_is_expiry_day_is_universe_filter_export():
+def test_is_expiry_day_is_symbol_metadata_export():
     """Sanity: ocl.is_expiry_day is the same callable as
-    services.universe_filter.is_expiry_day — proves no copy."""
-    from services.universe_filter import is_expiry_day as canonical
+    services.symbol_metadata.is_expiry_day — proves no copy.
+
+    History: pre-Phase-C this re-exported from services.universe_filter;
+    post-Phase-C the function lives in services.symbol_metadata.
+    """
+    from services.symbol_metadata import is_expiry_day as canonical
     assert ocl.is_expiry_day is canonical
     # And it actually works on a known Thursday pre-2025-09
     assert ocl.is_expiry_day(date(2024, 6, 6)) is True

@@ -1,10 +1,14 @@
-"""universe_filter tests (sub8-T1, rev2 — adds expiry/circuit helpers)."""
+"""symbol_metadata tests — universe membership + expiry/circuit helpers.
+
+History: relocated 2026-04-30 from services/universe_filter.py as part of
+the Phase-C refactor (Commit 1). Public API is unchanged.
+"""
 from datetime import date
 
 import pandas as pd
 import pytest
 
-from services.universe_filter import (
+from services.symbol_metadata import (
     in_nifty50,
     in_banknifty,
     in_fno_liquid_200,

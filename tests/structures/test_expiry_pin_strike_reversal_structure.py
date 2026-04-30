@@ -554,8 +554,13 @@ def test_walk_back_caps_at_seven_days():
 def test_plan_emits_hard_sl_and_tiered_t1_t2_for_short():
     """SHORT plan: hard_sl > entry, T1 < entry, T2 ≤ T1, qty_pct splits."""
     sd = date(2024, 6, 6)
+    # Disable min_stop_distance floor — this test is about T1/T2 emission,
+    # not about the qty-inflation guard. The fixture's geometry can land
+    # close to the production floor (0.3%); separating concerns keeps this
+    # test focused on its actual intent.
     det = ExpiryPinStrikeReversalStructure(
-        _cfg(), oi_loader=_StubOILoader(pin_strike=23100.0, is_expiry=True),
+        _cfg(min_stop_distance_pct=0.0),
+        oi_loader=_StubOILoader(pin_strike=23100.0, is_expiry=True),
     )
     df = _build_session_5m(
         sd, current_time="14:00:00", n_bars=40, close=1500.0,
@@ -578,8 +583,10 @@ def test_plan_emits_hard_sl_and_tiered_t1_t2_for_short():
 def test_plan_emits_hard_sl_and_tiered_t1_t2_for_long():
     """LONG mirror."""
     sd = date(2024, 6, 6)
+    # Disable min_stop_distance floor — see SHORT test rationale.
     det = ExpiryPinStrikeReversalStructure(
-        _cfg(), oi_loader=_StubOILoader(pin_strike=23000.0, is_expiry=True),
+        _cfg(min_stop_distance_pct=0.0),
+        oi_loader=_StubOILoader(pin_strike=23000.0, is_expiry=True),
     )
     df = _build_session_5m(
         sd, current_time="14:00:00", n_bars=40, close=1500.0,

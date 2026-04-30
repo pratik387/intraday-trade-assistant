@@ -23,6 +23,10 @@ def _cfg():
         "t1_qty_pct": 0.5,
         "universe_key": "smallmid_fno",
         "min_bars_required": 30,
+        # Phase-C-Commit-2: detector validates plan geometry inline.
+        "entry_zone_pct": 0.10,
+        "entry_zone_mode": "symmetric",
+        "min_stop_distance_pct": 0.0,
     }
 
 
