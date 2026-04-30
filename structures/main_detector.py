@@ -129,6 +129,16 @@ class MainDetector(BaseStructure):
                                                                   config.get("conflict_resolution_enabled", True))
         self.priority_weights = main_detector_config.get("priority_weights", {})
 
+        # wide_open_mode — when true, _resolve_conflicts_and_prioritize bypasses
+        # the 0.5%-price-proximity dedup AND the max_detections_per_symbol cap.
+        # Under wide-open OCI capture the gauntlet must see every detector's
+        # structure event, even when multiple detectors fire on the same bar
+        # at adjacent levels (e.g., camarilla L3 ~0.3% from PDL: pdh_pdl_reject's
+        # higher confidence currently wins by default and silently masks
+        # camarilla_l3_reversal). Same architectural pattern as the
+        # universe/cap_segment bypass in commit 65648f1.
+        self._wide_open = bool(config.get("wide_open_mode", False))
+
         logger.debug(f"MAIN_DETECTOR: Initialization complete with {len(self.detectors)} active detectors: {list(self.detectors.keys())}")
 
     def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame,
@@ -465,7 +475,21 @@ class MainDetector(BaseStructure):
                                         symbol: str) -> List[StructureEvent]:
         """
         Resolve conflicts between different detectors and prioritize the best setups.
+
+        Wide-open bypass: when wide_open_mode=true, returns ALL events from ALL
+        detectors with NO dedup and NO max_detections cap — the gauntlet needs
+        every structure signal independently scored. The 0.5% proximity dedup
+        plus 5-event cap silently masks newer detectors with conservative
+        confidence calculations (camarilla_l3_reversal median 0.138 loses to
+        pdh_pdl_reject 0.662 even when both fire at the same level).
         """
+        if self._wide_open:
+            # Bypass dedup + cap entirely. Return all events.
+            final_events: List[StructureEvent] = []
+            for analysis in all_detections.values():
+                final_events.extend(analysis.events)
+            return final_events
+
         if not self.conflict_resolution_enabled:
             # Simple concatenation without conflict resolution
             final_events = []

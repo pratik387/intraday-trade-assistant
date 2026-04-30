@@ -317,6 +317,97 @@ def download_index_ohlcv():
         raise
 
 
+def download_option_chain(date_str):
+    """Download NSE F&O OI parquet snapshots for the session date and the
+    prior ~31 days from OCI Object Storage.
+
+    Required by structures/expiry_pin_strike_reversal_structure: the detector
+    calls services.option_chain_loader.find_max_oi_strike() which reads
+    `data/option_chain/<YYYY>/<MM>/<YYYY-MM-DD>.parquet`. The detector's D-1
+    lookup also walks backward up to 7 calendar days when D-1 is missing
+    (weekends + NSE holidays), so we need the prior month available too —
+    walking 7 days back from a Monday-after-long-weekend can cross a month
+    boundary.
+
+    Bucket layout:
+        option_chain/<YYYY>/<MM>/<YYYY-MM-DD>.parquet
+
+    Local layout (mirrors repo):
+        /app/data/option_chain/<YYYY>/<MM>/<YYYY-MM-DD>.parquet
+
+    A 404 on the entire prefix is logged as WARNING (not fatal) — the
+    detector returns `pin strike unavailable from OI snapshot` on missing
+    data, which is recoverable. Only the OTHER detectors stay functional.
+    """
+    log(f"Downloading option_chain OI snapshots for {date_str} (+ prior month)...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
+
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+    # Two month buckets: the session's month + the prior month (handles
+    # walk-back across month boundaries).
+    months_to_fetch = {
+        f"{date_obj.year:04d}/{date_obj.month:02d}",
+    }
+    # Prior month (handle Jan → previous Dec)
+    if date_obj.month == 1:
+        months_to_fetch.add(f"{date_obj.year - 1:04d}/12")
+    else:
+        months_to_fetch.add(f"{date_obj.year:04d}/{date_obj.month - 1:02d}")
+
+    total_downloaded = 0
+    total_bytes = 0
+    for ym in sorted(months_to_fetch):
+        prefix = f"option_chain/{ym}/"
+        local_dir = Path(f"/app/data/option_chain/{ym}")
+        local_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # List all objects under the month prefix (~22 parquets per month)
+            list_response = os_client.list_objects(
+                namespace_name=namespace,
+                bucket_name=bucket,
+                prefix=prefix,
+            )
+            objects = list_response.data.objects or []
+            if not objects:
+                log(f"  (no OI snapshots found under {prefix} — skipping)")
+                continue
+            for obj in objects:
+                object_name = obj.name
+                # Filename only (last path segment) — preserves YYYY-MM-DD.parquet
+                local_file = local_dir / Path(object_name).name
+                if local_file.exists():
+                    continue
+                try:
+                    get_obj = os_client.get_object(
+                        namespace_name=namespace,
+                        bucket_name=bucket,
+                        object_name=object_name,
+                    )
+                    with open(local_file, 'wb') as f:
+                        for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                            f.write(chunk)
+                    total_downloaded += 1
+                    total_bytes += local_file.stat().st_size
+                except Exception as e:
+                    log(f"  WARNING: failed to download {object_name}: {e}")
+        except oci.exceptions.ServiceError as e:
+            if e.status == 404:
+                log(f"  WARNING: prefix not found in bucket: {prefix}")
+            else:
+                log(f"  ERROR listing {prefix}: {e}")
+        except Exception as e:
+            log(f"  ERROR listing {prefix}: {e}")
+
+    size_mb = total_bytes / (1024 * 1024)
+    log(f"Downloaded {total_downloaded} OI snapshots ({size_mb:.1f} MB)")
+
+
 def generate_analytics(date_str):
     """Regenerate analytics.jsonl from events.jsonl for the given date.
 
@@ -602,6 +693,12 @@ def main():
 
     # Download index OHLCV for directional bias
     download_index_ohlcv()
+
+    # Download option_chain OI snapshots for expiry_pin_strike_reversal.
+    # Pulls the session's month + the prior month (~44 parquets, ~65 MB total)
+    # so the detector's D-1 walk-back lookup can find the latest available
+    # bhavcopy even on Monday-after-long-weekend.
+    download_option_chain(date_str)
 
     # Run backtest
     result = run_backtest(date_str)
