@@ -23,8 +23,8 @@ from typing import Optional, Tuple, Union
 
 import pandas as pd
 
-# Re-export is_expiry_day from universe_filter — single source of truth.
-from services.universe_filter import is_expiry_day   # noqa: F401  (re-export)
+# Re-export is_expiry_day from symbol_metadata — single source of truth.
+from services.symbol_metadata import is_expiry_day   # noqa: F401  (re-export)
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]

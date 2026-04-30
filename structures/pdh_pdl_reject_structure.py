@@ -27,7 +27,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from config.logging_config import get_agent_logger
-from services.universe_filter import in_universe
+from services.symbol_metadata import in_universe
 from .base_structure import BaseStructure
 from .data_models import (
     ExitLevels, MarketContext, RiskParams, StructureAnalysis, StructureEvent, TradePlan,
@@ -39,7 +39,7 @@ logger = get_agent_logger()
 def _is_wide_open() -> bool:
     """Read top-level wide_open_mode flag from base config."""
     try:
-        from pipelines.base_pipeline import load_base_config
+        from services.config_loader import load_base_config
         return bool(load_base_config().get("wide_open_mode", False))
     except Exception:
         return False

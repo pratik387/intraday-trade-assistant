@@ -16,7 +16,10 @@ from services.orders.order_queue import OrderQueue
 from utils.time_util import _minute_of_day, _parse_hhmm_to_md
 from utils.price_utils import round_to_tick
 from diagnostics.diag_event_log import diag_event_log
-from pipelines.breakout_pipeline import BreakoutPipeline
+from services.target_recalc import (
+    InvertedSLError,
+    recalculate_targets_for_actual_entry,
+)
 
 # Import from unified validator
 from services.execution.trigger_validation_engine import (
@@ -429,162 +432,29 @@ class TriggerAwareExecutor:
     def _recalculate_targets_for_actual_entry(
         self, plan: Dict[str, Any], actual_entry: float, side: str
     ) -> Dict[str, Any]:
+        """Re-anchor SL/targets/risk to the actual fill price.
+
+        Delegates to services.target_recalc — see that module for anchor-type
+        semantics (structural / r_multiple / or_range). The detector tags the
+        plan with `target_anchor_type`; default is "structural" (preserve
+        target levels, only update rps + actual_entry).
+
+        On InvertedSLError (actual fill on the wrong side of the planned
+        stop), logs the structural breach and returns the plan unchanged —
+        downstream exit logic will detect the inverted SL and immediate-exit
+        at market.
         """
-        Recalculate targets based on ACTUAL entry price, not planned entry.
-
-        Problem:
-        - Pipeline calculates targets from entry_ref_price (e.g., 256.43)
-        - Actual trigger may occur at different price (e.g., 261.40)
-        - If targets aren't recalculated, T2 gives wrong R-multiple
-
-        Solution:
-        - For ORB setups: Use OR range-based targets (pro standard)
-        - For LEVEL setups: Keep original structural targets (price respects levels, not math)
-        - For other setups: Use R-multiples from actual entry
-
-        Pro trader insight: Level-based trades target STRUCTURAL levels (PDL, support, etc.),
-        not arbitrary distances from entry. A better entry = better R:R naturally.
-        """
-        import copy
-        from config.setup_categories import is_level_category
-        adjusted_plan = copy.deepcopy(plan)
-
-        # Snapshot decision-time SL and targets BEFORE recalculation.
-        # These persist in pos.plan for EXIT diagnostics audit trail.
-        stop_data_orig = plan.get("stop", {})
-        if stop_data_orig.get("hard") is not None and "_decision_sl" not in adjusted_plan:
-            adjusted_plan["_decision_sl"] = stop_data_orig["hard"]
-        original_targets = plan.get("targets", [])
-        if original_targets and "_decision_targets" not in adjusted_plan:
-            adjusted_plan["_decision_targets"] = [
-                t.get("level") for t in original_targets if t.get("level") is not None
-            ]
-
         try:
-            # Check if this is an ORB setup - use OR range-based targets (pro standard)
-            # Delegate to breakout pipeline which has the config (no hardcoded values here)
-            strategy = plan.get("strategy", "") or ""
-            if "orb" in strategy.lower():
-                breakout_pipeline = BreakoutPipeline()
-                return breakout_pipeline.recalculate_orb_targets_at_trigger(adjusted_plan, actual_entry, side)
-
-            # LEVEL category setups: Keep original structural targets
-            # Price respects LEVELS (PDL, support, resistance), not arbitrary R-multiple distances
-            # A better entry improves R:R naturally without pushing targets further away
-            if is_level_category(strategy):
-                original_entry = plan.get("entry_ref_price") or plan.get("price")
-                stop_data = plan.get("stop", {})
-                hard_sl = stop_data.get("hard")
-
-                if hard_sl is not None and original_entry is not None:
-                    # Calculate actual rps for R-multiple tracking
-                    if side.upper() == "BUY":
-                        actual_rps = actual_entry - hard_sl
-                    else:
-                        actual_rps = hard_sl - actual_entry
-
-                    # Only update rps for tracking, keep original targets
-                    if actual_rps > 0:
-                        if "stop" in adjusted_plan and isinstance(adjusted_plan["stop"], dict):
-                            adjusted_plan["stop"]["risk_per_share"] = round(actual_rps, 2)
-                        adjusted_plan["risk_per_share"] = round(actual_rps, 2)
-                        adjusted_plan["actual_entry"] = round_to_tick(actual_entry)
-
-                        logger.info(
-                            f"LEVEL_TARGET_PRESERVED: {plan.get('symbol')} {strategy} "
-                            f"entry {original_entry}→{actual_entry}, targets unchanged, "
-                            f"rps {stop_data.get('risk_per_share', 0):.2f}→{actual_rps:.2f}"
-                        )
-
-                return adjusted_plan
-            # Get stop data from plan - exec_item now includes full "stop" dict
-            stop_data = plan.get("stop", {})
-            hard_sl = stop_data.get("hard")
-            original_rps = stop_data.get("risk_per_share")
-
-            # Get original entry price
-            original_entry = plan.get("entry_ref_price") or plan.get("price")
-
-            # Can't recalculate without stop loss info
-            if hard_sl is None or original_rps is None or original_rps <= 0:
-                logger.info(f"TARGET_RECALC_SKIP: missing data hard_sl={hard_sl} orig_entry={original_entry} rps={original_rps}")
-                return adjusted_plan
-
-            # Calculate ACTUAL risk per share based on actual entry
-            if side.upper() == "BUY":
-                actual_rps = actual_entry - hard_sl
-            else:
-                actual_rps = hard_sl - actual_entry
-
-            # Skip if rps is invalid
-            if actual_rps <= 0:
-                logger.warning(f"Invalid actual_rps={actual_rps:.2f}, using original targets")
-                return adjusted_plan
-
-            # Get original targets
-            original_targets = plan.get("targets", [])
-            if len(original_targets) < 2:
-                logger.info(f"TARGET_RECALC_SKIP: less than 2 targets, got {len(original_targets)}")
-                return adjusted_plan
-
-            # original_entry was already calculated above when computing original_rps
-
-            # Use explicit R-multiples from plan (rr field) - NOT derived from levels
-            # The planner may cap/adjust levels for structure, but rr represents intended R
-            t1_orig = original_targets[0].get("level", 0)
-            t2_orig = original_targets[1].get("level", 0)
-
-            # Get planned R-multiples directly from targets (preferred)
-            # Fall back to deriving from levels only if rr not present
-            t1_r = original_targets[0].get("rr") or original_targets[0].get("r_multiple")
-            t2_r = original_targets[1].get("rr") or original_targets[1].get("r_multiple")
-
-            # If rr not in plan, derive from levels (legacy fallback)
-            if t1_r is None:
-                if side.upper() == "BUY":
-                    t1_r = (t1_orig - original_entry) / original_rps if original_rps > 0 else 1.5
-                else:
-                    t1_r = (original_entry - t1_orig) / original_rps if original_rps > 0 else 1.5
-
-            if t2_r is None:
-                if side.upper() == "BUY":
-                    t2_r = (t2_orig - original_entry) / original_rps if original_rps > 0 else 2.0
-                else:
-                    t2_r = (original_entry - t2_orig) / original_rps if original_rps > 0 else 2.0
-
-            # Recalculate targets from actual entry using same R-multiples
-            if side.upper() == "BUY":
-                new_t1 = actual_entry + (t1_r * actual_rps)
-                new_t2 = actual_entry + (t2_r * actual_rps)
-            else:
-                new_t1 = actual_entry - (t1_r * actual_rps)
-                new_t2 = actual_entry - (t2_r * actual_rps)
-
-            # Update targets in plan
-            adjusted_plan["targets"] = [
-                {"level": round(new_t1, 2), "r_multiple": round(t1_r, 2)},
-                {"level": round(new_t2, 2), "r_multiple": round(t2_r, 2)}
-            ]
-
-            # Update stop info with actual rps - handle both exec_item and full plan structures
-            if "stop" in adjusted_plan and isinstance(adjusted_plan["stop"], dict):
-                adjusted_plan["stop"]["risk_per_share"] = round(actual_rps, 2)
-            # Also store at top level for exec_item structure
-            adjusted_plan["risk_per_share"] = round(actual_rps, 2)
-            adjusted_plan["actual_entry"] = round_to_tick(actual_entry)
-
-            # Log recalculation for non-LEVEL strategies (REVERSION, MOMENTUM, etc.)
-            logger.info(
-                f"TARGET_RECALCULATED: {plan.get('symbol')} {strategy} "
-                f"entry {original_entry}->{actual_entry}, "
-                f"T1 {t1_orig}->{new_t1:.2f}, T2 {t2_orig}->{new_t2:.2f}, "
-                f"rps {original_rps:.2f}->{actual_rps:.2f}"
+            return recalculate_targets_for_actual_entry(plan, actual_entry, side)
+        except InvertedSLError as e:
+            logger.warning(
+                f"TARGET_RECALC_INVERTED_SL: {plan.get('symbol')} "
+                f"{plan.get('strategy')} {e} — keeping original plan"
             )
-
+            return plan
         except Exception as e:
             logger.warning(f"Target recalculation failed: {e}, using original targets")
-
-        return adjusted_plan
+            return plan
 
     def _check_fill_quality(
         self, plan: Dict[str, Any], actual_fill: float, side: str

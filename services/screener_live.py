@@ -71,8 +71,8 @@ from services import levels
 from services import metrics_intraday as mi
 from structures.main_detector import MainDetector
 
-# Category-based pipeline orchestrator (replaces services.ranker)
-from pipelines import process_setup_candidates
+# Plan orchestrator (sub7/sub8 fast path; Phase C 2026-04-30)
+from services.plan_orchestrator import process_setup_candidates
 
 # orders & execution
 from services.orders.order_queue import OrderQueue

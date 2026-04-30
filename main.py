@@ -37,7 +37,7 @@ from services.capital_manager import CapitalManager
 from services.state.position_store import PositionStore
 from services.state.recovery import startup_recovery
 from services.state.daily_cache_persistence import DailyCachePersistence
-from pipelines.base_pipeline import set_base_config_override, load_base_config
+from services.config_loader import set_base_config_override, load_base_config
 from api import get_api_server, SessionState
 
 # Shared LTP cache (supports multi-instance trading via Redis)

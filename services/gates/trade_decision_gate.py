@@ -51,7 +51,7 @@ logger = get_agent_logger()
 def _get_wide_open_mode() -> bool:
     """Return top-level wide_open_mode flag from base config, defaulting to False."""
     try:
-        from pipelines.base_pipeline import load_base_config
+        from services.config_loader import load_base_config
         return bool(load_base_config().get("wide_open_mode", False))
     except Exception:
         return False

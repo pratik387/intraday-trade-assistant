@@ -24,7 +24,7 @@ from .gap_and_go_continuation_structure import GapAndGoContinuationStructure
 from .ema5_alert_pullback_structure import EMA5AlertPullbackStructure
 from .camarilla_l3_reversal_structure import CamarillaL3ReversalStructure
 from .expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
-from pipelines.base_pipeline import get_cap_segment
+from services.symbol_metadata import get_cap_segment
 
 logger = get_agent_logger()
 

@@ -35,8 +35,9 @@ from typing import Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
 
-# Import centralized is_hard_blocked from base_pipeline (single source of truth)
-from pipelines.base_pipeline import is_hard_blocked as _is_hard_blocked_base
+# HARD_BLOCKS removed in Phase C refactor (2026-04-30) — surviving setups
+# absorb regime filters into their own detect() body. is_hard_blocked() is
+# kept as a no-op for call-site compatibility; the underlying mechanism is gone.
 
 # Phase 1: Multi-timeframe regime detection (institutional approach)
 try:
@@ -304,20 +305,14 @@ class MarketRegimeGate:
 
     # ---------------- Hard Block Check ----------------
     def is_hard_blocked(self, setup_type: str, regime: str) -> bool:
+        """No-op since the Phase C refactor (2026-04-30).
+
+        HARD_BLOCKS was removed because surviving setups now embed any
+        needed regime filtering directly in their detect() body. The
+        method is kept so trade_decision_gate / external callers don't
+        need a coordinated edit; it always returns False.
         """
-        Check if a setup is HARD BLOCKED for a regime.
-
-        Hard blocks CANNOT be bypassed by HCET or any other mechanism.
-        Delegates to centralized function in base_pipeline.py.
-
-        Args:
-            setup_type: The setup type to check
-            regime: The current market regime
-
-        Returns:
-            True if the setup is hard blocked for this regime
-        """
-        return _is_hard_blocked_base(setup_type, regime)
+        return False
 
     # ---------------- Sizing bias ----------------
     def size_multiplier(self, regime: str, *, counter_trend: bool = False, setup_type: str = None) -> float:
