@@ -149,11 +149,20 @@ def aggregate_oci_dir(oci_dir: Path) -> pd.DataFrame:
         if sub.empty:
             continue
         sub["session_date"] = sess
-        # Select available columns only
+        # Select available columns only. Phase-C-Stage4 update: preserve the
+        # volatility / momentum features needed to compute Stage 3's
+        # `volatility_regime` conditioner (master plan §3.3 — BB-width
+        # tercile per stock × 20-day) plus the SHAP-flagged structural
+        # drivers (adx5, range_pct, vol_x_*, body_pct).
         desired_cols = ["session_date", "setup_type", "realized_pnl",
                         "fee", "net_pnl", "qty", "entry_price", "e1_price",
                         "side", "decision_ts", "symbol",
-                        "regime", "cap_segment", "rank_score"]
+                        "regime", "cap_segment", "rank_score",
+                        # Structural drivers from Stage 4 SHAP analysis:
+                        "bb_width_proxy", "adx5", "atr", "range_pct",
+                        "vol_x_median", "vol_x_recent", "body_pct",
+                        "minute_of_day", "day_of_week",
+                        "first_bar_volume_ratio", "daily_trend_distance_pct"]
         available_cols = [c for c in desired_cols if c in sub.columns]
         parts.append(sub[available_cols])
     if not parts:

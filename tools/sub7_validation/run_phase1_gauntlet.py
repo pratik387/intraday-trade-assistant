@@ -70,7 +70,7 @@ CELL_MIN_N = 100
 CELL_MIN_PF = 1.30
 CELL_SUBPERIOD_MIN_PF = 1.10
 
-CONDITIONERS = ("side", "regime", "cap_segment", "hour_bucket")
+CONDITIONERS = ("side", "regime", "cap_segment", "hour_bucket", "volatility_regime")
 # `side` joins regime/cap/hour as a primary conditioner because Indian
 # intraday has a known structural asymmetry: 70% of cash intraday traders
 # lose money (SEBI FY23), and the losing flow is overwhelmingly LONG. MIS
@@ -79,6 +79,13 @@ CONDITIONERS = ("side", "regime", "cap_segment", "hour_bucket")
 # Empirically, every multi-side sub7+sub8 setup in the 2026-04-30 capture
 # shows BUY PF 0.53-0.74 vs SELL PF 0.84-0.99. Splitting on side at cell
 # level surfaces the edge that's drowned out by mixing both directions.
+#
+# `volatility_regime` is the master plan's 4th approved conditioner
+# (§3.3): per-stock tercile of BB-width vs the stock's OWN distribution.
+# Stage 4 SHAP on the 2 rescue cells (orb_15, pdh_pdl_reject) showed
+# bb_width_proxy in top-5 features — drives the win/loss split independent
+# of regime. Bucketing into low_vol/mid_vol/high_vol surfaces sub-cells
+# the master plan's regime conditioner doesn't separate.
 
 # Setups that should be SKIPPED from the gauntlet (already validated &
 # locked, OR awaiting their own data). Add to this set as the validated
@@ -238,6 +245,55 @@ def _split_subperiods(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
 # ---------------------------------------------------------------------------
 # Hour-bucket derivation (master plan Section 3.3 conditioner)
 # ---------------------------------------------------------------------------
+
+
+def _add_volatility_regime(df: pd.DataFrame) -> pd.DataFrame:
+    """Add `volatility_regime` ∈ {low_vol, mid_vol, high_vol} from
+    bb_width_proxy, bucketed per-stock against that stock's OWN
+    distribution.
+
+    Master plan §3.3: "Volatility regime: BB width tercile of stock vs its
+    own 20-day distribution." Strict 20-day rolling would require the full
+    daily BB-width history per symbol; we use the per-symbol 2-year
+    distribution from the trade rows as a stable approximation. The
+    tercile is symbol-relative (so a "high_vol day" for a quiet large-cap
+    isn't compared to a noisy micro-cap on absolute terms).
+
+    Symbols with <30 trades fall into a single 'unknown' bucket — their
+    own distribution isn't stable enough to tercile.
+    """
+    out = df.copy()
+    if "bb_width_proxy" not in out.columns:
+        out["volatility_regime"] = None
+        return out
+
+    # Per-symbol q33 / q67 of bb_width_proxy
+    bbw = pd.to_numeric(out["bb_width_proxy"], errors="coerce")
+    out["bb_width_proxy"] = bbw
+
+    def _bucket(group: pd.DataFrame) -> pd.Series:
+        vals = group["bb_width_proxy"].dropna()
+        if len(vals) < 30:
+            return pd.Series(["unknown"] * len(group), index=group.index)
+        q33, q67 = vals.quantile([0.33, 0.67])
+        # Defensive: if distribution is degenerate (q33 == q67), put
+        # everything in mid_vol.
+        if q33 == q67:
+            return pd.Series(["mid_vol"] * len(group), index=group.index)
+
+        def _label(x):
+            if pd.isna(x):
+                return None
+            if x <= q33:
+                return "low_vol"
+            if x >= q67:
+                return "high_vol"
+            return "mid_vol"
+
+        return group["bb_width_proxy"].map(_label)
+
+    out["volatility_regime"] = out.groupby("symbol", group_keys=False).apply(_bucket)
+    return out
 
 
 def _add_hour_bucket(df: pd.DataFrame) -> pd.DataFrame:
@@ -549,6 +605,7 @@ def main():
             print(f"  {setup}: no trades in [{args.period_start}, {args.period_end}]")
             continue
         df = _add_hour_bucket(df)
+        df = _add_volatility_regime(df)
 
         # Apply intended universe + cap filter so wide-open noise doesn't
         # drown out the cells where each setup's structural thesis lives.
