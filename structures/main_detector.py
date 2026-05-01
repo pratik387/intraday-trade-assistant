@@ -18,6 +18,7 @@ from .data_models import StructureEvent, TradePlan, RiskParams, ExitLevels, Mark
 from services.gates.trade_decision_gate import SetupCandidate
 from .gap_fade_short_structure import GapFadeShortStructure
 from .expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
+from .circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
 from services.symbol_metadata import get_cap_segment
 
 logger = get_agent_logger()
@@ -63,6 +64,7 @@ class MainDetector(BaseStructure):
             # (setup_name, detector_class, detector_key)
             ("gap_fade_short", GapFadeShortStructure, "gap_fade_short"),
             ("expiry_pin_strike_reversal", ExpiryPinStrikeReversalStructure, "expiry_pin_strike_reversal"),
+            ("circuit_t1_fade_short", CircuitT1FadeShortStructure, "circuit_t1_fade_short"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.

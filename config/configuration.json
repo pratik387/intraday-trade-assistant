@@ -396,6 +396,33 @@
       "_research_notes": "Calendar+OI driven pin-magnet reversal per specs/2026-04-29-research-new-indian-setup-candidates.md §Candidate 8. Sources: Wright Research, ICFM, OptionX, PL Capital. Mechanic: market-makers minimize gamma exposure by pulling spot to high-OI strike on Indian weekly+monthly expiry sessions post 13:30 IST. Detector fires only on expiry days (is_expiry_day true), only on NIFTY heavyweights (top 10 by weight — pin gravity is mediated through index basket constituents, not random F&O symbols), only when spot is ≥0.3% from pin (room for the magnet pull), and only after RSI extreme reading earlier in session (overbought → short towards pin from above; oversold → long towards pin from below). Stop = 0.5*ATR beyond entry. Tiered T1 50% qty at half-distance to pin; T2 100% qty at pin strike. First-trigger latch keyed on (symbol, side, session_date_iso). Monthly expiry uses last-Thursday-of-month rule via is_monthly_expiry; weekly is any other expiry day.",
       "_live_status": "disabled — Phase 0 scaffolding; awaits Phase B3 backtest validation",
       "_audit_decision_2026_05_01": "DEFERRED -- NOT disabled. Indian-specific F&O gamma-pin asymmetry; design is sound (NIFTY heavyweights + RSI decay + spot-vs-pin distance). Validation impossible on the 20260430-232414 OCI run because option_chain parquets failed to download (entrypoint list_objects bug; fixed in commit d50b28f). Re-run on next OCI capture (with OI download fix) for Phase-1 validation evidence."
+    },
+    "circuit_t1_fade_short": {
+      "enabled": false,
+      "_status_2026_05_01": "NEW — sub-9 §3.3 sanity-check PASSED (PF=1.47 NET, n=654 over 12mo 2024). Phase-1 validation pending. enabled=false until production smoke + Phase-1 backtest confirm.",
+      "t0_min_pct_change": 4.5,
+      "t0_high_to_close_min": 0.995,
+      "t0_last30min_vol_share_max": 0.35,
+      "t0_min_vol_vs_20d": 1.5,
+      "t1_gap_min_pct": 1.0,
+      "t1_gap_max_pct": 5.0,
+      "active_window_start": "10:30",
+      "active_window_end": "10:30",
+      "stop_t1_high_buffer_pct": 0.5,
+      "min_stop_distance_pct": 1.0,
+      "t1_target_anchor": "t1_open",
+      "t2_target_anchor": "t0_close",
+      "t1_qty_pct": 0.5,
+      "time_stop_at": "15:10",
+      "allowed_cap_segments": [
+        "mid_cap",
+        "small_cap"
+      ],
+      "universe_key": null,
+      "min_bars_required": 16,
+      "entry_zone_pct": 0.1,
+      "entry_zone_mode": "directional",
+      "_research_notes": "Sub-project #9 first APPROVED setup. Asymmetry: post-circuit-hit retail FOMO + operator pump exhaustion in T+0 close, faded T+1 mid-session. Indian-microstructure-specific (NSE DPR flexing, no US/forex analog). Direction: short-only. 5 peer-reviewed sources (Guo JIFM 2023, Chen/Petukhov/Wang MIT WP, Tandfonline 2024, Sehgal PBFJ 2024, Chari 2017). Sanity check (tools/sub9_research/sanity_circuit_t1_fade_short.py): NET PF=1.473 on 654 trades over 2024. Brief: specs/2026-05-01-sub-project-9-brief-circuit_t1_fade_short.md."
     }
   },
   "filters": {
