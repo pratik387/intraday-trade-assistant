@@ -36,6 +36,14 @@ logger = logging.getLogger(__name__)
 class EnergyScanner:
     top_k_long: int
     top_k_short: int
+    # When True, select_shortlist returns the full universe instead of
+    # the top-K momentum/mean-rev ranked subset. Sub-project #9 wide-open
+    # discovery: setups like circuit_t1_fade_short fire on stocks that
+    # have stabilized by their entry bar and no longer rank top-K, so
+    # the ranker silently drops them. Honors the system-wide
+    # wide_open_mode contract that "every detector evaluates every
+    # candidate."
+    wide_open: bool = False
 
     # ------------------------------ Core API ------------------------------ #
     def compute_features(
@@ -336,6 +344,10 @@ class EnergyScanner:
     def select_shortlist(self, features_df: pd.DataFrame) -> Dict[str, List[str]]:
         """Return balanced shortlist {'long': [...], 'short': [...]}.
         Uses the rank columns if present, otherwise scores directly.
+
+        Under wide_open=True the full feature universe is returned on
+        BOTH sides — every downstream detector evaluates every candidate
+        without the top-K ranker filtering ones it doesn't reward.
         """
         scanner_logger = get_scanner_logger()
 
@@ -344,6 +356,28 @@ class EnergyScanner:
         df = features_df.copy()
         if "rank_long" not in df.columns or "rank_short" not in df.columns:
             df = self.rank_candidates(df)
+
+        if self.wide_open:
+            all_syms = df["symbol"].tolist()
+            if scanner_logger:
+                ts_iso = (
+                    df["ts"].iloc[0].isoformat()
+                    if "ts" in df.columns and not df.empty
+                    else None
+                )
+                for _, row in df.iterrows():
+                    scanner_logger.log_accept(
+                        row["symbol"], bias="long", category="wide_open",
+                        timestamp=ts_iso,
+                        score_long=row.get("score_long", 0),
+                        score_short=row.get("score_short", 0),
+                        rank_long=row.get("rank_long", 0),
+                        rank_short=row.get("rank_short", 0),
+                        volume_z=row.get("vol_z20", 0),
+                        close=row.get("close", 0),
+                        ret_1=row.get("ret_1", 0),
+                    )
+            return {"long": all_syms, "short": list(all_syms)}
 
         # Split allocation: 70% momentum, 30% mean-reversion
         momentum_long_count = int(self.top_k_long * 0.7) if self.top_k_long > 0 else 0

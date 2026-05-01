@@ -276,6 +276,7 @@ def _init_stage0_worker(config_dict):
         _stage0_scanner = EnergyScanner(
             top_k_long=scanner_cfg["top_k_long"],
             top_k_short=scanner_cfg["top_k_short"],
+            wide_open=bool(config_dict.get("wide_open_mode", False)),
         )
 
         # Pre-load cap mapping (same logic as ScreenerLive._load_cap_mapping)
@@ -313,11 +314,21 @@ def _filter_stage0_standalone(feats, now_ts, *, skip_vol_persist, config, cap_ma
     Stage-0 filter logic extracted for cross-process execution.
     Mirrors ScreenerLive._filter_stage0 exactly, but takes all
     dependencies as explicit parameters instead of reading from self.
+
+    Under wide_open_mode the entire filter is bypassed: vol/vwap/ret_1/
+    liquidity caps are momentum/mean-rev biased and silently drop
+    candidates for setups like circuit_t1_fade_short whose entry bar
+    sits OUTSIDE the standard intraday-momentum profile. Wide-open's
+    contract is "every detector evaluates every candidate" — the
+    detectors do the filtering downstream.
     """
     import logging
     _logger = logging.getLogger(__name__)
 
     if feats is None or feats.empty:
+        return feats
+
+    if bool(config.get("wide_open_mode", False)):
         return feats
 
     # Inline _time_bucket (avoids self reference)
@@ -573,6 +584,7 @@ class ScreenerLive:
         self.scanner = EnergyScanner(
             top_k_long=scanner_cfg["top_k_long"],
             top_k_short=scanner_cfg["top_k_short"],
+            wide_open=bool(raw.get("wide_open_mode", False)),
         )
 
         # Trigger-aware executor for live trade execution

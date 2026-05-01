@@ -366,6 +366,12 @@ class MockBroker:
         symbol_data = symbol_data.sort_values('date')
         symbol_data = symbol_data[['date', 'open', 'high', 'low', 'close', 'volume']].copy()
 
+        # Use date as the index — matches the fallback (individual-files) path
+        # and the contract assumed by detectors that read df_daily.index
+        # (e.g. circuit_t1_fade_short reads idx.date for T-1 lookup).
+        symbol_data['date'] = symbol_data['date'].dt.normalize()
+        symbol_data = symbol_data.set_index('date')
+
         return symbol_data
 
     def _reset_daily_cache_if_new_day(self) -> None:

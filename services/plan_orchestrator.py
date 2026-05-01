@@ -122,7 +122,7 @@ def _load_root_config() -> Dict[str, Any]:
         os.path.dirname(os.path.dirname(__file__)),
         "config", "configuration.json",
     )
-    with open(cfg_path) as f:
+    with open(cfg_path, encoding="utf-8") as f:
         _ROOT_CFG_CACHE = json.load(f)
     return _ROOT_CFG_CACHE
 

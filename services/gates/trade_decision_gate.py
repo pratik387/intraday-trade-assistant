@@ -509,6 +509,20 @@ class TradeDecisionGate:
         # Evidence-based pattern filters (momentum consolidation / range compression)
         pattern_filters_enabled = self.quality_filters.get('pattern_filters_enabled', True)
 
+        # Wide-open coverage gap (sub-9 fix): pattern filters
+        # (momentum_consolidation, range_compression) reject candidates
+        # whose entry-bar profile sits OUTSIDE intraday momentum/compression
+        # (e.g. circuit_t1_fade_short fires on stocks that already moved big
+        # T-1 and have HIGH range, failing range_compression_fail). Under
+        # wide_open the contract is "every detector evaluates every
+        # candidate" — let detectors filter via their own logic.
+        try:
+            from services.config_loader import load_base_config as _load_base
+            if bool(_load_base().get("wide_open_mode", False)):
+                pattern_filters_enabled = False
+        except Exception:
+            pass
+
         # Skip feasible checks for very early data; allow HCET to decide later
         if df5m_tail is None or len(df5m_tail) < 10:
             reasons.append(f"skip_feasible_checks:insufficient_bars_{len(df5m_tail) if df5m_tail is not None else 0}<10")

@@ -91,7 +91,7 @@ def load_base_config() -> Dict[str, Any]:
         return _BASE_CONFIG_CACHE
 
     try:
-        with open(config_file, "r") as f:
+        with open(config_file, "r", encoding="utf-8") as f:
             _BASE_CONFIG_CACHE = json.load(f)
         logger.debug(f"Loaded base config: {len(_BASE_CONFIG_CACHE)} keys")
         return _BASE_CONFIG_CACHE
