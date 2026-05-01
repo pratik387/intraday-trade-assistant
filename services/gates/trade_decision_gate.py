@@ -183,7 +183,9 @@ class GateDecision:
 # ----------------------------- Component Protocols -----------------------------
 
 class StructureDetector(Protocol):  # pragma: no cover (interface only)
-    def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame, levels: dict | None) -> List[SetupCandidate]:
+    def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame,
+                      levels: dict | None,
+                      daily_df: pd.DataFrame | None = None) -> List[SetupCandidate]:
         ...
 
 
@@ -645,7 +647,13 @@ class TradeDecisionGate:
         # ---------------- STRUCTURE ----------------
         logger.debug(f"TRADE_GATE: Calling structure.detect_setups for {symbol}")
         with perf("gate", "detect_setups", sym=symbol):
-            setups = self.structure.detect_setups(symbol, df5m_tail, levels)
+            # daily_df threaded through so detectors with cross-day state
+            # (e.g. circuit_t1_fade_short reads T-1 upper-circuit features)
+            # see prior trading days. None is safe for detectors that
+            # don't read MarketContext.df_daily.
+            setups = self.structure.detect_setups(
+                symbol, df5m_tail, levels, daily_df=daily_df,
+            )
         logger.debug(f"TRADE_GATE: Structure detection returned {len(setups)} setups for {symbol}")
         if not setups:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")

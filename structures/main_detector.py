@@ -135,7 +135,8 @@ class MainDetector(BaseStructure):
         logger.debug(f"MAIN_DETECTOR: Initialization complete with {len(self.detectors)} active detectors: {list(self.detectors.keys())}")
 
     def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame,
-                     levels: Dict[str, float] | None = None) -> List[SetupCandidate]:
+                     levels: Dict[str, float] | None = None,
+                     daily_df: Optional[pd.DataFrame] = None) -> List[SetupCandidate]:
         """
         Primary interface for structure detection.
 
@@ -143,14 +144,19 @@ class MainDetector(BaseStructure):
             symbol: Trading symbol
             df5m_tail: 5-minute dataframe
             levels: Dict with ORH, ORL, PDH, PDL, PDC levels
+            daily_df: Optional per-symbol daily OHLCV bars (>= 30 rows
+                recommended). Required by detectors with cross-day state
+                like circuit_t1_fade_short; safely ignored by detectors
+                that don't read MarketContext.df_daily.
 
         Returns:
             List of SetupCandidate objects ordered by strength
         """
-        return self.detect_setups_comprehensive(symbol, df5m_tail, levels or {})
+        return self.detect_setups_comprehensive(symbol, df5m_tail, levels or {}, daily_df=daily_df)
 
     def detect_setups_comprehensive(self, symbol: str, df: pd.DataFrame,
-                                  levels: Dict[str, float]) -> List[SetupCandidate]:
+                                  levels: Dict[str, float],
+                                  daily_df: Optional[pd.DataFrame] = None) -> List[SetupCandidate]:
         """
         Comprehensive setup detection that coordinates all structure detectors.
 
@@ -169,7 +175,7 @@ class MainDetector(BaseStructure):
 
             # Create market context
             _t_ctx = _time_mod.perf_counter()
-            context = self._create_market_context(symbol, df, levels)
+            context = self._create_market_context(symbol, df, levels, daily_df=daily_df)
             _t_ctx_ms = (_time_mod.perf_counter() - _t_ctx) * 1000
             logger.debug(f"MAIN_DETECTOR: {symbol} market context created successfully")
 
@@ -408,8 +414,15 @@ class MainDetector(BaseStructure):
             return []
 
     def _create_market_context(self, symbol: str, df: pd.DataFrame,
-                             levels: Dict[str, float]) -> MarketContext:
-        """Create market context for structure detection."""
+                             levels: Dict[str, float],
+                             daily_df: Optional[pd.DataFrame] = None) -> MarketContext:
+        """Create market context for structure detection.
+
+        daily_df is forwarded onto ctx.df_daily for detectors with
+        cross-day state (e.g. circuit_t1_fade_short reads T-1 daily bar
+        for upper-circuit qualification). None is fine for detectors
+        that don't need it.
+        """
         try:
             # Ensure we have the required indicators
             d = df.copy()
@@ -451,6 +464,7 @@ class MainDetector(BaseStructure):
                 timestamp=bar_timestamp,
                 df_5m=d,
                 session_date=bar_timestamp.date(),
+                df_daily=daily_df,
                 orh=levels.get('ORH'),
                 orl=levels.get('ORL'),
                 pdh=levels.get('PDH'),
