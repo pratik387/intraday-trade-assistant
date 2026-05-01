@@ -226,30 +226,30 @@
       "mid_cap_weight": 0.15,
       "small_cap_weight": 0.1,
       "micro_cap_weight": 0.25,
-      "_rationale": "CHOP \u00e2\u2020\u2019 Large-caps + micro-caps excel (mean-reversion edge). Micro-caps 25% weight due to BASELINE: 43.8% WR, 1.63 PF with failure_fade strategy in chop conditions."
+      "_rationale": "CHOP â†’ Large-caps + micro-caps excel (mean-reversion edge). Micro-caps 25% weight due to BASELINE: 43.8% WR, 1.63 PF with failure_fade strategy in chop conditions."
     },
     "trend_up": {
       "large_cap_weight": 0.15,
       "mid_cap_weight": 0.45,
       "small_cap_weight": 0.25,
       "micro_cap_weight": 0.15,
-      "_rationale": "TREND_UP \u00e2\u2020\u2019 Mid/Small-caps lead momentum. Micro-caps 15% (moderate allocation, prefer liquidity in trends)."
+      "_rationale": "TREND_UP â†’ Mid/Small-caps lead momentum. Micro-caps 15% (moderate allocation, prefer liquidity in trends)."
     },
     "trend_down": {
       "large_cap_weight": 0.5,
       "mid_cap_weight": 0.25,
       "small_cap_weight": 0.15,
       "micro_cap_weight": 0.1,
-      "_rationale": "TREND_DOWN \u00e2\u2020\u2019 Flight to quality, minimize micro-cap exposure. Micro-caps 10% (lowest allocation due to crash risk)."
+      "_rationale": "TREND_DOWN â†’ Flight to quality, minimize micro-cap exposure. Micro-caps 10% (lowest allocation due to crash risk)."
     },
     "squeeze": {
       "large_cap_weight": 0.35,
       "mid_cap_weight": 0.3,
       "small_cap_weight": 0.2,
       "micro_cap_weight": 0.15,
-      "_rationale": "SQUEEZE \u00e2\u2020\u2019 Balanced allocation awaiting breakout direction. Micro-caps 15% (moderate, can explode either way)."
+      "_rationale": "SQUEEZE â†’ Balanced allocation awaiting breakout direction. Micro-caps 15% (moderate, can explode either way)."
     },
-    "_institutional_evidence": "Linda Raschke: market cap rotation patterns follow regime shifts. CTAs rotate from large\u00e2\u2020\u2019mid\u00e2\u2020\u2019small during trend, reverse during chop.",
+    "_institutional_evidence": "Linda Raschke: market cap rotation patterns follow regime shifts. CTAs rotate from largeâ†’midâ†’small during trend, reverse during chop.",
     "_baseline_evidence": "3-month baseline: micro-caps generated 84% of profits (Rs.5,550 / Rs.6,617 total). failure_fade strategy dominates micro-caps in CHOP conditions."
   },
   "decision_require_structure_event": true,
@@ -361,8 +361,9 @@
       "min_bars_required": 1,
       "entry_zone_pct": 0.1,
       "entry_zone_mode": "symmetric",
-      "_live_status": "PRIMARY \u2014 Phase 7 OOS PASS: PF=1.36, WR=70%, N=797 in 117-session Holdout. Restricted to small_cap (the validated cell). Mid/micro_cap not Phase-7 validated.",
-      "min_stop_distance_pct": 0.3
+      "_live_status": "PRIMARY — Phase 7 OOS PASS: PF=1.36, WR=70%, N=797 in 117-session Holdout. Restricted to small_cap (the validated cell). Mid/micro_cap not Phase-7 validated.",
+      "min_stop_distance_pct": 0.3,
+      "_audit_decision_2026_05_01": "TRUSTED -- validated production setup. NET PF=1.49 on 5,848 trades over 2-yr Discovery (sub-project #5 era). Indian-microstructure-specific: small-cap retail-driven gap-up exhaustion + structural opening-window mechanics + SHORT-only (aligned with SEBI FY23 long-bias-loses finding). Locked, no design changes."
     },
     "orb_15": {
       "enabled": false,
@@ -388,12 +389,23 @@
       "nr7_multiplier": 1.0,
       "min_rvol_at_or_close": 2.0,
       "rvol_baseline_lookback_days": 14,
-      "exclude_dow": [4],
-      "allowed_regimes": ["trend_up", "trend_down", "chop", "squeeze"],
-      "allowed_sides": ["long", "short"],
-      "_rev2_notes": "stop_at_range_midpoint=false is opposite-end-of-range (Indian-source default). range_window_start=09:20 skips pre-open call-auction wick. max_gap_pct_for_orb=0.5: skip ORB if today's open gap > 0.5% (route to gap_fade_short). entry_zone directional 0.3% \u2014 breakout continuation; smoke-22 showed \u00b10.1% symmetric starved fills to 11%.",
-      "_redesign_notes": "Redesign 2026-04-29 per specs/2026-04-29-orb_15-redesign-plan.md. Sources: specs/2026-04-28-research-orb_15-findings.md (47,754-trade gross_PF 1.052 / net_PF 0.797 baseline; re-fire spam 87% post-10:25; SELL\u00d7squeeze\u00d709:50 cell gross_PF 1.624 / net_PF 1.298 / n=206 OOS-stable) and specs/2026-04-28-research-orb_15-indian-pro-mechanics.md (sweep+reclaim per Sahi/DailyPriceAction; NR7 per Crabel/HDFC Sky/eLearnMarkets; rvol per QuantConnect 2.4-Sharpe). New params: sweep_reclaim_lookback_bars=6 (30min cap to 10:00); nr7_lookback_days=7 / nr7_multiplier=1.0 (today's OR \u2264 min(prior 7 OR ranges)); min_rvol_at_or_close=2.0 / rvol_baseline_lookback_days=14; exclude_dow=[4] (Friday gross_PF 0.925 vs >1.05 other DOWs); allowed_regimes/allowed_sides empty allowlist = none allowed (explicit semantics). First-trigger latch in detect() prevents re-fire spam.",
-      "_live_status": "disabled \u2014 redesign awaiting Phase 3 backtest validation"
+      "exclude_dow": [
+        4
+      ],
+      "allowed_regimes": [
+        "trend_up",
+        "trend_down",
+        "chop",
+        "squeeze"
+      ],
+      "allowed_sides": [
+        "long",
+        "short"
+      ],
+      "_rev2_notes": "stop_at_range_midpoint=false is opposite-end-of-range (Indian-source default). range_window_start=09:20 skips pre-open call-auction wick. max_gap_pct_for_orb=0.5: skip ORB if today's open gap > 0.5% (route to gap_fade_short). entry_zone directional 0.3% — breakout continuation; smoke-22 showed ±0.1% symmetric starved fills to 11%.",
+      "_redesign_notes": "Redesign 2026-04-29 per specs/2026-04-29-orb_15-redesign-plan.md. Sources: specs/2026-04-28-research-orb_15-findings.md (47,754-trade gross_PF 1.052 / net_PF 0.797 baseline; re-fire spam 87% post-10:25; SELL×squeeze×09:50 cell gross_PF 1.624 / net_PF 1.298 / n=206 OOS-stable) and specs/2026-04-28-research-orb_15-indian-pro-mechanics.md (sweep+reclaim per Sahi/DailyPriceAction; NR7 per Crabel/HDFC Sky/eLearnMarkets; rvol per QuantConnect 2.4-Sharpe). New params: sweep_reclaim_lookback_bars=6 (30min cap to 10:00); nr7_lookback_days=7 / nr7_multiplier=1.0 (today's OR ≤ min(prior 7 OR ranges)); min_rvol_at_or_close=2.0 / rvol_baseline_lookback_days=14; exclude_dow=[4] (Friday gross_PF 0.925 vs >1.05 other DOWs); allowed_regimes/allowed_sides empty allowlist = none allowed (explicit semantics). First-trigger latch in detect() prevents re-fire spam.",
+      "_live_status": "disabled — redesign awaiting Phase 3 backtest validation",
+      "_audit_decision_2026_05_01": "DISABLED -- failed Phase-1 validation. Per sub-project #9 spec section 5 + lessons.md 2026-05-01. NET PF=0.79 on 8,448 Discovery-only trades; no Stage-3-passing cell; cargo-culted Opening Range Breakout pattern (Toby Crabel, US-origin). Universal pattern, not Indian-microstructure-specific. See specs/2026-05-01-sub-project-9-microstructure-first-redesign.md."
     },
     "pdh_pdl_reject": {
       "enabled": false,
@@ -413,14 +425,15 @@
       "min_bars_required": 30,
       "entry_zone_pct": 0.15,
       "entry_zone_mode": "symmetric",
-      "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default \u00e2\u20ac\u201d bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both.",
-      "_live_status": "disabled \u2014 research only, not Phase 7 validated"
+      "_rev2_notes": "volume_polarity is A/B variant: 'absence' (default â€” bar vol must NOT be >= 1.5x recent) or 'spike' (bar vol must be >= 1.5x recent). Reviewer flagged Indian sources contested on polarity; Phase 1 runs both.",
+      "_live_status": "disabled — research only, not Phase 7 validated",
+      "_audit_decision_2026_05_01": "DISABLED -- failed Phase-1 validation. NET PF=0.65 on 3,220 Discovery-only trades; no Stage-3-passing cell on disciplined Discovery. The mid_cap PF=1.46 cell from undisciplined runs was tainted by validation-data leakage. Universal level-rejection pattern, not Indian-specific. See specs/2026-05-01-sub-project-9-microstructure-first-redesign.md."
     },
     "pdh_pdl_sweep_reclaim": {
       "enabled": false,
       "active_window_start": "11:00",
       "active_window_end": "14:00",
-      "sweep_penetration_pct": 0.10,
+      "sweep_penetration_pct": 0.1,
       "reclaim_buffer_pct": 0.05,
       "confirm_close_beyond_sweep_low": true,
       "multi_day_confluence_enabled": false,
@@ -428,11 +441,19 @@
       "multi_day_lookback": 3,
       "gap_context_enabled": true,
       "gap_threshold_pct": 0.5,
-      "allowed_sides": ["long", "short"],
-      "allowed_cap_segments": ["large_cap", "mid_cap", "small_cap", "micro_cap"],
+      "allowed_sides": [
+        "long",
+        "short"
+      ],
+      "allowed_cap_segments": [
+        "large_cap",
+        "mid_cap",
+        "small_cap",
+        "micro_cap"
+      ],
       "universe_key": "fno_liquid_200",
       "stop_atr_buffer": 0.5,
-      "wick_buffer_pct": 0.10,
+      "wick_buffer_pct": 0.1,
       "t1_target": "vwap",
       "t2_target": "two_day_range_50pct_retrace",
       "t1_qty_pct": 0.5,
@@ -440,8 +461,9 @@
       "entry_zone_pct": 0.15,
       "entry_zone_mode": "symmetric",
       "min_stop_distance_pct": 0.3,
-      "_research_notes": "Indian-pro sweep+reclaim mechanic per specs/2026-04-28-research-pdh_pdl_reject-indian-pro-mechanics.md. M1 (sweep+reclaim core trigger) \u2014 Sahi.com / DailyPriceAction liquidity-sweep literature: bar t-1 PENETRATES the level (high > pdh*(1+pen) for shorts) AND closes back inside (close < pdh*(1-rec)); bar t confirms via close < pdh AND close < bar(t-1).low. M2 (multi-day confluence) \u2014 Phase 1 OFF, enable in Phase 2 if base mechanic underperforms. M8 (gap-context side selector) \u2014 on gap-up days prefer PDH-fade-short, gap-down prefer PDL-fade-long, flat-open allow both. Active window 11:00-14:00 confirmed in IPM\u00a74 mid_cap PF table (morning re-test of yesterday's extremes). fno_liquid_200 starting universe \u2014 research found edge concentrated in mid_cap with OLD trigger; new mechanic may have different cap-segment behavior, so cast wide net for Edge Discovery.",
-      "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Edge Discovery \u2192 Phase 1 backtest"
+      "_research_notes": "Indian-pro sweep+reclaim mechanic per specs/2026-04-28-research-pdh_pdl_reject-indian-pro-mechanics.md. M1 (sweep+reclaim core trigger) — Sahi.com / DailyPriceAction liquidity-sweep literature: bar t-1 PENETRATES the level (high > pdh*(1+pen) for shorts) AND closes back inside (close < pdh*(1-rec)); bar t confirms via close < pdh AND close < bar(t-1).low. M2 (multi-day confluence) — Phase 1 OFF, enable in Phase 2 if base mechanic underperforms. M8 (gap-context side selector) — on gap-up days prefer PDH-fade-short, gap-down prefer PDL-fade-long, flat-open allow both. Active window 11:00-14:00 confirmed in IPM§4 mid_cap PF table (morning re-test of yesterday's extremes). fno_liquid_200 starting universe — research found edge concentrated in mid_cap with OLD trigger; new mechanic may have different cap-segment behavior, so cast wide net for Edge Discovery.",
+      "_live_status": "disabled — Phase 0 scaffolding only, awaits Edge Discovery → Phase 1 backtest",
+      "_audit_decision_2026_05_01": "DISABLED -- failed Phase-1 validation. NET PF=0.94 on only 93 Discovery-only trades (below n=500 floor). ICT-style sweep+reclaim pattern; cargo-culted from US/forex SMC literature. See specs/2026-05-01-sub-project-9-microstructure-first-redesign.md."
     },
     "gap_and_go_continuation": {
       "enabled": false,
@@ -456,15 +478,22 @@
       "t2_target_r": 2.0,
       "t1_qty_pct": 0.5,
       "stop_below_first_bar_low_buffer_pct": 0.05,
-      "allowed_sides": ["long", "short"],
-      "allowed_cap_segments": ["large_cap", "mid_cap"],
+      "allowed_sides": [
+        "long",
+        "short"
+      ],
+      "allowed_cap_segments": [
+        "large_cap",
+        "mid_cap"
+      ],
       "universe_key": "fno_liquid_200",
       "min_bars_required": 2,
       "entry_zone_pct": 0.15,
       "entry_zone_mode": "directional",
       "min_stop_distance_pct": 0.3,
-      "_research_notes": "Indian-pro gap-and-go continuation per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 5. Sources: Enrich Money, ICICI Direct, TrueData, GWC India, Motilal Oswal. REGIME-COMPLEMENT to live gap_fade_short \u2014 large-cap CONTINUES, small-cap FADES. Mutual exclusion with orb_15 enforced by gap_threshold_pct=1.0 vs max_gap_pct_for_orb=0.5 (the 0.5-1.0% band is intentionally dead). allowed_cap_segments=large_cap+mid_cap (opposite of gap_fade_short small_cap). Mechanic: bar 0 (09:15) qualifies on gap_pct + daily-trend (PDC vs 20SMA) + first-bar new-extreme + rising volume; bar 1+ tags bar 0 high/low to fire entry.",
-      "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Phase 3 backtest"
+      "_research_notes": "Indian-pro gap-and-go continuation per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 5. Sources: Enrich Money, ICICI Direct, TrueData, GWC India, Motilal Oswal. REGIME-COMPLEMENT to live gap_fade_short — large-cap CONTINUES, small-cap FADES. Mutual exclusion with orb_15 enforced by gap_threshold_pct=1.0 vs max_gap_pct_for_orb=0.5 (the 0.5-1.0% band is intentionally dead). allowed_cap_segments=large_cap+mid_cap (opposite of gap_fade_short small_cap). Mechanic: bar 0 (09:15) qualifies on gap_pct + daily-trend (PDC vs 20SMA) + first-bar new-extreme + rising volume; bar 1+ tags bar 0 high/low to fire entry.",
+      "_live_status": "disabled — Phase 0 scaffolding only, awaits Phase 3 backtest",
+      "_audit_decision_2026_05_01": "DISABLED -- failed Phase-1 validation, fundamentally structural mismatch. NET PF=0.55 on 2,136 Discovery-only trades. Long-bias gap-continuation is exactly the LOSING flow per SEBI FY23 (70% of cash intraday traders lose, 93% of F&O). Cargo-culted. See specs/2026-05-01-sub-project-9-microstructure-first-redesign.md."
     },
     "ema5_alert_pullback": {
       "enabled": false,
@@ -476,21 +505,29 @@
       "target_rr": 3.0,
       "t1_rr": 1.5,
       "t1_qty_pct": 0.5,
-      "allowed_sides": ["long", "short"],
-      "allowed_cap_segments": ["large_cap", "mid_cap", "small_cap"],
+      "allowed_sides": [
+        "long",
+        "short"
+      ],
+      "allowed_cap_segments": [
+        "large_cap",
+        "mid_cap",
+        "small_cap"
+      ],
       "universe_key": "fno_liquid_200",
       "min_bars_required": 5,
       "entry_zone_pct": 0.1,
       "entry_zone_mode": "directional",
       "min_stop_distance_pct": 0.3,
       "_research_notes": "Subasish Pani / Power of Stocks 5 EMA Alert-Candle Pullback. Per canonical research (AlgoTest, Myalgomate, TradeWithTech, StockPathshala, EzQuant): the strategy is a ROLLING-ALERT-CANDLE mechanic with NO numeric trend-bar prerequisite — alerts can form ANY TIME after open, and the 10:00 AM gate is the ENTRY (fill) cutoff, not a setup-window cutoff. Initial production config (active_window 09:30-10:00, trend_lookback_bars=10) was over-constrained: trend_lookback_bars=10 + active_window=09:30-10:00 made the trend prerequisite mathematically unsatisfiable inside the window (need 11 prior bars; max 9 exist by 10:00 AM), so the detector could literally never fire. Phase-C calibration (2026-04-30): widened active_window to 09:15-10:00 (entry-cutoff semantics) and reduced trend_lookback_bars to 3 (minimal recent-uptrend confirmation; canonical has 0 — rolling alert). min_bars_required = trend_lookback_bars + alert + confirm = 5. Mechanic: in established 5m uptrend (ema_slope_positive over 3 increments), the FIRST candle whose entire body+wick HIGH closes BELOW 5 EMA = Alert Candle; the next bar whose HIGH breaks the alert candle's HIGH fires LONG. Mirror SHORT. Subasish-published 1:3 RR target (t2_rr=3.0); T1 50% partial at 1.5R per project tiered-exit framework.",
-      "_live_status": "disabled \u2014 Phase 0 scaffolding only, awaits Phase 3 backtest"
+      "_live_status": "disabled — Phase 0 scaffolding only, awaits Phase 3 backtest",
+      "_audit_decision_2026_05_01": "DISABLED -- insufficient sample for Phase-1 validation (n=4 within intended fno_liquid_200 universe on Discovery period). Subasish Pani 5-EMA pattern; published Indian source but generic trend-pullback mechanic, not Indian-microstructure-specific. See specs/2026-05-01-sub-project-9-microstructure-first-redesign.md."
     },
     "camarilla_l3_reversal": {
       "enabled": false,
       "active_window_start": "10:00",
       "active_window_end": "14:00",
-      "sweep_penetration_pct": 0.10,
+      "sweep_penetration_pct": 0.1,
       "reclaim_buffer_pct": 0.05,
       "max_adx_for_revert": 25,
       "pdh_pdl_proximity_skip_pct": 0.3,
@@ -499,15 +536,23 @@
       "t1_qty_pct": 0.5,
       "stop_atr_buffer": 0.0,
       "wick_buffer_pct": 0.05,
-      "allowed_sides": ["long", "short"],
-      "allowed_cap_segments": ["large_cap", "mid_cap", "small_cap"],
+      "allowed_sides": [
+        "long",
+        "short"
+      ],
+      "allowed_cap_segments": [
+        "large_cap",
+        "mid_cap",
+        "small_cap"
+      ],
       "universe_key": "fno_liquid_200",
       "min_bars_required": 30,
-      "entry_zone_pct": 0.10,
+      "entry_zone_pct": 0.1,
       "entry_zone_mode": "symmetric",
       "min_stop_distance_pct": 0.3,
-      "_research_notes": "Camarilla L3/H3 mean-revert per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 1. Indian sources: market-pulse.in, Pivottrading.co.in, Bhaskar Das Medium, Jainam, Fisdom, OptionX. CANONICAL Camarilla formulas (NOT Floor Pivot): Range=PDH-PDL; P=(PDH+PDL+PDC)/3; H3=PDC+0.275*Range; L3=PDC-0.275*Range; H4/L4=PDC\u00b10.55*Range. Stop AT L4/H4 (no extra ATR buffer \u2014 L4/H4 is the wide stop per Camarilla literature). Active window 10:00-14:00 (skip first 30 min for level visibility, skip last 90 min closing volatility). max_adx_for_revert=25 \u2014 Camarilla literature explicit on trending days running through L3 to L4. Mutual-exclusion vs pdh_pdl_sweep_reclaim when L3 within 0.3% of PDL (or H3 within 0.3% of PDH) \u2014 cede to that detector to avoid double-trade. Bidirectional via single setup name: long side fires off L3, short side fires off H3.",
-      "_live_status": "disabled \u2014 Phase 0 scaffolding; awaits Phase 1 backtest validation"
+      "_research_notes": "Camarilla L3/H3 mean-revert per specs/2026-04-29-research-new-indian-setup-candidates.md Candidate 1. Indian sources: market-pulse.in, Pivottrading.co.in, Bhaskar Das Medium, Jainam, Fisdom, OptionX. CANONICAL Camarilla formulas (NOT Floor Pivot): Range=PDH-PDL; P=(PDH+PDL+PDC)/3; H3=PDC+0.275*Range; L3=PDC-0.275*Range; H4/L4=PDC±0.55*Range. Stop AT L4/H4 (no extra ATR buffer — L4/H4 is the wide stop per Camarilla literature). Active window 10:00-14:00 (skip first 30 min for level visibility, skip last 90 min closing volatility). max_adx_for_revert=25 — Camarilla literature explicit on trending days running through L3 to L4. Mutual-exclusion vs pdh_pdl_sweep_reclaim when L3 within 0.3% of PDL (or H3 within 0.3% of PDH) — cede to that detector to avoid double-trade. Bidirectional via single setup name: long side fires off L3, short side fires off H3.",
+      "_live_status": "disabled — Phase 0 scaffolding; awaits Phase 1 backtest validation",
+      "_audit_decision_2026_05_01": "DISABLED -- failed Phase-1 validation. NET PF=0.97 on 224 Discovery-only trades; no Stage-3-passing cell. Camarilla pivots are universal (not Indian-specific). See specs/2026-05-01-sub-project-9-microstructure-first-redesign.md."
     },
     "expiry_pin_strike_reversal": {
       "enabled": false,
@@ -515,7 +560,10 @@
       "active_window_end": "15:15",
       "min_spot_distance_to_pin_pct": 0.3,
       "pin_index": "NIFTY",
-      "expiry_types": ["weekly", "monthly"],
+      "expiry_types": [
+        "weekly",
+        "monthly"
+      ],
       "nifty_heavyweights_csv": "assets/nifty_heavyweights.csv",
       "rsi_period": 14,
       "rsi_overbought": 70,
@@ -523,14 +571,20 @@
       "stop_atr_multiplier": 0.5,
       "t1_qty_pct": 0.5,
       "t1_target_frac": 0.5,
-      "allowed_sides": ["long", "short"],
-      "allowed_cap_segments": ["large_cap"],
+      "allowed_sides": [
+        "long",
+        "short"
+      ],
+      "allowed_cap_segments": [
+        "large_cap"
+      ],
       "min_bars_required": 30,
-      "entry_zone_pct": 0.10,
+      "entry_zone_pct": 0.1,
       "entry_zone_mode": "symmetric",
       "min_stop_distance_pct": 0.3,
-      "_research_notes": "Calendar+OI driven pin-magnet reversal per specs/2026-04-29-research-new-indian-setup-candidates.md \u00a7Candidate 8. Sources: Wright Research, ICFM, OptionX, PL Capital. Mechanic: market-makers minimize gamma exposure by pulling spot to high-OI strike on Indian weekly+monthly expiry sessions post 13:30 IST. Detector fires only on expiry days (is_expiry_day true), only on NIFTY heavyweights (top 10 by weight \u2014 pin gravity is mediated through index basket constituents, not random F&O symbols), only when spot is \u22650.3% from pin (room for the magnet pull), and only after RSI extreme reading earlier in session (overbought \u2192 short towards pin from above; oversold \u2192 long towards pin from below). Stop = 0.5*ATR beyond entry. Tiered T1 50% qty at half-distance to pin; T2 100% qty at pin strike. First-trigger latch keyed on (symbol, side, session_date_iso). Monthly expiry uses last-Thursday-of-month rule via is_monthly_expiry; weekly is any other expiry day.",
-      "_live_status": "disabled \u2014 Phase 0 scaffolding; awaits Phase B3 backtest validation"
+      "_research_notes": "Calendar+OI driven pin-magnet reversal per specs/2026-04-29-research-new-indian-setup-candidates.md §Candidate 8. Sources: Wright Research, ICFM, OptionX, PL Capital. Mechanic: market-makers minimize gamma exposure by pulling spot to high-OI strike on Indian weekly+monthly expiry sessions post 13:30 IST. Detector fires only on expiry days (is_expiry_day true), only on NIFTY heavyweights (top 10 by weight — pin gravity is mediated through index basket constituents, not random F&O symbols), only when spot is ≥0.3% from pin (room for the magnet pull), and only after RSI extreme reading earlier in session (overbought → short towards pin from above; oversold → long towards pin from below). Stop = 0.5*ATR beyond entry. Tiered T1 50% qty at half-distance to pin; T2 100% qty at pin strike. First-trigger latch keyed on (symbol, side, session_date_iso). Monthly expiry uses last-Thursday-of-month rule via is_monthly_expiry; weekly is any other expiry day.",
+      "_live_status": "disabled — Phase 0 scaffolding; awaits Phase B3 backtest validation",
+      "_audit_decision_2026_05_01": "DEFERRED -- NOT disabled. Indian-specific F&O gamma-pin asymmetry; design is sound (NIFTY heavyweights + RSI decay + spot-vs-pin distance). Validation impossible on the 20260430-232414 OCI run because option_chain parquets failed to download (entrypoint list_objects bug; fixed in commit d50b28f). Re-run on next OCI capture (with OI download fix) for Phase-1 validation evidence."
     }
   },
   "filters": {
@@ -633,17 +687,17 @@
   "exit_be_buffer_pct": 0.1,
   "_comment_be_buffer": "Buffer above/below breakeven for SL after T1 (0.1% = 10 bps)",
   "exit_trail_atr_mult": 2.0,
-  "_comment_trail_mult": "PHASE 2: Trail at 2.0\u00c3\u2014 ATR distance",
+  "_comment_trail_mult": "PHASE 2: Trail at 2.0Ã— ATR distance",
   "exit_trail_time_tighten": "14:30",
   "_comment_trail_time": "PHASE 3: Tighten trail after 2:30 PM when NSE liquidity drops",
   "exit_trail_atr_mult_late": 1.5,
-  "_comment_trail_late": "PHASE 3: Tighter 1.5\u00c3\u2014 ATR trail after 14:30",
+  "_comment_trail_late": "PHASE 3: Tighter 1.5Ã— ATR trail after 14:30",
   "exit_time_stop_min": 30.0,
   "exit_time_stop_req_rr": 0.4,
   "exit_score_drop_enabled": true,
   "exit_score_drop_bpct": 30.0,
   "exit_t1_min_partial_r": 0.3,
-  "_comment_t1_min_r": "Skip T1 partial if profit < 0.3R \u00e2\u20ac\u201d charges eat 87%+ of gross at <0.3R on NSE",
+  "_comment_t1_min_r": "Skip T1 partial if profit < 0.3R â€” charges eat 87%+ of gross at <0.3R on NSE",
   "or_kill_enabled": false,
   "or_kill_time_adaptive": true,
   "or_kill_volume_confirmation": true,
@@ -655,7 +709,7 @@
   "or_kill_mid_buffer_mult": 0.75,
   "or_kill_late_buffer_mult": 0.25,
   "or_kill_major_break_mult": 2.0,
-  "_comment_or_kill": "OR kill exit: DISABLED \u00e2\u20ac\u201d not in working run. Keys kept for code compatibility.",
+  "_comment_or_kill": "OR kill exit: DISABLED â€” not in working run. Keys kept for code compatibility.",
   "breakout_short_risk_control": true,
   "eod_scale_out": true,
   "entry_cutoff_hhmm": "15:20",
@@ -1184,7 +1238,7 @@
   "_comment_backtest_mis": "=== BACKTEST MIS FILTERING (Reject non-MIS stocks in backtest to match live) ===",
   "backtest_mis_filtering": {
     "enabled": true,
-    "_comment": "Filter non-MIS stocks in backtest using nse_all.json mis_enabled field. Large/mid cap MIS is 98.9% stable over 3 years. No capital restrictions applied \u00e2\u20ac\u201d backtest tests signals/filters, not capital management."
+    "_comment": "Filter non-MIS stocks in backtest using nse_all.json mis_enabled field. Large/mid cap MIS is 98.9% stable over 3 years. No capital restrictions applied â€” backtest tests signals/filters, not capital management."
   },
   "_comment_early_mis_filter": "=== EARLY MIS UNIVERSE FILTER (Reduce live/paper universe to MIS-eligible stocks) ===",
   "api_5m_bars": {
@@ -1193,7 +1247,7 @@
     "rps": 15,
     "concurrency": 30,
     "fetch_all_symbols": true,
-    "_note": "Fetch V3 intraday 5m bars for ALL core_symbols BEFORE Stage-0. Uses Historical API pipeline \u00e2\u20ac\u201d guarantees backtest-live parity for both energy scoring and structure detection. Only active in live/paper mode (not backtest). 1500 symbols at 40 RPS = ~37s. Set fetch_all_symbols=false to revert to old behavior (fetch shortlisted only, after Stage-0)."
+    "_note": "Fetch V3 intraday 5m bars for ALL core_symbols BEFORE Stage-0. Uses Historical API pipeline â€” guarantees backtest-live parity for both energy scoring and structure detection. Only active in live/paper mode (not backtest). 1500 symbols at 40 RPS = ~37s. Set fetch_all_symbols=false to revert to old behavior (fetch shortlisted only, after Stage-0)."
   },
   "bar_density_gate": {
     "enabled": true,
@@ -1234,7 +1288,7 @@
     "calibration_path": "models/conviction/2026-04-22-calibration.json",
     "daily_cap": 50,
     "min_predicted_r": 0.3,
-    "_comment_retrain": "Plan C model trained on all 281,795 sub7+sub8 trades from OCI 20260428-082149. Validation Pearson 0.11 (clipped) / 0.06 (raw). Plan A (Stage 3 cells only, n=7,310) collapsed to no signal \u00e2\u20ac\u201d kept for reference at 2026-04-28-sub8-A-*.json."
+    "_comment_retrain": "Plan C model trained on all 281,795 sub7+sub8 trades from OCI 20260428-082149. Validation Pearson 0.11 (clipped) / 0.06 (raw). Plan A (Stage 3 cells only, n=7,310) collapsed to no signal â€” kept for reference at 2026-04-28-sub8-A-*.json."
   },
   "_comment_dedup_gate": "=== DEDUP GATE (sub-project #4 refactor) ===",
   "dedup_gate": {
@@ -1255,6 +1309,6 @@
   },
   "rule_filter_gate": {
     "survivors_path": "analysis/edge_discovery_runs/2026-04-28-sub8-validation-gate/stage6_validation_survivors_C_admit_all.json",
-    "_comment_retrain": "Plan C admit-all-per-setup survivors (8 tautology rules) \u00e2\u20ac\u201d RuleFilterGate passes every sub7+sub8 candidate through to ConvictionGate, which is the actual discriminator. For Stage 3 cell enforcement, swap to stage6_validation_survivors_A_stage3_cells.json (14 rules)."
+    "_comment_retrain": "Plan C admit-all-per-setup survivors (8 tautology rules) â€” RuleFilterGate passes every sub7+sub8 candidate through to ConvictionGate, which is the actual discriminator. For Stage 3 cell enforcement, swap to stage6_validation_survivors_A_stage3_cells.json (14 rules)."
   }
 }
