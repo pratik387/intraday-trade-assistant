@@ -17,7 +17,7 @@ def _load_json(path: Path, required: bool) -> dict:
             print(msg)
             return {}
     try:
-        with path.open("r") as f:
+        with path.open("r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         
