@@ -9,14 +9,23 @@
 
 This was the FIRST test of the sub-9 §3.3 process. Brief was APPROVED for sanity check; sanity check FAILED; candidate is retired per the falsification criteria below.
 
-## RETIRED — sanity-check result (2026-05-01)
+## RETIRED — sanity-check result (2026-05-01, post-bug-fix)
 
-Pre-coding simulation on 6 months of NSE bulk-deals data (2024 H2):
-  - n = 855 T+1 intraday MIS trades
-  - **NET PF = 0.687** (below the 1.0 floor)
-  - WR = 28.9% (buys lose 71% of the time intraday)
-  - NET Sharpe = −0.30
-  - All 3 cap segments show losses (large 0.60, mid 0.60, small 0.74)
+Pre-coding simulation on 6 months of NSE bulk-deals data (2024 H2),
+revised after a missing-`atr`-column bug was caught (the 5m feather
+doesn't carry a daily-ATR column; original fallback used a single 5m bar
+range and produced unrealistically tight 0.5% stops). Re-run uses
+properly-aggregated daily ATR(14):
+
+  - n = 783 T+1 intraday MIS trades
+  - **NET PF = 0.636** (below the 1.0 floor)
+  - WR = 36.0% (buys lose 64% of the time intraday)
+  - NET Sharpe = −0.32
+  - All 3 cap segments show losses (large 0.52, mid 0.55, small 0.69)
+
+Original buggy run (tight stops): n=855, NET PF=0.687, WR=28.9%. Bug
+fix moved magnitudes (wider stops → smaller qty → smaller fees) but
+not direction — both runs RETIRE for the same structural reason.
 
 **Failure mode (post-mortem):** the peer-reviewed 50-150 bps net edge documented in Agarwalla/Pandey, Chaturvedula, and Managerial Finance 2022 is on T+1 to T+5 cumulative holds. The intraday-only T+1 component is captured by the **T+1 09:15 gap-open** (the disclosure information is priced into the auction match price). We entered at 09:25 close, AFTER the gap, leaving intraday-after-gap which is mean-reverting against the gap → systematic LOSS.
 

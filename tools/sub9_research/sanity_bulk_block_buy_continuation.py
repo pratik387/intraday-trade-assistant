@@ -138,6 +138,70 @@ def _load_5m_for_month(yyyy: int, mm: int) -> pd.DataFrame:
     return pd.read_feather(path)
 
 
+# One-shot daily-ATR table: MultiIndex (symbol, date) → ATR(14) value.
+# Built once on first access via vectorized aggregate over all monthly feathers.
+_DAILY_ATR_TABLE: pd.Series | None = None
+
+
+def _build_daily_atr_table() -> pd.Series:
+    """Single-pass aggregation: load all 2024 monthly 5m feathers, build
+    daily OHLC per (symbol, date), compute true range + 14-day rolling
+    mean ATR. Returns Series indexed by (symbol, date) → atr_value.
+
+    Cost: ~30s one-time vs hours-per-symbol if done lazily.
+    """
+    print("  one-shot daily-ATR precompute (loading 12 monthly 5m feathers)...")
+    parts: List[pd.DataFrame] = []
+    for m in range(1, 13):
+        mdf = _load_5m_for_month(2024, m)
+        if mdf.empty:
+            continue
+        # Aggregate to daily per (date, symbol) in one vectorized op
+        mdf = mdf[["date", "symbol", "high", "low", "close"]].copy()
+        mdf["d"] = mdf["date"].dt.date
+        day = mdf.groupby(["symbol", "d"]).agg(
+            high=("high", "max"),
+            low=("low", "min"),
+            close=("close", "last"),
+        ).reset_index()
+        parts.append(day)
+    if not parts:
+        return pd.Series(dtype=float)
+
+    daily = pd.concat(parts, ignore_index=True).sort_values(["symbol", "d"])
+    daily["prev_close"] = daily.groupby("symbol")["close"].shift(1)
+    daily["tr"] = pd.concat([
+        daily["high"] - daily["low"],
+        (daily["high"] - daily["prev_close"]).abs(),
+        (daily["low"]  - daily["prev_close"]).abs(),
+    ], axis=1).max(axis=1)
+    daily["atr14"] = daily.groupby("symbol")["tr"].transform(
+        lambda s: s.rolling(14).mean()
+    )
+    out = daily.set_index(["symbol", "d"])["atr14"]
+    print(f"  daily-ATR table built: {len(out):,} (symbol, date) rows")
+    return out
+
+
+def _daily_atr_for_symbol(sym_bare: str, target_date) -> float:
+    """O(1) lookup: ATR(14) for `sym_bare` on the trading day BEFORE `target_date`.
+
+    Uses the one-shot table built by `_build_daily_atr_table`. Returns NaN
+    if the symbol has insufficient history.
+    """
+    global _DAILY_ATR_TABLE
+    if _DAILY_ATR_TABLE is None:
+        _DAILY_ATR_TABLE = _build_daily_atr_table()
+    try:
+        sub = _DAILY_ATR_TABLE.loc[sym_bare]
+    except KeyError:
+        return float("nan")
+    eligible = sub[sub.index < target_date].dropna()
+    if eligible.empty:
+        return float("nan")
+    return float(eligible.iloc[-1])
+
+
 def simulate_t1_intraday(signals: pd.DataFrame) -> pd.DataFrame:
     """For each T+0 signal row, look up T+1 09:25 entry → 15:15 exit, with ATR
     stop, compute net PnL via Indian fee model.
@@ -179,18 +243,19 @@ def simulate_t1_intraday(signals: pd.DataFrame) -> pd.DataFrame:
             entry_ts = entry_row.iloc[0]["date"]
             entry_price = float(entry_row.iloc[0]["close"])
 
-            # ATR(14) from prior 14 daily bars — proxy via 14-day high/low range from 5m feather
-            # For sanity sim, use simpler proxy: 14×average true range from prior 14 trading days
-            atr_proxy = None
-            if "atr" in entry_row.columns:
-                v = entry_row.iloc[0].get("atr")
-                if v is not None and not pd.isna(v):
-                    atr_proxy = float(v)
-            if atr_proxy is None:
-                # fallback: use entry's bar range × 14
-                atr_proxy = float(entry_row.iloc[0]["high"] - entry_row.iloc[0]["low"])
-
-            stop_distance = max(ATR_STOP_MULT * atr_proxy, entry_price * MIN_STOP_PCT / 100.0)
+            # Brief: stop = 1.5 × daily ATR(14). The 5m feather has no atr
+            # column, so we aggregate to daily and compute true-range ATR
+            # ourselves (cached per symbol). Min-stop floor of 0.5% of
+            # entry kicks in on stocks with tight historical ATR.
+            atr_daily = _daily_atr_for_symbol(sym_bare, t1)
+            if pd.isna(atr_daily) or atr_daily <= 0:
+                # Insufficient history (e.g., new listing) — skip this trade
+                # rather than use a noisy fallback that distorts stop sizing.
+                break
+            stop_distance = max(
+                ATR_STOP_MULT * atr_daily,
+                entry_price * MIN_STOP_PCT / 100.0,
+            )
             hard_sl = entry_price - stop_distance
 
             # Walk forward: exit on stop hit, or at EXIT_BAR_HHMM close, whichever first
