@@ -1,13 +1,35 @@
 # §3.3 Brief: `bulk_block_buy_continuation`
 
 **Sub-project:** #9 (microstructure-first redesign)
-**Status:** DRAFT — pending user review per sub-9 spec §3.3 gate
+**Status:** **RETIRED** — pre-coding sanity check failed on 2026-05-01
 **Date:** 2026-05-01
 **Predecessor:**
 - specs/2026-05-01-sub-project-9-microstructure-first-redesign.md (defines §3.3 gate)
 - specs/2026-05-01-sub-project-9-asymmetry-research-findings.md (selected H as top candidate)
 
-This is the FIRST test of the sub-9 §3.3 process. Per the gate, this brief must pass user review BEFORE any code is written.
+This was the FIRST test of the sub-9 §3.3 process. Brief was APPROVED for sanity check; sanity check FAILED; candidate is retired per the falsification criteria below.
+
+## RETIRED — sanity-check result (2026-05-01)
+
+Pre-coding simulation on 6 months of NSE bulk-deals data (2024 H2):
+  - n = 855 T+1 intraday MIS trades
+  - **NET PF = 0.687** (below the 1.0 floor)
+  - WR = 28.9% (buys lose 71% of the time intraday)
+  - NET Sharpe = −0.30
+  - All 3 cap segments show losses (large 0.60, mid 0.60, small 0.74)
+
+**Failure mode (post-mortem):** the peer-reviewed 50-150 bps net edge documented in Agarwalla/Pandey, Chaturvedula, and Managerial Finance 2022 is on T+1 to T+5 cumulative holds. The intraday-only T+1 component is captured by the **T+1 09:15 gap-open** (the disclosure information is priced into the auction match price). We entered at 09:25 close, AFTER the gap, leaving intraday-after-gap which is mean-reverting against the gap → systematic LOSS.
+
+The brief explicitly listed this failure mode (§Risks: "MIS-vs-multi-day collapse"). The sanity check fired the kill criterion exactly as designed.
+
+**Sanity-check tool:** tools/sub9_research/sanity_bulk_block_buy_continuation.py
+**Trade log:** reports/sub9_sanity/bulk_block_buy_continuation_trades.csv
+
+**Implication for future briefs:** any candidate whose peer-reviewed evidence is multi-day cumulative needs a separate test that the SAME-DAY component (within MIS auto-square window) is enough to clear fees. Literature on cumulative effects ≠ literature on intraday components.
+
+---
+
+## Original brief (kept for reference)
 
 ---
 
