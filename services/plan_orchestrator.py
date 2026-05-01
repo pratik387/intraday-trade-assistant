@@ -57,14 +57,13 @@ import pandas as pd
 
 from config.logging_config import get_agent_logger, get_planning_logger
 
-# Sub7 + sub8 detector classes — every active setup is in this map.
+# Active detector classes — every active setup is in this map.
+# Sub-9 cleanup (2026-05-01): the 6 sub-7/sub-8 candidate detectors
+# (orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim, gap_and_go_continuation,
+# ema5_alert_pullback, camarilla_l3_reversal) were deleted after Phase-1
+# validation failure. See specs/2026-05-01-sub-project-9-microstructure-
+# first-redesign.md.
 from structures.gap_fade_short_structure import GapFadeShortStructure
-from structures.orb_15_structure import ORB15Structure
-from structures.pdh_pdl_reject_structure import PDHPDLRejectStructure
-from structures.pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructure
-from structures.gap_and_go_continuation_structure import GapAndGoContinuationStructure
-from structures.ema5_alert_pullback_structure import EMA5AlertPullbackStructure
-from structures.camarilla_l3_reversal_structure import CamarillaL3ReversalStructure
 from structures.expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
 from structures.data_models import MarketContext
 
@@ -86,14 +85,10 @@ def _planning_logger():
 
 # Setup → detector class. Adding a new setup = one entry here +
 # config/configuration.json setups.* block + the detector file.
+# Per sub-9 spec §3.3 a new setup requires a passing brief BEFORE code
+# is written — don't add entries here ahead of that gate.
 _DETECTOR_REGISTRY: Dict[str, Any] = {
     "gap_fade_short": GapFadeShortStructure,
-    "orb_15": ORB15Structure,
-    "pdh_pdl_reject": PDHPDLRejectStructure,
-    "pdh_pdl_sweep_reclaim": PDHPDLSweepReclaimStructure,
-    "gap_and_go_continuation": GapAndGoContinuationStructure,
-    "ema5_alert_pullback": EMA5AlertPullbackStructure,
-    "camarilla_l3_reversal": CamarillaL3ReversalStructure,
     "expiry_pin_strike_reversal": ExpiryPinStrikeReversalStructure,
 }
 

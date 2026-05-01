@@ -24,24 +24,6 @@
     "gap_fade_short": {
       "enabled": true
     },
-    "orb_15": {
-      "enabled": true
-    },
-    "pdh_pdl_reject": {
-      "enabled": true
-    },
-    "pdh_pdl_sweep_reclaim": {
-      "enabled": true
-    },
-    "gap_and_go_continuation": {
-      "enabled": true
-    },
-    "ema5_alert_pullback": {
-      "enabled": true
-    },
-    "camarilla_l3_reversal": {
-      "enabled": true
-    },
     "expiry_pin_strike_reversal": {
       "enabled": true
     }

@@ -17,12 +17,6 @@ from .base_structure import BaseStructure
 from .data_models import StructureEvent, TradePlan, RiskParams, ExitLevels, MarketContext, StructureAnalysis
 from services.gates.trade_decision_gate import SetupCandidate
 from .gap_fade_short_structure import GapFadeShortStructure
-from .orb_15_structure import ORB15Structure
-from .pdh_pdl_reject_structure import PDHPDLRejectStructure
-from .pdh_pdl_sweep_reclaim_structure import PDHPDLSweepReclaimStructure
-from .gap_and_go_continuation_structure import GapAndGoContinuationStructure
-from .ema5_alert_pullback_structure import EMA5AlertPullbackStructure
-from .camarilla_l3_reversal_structure import CamarillaL3ReversalStructure
 from .expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
 from services.symbol_metadata import get_cap_segment
 
@@ -54,21 +48,20 @@ class MainDetector(BaseStructure):
         self.detectors = {}
 
         # Define detector configurations with their classes.
-        # Post-cleanup (sub8 phase 1): only 3 detectors remain — gap_fade_short
-        # is the validated live ship; orb_15 is pending redesign-or-drop probe;
-        # pdh_pdl_reject is borderline (mid_cap edge but n<500). The 60+
-        # vestigial sub-project #1 entries and the sub8 phase 1 dropouts
-        # (mis_unwind_short, closing_hour_reversal) were removed along with
-        # their detector source files — Phase 1 confirmed no salvageable cell.
+        # Post-sub-9 cleanup (2026-05-01): only 2 detectors remain after
+        # the 11-failure validation outcome captured in
+        # specs/2026-05-01-sub-project-9-microstructure-first-redesign.md:
+        #   - gap_fade_short: validated production setup (PF=1.49 NET)
+        #   - expiry_pin_strike_reversal: design sound, awaits OI fix
+        # The 6 sub-7/sub-8 candidate detectors that failed Phase-1
+        # validation (orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim,
+        # gap_and_go_continuation, ema5_alert_pullback,
+        # camarilla_l3_reversal) were deleted with their source files,
+        # tests, and specs. Future setups must pass the §3.3 brief gate
+        # in the sub-9 spec before any code is written.
         detector_configs = [
             # (setup_name, detector_class, detector_key)
             ("gap_fade_short", GapFadeShortStructure, "gap_fade_short"),
-            ("orb_15", ORB15Structure, "orb_15"),
-            ("pdh_pdl_reject", PDHPDLRejectStructure, "pdh_pdl_reject"),
-            ("pdh_pdl_sweep_reclaim", PDHPDLSweepReclaimStructure, "pdh_pdl_sweep_reclaim"),
-            ("gap_and_go_continuation", GapAndGoContinuationStructure, "gap_and_go_continuation"),
-            ("ema5_alert_pullback", EMA5AlertPullbackStructure, "ema5_alert_pullback"),
-            ("camarilla_l3_reversal", CamarillaL3ReversalStructure, "camarilla_l3_reversal"),
             ("expiry_pin_strike_reversal", ExpiryPinStrikeReversalStructure, "expiry_pin_strike_reversal"),
         ]
 
@@ -133,9 +126,7 @@ class MainDetector(BaseStructure):
         # the 0.5%-price-proximity dedup AND the max_detections_per_symbol cap.
         # Under wide-open OCI capture the gauntlet must see every detector's
         # structure event, even when multiple detectors fire on the same bar
-        # at adjacent levels (e.g., camarilla L3 ~0.3% from PDL: pdh_pdl_reject's
-        # higher confidence currently wins by default and silently masks
-        # camarilla_l3_reversal). Same architectural pattern as the
+        # at adjacent levels. Same architectural pattern as the
         # universe/cap_segment bypass in commit 65648f1.
         self._wide_open = bool(config.get("wide_open_mode", False))
 
@@ -480,8 +471,7 @@ class MainDetector(BaseStructure):
         detectors with NO dedup and NO max_detections cap — the gauntlet needs
         every structure signal independently scored. The 0.5% proximity dedup
         plus 5-event cap silently masks newer detectors with conservative
-        confidence calculations (camarilla_l3_reversal median 0.138 loses to
-        pdh_pdl_reject 0.662 even when both fire at the same level).
+        confidence calculations.
         """
         if self._wide_open:
             # Bypass dedup + cap entirely. Return all events.
@@ -770,15 +760,11 @@ class MainDetector(BaseStructure):
             'gap_fade_short': 'gap_fade_short',
             'cpr_mean_revert': 'cpr_mean_revert',
 
-            # Sub-project #8 — Extended Indian-native setups
-            'orb_15': 'orb_15',
-            'narrow_cpr_breakout': 'narrow_cpr_breakout',
-            'vwap_first_pullback': 'vwap_first_pullback',
-            'pdh_pdl_reject': 'pdh_pdl_reject',
-            'pdh_pdl_sweep_reclaim': 'pdh_pdl_sweep_reclaim',
-            'gap_and_go_continuation': 'gap_and_go_continuation',
-            'ema5_alert_pullback': 'ema5_alert_pullback',
-            'camarilla_l3_reversal': 'camarilla_l3_reversal',
+            # Sub-project #8 / Sub-project #9 cleanup (2026-05-01):
+            # 6 sub-8 candidate detectors deleted after Phase-1 validation
+            # failure (orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim,
+            # gap_and_go_continuation, ema5_alert_pullback, camarilla_l3_reversal).
+            # Only expiry_pin_strike_reversal retained.
             'expiry_pin_strike_reversal': 'expiry_pin_strike_reversal',
         }
 
