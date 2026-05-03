@@ -77,28 +77,45 @@ def build_full_year_5m() -> pd.DataFrame:
     return big
 
 
-def daily_aggregate(big5m: pd.DataFrame) -> pd.DataFrame:
-    """Build daily OHLC + last-30-min-volume + intraday-volume per (symbol, date).
+def load_production_daily() -> pd.DataFrame:
+    """Load 1day OHLCV directly from the SAME source production reads.
 
-    Used for circuit-hit detection — needs both daily OHLC AND the
-    last-30-min volume share to test the price-clamp signature.
+    Earlier versions of this script aggregated 5m bars to daily
+    (groupby + max-high + last-close), which produced a phantom daily
+    series where close == high for circuit-hit days. The actual 1day
+    data from Upstox/Zerodha (cached in consolidated_daily.feather)
+    reports a different close — typically slightly lower than the
+    intraday high — because the API close is the post-close auction /
+    settlement price, not the last 5m bar's close.
+
+    Production reads consolidated_daily.feather. Sanity must too,
+    otherwise the brief gate measures a setup that doesn't exist in
+    production. Closes the data divergence found while diagnosing
+    why circuit_t1_fade_short fired 0 trades on a date this script
+    expected 11 fires.
     """
-    print("  aggregating to daily OHLC + last-30-min-volume share ...")
-    # last-30-min flag: bars with timestamp >= 15:00 IST (== minute_of_day >= 900)
-    mod = big5m["date"].dt.hour * 60 + big5m["date"].dt.minute
-    big5m = big5m.copy()
-    big5m["last30"] = mod >= 15 * 60  # 15:00 onwards
-
-    agg = big5m.groupby(["symbol", "d"]).agg(
-        open=("open", "first"),
-        high=("high", "max"),
-        low=("low", "min"),
-        close=("close", "last"),
-        volume=("volume", "sum"),
-        last30_vol=("volume", lambda v: v[big5m.loc[v.index, "last30"]].sum()),
-    ).reset_index()
-    print(f"  daily aggregate rows: {len(agg):,}")
-    return agg
+    print("  loading production 1day data from consolidated_daily.feather ...")
+    daily_path = _REPO_ROOT / "cache" / "preaggregate" / "consolidated_daily.feather"
+    if not daily_path.exists():
+        raise FileNotFoundError(
+            f"{daily_path} missing. Run "
+            f"`python tools/create_preaggregated_cache.py "
+            f"--from 2023-01-01 --to 2024-12-31` to build."
+        )
+    df = pd.read_feather(daily_path)
+    df["ts"] = pd.to_datetime(df["ts"])
+    if df["ts"].dt.tz is not None:
+        df["ts"] = df["ts"].dt.tz_localize(None)
+    df["d"] = df["ts"].dt.date
+    # Sanity period: full calendar year 2024 (T+0 events 2024-01 through 2024-12;
+    # T+1 entry trades land in 2024-01 through 2025-01 — the 5m feather is
+    # 2024-only so any 2024-12-31 hits won't simulate, accepted truncation).
+    df = df[(df["d"] >= date(2024, 1, 1)) & (df["d"] <= date(2024, 12, 31))]
+    df = df.rename(columns={"open": "open", "high": "high", "low": "low",
+                            "close": "close", "volume": "volume"})
+    df = df[["symbol", "d", "open", "high", "low", "close", "volume"]].copy()
+    print(f"  daily rows (2024 only): {len(df):,} | symbols: {df['symbol'].nunique()}")
+    return df
 
 
 def detect_circuit_hits(daily: pd.DataFrame) -> pd.DataFrame:
@@ -110,7 +127,6 @@ def detect_circuit_hits(daily: pd.DataFrame) -> pd.DataFrame:
     df["prev_close"] = df.groupby("symbol")["close"].shift(1)
     df["pct_change"] = (df["close"] / df["prev_close"] - 1.0) * 100.0
     df["high_to_close"] = df["close"] / df["high"]
-    df["last30_share"] = df["last30_vol"] / df["volume"]
     # 20-day avg volume (excluding T+0 itself)
     df["vol_avg_20d"] = df.groupby("symbol")["volume"].transform(
         lambda v: v.shift(1).rolling(20).mean()
@@ -128,8 +144,11 @@ def detect_circuit_hits(daily: pd.DataFrame) -> pd.DataFrame:
     df = df[df["high_to_close"] >= HIGH_TO_CLOSE_RATIO_MIN]
     print(f"    close ≈ day high (clamped):                {len(df):,}")
 
-    df = df[df["last30_share"] <= LAST30MIN_VOL_RATIO_MAX]
-    print(f"    last-30-min vol ≤ {LAST30MIN_VOL_RATIO_MAX*100:.0f}% of day:          {len(df):,}")
+    # last-30-min volume share check dropped to match production detector.
+    # Production reads only 1day OHLCV (no intraday volume share available);
+    # the close ≈ high check above is the working proxy for "price clamped
+    # at the band edge." Re-introducing it here would re-create the
+    # divergence we just fixed.
 
     df = df[df["vol_ratio_20d"] >= MIN_VOL_VS_20D]
     print(f"    day vol ≥ {MIN_VOL_VS_20D}× 20d avg:                  {len(df):,}")
@@ -331,8 +350,12 @@ def report(trades: pd.DataFrame) -> None:
 
 
 def main():
+    # T-1 circuit-hit classification reads production 1day data
+    # (consolidated_daily.feather) — same source mock_broker.get_daily
+    # returns to circuit_t1_fade_short.detect() at runtime. T+1
+    # simulation continues to use 5m bars.
     big5m = build_full_year_5m()
-    daily = daily_aggregate(big5m)
+    daily = load_production_daily()
     hits = detect_circuit_hits(daily)
     print(f"\nFiltered to {len(hits)} T+0 upper-circuit-hit events.")
     if hits.empty:
