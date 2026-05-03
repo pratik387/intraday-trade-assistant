@@ -782,6 +782,9 @@ class MainDetector(BaseStructure):
             # gap_and_go_continuation, ema5_alert_pullback, camarilla_l3_reversal).
             # Only expiry_pin_strike_reversal retained.
             'expiry_pin_strike_reversal': 'expiry_pin_strike_reversal',
+
+            # Sub-project #9 first APPROVED setup (2026-05-03):
+            'circuit_t1_fade_short': 'circuit_t1_fade_short',
         }
 
         return direct_mappings.get(structure_type)
