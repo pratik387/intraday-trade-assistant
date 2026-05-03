@@ -282,9 +282,18 @@ class CircuitT1FadeShortStructure(BaseStructure):
             return _empty("T-1 not an upper-circuit qualifier")
 
         # ---- T+1 (current session) gap-up filter ----
-        # Today's open = first bar's open; t0_close from cache.
+        # Today's open = TODAY'S first bar's open. Production passes a
+        # multi-day rolling tail (default 120 bars), so df.iloc[0] is
+        # the OLDEST bar in the tail (often 1-2 days back), not today's
+        # 09:15. Filter to session_date before taking iloc[0] — bug
+        # caught on 2024-04-04 smoke where APOLLO had df.iloc[0] = 04-02
+        # 13:05 open=105.05, producing gap_pct=-4.67% instead of the
+        # correct +1.63% from 04-04 09:15 open=112.00.
         t0_close = t0_info["t0_close"]
-        t1_open = float(df.iloc[0]["open"])
+        today_bars = df[df.index.date == session_date]
+        if today_bars.empty:
+            return _empty("no bars for session_date")
+        t1_open = float(today_bars.iloc[0]["open"])
         if t1_open <= 0:
             return _empty("T+1 open invalid")
         gap_pct = (t1_open / t0_close - 1.0) * 100.0
@@ -313,7 +322,7 @@ class CircuitT1FadeShortStructure(BaseStructure):
                 "t0_close": t0_close,
                 "t0_high": t0_info["t0_high"],
                 "t1_open": t1_open,
-                "t1_high_so_far": float(df["high"].max()),
+                "t1_high_so_far": float(today_bars["high"].max()),
                 "entry_close": bar_close,
             },
             context={
@@ -353,11 +362,18 @@ class CircuitT1FadeShortStructure(BaseStructure):
         levels = event.levels or {}
         t0_close = float(levels.get("t0_close", close))
         t1_open = float(levels.get("t1_open", close))
-        # T+1 high so far = max of bars in df. The brief's stop uses
-        # T+1 day's high; at 10:30 we have 14 bars (09:15-10:25), the
-        # high so far is the best proxy — operators that pump again
-        # post-10:30 invalidate the thesis and the stop should fire.
-        t1_high_so_far = float(df["high"].max())
+        # T+1 high so far = max of bars in TODAY only. df is a multi-day
+        # rolling tail; df["high"].max() over the tail picks up prior
+        # days' highs and inflates the stop. Same wrong-bar bug class as
+        # the t1_open issue in detect().
+        session_date = (
+            ctx.session_date
+            or pd.Timestamp(df.index[-1]).date()
+        )
+        today_bars = df[df.index.date == session_date]
+        if today_bars.empty:
+            return None
+        t1_high_so_far = float(today_bars["high"].max())
 
         # Stop = max(T+1 high × (1 + buffer), entry × (1 + min_stop_pct/100))
         sl_from_high = t1_high_so_far * (1.0 + self.stop_t1_high_buffer_pct / 100.0)
