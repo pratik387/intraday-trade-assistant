@@ -1,7 +1,40 @@
-# §3.3 Brief: `nifty500_deletion_short`
+# §3.3 Brief: `nifty500_deletion_short` — **RETIRED (2026-05-05)**
 
 **Sub-project:** #9 (microstructure-first redesign)
-**Status:** **DRAFT — pending user approval for §3.3 sanity check**
+**Status:** **RETIRED 2026-05-05 — failed feasibility-precedent gate.** Brief retained as documentation; do not implement.
+
+## Why retired (2026-05-05)
+
+After user approval and during sanity-tool design, a feasibility-precedent
+check revealed:
+
+- **Zero references** to NIFTY 500 deletion short as an intraday MIS algo
+  in Indian retail/pro quant resources (uTrade, PL Capital, combiz,
+  StockEdge, Tickertape, multiple Indian quant Github repos, Kaggle
+  Indian algo datasets).
+- Pros who trade this asymmetry operate in three modes, **none compatible
+  with our infrastructure**:
+  1. Index arb desks (sub-minute basket spread, exec-arb edge, paid
+     Bloomberg/NSE Indices feeds)
+  2. Active multi-day positional (CNC delivery, 2-8 week hold)
+  3. Tier-1 quant prop ensembles (paid feeds, basket trading)
+- Retail-scale single-day MIS shorting of index deletions has no precedent
+  because the forced flow doesn't concentrate in a single intraday
+  window — passive funds use VWAP/TWAP execution across the
+  pre-effective period.
+
+The brief's own falsification criterion #3 was prescient ("real edge
+wrong infra → retire from sub-9, don't loosen the brief") but was placed
+AFTER the sanity gate, not BEFORE the brief. Lesson captured at
+`tasks/lessons.md` 2026-05-05.
+
+The brief is retained for future reference IF/WHEN CNC/SLB/paid-feed
+infra is built. Until then, do NOT promote G back into the §3.3 queue.
+
+---
+
+**Original brief below (kept for reference):**
+
 **Date:** 2026-05-03
 **Predecessor:**
 - specs/2026-05-01-sub-project-9-microstructure-first-redesign.md (defines §3.3 gate)
