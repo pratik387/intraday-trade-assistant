@@ -76,6 +76,12 @@ spec:
         - name: CONFIG_HASH
           value: "{{CONFIG_HASH}}"
 
+        # Active sub-project's OCI override file (entrypoint.py loads it).
+        # Defaults to sub8 for back-compat; set per-run to switch sub-projects
+        # without rebuilding the Docker image.
+        - name: OCI_OVERRIDE_FILE
+          value: "{{OCI_OVERRIDE_FILE}}"
+
         # Working directory
         workingDir: /app
 

@@ -110,17 +110,24 @@ def download_code():
 
 
 def apply_oci_config_override():
-    """Fold sub8_oci_overrides.json into configuration.json (in place).
+    """Fold the active sub-project's OCI override into configuration.json.
 
     Bundled in the code tarball; missing override is a hard failure rather
     than silent skip — running OCI without the override gives a misleading
     "everything works" result while actually capturing only gap_fade_short.
 
+    Override file resolution (env-var-driven so sub-N transitions don't
+    need image rebuilds):
+      - $OCI_OVERRIDE_FILE if set (e.g. "sub9_oci_overrides.json")
+      - else default to "sub8_oci_overrides.json" (back-compat for any
+        currently-running sub8 jobs)
+
     Delegates to tools/apply_oci_override.py which has unit tests and is
     usable for local wide-open smoke runs too. Same merge logic both ways.
     """
     base_path = Path('/app/config/configuration.json')
-    override_path = Path('/app/config/sub8_oci_overrides.json')
+    override_filename = os.environ.get('OCI_OVERRIDE_FILE', 'sub8_oci_overrides.json')
+    override_path = Path('/app/config') / override_filename
 
     if not base_path.exists():
         log(f"ERROR: base config not found: {base_path}")
