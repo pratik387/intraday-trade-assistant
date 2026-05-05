@@ -261,7 +261,7 @@ class OCIBacktestSubmitter:
         with open(config_file, 'rb') as f:
             return hashlib.sha256(f.read()).hexdigest()[:8]
 
-    def submit_kubernetes_job(self, run_id, dates, description, max_parallel=None, oci_override_file="sub8_oci_overrides.json"):
+    def submit_kubernetes_job(self, run_id, dates, description, max_parallel=None):
         """Submit Kubernetes Job"""
         print("\n[3/5] 🚀 Submitting Kubernetes Job...")
 
@@ -290,7 +290,6 @@ class OCIBacktestSubmitter:
         job_yaml = job_yaml.replace('{{CONFIG_HASH}}', config_hash)
         job_yaml = job_yaml.replace('{{PARALLELISM}}', str(parallelism))
         job_yaml = job_yaml.replace('{{COMPLETIONS}}', str(num_dates))
-        job_yaml = job_yaml.replace('{{OCI_OVERRIDE_FILE}}', oci_override_file)
 
         # Write temporary job file
         temp_job_path = self.root / 'temp' / f'job-{run_id}.yaml'
@@ -552,7 +551,7 @@ class OCIBacktestSubmitter:
 
     def run(self, start_date=None, end_date=None, description=None, no_wait=False,
             max_parallel=None, num_nodes=None, wait_after_scale=180, failed_dates_file=None,
-            local=False, oci_override_file="sub8_oci_overrides.json"):
+            local=False):
         """Main workflow
 
         Args:
@@ -624,7 +623,7 @@ class OCIBacktestSubmitter:
         self.upload_code(tarball_path, run_id)
 
         # Submit Kubernetes job
-        parallelism = self.submit_kubernetes_job(run_id, dates, description, max_parallel, oci_override_file)
+        parallelism = self.submit_kubernetes_job(run_id, dates, description, max_parallel)
 
         if parallelism is None:
             print("\n❌ Job submission failed")
@@ -690,10 +689,6 @@ Examples:
     parser.add_argument('--local', action='store_true',
                         help='Process results locally after download (runs process_backtest_run.py '
                              'and generate_backtest_report.py, skips zip creation)')
-    parser.add_argument('--oci-override-file', type=str, default='sub8_oci_overrides.json',
-                        help='Active sub-project OCI override file (e.g. sub8_oci_overrides.json, '
-                             'sub9_oci_overrides.json). Passed to entrypoint.py via OCI_OVERRIDE_FILE '
-                             'env var. Defaults to sub8 for back-compat.')
 
     args = parser.parse_args()
 
@@ -711,8 +706,7 @@ Examples:
         num_nodes=args.nodes,
         wait_after_scale=args.wait_after_scale,
         failed_dates_file=args.failed_dates,
-        local=args.local,
-        oci_override_file=args.oci_override_file,
+        local=args.local
     )
 
 

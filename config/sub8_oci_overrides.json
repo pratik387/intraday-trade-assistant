@@ -19,12 +19,15 @@
     "enabled": true,
     "min_distance_to_circuit_pct": 2.0
   },
-  "_comment_setups": "Wide-open OCI capture for the 7 candidate sub8 detectors (orb_15 redesign + pdh_pdl_reject + 5 new 2026-04-29 detectors). gap_fade_short stays ENABLED as the live validated baseline reference; the 5 new sub8 detectors (pdh_pdl_sweep_reclaim, gap_and_go_continuation, ema5_alert_pullback, camarilla_l3_reversal, expiry_pin_strike_reversal) flipped to enabled=true so the gauntlet can score all 8 candidates from the same capture. Dropped post-Phase-1: mis_unwind_short, closing_hour_reversal (no salvageable cell). Dropped post-Phase-7: cpr_mean_revert, narrow_cpr_breakout, vwap_first_pullback.",
+  "_comment_setups": "Wide-open OCI capture. Active capture for sub-project #9: gap_fade_short (TRUSTED baseline) + expiry_pin_strike_reversal (DEFERRED, capture-ready post option-chain fix d50b28f) + circuit_t1_fade_short (NEW sub-9 setup needing gauntlet/cell selection). All three captured in one wide-open run so trades cross-analyze without confounding from separate captures. (Historical sub-7/sub-8 detectors that were retired post-Phase-1: mis_unwind_short, closing_hour_reversal, orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim, gap_and_go_continuation, ema5_alert_pullback, camarilla_l3_reversal, cpr_mean_revert, narrow_cpr_breakout, vwap_first_pullback — most source files DELETED in commit cycle ending 2026-05-01.)",
   "setups": {
     "gap_fade_short": {
       "enabled": true
     },
     "expiry_pin_strike_reversal": {
+      "enabled": true
+    },
+    "circuit_t1_fade_short": {
       "enabled": true
     }
   }
