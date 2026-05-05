@@ -1,7 +1,42 @@
-# §3.3 Brief: `oi_long_buildup_continuation`
+# §3.3 Brief: `oi_long_buildup_continuation` — **DEFERRED (2026-05-05)**
 
 **Sub-project:** #9 (microstructure-first redesign)
-**Status:** **DRAFT — pending user approval for §3.3 sanity check**
+**Status:** **DEFERRED 2026-05-05 — failed data-feasibility gate.** Brief retained; do not implement until intraday F&O OI capture is built.
+
+## Why deferred (2026-05-05)
+
+User approved this brief for sanity-check coding. Before writing the
+sanity tool, I verified what F&O OI data exists on disk:
+
+- 5m enriched feather: OHLCV + indicators only — **no OI column**
+- `data/option_chain/<YYYY>/<MM>/<YYYY-MM-DD>.parquet`: EOD per-strike
+  OPTION OI (not stock-future OI); daily snapshot, not intraday
+- F&O bhavcopy: EOD daily snapshot per contract — cannot interpolate
+  intraday velocity from a single-point-per-day snapshot
+- **No intraday minute-granular F&O OI tick data on disk anywhere**
+- NSE OI-Spurts feed is live-only; no historical archive
+
+The brief's three-leg filter requires 30-min intraday stock-future OI
+velocity. We have NEITHER stock-future OI NOR minute-granular OI ticks.
+
+The brief's "Data engineering plan" section line "F&O bhavcopy +
+interpolates intraday OI from the bhavcopy snapshot points" was
+incorrect speculation — F&O bhavcopy is single-snapshot per day, not
+interpolatable to intraday. This was caught before any sanity-tool
+code was written, but only after the brief was approved.
+
+Lesson captured at `tasks/lessons.md` 2026-05-05 second entry: the
+precedent-feasibility gate (lesson 2026-05-05 first entry) needs a
+companion data-feasibility gate. Both must pass BEFORE drafting a brief.
+
+The brief is retained for reference IF/WHEN intraday F&O OI capture is
+built (separate data-engineering project, ~1-2 weeks). Until then, do
+NOT promote this back into the §3.3 queue.
+
+---
+
+**Original brief below (kept for reference):**
+
 **Date:** 2026-05-05
 **Predecessors:**
 - specs/2026-05-01-sub-project-9-microstructure-first-redesign.md (defines §3.3 gate)
