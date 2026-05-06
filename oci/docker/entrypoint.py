@@ -205,6 +205,80 @@ def download_consolidated_daily_cache():
         raise
 
 
+def download_iv_rank():
+    """Download per-symbol 252-day IV-rank parquet for the sub-9 round-4
+    options_vol_iv_rank_revert detector.
+
+    Single file (~1 MB), keyed by the most recently uploaded
+    `options_iv/<from_year>_<to_year>_iv_rank.parquet`. The detector's
+    services.iv_rank_service auto-discovers the newest *_iv_rank.parquet
+    in `data/options_iv/` so the OCI pod just needs the file present.
+
+    Built locally by tools/option_chain/build_iv_rank.py from
+    `tools/option_chain/build_iv_timeseries.py` output. Uploaded via
+    oci/tools/upload_iv_rank.py.
+
+    Bucket layout:
+        options_iv/<from_year>_<to_year>_iv_rank.parquet
+
+    Per-date 404 (file missing) is logged at warning — the detector
+    tolerates absence (silently no-ops on every symbol) but the run
+    won't generate any IV-rank fires.
+    """
+    log("Downloading IV-rank parquet for options_vol_iv_rank_revert...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    # List all objects under the options_iv/ prefix and pick the lexically
+    # latest *_iv_rank.parquet (filename embeds year-range, so lex sort
+    # works: 2022_2024 < 2023_2025 < 2024_2026, etc).
+    try:
+        list_obj = os_client.list_objects(
+            namespace_name=namespace,
+            bucket_name=bucket,
+            prefix="options_iv/",
+        )
+        names = [o.name for o in list_obj.data.objects
+                 if o.name.endswith("_iv_rank.parquet")]
+    except oci.exceptions.ServiceError as e:
+        if e.status in (403, 404):
+            log(f"WARNING: list_objects(options_iv/) failed ({e.status}); "
+                "options_vol_iv_rank_revert detector will silently skip every bar")
+            return
+        log(f"ERROR listing options_iv/: {e}")
+        return
+
+    if not names:
+        log("WARNING: no *_iv_rank.parquet found in options_iv/ prefix; "
+            "run oci/tools/upload_iv_rank.py")
+        return
+    object_name = sorted(names)[-1]
+
+    local_dir = Path('/app/data/options_iv')
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_file = local_dir / Path(object_name).name
+
+    try:
+        get_obj = os_client.get_object(
+            namespace_name=namespace,
+            bucket_name=bucket,
+            object_name=object_name,
+        )
+        with open(local_file, 'wb') as f:
+            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                f.write(chunk)
+        size_kb = local_file.stat().st_size / 1024
+        log(f"Downloaded {object_name}: {size_kb:.1f} KB")
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            log(f"WARNING: {object_name} not found in OCI cache")
+        else:
+            log(f"ERROR downloading {object_name}: {e}")
+
+
 def _download_oci_file(os_client, namespace, bucket, object_name, local_path):
     """Download a single file from OCI Object Storage. Returns True on success."""
     try:
@@ -703,6 +777,10 @@ def main():
     # so the detector's D-1 walk-back lookup can find the latest available
     # bhavcopy even on Monday-after-long-weekend.
     download_option_chain(date_str)
+
+    # Download IV-rank parquet for options_vol_iv_rank_revert (~1 MB, single
+    # file). Detector auto-skips if absent — sub9 round-4 ship.
+    download_iv_rank()
 
     # Run backtest
     result = run_backtest(date_str)
