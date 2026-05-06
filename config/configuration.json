@@ -452,7 +452,8 @@
       "min_bars_required": 16,
       "entry_zone_pct": 0.1,
       "entry_zone_mode": "directional",
-      "min_stop_distance_pct": 1.0,
+      "min_stop_distance_pct": 0.5,
+      "_comment_min_stop_distance_pct": "Set to 0.5 (below the 1.0 stop_pct) to avoid the fp-rounding edge in enforce_min_stop_distance: with stop_pct=1% and min=1%, hard_sl=entry*1.01 produces stop_pct=0.999...%* for some entries (SAIL 112.4, GODREJCP 1077.1, LUPIN 1270.05, TCS 3810.45 — all rejected on smoke 2023-12-26). The guard exists for pivot-anchored stops that come out 0.01% from entry; our fixed 1% stop is already well above the qty-inflation floor.",
       "_research_notes": "Sub-9 round-4 brief APPROVED for narrow-cell ship. Asymmetry: Indian single-stock-options ATM IV-rank extreme = retail F&O option-buyer concentration (per SEBI FY23 91-93% retail loss study). At iv_rank>=0.85 (top 15% of 252-day window) the underlying mean-reverts down on T+0 mid-session as institutional vol-arb desks unwind. Source data: NSE F&O bhavcopy → tools/option_chain/build_iv_rank.py → data/options_iv/<from>_<to>_iv_rank.parquet. SHORT-only ship — sanity LONG cell (iv_rank<=0.20 + NIFTY uptrend) PF 0.819, dragged aggregate to 0.843. Brief: specs/2026-05-06-sub-project-9-brief-options_vol_iv_rank_revert.md. Sanity script: tools/sub9_research/sanity_options_vol_iv_rank_revert.py. Cell select: tools/sub9_research/cell_select_round4.py."
     }
   },

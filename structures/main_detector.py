@@ -787,6 +787,9 @@ class MainDetector(BaseStructure):
 
             # Sub-project #9 first APPROVED setup (2026-05-03):
             'circuit_t1_fade_short': 'circuit_t1_fade_short',
+
+            # Sub-project #9 round-4 narrow-cell ship (2026-05-06):
+            'options_vol_iv_rank_revert': 'options_vol_iv_rank_revert',
         }
 
         return direct_mappings.get(structure_type)
