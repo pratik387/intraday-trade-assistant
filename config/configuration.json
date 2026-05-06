@@ -344,7 +344,8 @@
   "lunch_end": "13:15",
   "setups": {
     "gap_fade_short": {
-      "enabled": true,
+      "enabled": false,
+      "_comment_disabled_2026_05_06": "Disabled while sub-9 round-3 candidates (VWAP-deviation, index-vs-stock divergence, volume-spike reversal) are researched. Holdout NET ~Rs.41K/yr is small for non-trivial capital scale. Re-enable post-research-decision based on combined-setup portfolio composition.",
       "active_window_start": "09:15",
       "active_window_end": "09:30",
       "min_gap_pct_above_pdc": 1.5,
