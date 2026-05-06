@@ -427,6 +427,33 @@
       "entry_zone_pct": 0.1,
       "entry_zone_mode": "directional",
       "_research_notes": "Sub-project #9 first APPROVED setup. Asymmetry: post-circuit-hit retail FOMO + operator pump exhaustion in T+0 close, faded T+1 mid-session. Indian-microstructure-specific (NSE DPR flexing, no US/forex analog). Direction: short-only. 5 peer-reviewed sources (Guo JIFM 2023, Chen/Petukhov/Wang MIT WP, Tandfonline 2024, Sehgal PBFJ 2024, Chari 2017). Sanity check (tools/sub9_research/sanity_circuit_t1_fade_short.py): NET PF=1.473 on 654 trades over 2024. Brief: specs/2026-05-01-sub-project-9-brief-circuit_t1_fade_short.md."
+    },
+    "options_vol_iv_rank_revert": {
+      "enabled": true,
+      "_status_2026_05_06": "NEW — sub-9 §3.3 round-4 sanity-check aggregate FAILED (PF=0.843, LONG drag); cell-selection rescued SHORT × iv_rank>=0.85 cell (n=448/2yr, PF=1.131, Sharpe=0.056). Reports: reports/sub9_sanity/round4_iv_rank_cell_selection.md. enabled=false until OOS validation (Jan-Sep 2025) + holdout (Oct 2025-Mar 2026) confirm.",
+      "iv_rank_high_threshold": 0.85,
+      "_comment_threshold": "Sanity 0.95 cell PF 1.192 (n=262); 0.85 cell PF 1.131 (n=448). Default 0.85 ships the broader cell with 70% more trades. Tighten to 0.95 if OOS PF < 1.10 on 0.85 cell.",
+      "active_window_start": "11:00",
+      "active_window_end": "11:00",
+      "stop_pct": 0.01,
+      "t1_r_multiple": 1.0,
+      "t2_r_multiple": 2.0,
+      "t1_qty_pct": 0.5,
+      "time_stop_at": "15:10",
+      "allowed_cap_segments": [
+        "large_cap",
+        "mid_cap",
+        "small_cap"
+      ],
+      "_comment_cap": "F&O 200 universe is empirically large_cap-dominant (143/153 large, 4 mid, 0 small per sanity). Brief restriction to mid+small was infeasible. Allow all 3 caps; cap_segment break-down available in trade log if cell tightening needed post-OOS.",
+      "allowed_regimes": null,
+      "_comment_regime": "Cell-selection found regime=trend_down × iv_rank>=0.85 cell strongest (n=244 PF 1.242). Ship regime-agnostic for Discovery; tighten to trend_down-only post-OOS if PF holds.",
+      "universe_key": "fno_liquid_200",
+      "min_bars_required": 16,
+      "entry_zone_pct": 0.1,
+      "entry_zone_mode": "directional",
+      "min_stop_distance_pct": 1.0,
+      "_research_notes": "Sub-9 round-4 brief APPROVED for narrow-cell ship. Asymmetry: Indian single-stock-options ATM IV-rank extreme = retail F&O option-buyer concentration (per SEBI FY23 91-93% retail loss study). At iv_rank>=0.85 (top 15% of 252-day window) the underlying mean-reverts down on T+0 mid-session as institutional vol-arb desks unwind. Source data: NSE F&O bhavcopy → tools/option_chain/build_iv_rank.py → data/options_iv/<from>_<to>_iv_rank.parquet. SHORT-only ship — sanity LONG cell (iv_rank<=0.20 + NIFTY uptrend) PF 0.819, dragged aggregate to 0.843. Brief: specs/2026-05-06-sub-project-9-brief-options_vol_iv_rank_revert.md. Sanity script: tools/sub9_research/sanity_options_vol_iv_rank_revert.py. Cell select: tools/sub9_research/cell_select_round4.py."
     }
   },
   "filters": {

@@ -66,6 +66,7 @@ from config.logging_config import get_agent_logger, get_planning_logger
 from structures.gap_fade_short_structure import GapFadeShortStructure
 from structures.expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
 from structures.circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
+from structures.options_vol_iv_rank_revert_structure import OptionsVolIvRankRevertStructure
 from structures.data_models import MarketContext
 
 from services.symbol_metadata import get_cap_segment, get_mis_info
@@ -92,6 +93,7 @@ _DETECTOR_REGISTRY: Dict[str, Any] = {
     "gap_fade_short": GapFadeShortStructure,
     "expiry_pin_strike_reversal": ExpiryPinStrikeReversalStructure,
     "circuit_t1_fade_short": CircuitT1FadeShortStructure,
+    "options_vol_iv_rank_revert": OptionsVolIvRankRevertStructure,
 }
 
 ACTIVE_SETUPS: frozenset = frozenset(_DETECTOR_REGISTRY.keys())

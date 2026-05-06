@@ -273,10 +273,20 @@ def _init_stage0_worker(config_dict):
         _stage0_config = config_dict
 
         scanner_cfg = config_dict["energy_scanner"]
+        # IV-rank priority: prepend qualifying SHORT candidates so the sub-9
+        # options_vol_iv_rank_revert detector reaches per-bar evaluation
+        # regardless of generic momentum rank.
+        _iv_setup = (config_dict.get("setups") or {}).get("options_vol_iv_rank_revert") or {}
+        _iv_thr = (
+            float(_iv_setup["iv_rank_high_threshold"])
+            if _iv_setup.get("enabled") and "iv_rank_high_threshold" in _iv_setup
+            else None
+        )
         _stage0_scanner = EnergyScanner(
             top_k_long=scanner_cfg["top_k_long"],
             top_k_short=scanner_cfg["top_k_short"],
             wide_open=bool(config_dict.get("wide_open_mode", False)),
+            iv_rank_short_threshold=_iv_thr,
         )
 
         # Pre-load cap mapping (same logic as ScreenerLive._load_cap_mapping)
@@ -581,10 +591,17 @@ class ScreenerLive:
 
         # Stage-0 scanner
         scanner_cfg = raw.get("energy_scanner")
+        _iv_setup = (raw.get("setups") or {}).get("options_vol_iv_rank_revert") or {}
+        _iv_thr = (
+            float(_iv_setup["iv_rank_high_threshold"])
+            if _iv_setup.get("enabled") and "iv_rank_high_threshold" in _iv_setup
+            else None
+        )
         self.scanner = EnergyScanner(
             top_k_long=scanner_cfg["top_k_long"],
             top_k_short=scanner_cfg["top_k_short"],
             wide_open=bool(raw.get("wide_open_mode", False)),
+            iv_rank_short_threshold=_iv_thr,
         )
 
         # Trigger-aware executor for live trade execution

@@ -44,6 +44,12 @@ class EnergyScanner:
     # wide_open_mode contract that "every detector evaluates every
     # candidate."
     wide_open: bool = False
+    # When set, symbols whose T-1 IV-rank >= this threshold are prepended
+    # to the SHORT shortlist regardless of OHLCV-based momentum rank. This
+    # lets non-OHLCV detectors (sub-9 options_vol_iv_rank_revert) reach the
+    # per-bar evaluation step even when the generic short-momentum score
+    # ranks them below top_k_short. Set to None to disable.
+    iv_rank_short_threshold: Optional[float] = None
 
     # ------------------------------ Core API ------------------------------ #
     def compute_features(
@@ -427,6 +433,34 @@ class EnergyScanner:
             except Exception as e:
                 logger.warning(f"ORB_PRIORITY | Failed to detect ORB candidates: {e}")
 
+        # ========== IV-RANK PRIORITY (sub-9 round-4) ==========
+        # Symbols whose T-1 IV-rank >= threshold are prepended to the SHORT
+        # shortlist. The signal is non-OHLCV so they don't rank highly on
+        # the generic short-momentum score; without this prepend the
+        # options_vol_iv_rank_revert detector never sees them.
+        iv_rank_short_candidates: List[str] = []
+        if self.iv_rank_short_threshold is not None and "ts" in df.columns and not df.empty:
+            try:
+                from services.iv_rank_service import get_iv_rank_service
+                current_ts = df["ts"].iloc[0]
+                session_date = current_ts.date() if hasattr(current_ts, "date") else current_ts
+                iv_rank_short_candidates = (
+                    get_iv_rank_service()
+                    .get_high_iv_rank_symbols(session_date, self.iv_rank_short_threshold)
+                )
+                # Restrict to symbols actually in today's feature universe (others
+                # have no bars to evaluate anyway).
+                in_universe = set(df["symbol"].tolist())
+                iv_rank_short_candidates = [s for s in iv_rank_short_candidates if s in in_universe]
+                if iv_rank_short_candidates:
+                    logger.debug(
+                        f"IV_RANK_PRIORITY | session={session_date} "
+                        f"threshold={self.iv_rank_short_threshold} "
+                        f"prepended {len(iv_rank_short_candidates)} symbols to SHORT shortlist"
+                    )
+            except Exception as e:
+                logger.warning(f"IV_RANK_PRIORITY | Failed to inject candidates: {e}")
+
         # Get momentum candidates (original logic)
         momentum_long = (
             df.sort_values("rank_long")["symbol"].head(momentum_long_count).tolist()
@@ -453,10 +487,13 @@ class EnergyScanner:
         mr_long = [s for s in mr_long if s not in momentum_long][:mr_long_count]
         mr_short = [s for s in mr_short if s not in momentum_short][:mr_short_count]
 
-        # Combine final lists with ORB priority candidates
-        # ORB candidates are PREPENDED to ensure they're always scanned during ORB window
+        # Combine final lists with priority candidates prepended.
+        # ORB candidates are PREPENDED during ORB window (any-side).
+        # IV-rank priority candidates are PREPENDED to SHORT only.
         long_syms = orb_candidates_long + momentum_long + mr_long
-        short_syms = orb_candidates_short + momentum_short + mr_short
+        short_syms = (
+            iv_rank_short_candidates + orb_candidates_short + momentum_short + mr_short
+        )
 
         # Remove duplicates while preserving order (ORB candidates first)
         seen_long = set()
@@ -473,8 +510,10 @@ class EnergyScanner:
                 # Determine if long or short
                 bias = "long" if symbol in long_syms else "short"
 
-                # Determine category: ORB priority > momentum > mean_reversion
-                if symbol in orb_candidates_long or symbol in orb_candidates_short:
+                # Determine category: iv_rank > ORB > momentum > mean_reversion
+                if symbol in iv_rank_short_candidates:
+                    category = "iv_rank_priority"
+                elif symbol in orb_candidates_long or symbol in orb_candidates_short:
                     category = "orb_priority"
                 elif symbol in (momentum_long + momentum_short):
                     category = "momentum"
