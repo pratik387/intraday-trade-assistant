@@ -110,6 +110,14 @@ class CircuitT1FadeShortStructure(BaseStructure):
         self.t1_qty_pct = float(config["t1_qty_pct"])
         # Universe
         self.allowed_caps = set(config["allowed_cap_segments"])
+        # OOS-validated cell restriction (sub-9 gauntlet 2026-05-06): only
+        # cells in this regime allowlist are tradable. Empty list/None =
+        # no restriction (Discovery / wide-open capture). Production should
+        # enable the validated subset (currently {"trend_up"} per
+        # docs/edge_discovery/2026-05-06-sub9-validation-gate/
+        # stage6_validation_survivors.json — squeeze regime FAILED OOS).
+        ar = config.get("allowed_regimes")
+        self.allowed_regimes: Optional[set] = set(ar) if ar else None
         uk = config.get("universe_key")
         self.universe_key = str(uk) if uk else None
         # Plumbing
@@ -236,6 +244,17 @@ class CircuitT1FadeShortStructure(BaseStructure):
             and not in_universe(ctx.symbol, self.universe_key)
         ):
             return _empty(f"universe_filter:{ctx.symbol} not in {self.universe_key}")
+
+        # ---- Regime allowlist (OOS-validated cell restriction) ----
+        # Bypassed under wide_open so capture runs see all regimes. None
+        # in production config = no restriction. Sub-9 gauntlet 2026-05-06:
+        # squeeze regime PF=0.96 OOS — failed validation, excluded.
+        if (
+            not _wide_open
+            and self.allowed_regimes is not None
+            and ctx.regime not in self.allowed_regimes
+        ):
+            return _empty(f"regime {ctx.regime!r} not in allowed set {sorted(self.allowed_regimes)}")
 
         df = ctx.df_5m
         if df is None or len(df) < self.min_bars_required:

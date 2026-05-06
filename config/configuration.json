@@ -415,9 +415,13 @@
       "t1_qty_pct": 0.5,
       "time_stop_at": "15:10",
       "allowed_cap_segments": [
-        "mid_cap",
-        "small_cap"
+        "mid_cap"
       ],
+      "_comment_cap_post_oos": "Restricted to mid_cap only after sub-9 OOS validation 2026-05-06. small_cap was Discovery's biggest cell (n=539, PF=1.65) but FAILED OOS — WR Δ -10.6pp, PF dropped to 1.42. mid_cap survived with PF=2.84 OOS. See docs/edge_discovery/2026-05-06-sub9-validation-gate/.",
+      "allowed_regimes": [
+        "trend_up"
+      ],
+      "_comment_regime_post_oos": "Restricted to trend_up only post-OOS. squeeze regime: Discovery PF=1.64, OOS PF=0.96 (failed). trend_down + chop: failed Discovery Stage-3 already. Discovery survivors after OOS: only trend_up retains tradeable edge.",
       "universe_key": null,
       "min_bars_required": 16,
       "entry_zone_pct": 0.1,
