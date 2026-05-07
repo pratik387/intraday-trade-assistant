@@ -20,11 +20,17 @@ This module exposes two functions:
   - download_bhavcopy(session_date) -> bytes
       Returns the raw ZIP bytes. Raises BhavcopyNotFound on a session that
       isn't a trading day (404), or on any other transport error.
-  - parse_bhavcopy(raw_bytes, session_date) -> pd.DataFrame
-      Unzips the ZIP, parses the CSV, filters to options only (OPTIDX +
-      OPTSTK), normalizes columns to the canonical schema:
+  - parse_bhavcopy(raw_bytes, session_date) -> BhavcopyParseResult
+      Unzips the ZIP, parses the CSV, splits rows into:
+        * options   (OPTIDX/OPTSTK legacy, IDO/STO new)  -> .rows
+        * futures   (FUTIDX/FUTSTK legacy, IDF/STF new)  -> .futures
+      Normalizes columns to canonical schemas. Options schema:
         session_date, symbol, expiry_date, strike, option_type (CE/PE),
         oi, oi_change, vol, ltp, settlement_price, iv (NULL).
+      Futures schema:
+        session_date, symbol, instrument_type ('FUTSTK'/'FUTIDX'),
+        expiry_date, contract_type (None), strike (None),
+        open, high, low, close, settle, oi, vol.
 
 The actual backfill is the user's deferred step — this client is a
 standalone module that the user can invoke via fetch_oi_snapshot.py once
@@ -118,12 +124,16 @@ def download_bhavcopy(
 
 @dataclass
 class BhavcopyParseResult:
-    """Result of parse_bhavcopy — a DataFrame and the inferred schema variant."""
+    """Result of parse_bhavcopy — options DataFrame, futures DataFrame, schema."""
 
-    rows: pd.DataFrame
-    schema: str   # "legacy" or "new"
+    rows: pd.DataFrame                # options rows (canonical schema)
+    schema: str                       # "legacy" or "new"
+    futures: pd.DataFrame = None      # futures rows (canonical schema)
 
 
+# Both options and futures need OHLC for the futures rows but only close/ltp
+# for the options rows. We extend the column maps accordingly so a single
+# rename pass handles both subsets of the same underlying CSV.
 _LEGACY_COLUMN_MAP = {
     # legacy CSV header → canonical
     "INSTRUMENT": "instrument",
@@ -131,10 +141,13 @@ _LEGACY_COLUMN_MAP = {
     "EXPIRY_DT": "expiry_date",
     "STRIKE_PR": "strike",
     "OPTION_TYP": "option_type",
+    "OPEN": "open",
+    "HIGH": "high",
+    "LOW": "low",
+    "CLOSE": "close",
     "OPEN_INT": "oi",
     "CHG_IN_OI": "oi_change",
     "CONTRACTS": "vol",
-    "CLOSE": "ltp",
     "SETTLE_PR": "settlement_price",
 }
 _NEW_COLUMN_MAP = {
@@ -144,20 +157,40 @@ _NEW_COLUMN_MAP = {
     "XpryDt": "expiry_date",
     "StrkPric": "strike",
     "OptnTp": "option_type",
+    "OpnPric": "open",
+    "HghPric": "high",
+    "LwPric": "low",
+    "ClsPric": "close",
     "OpnIntrst": "oi",
     "ChngInOpnIntrst": "oi_change",
     "TtlTradgVol": "vol",
-    "ClsPric": "ltp",
     "SttlmPric": "settlement_price",
+}
+
+# Maps the (schema, raw instrument code) onto the canonical instrument_type
+# label we want in the futures parquet. Index futures and stock futures
+# share the same OHLC schema but live in two distinct codes per scheme.
+_FUTURES_INSTRUMENT_LABEL = {
+    ("legacy", "FUTSTK"): "FUTSTK",
+    ("legacy", "FUTIDX"): "FUTIDX",
+    ("new", "STF"): "FUTSTK",
+    ("new", "IDF"): "FUTIDX",
 }
 
 
 def parse_bhavcopy(raw_bytes: bytes, session_date: date) -> BhavcopyParseResult:
-    """Unzip, parse, filter to options only, normalize columns.
+    """Unzip, parse, split into options + futures, normalize columns.
 
-    Returns a DataFrame with the canonical schema:
-      session_date, symbol, expiry_date, strike, option_type (CE/PE),
-      oi, oi_change, vol, ltp, settlement_price, iv (NULL)
+    Returns BhavcopyParseResult with:
+      .rows    — options DataFrame, canonical schema:
+                   session_date, symbol, expiry_date, strike,
+                   option_type (CE/PE), oi, oi_change, vol, ltp,
+                   settlement_price, iv (NULL)
+      .futures — futures DataFrame, canonical schema:
+                   symbol, instrument_type ('FUTSTK'/'FUTIDX'),
+                   expiry_date, contract_type (None), strike (None),
+                   open, high, low, close, settle, oi, vol, session_date
+      .schema  — "legacy" or "new"
 
     Raises ValueError if the ZIP is malformed or the schema doesn't match
     either known variant.
@@ -170,31 +203,28 @@ def parse_bhavcopy(raw_bytes: bytes, session_date: date) -> BhavcopyParseResult:
     if not csv_names:
         raise ValueError(f"no CSV in ZIP for {session_date}")
     raw_csv = zf.read(csv_names[0])
-    df = pd.read_csv(io.BytesIO(raw_csv))
+    raw_df = pd.read_csv(io.BytesIO(raw_csv))
 
     # Detect schema variant by header columns
-    cols = set(df.columns)
+    cols = set(raw_df.columns)
     if {"INSTRUMENT", "SYMBOL", "EXPIRY_DT"} <= cols:
         schema = "legacy"
-        df = df.rename(columns=_LEGACY_COLUMN_MAP)
+        raw_df = raw_df.rename(columns=_LEGACY_COLUMN_MAP)
+        opt_codes = ["OPTIDX", "OPTSTK"]
+        fut_codes = ["FUTSTK", "FUTIDX"]
     elif {"FinInstrmTp", "TckrSymb", "XpryDt"} <= cols:
         schema = "new"
-        df = df.rename(columns=_NEW_COLUMN_MAP)
+        raw_df = raw_df.rename(columns=_NEW_COLUMN_MAP)
+        opt_codes = ["STO", "IDO"]
+        fut_codes = ["STF", "IDF"]
     else:
         raise ValueError(
             f"unrecognized bhavcopy schema for {session_date}; "
             f"got cols: {sorted(cols)[:10]}"
         )
 
-    # Filter to options only (OPTIDX + OPTSTK; legacy uses OPTIDX/OPTSTK,
-    # new uses STO + IDO option-instrument codes).
-    if schema == "legacy":
-        df = df[df["instrument"].isin(["OPTIDX", "OPTSTK"])].copy()
-    else:
-        # New scheme: FinInstrmTp = STO (stock options) or IDO (index options).
-        df = df[df["instrument"].isin(["STO", "IDO"])].copy()
-
-    # Normalize types
+    # ---- Options subset (preserved behaviour from the original parser) ----
+    df = raw_df[raw_df["instrument"].isin(opt_codes)].copy()
     df["session_date"] = session_date
     df["expiry_date"] = pd.to_datetime(
         df["expiry_date"], errors="coerce"
@@ -203,22 +233,57 @@ def parse_bhavcopy(raw_bytes: bytes, session_date: date) -> BhavcopyParseResult:
     df["oi"] = pd.to_numeric(df["oi"], errors="coerce").fillna(0).astype("int64")
     df["oi_change"] = pd.to_numeric(df["oi_change"], errors="coerce").fillna(0).astype("int64")
     df["vol"] = pd.to_numeric(df["vol"], errors="coerce").fillna(0).astype("int64")
-    df["ltp"] = pd.to_numeric(df["ltp"], errors="coerce")
+    # 'close' is the canonical name; the historical option_chain parquets
+    # call it 'ltp' for compatibility with the loader API.
+    df["ltp"] = pd.to_numeric(df["close"], errors="coerce")
     df["settlement_price"] = pd.to_numeric(df["settlement_price"], errors="coerce")
     df["iv"] = pd.NA   # not in bhavcopy; placeholder for future
 
     # CE/PE normalization (legacy uses 'CE'/'PE'; new uses 'Call'/'Put')
     if schema == "new":
-        df["option_type"] = df["option_type"].str.upper().map(
+        df["option_type"] = df["option_type"].astype("string").str.upper().map(
             {"CALL": "CE", "PUT": "PE"}
         ).fillna(df["option_type"])
 
     df = df[df["option_type"].isin(["CE", "PE"])].copy()
 
-    # Final canonical column order
-    canonical_cols = [
+    options_cols = [
         "session_date", "symbol", "expiry_date", "strike", "option_type",
         "oi", "oi_change", "vol", "ltp", "settlement_price", "iv",
     ]
-    df = df[canonical_cols].reset_index(drop=True)
-    return BhavcopyParseResult(rows=df, schema=schema)
+    options_df = df[options_cols].reset_index(drop=True)
+
+    # ---- Futures subset (FUTSTK + FUTIDX) ----
+    fdf = raw_df[raw_df["instrument"].isin(fut_codes)].copy()
+    if not fdf.empty:
+        fdf["session_date"] = session_date
+        fdf["instrument_type"] = fdf["instrument"].map(
+            lambda code: _FUTURES_INSTRUMENT_LABEL.get((schema, code), code)
+        )
+        fdf["expiry_date"] = pd.to_datetime(
+            fdf["expiry_date"], errors="coerce"
+        ).dt.date
+        # Futures rows have no strike / no contract_type — explicit None
+        # columns keep the parquet schema stable across days.
+        fdf["contract_type"] = None
+        fdf["strike"] = pd.NA
+        for col in ("open", "high", "low", "close"):
+            fdf[col] = pd.to_numeric(fdf.get(col), errors="coerce")
+        fdf["settle"] = pd.to_numeric(fdf["settlement_price"], errors="coerce")
+        fdf["oi"] = pd.to_numeric(fdf["oi"], errors="coerce").fillna(0).astype("int64")
+        fdf["vol"] = pd.to_numeric(fdf["vol"], errors="coerce").fillna(0).astype("int64")
+
+        futures_cols = [
+            "symbol", "instrument_type", "expiry_date", "contract_type",
+            "strike", "open", "high", "low", "close", "settle",
+            "oi", "vol", "session_date",
+        ]
+        futures_df = fdf[futures_cols].reset_index(drop=True)
+    else:
+        futures_df = pd.DataFrame(columns=[
+            "symbol", "instrument_type", "expiry_date", "contract_type",
+            "strike", "open", "high", "low", "close", "settle",
+            "oi", "vol", "session_date",
+        ])
+
+    return BhavcopyParseResult(rows=options_df, schema=schema, futures=futures_df)
