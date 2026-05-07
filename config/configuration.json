@@ -431,8 +431,8 @@
     "options_vol_iv_rank_revert": {
       "enabled": true,
       "_status_2026_05_06": "NEW — sub-9 §3.3 round-4 sanity-check aggregate FAILED (PF=0.843, LONG drag); cell-selection rescued SHORT × iv_rank>=0.85 cell (n=448/2yr, PF=1.131, Sharpe=0.056). Reports: reports/sub9_sanity/round4_iv_rank_cell_selection.md. enabled=false until OOS validation (Jan-Sep 2025) + holdout (Oct 2025-Mar 2026) confirm.",
-      "iv_rank_high_threshold": 0.85,
-      "_comment_threshold": "Sanity 0.95 cell PF 1.192 (n=262); 0.85 cell PF 1.131 (n=448). Default 0.85 ships the broader cell with 70% more trades. Tighten to 0.95 if OOS PF < 1.10 on 0.85 cell.",
+      "iv_rank_high_threshold": 0.95,
+      "_comment_threshold": "Tightened 0.85 -> 0.95 after OOS validation 2026-05-07. Discovery sanity 0.85 cell PF 1.131 (n=448) and 0.95 cell PF 1.192 (n=262). OOS 2025-01..2025-09 (run 20260507-082527_full): 0.85 cell PF 0.843 NET (n=83) FAILED, 0.95 cell PF 1.197 NET (n=56) PASSED. The 0.85-0.90 sub-bucket was the noise drag I flagged as yellow in sanity (n=59 too thin to trust). Holdout 2025-10..2026-03 will gate the final ship; falsify if Holdout NET PF < 1.10 or n < 30 or |WR delta vs OOS| > 10pp.",
       "active_window_start": "11:00",
       "active_window_end": "11:00",
       "stop_pct": 0.01,
