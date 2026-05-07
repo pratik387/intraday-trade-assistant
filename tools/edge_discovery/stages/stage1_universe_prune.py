@@ -24,6 +24,8 @@ def run_stage1(
     trades: pd.DataFrame,
     report_path: Path,
     survivors_json: Path,
+    min_n: int = MIN_N,
+    min_pf: float = MIN_PF,
 ) -> List[Dict[str, Any]]:
     """Run Stage 1 universe pruning.
 
@@ -38,7 +40,7 @@ def run_stage1(
     rows: List[Dict[str, Any]] = []
     for setup, grp in trades.groupby("setup_type"):
         stats = summary_stats(grp["total_trade_pnl"])
-        passed = (stats["n"] >= MIN_N) and (stats["pf"] >= MIN_PF)
+        passed = (stats["n"] >= min_n) and (stats["pf"] >= min_pf)
         rows.append({
             "setup": str(setup),
             "n": stats["n"],
@@ -52,7 +54,7 @@ def run_stage1(
     write_stage_report(
         path=report_path,
         stage_name="Stage 1 — Universe Pruning",
-        criteria=f"N >= {MIN_N} AND PF >= {MIN_PF}",
+        criteria=f"N >= {min_n} AND PF >= {min_pf}",
         summary_rows=rows,
     )
     survivors = [r["setup"] for r in rows if r["passed"]]

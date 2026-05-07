@@ -40,6 +40,7 @@ def run_gauntlet_all(
     backtest_dir: Path,
     output_dir: Path,
     cfg_dates: Dict[str, date],
+    min_n: int = 500,
 ) -> Dict[str, Any]:
     """Run full gauntlet: load data, then stages 1, 2, 3, 5.
 
@@ -78,11 +79,12 @@ def run_gauntlet_all(
     print(f"[gauntlet] Loaded {len(trades):,} Discovery trades across "
           f"{data.sessions_loaded} sessions")
 
-    print("[gauntlet] Stage 1: Universe pruning ...")
+    print(f"[gauntlet] Stage 1: Universe pruning (min_n={min_n}) ...")
     s1 = run_stage1(
         trades,
         report_path=output_dir / "01-universe-pruning.md",
         survivors_json=output_dir / "stage1_survivors.json",
+        min_n=min_n,
     )
     s1_survivors = [r["setup"] for r in s1 if r["passed"]]
     print(f"[gauntlet]   Stage 1 survivors: {len(s1_survivors)}")
@@ -351,6 +353,11 @@ def main():
     p.add_argument("--validation-end", required=True)
     p.add_argument("--holdout-start", required=True)
     p.add_argument("--holdout-end", required=True)
+    p.add_argument(
+        "--min-n", type=int, default=500,
+        help="Stage-1 minimum trade count (default 500). Lower for narrow-cell "
+             "setups like options_vol_iv_rank_revert (~445 over 2yr).",
+    )
     args = p.parse_args()
 
     cfg_dates = {
@@ -365,6 +372,7 @@ def main():
         backtest_dir=Path(args.backtest_dir),
         output_dir=Path(args.output_dir),
         cfg_dates=cfg_dates,
+        min_n=int(args.min_n),
     )
     print(json.dumps(result, indent=2))
 
