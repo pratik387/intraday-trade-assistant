@@ -20,6 +20,7 @@ from .gap_fade_short_structure import GapFadeShortStructure
 from .expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
 from .circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
 from .options_vol_iv_rank_revert_structure import OptionsVolIvRankRevertStructure
+from .capitulation_long_morning_structure import CapitulationLongMorningStructure
 from services.symbol_metadata import get_cap_segment
 
 logger = get_agent_logger()
@@ -67,6 +68,7 @@ class MainDetector(BaseStructure):
             ("expiry_pin_strike_reversal", ExpiryPinStrikeReversalStructure, "expiry_pin_strike_reversal"),
             ("circuit_t1_fade_short", CircuitT1FadeShortStructure, "circuit_t1_fade_short"),
             ("options_vol_iv_rank_revert", OptionsVolIvRankRevertStructure, "options_vol_iv_rank_revert"),
+            ("capitulation_long_morning", CapitulationLongMorningStructure, "capitulation_long_morning"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -790,6 +792,9 @@ class MainDetector(BaseStructure):
 
             # Sub-project #9 round-4 narrow-cell ship (2026-05-06):
             'options_vol_iv_rank_revert': 'options_vol_iv_rank_revert',
+
+            # Sub-project #9 round-6 cell-ship (2026-05-07):
+            'capitulation_long_morning': 'capitulation_long_morning',
         }
 
         return direct_mappings.get(structure_type)

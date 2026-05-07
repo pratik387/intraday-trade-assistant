@@ -455,6 +455,42 @@
       "min_stop_distance_pct": 0.5,
       "_comment_min_stop_distance_pct": "Set to 0.5 (below the 1.0 stop_pct) to avoid the fp-rounding edge in enforce_min_stop_distance: with stop_pct=1% and min=1%, hard_sl=entry*1.01 produces stop_pct=0.999...%* for some entries (SAIL 112.4, GODREJCP 1077.1, LUPIN 1270.05, TCS 3810.45 — all rejected on smoke 2023-12-26). The guard exists for pivot-anchored stops that come out 0.01% from entry; our fixed 1% stop is already well above the qty-inflation floor.",
       "_research_notes": "Sub-9 round-4 brief APPROVED for narrow-cell ship. Asymmetry: Indian single-stock-options ATM IV-rank extreme = retail F&O option-buyer concentration (per SEBI FY23 91-93% retail loss study). At iv_rank>=0.85 (top 15% of 252-day window) the underlying mean-reverts down on T+0 mid-session as institutional vol-arb desks unwind. Source data: NSE F&O bhavcopy → tools/option_chain/build_iv_rank.py → data/options_iv/<from>_<to>_iv_rank.parquet. SHORT-only ship — sanity LONG cell (iv_rank<=0.20 + NIFTY uptrend) PF 0.819, dragged aggregate to 0.843. Brief: specs/2026-05-06-sub-project-9-brief-options_vol_iv_rank_revert.md. Sanity script: tools/sub9_research/sanity_options_vol_iv_rank_revert.py. Cell select: tools/sub9_research/cell_select_round4.py."
+    },
+    "capitulation_long_morning": {
+      "enabled": false,
+      "_status_2026_05_07": "NEW — sub-9 round-6 cell-ship. Aggregate sanity PF 0.813 (n=7,471) but cell trend_down × mid_cap × liq=10-30cr passed at PF 1.238, n=443 (~222/yr; 6mo holdout expects ~110 fires — proper statistical power). Mirror image of gap_fade_short (LONG fade of retail panic-capitulation on gap-down). enabled=false until OOS validation (Jan-Sep 2025) + holdout (Oct 2025-Mar 2026) confirm.",
+      "gap_min_pct": 1.5,
+      "gap_max_pct": 8.0,
+      "lower_wick_ratio_min": 0.5,
+      "body_size_max_pct": 30.0,
+      "active_window_start": "09:25",
+      "active_window_end": "10:00",
+      "stop_pct": 0.01,
+      "gap_low_buffer_pct": 0.5,
+      "atr_stop_multiple": 1.5,
+      "t1_r_multiple": 1.0,
+      "t2_r_multiple": 2.0,
+      "t1_qty_pct": 0.5,
+      "time_stop_at": "10:15",
+      "allowed_cap_segments": [
+        "mid_cap"
+      ],
+      "_comment_cap": "Cell-locked to mid_cap per round-6 cell selection. trend_down × mid_cap × liq=10-30cr was the only trivariate cell with n=443 PF 1.238 across all 7,471 aggregate trades. large_cap and small_cap fail PF (~0.75-0.85). DO NOT broaden without re-running cell selection on OOS data first.",
+      "allowed_regimes": [
+        "trend_down"
+      ],
+      "_comment_regime": "Cell-locked to NIFTY trend_down. trend_up cell PF=0.636 (n=2,776, biggest drag in aggregate). The brief did not pre-lock regime; cell selection on Discovery identified trend_down as the only regime where the asymmetry holds.",
+      "allowed_liquidity_band_cr": [
+        10.0,
+        30.0
+      ],
+      "_comment_liquidity_band": "Cell-locked to ADV_20d in [10, 30] Cr. liq=<3cr (PF 0.474), 3-10 (0.814), 10-30 (best, ~0.86 univariate; 1.238 with regime+cap), 30-100 (0.82), 100+ (0.81). Tight liquidity band excludes both retail-trap micro-caps (<3cr) AND large-cap names where institutional flow dominates.",
+      "universe_key": null,
+      "min_bars_required": 4,
+      "entry_zone_pct": 0.1,
+      "entry_zone_mode": "directional",
+      "min_stop_distance_pct": 0.3,
+      "_research_notes": "Sub-9 round-6 cell-ship. Mirror of gap_fade_short on the LONG-DOWN-side. Mechanic: 09:15 gap-down 1.5-8% on no-news (filter NOT enforced — cell stats showed news_status was orthogonal); confirmed by 09:25-10:00 5m bar with lower_wick/body>=0.5 + body<=30% + green + no fresh low. Stop = min(gap_low × 0.995, entry - ATR×1.5); T1=1R, T2=2R, time-stop 10:15 IST. Brief: specs/2026-05-07-sub-project-9-brief-capitulation_long_morning.md. Sanity: tools/sub9_research/sanity_capitulation_long_morning.py. Cell selection on aggregate trades CSV identified the trend_down × mid_cap × liq=10-30cr cell."
     }
   },
   "filters": {
