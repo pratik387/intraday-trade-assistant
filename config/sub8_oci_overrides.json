@@ -31,7 +31,8 @@
       "enabled": true
     },
     "options_vol_iv_rank_revert": {
-      "enabled": true
+      "_retired_2026_05_07": "Round-4 candidate retired at Holdout (2025-10..2026-03). NET PF 1.436 passed but n=11 < 30-floor and WR delta +13.6pp > 10pp limit. See setups.options_vol_iv_rank_revert._status_2026_05_07_RETIRED in configuration.json. Override stays disabled to keep future OCI captures clean.",
+      "enabled": false
     }
   }
 }
