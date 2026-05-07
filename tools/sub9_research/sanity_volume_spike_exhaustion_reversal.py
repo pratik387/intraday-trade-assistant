@@ -104,12 +104,15 @@ def _load_5m_for_month(yyyy: int, mm: int) -> pd.DataFrame:
 
 
 def build_full_year_5m() -> pd.DataFrame:
-    print("  loading 12 monthly 5m feathers ...")
+    print("  loading 24 monthly 5m feathers (2023-01 .. 2024-12) ...")
     parts: List[pd.DataFrame] = []
-    for m in range(1, 13):
-        mdf = _load_5m_for_month(2024, m)
-        if not mdf.empty:
-            parts.append(mdf)
+    for yyyy in (2023, 2024):
+        for m in range(1, 13):
+            mdf = _load_5m_for_month(yyyy, m)
+            if not mdf.empty:
+                parts.append(mdf)
+    if not parts:
+        return pd.DataFrame()
     big = pd.concat(parts, ignore_index=True).sort_values(["symbol", "date"]).reset_index(drop=True)
     big["d"] = big["date"].dt.date
     print(f"  total 5m bars: {len(big):,}")
@@ -133,7 +136,7 @@ def load_daily_for_liquidity() -> pd.DataFrame:
     if df["ts"].dt.tz is not None:
         df["ts"] = df["ts"].dt.tz_localize(None)
     df["d"] = df["ts"].dt.date
-    df = df[(df["d"] >= date(2023, 11, 1)) & (df["d"] <= date(2024, 12, 31))]
+    df = df[(df["d"] >= date(2022, 11, 1)) & (df["d"] <= date(2024, 12, 31))]
     df = df[["symbol", "d", "close", "volume"]].copy()
     df["traded_value"] = df["close"] * df["volume"]
     df = df.sort_values(["symbol", "d"])

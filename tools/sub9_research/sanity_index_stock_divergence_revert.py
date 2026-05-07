@@ -80,12 +80,16 @@ def _load_5m_for_month(yyyy: int, mm: int) -> pd.DataFrame:
 
 
 def build_full_year_5m() -> pd.DataFrame:
-    print("  loading 12 monthly 5m feathers ...")
+    """Concatenate 24 monthly 2023+2024 5m feathers (full Discovery period)."""
+    print("  loading 24 monthly 5m feathers (2023-01 .. 2024-12) ...")
     parts: List[pd.DataFrame] = []
-    for m in range(1, 13):
-        mdf = _load_5m_for_month(2024, m)
-        if not mdf.empty:
-            parts.append(mdf)
+    for yyyy in (2023, 2024):
+        for m in range(1, 13):
+            mdf = _load_5m_for_month(yyyy, m)
+            if not mdf.empty:
+                parts.append(mdf)
+    if not parts:
+        return pd.DataFrame()
     big = pd.concat(parts, ignore_index=True).sort_values(["symbol", "date"]).reset_index(drop=True)
     big["d"] = big["date"].dt.date
     print(f"  total 5m bars: {len(big):,}")
@@ -109,7 +113,7 @@ def load_nifty_5m() -> pd.DataFrame:
     df = pd.read_feather(p)
     if df["date"].dt.tz is not None:
         df["date"] = df["date"].dt.tz_localize(None)
-    df = df[(df["date"] >= pd.Timestamp("2024-01-01")) & (df["date"] < pd.Timestamp("2025-01-01"))]
+    df = df[(df["date"] >= pd.Timestamp("2023-01-01")) & (df["date"] < pd.Timestamp("2025-01-01"))]
     df = df.set_index("date")
     # 5m resample (right-closed/right-labeled to match production 5m bar 09:15..09:19 -> 09:15)
     agg = df.resample("5min", label="left", closed="left").agg({
@@ -137,7 +141,7 @@ def load_daily_for_beta() -> pd.DataFrame:
     if df["ts"].dt.tz is not None:
         df["ts"] = df["ts"].dt.tz_localize(None)
     df["d"] = df["ts"].dt.date
-    df = df[(df["d"] >= date(2023, 9, 1)) & (df["d"] <= date(2024, 12, 31))]
+    df = df[(df["d"] >= date(2022, 9, 1)) & (df["d"] <= date(2024, 12, 31))]
     return df[["symbol", "d", "close"]].copy()
 
 
