@@ -78,6 +78,12 @@ class GapFadeShortStructure(BaseStructure):
         # T1 partial exit at 50% gap fill (TradingQnA: small-cap gap-close rate
         # only 50-60%; capture half-fill at ~1R, let runners go to PDC).
         self.t1_partial_qty_pct = float(config.get("t1_partial_qty_pct", 0.5))
+        # First-trigger latch: one fire per (symbol, session_date). Without
+        # this, the detector re-fires on every 5m bar in 09:15-09:30 that
+        # still meets the exhaustion-candle conditions (verified in OCI
+        # run 20260508-195237_full: 30% of qualifying symbols fired 2-3
+        # bars consecutively, mean 1.31 fires/symbol).
+        self._fired_today: set = set()
 
     @staticmethod
     def _parse_time(s: str) -> time:
@@ -128,6 +134,16 @@ class GapFadeShortStructure(BaseStructure):
         cur_t = last_ts.time() if hasattr(last_ts, "time") else last_ts
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
+
+        # --- Latch: one fire per (symbol, session_date) ---
+        session_date = (
+            context.session_date
+            if context.session_date is not None
+            else pd.Timestamp(last_ts).date()
+        )
+        latch_key = (context.symbol, session_date)
+        if latch_key in self._fired_today:
+            return _empty("already fired this session")
 
         # --- Condition 4: PDC available ---
         pdc = float(context.pdc) if context.pdc is not None else None
@@ -207,6 +223,11 @@ class GapFadeShortStructure(BaseStructure):
             },
             price=bar_close,
         )
+        # Set latch in detect() — runs in MainDetector worker process and
+        # survives across bars within that worker. Setting it in
+        # plan_short_strategy would not propagate back because plan_*
+        # runs in PlanOrchestrator (main process) — different instance.
+        self._fired_today.add(latch_key)
         return StructureAnalysis(
             structure_detected=True,
             events=[evt],

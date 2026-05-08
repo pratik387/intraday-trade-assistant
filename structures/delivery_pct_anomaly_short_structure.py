@@ -301,8 +301,6 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
                 rejection_reason=reason or None,
             )
 
-        _wide_open = _is_wide_open()
-
         df = ctx.df_5m
         if df is None or len(df) < self.min_bars_required:
             return _empty("Insufficient bars")
@@ -322,6 +320,14 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
             return _empty("already fired this session")
 
         # ---- T-1 anomaly qualification (cross-day) ----
+        # NOTE on wide_open: the prior version of this detector bypassed all
+        # signal gates below under wide_open_mode. That was wrong — without
+        # the delivery_pct/daily_return/ADV gates this setup has no identity,
+        # and it caused ~7000x trade-count inflation in OCI capture (every
+        # symbol fired every bar). wide_open is meant to bypass meta-filters
+        # (cap_segment, regime, universe, historical PnL gates), NOT the
+        # detector signal itself. This detector has no meta-filters to
+        # bypass, so wide_open has no effect here — which is correct.
         df_daily = ctx.df_daily
         if df_daily is None or df_daily.empty:
             return _empty("daily bars unavailable")
@@ -343,23 +349,7 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
         if cache_key in self._t_minus_1_cache:
             t1_info = self._t_minus_1_cache[cache_key]
         else:
-            # Wide-open bypass: under wide_open_mode skip the cross-day
-            # anomaly qualification so the gauntlet sees every candidate.
-            if _wide_open:
-                # Still need T-1 close as stop anchor; pull last prior row.
-                try:
-                    pos = list(d_dates).index(t_minus_1_date)
-                    t1_info = {
-                        "t_minus_1_close": float(df_daily.iloc[pos]["close"]),
-                        "t_minus_1_volume": float(df_daily.iloc[pos].get("volume", 0)),
-                        "delivery_pct": float("nan"),
-                        "daily_return_pct": float("nan"),
-                        "adv_inr_cr": float("nan"),
-                    }
-                except Exception:
-                    t1_info = None
-            else:
-                t1_info = self._qualify_t_minus_1(df_daily, t_minus_1_date)
+            t1_info = self._qualify_t_minus_1(df_daily, t_minus_1_date)
             self._t_minus_1_cache[cache_key] = t1_info
         if t1_info is None:
             return _empty("T-1 not a delivery-pct anomaly qualifier")
@@ -377,35 +367,33 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
         if first_open <= 0:
             return _empty("session open invalid")
         gap_pct = (first_open / pdc - 1.0) * 100.0
-        if not _wide_open:
-            if gap_pct < self.min_gap_pct:
-                return _empty(f"gap_pct={gap_pct:.2f} < min={self.min_gap_pct}")
-            if gap_pct > self.max_gap_pct:
-                return _empty(f"gap_pct={gap_pct:.2f} > max={self.max_gap_pct}")
+        if gap_pct < self.min_gap_pct:
+            return _empty(f"gap_pct={gap_pct:.2f} < min={self.min_gap_pct}")
+        if gap_pct > self.max_gap_pct:
+            return _empty(f"gap_pct={gap_pct:.2f} > max={self.max_gap_pct}")
 
         # ---- Confirmation candle (current bar) ----
         last = df.iloc[-1]
         bar_open = float(last["open"])
         bar_close = float(last["close"])
-        if not _wide_open and bar_close >= bar_open:
+        if bar_close >= bar_open:
             return _empty(f"not red bar: open={bar_open}, close={bar_close}")
 
         # close < session VWAP
         vwap_val = self._session_vwap(today_bars)
         if vwap_val is None:
             return _empty("VWAP unavailable")
-        if not _wide_open and bar_close >= vwap_val:
+        if bar_close >= vwap_val:
             return _empty(f"close {bar_close} >= VWAP {vwap_val}")
 
         # cross-day RVOL >= threshold
         rvol = self._cross_day_rvol(df, session_date)
-        if not _wide_open:
-            if rvol is None:
-                return _empty("cross-day RVOL unavailable")
-            if rvol < self.min_volume_ratio_to_20d_avg:
-                return _empty(
-                    f"rvol={rvol:.2f} < {self.min_volume_ratio_to_20d_avg}"
-                )
+        if rvol is None:
+            return _empty("cross-day RVOL unavailable")
+        if rvol < self.min_volume_ratio_to_20d_avg:
+            return _empty(
+                f"rvol={rvol:.2f} < {self.min_volume_ratio_to_20d_avg}"
+            )
 
         # ---- Open-high (09:15) for stop construction ----
         # Use today's first bar high as the morning swing high anchor.
@@ -454,6 +442,14 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
             },
             price=bar_close,
         )
+        # Set latch HERE in detect() — not in plan_short_strategy. detect()
+        # runs in the cached MainDetector instance per worker process, so
+        # the latch state survives across bars within that worker. Setting
+        # it in plan_short_strategy was broken because plan_*_strategy runs
+        # in PlanOrchestrator (main process) — a separate detector instance,
+        # so the latch never propagated back to the workers' detect() loop.
+        # Caused ~6.5x re-fire on every (symbol, day) in the active window.
+        self._fired_today.add(latch_key)
         return StructureAnalysis(
             structure_detected=True,
             events=[evt],
@@ -551,10 +547,7 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
             )
             return None
 
-        # Commit-on-success latch
-        session_date = ctx.session_date or pd.Timestamp(df.index[-1]).date()
-        self._fired_today.add((ctx.symbol, session_date))
-
+        # Latch is set in detect() (worker-side) — not here.
         return TradePlan(
             symbol=ctx.symbol,
             side="short",

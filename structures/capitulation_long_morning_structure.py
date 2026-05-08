@@ -299,6 +299,14 @@ class CapitulationLongMorningStructure(BaseStructure):
             },
             price=bar_close,
         )
+        # Set latch HERE in detect() — not in plan_long_strategy. detect()
+        # runs in the cached MainDetector instance per worker process so the
+        # latch survives across bars within that worker. plan_long_strategy
+        # runs in PlanOrchestrator (main process) — a separate detector
+        # instance, so a latch set there never propagated back to the
+        # workers' detect() loop. Caused 1.67x re-fire on (symbol, day)
+        # within the 09:25-10:00 active window.
+        self._fired_today.add(latch_key)
         return StructureAnalysis(
             structure_detected=True,
             events=[evt],
@@ -371,9 +379,7 @@ class CapitulationLongMorningStructure(BaseStructure):
             )
             return None
 
-        session_date = ctx.session_date or pd.Timestamp(df.index[-1]).date()
-        self._fired_today.add((ctx.symbol, session_date))
-
+        # Latch is set in detect() (worker-side) — not here.
         return TradePlan(
             symbol=ctx.symbol,
             side="long",

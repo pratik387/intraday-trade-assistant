@@ -352,6 +352,13 @@ class CircuitT1FadeShortStructure(BaseStructure):
             },
             price=bar_close,
         )
+        # Set latch HERE in detect() — not in plan_short_strategy. The
+        # in-process latch in plan_*_strategy never propagated back to the
+        # workers' detect() loop because they run in different processes.
+        # The single-bar 10:30 active window masked the bug for this
+        # detector, but moving the latch here matches the canonical pattern
+        # used by all other latched detectors.
+        self._fired_today.add(latch_key)
         return StructureAnalysis(
             structure_detected=True,
             events=[evt],
@@ -447,10 +454,7 @@ class CircuitT1FadeShortStructure(BaseStructure):
             )
             return None
 
-        # Commit-on-success latch
-        session_date = ctx.session_date or pd.Timestamp(df.index[-1]).date()
-        self._fired_today.add((ctx.symbol, session_date))
-
+        # Latch is set in detect() (worker-side) — not here.
         return TradePlan(
             symbol=ctx.symbol,
             side="short",

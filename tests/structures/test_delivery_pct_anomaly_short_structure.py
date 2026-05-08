@@ -404,26 +404,29 @@ def test_latch_prevents_double_fire():
 
 
 # --------------------------------------------------------------------------
-# Test 10: wide_open mode bypasses cell filters
+# Test 10: wide_open does NOT bypass detector signal
 # --------------------------------------------------------------------------
+# This detector has no meta-filters (no cap_segment / regime / universe key
+# gates) for wide_open to legitimately bypass — the T-1 anomaly + gap +
+# confirmation candle + RVOL gates ARE the setup signal. A prior version of
+# this test asserted that wide_open bypassed the signal too; that
+# behavior caused 7000x trade-count inflation in OCI capture (every
+# symbol fired every bar in the 09:30-10:00 window). The detector now
+# applies the full signal regardless of wide_open_mode.
 
-def test_fires_under_wide_open_with_relaxed_filters(monkeypatch):
+def test_wide_open_does_not_bypass_signal(monkeypatch):
     monkeypatch.setattr(detector_module, "_is_wide_open", lambda: True)
     det = DeliveryPctAnomalyShortStructure(_cfg())
     sd = date(2024, 6, 6)
-    # Failing conditions in normal mode: delivery_pct=25 (>=20), gap=+5
-    # (>+3), green bar (close > open), low rvol — but wide_open should
-    # still allow a fire.
-    df_5m = _build_5m(sd, n_today_bars=4, gap_pct=5.0,
-                      confirmation_red=False,
-                      confirmation_volume_mult=0.3)
-    df_daily = _build_daily(sd, delivery_pct=25.0, daily_return_pct=2.0,
-                             adv_target_cr=50.0)
+    # Failing conditions: delivery_pct=25 (>=20 threshold) — should still
+    # reject under wide_open because the signal IS the setup identity.
+    df_5m = _build_5m(sd, n_today_bars=4, gap_pct=0.5)
+    df_daily = _build_daily(sd, delivery_pct=25.0)
     ctx = _make_ctx(df_5m, df_daily, sd)
     result = det.detect(ctx)
-    assert result.structure_detected, \
-        f"wide_open should bypass filters: {result.rejection_reason}"
-    assert result.events[0].side == "short"
+    assert not result.structure_detected, \
+        "wide_open must NOT bypass T-1 anomaly signal"
+    assert "qualifier" in (result.rejection_reason or "").lower()
 
 
 # --------------------------------------------------------------------------
