@@ -21,6 +21,7 @@ from .expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructu
 from .circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
 from .options_vol_iv_rank_revert_structure import OptionsVolIvRankRevertStructure
 from .capitulation_long_morning_structure import CapitulationLongMorningStructure
+from .delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
 from services.symbol_metadata import get_cap_segment
 
 logger = get_agent_logger()
@@ -69,6 +70,7 @@ class MainDetector(BaseStructure):
             ("circuit_t1_fade_short", CircuitT1FadeShortStructure, "circuit_t1_fade_short"),
             ("options_vol_iv_rank_revert", OptionsVolIvRankRevertStructure, "options_vol_iv_rank_revert"),
             ("capitulation_long_morning", CapitulationLongMorningStructure, "capitulation_long_morning"),
+            ("delivery_pct_anomaly_short", DeliveryPctAnomalyShortStructure, "delivery_pct_anomaly_short"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -795,6 +797,12 @@ class MainDetector(BaseStructure):
 
             # Sub-project #9 round-6 cell-ship (2026-05-07):
             'capitulation_long_morning': 'capitulation_long_morning',
+
+            # Sub-project #9 round-7 cell-ship (2026-05-08):
+            # delivery_pct_anomaly_short — first sub9 candidate to pass all 3
+            # validation gates (Discovery PF=1.44, OOS PF=1.90, Holdout PF=1.13)
+            # at TIGHT targets (0.25R/0.75R/TS=1300). War-period PF=5.03.
+            'delivery_pct_anomaly_short': 'delivery_pct_anomaly_short',
         }
 
         return direct_mappings.get(structure_type)

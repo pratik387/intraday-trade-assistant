@@ -68,6 +68,7 @@ from structures.expiry_pin_strike_reversal_structure import ExpiryPinStrikeRever
 from structures.circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
 from structures.options_vol_iv_rank_revert_structure import OptionsVolIvRankRevertStructure
 from structures.capitulation_long_morning_structure import CapitulationLongMorningStructure
+from structures.delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
 from structures.data_models import MarketContext
 
 from services.symbol_metadata import get_cap_segment, get_mis_info
@@ -96,6 +97,7 @@ _DETECTOR_REGISTRY: Dict[str, Any] = {
     "circuit_t1_fade_short": CircuitT1FadeShortStructure,
     "options_vol_iv_rank_revert": OptionsVolIvRankRevertStructure,
     "capitulation_long_morning": CapitulationLongMorningStructure,
+    "delivery_pct_anomaly_short": DeliveryPctAnomalyShortStructure,
 }
 
 ACTIVE_SETUPS: frozenset = frozenset(_DETECTOR_REGISTRY.keys())

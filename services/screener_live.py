@@ -1175,6 +1175,14 @@ class ScreenerLive:
                         dd = self.sdk.get_daily(sym, days=210)
                         if dd is not None and not dd.empty:
                             daily_dict[sym] = dd
+                # Enrich daily_df with delivery_pct (NSE bhavcopy archive).
+                # No-op if data/delivery_pct/delivery_history.parquet is missing.
+                # Required by `delivery_pct_anomaly_short` detector.
+                try:
+                    from services.delivery_pct_enrichment import enrich_dict as _enrich_delivery
+                    daily_dict = _enrich_delivery(daily_dict)
+                except Exception as _e:
+                    logger.warning("delivery_pct enrichment failed: %s", _e)
                 _t_seed_fetch = time.perf_counter()
                 try:
                     with perf("scan", "daily_seed_broadcast", n_workers=self._structure_workers,

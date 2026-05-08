@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from config.logging_config import get_agent_logger
+from services.config_loader import load_base_config
 from services.plan_helpers import (
     PlanRejected,
     assert_sl_outside_entry_zone,
@@ -22,6 +23,19 @@ from services.plan_helpers import (
     enforce_min_stop_distance,
 )
 from .base_structure import BaseStructure
+
+
+def _is_wide_open() -> bool:
+    """Read top-level wide_open_mode flag from base config.
+
+    When true, bypass cell filters (cap_segment) so the OCI capture run
+    sees every gap-up candidate. The gauntlet replays offline with the
+    cap filter re-applied. See commit 65648f1 for sub8 precedent.
+    """
+    try:
+        return bool(load_base_config().get("wide_open_mode", False))
+    except Exception:
+        return False
 from .data_models import (
     ExitLevels,
     MarketContext,
@@ -103,8 +117,10 @@ class GapFadeShortStructure(BaseStructure):
         if df is None or len(df) < self.min_bars_required:
             return _empty("Insufficient bars")
 
-        # --- Condition 2: Cap segment ---
-        if context.cap_segment not in self.allowed_caps:
+        _wide_open = _is_wide_open()
+
+        # --- Condition 2: Cap segment (bypassed under wide_open) ---
+        if not _wide_open and context.cap_segment not in self.allowed_caps:
             return _empty(f"Cap segment {context.cap_segment!r} not in allowed set")
 
         # --- Condition 1: Active time-of-day window ---

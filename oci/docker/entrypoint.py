@@ -279,6 +279,58 @@ def download_iv_rank():
             log(f"ERROR downloading {object_name}: {e}")
 
 
+def download_delivery_pct():
+    """Download NSE delivery-percentage history parquet for the sub-9
+    delivery_pct_anomaly_short detector.
+
+    Single file (~39 MB) at `delivery_pct/delivery_history.parquet`.
+    Loaded once at screener daily-cache seed by
+    `services/delivery_pct_enrichment.py` and merged into each
+    symbol's daily_df as the `delivery_pct` column.
+
+    Built locally by tools/delivery_pct/fetch_delivery.py from NSE
+    archive (MTO + PR daily files). Uploaded via
+    oci/tools/upload_delivery_pct.py.
+
+    Bucket layout:
+        delivery_pct/delivery_history.parquet
+
+    Per-date 404 (file missing) is logged at warning — the detector
+    tolerates absence (silently no-fires every signal) but the run
+    won't generate any delivery_pct_anomaly_short fires.
+    """
+    log("Downloading delivery_pct history parquet for delivery_pct_anomaly_short...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    object_name = "delivery_pct/delivery_history.parquet"
+    local_dir = Path('/app/data/delivery_pct')
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_file = local_dir / Path(object_name).name
+
+    try:
+        get_obj = os_client.get_object(
+            namespace_name=namespace,
+            bucket_name=bucket,
+            object_name=object_name,
+        )
+        with open(local_file, 'wb') as f:
+            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                f.write(chunk)
+        size_mb = local_file.stat().st_size / (1024 * 1024)
+        log(f"Downloaded {object_name}: {size_mb:.1f} MB")
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            log(f"WARNING: {object_name} not found in OCI cache; "
+                "delivery_pct_anomaly_short detector will silently skip every bar. "
+                "Run oci/tools/upload_delivery_pct.py to upload.")
+        else:
+            log(f"ERROR downloading {object_name}: {e}")
+
+
 def _download_oci_file(os_client, namespace, bucket, object_name, local_path):
     """Download a single file from OCI Object Storage. Returns True on success."""
     try:
@@ -781,6 +833,11 @@ def main():
     # Download IV-rank parquet for options_vol_iv_rank_revert (~1 MB, single
     # file). Detector auto-skips if absent — sub9 round-4 ship.
     download_iv_rank()
+
+    # Download NSE delivery-percentage history parquet for
+    # delivery_pct_anomaly_short (~39 MB, single file). Detector auto-skips
+    # if absent — sub9 round-8 ship.
+    download_delivery_pct()
 
     # Run backtest
     result = run_backtest(date_str)

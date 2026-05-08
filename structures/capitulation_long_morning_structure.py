@@ -210,8 +210,8 @@ class CapitulationLongMorningStructure(BaseStructure):
             )
         gap_low = float(first_bar["low"])
 
-        # ---- Liquidity gate (20-day ADV in Cr) ----
-        if self.liquidity_band is not None:
+        # ---- Liquidity gate (20-day ADV in Cr) — bypassed under wide_open ----
+        if not _wide_open and self.liquidity_band is not None:
             adv_cr = None
             if "adv_20d_cr" in df.columns and not pd.isna(df["adv_20d_cr"].iloc[-1]):
                 adv_cr = float(df["adv_20d_cr"].iloc[-1])
