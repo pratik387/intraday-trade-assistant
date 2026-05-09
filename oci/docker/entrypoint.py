@@ -332,26 +332,31 @@ def download_delivery_pct():
 
 
 def download_cross_day_rvol():
-    """Download precomputed cross-day RVOL baseline parquet for the
-    delivery_pct_anomaly_short detector.
+    """Look up the precomputed cross-day RVOL baseline parquet from OCI cache.
 
-    Single file (~77 MB) at `cross_day_rvol/rvol_baseline.parquet`.
+    Single static file (~77 MB) at `cross_day_rvol/rvol_baseline.parquet`.
+    Built once locally by tools/cross_day_rvol/build_baseline.py and
+    uploaded via oci/tools/upload_cross_day_rvol.py — same data for
+    every backtest run since the baseline is a function of historical
+    5m bars, which never change.
+
     Loaded by `services/cross_day_rvol_enrichment.py` and queried
     bar-by-bar by the detector to compute RVOL = today_bar_vol /
     cached_baseline_at_(symbol, date, hhmm).
 
-    Built locally by tools/cross_day_rvol/build_baseline.py. Uploaded via
-    oci/tools/upload_cross_day_rvol.py.
-
     Why this exists: structures/delivery_pct_anomaly_short_structure.py's
-    _cross_day_rvol() needs 20 prior-session same-tod 5m bars to compute
-    the baseline. The screener caps df_5m at screener_store_5m_max=120
-    (~1.5 trading days), so the in-detector calculation always returned
-    None. Without this cached baseline, the detector silently no-fires
-    every signal (verified in OCI run 20260508-230433_full: 0 fires
-    across 501 Discovery days vs sanity's 261 expected).
+    _cross_day_rvol() needs 20 prior-session same-tod 5m bars. The
+    screener caps df_5m at screener_store_5m_max=120 (~1.5 days), so
+    the in-detector calculation always returned None. Verified in OCI
+    run 20260508-230433_full: 0 fires across 501 Discovery days vs
+    sanity's 261 expected.
+
+    Uses the canonical _download_oci_file helper + broad except so a
+    transient bucket / network error never crashes the pod. The detector
+    auto-skips when the file is absent, so the worst case is "no
+    delivery_pct fires for this run" not "pod failure".
     """
-    log("Downloading cross_day_rvol baseline parquet for delivery_pct_anomaly_short...")
+    log("Looking up cross_day_rvol baseline from OCI cache...")
 
     config = oci.config.from_file()
     os_client = oci.object_storage.ObjectStorageClient(config)
@@ -359,29 +364,17 @@ def download_cross_day_rvol():
     bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
 
     object_name = "cross_day_rvol/rvol_baseline.parquet"
-    local_dir = Path('/app/data/cross_day_rvol')
-    local_dir.mkdir(parents=True, exist_ok=True)
-    local_file = local_dir / Path(object_name).name
+    local_path = Path('/app/data/cross_day_rvol') / Path(object_name).name
 
     try:
-        get_obj = os_client.get_object(
-            namespace_name=namespace,
-            bucket_name=bucket,
-            object_name=object_name,
-        )
-        with open(local_file, 'wb') as f:
-            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
-                f.write(chunk)
-        size_mb = local_file.stat().st_size / (1024 * 1024)
-        log(f"Downloaded {object_name}: {size_mb:.1f} MB")
-    except oci.exceptions.ServiceError as e:
-        if e.status == 404:
-            log(f"WARNING: {object_name} not found in OCI cache; "
-                "delivery_pct_anomaly_short detector will reject every signal "
-                "with 'cross-day RVOL unavailable'. "
-                "Run oci/tools/upload_cross_day_rvol.py to upload.")
-        else:
-            log(f"ERROR downloading {object_name}: {e}")
+        ok = _download_oci_file(os_client, namespace, bucket, object_name, local_path)
+        if not ok:
+            log(f"WARNING: {object_name} not in OCI cache; "
+                "delivery_pct_anomaly_short will reject every signal "
+                "with 'cross-day RVOL unavailable'. Run "
+                "oci/tools/upload_cross_day_rvol.py to upload.")
+    except Exception as e:
+        log(f"ERROR looking up {object_name} (continuing without it): {e}")
 
 
 def _download_oci_file(os_client, namespace, bucket, object_name, local_path):
