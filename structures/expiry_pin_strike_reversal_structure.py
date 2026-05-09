@@ -363,11 +363,18 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
                     )
 
         # ---- Build event ----
-        # NOTE: latch NOT added here. detect() must remain idempotent.
-        # _build_plan commits the latch on TradePlan-build success.
+        # Latch is set HERE in detect() — runs in MainDetector worker
+        # processes and survives across bars within the worker. The original
+        # design committed the latch in _build_plan instead so that detect()
+        # could remain idempotent, but _build_plan runs in PlanOrchestrator
+        # (main process) — a separate detector instance. Latch state never
+        # propagated, causing 1.22% multi-fires on (symbol, side, day) in
+        # OCI run 20260508-230433_full. detect() is now non-idempotent by
+        # design; this matches every other latched sub-9 detector.
         evt = self._build_event(
             ctx, side, pin_strike, nifty_spot, spot_distance, session_date_iso,
         )
+        self._fired_today.add(latch_key)
         return StructureAnalysis(
             structure_detected=True,
             events=[evt],
@@ -424,12 +431,11 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
         evt = event
         if evt.side != side:
             return None
-        # Re-entry guard
-        session_date_iso = pd.Timestamp(ctx.session_date).strftime("%Y-%m-%d")
-        latch_key = (ctx.symbol, side, session_date_iso)
-        if latch_key in self._fired_today:
-            return None
-
+        # Latch is checked + committed in detect() (worker-side).
+        # _build_plan runs in a different process (PlanOrchestrator);
+        # its detector instance has a separate _fired_today set, so a
+        # check here would be a false negative in production. The check
+        # was also a false positive in single-process tests. Removed.
         levels = evt.levels
         target_price = float(levels["target_constituent_price"])
         close = float(ctx.df_5m["close"].iloc[-1])
@@ -494,9 +500,7 @@ class ExpiryPinStrikeReversalStructure(BaseStructure):
             )
             return None
 
-        # Commit-on-success latch
-        self._fired_today.add(latch_key)
-
+        # Latch is set in detect() (worker-side) — not here.
         return TradePlan(
             symbol=ctx.symbol,
             side=side,

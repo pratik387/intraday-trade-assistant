@@ -222,6 +222,14 @@ class OptionsVolIvRankRevertStructure(BaseStructure):
             },
             price=bar_close,
         )
+        # Set latch HERE in detect() — same fix applied to all sub-9
+        # detectors after OCI run 20260508-230433_full revealed the
+        # plan_*_strategy latch never propagates back to detect()
+        # because detect() runs in worker processes while plan_*_strategy
+        # runs in PlanOrchestrator (main process). This detector is
+        # currently disabled, but the bug would activate the moment it
+        # is re-enabled.
+        self._fired_today.add(latch_key)
         return StructureAnalysis(
             structure_detected=True,
             events=[evt],
@@ -289,9 +297,7 @@ class OptionsVolIvRankRevertStructure(BaseStructure):
             )
             return None
 
-        session_date = ctx.session_date or pd.Timestamp(df.index[-1]).date()
-        self._fired_today.add((ctx.symbol, session_date))
-
+        # Latch is set in detect() (worker-side) — not here.
         return TradePlan(
             symbol=ctx.symbol,
             side="short",
