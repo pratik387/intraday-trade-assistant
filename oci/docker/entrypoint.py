@@ -331,6 +331,59 @@ def download_delivery_pct():
             log(f"ERROR downloading {object_name}: {e}")
 
 
+def download_cross_day_rvol():
+    """Download precomputed cross-day RVOL baseline parquet for the
+    delivery_pct_anomaly_short detector.
+
+    Single file (~77 MB) at `cross_day_rvol/rvol_baseline.parquet`.
+    Loaded by `services/cross_day_rvol_enrichment.py` and queried
+    bar-by-bar by the detector to compute RVOL = today_bar_vol /
+    cached_baseline_at_(symbol, date, hhmm).
+
+    Built locally by tools/cross_day_rvol/build_baseline.py. Uploaded via
+    oci/tools/upload_cross_day_rvol.py.
+
+    Why this exists: structures/delivery_pct_anomaly_short_structure.py's
+    _cross_day_rvol() needs 20 prior-session same-tod 5m bars to compute
+    the baseline. The screener caps df_5m at screener_store_5m_max=120
+    (~1.5 trading days), so the in-detector calculation always returned
+    None. Without this cached baseline, the detector silently no-fires
+    every signal (verified in OCI run 20260508-230433_full: 0 fires
+    across 501 Discovery days vs sanity's 261 expected).
+    """
+    log("Downloading cross_day_rvol baseline parquet for delivery_pct_anomaly_short...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    object_name = "cross_day_rvol/rvol_baseline.parquet"
+    local_dir = Path('/app/data/cross_day_rvol')
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_file = local_dir / Path(object_name).name
+
+    try:
+        get_obj = os_client.get_object(
+            namespace_name=namespace,
+            bucket_name=bucket,
+            object_name=object_name,
+        )
+        with open(local_file, 'wb') as f:
+            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                f.write(chunk)
+        size_mb = local_file.stat().st_size / (1024 * 1024)
+        log(f"Downloaded {object_name}: {size_mb:.1f} MB")
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            log(f"WARNING: {object_name} not found in OCI cache; "
+                "delivery_pct_anomaly_short detector will reject every signal "
+                "with 'cross-day RVOL unavailable'. "
+                "Run oci/tools/upload_cross_day_rvol.py to upload.")
+        else:
+            log(f"ERROR downloading {object_name}: {e}")
+
+
 def _download_oci_file(os_client, namespace, bucket, object_name, local_path):
     """Download a single file from OCI Object Storage. Returns True on success."""
     try:
@@ -838,6 +891,13 @@ def main():
     # delivery_pct_anomaly_short (~39 MB, single file). Detector auto-skips
     # if absent — sub9 round-8 ship.
     download_delivery_pct()
+
+    # Download precomputed cross-day RVOL baseline parquet for
+    # delivery_pct_anomaly_short (~77 MB, single file). Required because
+    # screener_store_5m_max=120 means df_5m never has 20 prior same-tod
+    # bars for the in-detector RVOL calculation. Detector rejects with
+    # "cross-day RVOL unavailable" if absent — every signal blocked.
+    download_cross_day_rvol()
 
     # Run backtest
     result = run_backtest(date_str)

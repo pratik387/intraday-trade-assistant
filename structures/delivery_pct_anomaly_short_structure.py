@@ -235,33 +235,42 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _cross_day_rvol(df_5m: pd.DataFrame, session_date: date) -> Optional[float]:
-        """Return today's last-bar volume divided by the mean volume of the
-        same time-of-day 5m bar across the prior 20 trading sessions in
-        df_5m. None if insufficient history.
+    def _cross_day_rvol(
+        df_5m: pd.DataFrame, session_date: date, symbol: str
+    ) -> Optional[float]:
+        """Return today's last-bar volume divided by the prior-20-session
+        same-time-of-day mean for (symbol, session_date, hhmm).
+
+        Reads baseline from `services/cross_day_rvol_enrichment.py` (a static
+        precomputed parquet keyed by (symbol, date, hhmm)). The previous
+        implementation filtered df_5m for prior same-tod bars — but the
+        screener caps df_5m at `screener_store_5m_max=120` (~1.5 days), so
+        20 prior same-tod bars are never present. That made this function
+        always return None in production, which silenced every otherwise-
+        qualifying delivery_pct_anomaly_short fire (verified by 0 trades
+        across 501 Discovery days in OCI run 20260508-230433_full vs
+        sanity's 261).
+
+        Falls back to None when the lookup parquet is missing — caller
+        rejects with "cross-day RVOL unavailable" so the operator sees the
+        problem without crashing live.
         """
         if df_5m is None or df_5m.empty:
             return None
         try:
             last_ts = df_5m.index[-1]
             last_vol = float(df_5m.iloc[-1]["volume"])
+            if last_vol <= 0:
+                return None
             tod = last_ts.time() if hasattr(last_ts, "time") else None
-            if tod is None or last_vol <= 0:
+            if tod is None:
                 return None
-            # All prior bars at same time-of-day on prior dates
-            prior_mask = (
-                (df_5m.index.time == tod)
-                & (df_5m.index.date < session_date)
-            )
-            prior_vols = df_5m.loc[prior_mask, "volume"]
-            # Take the most recent 20 same-tod prior bars
-            prior_vols = prior_vols.tail(20)
-            if len(prior_vols) < 5:   # need at least some history
+            hhmm = tod.hour * 100 + tod.minute
+            from services.cross_day_rvol_enrichment import get_baseline_vol
+            baseline = get_baseline_vol(symbol, session_date, hhmm)
+            if baseline is None or baseline <= 0:
                 return None
-            avg = float(prior_vols.mean())
-            if avg <= 0:
-                return None
-            return last_vol / avg
+            return last_vol / baseline
         except Exception:
             return None
 
@@ -386,8 +395,9 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
         if bar_close >= vwap_val:
             return _empty(f"close {bar_close} >= VWAP {vwap_val}")
 
-        # cross-day RVOL >= threshold
-        rvol = self._cross_day_rvol(df, session_date)
+        # cross-day RVOL >= threshold (uses precomputed baseline parquet —
+        # df_5m alone doesn't have 20 prior same-tod bars in production).
+        rvol = self._cross_day_rvol(df, session_date, ctx.symbol)
         if rvol is None:
             return _empty("cross-day RVOL unavailable")
         if rvol < self.min_volume_ratio_to_20d_avg:

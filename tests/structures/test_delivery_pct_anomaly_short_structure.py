@@ -20,6 +20,26 @@ from structures.delivery_pct_anomaly_short_structure import (
 from structures.data_models import MarketContext
 
 
+@pytest.fixture(autouse=True)
+def _stub_rvol_baseline(monkeypatch):
+    """Stub the cross-day RVOL baseline lookup for all tests in this file.
+
+    Tests synthesize df_5m without writing to data/cross_day_rvol/. The
+    detector's _cross_day_rvol() now reads baseline from a precomputed
+    parquet via services.cross_day_rvol_enrichment.get_baseline_vol —
+    which would return None in tests, blocking every fire. Replace with
+    a simple stub that uses the previous bar's volume as the baseline so
+    test data still exercises the gate semantics (today_vol/baseline >= 1).
+    """
+    import services.cross_day_rvol_enrichment as _enrich
+
+    def _stub_get_baseline_vol(symbol, session_date, hhmm):
+        # Constant baseline = 1000; tests build today_vol > 1000 to fire.
+        return 1000.0
+
+    monkeypatch.setattr(_enrich, "get_baseline_vol", _stub_get_baseline_vol)
+
+
 def _cfg(**overrides):
     cfg = {
         "_setup_name": "delivery_pct_anomaly_short",
