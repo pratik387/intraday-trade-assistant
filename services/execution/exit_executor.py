@@ -93,10 +93,6 @@ class ExitExecutor:
         # Enhanced exit configuration - KeyError if missing trading parameters
         exits_config = cfg.get("exits", {})
 
-        self.score_drop_enabled = bool(exits_config.get("score_drop_enabled", cfg["exit_score_drop_enabled"]))
-        self.score_drop_bpct = float(exits_config.get("score_drop_bpct", cfg["exit_score_drop_bpct"]))
-        self.time_stop_min = float(exits_config.get("time_stop_min", cfg["exit_time_stop_min"]))
-        self.time_stop_req_rr = float(exits_config.get("time_stop_req_rr", cfg["exit_time_stop_req_rr"]))
 
         self.breakout_short_risk_control = bool(exits_config.get("breakout_short_risk_control", cfg["breakout_short_risk_control"]))
         self.breakout_short_initial_stop_mult = float(exits_config["breakout_short_initial_stop_mult"])
@@ -107,12 +103,6 @@ class ExitExecutor:
         self.breakout_short_time_stop_max = float(exits_config["breakout_short_time_stop_max"])
         self.breakout_short_time_stop_rr = float(exits_config["breakout_short_time_stop_rr"])
 
-        self.eod_scale_out = bool(exits_config.get("eod_scale_out", cfg["eod_scale_out"]))
-        self.eod_scale_out_time1 = str(exits_config["eod_scale_out_time1"])
-        self.eod_scale_out_time2 = str(exits_config["eod_scale_out_time2"])
-        self.eod_scale_out_rr1 = float(exits_config["eod_scale_out_rr1"])
-        self.eod_scale_out_rr2 = float(exits_config["eod_scale_out_rr2"])
-        self.eod_scale_out_pct1 = float(exits_config["eod_scale_out_pct1"])
 
         # T1 behavior - PHASE 2.5: No defaults, must be in config
         self.t1_min_partial_r = float(cfg["exit_t1_min_partial_r"])
@@ -132,13 +122,6 @@ class ExitExecutor:
         db_cfg = cfg.get("directional_bias", {})
         self._exit_modifiers = db_cfg.get("exit_modifiers", {}) if db_cfg.get("enabled", False) else {}
 
-        # Time-based SL widening (Pro Trader Standard - reduces morning whipsaw)
-        self.sl_time_widening_enabled = bool(cfg["sl_time_widening_enabled"])
-        self.sl_time_widening_after_minutes = float(cfg["sl_time_widening_after_minutes"])
-        self.sl_time_widening_atr_add = float(cfg["sl_time_widening_atr_add"])
-        self.sl_time_widening_max_r_from_entry = float(cfg["sl_time_widening_max_r_from_entry"])
-        self.sl_time_widening_second_after_minutes = float(cfg["sl_time_widening_second_after_minutes"])
-        self.sl_time_widening_second_atr_add = float(cfg["sl_time_widening_second_atr_add"])
 
         # PRO TRADER: ORB-specific max hold time (Crabel: ideal trade profits instantly)
         # Pro traders hold ORB for 30-90 min max. Exit if no target hit within this time.
@@ -151,8 +134,6 @@ class ExitExecutor:
 
         logger.info(
             f"exit_executor: init eod={self.eod_hhmm} "
-            f"score_drop={self.score_drop_enabled}:{self.score_drop_bpct}% "
-            f"time_stop={self.time_stop_min}m@RR<{self.time_stop_req_rr} "
             f"t1_pct={self.t1_book_pct}% t2_pct={self.t2_book_pct}% "
             f"trail={self.trail_atr_mult}x->{self.trail_atr_mult_late}x@{self.trail_time_tighten} "
             f"sl2be={self.t1_move_sl_to_be}"
@@ -457,9 +438,6 @@ class ExitExecutor:
 
                         plan_sl = new_plan_sl
 
-                # Apply time-based SL widening (Pro Trader Standard - reduces morning whipsaw)
-                plan_sl = self._apply_time_based_sl_widening(sym, pos, plan_sl, float(px), ts)
-
                 # Get state early to check if T1/T2 were already hit (for better exit reason labeling)
                 st = pos.plan.get("_state") or {}
                 t1_done = bool(st.get("t1_done", False))
@@ -569,24 +547,9 @@ class ExitExecutor:
                     self._exit(sym, pos, float(px), ts, reason)
                     continue
 
-                # 5) Score-drop (% from peak since entry)
-                sdrop = self._score_drop_price(sym, pos.side, float(px))
-                if sdrop:
-                    self._exit(sym, pos, float(px), ts, sdrop)
-                    continue
-
-                # 6) Breakout short risk control
+                # 5) Breakout short risk control
                 if self._breakout_short_risk_control_triggered(sym, pos, float(px), ts):
                     continue  # Handled internally
-
-                # 7) EOD scale-out
-                if self._eod_scale_out_triggered(sym, pos, float(px), ts):
-                    continue  # Handled internally
-
-                # 8) Time-stop (tick timestamp)
-                if self.time_stop_min > 0 and self._time_stop_triggered(pos, float(px), plan_sl, ts):
-                    self._exit(sym, pos, float(px), ts, f"time_stop_{self.time_stop_min}m_rr<{self.time_stop_req_rr}")
-                    continue
 
             except Exception as e:
                 logger.exception(f"exit_executor: run_once error sym={sym}: {e}")
@@ -756,163 +719,6 @@ class ExitExecutor:
             return float(plan["stop"]["hard"])
         except (KeyError, TypeError, ValueError):
             return float("nan")
-
-    def _apply_time_based_sl_widening(self, sym: str, pos: Position, plan_sl: float, current_price: float, ts: pd.Timestamp) -> float:
-        """
-        Apply time-based SL widening to avoid morning volatility whipsaw.
-
-        Pro trader standard: After 30-60 minutes in trade, if price is within 0.5R of entry,
-        widen SL by 0.3-0.5 ATR to give trade room to work.
-
-        Returns: Widened SL price (or original if widening not applicable)
-        """
-        if not self.sl_time_widening_enabled:
-            return plan_sl
-
-        if math.isnan(plan_sl):
-            return plan_sl
-
-        # Get entry timestamp
-        entry_ts_raw = pos.plan.get("entry_ts") or pos.plan.get("entry_epoch_ms")
-        if not entry_ts_raw:
-            return plan_sl
-
-        try:
-            if isinstance(entry_ts_raw, (int, float)) and entry_ts_raw > 1e10:
-                entry_ts = pd.Timestamp(entry_ts_raw, unit='ms')
-            else:
-                entry_ts = pd.Timestamp(entry_ts_raw)
-        except Exception:
-            return plan_sl
-
-        # Calculate time in trade
-        try:
-            time_in_trade_minutes = (ts - entry_ts).total_seconds() / 60.0
-        except Exception:
-            return plan_sl
-
-        # Get ATR for widening calculation
-        _atr_val = pos.plan.get("indicators", {}).get("atr")
-        atr_cached = float(_atr_val) if _atr_val is not None else float("nan")
-        if math.isnan(atr_cached) or atr_cached <= 0:
-            return plan_sl
-
-        # Calculate current R from entry
-        entry_price = pos.avg_price
-        side = pos.side.upper()
-        risk = abs(entry_price - plan_sl)
-        if risk <= 0:
-            return plan_sl
-
-        if side == "BUY":
-            current_r = (current_price - entry_price) / risk
-        else:
-            current_r = (entry_price - current_price) / risk
-
-        # Check state to avoid re-widening
-        st = pos.plan.get("_state") or {}
-        first_widening_done = st.get("sl_time_widening_1_done", False)
-        second_widening_done = st.get("sl_time_widening_2_done", False)
-
-        widened_sl = plan_sl
-
-        # First widening: after 30 minutes (configurable)
-        if not first_widening_done and time_in_trade_minutes >= self.sl_time_widening_after_minutes:
-            # Only widen if trade is within max_r from entry
-            if abs(current_r) <= self.sl_time_widening_max_r_from_entry:
-                if side == "BUY":
-                    widened_sl = round_to_tick(plan_sl - (self.sl_time_widening_atr_add * atr_cached))
-                else:
-                    widened_sl = round_to_tick(plan_sl + (self.sl_time_widening_atr_add * atr_cached))
-
-                # Update plan with widened SL
-                if isinstance(pos.plan.get("stop"), dict):
-                    pos.plan["stop"]["hard"] = widened_sl
-                pos.plan["hard_sl"] = widened_sl
-
-                # Mark first widening done
-                st["sl_time_widening_1_done"] = True
-                st["sl_time_widening_1_at"] = str(ts)
-                pos.plan["_state"] = st
-
-                logger.info(
-                    f"SL_TIME_WIDENING_1 | {sym} | {side} | "
-                    f"Time_In_Trade: {time_in_trade_minutes:.1f}min | Current_R: {current_r:.2f} | "
-                    f"Original_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
-                    f"ATR_Add: {self.sl_time_widening_atr_add * atr_cached:.2f}"
-                )
-                # Log SL widening to events.jsonl for post-analysis
-                try:
-                    diag_event_log._emit({
-                        "schema_version": _EVT_SCHEMA,
-                        "type": "SL_WIDENING",
-                        "run_id": diag_event_log.run_id,
-                        "trade_id": pos.plan.get("trade_id", ""),
-                        "symbol": sym,
-                        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
-                        "sl_widening": {
-                            "stage": 1,
-                            "side": side,
-                            "time_in_trade_min": round(time_in_trade_minutes, 1),
-                            "current_r": round(current_r, 2),
-                            "original_sl": round(plan_sl, 2),
-                            "widened_sl": round(widened_sl, 2),
-                            "atr_add": round(self.sl_time_widening_atr_add * atr_cached, 2),
-                        },
-                    })
-                except Exception:
-                    pass  # Best-effort logging
-                return widened_sl
-
-        # Second widening: after 60 minutes (configurable)
-        if first_widening_done and not second_widening_done and time_in_trade_minutes >= self.sl_time_widening_second_after_minutes:
-            # Only widen if trade is within max_r from entry
-            if abs(current_r) <= self.sl_time_widening_max_r_from_entry:
-                if side == "BUY":
-                    widened_sl = round_to_tick(plan_sl - (self.sl_time_widening_second_atr_add * atr_cached))
-                else:
-                    widened_sl = round_to_tick(plan_sl + (self.sl_time_widening_second_atr_add * atr_cached))
-
-                # Update plan with widened SL
-                if isinstance(pos.plan.get("stop"), dict):
-                    pos.plan["stop"]["hard"] = widened_sl
-                pos.plan["hard_sl"] = widened_sl
-
-                # Mark second widening done
-                st["sl_time_widening_2_done"] = True
-                st["sl_time_widening_2_at"] = str(ts)
-                pos.plan["_state"] = st
-
-                logger.info(
-                    f"SL_TIME_WIDENING_2 | {sym} | {side} | "
-                    f"Time_In_Trade: {time_in_trade_minutes:.1f}min | Current_R: {current_r:.2f} | "
-                    f"Previous_SL: {plan_sl:.2f} | Widened_SL: {widened_sl:.2f} | "
-                    f"ATR_Add: {self.sl_time_widening_second_atr_add * atr_cached:.2f}"
-                )
-                # Log SL widening to events.jsonl for post-analysis
-                try:
-                    diag_event_log._emit({
-                        "schema_version": _EVT_SCHEMA,
-                        "type": "SL_WIDENING",
-                        "run_id": diag_event_log.run_id,
-                        "trade_id": pos.plan.get("trade_id", ""),
-                        "symbol": sym,
-                        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
-                        "sl_widening": {
-                            "stage": 2,
-                            "side": side,
-                            "time_in_trade_min": round(time_in_trade_minutes, 1),
-                            "current_r": round(current_r, 2),
-                            "previous_sl": round(plan_sl, 2),
-                            "widened_sl": round(widened_sl, 2),
-                            "atr_add": round(self.sl_time_widening_second_atr_add * atr_cached, 2),
-                        },
-                    })
-                except Exception:
-                    pass  # Best-effort logging
-                return widened_sl
-
-        return plan_sl
 
     def _breach_sl(self, side: str, price: float, sl: float) -> bool:
         if math.isnan(sl) or math.isnan(price):
@@ -1354,67 +1160,6 @@ class ExitExecutor:
             except Exception:
                 continue
         return None
-
-    # ---------- Score drop ----------
-
-    def _score_drop_price(self, sym: str, side: str, px: float) -> Optional[str]:
-        if not self.score_drop_enabled or self.score_drop_bpct <= 0 or math.isnan(px):
-            return None
-
-        cur = self._peak_price.get(sym)
-        if cur is None:
-            self._peak_price[sym] = px
-            return None
-
-        side = side.upper()
-        if side == "BUY":
-            if px > cur:
-                self._peak_price[sym] = px
-                return None
-            dd = (cur - px) / cur * 100.0
-            if dd >= self.score_drop_bpct:
-                return f"score_drop_dd{dd:.1f}%>= {self.score_drop_bpct:.1f}%"
-        else:
-            if px < cur:
-                self._peak_price[sym] = px
-                return None
-            dd = (px - cur) / cur * 100.0
-            if dd >= self.score_drop_bpct:
-                return f"score_drop_rally{dd:.1f}%>= {self.score_drop_bpct:.1f}%"
-        return None
-
-    # ---------- Time stop (tick timestamp) ----------
-
-    def _time_stop_triggered(self, pos: Position, px: float, sl: float, ts: Optional[pd.Timestamp]) -> bool:
-        try:
-            entry_ts = pos.plan.get("entry_ts")
-            if entry_ts:
-                start = pd.Timestamp(entry_ts)
-            else:
-                epoch_ms = pos.plan.get("entry_epoch_ms")
-                if epoch_ms is None:
-                    return False
-                start = pd.Timestamp(epoch_ms, unit="ms")
-        except Exception:
-            return False
-
-        ref_ts = pd.Timestamp(ts) if ts is not None else _now_naive_ist()
-        mins_live = max(0.0, (ref_ts - start).total_seconds() / 60.0)
-        bias_mods = self._get_bias_exit_modifiers(pos)
-        time_mult = bias_mods.get("time_stop_mult", 1.0)
-        adjusted_time_stop = float(self.time_stop_min) * time_mult
-        if mins_live < adjusted_time_stop:
-            return False
-
-        if math.isnan(sl):
-            return False
-        side = pos.side.upper()
-        r_ps = abs(float(pos.avg_price) - float(sl))
-        if r_ps <= 0:
-            return False
-
-        rr = ((px - float(pos.avg_price)) / r_ps) if side == "BUY" else ((float(pos.avg_price) - px) / r_ps)
-        return rr < float(self.time_stop_req_rr)
 
     # ---------- Directional bias exit modifiers ----------
 
@@ -2269,84 +2014,6 @@ class ExitExecutor:
                     return True
         except Exception:
             pass
-
-        return False
-
-    def _eod_scale_out_triggered(self, sym: str, pos: Position, px: float, ts: pd.Timestamp) -> bool:
-        """
-        EOD scale-out: If still <0.7R by 15:00, exit 50%; if <0.4R by 15:07, close the rest.
-        """
-        if not self.eod_scale_out:
-            return False
-
-        try:
-            minute_of_day = _minute_of_day(ts)
-            eod_time1_md = _parse_hhmm_to_md(self.eod_scale_out_time1)  # 15:00
-            eod_time2_md = _parse_hhmm_to_md(self.eod_scale_out_time2)  # 15:07
-
-            if eod_time1_md is None or eod_time2_md is None:
-                return False
-
-            st = pos.plan.get("_state") or {}
-            rr = self._calculate_rr(pos, px)
-
-            # First scale-out at 15:00 if <0.7R
-            if (minute_of_day >= eod_time1_md and
-                not st.get("eod_scale_out_first_done", False) and
-                rr < self.eod_scale_out_rr1):
-
-                qty = int(pos.qty)
-                qty_exit = int(max(1, round(qty * (self.eod_scale_out_pct1 / 100.0))))
-                qty_exit = min(qty_exit, qty)
-
-                if qty_exit > 0:
-                    logger.info(f"EOD_SCALE_OUT: {sym} first scale @ {self.eod_scale_out_time1} RR={rr:.2f} < {self.eod_scale_out_rr1} - exit {qty_exit}/{qty}")
-                    actual_exit_px = self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"eod_scale_out_1st_{rr:.2f}R")
-                    self.positions.reduce(_pos_tid(pos), qty_exit)
-
-                    # Track EOD partial profit (like T1/manual partials)
-                    if pos.side.upper() == "BUY":
-                        eod_partial_profit = qty_exit * (actual_exit_px - pos.avg_price)
-                    else:
-                        eod_partial_profit = qty_exit * (pos.avg_price - actual_exit_px)
-
-                    new_qty = qty - qty_exit
-                    existing_eod_profit = st.get("eod_partial_profit", 0) or 0
-                    existing_eod_qty = st.get("eod_partial_qty", 0) or 0
-                    st["eod_scale_out_first_done"] = True
-                    st["eod_partial_qty"] = existing_eod_qty + qty_exit
-                    st["eod_partial_profit"] = existing_eod_profit + eod_partial_profit
-                    st["eod_partial_price"] = actual_exit_px  # Store broker fill for weighted avg exit
-                    pos.plan["_state"] = st
-
-                    # EOD first scale-out is tracked in _state (like T1 partial), NOT as a
-                    # separate dashboard row. The final _exit() call will include eod_partial_profit
-                    # and eod_partial_qty in the total trade summary — one trade = one dashboard row.
-
-                    # Release partial margin
-                    if self.capital_manager:
-                        self.capital_manager.reduce_position(sym, qty_exit, new_qty)
-
-                    # Update persistence with new qty (crash recovery)
-                    if self.persistence:
-                        self.persistence.update_position(sym, new_qty=new_qty, state_updates={
-                            "eod_scale_out_first_done": True,
-                            "eod_partial_qty": st["eod_partial_qty"],
-                            "eod_partial_profit": st["eod_partial_profit"],
-                        })
-
-                    return True
-
-            # Final exit at 15:07 if <0.4R
-            if (minute_of_day >= eod_time2_md and
-                rr < self.eod_scale_out_rr2):
-
-                logger.info(f"EOD_SCALE_OUT: {sym} final exit @ {self.eod_scale_out_time2} RR={rr:.2f} < {self.eod_scale_out_rr2}")
-                self._exit(sym, pos, px, ts, f"eod_scale_out_final_{rr:.2f}R")
-                return True
-
-        except Exception as e:
-            logger.warning(f"EOD_SCALE_OUT: {sym} error: {e}")
 
         return False
 
