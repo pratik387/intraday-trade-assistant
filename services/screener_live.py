@@ -2025,6 +2025,12 @@ class ScreenerLive:
                     "mis_leverage": plan.get("sizing", {}).get("mis_leverage", 1.0),
                     "bias": plan.get("bias"),
                     "indicators": plan.get("indicators"),
+                    # 2026-05-13 fix: plan-as-source-of-truth fields must propagate
+                    # through to the executor. exits.time_stop_hhmm is read by
+                    # exit_executor._effective_eod_md to cap EOD per-position;
+                    # priority is logged for bar_scheduler audit.
+                    "exits": plan.get("exits"),
+                    "priority": plan.get("priority"),
                 },
                 "meta": plan,
             }
