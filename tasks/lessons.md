@@ -11,6 +11,51 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-12 (#2) — Detector implementation must EXACTLY mirror validated sanity logic — silent exit-logic divergence destroyed circuit_t1
+**What went wrong:** `circuit_t1_fade_short` sanity script (`tools/sub9_research/sanity_circuit_t1_fade_short.py`) validated a SINGLE-EXIT mechanic: enter short at T+1 10:30, ride to T2 (= t0_close = full gap fill) OR stop OR time-stop 15:10. No T1 partial, no breakeven trail. Reproduced PF=1.404 (Discovery) / 1.890 (Holdout). But the **production detector** + executor added a T1 partial at t1_open (`t1_qty_pct=0.5`) plus `exit_t1_book_pct` execution logic plus breakeven-trail-after-T1. Sweep finding (240 combos × 585 Discovery trades): production's `partial_50_be_trail` mode drops PF from 1.34 → **0.49** on the same trades. The 41% of trades that hit T1 partial then bounced into the BE-trail SL would have ridden to T2 in the validated mechanic. Production was actively losing money on its own validated trade set.
+
+**Root cause discovery path:** User pushed me to verify SL/target sweep on the 3 "prod-ready" setups. I wrote `_circuit_t1_sl_target_sweep.py` that replays the trigger CSV through alternative SL/target/partial-mode params. The sweep instantly showed: sanity baseline reproduces PF=1.34, production current = 0.49. This kind of defect cannot be caught by aggregate PF alone — the production parquet PF=1.40 numbers I saw earlier came from the SANITY script outputs, NOT the production OCI captures (which were wide_open and don't isolate the real production exit logic).
+
+**Architectural finding:** The executor's `_partial_exit_t1` reads `self.t1_book_pct` from execution config (line 1804) which is a SINGLE GLOBAL value applied to every setup that emits a T1 target. Setting `t1_qty_pct=0.0` in a per-setup detector config does NOT prevent T1 partial because executor ignores the plan's per-target qty_pct. Fixed in this commit by modifying `circuit_t1_fade_short_structure.py` to emit ONLY T2 (no T1 entry in the targets list) when `t1_qty_pct <= 0.0`, which is what the executor checks.
+
+**Rule:**
+1. **Sanity script defines the validated mechanic** — production detector + executor TOGETHER must reproduce sanity PF on the same trigger set, EXACTLY. Acceptance: ±2% PF drift, no more.
+2. **Pre-ship reproducibility test**: feed each shipped setup's exact trigger conditions into local sanity-mode + production-mode and compare net_pnl per trade. Differences > Rs.10/trade are a defect.
+3. **Per-setup partial/exit logic must be opt-in, not opt-out** — when a sanity validates single-exit, production must NOT add T1 partial just because the executor supports it. The detector emits exactly the exit ladder the sanity validated.
+4. **SL/target sweep is the audit tool** — any setup shipped before its SL/target sweep produced concrete numbers is a candidate for hidden defects. Run the sweep retroactively on every shipped setup.
+
+### 2026-05-12 — Production ship requires reproducible full validation chain — Discovery cell-mining + OOS + Holdout, all preserved
+**What went wrong:** Multiple sub9 setups were shipped with incomplete validation:
+- `capitulation_long_morning` (shipped 2026-05-07): Cell-mining script was never preserved (claim `n=443 PF 1.238` exists only in commit message); OOS validation was explicitly deferred (`will re-validate at OOS`) and never done; Holdout was captured but never cell-level-analyzed; production detector used wrong regime classifier (ADX-based) vs cell-mining used per-symbol close<SMA20 T-1; mass-enabled commit `98f520d` flipped `enabled=true` without the deferred OOS step ever being completed. Reproducibility audit on 2026-05-12: cell at per-sym SMA classifier gives Discovery PF 1.290 (close to claim) but **Holdout PF 0.631 — FAILS decisively**.
+- `circuit_t1_fade_short`: Discovery PF 1.404 (only 11mo 2024, not full 2yr), OOS **PF 0.982** (below 1.10 ship gate), Holdout PF 1.890 — regime-dependent, fails OOS but recovers in war-period Holdout. Shipped on Discovery+Holdout despite OOS failure.
+- `expiry_pin_strike_reversal`: Discovery PF 0.568, OOS PF 0.736, Holdout PF 0.508 — **loses money in ALL periods**. Should never have shipped. Currently silent in production because OI data is not loaded.
+- `gap_fade_short`: HAD full validation chain (sub7 Discovery PF 1.153, sub8 Phase-1 v1/clean/v2/v3 all in 1.118-1.227 range, OOS PF 0.993 [marginal], Holdout PF 1.128). Initial audit incorrectly reported no OOS/Holdout because validation artifacts live in `reports/sub8_oos_*/`, not the sub9 directory pattern. **Audit lesson**: always check ALL `reports/` subdirectories for a setup's history, not just the latest sub-pattern; legacy setups span multiple sub-projects.
+- `delivery_pct_anomaly_short`: shipped with claimed full chain (Discovery 1.44, OOS 1.90, Holdout 1.13) but failed Phase-1 OCI capture → retired.
+
+**Contrast — `earnings_day_intraday_fade` (shipped 2026-05-12)** went through proper rigor: Discovery PF 1.64 + OOS PF 1.53 + Holdout PF 1.25 all reproducible; T1×T2×SL 3D sweep done with documented script and 45 cell outputs; production detector code reproducible against sanity; cell-mining methodology preserved.
+
+**Why:** "Shipped" was being used to mean "merged a detector and flipped enabled=true" rather than "passed Discovery + OOS + Holdout with reproducible evidence." Commit messages contained claimed numbers that couldn't be reproduced from any preserved artifact. Production detector code drifted from the validated cell-mining code in subtle ways (regime classifier, T1/T2 sweep choices) without anyone noticing because no end-to-end reproducibility test was required.
+
+**Rule — production ship gate (binding):**
+1. **Cell-mining script must be preserved** in `tools/sub9_research/_cell_mine_*.py` with output saved in `analysis/_cell_mine_*.log`. If you can't point at the script that produced the cell's claimed PF, the cell isn't shipped.
+2. **T1/T2/SL R-multiplier sweep is mandatory** with output saved in `reports/sub9_sanity/<setup>_t1_*_t2_*_sl_*/summary.json`. The shipped R combo is the one that maximizes the cell's PF on Discovery, not arbitrarily chosen defaults.
+3. **Discovery + OOS + Holdout must ALL pass** at the locked cell + R config:
+   - Discovery: n ≥ 200, net PF ≥ 1.20, Sharpe > 0.5
+   - OOS (Jan-Sep 2025): net PF ≥ 1.10 with no major-cell collapse vs Discovery
+   - Holdout (Oct 2025-Mar 2026): net PF ≥ 1.10 with no major-cell collapse vs OOS
+4. **Reproducibility check**: production detector's filter logic (regime classifier, cap_segment, ADV band, T1/T2/SL) must be byte-identical to what the cell-mining used. If you change the regime computation, you must re-mine the cell.
+5. **TODO debt is not allowed at ship time**: commit messages saying "will re-validate at OOS" + `enabled=false` are NOT a valid path to production. Either complete OOS before merge, or don't merge.
+6. **No mass-enable commits without per-setup audit**: a commit that flips `enabled=true` on multiple setups must explicitly document the OOS + Holdout passes for each.
+
+**Process check before any future `enabled=true`:**
+- [ ] Cell-mining script committed + output file in `analysis/`
+- [ ] R-multiplier sweep script committed + 9+ cell outputs in `reports/sub9_sanity/`
+- [ ] Discovery sanity reproducible (script can be re-run, exact PF reproduces)
+- [ ] OOS validation done with `--allow-oos` flag, output in `reports/sub9_iv_rank_oos/`
+- [ ] Holdout validation done, output in `reports/sub9_iv_rank_holdout/`
+- [ ] Production detector regression test against sanity (same trade IDs, same PnL)
+- [ ] No regression in `tests/structures/` suite
+
 ### 2026-04-22 — Never run architecture/variant comparisons on OOS data; reserve OOS for ONE confirmation check on the chosen winner
 **What went wrong:** After the chained gauntlet showed Stage 5e (Budgeted Selector) beat Stage 5d (FIFO) on Discovery 2023-24, I ran a head-to-head on 2025 OOS. Then, when the user asked to also test a simplified variant (5e without ADV/bar/rate/concurrency caps), I started to run the variant comparison ALSO on 2025. User caught it: "why not on 23 24 data? isn't it the whole point? also the split checks? shouldn't we do all this on 23 24 data only?"
 **Why:** This is the standard ML train/validation/holdout discipline. Every evaluation on OOS data consumes its informational value. If you keep running variants on OOS until one looks good, you've implicitly overfitted selection choices to the "holdout" set and lost the ability to claim OOS generalization. The correct sequence is: all architecture + hyperparameter + variant selection happens on IN-SAMPLE data, then you validate the ONE chosen winner on OOS (single check, no shopping), then final holdout gate before deploy.

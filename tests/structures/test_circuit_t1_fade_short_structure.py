@@ -311,6 +311,34 @@ def test_plan_short_emits_correct_geometry():
 
 
 # ---------------------------------------------------------------------------
+# Test 8b: plan emits single T2 target when t1_qty_pct=0 (sweep-locked mode)
+# ---------------------------------------------------------------------------
+
+def test_plan_short_t1_qty_pct_zero_means_executor_skips_partial():
+    """2026-05-12: SL/target sweep locked t1_qty_pct=0.0 (disable T1 partial).
+    Detector emits T1 with qty_pct=0 and T2 with qty_pct=1.0. The
+    plan-as-source-of-truth refactor makes exit_executor honor qty_pct=0
+    by skipping the T1 partial entirely (see _partial_exit_t1).
+    """
+    cfg = _cfg()
+    cfg["t1_qty_pct"] = 0.0
+    det = CircuitT1FadeShortStructure(cfg)
+    t0_date = date(2024, 6, 5); t1_date = date(2024, 6, 6)
+    daily = _build_daily(t0_date, 106.0, 100.0, 106.0, 100000)
+    t1_5m = _build_t1_5m(t1_date, t1_open=108.65, peak=110.0,
+                          current_close=108.5, n_bars=16)
+    ctx = _make_ctx(t1_5m, daily, t1_date)
+    res = det.detect(ctx)
+    assert res.structure_detected
+    plan = det.plan_short_strategy(ctx, event=res.events[0])
+    assert plan is not None
+    targets = plan.exit_levels.targets
+    assert len(targets) == 2
+    assert targets[0]["name"] == "T1" and targets[0]["qty_pct"] == 0.0
+    assert targets[1]["name"] == "T2" and targets[1]["qty_pct"] == 1.0
+
+
+# ---------------------------------------------------------------------------
 # Test 9: latch prevents double-fire same session
 # ---------------------------------------------------------------------------
 

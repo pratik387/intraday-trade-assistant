@@ -420,6 +420,10 @@ class CircuitT1FadeShortStructure(BaseStructure):
 
         rr_t1 = (close - t1_target) / max(risk_per_share, 1e-6)
         rr_t2 = (close - t2_target) / max(risk_per_share, 1e-6)
+        # Per-target qty_pct is honored by exit_executor (plan-as-source-of-truth
+        # refactor 2026-05-12). qty_pct=0.0 means the executor skips T1 partial
+        # and rides full qty to T2 (the validated mechanic per
+        # _circuit_t1_sl_target_sweep.py — partial dropped PF 1.34 -> 0.49).
         targets = [
             {
                 "name": "T1", "level": t1_target, "rr": rr_t1,
@@ -434,7 +438,9 @@ class CircuitT1FadeShortStructure(BaseStructure):
         risk_params = RiskParams(
             hard_sl=hard_sl, risk_per_share=risk_per_share, atr=None,
         )
-        exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
+        # Plan-as-source-of-truth (2026-05-12): time_exit from per-setup config.
+        time_exit_str = str(self.config.get("time_stop_at") or "").strip() or None
+        exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets, time_exit=time_exit_str)
 
         # Plan-geometry validation (Phase-C-Commit-2 pattern)
         try:

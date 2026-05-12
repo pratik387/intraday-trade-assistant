@@ -345,6 +345,7 @@
   "setups": {
     "gap_fade_short": {
       "enabled": true,
+      "_status_2026_05_12_SWEEP_FIX": "T1/T2/SL/time-stop sweep (tools/sub9_research/_gap_fade_short_sl_target_sweep.py) ran 180 combos x 11,803 Discovery + 4,987 OOS + 2,443 Holdout triggers. Production was bleeding edge in 3 ways: (1) stop_buffer too wide (0.25% vs optimum 0.10%), (2) ATR mult locked at 1.5 vs optimum 2.0, (3) time_stop_at=10:15 cuts trades 30min after entry — gap-fade trades need hours to reach PDC. PROD baseline PF: Disc 1.47 / OOS 1.06 / Hold 1.41. LOCKED combo (sb=0.10 / am=2.0 / ts=13:00 / partial_50_be_trail) passes PF>=1.30 in ALL 3 periods: Disc 2.36 / OOS 1.71 / Hold 1.69. Net Discovery jumps from Rs.929k -> Rs.~3M. Also: per-trade hold time goes from 30min -> 4hr but time-stop rate drops 62.5% -> 37.5% (more T2 hits, fewer stuck trades).",
       "_status_2026_05_08_oci": "ENABLED for OCI wide_open run alongside circuit_t1 + capitulation + delivery_pct_anomaly. Production-validated via sub7/8 gauntlet.",
       "_comment_disabled_2026_05_06": "Disabled while sub-9 round-3 candidates (VWAP-deviation, index-vs-stock divergence, volume-spike reversal) are researched. Holdout NET ~Rs.41K/yr is small for non-trivial capital scale. Re-enable post-research-decision based on combined-setup portfolio composition.",
       "active_window_start": "09:15",
@@ -358,8 +359,13 @@
         "small_cap"
       ],
       "stop_above_gap_high_atr": 0.25,
+      "stop_atr_multiplier": 2.0,
+      "_comment_stop_atr_multiplier": "ATR multiplier for the alternative stop (entry + atr * mult). Was hardcoded 1.5 pre-2026-05-12; sweep lifted to 2.0 (Disc PF 1.47->2.36 / OOS 1.06->1.71 / Hold 1.41->1.69 with paired changes below).",
+      "stop_buffer_above_gap_high_pct_small_mid": 0.001,
+      "_comment_stop_buffer_small_mid": "0.10% buffer above gap_high (was 0.25%). Sweep showed tighter stop dominates across all 3 periods.",
       "target_type": "pdc_or_open",
-      "time_stop_at": "10:15",
+      "time_stop_at": "13:00",
+      "_comment_time_stop": "Extended from 10:15 to 13:00 per sweep. Gap-fade trades need hours to reach PDC; cutting at 10:15 chopped 55% of trades at break-even before they could resolve. ts=13:00 balances edge capture (avg PF 1.92) vs capital tie-up (4hr hold vs full session).",
       "min_bars_required": 1,
       "entry_zone_pct": 0.1,
       "entry_zone_mode": "symmetric",
@@ -369,6 +375,8 @@
     },
     "expiry_pin_strike_reversal": {
       "enabled": false,
+      "_status_2026_05_12_RETIRED": "RETIRED 2026-05-12. Shipped without any validation of the actual signal logic. All sub9 OCI captures (phase1/oos/holdout) were wide_open which BYPASSES the RSI-decay confirmation, heavyweight universe filter, AND cap segment guard — making them noise (47k fires across 1,218 symbols in Discovery, when the real detector should fire on top-10 heavyweights only). Filtering wide_open captures to heavyweight universe post-hoc shows Discovery PF 0.526 n=377 (fails both PF>=1.10 AND n>=500 gates from spec line 202 'Phase B3 backtest pending'). 3D cell mining on wide_open captures found SHIP-eligible cell PF 1.43 Discovery but collapses to PF 0.80 OOS / 0 SELL trades with rank>=2.0 in Holdout — overfitting confirmed. Setup was never cell-mined and never had a sanity script that exercised RSI-decay logic. To revive: write tools/sub9_research/sanity_expiry_pin_strike_reversal.py replicating full detector logic on local 2023-2024 OI parquets (data/option_chain/2023/ already populated).",
+      "_enabled_2026_05_12": "Enabled after OI fix landed (commit d50b28f) + parquet store backfilled. Production smoke 2024-04-25 (monthly expiry Thursday) confirmed detector was completely silent (0 accepts AND 0 rejections) due to enabled=false skipping MainDetector init. With wide_open=false in production config, heavyweight universe + cap segment guards remain enforced; expiry-day check + pin lookup are mandatory regardless. OI loader verified locally (NIFTY monthly pin 22600 on 2024-04-24 D-1 snapshot).",
       "active_window_start": "13:30",
       "active_window_end": "15:15",
       "min_spot_distance_to_pin_pct": 0.3,
@@ -401,6 +409,7 @@
     },
     "circuit_t1_fade_short": {
       "enabled": true,
+      "_status_2026_05_12_SWEEP_FIX": "T1/T2/SL sweep (tools/sub9_research/_circuit_t1_sl_target_sweep.py) ran 240 combos x 585 Discovery trades + 61 Holdout trades. Production was running partial_50_be_trail (PF 0.49 Discovery / 0.91 Holdout — actively losing money). Sanity baseline (all_in, ride to T2=t0_close) reproduces PF 1.34 Discovery / 1.89 Holdout. Sweep optimum (sb=0.25, ms=0.5, all_in, ts=15:10) gives PF 1.74 Discovery / 1.88 Holdout. LOCKED: t1_qty_pct=0.0 (disable partial — ride to T2), stop_t1_high_buffer_pct=0.25, min_stop_distance_pct=0.5.",
       "_status_2026_05_08_oci": "ENABLED for OCI wide_open run. Holdout PF 1.89 (Oct'25-Apr'26) confirmed robust through war + regulatory regime.",
       "_status_2026_05_01": "NEW — sub-9 §3.3 sanity-check PASSED (PF=1.47 NET, n=654 over 12mo 2024). Phase-1 validation pending. enabled=false until production smoke + Phase-1 backtest confirm.",
       "t0_min_pct_change": 4.5,
@@ -411,11 +420,12 @@
       "t1_gap_max_pct": 5.0,
       "active_window_start": "10:30",
       "active_window_end": "10:30",
-      "stop_t1_high_buffer_pct": 0.5,
-      "min_stop_distance_pct": 1.0,
+      "stop_t1_high_buffer_pct": 0.25,
+      "min_stop_distance_pct": 0.5,
       "t1_target_anchor": "t1_open",
       "t2_target_anchor": "t0_close",
-      "t1_qty_pct": 0.5,
+      "t1_qty_pct": 0.0,
+      "_comment_t1_qty_pct": "Set to 0.0 (disable partial) per 2026-05-12 sweep finding. Sanity baseline rode to T2 (no partial); production had added 50% partial + BE trail which drops PF from 1.34 to 0.49 on Discovery (n=585). Single exit at T2=t0_close is the validated mechanic.",
       "time_stop_at": "15:10",
       "allowed_cap_segments": [
         "mid_cap",
@@ -459,7 +469,8 @@
       "_research_notes": "Sub-9 round-4 brief APPROVED for narrow-cell ship. Asymmetry: Indian single-stock-options ATM IV-rank extreme = retail F&O option-buyer concentration (per SEBI FY23 91-93% retail loss study). At iv_rank>=0.85 (top 15% of 252-day window) the underlying mean-reverts down on T+0 mid-session as institutional vol-arb desks unwind. Source data: NSE F&O bhavcopy → tools/option_chain/build_iv_rank.py → data/options_iv/<from>_<to>_iv_rank.parquet. SHORT-only ship — sanity LONG cell (iv_rank<=0.20 + NIFTY uptrend) PF 0.819, dragged aggregate to 0.843. Brief: specs/2026-05-06-sub-project-9-brief-options_vol_iv_rank_revert.md. Sanity script: tools/sub9_research/sanity_options_vol_iv_rank_revert.py. Cell select: tools/sub9_research/cell_select_round4.py."
     },
     "capitulation_long_morning": {
-      "enabled": true,
+      "enabled": false,
+      "_status_2026_05_12_RETIRED": "RETIRED 2026-05-12. Own sanity script (tools/sub9_research/sanity_capitulation_long_morning.py) shows aggregate PF 0.813 Discovery (n=7,471) and PF 0.899 Holdout (n=3,035) — fails Phase B3 floor (1.10) on its own validated data. Earlier ship decision relied on cell trend_down x mid_cap x liq=10-30cr (Discovery PF 1.238 n=443) but Holdout with that same cell + reproducible regime classifier (per-symbol close<SMA20 T-1) gave n=174 PF 0.631 — catastrophic failure. The cell was not robust across regime classifier definitions. Setup retired permanently. No fix path identified; the gap-down + reversal mechanic is not asymmetric enough to overcome friction in 2025-2026 conditions.",
       "_status_2026_05_08": "ENABLED for OCI smoke + Phase-1 backtest. Sub9 sanity Discovery PF 1.238 (n=443 cell). Holdout aggregate PF 0.97; latest month (Apr 2026) PF 1.26 post-ceasefire. Push to OCI for trade capture in wide_open mode.",
       "_status_2026_05_07": "NEW — sub-9 round-6 cell-ship. Aggregate sanity PF 0.813 (n=7,471) but cell trend_down × mid_cap × liq=10-30cr passed at PF 1.238, n=443 (~222/yr; 6mo holdout expects ~110 fires — proper statistical power). Mirror image of gap_fade_short (LONG fade of retail panic-capitulation on gap-down). enabled=false until OOS validation (Jan-Sep 2025) + holdout (Oct 2025-Mar 2026) confirm.",
       "gap_min_pct": 1.5,
@@ -519,6 +530,31 @@
       "entry_zone_pct": 0.10,
       "entry_zone_mode": "directional",
       "_research_notes": "Validated cell from delivery_pct anomaly cell-mining. SHORT only. Indian-microstructure anchor: NSE-published delivery percentage <20% + same-day pump >3% = retail/operator pump signature. Cross-day RVOL confirmation rejects intra-session false signals. Sanity: tools/sub9_research/sanity_nse_delivery_pct_anomaly.py. Brief: specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md."
+    },
+    "earnings_day_intraday_fade": {
+      "enabled": true,
+      "_status_2026_05_12": "NEW — sub-9 ship #5. Bidirectional fade of BMO/AMC earnings-gap. Discovery PF 1.64 (n=1569) / OOS PF 1.53 (n=510) / Holdout PF 1.25 (n=298). Locked R-multiples T1=1.0R / T2=1.0R / SL=2.5x structural per 3D sweep. Enabled for OCI smoke + Phase-1 backtest.",
+      "gap_pct_min": 0.005,
+      "gap_pct_max": 0.06,
+      "entry_window_start_hhmm": "10:30",
+      "entry_window_end_hhmm": "15:00",
+      "time_stop_hhmm": "15:10",
+      "sl_buffer_pct": 0.005,
+      "min_stop_pct": 0.01,
+      "t1_r_multiple": 1.0,
+      "t2_r_multiple": 1.0,
+      "stop_r_multiple": 2.5,
+      "use_breakeven_trail_after_t1": true,
+      "min_adv_cr": 10.0,
+      "allowed_caps": ["large_cap", "mid_cap"],
+      "_comment_caps": "small_cap dropped to PF 0.87 in OOS — exclude per cell-lock. Do NOT broaden without re-running cell selection.",
+      "announce_time_classes": ["BMO", "AMC"],
+      "risk_per_trade_inr": 1000,
+      "min_bars_required": 4,
+      "entry_zone_pct": 0.10,
+      "entry_zone_mode": "directional",
+      "min_stop_distance_pct": 0.3,
+      "_research_notes": "Sub-9 ship #5. Indian-microstructure anchor: NSE single-stock-options + low retail tolerance for earnings uncertainty produces a 09:15 gap (any direction) that retail/option-buyers extend in the first hour. Inst-flow fades it 10:30-15:00 once the beat/miss is rationally priced. Universe: MIS-eligible + ADV>=10cr/day (the F&O 200 had n<floor; expanded universe lifted n past gate). Brief: specs/2026-05-06-sub-project-9-brief-earnings_day_intraday_fade.md. Sanity: tools/sub9_research/sanity_earnings_day_intraday_fade.py. R-multiples LOCKED (T1=1.0R T2=1.0R SL=2.5x) from 3D sweep — DO NOT modify without re-running gauntlet."
     }
   },
   "filters": {
@@ -660,7 +696,7 @@
   "rank_pctl_min": 0.6,
   "max_concurrent_positions": 999,
   "_comment_max_positions": "DIAGNOSTIC: Disabled limit (999) to see true setup performance without portfolio competition",
-  "wide_open_mode": true,
+  "wide_open_mode": false,
   "_comment_wide_open": "MASTER FLAG: when true, all historical-PnL filters are bypassed so raw detector edge can be measured on a 3-year backtest. Disables: trade_quality_gates (hour 10 block + category floors), _check_validated_combinations (VC whitelist), ICT sweep/MSS prerequisite in order_block detector, _validate_htf_trend hard-coded calls in BOS/CHoCH/FVG, _validate_premium_discount_zone calls, event_policy_gate session/expiry policy, news_spike_gate size penalties, directional_bias multipliers (neutralized to 1.0), dedupe cooloff, blocked_regimes/caps/entirely in all pipeline configs. PRESERVED: risk math, exit logic (T1/T2/SL/trailing/EOD), MIS eligibility, timing infrastructure, detector firing conditions themselves. Set to false for normal production operation.",
   "time_restricted_trading": true,
   "_comment_execution": "=== EXECUTION SETTINGS ===",

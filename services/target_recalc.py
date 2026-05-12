@@ -247,9 +247,20 @@ def _recalc_r_multiple(
         new_t1 = actual_entry - t1_r * actual_rps
         new_t2 = actual_entry - t2_r * actual_rps
 
+    # Plan-as-source-of-truth (2026-05-12): preserve per-target qty_pct and
+    # action from the original detector emission. Re-anchor only changes the
+    # numeric levels; the split/action contract is setup-authoritative.
     adjusted["targets"] = [
-        {"level": round(new_t1, 2), "name": "T1", "rr": round(t1_r, 2)},
-        {"level": round(new_t2, 2), "name": "T2", "rr": round(t2_r, 2)},
+        {
+            "level": round(new_t1, 2), "name": "T1", "rr": round(t1_r, 2),
+            "qty_pct": original_targets[0].get("qty_pct", 0.5),
+            "action": original_targets[0].get("action", "partial_exit"),
+        },
+        {
+            "level": round(new_t2, 2), "name": "T2", "rr": round(t2_r, 2),
+            "qty_pct": original_targets[1].get("qty_pct", 0.5),
+            "action": original_targets[1].get("action", "exit_full"),
+        },
     ]
     if "stop" in adjusted and isinstance(adjusted["stop"], dict):
         adjusted["stop"]["risk_per_share"] = round(actual_rps, 2)

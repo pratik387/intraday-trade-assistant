@@ -65,6 +65,10 @@ class GapFadeShortStructure(BaseStructure):
         self.require_vol_decline = bool(config["require_volume_decline_after_gap"])
         self.allowed_caps = set(config.get("allowed_cap_segments", []))
         self.stop_atr_buffer = float(config["stop_above_gap_high_atr"])
+        # ATR multiplier for the alternative stop (entry + atr * mult). 2026-05-12
+        # sweep lifted to 2.0 (was hardcoded 1.5 pre-sweep). See
+        # tools/sub9_research/_gap_fade_short_sl_target_sweep.py.
+        self.stop_atr_multiplier = float(config.get("stop_atr_multiplier", 1.5))
         # Cap-aware buffer above gap_high. Indian sources (StockManiacs, smallcase):
         # micro-caps need wider buffer than small/mid because of illiquid spreads.
         self.stop_buffer_above_gap_high_pct_small_mid = float(
@@ -281,10 +285,10 @@ class GapFadeShortStructure(BaseStructure):
         # intrabar spikes at 0.25%; 0.5% provides research-aligned cushion.
         cap_seg = getattr(context, "cap_segment", None) or ""
         if cap_seg == "micro_cap":
-            stop_a = gap_high * 1.005                 # gap_high + 0.5% for micro_cap
+            stop_a = gap_high * (1.0 + self.stop_buffer_above_gap_high_pct_micro)
         else:
-            stop_a = gap_high * 1.0025                # gap_high + 0.25% for small/mid_cap
-        stop_b = close + atr_val * 1.5                # entry + 1.5 ATR
+            stop_a = gap_high * (1.0 + self.stop_buffer_above_gap_high_pct_small_mid)
+        stop_b = close + atr_val * self.stop_atr_multiplier
         hard_sl = max(stop_a, stop_b)
         risk_per_share = max(hard_sl - close, atr_val * 0.1)
 
@@ -303,25 +307,29 @@ class GapFadeShortStructure(BaseStructure):
 
         rr_t1 = (close - t1_level) / max(risk_per_share, 1e-6)
         rr_t2 = (close - t2_level) / max(risk_per_share, 1e-6)
+        # Per-target qty_pct from config (plan-as-source-of-truth 2026-05-12).
+        # qty_pct=0.0 → executor skips T1 partial and rides full qty to T2.
         targets = [
             {
                 "name": "T1",
                 "level": t1_level,
                 "rr": rr_t1,
-                "qty_pct": 0.5,
+                "qty_pct": self.t1_partial_qty_pct,
                 "action": "partial_exit",
             },
             {
                 "name": "T2",
                 "level": t2_level,
                 "rr": rr_t2,
-                "qty_pct": 0.5,
+                "qty_pct": round(1.0 - self.t1_partial_qty_pct, 4),
                 "action": "exit_full",
             },
         ]
 
         risk_params = self.calculate_risk_params(close, context)
-        exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets)
+        # Set time_exit from per-setup config — executor honors plan over global EOD.
+        time_exit_str = str(self.config.get("time_stop_at") or "").strip() or None
+        exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets, time_exit=time_exit_str)
 
         # === Plan-geometry validation (Phase-C-Commit-2) ===
         # Reject geometrically-broken plans at the source. The orchestrator

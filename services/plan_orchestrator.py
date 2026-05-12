@@ -69,6 +69,7 @@ from structures.circuit_t1_fade_short_structure import CircuitT1FadeShortStructu
 from structures.options_vol_iv_rank_revert_structure import OptionsVolIvRankRevertStructure
 from structures.capitulation_long_morning_structure import CapitulationLongMorningStructure
 from structures.delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
+from structures.earnings_day_intraday_fade_structure import EarningsDayIntradayFadeStructure
 from structures.data_models import MarketContext
 
 from services.symbol_metadata import get_cap_segment, get_mis_info
@@ -98,6 +99,7 @@ _DETECTOR_REGISTRY: Dict[str, Any] = {
     "options_vol_iv_rank_revert": OptionsVolIvRankRevertStructure,
     "capitulation_long_morning": CapitulationLongMorningStructure,
     "delivery_pct_anomaly_short": DeliveryPctAnomalyShortStructure,
+    "earnings_day_intraday_fade": EarningsDayIntradayFadeStructure,
 }
 
 ACTIVE_SETUPS: frozenset = frozenset(_DETECTOR_REGISTRY.keys())
@@ -520,6 +522,24 @@ class PlanOrchestrator:
             # to re-anchor at trigger. Detectors set this on the TradePlan;
             # default to "structural" (preserve target levels) for safety.
             "target_anchor_type": getattr(trade_plan, "target_anchor_type", "structural"),
+
+            # Per-setup exit overrides. Plan-as-source-of-truth principle
+            # (2026-05-12 architectural refactor): executor honors these over
+            # global defaults. Global EOD remains a hard safety cap (MIS
+            # auto-square regardless of setup choice). For target qty splits,
+            # the per-target qty_pct in `targets[]` is also setup-authoritative.
+            #
+            # Resolution order for time-stop:
+            #   1. TradePlan.exit_levels.time_exit (detector explicitly set it)
+            #   2. setup_cfg["time_stop_at"] (config key — most setups)
+            #   3. setup_cfg["time_stop_hhmm"] (alt key — earnings_day legacy)
+            "exits": {
+                "time_stop_hhmm": (
+                    (trade_plan.exit_levels.time_exit if trade_plan.exit_levels else None)
+                    or setup_cfg.get("time_stop_at")
+                    or setup_cfg.get("time_stop_hhmm")
+                ),
+            },
 
             "quality": {
                 "structural_rr": round(structural_rr, 2),

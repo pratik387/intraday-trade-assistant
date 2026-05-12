@@ -332,9 +332,16 @@ class ExitExecutor:
                     st['_last_bar_ts'] = bar_ts_key
                 pos.plan['_state'] = st
 
-                # 0) EOD square-off by tick timestamp
-                if self.eod_md is not None and _minute_of_day(ts) >= self.eod_md:
-                    self._exit(sym, pos, float(px), ts, f"eod_squareoff_{self.eod_hhmm}")
+                # 0) Time-stop / EOD square-off by tick timestamp.
+                # Plan-as-source-of-truth (2026-05-12): respect per-setup
+                # time_stop_hhmm if set, capped at the global EOD safety floor.
+                effective_md = self._effective_eod_md(pos)
+                if effective_md is not None and _minute_of_day(ts) >= effective_md:
+                    plan_ts = (pos.plan.get("exits") or {}).get("time_stop_hhmm")
+                    reason = (f"time_stop_{plan_ts}"
+                              if (plan_ts and effective_md != self.eod_md)
+                              else f"eod_squareoff_{self.eod_hhmm}")
+                    self._exit(sym, pos, float(px), ts, reason)
                     continue
 
                 # 0.5) PRO TRADER: Failed breakout exit for ORB trades
@@ -712,11 +719,30 @@ class ExitExecutor:
 
     # ---------- Static levels ----------
 
-    def _is_eod(self, ts: pd.Timestamp) -> bool:
+    def _effective_eod_md(self, pos) -> Optional[int]:
+        """Plan-as-source-of-truth (2026-05-12): per-position effective EOD
+        = min(plan.exits.time_stop_hhmm, global eod). Plan can pull EOD
+        EARLIER but not LATER than the global MIS auto-square cutoff.
+        """
+        plan_md = None
+        try:
+            plan_ts = (pos.plan.get("exits") or {}).get("time_stop_hhmm") if pos and pos.plan else None
+            if plan_ts:
+                plan_md = _parse_hhmm_to_md(str(plan_ts).replace(":", ""))
+        except Exception:
+            plan_md = None
+        if plan_md is None:
+            return self.eod_md
         if self.eod_md is None:
+            return plan_md
+        return min(plan_md, self.eod_md)
+
+    def _is_eod(self, ts: pd.Timestamp, pos=None) -> bool:
+        eff_md = self._effective_eod_md(pos) if pos is not None else self.eod_md
+        if eff_md is None:
             return False
         try:
-            return _minute_of_day(ts) >= int(self.eod_md)
+            return _minute_of_day(ts) >= int(eff_md)
         except Exception:
             return False
 
@@ -1797,11 +1823,33 @@ class ExitExecutor:
             pos.plan["_state"] = st
         original_qty = st["entry_qty"]
 
-        # Use config-driven percentage (60-40-0 split from config)
-        # FIX: Calculate based on ORIGINAL entry qty, not current remaining
+        # Plan-as-source-of-truth (2026-05-12): use plan.targets[0].qty_pct
+        # (set by detector from setup config) over global t1_book_pct.
+        # Falls back to global only if plan doesn't carry a target qty_pct.
         bias_mods = self._get_bias_exit_modifiers(pos)
         t1_add = bias_mods.get("t1_book_pct_add", 0)
-        actual_pct = max(1.0, self.t1_book_pct + t1_add)
+        plan_t1_qty_pct = None
+        try:
+            tgts = pos.plan.get("targets") or []
+            if tgts and isinstance(tgts[0], dict) and "qty_pct" in tgts[0]:
+                # Plan stores fraction (0.5 = 50%); convert to pct
+                plan_t1_qty_pct = float(tgts[0]["qty_pct"]) * 100.0
+        except Exception:
+            plan_t1_qty_pct = None
+        base_pct = plan_t1_qty_pct if plan_t1_qty_pct is not None else self.t1_book_pct
+        actual_pct = max(0.0, base_pct + t1_add)
+
+        # Plan-override: qty_pct=0 means "skip T1 partial, full qty rides to T2"
+        if actual_pct <= 0.0:
+            st["t1_done"] = True
+            st["t1_booked_qty"] = 0
+            st["t1_booked_price"] = px
+            st["t1_profit"] = 0.0
+            st["t1_skipped_plan_zero"] = True
+            st.pop("_t1_processing", None)
+            pos.plan["_state"] = st
+            logger.info(f"T1_SKIP_PLAN_ZERO | {sym} | plan qty_pct=0; full qty rides to T2")
+            return
 
         qty_exit = int(max(1, round(original_qty * (actual_pct / 100.0))))
         qty_exit = min(qty_exit, current_qty)  # Can't exit more than we have
@@ -1908,12 +1956,17 @@ class ExitExecutor:
                 "t1_profit": round(profit_booked, 2),
             })
 
-        if self.eod_md is not None and ts is not None:
+        if ts is not None:
             try:
-                if _minute_of_day(ts) >= int(self.eod_md):
+                eff_md = self._effective_eod_md(pos)
+                if eff_md is not None and _minute_of_day(ts) >= int(eff_md):
                     cur = self.positions.get_by_trade_id(_pos_tid(pos))
                     if cur and int(cur.qty) > 0:
-                        self._exit(sym, cur, float(px), ts, f"eod_squareoff_{self.eod_hhmm}")
+                        plan_ts = (pos.plan.get("exits") or {}).get("time_stop_hhmm")
+                        reason = (f"time_stop_{plan_ts}"
+                                  if (plan_ts and eff_md != self.eod_md)
+                                  else f"eod_squareoff_{self.eod_hhmm}")
+                        self._exit(sym, cur, float(px), ts, reason)
                         return
             except Exception:
                 pass
@@ -1946,12 +1999,24 @@ class ExitExecutor:
         st["_t2_processing"] = True
         pos.plan["_state"] = st
 
-        # Adjust T2 to absorb T1's bias modifier (keep T1+T2 total consistent)
-        # Base: 60+40=100 (no trail). With-trend T1=45 → T2=55. Against-trend T1=80 → T2=20.
+        # Plan-as-source-of-truth (2026-05-12): use plan target qty_pct over
+        # globals. Each plan target carries its own qty_pct from the detector.
         bias_mods = self._get_bias_exit_modifiers(pos)
         t1_add = bias_mods.get("t1_book_pct_add", 0)
-        adjusted_t1 = self.t1_book_pct + t1_add
-        adjusted_t2 = self.t2_book_pct - t1_add  # T2 absorbs what T1 gives up/takes
+        plan_t1_pct = None
+        plan_t2_pct = None
+        try:
+            tgts = pos.plan.get("targets") or []
+            if tgts and isinstance(tgts[0], dict) and "qty_pct" in tgts[0]:
+                plan_t1_pct = float(tgts[0]["qty_pct"]) * 100.0
+            if len(tgts) >= 2 and isinstance(tgts[1], dict) and "qty_pct" in tgts[1]:
+                plan_t2_pct = float(tgts[1]["qty_pct"]) * 100.0
+        except Exception:
+            plan_t1_pct = plan_t2_pct = None
+        base_t1 = plan_t1_pct if plan_t1_pct is not None else self.t1_book_pct
+        base_t2 = plan_t2_pct if plan_t2_pct is not None else self.t2_book_pct
+        adjusted_t1 = base_t1 + t1_add
+        adjusted_t2 = base_t2 - t1_add  # T2 absorbs what T1 gives up/takes
 
         # If no trail configured (T1+T2 >= 100%), exit ALL remaining at T2
         # This avoids rounding issues and matches 60-40-0 intent

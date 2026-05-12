@@ -537,7 +537,12 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
         risk_params = RiskParams(
             hard_sl=hard_sl, risk_per_share=risk_per_share, atr=atr_val,
         )
-        exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets, trail_to="breakeven")
+        # Plan-as-source-of-truth (2026-05-12): time_exit from per-setup config.
+        time_exit_str = str(self.config.get("time_stop_at") or "").strip() or None
+        exit_levels = ExitLevels(
+            hard_sl=hard_sl, targets=targets, trail_to="breakeven",
+            time_exit=time_exit_str,
+        )
 
         # Plan-geometry validation
         try:
