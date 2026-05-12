@@ -38,7 +38,7 @@ Notes:
 
 from dataclasses import dataclass
 from datetime import datetime, time as dtime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import os
 import threading
@@ -664,6 +664,15 @@ class ScreenerLive:
             initargs=(worker_cfg,)
         )
         self._daily_cache_seeded = False
+        # Per-setup qualifying-universe contributions (computed once at session
+        # seed). 2026-05-12 architectural fix: cross-day setups (circuit_t1,
+        # earnings_day, delivery_pct) have signals invisible to Stage-0's
+        # intraday momentum ranking. Their qualifying symbols are union'd with
+        # the Stage-0 shortlist per-bar so they're never silently dropped.
+        # See services/setup_universe.py.
+        self._setup_universes: Dict[str, Set[str]] = {}
+        self._gap_fade_universe: Optional[Set[str]] = None  # set at 09:15 bar
+        self._daily_dict_cache: Dict[str, "pd.DataFrame"] = {}
 
         # Last-scan cutoff (parsed once). Backtest and paper both honor this — skips scans
         # after this time, leaving exit_executor running for the remaining ticks until EOD.
@@ -1183,6 +1192,31 @@ class ScreenerLive:
                     daily_dict = _enrich_delivery(daily_dict)
                 except Exception as _e:
                     logger.warning("delivery_pct enrichment failed: %s", _e)
+
+                # ---------- Per-setup qualifying universes (static, session-start) ----------
+                # 2026-05-12 architectural fix: setups whose qualifying signals
+                # are invisible to Stage-0's intraday momentum ranking
+                # (circuit_t1, earnings_day, delivery_pct) declare their
+                # universe here. Screener unions per-bar with Stage-0 shortlist.
+                # Also cache daily_dict on self so the gap_fade universe (which
+                # needs PDC and runs lazy at the 09:15 bar) can re-use it.
+                self._daily_dict_cache = daily_dict
+                try:
+                    from services.setup_universe import compute_static_universes
+                    session_date_obj = now.date() if hasattr(now, "date") else now
+                    setups_cfg = (self.raw_cfg.get("setups") or {})
+                    self._setup_universes = compute_static_universes(
+                        setups_cfg, daily_dict, session_date_obj,
+                    )
+                    total_extra = sum(len(s) for s in self._setup_universes.values())
+                    logger.info(
+                        "SETUP_UNIVERSES_LOADED | total=%d %s",
+                        total_extra,
+                        ", ".join(f"{k}={len(v)}" for k, v in self._setup_universes.items()),
+                    )
+                except Exception as _e:
+                    logger.warning("setup_universe computation failed: %s", _e)
+                    self._setup_universes = {}
                 _t_seed_fetch = time.perf_counter()
                 try:
                     with perf("scan", "daily_seed_broadcast", n_workers=self._structure_workers,
@@ -1358,6 +1392,60 @@ class ScreenerLive:
         except Exception as e:
             logger.exception("Stage-0 process failed; fallback shortlist: %s", e)
             shortlist = self._fallback_shortlist()
+
+        # ---------- Universe-union (plan-as-source-of-truth, 2026-05-12) ----------
+        # Add per-setup qualifying symbols to the shortlist so cross-day /
+        # event-driven setups (whose signals Stage-0 can't see) never lose
+        # qualifying symbols. The detector itself still applies its full
+        # filter chain — this only guarantees VISIBILITY past Stage-0.
+        _extra_added = 0
+        try:
+            current_t = now.time() if hasattr(now, "time") else now
+            from datetime import time as _dtime
+            # gap_fade lazy-compute on first 09:15-window bar where df5_by_symbol
+            # is populated. Keep cached for session.
+            if self._gap_fade_universe is None and _dtime(9, 15) <= current_t <= _dtime(9, 30):
+                setups_cfg = (self.raw_cfg.get("setups") or {})
+                gf_cfg = setups_cfg.get("gap_fade_short") or {}
+                if gf_cfg.get("enabled"):
+                    try:
+                        from services.setup_universe import gap_fade_universe
+                        # Build cap_map for symbols we have data for
+                        from services.symbol_metadata import get_cap_segment
+                        cap_map = {s: get_cap_segment(s) for s in df5_by_symbol.keys()}
+                        session_date_obj = now.date() if hasattr(now, "date") else now
+                        self._gap_fade_universe = gap_fade_universe(
+                            df5_by_symbol,
+                            getattr(self, "_daily_dict_cache", {}) or {},
+                            session_date_obj, gf_cfg, cap_map,
+                        )
+                    except Exception as _e:
+                        logger.warning("gap_fade_universe lazy build failed: %s", _e)
+                        self._gap_fade_universe = set()
+            extras: Set[str] = set()
+            for s in (self._setup_universes or {}).values():
+                extras.update(s)
+            if self._gap_fade_universe:
+                extras.update(self._gap_fade_universe)
+            if extras:
+                # Restrict to symbols we actually have 5m data for this bar
+                # (extras outside df5_by_symbol can't be processed anyway).
+                pre_count = len(shortlist)
+                shortlist_set = set(shortlist)
+                injected = (extras & set(df5_by_symbol.keys())) - shortlist_set
+                if injected:
+                    shortlist = shortlist + list(injected)
+                    _extra_added = len(injected)
+                    logger.info(
+                        "UNIVERSE_UNION | shortlist %d -> %d (+%d) | gap_fade=%d circuit_t1=%d earnings=%d delivery=%d",
+                        pre_count, len(shortlist), _extra_added,
+                        len(self._gap_fade_universe or set()),
+                        len(self._setup_universes.get("circuit_t1_fade_short", set())),
+                        len(self._setup_universes.get("earnings_day_intraday_fade", set())),
+                        len(self._setup_universes.get("delivery_pct_anomaly_short", set())),
+                    )
+        except Exception as _e:
+            logger.warning("UNIVERSE_UNION failed: %s", _e)
 
         # ENHANCED LOGGING: Stage-0 completion with accurate counts
         _t_scanner_end = time.perf_counter()
