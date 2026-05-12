@@ -523,6 +523,19 @@ class PlanOrchestrator:
             # default to "structural" (preserve target levels) for safety.
             "target_anchor_type": getattr(trade_plan, "target_anchor_type", "structural"),
 
+            # Plan priority (2026-05-12 architectural refactor). Used by
+            # bar_scheduler to order capital allocation when constrained.
+            # Formula: setup_cfg.priority * detector.quality_score / 100.
+            # default priority=50 if setup hasn't been migrated yet.
+            # NOTE: quality_score (0-100) from StructureAnalysis would be ideal but
+            # is not threaded into this builder yet. trade_plan.confidence (0-1) is
+            # the closest available proxy. Wire-up: a follow-up task.
+            "priority": (
+                float(setup_cfg.get("priority", 50))
+                * float(getattr(trade_plan, "confidence", 0.5)) * 100.0
+                / 100.0
+            ),
+
             # Per-setup exit overrides. Plan-as-source-of-truth principle
             # (2026-05-12 architectural refactor): executor honors these over
             # global defaults. Global EOD remains a hard safety cap (MIS
