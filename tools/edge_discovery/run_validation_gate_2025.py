@@ -18,10 +18,12 @@ from tools.edge_discovery.data_loader import load_run
 from tools.edge_discovery.gates.validation_gate import run_validation_gate
 
 ROOT = Path(__file__).parent.parent.parent
-BACKTEST_DIR = ROOT / "20260421-134338_full"
-DISCOVERY_SURVIVORS = ROOT / "analysis" / "edge_discovery_runs" / "2026-04-20" / "stage3_survivors.json"
+# Sub-9 OOS validation: 2025 wide-open run (20260506-102336_full) tested
+# against Discovery-survivors from 2023-24 sub-9 gauntlet.
+BACKTEST_DIR = ROOT / "20260506-102336_full"
+DISCOVERY_SURVIVORS = ROOT / "docs" / "edge_discovery" / "2026-05-06-sub9-circuit_t1" / "stage3_survivors.json"
 FILL_SCRIPT = ROOT / "tools" / "edge_discovery" / "fill_narratives.py"
-OUT_DIR = ROOT / "docs" / "edge_discovery" / "2026-04-22-validation-gate"
+OUT_DIR = ROOT / "docs" / "edge_discovery" / "2026-05-06-sub9-validation-gate"
 
 VALIDATION_START = date(2025, 1, 1)
 VALIDATION_END = date(2025, 9, 30)

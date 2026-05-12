@@ -28,5 +28,6 @@ def force_wide_open_false(monkeypatch):
     import structures.delivery_pct_anomaly_short_structure as _del_pct
     import structures.capitulation_long_morning_structure as _cap
     import structures.gap_fade_short_structure as _gap
-    for mod in (_exp_pin, _circ, _del_pct, _cap, _gap):
+    import structures.earnings_day_intraday_fade_structure as _earn
+    for mod in (_exp_pin, _circ, _del_pct, _cap, _gap, _earn):
         monkeypatch.setattr(mod, "_is_wide_open", lambda: False)

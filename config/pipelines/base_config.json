@@ -2,7 +2,7 @@
     "_comment": "BASE Pipeline Configuration - Universal settings applied to ALL categories",
     "_description": "Risk management, sizing, and quality filter settings shared across all pipelines",
 
-    "wide_open_mode": true,
+    "wide_open_mode": false,
     "_wide_open_comment": "MASTER FLAG: when true, all historical-PnL filters are bypassed so raw detector edge can be measured on a 3-year backtest. Disables: trade_quality_gates, apply_setup_filters, _check_validated_combinations, ICT sweep/MSS prerequisite, _validate_htf_trend/premium_discount hard-coded calls in BOS/CHoCH/FVG, event_policy_gate session/expiry policy, news_spike_gate size penalties, directional_bias multipliers, dedupe cooloff. PRESERVED: risk math, exit logic (T1/T2/SL/trailing/EOD), MIS eligibility, timing infrastructure, detector firing conditions themselves. Set to false for normal production operation after 3yr wide-open analysis.",
 
     "range_compression": {

@@ -45,7 +45,8 @@ import time
 #     {"name": "Low_Vol_Range", "start_date": "2025-07-01", "end_date": "2025-07-31"}
 # ]
 
-DATE_RANGES = [{"name": "Strong_Uptrend", "start_date": "2023-01-01", "end_date": "2025-09-26"},
+DATE_RANGES = [
+    {"name": "Mar_Apr_2026", "start_date": "2026-03-01", "end_date": "2026-04-12"},
 ]
 
 # Timeframes to download (must match Upstox API requirements)
@@ -56,13 +57,18 @@ DATE_RANGES = [{"name": "Strong_Uptrend", "start_date": "2023-01-01", "end_date"
 # Available timeframe options
 TIMEFRAME_OPTIONS = {
     "minute": [{"interval": "1", "unit": "minutes"}],     # 1-minute candles -> 1minutes
+    "5minute": [{"interval": "5", "unit": "minutes"}],    # 5-minute candles -> 5minutes
     "daily": [{"interval": "1", "unit": "days"}],         # Daily candles -> 1days
     "both": [
         {"interval": "1", "unit": "minutes"},             # 1-minute candles -> 1minutes
         {"interval": "1", "unit": "days"}                 # Daily candles -> 1days
+    ],
+    "all_intraday": [
+        {"interval": "1", "unit": "minutes"},             # 1-minute candles -> 1minutes
+        {"interval": "5", "unit": "minutes"},             # 5-minute candles -> 5minutes
+        {"interval": "1", "unit": "days"}                 # Daily candles -> 1days
     ]
     # Other available options:
-    # {"interval": "5", "unit": "minutes"},   # 5-minute candles -> 5minutes
     # {"interval": "15", "unit": "minutes"},  # 15-minute candles -> 15minutes
     # {"interval": "30", "unit": "minutes"},  # 30-minute candles -> 30minutes
     # {"interval": "60", "unit": "minutes"},  # 1-hour candles -> 60minutes
@@ -413,12 +419,14 @@ def run_intraday_today(instrument_map: dict, workers: int):
     # Build combined task list: (symbol, instrument_key, unit, interval)
     tasks = []
     for sym, key in instrument_map.items():
-        tasks.append((sym, key, "minutes", "1"))  # 1m candles
+        # tasks.append((sym, key, "minutes", "1"))  # 1m candles
+        tasks.append((sym, key, "minutes", "5"))  # 5m candles (native, matches paper API fetch)
         tasks.append((sym, key, "days", "1"))      # daily bar
 
     for idx_name, idx_key in INDEX_INSTRUMENTS.items():
         idx_sym = f"{idx_name}.NS"
         tasks.append((idx_sym, idx_key, "minutes", "1"))
+        tasks.append((idx_sym, idx_key, "minutes", "5"))
         tasks.append((idx_sym, idx_key, "days", "1"))
 
     total = len(tasks)
@@ -534,9 +542,9 @@ Examples:
 
     parser.add_argument(
         "--data-type",
-        choices=["minute", "daily", "both"],
+        choices=["minute", "5minute", "daily", "both", "all_intraday"],
         default="both",
-        help="Type of data to download (default: both)"
+        help="Type of data to download: minute, 5minute, daily, both (1m+daily), all_intraday (1m+5m+daily)"
     )
 
     parser.add_argument(

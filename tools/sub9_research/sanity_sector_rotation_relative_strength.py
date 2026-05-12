@@ -16,12 +16,14 @@ Universe: F&O 200 mid+small_cap, mappable via assets/stock_sector_map.json.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List
 
+import numpy as np
 import pandas as pd
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -47,6 +49,7 @@ TIME_STOP_HHMM = "14:45"
 STOP_PCT = 0.007
 T1_R_MULTIPLE = 1.0
 T2_R_MULTIPLE = 2.0
+STOP_R_MULTIPLE = 1.0   # scales STOP_PCT (1.0 = locked 0.7%); CLI overrides
 SECTOR_STRENGTH_LOOKBACK_DAYS = 5
 TOP_QUARTILE_N = 3
 BOTTOM_QUARTILE_N = 3
@@ -65,11 +68,16 @@ SECTOR_INDICES = [
 ]
 
 
+_MIN_COLS_5M = ["symbol", "date", "open", "high", "low", "close", "volume", "vwap"]
+
+
 def _load_5m_for_month(yyyy: int, mm: int) -> pd.DataFrame:
     path = _REPO_ROOT / "backtest-cache-download" / "monthly" / f"{yyyy:04d}_{mm:02d}_5m_enriched.feather"
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_feather(path)
+    # Project to minimal column set; full enriched has ~14 columns and the
+    # consolidated copy during sort+reset_index OOMs at ~3GB on 47M rows.
+    return pd.read_feather(path, columns=_MIN_COLS_5M)
 
 
 def build_full_period_5m() -> pd.DataFrame:
@@ -80,7 +88,9 @@ def build_full_period_5m() -> pd.DataFrame:
             mdf = _load_5m_for_month(yyyy, m)
             if not mdf.empty:
                 parts.append(mdf)
-    big = pd.concat(parts, ignore_index=True).sort_values(["symbol", "date"]).reset_index(drop=True)
+    # Skip the global sort+reset_index — both find_triggers and simulate re-sort
+    # by symbol+date downstream, so the global sort is redundant and OOMed at ~3GB.
+    big = pd.concat(parts, ignore_index=True)
     big["d"] = big["date"].dt.date
     print(f"  total 5m bars: {len(big):,}")
     return big
@@ -257,13 +267,14 @@ def simulate(triggers: pd.DataFrame, big5m: pd.DataFrame) -> pd.DataFrame:
         entry_price = float(entry_bar["open"])
         entry_ts = entry_bar["date"]
 
+        eff_stop_pct = STOP_PCT * STOP_R_MULTIPLE
         if side == "SHORT":
-            hard_sl = entry_price * (1.0 + STOP_PCT)
+            hard_sl = entry_price * (1.0 + eff_stop_pct)
             stop_distance = hard_sl - entry_price
             t1_target = entry_price - T1_R_MULTIPLE * stop_distance
             t2_target = entry_price - T2_R_MULTIPLE * stop_distance
         else:
-            hard_sl = entry_price * (1.0 - STOP_PCT)
+            hard_sl = entry_price * (1.0 - eff_stop_pct)
             stop_distance = entry_price - hard_sl
             t1_target = entry_price + T1_R_MULTIPLE * stop_distance
             t2_target = entry_price + T2_R_MULTIPLE * stop_distance
@@ -415,8 +426,143 @@ def report(trades: pd.DataFrame) -> None:
         print(f"\nLong/Short PF ratio: {ratio} (gate: >= 0.85 for bidirectional ship)")
 
 
+def _pf(s: pd.Series) -> float:
+    g = s[s > 0].sum()
+    l = s[s < 0].abs().sum()
+    return float(g / l) if l > 0 else float("inf")
+
+
+def _hl_bucket(t) -> str:
+    # trigger_ts hour-minute bucket
+    h = t.hour * 100 + t.minute
+    if h < 1130:
+        return "morning"
+    if h < 1330:
+        return "midday"
+    return "afternoon"
+
+
+def write_artifacts(trades: pd.DataFrame, out_dir: Path,
+                    start_d: date, end_d: date) -> dict:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    trades.to_csv(out_dir / "trades.csv", index=False)
+
+    if trades.empty:
+        summary = {
+            "period_start": str(start_d), "period_end": str(end_d),
+            "n_trades": 0, "gross_pf": None, "net_pf": None,
+            "sharpe_annualized": 0.0, "n_cells_passing_mining_gate": 0,
+            "top_cell_net_pf": None, "passing_cells": [],
+            "params": {"t1_r_mult": T1_R_MULTIPLE, "t2_r_mult": T2_R_MULTIPLE,
+                       "stop_r_mult": STOP_R_MULTIPLE, "stop_pct_base": STOP_PCT},
+        }
+        (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
+        return summary
+
+    # Add cell tags (sector + hl_bucket from trigger time + side + cap_segment)
+    trades = trades.copy()
+    trades["entry_ts_dt"] = pd.to_datetime(trades["entry_ts"])
+    trades["hl_bucket"] = trades["entry_ts_dt"].apply(_hl_bucket)
+
+    daily = trades.groupby("T1_entry_date")["net_pnl"].sum()
+    if daily.std(ddof=0) > 0:
+        sharpe = float(daily.mean() / daily.std(ddof=0) * np.sqrt(252))
+    else:
+        sharpe = 0.0
+
+    gross_pf = _pf(trades["realized_pnl"])
+    net_pf = _pf(trades["net_pnl"])
+
+    # Cell mining: sector x hl_bucket x side x cap_segment, n>=30
+    cell_rows = []
+    for (sec, hl, side, cap), g in trades.groupby(
+            ["sector", "hl_bucket", "side", "cap_segment"]):
+        if len(g) < 30:
+            continue
+        d = g.groupby("T1_entry_date")["net_pnl"].sum()
+        sh = float(d.mean() / d.std(ddof=0) * np.sqrt(252)) if d.std(ddof=0) > 0 else 0.0
+        cell_rows.append({
+            "sector": sec, "hl_bucket": hl, "side": side, "cap_segment": cap,
+            "n_trades": int(len(g)),
+            "gross_pf": _pf(g["realized_pnl"]),
+            "net_pf": _pf(g["net_pnl"]),
+            "net_pnl": float(g["net_pnl"].sum()),
+            "sharpe": sh,
+            "win_rate": float((g["net_pnl"] > 0).mean()),
+        })
+    if cell_rows:
+        cell_df = pd.DataFrame(cell_rows).sort_values("net_pf", ascending=False)
+    else:
+        cell_df = pd.DataFrame(columns=["sector", "hl_bucket", "side", "cap_segment",
+                                         "n_trades", "gross_pf", "net_pf", "net_pnl",
+                                         "sharpe", "win_rate"])
+    cell_df.to_csv(out_dir / "by_cell.csv", index=False)
+
+    cell_mining = cell_df[
+        (cell_df["n_trades"] >= 200) & (cell_df["net_pf"] >= 1.20) & (cell_df["sharpe"] > 0.5)
+    ] if not cell_df.empty else cell_df
+    top_cell_net_pf = float(cell_df["net_pf"].iloc[0]) if not cell_df.empty else None
+
+    summary = {
+        "period_start": str(start_d),
+        "period_end": str(end_d),
+        "n_trades": int(len(trades)),
+        "gross_pf": gross_pf,
+        "net_pf": net_pf,
+        "gross_pnl_inr": float(trades["realized_pnl"].sum()),
+        "net_pnl_inr": float(trades["net_pnl"].sum()),
+        "sharpe_annualized": sharpe,
+        "win_rate": float((trades["net_pnl"] > 0).mean()),
+        "n_cells_passing_mining_gate": int(len(cell_mining)),
+        "top_cell_net_pf": top_cell_net_pf,
+        "passing_cells": cell_mining.head(30).to_dict("records") if not cell_mining.empty else [],
+        "params": {
+            "t1_r_mult": T1_R_MULTIPLE, "t2_r_mult": T2_R_MULTIPLE,
+            "stop_r_mult": STOP_R_MULTIPLE, "stop_pct_base": STOP_PCT,
+        },
+    }
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
+    return summary
+
+
 def main():
+    global T1_R_MULTIPLE, T2_R_MULTIPLE, STOP_R_MULTIPLE
+    p = argparse.ArgumentParser(description="sector_rotation_relative_strength sanity")
+    p.add_argument("--start", default="2023-01-01")
+    p.add_argument("--end", default="2024-12-31")
+    p.add_argument("--t1-r-mult", type=float, default=T1_R_MULTIPLE,
+                   help="T1 target as R-multiple (default 1.0)")
+    p.add_argument("--t2-r-mult", type=float, default=T2_R_MULTIPLE,
+                   help="T2 target as R-multiple (default 2.0)")
+    p.add_argument("--stop-r-mult", type=float, default=STOP_R_MULTIPLE,
+                   help="Hard-stop R scale (1.0 = locked 0.7 pct)")
+    p.add_argument("--out-suffix", default="",
+                   help="suffix appended to output dir name")
+    args = p.parse_args()
+
+    T1_R_MULTIPLE = float(args.t1_r_mult)
+    T2_R_MULTIPLE = float(args.t2_r_mult)
+    STOP_R_MULTIPLE = float(args.stop_r_mult)
+
+    start_d = datetime.strptime(args.start, "%Y-%m-%d").date()
+    end_d = datetime.strptime(args.end, "%Y-%m-%d").date()
+    if end_d > date(2024, 12, 31):
+        print("ERROR: end past Discovery (2024-12-31); refusing OOS/Holdout reads")
+        return 2
+    print(f"params: t1={T1_R_MULTIPLE}R, t2={T2_R_MULTIPLE}R, "
+          f"stop={STOP_R_MULTIPLE}x{STOP_PCT*100:.2f}%")
+    print(f"period: {start_d}..{end_d}")
+
+    out_dir_name = "sector_rotation_relative_strength"
+    if args.out_suffix:
+        out_dir_name += args.out_suffix
+    out_dir = _REPO_ROOT / "reports" / "sub9_sanity" / out_dir_name
+
     big5m = build_full_period_5m()
+    # Sentinel: clip to the requested Discovery window
+    big5m = big5m[(big5m["d"] >= start_d) & (big5m["d"] <= end_d)].copy()
+    print(f"  bars in window: {len(big5m):,}")
+
     universe = load_fno_universe()
     sector_map = load_sector_map()
     strength = build_sector_strength()
@@ -425,16 +571,24 @@ def main():
     print("\nFinding triggers ...")
     triggers = find_triggers(big5m, universe, sector_map, strength, sector_5m)
     print(f"\nTotal triggers (before latch): {len(triggers)}")
+
     if triggers.empty:
-        return
+        write_artifacts(pd.DataFrame(), out_dir, start_d, end_d)
+        print(f"\nNO TRIGGERS. Wrote empty summary to {out_dir}")
+        return 0
 
     trades = simulate(triggers, big5m)
     report(trades)
-    out = _REPO_ROOT / "reports" / "sub9_sanity" / "sector_rotation_relative_strength_trades.csv"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    trades.to_csv(out, index=False)
-    print(f"\nFull trade log: {out}")
+    summary = write_artifacts(trades, out_dir, start_d, end_d)
+
+    print(f"\n=== ARTIFACTS ===")
+    print(f"  out_dir       : {out_dir}")
+    print(f"  trades.csv    : {len(trades)} rows")
+    print(f"  by_cell.csv   : {summary['n_cells_passing_mining_gate']} cells passing mining gate")
+    print(f"  net_pf        : {summary['net_pf']}")
+    print(f"  sharpe        : {summary['sharpe_annualized']:.3f}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

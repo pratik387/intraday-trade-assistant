@@ -59,9 +59,30 @@ from tools.sub7_validation.build_per_setup_pnl import calc_fee     # noqa: E402
 
 
 # ---- Locked params (per brief §6 — direct mirror of gap_fade_short) ----
-# Discovery period
-DISCOVERY_START = date(2023, 1, 1)
-DISCOVERY_END   = date(2024, 12, 31)
+# Period: env override SANITY_PERIOD = discovery (default) | oos | holdout
+import os as _os
+_PERIOD = _os.environ.get("SANITY_PERIOD", "discovery").lower()
+if _PERIOD == "oos":
+    DISCOVERY_START = date(2025, 1, 1)
+    DISCOVERY_END   = date(2025, 9, 30)
+    _Y_RANGE = (2025,)
+    _M_RANGE_FN = lambda y: range(1, 10)
+    _OUT_SUFFIX = "_oos"
+    _ADV_WARMUP_FROM = date(2024, 11, 1)
+elif _PERIOD == "holdout":
+    DISCOVERY_START = date(2025, 10, 1)
+    DISCOVERY_END   = date(2026, 4, 30)
+    _Y_RANGE = (2025, 2026)
+    _M_RANGE_FN = lambda y: range(10, 13) if y == 2025 else range(1, 5)
+    _OUT_SUFFIX = "_holdout"
+    _ADV_WARMUP_FROM = date(2025, 8, 1)
+else:
+    DISCOVERY_START = date(2023, 1, 1)
+    DISCOVERY_END   = date(2024, 12, 31)
+    _Y_RANGE = (2023, 2024)
+    _M_RANGE_FN = lambda y: range(1, 13)
+    _OUT_SUFFIX = ""
+    _ADV_WARMUP_FROM = date(2022, 11, 1)
 
 # Gap thresholds — mirror of gap_fade_short.min_gap_pct_above_pdc=1.5,
 # max=8.0 (sign-flipped for gap-down).
@@ -126,8 +147,8 @@ def build_full_period_5m() -> pd.DataFrame:
     """
     print("  loading 24 monthly 5m feathers (2023-01 .. 2024-12) ...")
     parts: List[pd.DataFrame] = []
-    for yyyy in (2023, 2024):
-        for m in range(1, 13):
+    for yyyy in _Y_RANGE:
+        for m in _M_RANGE_FN(yyyy):
             mdf = _load_5m_for_month(yyyy, m)
             if not mdf.empty:
                 parts.append(mdf)
@@ -150,7 +171,7 @@ def load_consolidated_daily() -> pd.DataFrame:
         df["ts"] = df["ts"].dt.tz_localize(None)
     df["d"] = df["ts"].dt.date
     # Need history back to ~late 2022 for 20-day ADV warmup at 2023-01-01
-    df = df[(df["d"] >= date(2022, 11, 1)) & (df["d"] <= DISCOVERY_END)].copy()
+    df = df[(df["d"] >= _ADV_WARMUP_FROM) & (df["d"] <= DISCOVERY_END)].copy()
     df = df[["symbol", "d", "close", "volume"]].copy()
     df["traded_value"] = df["close"] * df["volume"]
     df = df.sort_values(["symbol", "d"]).reset_index(drop=True)
@@ -672,7 +693,7 @@ def main():
 
     report(trades, gap_up_keys)
 
-    out = _REPO_ROOT / "reports" / "sub9_sanity" / "capitulation_long_morning_trades.csv"
+    out = _REPO_ROOT / "reports" / "sub9_sanity" / f"capitulation_long_morning_trades{_OUT_SUFFIX}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     trades.to_csv(out, index=False)
     print(f"\nFull trade log: {out}")

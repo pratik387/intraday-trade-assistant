@@ -18,8 +18,9 @@ Earnings calendar source: data/earnings_calendar/earnings_events.parquet
 """
 from __future__ import annotations
 
+import argparse
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List
 
@@ -58,28 +59,91 @@ SL_BUFFER_PCT = 0.5                         # SL = T+0 high * 1.005 (SHORT) / lo
 MIN_STOP_PCT = 0.01                         # 1% minimum stop distance
 T1_R_MULTIPLE = 0.5                         # was 1.0
 T2_R_MULTIPLE = 1.5                         # was 2.0
+STOP_R_MULTIPLE = 1.0                       # multiplier on computed structural stop_distance (1.0 = baseline)
 USE_BREAKEVEN_TRAIL_AFTER_T1 = True
 RISK_PER_TRADE_RUPEES = 1000
 
 
+# Columns retained for sanity logic (drop heavy enriched columns to reduce memory)
+_KEEP_COLS = ["symbol", "date", "open", "high", "low", "close"]
+
+
 def _load_5m_for_month(yyyy: int, mm: int) -> pd.DataFrame:
+    """Load only the 6 OHLC columns needed (avoid heavy enriched cols at I/O)."""
     path = _REPO_ROOT / "backtest-cache-download" / "monthly" / f"{yyyy:04d}_{mm:02d}_5m_enriched.feather"
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_feather(path)
+    try:
+        # pyarrow column projection: read only what we need (avoids 1.4 GiB peak alloc)
+        import pyarrow.feather as feather
+        tbl = feather.read_table(path, columns=_KEEP_COLS)
+        return tbl.to_pandas()
+    except Exception:
+        # Fallback: read full and project
+        df = pd.read_feather(path)
+        return df[[c for c in _KEEP_COLS if c in df.columns]]
 
 
-def build_full_period_5m() -> pd.DataFrame:
-    print("  loading 24 monthly 5m feathers (2023-01 .. 2024-12) ...")
+def build_full_period_5m(universe: set | None = None,
+                         event_keys: set | None = None,
+                         start_d: date | None = None,
+                         end_d: date | None = None) -> pd.DataFrame:
+    """Load monthly 5m feathers, filtering each in-place to reduce memory.
+
+    Filters applied PER FILE before concat:
+      - keep only `_KEEP_COLS` columns
+      - keep only symbols in `universe` (if provided)
+      - keep only (symbol, day) in `event_keys` (if provided)
+      - keep only dates within [start_d, end_d] if provided
+
+    Period: months overlapping [start_d, end_d] (defaults to 2023-01..2024-12 for back-compat).
+    """
+    # Determine month range from [start_d, end_d]
+    if start_d is None:
+        start_d = date(2023, 1, 1)
+    if end_d is None:
+        end_d = date(2024, 12, 31)
+    months = []
+    cur = date(start_d.year, start_d.month, 1)
+    end_first = date(end_d.year, end_d.month, 1)
+    while cur <= end_first:
+        months.append((cur.year, cur.month))
+        if cur.month == 12:
+            cur = date(cur.year + 1, 1, 1)
+        else:
+            cur = date(cur.year, cur.month + 1, 1)
+    print(f"  loading {len(months)} monthly 5m feathers ({months[0][0]:04d}-{months[0][1]:02d} .. {months[-1][0]:04d}-{months[-1][1]:02d}) ...")
     parts: List[pd.DataFrame] = []
-    for yyyy in (2023, 2024):
-        for m in range(1, 13):
+    import gc
+    for yyyy, m in months:
             mdf = _load_5m_for_month(yyyy, m)
-            if not mdf.empty:
-                parts.append(mdf)
+            if mdf.empty:
+                continue
+            # Filter rows BEFORE any column projection / copy to keep peak memory low
+            if universe is not None:
+                mdf = mdf[mdf["symbol"].isin(universe)]
+                if mdf.empty:
+                    del mdf; gc.collect(); continue
+            if event_keys is not None:
+                d_series = mdf["date"].dt.date
+                sym_arr = mdf["symbol"].to_numpy()
+                d_arr = d_series.to_numpy()
+                # Avoid Python-level zip over all rows: build a small list of bools via zip
+                mask = [(s, d) in event_keys for s, d in zip(sym_arr, d_arr)]
+                mdf = mdf[pd.Series(mask, index=mdf.index)]
+                if mdf.empty:
+                    del mdf; gc.collect(); continue
+            cols = [c for c in _KEEP_COLS if c in mdf.columns]
+            mdf = mdf[cols].copy()
+            mdf["d"] = mdf["date"].dt.date
+            parts.append(mdf)
+            gc.collect()
+    if not parts:
+        return pd.DataFrame()
     big = pd.concat(parts, ignore_index=True).sort_values(["symbol", "date"]).reset_index(drop=True)
-    big["d"] = big["date"].dt.date
-    print(f"  total 5m bars: {len(big):,}")
+    if "d" not in big.columns:
+        big["d"] = big["date"].dt.date
+    print(f"  total 5m bars (post-filter): {len(big):,}")
     return big
 
 
@@ -99,6 +163,32 @@ def load_fno_universe() -> set:
     syms = df["symbol"].astype(str).str.replace("NSE:", "", regex=False).tolist()
     print(f"  F&O 200 universe: {len(syms)} symbols")
     return set(syms)
+
+
+def load_expanded_universe(min_adv_cr: float = 10.0) -> set:
+    """MIS-eligible + ADV >= min_adv_cr / day (in INR crore).
+    Sources: nse_all.json (MIS) + consolidated_daily.feather (ADV).
+    """
+    import json
+    nse_path = _REPO_ROOT / "nse_all.json"
+    items = json.loads(nse_path.read_text(encoding="utf-8"))
+    mis_set = set()
+    for it in items:
+        sym = str(it.get("symbol", ""))
+        if not sym: continue
+        bare = sym[:-3] if sym.endswith(".NS") else sym
+        if it.get("mis_enabled") and (it.get("mis_leverage") or 0) >= 1.0:
+            mis_set.add(bare)
+    daily_path = _REPO_ROOT / "cache" / "preaggregate" / "consolidated_daily.feather"
+    daily = pd.read_feather(daily_path, columns=["ts", "symbol", "close", "volume"])
+    daily["ts"] = pd.to_datetime(daily["ts"])
+    daily["adv_inr"] = daily["close"].astype(float) * daily["volume"].astype(float)
+    adv = daily.groupby("symbol")["adv_inr"].median()
+    floor_inr = min_adv_cr * 1e7
+    liquid = set(adv[adv >= floor_inr].index)
+    expanded = mis_set & liquid
+    print(f"  expanded universe: MIS-eligible={len(mis_set)}, ADV>={min_adv_cr}cr={len(liquid)}, intersection={len(expanded)}")
+    return expanded
 
 
 def load_earnings_events() -> pd.DataFrame:
@@ -230,15 +320,19 @@ def simulate(triggers: pd.DataFrame, big5m: pd.DataFrame) -> pd.DataFrame:
         if side == "SHORT":
             sl_struct = day_high * (1.0 + SL_BUFFER_PCT / 100.0)
             sl_min = entry_price * (1.0 + MIN_STOP_PCT)
-            hard_sl = max(sl_struct, sl_min)
-            stop_distance = hard_sl - entry_price
+            hard_sl_raw = max(sl_struct, sl_min)
+            stop_distance_raw = hard_sl_raw - entry_price
+            stop_distance = stop_distance_raw * STOP_R_MULTIPLE
+            hard_sl = entry_price + stop_distance
             t1_target = entry_price - T1_R_MULTIPLE * stop_distance
             t2_target = entry_price - T2_R_MULTIPLE * stop_distance
         else:
             sl_struct = day_low * (1.0 - SL_BUFFER_PCT / 100.0)
             sl_min = entry_price * (1.0 - MIN_STOP_PCT)
-            hard_sl = min(sl_struct, sl_min)
-            stop_distance = entry_price - hard_sl
+            hard_sl_raw = min(sl_struct, sl_min)
+            stop_distance_raw = entry_price - hard_sl_raw
+            stop_distance = stop_distance_raw * STOP_R_MULTIPLE
+            hard_sl = entry_price - stop_distance
             t1_target = entry_price + T1_R_MULTIPLE * stop_distance
             t2_target = entry_price + T2_R_MULTIPLE * stop_distance
         if stop_distance <= 0:
@@ -379,10 +473,52 @@ def report(trades: pd.DataFrame) -> None:
 
 
 def main():
-    big5m = build_full_period_5m()
-    universe = load_fno_universe()
+    global T1_R_MULTIPLE, T2_R_MULTIPLE, STOP_R_MULTIPLE
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--start", default="2023-01-01")
+    p.add_argument("--end", default="2024-12-31")
+    p.add_argument("--t1-r-mult", type=float, default=T1_R_MULTIPLE,
+                   help=f"T1 R-multiple (default {T1_R_MULTIPLE})")
+    p.add_argument("--t2-r-mult", type=float, default=T2_R_MULTIPLE,
+                   help=f"T2 R-multiple (default {T2_R_MULTIPLE})")
+    p.add_argument("--stop-r-mult", type=float, default=STOP_R_MULTIPLE,
+                   help=f"Stop R-multiple (scales structural stop; default {STOP_R_MULTIPLE})")
+    p.add_argument("--out-suffix", default="", help="suffix appended to output dir/file basename")
+    p.add_argument("--expanded-universe", action="store_true",
+                   help="Use MIS-eligible + ADV>=10cr universe instead of F&O 200")
+    p.add_argument("--min-adv-cr", type=float, default=10.0,
+                   help="Minimum ADV (Rs crore) when --expanded-universe is set (default 10)")
+    p.add_argument("--allow-oos", action="store_true",
+                   help="Opt in to read past 2024-12-31 (OOS / Holdout). Default refuses (Discovery guard).")
+    args = p.parse_args()
+
+    # Sentinel guard: refuse OOS/Holdout reads unless explicit opt-in
+    end_d = datetime.strptime(args.end, "%Y-%m-%d").date()
+    if end_d > date(2024, 12, 31) and not args.allow_oos:
+        print("[ERROR] --end past 2024-12-31 (Discovery cutoff). Pass --allow-oos to bypass.")
+        return 2
+    if args.allow_oos:
+        print(f"[WARN] OOS/Holdout mode active (--allow-oos); reading past Discovery cutoff.")
+
+    T1_R_MULTIPLE = float(args.t1_r_mult)
+    T2_R_MULTIPLE = float(args.t2_r_mult)
+    STOP_R_MULTIPLE = float(args.stop_r_mult)
+    print(f"[params] T1_R={T1_R_MULTIPLE} T2_R={T2_R_MULTIPLE} STOP_R={STOP_R_MULTIPLE} "
+          f"period={args.start}..{args.end} out_suffix={args.out_suffix!r}")
+
+    start_d = datetime.strptime(args.start, "%Y-%m-%d").date()
+    universe = load_expanded_universe(args.min_adv_cr) if args.expanded_universe else load_fno_universe()
     daily_close = load_daily_close()
     events = load_earnings_events()
+    # Filter earnings events to the requested period
+    events = events[(events["trade_date"] >= start_d) & (events["trade_date"] <= end_d)].copy()
+    print(f"  earnings events in window {start_d}..{end_d}: {len(events):,}")
+
+    # Build (symbol, day) prefilter set so monthly feathers can be downselected at load time
+    event_keys = set(zip(events["bare_symbol"].astype(str), events["trade_date"]))
+    print(f"  earnings (symbol, day) keys for prefilter: {len(event_keys):,}")
+    big5m = build_full_period_5m(universe=universe, event_keys=event_keys,
+                                  start_d=start_d, end_d=end_d)
 
     print("\nFinding triggers ...")
     triggers = find_triggers(big5m, universe, events, daily_close)
@@ -392,11 +528,18 @@ def main():
 
     trades = simulate(triggers, big5m)
     report(trades)
-    out = _REPO_ROOT / "reports" / "sub9_sanity" / "earnings_day_intraday_fade_trades.csv"
-    out.parent.mkdir(parents=True, exist_ok=True)
+
+    suffix = args.out_suffix or ""
+    if suffix:
+        out_dir = _REPO_ROOT / "reports" / "sub9_sanity" / f"earnings_day_intraday_fade{suffix}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / "trades.csv"
+    else:
+        out = _REPO_ROOT / "reports" / "sub9_sanity" / "earnings_day_intraday_fade_trades.csv"
+        out.parent.mkdir(parents=True, exist_ok=True)
     trades.to_csv(out, index=False)
     print(f"\nFull trade log: {out}")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

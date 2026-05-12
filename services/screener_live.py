@@ -77,7 +77,6 @@ from services.plan_orchestrator import process_setup_candidates
 # orders & execution
 from services.orders.order_queue import OrderQueue
 from services.scan.energy_scanner import EnergyScanner
-from services.gate_chain.live_gate_chain import LiveGateChain
 from diagnostics.diag_event_log import diag_event_log, mint_trade_id
 from utils.perf_timer import perf, mark
 from services.state.orb_cache_persistence import ORBCachePersistence
@@ -705,11 +704,6 @@ class ScreenerLive:
         self._scan_thread: Optional[threading.Thread] = None
         self._scan_running = False
 
-        # Live gate chain (composed RuleFilter + CrossSectional + Conviction).
-        # When disabled (live_gate_chain.enabled=false in config), evaluate() is a
-        # passthrough — no model load, no state. Flip to true in config for LW-8.
-        from pathlib import Path as _Path
-        self.live_gate_chain = LiveGateChain(self.raw_cfg, project_root=_Path(__file__).parent.parent)
         # State for per-bar volume accumulation (fed to RVOL on bar transition)
         self._pending_bar_ts = None
         self._pending_bar_vols: Dict[str, int] = {}
@@ -1104,28 +1098,18 @@ class ScreenerLive:
     # ----- 5m scan dispatch (backtest only) --------------------------------
     def _on_5m_close(self, symbol: str, bar_5m: pd.Series) -> None:
         """Backtest-only scan dispatch. Paper uses timer thread."""
-        # Accumulate per-symbol bar volumes for RVOL state. When the timestamp
-        # advances to a new bar, flush the previous bar's accumulated volumes
-        # to live_gate_chain.on_bar_close (no-op if chain is disabled).
+        # Accumulate per-symbol bar volumes for future RVOL state (bar_scheduler
+        # integration lands in Phase 7).
         try:
             bar_ts = bar_5m.name if hasattr(bar_5m, "name") else None
             vol = float(bar_5m.get("volume", 0)) if hasattr(bar_5m, "get") else 0
             if bar_ts is not None:
                 if self._pending_bar_ts is not None and bar_ts != self._pending_bar_ts:
-                    # Bar transition — flush previous bar's accumulated volumes
-                    cap_map = self._load_cap_mapping()
-                    sym_caps = {s: cap_map.get(s, {}).get("cap_segment", "unknown")
-                                for s in self._pending_bar_vols.keys()}
-                    self.live_gate_chain.on_bar_close(
-                        bar_ts=self._pending_bar_ts,
-                        bar_volumes=self._pending_bar_vols,
-                        symbol_caps=sym_caps,
-                    )
                     self._pending_bar_vols = {}
                 self._pending_bar_ts = bar_ts
                 self._pending_bar_vols[symbol] = int(vol)
         except Exception as e:
-            logger.warning("LIVE_GATE_CHAIN | bar-volume accumulator error: %s", e)
+            logger.warning("BAR_VOL_ACCUMULATOR | error: %s", e)
 
         if env.DRY_RUN:
             self._run_5m_scan(symbol, bar_5m)
@@ -1723,13 +1707,12 @@ class ScreenerLive:
                               n_candidates=len(setup_candidates)):
                         # return_all_eligible=True: get every eligible plan
                         # (one per setup) instead of the orchestrator's
-                        # per-symbol-category-best dedupe. The LiveGateChain
-                        # downstream applies its own selection — this matches
-                        # gauntlet's no-dedupe behavior (every executed trade
-                        # is a separate row in analytics.jsonl). Without this,
-                        # range_bounce/resistance_bounce candidates that share
-                        # a symbol with a higher-RR premium_zone_short never
-                        # reach the gate (live-vs-gauntlet parity bug 2026-04-23).
+                        # per-symbol-category-best dedupe. Matches gauntlet's
+                        # no-dedupe behavior (every executed trade is a separate
+                        # row in analytics.jsonl). Without this, range_bounce/
+                        # resistance_bounce candidates that share a symbol with a
+                        # higher-RR premium_zone_short never reach execution
+                        # (live-vs-gauntlet parity bug 2026-04-23).
                         plans = process_setup_candidates(
                             symbol=sym,
                             df5m=df5,
@@ -1760,34 +1743,21 @@ class ScreenerLive:
                             f"ORCHESTRATOR:ELIGIBLE {sym} {plan.get('strategy', '?')} score={score:.3f}"
                         )
 
-        # NOTE: sort is deferred to AFTER LiveGateChain.evaluate so the gate
-        # sees candidates in arrival order (insertion = symbol iteration order
-        # within bar), matching the gauntlet's chronological FIFO behavior.
-        # Pre-sorting by rank_score caused premium_zone_short (typically
-        # higher structural_rr) to fill the daily_cap first, locking out
-        # range_bounce/resistance_bounce candidates from same bar — observed
-        # 2026-04-23 as the third bug in live-vs-gauntlet parity gap.
-
         _t_orch_end = time.perf_counter()
         logger.info("ORCHESTRATOR_COMPLETE | %d eligible plans from %d decisions | TIME: %.2fs",
                    len(eligible_plans), len(decisions), _t_orch_end - _t_orch_start)
 
-        # ---------- Build candidate dicts (needed by both gate chain + capture writer) ----------
-        # Two independent flags consume these candidates:
-        #   1. live_gate_chain.enabled — runs RuleFilter→CrossSectional→Conviction gates
-        #   2. gate_input_logging.enabled — captures gate_input.jsonl for parity_simulator
-        # Capture-mode (gates off + logging on) requires the writer to fire even when
-        # the gate chain is disabled. Coupling the two breaks gauntlet ingestion.
-        _gate_chain_on = self.live_gate_chain.enabled and bool(eligible_plans)
+        # ---------- Gate-input capture writer (offline parity replay) ----------
+        # gate_input_logging.enabled writes one JSONL row per bar with candidate
+        # dicts for the parity_simulator. Gate chain removed in Phase 6.
         _gate_input_on = (
             self.raw_cfg.get("gate_input_logging", {}).get("enabled", False)
             and bool(eligible_plans)
         )
-        if _gate_chain_on or _gate_input_on:
-            # Derive hour_bucket from the bar timestamp using edge_discovery convention
+        if _gate_input_on:
             _mod = now.hour * 60 + now.minute  # minute-of-day
             if _mod < 600:
-                _hour_bucket = "opening"  # pre-market and 9:15-9:59
+                _hour_bucket = "opening"
             elif _mod < 720:
                 _hour_bucket = "morning"
             elif _mod < 780:
@@ -1799,14 +1769,12 @@ class ScreenerLive:
 
             _day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-            # Build (candidate_dict, original_tuple) pairs
-            _cand_tuples = []
+            _cand_dicts = []
             for _ep in eligible_plans:
                 _sym, _plan, _score, _dec = _ep
                 _extras = _plan.get("extras") or {}
                 _model_features = _plan.get("model_features") or {}
                 _cand = {
-                    # Required gate keys
                     "symbol": _sym,
                     "setup_type": _plan.get("strategy", ""),
                     "regime": _plan.get("regime", ""),
@@ -1814,85 +1782,50 @@ class ScreenerLive:
                     "hour_bucket": _hour_bucket,
                     "decision_ts": now,
                     "session_date_dt": now.date(),
-                    # Numeric / boolean features from detector extras (flattened)
                     "minute_of_day": _mod,
                     "day_of_week": _day_names[now.weekday()] if now.weekday() < 7 else "Monday",
                     "size_mult": (_plan.get("sizing") or {}).get("size_mult", 1.0),
-                    # Rank score — required by DedupGate (stage D) to compute
-                    # the per-bar percentile cut and enforce score-beats-pctl rule.
                     "rank_score": float(_score),
-                    # Passthrough all extras keys (pdz_*, ob_*, etc.)
                     **{k: v for k, v in _extras.items()
                        if isinstance(v, (int, float, bool, str)) or v is None},
-                    # Bar-level ML features (bb_width_proxy, volume5, vol_z, etc.)
-                    # so the conviction scorer matches its training-time inputs.
-                    # base_pipeline writes these into plan["model_features"]; without
-                    # this passthrough range_bounce/resistance_bounce candidates score
-                    # near-zero and get below_threshold rejected (live-vs-gauntlet
-                    # parity bug found 2026-04-23).
                     **{k: v for k, v in _model_features.items()
                        if isinstance(v, (int, float, bool))},
                 }
-                _cand_tuples.append((_cand, _ep))
+                _cand_dicts.append(_cand)
 
-            _cand_dicts = [c for c, _ in _cand_tuples]
+            from config.logging_config import get_gate_input_logger
+            _gi_logger = get_gate_input_logger()
+            _cap_map = self._load_cap_mapping()
+            _bar_vols = dict(self._pending_bar_vols) if self._pending_bar_vols else {}
+            _sym_caps = {s: _cap_map.get(s, {}).get("cap_segment", "unknown")
+                         for s in _bar_vols.keys()}
+            _serializable_cands = []
+            for _c in _cand_dicts:
+                _safe = {}
+                for _k, _v in _c.items():
+                    if hasattr(_v, "isoformat"):
+                        _safe[_k] = _v.isoformat()
+                    else:
+                        _safe[_k] = _v
+                _serializable_cands.append(_safe)
+            _gi_logger.log_event(
+                ts=now.isoformat(),
+                session_date=str(now.date()),
+                candidates=_serializable_cands,
+                bar_volumes=_bar_vols,
+                symbol_caps=_sym_caps,
+            )
 
-            # Sub-project #4: log the exact gate input for offline parity replay.
-            # Writes one JSONL row per bar with the candidate dicts, bar_volumes,
-            # and symbol_caps — everything the gate consumes. Disabled in
-            # production trading via config.gate_input_logging.enabled.
-            if _gate_input_on:
-                from config.logging_config import get_gate_input_logger
-                _gi_logger = get_gate_input_logger()
-                _cap_map = self._load_cap_mapping()
-                _bar_vols = dict(self._pending_bar_vols) if self._pending_bar_vols else {}
-                _sym_caps = {s: _cap_map.get(s, {}).get("cap_segment", "unknown")
-                             for s in _bar_vols.keys()}
-                # Cand dicts contain pd.Timestamp + datetime.date which are not
-                # JSON-serializable. Stringify them per-cand so json.dumps doesn't
-                # raise. Simulator's _parse_dt converts back to datetime on read.
-                _serializable_cands = []
-                for _c in _cand_dicts:
-                    _safe = {}
-                    for _k, _v in _c.items():
-                        if hasattr(_v, "isoformat"):  # pd.Timestamp, datetime, date
-                            _safe[_k] = _v.isoformat()
-                        else:
-                            _safe[_k] = _v
-                    _serializable_cands.append(_safe)
-                _gi_logger.log_event(
-                    ts=now.isoformat(),
-                    session_date=str(now.date()),
-                    candidates=_serializable_cands,
-                    bar_volumes=_bar_vols,
-                    symbol_caps=_sym_caps,
-                )
-
-            # ---------- Live Gate Chain (RuleFilter → CrossSectional → Conviction) ----------
-            # When disabled (live_gate_chain.enabled=false), the chain block is skipped
-            # and eligible_plans passes through unchanged.
-            if _gate_chain_on:
-                _admitted_dicts = self.live_gate_chain.evaluate(_cand_dicts)
-
-                # Map admitted dicts back to original tuples by identity (object id)
-                _admitted_ids = {id(c) for c in _admitted_dicts}
-                _before = len(eligible_plans)
-                eligible_plans = [_ep for _cand, _ep in _cand_tuples if id(_cand) in _admitted_ids]
-                _dropped = _before - len(eligible_plans)
-                if _dropped > 0 or _before > 0:
-                    logger.info(
-                        "LIVE_GATE_CHAIN | %d→%d plans | dropped=%d | stats=%s",
-                        _before, len(eligible_plans), _dropped,
-                        self.live_gate_chain.stats(),
-                    )
+        # TODO Phase 7: insert bar_scheduler.schedule_admits() here.
+        # Plans flow straight through — bar_scheduler integration lands in Phase 7
+        # (universe-driven scanning). Until then, all eligible_plans pass.
+        admitted_plans = eligible_plans
 
         # Sort admitted plans by rank_score desc for execution priority.
-        # (Was previously sorted before the gate; moved here so the gate
-        # sees arrival-order FIFO and doesn't bias toward higher-score setups.)
-        eligible_plans.sort(key=lambda x: x[2], reverse=True)
+        admitted_plans.sort(key=lambda x: x[2], reverse=True)
 
-        # ---------- Process eligible plans → Execution ----------
-        for i, (sym, plan, score, decision) in enumerate(eligible_plans):
+        # ---------- Process admitted plans → Execution ----------
+        for i, (sym, plan, score, decision) in enumerate(admitted_plans):
             strategy_type = plan.get("strategy", "unknown")
             df5 = symbol_data_map.get(sym, (None,))[0]
 
@@ -1951,9 +1884,6 @@ class ScreenerLive:
                 )
                 plan["trade_id"] = mint_trade_id(sym, token=uuid.uuid4().hex[:8])
 
-            # De-dupe (cooloff, setup change, second-entry strength) now enforced
-            # by DedupGate inside LiveGateChain — candidates that fail dedup are
-            # filtered out before reaching this loop.
             decision_obj = dec_map.get(sym)
 
             # Minimal bar5/features snapshot for diagnostics

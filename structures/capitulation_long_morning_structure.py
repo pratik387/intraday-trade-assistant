@@ -43,6 +43,7 @@ aggregate PF 0.813; trend_down × mid_cap × liq=10-30cr cell ships at PF
 from __future__ import annotations
 
 from datetime import time, date
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -56,6 +57,54 @@ from services.plan_helpers import (
 )
 from services.symbol_metadata import in_universe
 from .base_structure import BaseStructure
+
+
+# NIFTY 50 daily regime cache — computed once per process from the daily
+# index feather. Matches `tools/sub9_research/sanity_first_hour_momentum.py`'s
+# `load_nifty_daily_regime()` classifier (5-day return thresholded at +/-1.5%)
+# which is the convention used for sub9 cell-mining. The shipped cell
+# (trend_down x mid_cap x liq=10-30cr, PF 1.238 n=443) was validated against
+# THIS classifier — not the ADX-based regime in services/gates/regime_gate.py.
+_NIFTY_DAILY_REGIME_CACHE: Optional[Dict[date, str]] = None
+
+
+def _load_nifty_daily_regime() -> Dict[date, str]:
+    """Load NIFTY 50 daily feather and compute 5-day-return-based regime.
+
+    Returns dict mapping session_date -> regime in {trend_up, trend_down,
+    chop, unknown}. Cached per process.
+
+    Source: backtest-cache-download/index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1days.feather
+    """
+    global _NIFTY_DAILY_REGIME_CACHE
+    if _NIFTY_DAILY_REGIME_CACHE is not None:
+        return _NIFTY_DAILY_REGIME_CACHE
+    base = Path(__file__).resolve().parents[1]
+    fp = base / "backtest-cache-download" / "index_ohlcv" / "NSE_NIFTY_50" / "NSE_NIFTY_50_1days.feather"
+    if not fp.exists():
+        logger.warning(f"NIFTY 50 daily feather not found at {fp} — regime defaults to 'unknown'")
+        _NIFTY_DAILY_REGIME_CACHE = {}
+        return _NIFTY_DAILY_REGIME_CACHE
+    df = pd.read_feather(fp)
+    if "date" in df.columns:
+        if df["date"].dt.tz is not None:
+            df["date"] = df["date"].dt.tz_localize(None)
+        df["d"] = df["date"].dt.date
+    df = df.sort_values("d").reset_index(drop=True)
+    df["nifty_5d_ret"] = df["close"].pct_change(5) * 100.0
+
+    def _r(r: float) -> str:
+        if pd.isna(r):
+            return "unknown"
+        if r >= 1.5:
+            return "trend_up"
+        if r <= -1.5:
+            return "trend_down"
+        return "chop"
+
+    df["regime"] = df["nifty_5d_ret"].apply(_r)
+    _NIFTY_DAILY_REGIME_CACHE = dict(zip(df["d"], df["regime"]))
+    return _NIFTY_DAILY_REGIME_CACHE
 from .data_models import (
     ExitLevels,
     MarketContext,
@@ -150,13 +199,23 @@ class CapitulationLongMorningStructure(BaseStructure):
         ):
             return _empty(f"universe_filter:{ctx.symbol} not in {self.universe_key}")
 
+        # Regime classification: use NIFTY 50 daily 5-day-return rule
+        # (matches sub9 cell-mining convention — see _load_nifty_daily_regime
+        # docstring). Production's services/gates/regime_gate.py uses an
+        # ADX-based classifier with different sensitivity; that produces a
+        # DIFFERENT "trend_down" classification than what was validated.
+        session_date_for_regime = ctx.session_date
+        if session_date_for_regime is None and ctx.df_5m is not None and len(ctx.df_5m) > 0:
+            session_date_for_regime = pd.Timestamp(ctx.df_5m.index[-1]).date()
+        nifty_regime = _load_nifty_daily_regime().get(session_date_for_regime, "unknown")
+
         if (
             not _wide_open
             and self.allowed_regimes is not None
-            and ctx.regime not in self.allowed_regimes
+            and nifty_regime not in self.allowed_regimes
         ):
             return _empty(
-                f"regime {ctx.regime!r} not in allowed set {sorted(self.allowed_regimes)}"
+                f"nifty_regime {nifty_regime!r} not in allowed set {sorted(self.allowed_regimes)}"
             )
 
         df = ctx.df_5m

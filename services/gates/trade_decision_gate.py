@@ -185,7 +185,8 @@ class GateDecision:
 class StructureDetector(Protocol):  # pragma: no cover (interface only)
     def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame,
                       levels: dict | None,
-                      daily_df: pd.DataFrame | None = None) -> List[SetupCandidate]:
+                      daily_df: pd.DataFrame | None = None,
+                      regime: str | None = None) -> List[SetupCandidate]:
         ...
 
 
@@ -658,6 +659,35 @@ class TradeDecisionGate:
             else:
                 reasons.extend(pattern_reasons)
 
+        # ---------------- REGIME (computed BEFORE detect_setups) ---------------
+        # Must happen BEFORE detect_setups so per-bar MarketContext carries the
+        # current regime label. Cell-locked detectors (capitulation_long_morning,
+        # circuit_t1_fade_short, options_vol_iv_rank_revert) read ctx.regime
+        # inside detect() and silently reject every bar if it stays None.
+        # Previously this block ran AFTER detect_setups so ctx.regime was always
+        # None in production (wide_open=false), turning the allowed_regimes
+        # filter into an unconditional rejection. Multi-TF unchanged: 5m
+        # NIFTY + per-symbol daily blended into one of {trend_up, trend_down,
+        # chop, squeeze}.
+        df_for_regime = index_df5m if index_df5m is not None and not index_df5m.empty else df5m_tail
+
+        regime_diagnostics = None
+        with perf("gate", "regime_compute", sym=symbol,
+                  multi_tf=(hasattr(self.regime_gate, 'compute_regime_multi_tf') and daily_df is not None)):
+            if hasattr(self.regime_gate, 'compute_regime_multi_tf') and daily_df is not None:
+                try:
+                    regime, regime_confidence, regime_diagnostics = self.regime_gate.compute_regime_multi_tf(
+                        df5=df_for_regime,
+                        daily_df=daily_df,
+                        symbol=symbol
+                    )
+                except Exception as e:
+                    logger.warning(f"Multi-TF regime failed for {symbol}, falling back to 5m-only: {e}")
+                    regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
+            else:
+                # Fallback to 5m-only regime
+                regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
+
         # ---------------- STRUCTURE ----------------
         logger.debug(f"TRADE_GATE: Calling structure.detect_setups for {symbol}")
         with perf("gate", "detect_setups", sym=symbol):
@@ -665,13 +695,16 @@ class TradeDecisionGate:
             # (e.g. circuit_t1_fade_short reads T-1 upper-circuit features)
             # see prior trading days. None is safe for detectors that
             # don't read MarketContext.df_daily.
+            # regime threaded through so cell-locked detectors (which check
+            # ctx.regime inside detect()) see the actual broad-market regime
+            # rather than the default None.
             setups = self.structure.detect_setups(
-                symbol, df5m_tail, levels, daily_df=daily_df,
+                symbol, df5m_tail, levels, daily_df=daily_df, regime=regime,
             )
         logger.debug(f"TRADE_GATE: Structure detection returned {len(setups)} setups for {symbol}")
         if not setups:
             logger.debug(f"TRADE_GATE: No structure events found for {symbol}, returning no_structure_event")
-            return GateDecision(accept=False, reasons=["no_structure_event"])
+            return GateDecision(accept=False, reasons=["no_structure_event"], regime=regime, regime_conf=regime_confidence)
 
         # OPENING BELL FILTERING: Only allow specific setups during opening bell window
         if in_opening_bell_window and opening_bell_enabled:
@@ -744,26 +777,9 @@ class TradeDecisionGate:
 
         reasons.extend([f"structure:{r}" for r in best.reasons])
 
-        # ---------------- REGIME (Phase 2: Multi-timeframe) ----------------
-        df_for_regime = index_df5m if index_df5m is not None and not index_df5m.empty else df5m_tail
-
-        # Try multi-timeframe regime if available
-        regime_diagnostics = None
-        with perf("gate", "regime_compute", sym=symbol,
-                  multi_tf=(hasattr(self.regime_gate, 'compute_regime_multi_tf') and daily_df is not None)):
-            if hasattr(self.regime_gate, 'compute_regime_multi_tf') and daily_df is not None:
-                try:
-                    regime, regime_confidence, regime_diagnostics = self.regime_gate.compute_regime_multi_tf(
-                        df5=df_for_regime,
-                        daily_df=daily_df,
-                        symbol=symbol
-                    )
-                except Exception as e:
-                    logger.warning(f"Multi-TF regime failed for {symbol}, falling back to 5m-only: {e}")
-                    regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
-            else:
-                # Fallback to 5m-only regime
-                regime, regime_confidence = self.regime_gate.compute_regime(df_for_regime)
+        # Regime already computed above (before detect_setups) so detectors see
+        # the actual broad-market regime via ctx.regime. Reuse the same value
+        # for the rest of the gate logic (HCET, hard blocks, accept payload).
 
         # Evidence for regime gate
         strength = _safe_float(best.strength, 0.0)

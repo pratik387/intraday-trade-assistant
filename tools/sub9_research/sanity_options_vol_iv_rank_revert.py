@@ -19,8 +19,9 @@ LONG-side ship gate: LONG-side PF >= SHORT-side PF * 0.85.
 """
 from __future__ import annotations
 
+import argparse
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List
 
@@ -40,7 +41,8 @@ IV_RANK_HIGH = 0.80                       # iv_rank >= 0.80 -> SHORT
 IV_RANK_LOW = 0.20                        # iv_rank <= 0.20 -> LONG
 ENTRY_HHMM = "11:00"                      # Entry at 11:00 5m bar
 TIME_STOP_HHMM = "15:10"                  # 5 min before MIS auto-square
-STOP_PCT = 0.01                           # 1% hard stop
+STOP_PCT = 0.01                           # 1% hard stop (1.0R baseline)
+STOP_R_MULTIPLE = 1.0                     # multiplier on STOP_PCT (CLI --stop-r-mult overrides)
 T1_R_MULTIPLE = 1.0
 T2_R_MULTIPLE = 2.0
 USE_BREAKEVEN_TRAIL_AFTER_T1 = True       # Q8 design decision (round-3)
@@ -48,24 +50,37 @@ NIFTY_TREND_EMA_PERIOD = 20               # NIFTY 50 EMA(20) for LONG-side trend
 RISK_PER_TRADE_RUPEES = 1000
 
 
-def _load_5m_for_month(yyyy: int, mm: int) -> pd.DataFrame:
+_NEEDED_COLS = ["date", "symbol", "open", "high", "low", "close", "vwap"]
+_FLOAT_COLS = ["open", "high", "low", "close", "vwap"]
+
+
+def _load_5m_for_month(yyyy: int, mm: int, universe: set | None = None) -> pd.DataFrame:
     path = _REPO_ROOT / "backtest-cache-download" / "monthly" / f"{yyyy:04d}_{mm:02d}_5m_enriched.feather"
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_feather(path)
+    df = pd.read_feather(path, columns=_NEEDED_COLS)
+    if universe is not None:
+        df = df[df["symbol"].isin(universe)]
+    # Downcast to float32 to halve memory
+    for c in _FLOAT_COLS:
+        if c in df.columns:
+            df[c] = df[c].astype("float32")
+    return df
 
 
-def build_full_period_5m() -> pd.DataFrame:
+def build_full_period_5m(universe: set | None = None) -> pd.DataFrame:
     print("  loading 24 monthly 5m feathers (2023-01 .. 2024-12) ...")
     parts: List[pd.DataFrame] = []
     for yyyy in (2023, 2024):
         for m in range(1, 13):
-            mdf = _load_5m_for_month(yyyy, m)
+            mdf = _load_5m_for_month(yyyy, m, universe=universe)
             if not mdf.empty:
                 parts.append(mdf)
     if not parts:
         return pd.DataFrame()
-    big = pd.concat(parts, ignore_index=True).sort_values(["symbol", "date"]).reset_index(drop=True)
+    # Avoid a global sort (it doubles memory). Concatenate, then add d column.
+    big = pd.concat(parts, ignore_index=True)
+    parts.clear()
     big["d"] = big["date"].dt.date
     print(f"  total 5m bars: {len(big):,}")
     return big
@@ -208,13 +223,14 @@ def simulate(triggers: pd.DataFrame, big5m: pd.DataFrame) -> pd.DataFrame:
         entry_price = float(entry_bar["open"])
         entry_ts = entry_bar["date"]
 
+        eff_stop_pct = STOP_PCT * STOP_R_MULTIPLE
         if side == "SHORT":
-            hard_sl = entry_price * (1.0 + STOP_PCT)
+            hard_sl = entry_price * (1.0 + eff_stop_pct)
             stop_distance = hard_sl - entry_price
             t1_target = entry_price - T1_R_MULTIPLE * stop_distance
             t2_target = entry_price - T2_R_MULTIPLE * stop_distance
         else:
-            hard_sl = entry_price * (1.0 - STOP_PCT)
+            hard_sl = entry_price * (1.0 - eff_stop_pct)
             stop_distance = entry_price - hard_sl
             t1_target = entry_price + T1_R_MULTIPLE * stop_distance
             t2_target = entry_price + T2_R_MULTIPLE * stop_distance
@@ -347,6 +363,27 @@ def report(trades: pd.DataFrame) -> None:
     for rsn, grp in trades.groupby("exit_reason"):
         print(f"  {rsn:<22} n={len(grp):>4} avg_net=Rs.{int(grp['net_pnl'].mean()):>6,}")
 
+    # iv_rank cell breakdowns (the cell that almost shipped)
+    print("\nIV-rank extreme cells:")
+    for label, mask in (
+        ("iv_rank>=0.95", trades["iv_rank"] >= 0.95),
+        ("iv_rank>=0.90", trades["iv_rank"] >= 0.90),
+        ("iv_rank<=0.05", trades["iv_rank"] <= 0.05),
+    ):
+        grp = trades[mask]
+        if grp.empty:
+            print(f"  {label:<14} n=0")
+            continue
+        n2 = len(grp)
+        w2 = grp["net_pnl"][grp["net_pnl"] > 0].sum()
+        l2 = grp["net_pnl"][grp["net_pnl"] < 0].abs().sum()
+        pf3 = round(w2 / l2, 3) if l2 > 0 else float("inf")
+        wr3 = round(float((grp["net_pnl"] > 0).mean()) * 100, 1)
+        d3 = grp.groupby("T1_entry_date")["net_pnl"].sum()
+        sh3 = round(d3.mean() / d3.std(), 3) if d3.std() > 0 else 0.0
+        net3 = int(grp["net_pnl"].sum())
+        print(f"  {label:<14} n={n2:>4} PF={pf3:>5} WR={wr3:>5}% Sharpe={sh3:>6} netPnL=Rs.{net3:>10,}")
+
     print("\n--- VERDICT ---")
     if pf >= 1.10:
         print(f"PF={pf} >= 1.10 -> STRONG PROCEED. Move to detector implementation.")
@@ -360,8 +397,38 @@ def report(trades: pd.DataFrame) -> None:
 
 
 def main():
-    big5m = build_full_period_5m()
+    global T1_R_MULTIPLE, T2_R_MULTIPLE, STOP_R_MULTIPLE
+
+    p = argparse.ArgumentParser(description="options_vol_iv_rank_revert sanity (Discovery only)")
+    p.add_argument("--start", default="2023-01-01", help="start date YYYY-MM-DD (Discovery only)")
+    p.add_argument("--end", default="2024-12-31", help="end date YYYY-MM-DD (Discovery only)")
+    p.add_argument("--t1-r-mult", type=float, default=T1_R_MULTIPLE,
+                   help="T1 R-multiple (default 1.0)")
+    p.add_argument("--t2-r-mult", type=float, default=T2_R_MULTIPLE,
+                   help="T2 R-multiple (default 2.0)")
+    p.add_argument("--stop-r-mult", type=float, default=STOP_R_MULTIPLE,
+                   help="Stop multiplier on 1pct hard stop (default 1.0)")
+    p.add_argument("--out-suffix", default="",
+                   help="suffix appended to output dir name")
+    args = p.parse_args()
+
+    # ASCII-only sentinel: refuse OOS/Holdout reads
+    end_d = datetime.strptime(args.end, "%Y-%m-%d").date()
+    if end_d > date(2024, 12, 31):
+        print(f"[sanity_iv_rank_revert] ERROR: end={args.end} past Discovery (2024-12-31); refusing OOS/Holdout reads")
+        sys.exit(2)
+    start_d = datetime.strptime(args.start, "%Y-%m-%d").date()
+
+    # Global rebind (per cointegration script pattern)
+    T1_R_MULTIPLE = float(args.t1_r_mult)
+    T2_R_MULTIPLE = float(args.t2_r_mult)
+    STOP_R_MULTIPLE = float(args.stop_r_mult)
+
+    print(f"[sanity_iv_rank_revert] params: T1={T1_R_MULTIPLE}R T2={T2_R_MULTIPLE}R "
+          f"stop={STOP_R_MULTIPLE}R period={start_d}..{end_d}")
+
     universe = load_fno_universe()
+    big5m = build_full_period_5m(universe=universe)
     iv_lookup = load_iv_rank_lookup()
     nifty_trend = load_nifty_trend_at_1100()
 
@@ -373,8 +440,14 @@ def main():
 
     trades = simulate(triggers, big5m)
     report(trades)
-    out = _REPO_ROOT / "reports" / "sub9_sanity" / "options_vol_iv_rank_revert_trades.csv"
-    out.parent.mkdir(parents=True, exist_ok=True)
+
+    out_dir_name = "options_vol_iv_rank_revert"
+    if args.out_suffix:
+        out_dir_name = f"{out_dir_name}{args.out_suffix}"
+    out_dir = _REPO_ROOT / "reports" / "sub9_sanity" / out_dir_name
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "trades.csv"
     trades.to_csv(out, index=False)
     print(f"\nFull trade log: {out}")
 

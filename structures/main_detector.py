@@ -22,6 +22,7 @@ from .circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
 from .options_vol_iv_rank_revert_structure import OptionsVolIvRankRevertStructure
 from .capitulation_long_morning_structure import CapitulationLongMorningStructure
 from .delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
+from .earnings_day_intraday_fade_structure import EarningsDayIntradayFadeStructure
 from services.symbol_metadata import get_cap_segment
 
 logger = get_agent_logger()
@@ -71,6 +72,7 @@ class MainDetector(BaseStructure):
             ("options_vol_iv_rank_revert", OptionsVolIvRankRevertStructure, "options_vol_iv_rank_revert"),
             ("capitulation_long_morning", CapitulationLongMorningStructure, "capitulation_long_morning"),
             ("delivery_pct_anomaly_short", DeliveryPctAnomalyShortStructure, "delivery_pct_anomaly_short"),
+            ("earnings_day_intraday_fade", EarningsDayIntradayFadeStructure, "earnings_day_intraday_fade"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -142,7 +144,8 @@ class MainDetector(BaseStructure):
 
     def detect_setups(self, symbol: str, df5m_tail: pd.DataFrame,
                      levels: Dict[str, float] | None = None,
-                     daily_df: Optional[pd.DataFrame] = None) -> List[SetupCandidate]:
+                     daily_df: Optional[pd.DataFrame] = None,
+                     regime: Optional[str] = None) -> List[SetupCandidate]:
         """
         Primary interface for structure detection.
 
@@ -154,15 +157,25 @@ class MainDetector(BaseStructure):
                 recommended). Required by detectors with cross-day state
                 like circuit_t1_fade_short; safely ignored by detectors
                 that don't read MarketContext.df_daily.
+            regime: Broad-market regime label ("trend_up", "trend_down",
+                "chop", "squeeze") computed by the caller's regime gate.
+                Threaded onto MarketContext.regime so cell-locked detectors
+                (capitulation_long_morning, circuit_t1_fade_short, etc.) can
+                enforce their allowed_regimes filter inside detect(). None
+                is permitted only when wide_open_mode is on or when no
+                regime is available.
 
         Returns:
             List of SetupCandidate objects ordered by strength
         """
-        return self.detect_setups_comprehensive(symbol, df5m_tail, levels or {}, daily_df=daily_df)
+        return self.detect_setups_comprehensive(
+            symbol, df5m_tail, levels or {}, daily_df=daily_df, regime=regime,
+        )
 
     def detect_setups_comprehensive(self, symbol: str, df: pd.DataFrame,
                                   levels: Dict[str, float],
-                                  daily_df: Optional[pd.DataFrame] = None) -> List[SetupCandidate]:
+                                  daily_df: Optional[pd.DataFrame] = None,
+                                  regime: Optional[str] = None) -> List[SetupCandidate]:
         """
         Comprehensive setup detection that coordinates all structure detectors.
 
@@ -181,7 +194,9 @@ class MainDetector(BaseStructure):
 
             # Create market context
             _t_ctx = _time_mod.perf_counter()
-            context = self._create_market_context(symbol, df, levels, daily_df=daily_df)
+            context = self._create_market_context(
+                symbol, df, levels, daily_df=daily_df, regime=regime,
+            )
             _t_ctx_ms = (_time_mod.perf_counter() - _t_ctx) * 1000
             logger.debug(f"MAIN_DETECTOR: {symbol} market context created successfully")
 
@@ -421,13 +436,20 @@ class MainDetector(BaseStructure):
 
     def _create_market_context(self, symbol: str, df: pd.DataFrame,
                              levels: Dict[str, float],
-                             daily_df: Optional[pd.DataFrame] = None) -> MarketContext:
+                             daily_df: Optional[pd.DataFrame] = None,
+                             regime: Optional[str] = None) -> MarketContext:
         """Create market context for structure detection.
 
         daily_df is forwarded onto ctx.df_daily for detectors with
         cross-day state (e.g. circuit_t1_fade_short reads T-1 daily bar
         for upper-circuit qualification). None is fine for detectors
         that don't need it.
+
+        regime is forwarded onto ctx.regime so detectors that hard-filter
+        on broad-market regime (capitulation_long_morning, circuit_t1_fade_short,
+        options_vol_iv_rank_revert) can enforce their allowed_regimes set
+        inside detect(). The caller (TradeDecisionGate) computes regime
+        once per scan and threads it through here.
         """
         try:
             # Ensure we have the required indicators
@@ -476,6 +498,7 @@ class MainDetector(BaseStructure):
                 pdh=levels.get('PDH'),
                 pdl=levels.get('PDL'),
                 pdc=levels.get('PDC'),
+                regime=regime,
                 cap_segment=get_cap_segment(symbol),
                 indicators=indicators
             )
@@ -803,6 +826,12 @@ class MainDetector(BaseStructure):
             # validation gates (Discovery PF=1.44, OOS PF=1.90, Holdout PF=1.13)
             # at TIGHT targets (0.25R/0.75R/TS=1300). War-period PF=5.03.
             'delivery_pct_anomaly_short': 'delivery_pct_anomaly_short',
+
+            # Sub-project #9 ship #5 (2026-05-12):
+            # earnings_day_intraday_fade — bidirectional fade of BMO/AMC
+            # earnings gap. Discovery PF 1.64 / OOS PF 1.53 / Holdout PF 1.25.
+            # Locked R-multiples: T1=1.0R / T2=1.0R / SL=2.5× structural.
+            'earnings_day_intraday_fade': 'earnings_day_intraday_fade',
         }
 
         return direct_mappings.get(structure_type)

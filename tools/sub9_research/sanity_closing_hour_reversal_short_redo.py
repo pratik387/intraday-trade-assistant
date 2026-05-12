@@ -61,8 +61,9 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -87,6 +88,7 @@ ALLOWED_CAPS = {"small_cap", "mid_cap"}    # large_cap excluded (operator-pump
 # brief's full mechanic allows 14:30..15:00 rollover-bar entries, but
 # the sanity sticks to the single-bar version per task instruction).
 ENTRY_HHMM = "14:30"
+ENTRY_HHMM_INT = 14 * 100 + 30  # = 1430
 
 # Reference HH:MM windows for derived signals.
 HHMM_OPEN = "09:15"
@@ -95,6 +97,22 @@ HHMM_1200 = "12:00"
 HHMM_1330 = "13:30"
 HHMM_1400 = "14:00"
 HHMM_1430 = "14:30"
+
+# Integer encodings for the per-row hhmm column (HH*100 + MM). Storing the
+# 27M-row hhmm column as int16 (instead of 5-char unicode) avoids a 300+ MB
+# allocation that OOMs on 16GB hosts during the R-multiplier sweep. Lex order
+# of "HH:MM" strings is preserved by int order because the format is
+# fixed-width; all comparisons (>=, <=, ==) translate 1:1.
+def _hhmm_to_int(s: str) -> int:
+    h, m = s.split(":")
+    return int(h) * 100 + int(m)
+
+HHMM_INT_OPEN = _hhmm_to_int(HHMM_OPEN)
+HHMM_INT_0930 = _hhmm_to_int(HHMM_0930)
+HHMM_INT_1200 = _hhmm_to_int(HHMM_1200)
+HHMM_INT_1330 = _hhmm_to_int(HHMM_1330)
+HHMM_INT_1400 = _hhmm_to_int(HHMM_1400)
+HHMM_INT_1430 = _hhmm_to_int(HHMM_1430)
 
 # Intraday-return gate at entry bar close (brief §6 step 2 — locked
 # 1.5-3.5% for the redo per task instruction; brief §6 widens to
@@ -112,9 +130,17 @@ RETAIL_LIGHT_PCT_MAX = 33.0  # bottom 33rd percentile (per session)
 STOP_BUFFER_PCT_INTRA_HIGH = 0.5   # max(intraday-high * 1.005, ...)
 STOP_MIN_PCT_OVER_ENTRY = 1.2      # max(..., entry * 1.012)
 
+# R-multiplier constants for T1 / T2 / stop (CLI-overridable; default = 1R / 2R / 1R).
+# T1 partial fill at entry - T1_R * stop_distance; T2 full close at entry - T2_R * stop_distance.
+# STOP_R scales the computed hard_sl distance (1.0 = no scaling).
+_R_MULTIPLE_T1 = 1.0
+_R_MULTIPLE_T2 = 2.0
+_R_MULTIPLE_STOP = 1.0
+
 # Hard time-stop bar (forced exit regardless of P&L; 5 min before MIS
 # auto-square 15:15-15:20).
 HARD_TIMESTOP_HHMM = "15:10"
+HARD_TIMESTOP_HHMM_INT = 15 * 100 + 10  # = 1510
 
 # Risk per trade — match other sub9 sanity scripts for comparable PnL units.
 RISK_PER_TRADE_RUPEES = 1000
@@ -264,12 +290,22 @@ def build_full_period_5m(allowed_caps: set, fno_excl: set) -> pd.DataFrame:
             for c in ("open", "high", "low", "close"):
                 mdf[c] = mdf[c].astype("float32")
             mdf["volume"] = mdf["volume"].astype("float32")
-            mdf["cap_segment"] = mdf["symbol"].map(sym_to_cap).astype("category")
-            mdf["symbol"] = mdf["symbol"].astype("category")
+            # IMPORTANT: keep symbol / cap_segment as plain object dtype here.
+            # Concat-of-categoricals with disjoint category sets per month
+            # forces a per-frame astype-to-object during concat, allocating a
+            # 1.1M-row object array per month inside pandas' internal join
+            # (numpy._core._exceptions._ArrayMemoryError on 16GB hosts during
+            # R-multiplier sweeps). Categorize ONCE post-concat where the
+            # category set is union'd in a single pass. Mechanic logic
+            # unchanged — downstream code only reads .values / groupby keys.
+            mdf["cap_segment"] = mdf["symbol"].map(sym_to_cap)
             parts.append(mdf)
     if not parts:
         return pd.DataFrame()
-    big = pd.concat(parts, ignore_index=True)
+    big = pd.concat(parts, ignore_index=True, copy=False)
+    # Now categorize symbol / cap_segment ONCE on the full union of values.
+    big["symbol"] = big["symbol"].astype("category")
+    big["cap_segment"] = big["cap_segment"].astype("category")
     print(f"  raw bars across 24 months: {total_raw:,}")
     print(f"  after non-F&O + cap filter: {len(big):,}")
 
@@ -277,7 +313,15 @@ def build_full_period_5m(allowed_caps: set, fno_excl: set) -> pd.DataFrame:
     # then rely on per-(symbol, d) groupby which is order-tolerant within
     # the groupby (we sort inside _enrich_session_features anyway).
     big["d"] = big["date"].dt.date
-    big["hhmm"] = big["date"].dt.strftime("%H:%M")
+    # IMPORTANT: store hhmm as int16 (HH*100 + MM), not 5-char unicode.
+    # Allocating a 27M-row "HH:MM" string column needs ~300+ MB and OOMs on
+    # 16GB hosts. int16 column is ~54 MB and supports identical lex-order
+    # comparisons (the "HH:MM" format is fixed-width). All downstream usages
+    # compare against HHMM_INT_* constants instead of the original strings.
+    big["hhmm"] = (
+        big["date"].dt.hour.astype("int16") * 100
+        + big["date"].dt.minute.astype("int16")
+    ).astype("int16")
     return big
 
 
@@ -308,14 +352,14 @@ def _enrich_session_features(day_df: pd.DataFrame) -> pd.DataFrame:
     # the 09:30 bar covers 09:30-09:35. We use HH:MM >= 09:30 AND <= 12:00 for
     # the morning window, and >= 13:30 AND <= 14:30 for the late-morning
     # window. This is approximate but consistent across sessions.)
-    mask_morning = (df["hhmm"] >= HHMM_0930) & (df["hhmm"] <= HHMM_1200)
+    mask_morning = (df["hhmm"] >= HHMM_INT_0930) & (df["hhmm"] <= HHMM_INT_1200)
     if mask_morning.any():
         avg_morning = float(df.loc[mask_morning, "volume"].mean())
     else:
         avg_morning = np.nan
     df["vol_mean_0930_1200"] = avg_morning
 
-    mask_pre_entry = (df["hhmm"] >= HHMM_1330) & (df["hhmm"] <= HHMM_1430)
+    mask_pre_entry = (df["hhmm"] >= HHMM_INT_1330) & (df["hhmm"] <= HHMM_INT_1430)
     if mask_pre_entry.any():
         avg_pre_entry = float(df.loc[mask_pre_entry, "volume"].mean())
     else:
@@ -323,9 +367,9 @@ def _enrich_session_features(day_df: pd.DataFrame) -> pd.DataFrame:
     df["vol_mean_1330_1430"] = avg_pre_entry
 
     # Cum vol AT 14:00 — for retail-light classifier denominator.
-    if (df["hhmm"] == HHMM_1400).any():
+    if (df["hhmm"] == HHMM_INT_1400).any():
         cum_vol_1400 = float(
-            df.loc[df["hhmm"] == HHMM_1400, "cum_vol"].iloc[0]
+            df.loc[df["hhmm"] == HHMM_INT_1400, "cum_vol"].iloc[0]
         )
     else:
         cum_vol_1400 = np.nan
@@ -343,18 +387,27 @@ def find_triggers(
     """Per-session, per-symbol: enrich features, compute retail-light classifier
     rank cross-symbol, then apply 14:30 single-bar gates and latch.
     """
-    df = big5m.copy()
+    df = big5m  # avoid full .copy() — costs ~1 GB on 27M rows
     print(f"    pre-filtered 5m bars (cap+non-F&O): {len(df):,}")
 
-    # Merge ADV + 20d_median full-session volume (per-(symbol, d) keys).
+    # Attach ADV + 20d_median full-session volume via index.map (no merge).
+    # df.merge on (symbol, d) realigns the 27M-row block manager and
+    # internally copies the object/categorical symbol column twice (~400 MB
+    # each), OOMing on 16GB hosts during the R-multiplier sweep. .map() on
+    # a MultiIndex hits the right rows with a single hash lookup and
+    # produces only the two new float columns (~220 MB). Equivalent semantics
+    # for the (symbol, d) -> (adv, vol_median) lookup; mechanic unchanged.
     adv_idx = adv_table.set_index(["symbol", "d"])
-    merged = df.merge(
-        adv_table, on=["symbol", "d"], how="left", validate="many_to_one"
-    )
-    df = merged
+    sym_d_idx = pd.MultiIndex.from_arrays([df["symbol"].astype(str), df["d"]])
+    df = df.copy()  # allow column assignment without SettingWithCopy warnings
+    df["adv_20d_cr"] = sym_d_idx.map(adv_idx["adv_20d_cr"]).astype("float32")
+    df["vol_20d_median"] = sym_d_idx.map(adv_idx["vol_20d_median"]).astype("float32")
+    del sym_d_idx, adv_idx
+    import gc as _gc0
+    _gc0.collect()
 
-    # Liquidity floor.
-    df = df[df["adv_20d_cr"] >= MIN_ADV_INR_CR].copy()
+    # Liquidity floor (in-place boolean mask, no extra .copy()).
+    df = df[df["adv_20d_cr"] >= MIN_ADV_INR_CR]
     print(f"    adv_20d >= Rs {MIN_ADV_INR_CR}Cr: {len(df):,}")
 
     print("  enriching per-(symbol, session) intraday features (vectorized) ...")
@@ -383,7 +436,7 @@ def find_triggers(
 
     # Window-mean columns: compute per-(symbol, d) means on filtered subsets,
     # then broadcast back via map.
-    mask_morn = (enriched["hhmm"] >= HHMM_0930) & (enriched["hhmm"] <= HHMM_1200)
+    mask_morn = (enriched["hhmm"] >= HHMM_INT_0930) & (enriched["hhmm"] <= HHMM_INT_1200)
     morn_mean = (
         enriched.loc[mask_morn]
         .groupby(["symbol", "d"], sort=False)["volume"]
@@ -391,7 +444,7 @@ def find_triggers(
     )
     enriched["vol_mean_0930_1200"] = enriched.set_index(["symbol", "d"]).index.map(morn_mean).values
 
-    mask_pre = (enriched["hhmm"] >= HHMM_1330) & (enriched["hhmm"] <= HHMM_1430)
+    mask_pre = (enriched["hhmm"] >= HHMM_INT_1330) & (enriched["hhmm"] <= HHMM_INT_1430)
     pre_mean = (
         enriched.loc[mask_pre]
         .groupby(["symbol", "d"], sort=False)["volume"]
@@ -400,7 +453,7 @@ def find_triggers(
     enriched["vol_mean_1330_1430"] = enriched.set_index(["symbol", "d"]).index.map(pre_mean).values
 
     # Cum vol AT 14:00 — first row matching hhmm==14:00 per (symbol, d)
-    mask_1400 = enriched["hhmm"] == HHMM_1400
+    mask_1400 = enriched["hhmm"] == HHMM_INT_1400
     cv_1400 = (
         enriched.loc[mask_1400]
         .drop_duplicates(subset=["symbol", "d"], keep="first")
@@ -446,7 +499,7 @@ def find_triggers(
     print(f"    bars in retail-light universe: {len(enriched):,}")
 
     # Restrict to 14:30 entry-screen bar.
-    entry_bars = enriched[enriched["hhmm"] == ENTRY_HHMM].copy()
+    entry_bars = enriched[enriched["hhmm"] == ENTRY_HHMM_INT].copy()
     print(f"    bars at {ENTRY_HHMM}: {len(entry_bars):,}")
 
     # Apply 14:30 gates.
@@ -519,18 +572,20 @@ def simulate(triggers: pd.DataFrame, big5m: pd.DataFrame) -> pd.DataFrame:
         entry_price = float(entry_bar["close"])
         entry_ts = entry_bar["date"]
 
-        # Stop = max(intraday-high * 1.005, entry * 1.012).
+        # Stop = max(intraday-high * 1.005, entry * 1.012), scaled by _R_MULTIPLE_STOP.
         intra_high_at_entry = float(t["intraday_high_so_far"])
         sl_struct = intra_high_at_entry * (1.0 + STOP_BUFFER_PCT_INTRA_HIGH / 100.0)
         sl_min = entry_price * (1.0 + STOP_MIN_PCT_OVER_ENTRY / 100.0)
-        hard_sl = max(sl_struct, sl_min)
-        stop_distance = hard_sl - entry_price
-        if stop_distance <= 0:
+        base_sl = max(sl_struct, sl_min)
+        base_stop_distance = base_sl - entry_price
+        if base_stop_distance <= 0:
             continue
+        stop_distance = base_stop_distance * _R_MULTIPLE_STOP
+        hard_sl = entry_price + stop_distance
 
-        # T1 (1R partial — 50%) + T2 (2R full close).
-        t1_target = entry_price - 1.0 * stop_distance
-        t2_target = entry_price - 2.0 * stop_distance
+        # T1 (T1_R partial - 50%) + T2 (T2_R full close).
+        t1_target = entry_price - _R_MULTIPLE_T1 * stop_distance
+        t2_target = entry_price - _R_MULTIPLE_T2 * stop_distance
 
         # Forward bars: entry bar's CLOSE is the fill, so subsequent bars
         # (entry_idx + 1 onwards) are where SL/T1/T2/time-stop fire.
@@ -547,7 +602,7 @@ def simulate(triggers: pd.DataFrame, big5m: pd.DataFrame) -> pd.DataFrame:
 
         for _, bar in forward.iterrows():
             bar_ts = bar["date"]
-            bar_hhmm = bar_ts.strftime("%H:%M")
+            bar_hhmm_int = bar_ts.hour * 100 + bar_ts.minute
             high = float(bar["high"])
             low = float(bar["low"])
             close_b = float(bar["close"])
@@ -576,7 +631,7 @@ def simulate(triggers: pd.DataFrame, big5m: pd.DataFrame) -> pd.DataFrame:
                 break
 
             # Hard time-stop at 15:10 — forced exit at bar's close.
-            if bar_hhmm >= HARD_TIMESTOP_HHMM:
+            if bar_hhmm_int >= HARD_TIMESTOP_HHMM_INT:
                 exit_ts = bar_ts
                 exit_price = close_b
                 exit_reason = "time_stop_1510"
@@ -871,6 +926,36 @@ def report(trades: pd.DataFrame) -> None:
 
 
 def main():
+    global _R_MULTIPLE_T1, _R_MULTIPLE_T2, _R_MULTIPLE_STOP
+
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--start", default="2023-01-01")
+    p.add_argument("--end", default="2024-12-31")
+    p.add_argument("--t1-r-mult", type=float, default=_R_MULTIPLE_T1,
+                   help="T1 R-multiple (default 1.0)")
+    p.add_argument("--t2-r-mult", type=float, default=_R_MULTIPLE_T2,
+                   help="T2 R-multiple (default 2.0)")
+    p.add_argument("--stop-r-mult", type=float, default=_R_MULTIPLE_STOP,
+                   help="Stop R-multiple scaler (default 1.0)")
+    p.add_argument("--out-suffix", default="",
+                   help="suffix appended to output dir/file basename")
+    args = p.parse_args()
+
+    _R_MULTIPLE_T1 = float(args.t1_r_mult)
+    _R_MULTIPLE_T2 = float(args.t2_r_mult)
+    _R_MULTIPLE_STOP = float(args.stop_r_mult)
+
+    # Sentinel-guard: refuse OOS/Holdout reads (Discovery only).
+    end_d = datetime.strptime(args.end, "%Y-%m-%d").date()
+    if end_d > date(2024, 12, 31):
+        print("[ABORT] end past Discovery 2024-12-31; refusing OOS/Holdout reads")
+        return 2
+    start_d = datetime.strptime(args.start, "%Y-%m-%d").date()
+
+    print(f"[sanity_chrs_redo] params: t1_r={_R_MULTIPLE_T1}, "
+          f"t2_r={_R_MULTIPLE_T2}, stop_r={_R_MULTIPLE_STOP}, "
+          f"period={start_d}..{end_d}, out_suffix={args.out_suffix!r}")
+
     fno_excl = load_fno_universe()
     big5m = build_full_period_5m(ALLOWED_CAPS, fno_excl)
     if big5m.empty:
@@ -893,10 +978,46 @@ def main():
     trades = simulate(triggers, big5m)
     report(trades)
 
-    out = (
-        _REPO_ROOT / "reports" / "sub9_sanity"
-        / "closing_hour_reversal_short_redo_trades.csv"
-    )
+    suffix = args.out_suffix
+    out_dir = _REPO_ROOT / "reports" / "sub9_sanity"
+    if suffix:
+        # Per-sweep output dir (matches step-4 spec).
+        sweep_dir = out_dir / f"closing_hour_reversal_short_redo{suffix}"
+        sweep_dir.mkdir(parents=True, exist_ok=True)
+        out = sweep_dir / "trades.csv"
+        # Also drop a summary.json with key metrics for aggregation.
+        if not trades.empty:
+            npnl = trades["net_pnl"]
+            wins = float(npnl[npnl > 0].sum())
+            losses = float(npnl[npnl < 0].abs().sum())
+            gross = float(trades["realized_pnl"].sum())
+            gross_w = float(trades["realized_pnl"][trades["realized_pnl"] > 0].sum())
+            gross_l = float(
+                trades["realized_pnl"][trades["realized_pnl"] < 0].abs().sum()
+            )
+            net_pf = (wins / losses) if losses > 0 else float("inf")
+            gross_pf = (gross_w / gross_l) if gross_l > 0 else float("inf")
+            daily = trades.groupby("T1_entry_date")["net_pnl"].sum()
+            sharpe = (
+                float(daily.mean() / daily.std()) if daily.std() > 0 else 0.0
+            )
+            import json as _json
+            (sweep_dir / "summary.json").write_text(_json.dumps({
+                "t1_r_mult": _R_MULTIPLE_T1,
+                "t2_r_mult": _R_MULTIPLE_T2,
+                "stop_r_mult": _R_MULTIPLE_STOP,
+                "n_trades": int(len(trades)),
+                "gross_pf": round(gross_pf, 4),
+                "net_pf": round(net_pf, 4),
+                "gross_pnl": round(gross, 2),
+                "net_pnl": round(float(npnl.sum()), 2),
+                "sharpe_daily": round(sharpe, 4),
+                "win_rate_pct": round(float((npnl > 0).mean()) * 100, 2),
+                "fees": round(float(trades["fee"].sum()), 2),
+            }, indent=2, default=str))
+            print(f"Sweep summary: {sweep_dir / 'summary.json'}")
+    else:
+        out = out_dir / "closing_hour_reversal_short_redo_trades.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     trades.to_csv(out, index=False)
     print(f"\nFull trade log: {out}")

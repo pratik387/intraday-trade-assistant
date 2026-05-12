@@ -41,9 +41,13 @@ def build(oci_dir: Path) -> pd.DataFrame:
             pnl_col = "total_trade_pnl"
         else:
             pnl_col = None
+        # Normalize decision_ts to ISO 8601 with 'T' separator so the join key
+        # matches gate_input.jsonl (which uses pd.Timestamp.isoformat()). Live's
+        # trade_report.csv writes "YYYY-MM-DD HH:MM:SS" (space) by default.
+        ts_normalized = df["decision_ts"].astype(str).str.replace(" ", "T", regex=False)
         out = pd.DataFrame({
             "session_date": sess_date,
-            "ts": df["decision_ts"].astype(str),
+            "ts": ts_normalized,
             "symbol": df["symbol"].astype(str),
             "setup_type": df["setup_type"].astype(str),
             "total_trade_pnl": df[pnl_col].astype(float) if pnl_col else 0.0,
@@ -55,15 +59,20 @@ def build(oci_dir: Path) -> pd.DataFrame:
         raise SystemExit(f"[build_pnl_index] no trade_report.csv found under {oci_dir}")
     big = pd.concat(rows, ignore_index=True)
 
-    # Duplicate-key detection: join key must be unique across the corpus
+    # Duplicate-key handling: wide_open_mode OCI captures bypass dedup, so a
+    # single bar can contain multiple trades on the same (sym, ts, setup) —
+    # each a separate trade_id. Any dedup-enabled config being A/B tested
+    # would admit only the FIRST of those. Keep the first-seen row per key
+    # so PnL joins are unambiguous. Extra same-key admits from looser
+    # configs silently won't match (a minor bias for very loose configs).
     dup_mask = big.duplicated(subset=list(KEY_COLS), keep=False)
-    if dup_mask.any():
-        ndup = int(dup_mask.sum())
-        sample = big[dup_mask].head(5).to_dict(orient="records")
-        raise SystemExit(
-            f"[build_pnl_index] duplicate admit keys detected: {ndup} rows\n"
-            f"sample: {sample}"
-        )
+    ndup = int(dup_mask.sum())
+    if ndup > 0:
+        n_before = len(big)
+        big = big.drop_duplicates(subset=list(KEY_COLS), keep="first").reset_index(drop=True)
+        n_after = len(big)
+        print(f"[build_pnl_index] deduplicated {n_before - n_after} duplicate-key rows "
+              f"({ndup} total matched duplicates); kept first of each key")
     return big[list(OUT_COLS)]
 
 

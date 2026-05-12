@@ -21,8 +21,8 @@ from diagnostics.diagnostics_report_builder import build_csv_from_events  # noqa
 from config.filters_setup import load_filters  # noqa: E402
 
 # ====== SETTINGS ======
-START_DATE = "2026-04-07"   # YYYY-MM-DD - Kite data validation run
-END_DATE   = "2026-04-07"  # YYYY-MM-DD (inclusive) - Matches paper trading period
+START_DATE = "2023-04-07"   # YYYY-MM-DD - Kite data validation run
+END_DATE   = "2023-04-13"  # YYYY-MM-DD (inclusive) - Matches paper trading period
 MAIN_PATH  = ROOT / "main.py"
 
 # Hardcoded time windows for engine runs

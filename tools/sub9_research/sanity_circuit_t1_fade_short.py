@@ -63,12 +63,28 @@ def _load_5m_for_month(yyyy: int, mm: int) -> pd.DataFrame:
     return pd.read_feather(path)
 
 
+import os as _os
+_PERIOD = _os.environ.get("SANITY_PERIOD", "discovery").lower()
+if _PERIOD == "oos":
+    _Y_M_PAIRS = [(2025, m) for m in range(1, 10)]
+    _DATE_LO, _DATE_HI = date(2025, 1, 1), date(2025, 9, 30)
+    _OUT_SUFFIX = "_oos"
+elif _PERIOD == "holdout":
+    _Y_M_PAIRS = [(2025, m) for m in range(10, 13)] + [(2026, m) for m in range(1, 5)]
+    _DATE_LO, _DATE_HI = date(2025, 10, 1), date(2026, 4, 30)
+    _OUT_SUFFIX = "_holdout"
+else:
+    _Y_M_PAIRS = [(2024, m) for m in range(1, 13)]
+    _DATE_LO, _DATE_HI = date(2024, 1, 1), date(2024, 12, 31)
+    _OUT_SUFFIX = ""
+
+
 def build_full_year_5m() -> pd.DataFrame:
-    """Concatenate all 12 monthly 2024 5m feathers."""
-    print("  loading 12 monthly 5m feathers ...")
+    """Concatenate monthly 5m feathers for the configured SANITY_PERIOD."""
+    print(f"  loading {len(_Y_M_PAIRS)} monthly 5m feathers ({_PERIOD}) ...")
     parts: List[pd.DataFrame] = []
-    for m in range(1, 13):
-        mdf = _load_5m_for_month(2024, m)
+    for yyyy, m in _Y_M_PAIRS:
+        mdf = _load_5m_for_month(yyyy, m)
         if not mdf.empty:
             parts.append(mdf)
     big = pd.concat(parts, ignore_index=True).sort_values(["symbol", "date"]).reset_index(drop=True)
@@ -110,7 +126,7 @@ def load_production_daily() -> pd.DataFrame:
     # Sanity period: full calendar year 2024 (T+0 events 2024-01 through 2024-12;
     # T+1 entry trades land in 2024-01 through 2025-01 — the 5m feather is
     # 2024-only so any 2024-12-31 hits won't simulate, accepted truncation).
-    df = df[(df["d"] >= date(2024, 1, 1)) & (df["d"] <= date(2024, 12, 31))]
+    df = df[(df["d"] >= _DATE_LO) & (df["d"] <= _DATE_HI)]
     df = df.rename(columns={"open": "open", "high": "high", "low": "low",
                             "close": "close", "volume": "volume"})
     df = df[["symbol", "d", "open", "high", "low", "close", "volume"]].copy()
@@ -367,7 +383,7 @@ def main():
     trades = simulate_t1_short(hits, big5m, atr_table)
     report(trades)
 
-    out = _REPO_ROOT / "reports" / "sub9_sanity" / "circuit_t1_fade_short_trades.csv"
+    out = _REPO_ROOT / "reports" / "sub9_sanity" / f"circuit_t1_fade_short_trades{_OUT_SUFFIX}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     trades.to_csv(out, index=False)
     print(f"\nFull trade log: {out}")
