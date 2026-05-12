@@ -82,6 +82,11 @@ from utils.perf_timer import perf, mark
 from services.state.orb_cache_persistence import ORBCachePersistence
 import uuid
 
+# 2026-05-12 architectural refactor — Phase 7
+from services.bar_scheduler import schedule_admits
+from services.setup_risk import SetupRiskTracker
+from services.feature_computer import compute_bar_features
+
 
 logger = get_agent_logger()
 
@@ -602,6 +607,58 @@ class ScreenerLive:
             wide_open=bool(raw.get("wide_open_mode", False)),
             iv_rank_short_threshold=_iv_thr,
         )
+
+        # CapitalManager for bar-level admission (2026-05-12 architectural refactor).
+        # Used by schedule_admits to enforce portfolio + per-setup capital budgets.
+        from services.capital_manager import CapitalManager
+        _cap_cfg = raw.get("capital_management") or {}
+        _risk_mode = str(_cap_cfg.get("risk_mode", "fixed"))
+        _risk_fixed = float(_cap_cfg.get("risk_fixed_amount", 0) or 0)
+        _risk_pct = float(_cap_cfg.get("risk_percentage", 0) or 0)
+        self.capital_manager = CapitalManager(
+            enabled=bool(_cap_cfg.get("enabled", False)),
+            initial_capital=float(
+                _cap_cfg.get("paper_initial_capital", 0)
+                if env.DRY_RUN
+                else _cap_cfg.get("initial_capital", 0)
+            ),
+            max_positions=int(_cap_cfg.get("max_concurrent_positions") or raw.get("max_concurrent_positions") or 1),
+            min_notional_pct=float(_cap_cfg.get("min_notional_pct", 0) or 0),
+            capital_utilization=float(_cap_cfg.get("capital_utilization", 0.85) or 0.85),
+            max_allocation_per_trade=float(_cap_cfg.get("max_allocation_per_trade", 0.20) or 0.20),
+            risk_mode=_risk_mode,
+            risk_fixed_amount=_risk_fixed,
+            risk_percentage=_risk_pct,
+            mis_enabled=bool(_cap_cfg.get("mis_enabled", False)),
+            mis_fetcher=mis_fetcher,
+        )
+
+        # PositionStore for SetupRiskTracker concurrency lookups.
+        # Screener-local store tracks admitted-but-not-yet-triggered plans
+        # within the same bar-scheduling context.
+        from services.state.position_store import PositionStore
+        self.position_store = PositionStore()
+
+        # Per-setup risk tracker (2026-05-12 refactor — replaces deleted
+        # CrossSectionalGate + DedupGate). Reads max_concurrent_positions,
+        # per_symbol_cooloff_min, max_fires_per_5min from each setup config.
+        self.setup_risk = SetupRiskTracker(
+            self.raw_cfg.get("setups") or {},
+            self.position_store,
+        )
+
+        # Per-setup capital budgets (2026-05-12 refactor). Wires from each
+        # setup config's capital_budget_pct into CapitalManager so it can
+        # block setups that monopolize total capital.
+        _setups_cfg_init = self.raw_cfg.get("setups") or {}
+        self.capital_manager.setup_budgets_pct = {
+            name: float(cfg.get("capital_budget_pct", 0))
+            for name, cfg in _setups_cfg_init.items()
+            if cfg.get("enabled") and float(cfg.get("capital_budget_pct", 0) or 0) > 0
+        }
+        self.capital_manager.setup_budget_used = {
+            name: 0.0 for name in self.capital_manager.setup_budgets_pct
+        }
 
         # Trigger-aware executor for live trade execution
         # Note: This needs proper risk state and position management in production
@@ -1345,33 +1402,26 @@ class ScreenerLive:
                 with perf("scan", "compute_orb_levels", n=len(df5_by_symbol)):
                     levels_by_symbol = self._compute_orb_levels_once(now, df5_by_symbol)
 
-                # GIL FIX: Trim to 20-bar tails before pickling (55MB → 2.2MB)
-                # compute_features only needs lookback_bars=20, not the full 500
-                with perf("scan", "stage0_pickle_prep", n=len(df5_by_symbol)):
-                    df5_tails = {
-                        sym: df.tail(20).copy()
-                        for sym, df in df5_by_symbol.items()
-                    }
+                # ---------- Universe-driven scanning (2026-05-12 architectural refactor) ----------
+                # Replaces Stage-0 top-K filter. Features computed only for the
+                # universe-union (~200 symbols/bar), not the full eligible pool (1500).
+                with perf("scan", "feature_compute", n_in=len(df5_by_symbol)):
+                    # Universe = static cross-day universes ∪ lazy gap_fade universe.
+                    universe = set()
+                    for u in (self._setup_universes or {}).values():
+                        universe.update(u)
+                    if self._gap_fade_universe:
+                        universe.update(self._gap_fade_universe)
+                    # Restrict to symbols that actually have 5m data for this bar.
+                    universe &= set(df5_by_symbol.keys())
 
-                # Submit Stage-0 to separate process (GIL released during wait)
-                # future.result() is a C-level wait on pipe — subscriber thread runs freely
-                with perf("scan", "stage0_execute", n_in=len(df5_tails)):
-                    stage0_future = self._stage0_executor.submit(
-                        _run_stage0_in_process,
-                        df5_tails,
-                        levels_by_symbol,
-                        now,
-                        in_opening_bell,
-                        bool(env.DRY_RUN),
+                    feats_df = compute_bar_features(
+                        df5_by_symbol, universe, now, levels_by_symbol,
                     )
-                    _, shortlist_dict, stage0_timing = stage0_future.result(timeout=60)
-                    shortlist = shortlist_dict.get("long", []) + shortlist_dict.get("short", [])
+                    shortlist = feats_df["symbol"].tolist() if not feats_df.empty else []
                 logger.info(
-                    "STAGE0_PROCESS | compute=%.2fs filter=%.2fs shortlist=%.2fs total=%.2fs | "
-                    "filtered=%d long=%d short=%d",
-                    stage0_timing["compute"], stage0_timing["filter"],
-                    stage0_timing["shortlist"], stage0_timing["total"],
-                    stage0_timing["filtered"], stage0_timing["long"], stage0_timing["short"],
+                    "UNIVERSE_SCAN | universe=%d, df5=%d, scanned=%d",
+                    len(universe), len(df5_by_symbol), len(shortlist),
                 )
         except Exception as e:
             logger.exception("Stage-0 process failed; fallback shortlist: %s", e)
@@ -1816,10 +1866,23 @@ class ScreenerLive:
                 symbol_caps=_sym_caps,
             )
 
-        # TODO Phase 7: insert bar_scheduler.schedule_admits() here.
-        # Plans flow straight through — bar_scheduler integration lands in Phase 7
-        # (universe-driven scanning). Until then, all eligible_plans pass.
-        admitted_plans = eligible_plans
+        # Bar-level scheduling: priority-sorted capital admission.
+        # 2026-05-12 architectural refactor — replaces the gate_chain
+        # invocation. setup_risk + capital_manager carry all gate-equivalent
+        # logic. Plans sorted by plan["priority"] desc; admitted in order.
+        # eligible_plans is List[Tuple[sym, plan, score, decision]] — extract
+        # the plan dicts for schedule_admits, then rejoin with original tuples.
+        _ep_plan_dicts = [plan for (_, plan, _, _) in eligible_plans]
+        _admitted_dicts_set = set(
+            id(p) for p in schedule_admits(
+                _ep_plan_dicts, self.capital_manager, self.setup_risk, ts=now,
+            )
+        )
+        admitted_plans = [
+            (sym, plan, score, decision)
+            for (sym, plan, score, decision) in eligible_plans
+            if id(plan) in _admitted_dicts_set
+        ]
 
         # Sort admitted plans by rank_score desc for execution priority.
         admitted_plans.sort(key=lambda x: x[2], reverse=True)
