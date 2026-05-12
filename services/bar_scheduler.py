@@ -64,16 +64,21 @@ def schedule_admits(
             logger.info(f"BAR_SCHED_BLOCK | {sym} | {setup_type} | risk:{risk_reason}")
             continue
 
-        # 2. Capital (portfolio + per-setup budget)
-        entry = float(plan.get("entry_ref_price", 0.0))
-        rps = float((plan.get("stop") or {}).get("risk_per_share", 0.0))
-        cap_seg = (plan.get("sizing") or {}).get("cap_segment", "unknown")
+        # 2. Capital (portfolio + per-setup budget).
+        # CapitalManager.can_enter_position signature:
+        #   (symbol, qty, price, cap_segment, mis_leverage, shadow, side, setup_type)
+        # Returns (ok: bool, qty_adjusted: int, reason: str).
+        sizing = plan.get("sizing") or {}
+        qty = int(sizing.get("qty", 0))
+        price = float(plan.get("entry_ref_price", 0.0))
+        cap_seg = sizing.get("cap_segment", "unknown")
+        mis_leverage = sizing.get("mis_leverage")
         bias = (plan.get("bias") or "short").upper()
         side = "BUY" if bias == "LONG" else "SELL"
 
-        cap_ok, cap_reason, _ = capital_manager.can_enter_position(
-            symbol=sym, side=side, entry_price=entry, stop_distance=rps,
-            cap_segment=cap_seg, setup_type=setup_type,
+        cap_ok, _qty_adjusted, cap_reason = capital_manager.can_enter_position(
+            symbol=sym, qty=qty, price=price, cap_segment=cap_seg,
+            mis_leverage=mis_leverage, side=side, setup_type=setup_type,
         )
         if not cap_ok:
             logger.info(f"BAR_SCHED_BLOCK | {sym} | {setup_type} | capital:{cap_reason}")

@@ -22,13 +22,15 @@ class _FakeCapitalManager:
         self._allow = allow_all
         self.admits = []
 
-    def can_enter_position(self, symbol, side, entry_price, stop_distance,
-                            cap_segment, setup_type=None, **_):
+    def can_enter_position(self, symbol, qty, price, cap_segment,
+                            mis_leverage=None, shadow=False, side="BUY",
+                            setup_type=None, **_):
+        # Returns (ok, qty_adjusted, reason) — matches real CapitalManager.
         if not self._allow:
-            return False, "no_capital", 0
-        return True, "", 100
+            return False, 0, "no_capital"
+        return True, 100, ""
 
-    def enter_position(self, symbol, side, qty, price, cap_segment, setup_type=None, **_):
+    def enter_position(self, symbol, qty, price, cap_segment, setup_type=None, **_):
         self.admits.append((symbol, setup_type))
 
 
