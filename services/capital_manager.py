@@ -94,6 +94,18 @@ class CapitalManager:
         self.enabled = enabled
         self.total_capital = initial_capital
         self.available_capital = initial_capital
+
+        # Per-setup capital budgets (2026-05-12 architectural refactor). Each
+        # setup gets a percentage share of total_capital. Tracking lets us
+        # reject new entries when a setup hits its cap, preventing one setup
+        # (e.g. gap_fade morning storm) from starving others (e.g. earnings_day
+        # at 10:30). Pipeline init wires this from setups_cfg.
+        self.setup_budgets_pct: Dict[str, float] = {}
+        self.setup_budget_used: Dict[str, float] = {}
+        # symbol -> setup_type that owns the position (for reduce_position to know
+        # which bucket to decrement when broker callback fires).
+        self._position_setup: Dict[str, str] = {}
+
         self.mis_enabled = mis_enabled
         self.max_positions = max_positions
         self.capital_utilization = max(0.5, min(1.0, capital_utilization))  # Clamp to [0.5, 1.0]
@@ -300,7 +312,8 @@ class CapitalManager:
         cap_segment: str = "unknown",
         mis_leverage: Optional[float] = None,
         shadow: bool = False,
-        side: str = "BUY"
+        side: str = "BUY",
+        setup_type: Optional[str] = None,
     ) -> Tuple[bool, int, str]:
         """
         Check if we can enter a new position and return adjusted quantity if needed.
@@ -416,7 +429,8 @@ class CapitalManager:
         cap_segment: str = "unknown",
         timestamp: Optional[datetime] = None,
         mis_leverage: Optional[float] = None,
-        shadow: bool = False
+        shadow: bool = False,
+        setup_type: Optional[str] = None,
     ) -> None:
         """
         Record a new position and allocate capital.
@@ -463,6 +477,13 @@ class CapitalManager:
 
         self.available_capital -= margin_used
 
+        # Track per-setup budget usage (2026-05-12 refactor).
+        if setup_type and setup_type in self.setup_budgets_pct:
+            self.setup_budget_used[setup_type] = (
+                self.setup_budget_used.get(setup_type, 0.0) + margin_used
+            )
+            self._position_setup[symbol] = setup_type
+
         # Update stats
         self.stats['max_concurrent_positions'] = max(self.stats['max_concurrent_positions'], len(self.positions))
         margin_used_total = sum(p['margin_used'] for p in self.positions.values())
@@ -505,6 +526,17 @@ class CapitalManager:
         pos['notional'] = pos['notional'] * (new_qty / original_qty)
 
         self.available_capital += margin_freed
+
+        # Decrement per-setup budget (2026-05-12 refactor). Uses the
+        # symbol→setup_type map established at enter_position time.
+        setup_type = self._position_setup.get(symbol)
+        if setup_type and setup_type in self.setup_budgets_pct:
+            self.setup_budget_used[setup_type] = max(
+                0.0, self.setup_budget_used.get(setup_type, 0.0) - margin_freed
+            )
+            # Clean up map on full exit (new_qty == 0)
+            if new_qty == 0:
+                self._position_setup.pop(symbol, None)
 
         logger.info(f"CAP_REDUCE | {symbol} | Qty: {original_qty} -> {new_qty} ({qty_exited} exited) | "
                     f"Margin freed: Rs.{margin_freed:,.0f} | "
