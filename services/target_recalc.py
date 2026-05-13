@@ -153,7 +153,19 @@ def recalculate_targets_for_actual_entry(
     # Fail-fast: a short that filled below its SL is uninvestable, full stop.
     _validate_sl_orientation(side, actual_entry, hard_sl)
 
-    anchor_type = plan.get("target_anchor_type", "structural")
+    # Treat a missing anchor_type as a plan-builder bug, not a "structural"
+    # default. Until 2026-05-13, screener_live.py stripped the field off the
+    # exec_item dict, so every plan defaulted to "structural" silently — which
+    # nullified r_multiple recalc for delivery_pct / options_vol_iv_rank_revert.
+    # Detectors that legitimately want structural preservation must say so
+    # explicitly (TradePlan dataclass default already does this).
+    anchor_type = plan.get("target_anchor_type")
+    if anchor_type is None:
+        raise UnknownAnchorTypeError(
+            None,
+            symbol=plan.get("symbol"),
+            strategy=plan.get("strategy"),
+        )
 
     if anchor_type == "structural":
         return _recalc_structural(adjusted, plan, actual_entry, side, hard_sl)

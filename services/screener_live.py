@@ -2030,6 +2030,14 @@ class ScreenerLive:
                     # priority is logged for bar_scheduler audit.
                     "exits": plan.get("exits"),
                     "priority": plan.get("priority"),
+                    # target_anchor_type drives services/target_recalc.py at fill
+                    # time. Missing from this re-build prior to 2026-05-13 caused
+                    # every plan to default to "structural" in the executor —
+                    # silently nullifying r_multiple recalc for delivery_pct +
+                    # options_vol_iv_rank_revert. Verified via run_0d03a7a6_*
+                    # smoke: DECISION event had r_multiple, but agent.log showed
+                    # STRUCTURAL_TARGET_PRESERVED for every trade.
+                    "target_anchor_type": plan.get("target_anchor_type"),
                 },
                 "meta": plan,
             }
