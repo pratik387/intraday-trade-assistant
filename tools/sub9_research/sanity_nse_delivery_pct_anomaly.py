@@ -398,9 +398,15 @@ def simulate_one(symbol: str, t1_date: pd.Timestamp, side: str,
         eligible = [v for k, v in closes_at_hhmm.items() if k <= hhmm]
         return float(eligible[-1]) if eligible else float("nan")
 
+    # Extended grid for time_stop sweep — capture closes across the full
+    # session so the sweep can find the data-optimal time_stop (was 13:00
+    # brief-asserted, never swept).
     close_at_1100 = _close_at(1100)
     close_at_1200 = _close_at(1200)
     close_at_1300 = _close_at(1300)
+    close_at_1400 = _close_at(1400)
+    close_at_1500 = _close_at(1500)
+    close_at_1525 = _close_at(1525)
 
     # PnL — calc_fee(entry_price, exit_price, qty, side) returns round-trip fees.
     # side: "BUY" for LONG (opened BUY), anything else (e.g. "SELL") for SHORT.
@@ -461,6 +467,9 @@ def simulate_one(symbol: str, t1_date: pd.Timestamp, side: str,
         "close_at_1100": close_at_1100,
         "close_at_1200": close_at_1200,
         "close_at_1300": close_at_1300,
+        "close_at_1400": close_at_1400,
+        "close_at_1500": close_at_1500,
+        "close_at_1525": close_at_1525,
     }
 
 

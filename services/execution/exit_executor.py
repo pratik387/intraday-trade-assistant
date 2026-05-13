@@ -686,12 +686,23 @@ class ExitExecutor:
         """Plan-as-source-of-truth (2026-05-12): per-position effective EOD
         = min(plan.exits.time_stop_hhmm, global eod). Plan can pull EOD
         EARLIER but not LATER than the global MIS auto-square cutoff.
+
+        Research-mode bypass (2026-05-13): under setups.<strategy>.wide_open=true
+        the plan's time_stop_hhmm is IGNORED — capture mode lets the trade
+        ride to natural SL/T2/EOD so cell-mining can discover the optimal
+        time_stop from data (e.g. delivery_pct's 13:00 was brief-asserted,
+        never swept). Global EOD (MIS auto-square) still binds as a hard cap.
         """
         plan_md = None
         try:
-            plan_ts = (pos.plan.get("exits") or {}).get("time_stop_hhmm") if pos and pos.plan else None
-            if plan_ts:
-                plan_md = _parse_hhmm_to_md(str(plan_ts).replace(":", ""))
+            strategy = (pos.plan.get("strategy") if pos and pos.plan else None)
+            from services.config_loader import is_wide_open_for_setup
+            if is_wide_open_for_setup(strategy):
+                plan_md = None  # bypass plan time_stop in research-mode capture
+            else:
+                plan_ts = (pos.plan.get("exits") or {}).get("time_stop_hhmm") if pos and pos.plan else None
+                if plan_ts:
+                    plan_md = _parse_hhmm_to_md(str(plan_ts).replace(":", ""))
         except Exception:
             plan_md = None
         if plan_md is None:
