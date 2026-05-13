@@ -195,48 +195,13 @@ class TriggerAwareExecutor:
                 logger.warning(f"Invalid qty for {symbol}: {qty}")
                 return False
 
-            # Validate entry price vs hard_sl distance
+            # Plan-level pre-entry validations (min_entry_sl_distance + RR floor) were
+            # removed 2026-05-13. Each setup's min_stop_distance_pct is already enforced
+            # by plan_orchestrator via enforce_min_stop_distance, and structural RR
+            # is cell-mined per setup (circuit_t1 ~0.3R, delivery_pct 0.25R are
+            # validated low-RR designs that the global 0.3 floor was killing).
             hard_sl = plan.get("hard_sl")
-
             logger.info(f"VALIDATION CHECK: {symbol} entry={price:.2f} hard_sl={hard_sl} side={side}")
-    
-            if hard_sl is not None:
-                # Sub-project #7: wide_open_mode bypasses min-entry-SL-distance floor.
-                # Sub7 mean-reversion detectors (cpr_mean_revert) place stops within
-                # ~0.3% of entry (just past pivot); the system-wide 0.3% safety floor
-                # blocks 200+/day of them. Same kill-switch rationale as S8.10/S8.11.
-                _wide_open = bool(self.cfg.get("wide_open_mode", False))
-                if not _wide_open:
-                    # Check minimum distance - configurable to avoid hardcoded trading rules
-                    from config.filters_setup import load_filters
-                    filters_config = load_filters()
-                    # KeyError if missing trading parameters
-                    min_distance_pct = filters_config["min_entry_sl_distance_pct"]
-                    min_distance_abs = filters_config["min_entry_sl_distance_abs"]
-                    min_distance = max(price * min_distance_pct, min_distance_abs)
-
-                    if side == "BUY" and price <= (hard_sl + min_distance):
-                        logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
-                        return False
-                    elif side == "SELL" and price >= (hard_sl - min_distance):
-                        logger.warning(f"REJECTED: {symbol} entry {price:.2f} too close to hard_sl {hard_sl:.2f} (min_distance={min_distance:.2f})")
-                        return False
-
-            # Pre-order R:R gate: reject if trigger price already compresses R:R
-            # Pure arithmetic (~microseconds) — avoids placing orders that will immediately exit
-            # Sub-project #7: wide_open_mode bypasses RR floor — sub7 detectors (gap_fade etc.)
-            # set their own RR logic; system-wide 0.3 floor blocks them legitimately.
-            _wide_open = bool(self.cfg.get("wide_open_mode", False))
-            if _wide_open:
-                pass  # Skip RR check — let detector-defined RR be the source of truth
-            else:
-                pre_ok, pre_reason = self._check_fill_quality(plan, price, side)
-                if not pre_ok:
-                    logger.warning(
-                        f"PRE_ORDER_RR_REJECT | {symbol} | Skipping entry | "
-                        f"Price: {price:.2f} | Reason: {pre_reason}"
-                    )
-                    return False
 
             # Check if this is a shadow trade (simulated, no capital consumed)
             is_shadow = plan.get("shadow", False)
@@ -285,18 +250,9 @@ class TriggerAwareExecutor:
                     except Exception as e:
                         logger.warning(f"Failed to reconcile position for {symbol}: {e}")
 
-                # Fill Quality Gate: Exit immediately if fill degrades R:R below threshold
-                # Sub-project #7: wide_open_mode also bypasses post-fill RR check (same
-                # rationale as the pre-order bypass at L217). Without this, sub7 detector
-                # plans whose risk:target geometry sits below the system-wide 0.3 floor get
-                # immediately exited at fill price (PnL=0), masking the real outcome.
-                if _wide_open:
-                    pass
-                else:
-                    can_proceed, fq_reason = self._check_fill_quality(plan, price, side)
-                    if not can_proceed:
-                        self._immediate_exit_bad_fill(symbol, side, qty, price, order_id, fq_reason, plan)
-                        return False
+                # Post-fill RR check (removed 2026-05-13): contradicted cell-mined
+                # low-RR setups; bad-fill detection now relies on broker reconcile
+                # + per-setup hard_sl/structural targets.
 
             # Log TRIGGER to events.jsonl (single writer: diag_event_log)
             try:
@@ -456,214 +412,6 @@ class TriggerAwareExecutor:
             logger.warning(f"Target recalculation failed: {e}, using original targets")
             return plan
 
-    def _check_fill_quality(
-        self, plan: Dict[str, Any], actual_fill: float, side: str
-    ) -> Tuple[bool, str]:
-        """
-        Validate that actual fill doesn't degrade R:R below acceptable threshold.
-
-        Pro trader insight: A trade that looked good at decision time may become
-        unacceptable after fill slippage compresses the R:R. Better to exit
-        immediately and take a small loss than hold a negative expectancy trade.
-
-        Returns:
-            (can_proceed, reason_string)
-        """
-        # Get config thresholds
-        fq_cfg = self.cfg.get("fill_quality", {})
-        if not fq_cfg.get("enabled", False):
-            return True, "fill_quality_disabled"
-
-        min_rr = fq_cfg.get("min_rr_to_t1")
-        max_slippage_pct = fq_cfg.get("max_slippage_pct")
-
-        # Get plan values
-        hard_sl = plan.get("stop", {}).get("hard") or plan.get("hard_sl")
-        targets = plan.get("targets", [])
-        t1_level = targets[0].get("level") if targets else None
-        entry_ref = plan.get("entry_ref_price") or plan.get("price")
-
-        if not all([hard_sl, t1_level, entry_ref]):
-            return True, "incomplete_plan_data"
-
-        # Calculate slippage percentage
-        slippage_pct = abs(actual_fill - entry_ref) / entry_ref * 100
-
-        # Calculate actual R:R to T1
-        if side.upper() == "BUY":
-            actual_risk = actual_fill - hard_sl
-            actual_reward_t1 = t1_level - actual_fill
-        else:  # SELL/SHORT
-            actual_risk = hard_sl - actual_fill
-            actual_reward_t1 = actual_fill - t1_level
-
-        # Check if SL already breached
-        if actual_risk <= 0:
-            return False, f"sl_already_breached:fill={actual_fill:.2f},sl={hard_sl:.2f}"
-
-        # Use target_risk for RR calculation — matches the risk basis used to compute targets.
-        # Breakout targets use structure risk (ORH-ORL), not absolute entry-to-SL distance.
-        # Falls back to actual_risk for legacy plans or non-breakout trades without target_risk.
-        target_risk = plan.get("stop", {}).get("target_risk")
-        rr_denominator = target_risk if target_risk and target_risk > 0 else actual_risk
-        actual_rr = actual_reward_t1 / rr_denominator if rr_denominator > 0 else 0
-        risk_tag = "target" if (target_risk and target_risk > 0) else "absolute"
-
-        # Check slippage — but skip if fill is within entry zone.
-        # The entry zone defines the structurally acceptable fill range;
-        # slippage from the reference price is irrelevant if the fill is in-zone.
-        entry_zone = plan.get("entry_zone") or plan.get("entry", {}).get("zone", [])
-        in_zone = len(entry_zone) == 2 and entry_zone[0] <= actual_fill <= entry_zone[1]
-
-        if not in_zone and slippage_pct > max_slippage_pct:
-            return False, f"slippage_exceeded:{slippage_pct:.2f}%>{max_slippage_pct}%"
-
-        if actual_rr < min_rr:
-            return False, f"rr_compressed:{actual_rr:.2f}<{min_rr}(risk={risk_tag})"
-
-        zone_tag = "in_zone" if in_zone else f"slip={slippage_pct:.2f}%"
-        return True, f"fill_ok:rr={actual_rr:.2f},{zone_tag},risk={risk_tag}"
-
-    def _immediate_exit_bad_fill(
-        self,
-        symbol: str,
-        side: str,
-        qty: int,
-        fill_price: float,
-        order_id: str,
-        reason: str,
-        plan: Dict[str, Any] = None
-    ) -> None:
-        """
-        Exit position immediately due to poor fill quality.
-
-        This is the disciplined response when a fill degrades R:R below threshold.
-        Accept the small loss rather than hold a negative expectancy trade.
-        """
-        exit_side = "SELL" if side.upper() == "BUY" else "BUY"
-
-        # Block this symbol from re-entry for the rest of the session
-        self._fq_rejected.add(symbol)
-
-        logger.warning(
-            f"FILL_QUALITY_EXIT | {symbol} | Exiting {qty} @ market | "
-            f"Entry: {fill_price:.2f} | Reason: {reason}"
-        )
-
-        try:
-            # Place immediate exit order
-            order_id = self.broker.place_order(
-                symbol=symbol,
-                side=exit_side,
-                qty=qty,
-                order_type="MARKET",
-                product="MIS",
-                variety="regular"
-            )
-
-            # Get actual exit price: broker reconciliation → LTP fallback → entry price fallback
-            actual_exit_px = fill_price  # Default to entry price
-            if order_id and hasattr(self.broker, 'reconcile_exit'):
-                try:
-                    reconciled = self.broker.reconcile_exit(
-                        symbol=symbol,
-                        order_id=order_id,
-                        expected_qty=qty,
-                        position_qty_before=qty,
-                        timeout=0.5
-                    )
-                    if reconciled:
-                        broker_fill = reconciled.get("avg_price")
-                        if broker_fill and broker_fill > 0:
-                            actual_exit_px = broker_fill
-                            logger.info(
-                                f"FILL_QUALITY_EXIT_FILL | {symbol} | Broker: {actual_exit_px:.2f} | "
-                                f"Entry: {fill_price:.2f} | Slippage: {actual_exit_px - fill_price:+.2f}"
-                            )
-                except Exception as e:
-                    logger.warning(f"FILL_QUALITY_EXIT | {symbol} | Reconcile failed: {e}")
-
-            # LTP fallback if broker reconciliation didn't yield a price
-            if actual_exit_px == fill_price:
-                try:
-                    ltp, _ = self.get_ltp_ts(symbol)
-                    if ltp and ltp > 0:
-                        actual_exit_px = ltp
-                except Exception:
-                    pass  # Keep fill_price as fallback
-
-            # Calculate actual PnL
-            if side.upper() == "BUY":
-                pnl = round((actual_exit_px - fill_price) * qty, 2)
-            else:
-                pnl = round((fill_price - actual_exit_px) * qty, 2)
-
-            logger.info(
-                f"FILL_QUALITY_EXIT_DONE | {symbol} | Exit: {actual_exit_px:.2f} | PnL: {pnl:+.2f}"
-            )
-
-            # Release capital allocation
-            if self.capital_manager:
-                self.capital_manager.exit_position(symbol)
-
-            # Use tick timestamp for backtest compatibility
-            exit_ts = self._last_tick_ts if self._last_tick_ts else self._get_current_time()
-
-            # Log EXIT to events.jsonl (single writer: diag_event_log)
-            try:
-                diag_event_log.log_exit(
-                    symbol=symbol,
-                    plan=plan or {},
-                    reason=f"fill_quality_rejected:{reason}",
-                    exit_price=actual_exit_px,
-                    exit_qty=qty,
-                    ts=exit_ts,
-                    pnl=pnl,
-                    diagnostics={"fill_quality_reason": reason},
-                )
-            except Exception as _diag_err:
-                logger.warning("diag_event_log.log_exit failed for %s: %s", symbol, _diag_err)
-
-            # Log EXIT to trade_logs.log (human-readable)
-            if self.trading_logger:
-                self.trading_logger.log_exit({
-                    "symbol": symbol, "reason": f"fill_quality_rejected:{reason}",
-                    "qty": qty, "entry_price": fill_price, "exit_price": actual_exit_px, "pnl": pnl,
-                })
-
-            # Log closed trade to API server for dashboard display
-            if self.api_server:
-                plan = plan or {}
-                stop_data = plan.get("stop", {})
-                sl = stop_data.get("hard") if isinstance(stop_data, dict) else plan.get("sl")
-                targets = plan.get("targets", [])
-                t1 = targets[0].get("level") if targets and len(targets) > 0 else plan.get("t1")
-
-                closed_trade = {
-                    "symbol": symbol,
-                    "side": side.upper(),
-                    "qty": qty,
-                    "entry_price": round(fill_price, 2),
-                    "exit_price": round(actual_exit_px, 2),
-                    "pnl": pnl,
-                    "exit_reason": f"fill_quality_rejected:{reason}",
-                    "setup": plan.get("setup_type", "unknown"),
-                    "exit_time": str(exit_ts),
-                    "entry_time": plan.get("entry_ts") or plan.get("trigger_ts"),
-                    "sl": round(sl, 2) if sl else None,
-                    "t1": round(t1, 2) if t1 else None,
-                    "t2": None,
-                    "shadow": plan.get("shadow", False),
-                }
-                self.api_server.log_closed_trade(closed_trade)
-
-                # Broadcast to WebSocket for real-time dashboard (skip shadow trades)
-                if not plan.get("shadow", False):
-                    self.api_server.broadcast_ws("closed_trade", closed_trade)
-
-        except Exception as e:
-            logger.error(f"FILL_QUALITY_EXIT_FAILED | {symbol} | {e}")
-
     def _cleanup_expired_trades(self) -> None:
         """Clean up expired and completed trades
 
@@ -788,9 +536,6 @@ class TriggerAwareExecutor:
         trigger_cfg = self.cfg.get("trigger_system", {})
         self.staleness_seconds = float(trigger_cfg.get("staleness_seconds", 1800))
         
-        # Symbols rejected by fill quality gate — block re-entry for the session
-        self._fq_rejected: set = set()
-
         # Hook into BarBuilder's 1m callback
         self.original_1m_handler = bar_builder._on_1m_close
         bar_builder._on_1m_close = self._enhanced_1m_handler
@@ -1055,11 +800,6 @@ class TriggerAwareExecutor:
             
             if not symbol or not plan:
                 logger.warning("Invalid trade item received")
-                return
-
-            # Block re-entry for symbols rejected by fill quality gate
-            if symbol in self._fq_rejected:
-                logger.info(f"PLAN_SKIP | {symbol} | Previously rejected by fill quality gate, ignoring")
                 return
 
             # Block duplicate entry — symbol already has an open position.
