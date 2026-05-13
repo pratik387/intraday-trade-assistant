@@ -446,23 +446,35 @@ def get_trade_mis_leverage(trade: dict, mis_from_csv: Dict[str, float],
 # =============================================================================
 
 def calculate_single_trade_charges(entry_price: float, exit_price: float,
-                                    qty: int) -> Dict[str, float]:
+                                    qty: int,
+                                    mis_leverage: float = 1.0) -> Dict[str, float]:
     """
     Calculate Zerodha intraday charges for a single trade (1 buy + 1 sell order).
 
     Uses exact per-order brokerage cap instead of averaging.
 
+    IMPORTANT: `qty` is the BASE share count from the plan (sized to Rs.1000
+    unleveraged risk). When MIS leverage is enabled, the broker holds
+    `qty * mis_leverage` shares, and Zerodha charges fees on that FULL
+    leveraged notional — not the base notional. Pass mis_leverage so the
+    per-order brokerage cap (Rs.20) is evaluated against the real position
+    size; otherwise fees are silently undercounted (~2-3x on typical trades).
+
     Args:
         entry_price: Entry price per share
         exit_price: Exit price per share
-        qty: Number of shares
+        qty: Base share count (unleveraged)
+        mis_leverage: MIS leverage applied (1.0 = NRML, 5.0 = full MIS).
+                       Default 1.0 keeps backward compat with non-MIS callers.
 
     Returns:
         Dict with brokerage, stt, exchange, sebi, ipft, stamp_duty, gst,
         total_charges
     """
-    buy_turnover = entry_price * qty
-    sell_turnover = exit_price * qty
+    lev = max(float(mis_leverage), 1.0)
+    qty_actual = int(round(qty * lev))
+    buy_turnover = entry_price * qty_actual
+    sell_turnover = exit_price * qty_actual
     total_turnover = buy_turnover + sell_turnover
 
     # Per-order brokerage with Rs 20 cap
@@ -545,7 +557,12 @@ def calculate_per_trade_final_pnl(trades: List[dict],
             exit_p = trade.get('exit_price', 0)
             qty = trade.get('qty', 0)
             if entry_p > 0 and exit_p > 0 and qty > 0:
-                charges = calculate_single_trade_charges(entry_p, exit_p, qty)
+                # Pass mis_leverage so brokerage cap is evaluated against the
+                # true leveraged position. Bug history 2026-05-13: omitted
+                # multiplier produced ~3x fee under-count and Rs.650K+ NET
+                # overstatement on 2yr OCI Discovery.
+                charges = calculate_single_trade_charges(entry_p, exit_p, qty,
+                                                         mis_leverage=multiplier)
                 trade_charges = charges['total_charges']
         total_charges += trade_charges
 

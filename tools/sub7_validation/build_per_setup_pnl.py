@@ -29,14 +29,24 @@ STAMP_RATE = 0.00003
 GST_RATE = 0.18
 
 
-def calc_fee(entry_price: float, exit_price: float, qty: int, side: str) -> float:
-    """Compute round-trip fees for one Indian intraday equity trade."""
+def calc_fee(entry_price: float, exit_price: float, qty: int, side: str,
+             mis_leverage: float = 1.0) -> float:
+    """Compute round-trip fees for one Indian intraday equity trade.
+
+    IMPORTANT: `qty` is the BASE share count (sized for unleveraged Rs.1000
+    risk). When MIS leverage is enabled, the broker holds qty*mis_leverage
+    shares and charges fees on that full notional. Pass mis_leverage so the
+    Rs.20/leg brokerage cap is evaluated against the real position size;
+    otherwise fees undercount by ~2-3x on typical trades.
+    """
     if qty <= 0 or entry_price is None or exit_price is None:
         return 0.0
     if pd.isna(entry_price) or pd.isna(exit_price):
         return 0.0
-    entry_to = float(entry_price) * int(qty)
-    exit_to = float(exit_price) * int(qty)
+    lev = max(float(mis_leverage), 1.0)
+    qty_actual = int(round(int(qty) * lev))
+    entry_to = float(entry_price) * qty_actual
+    exit_to = float(exit_price) * qty_actual
 
     eb = min(BROK_RATE * entry_to, BROK_CAP)
     xb = min(BROK_RATE * exit_to, BROK_CAP)

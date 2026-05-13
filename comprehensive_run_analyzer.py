@@ -57,14 +57,21 @@ except ImportError:
         load_mis_from_trade_reports, get_trade_mis_leverage,
     )
 
-def estimate_trade_charges(entry_price, exit_price, qty):
+def estimate_trade_charges(entry_price, exit_price, qty, mis_leverage=1.0):
     """
     Estimate Zerodha intraday charges for a single trade.
     Uses per-order brokerage cap from calculate_single_trade_charges().
+
+    mis_leverage scales the position to the broker's true holding so the
+    Rs.20/leg cap is evaluated against the leveraged notional. Bug history
+    2026-05-13: previously omitted, causing ~3x fee under-count.
     """
-    result = calculate_single_trade_charges(entry_price, exit_price, qty)
-    buy_turnover = entry_price * qty
-    sell_turnover = exit_price * qty
+    result = calculate_single_trade_charges(entry_price, exit_price, qty,
+                                            mis_leverage=mis_leverage)
+    lev = max(float(mis_leverage), 1.0)
+    qty_actual = int(round(qty * lev))
+    buy_turnover = entry_price * qty_actual
+    sell_turnover = exit_price * qty_actual
     result['turnover'] = round(buy_turnover + sell_turnover, 2)
     return result
 
@@ -1946,13 +1953,18 @@ class ComprehensiveRunAnalyzer:
                 mis_pnl_total += trade_mis_pnl
                 all_multipliers.append(mis_mult)
 
-                # 2. Per-trade charges
+                # 2. Per-trade charges — fees scale with REAL MIS-leveraged
+                # position size, not base qty. Bug history (2026-05-13):
+                # estimate_trade_charges used to be called with base qty,
+                # under-counting fees by ~3x and over-reporting NET P&L by
+                # Rs.650K+ on 2yr Discovery. Now pass mis_mult through.
                 trade_charges = 0.0
                 entry_price = trade.get('entry_price', 0)
                 exit_price = trade.get('exit_price', 0)
                 qty = trade.get('qty', 1)
                 if entry_price > 0 and exit_price > 0 and qty > 0:
-                    charges = estimate_trade_charges(entry_price, exit_price, qty)
+                    charges = estimate_trade_charges(entry_price, exit_price,
+                                                     qty, mis_leverage=mis_mult)
                     trade_charges = charges['total_charges']
                 total_charges += trade_charges
 
