@@ -18,6 +18,7 @@ from utils.price_utils import round_to_tick
 from diagnostics.diag_event_log import diag_event_log
 from services.target_recalc import (
     InvertedSLError,
+    UnknownAnchorTypeError,
     recalculate_targets_for_actual_entry,
 )
 
@@ -408,6 +409,16 @@ class TriggerAwareExecutor:
                 f"{plan.get('strategy')} {e} — keeping original plan"
             )
             return plan
+        except UnknownAnchorTypeError as e:
+            # Detector bug — silent fall-through used to keep detect-time
+            # targets (broken in production for months on delivery_pct).
+            # Fail loud so a future typo cannot ship: outer `except Exception`
+            # in execute_trade() catches this and rejects the entry.
+            logger.error(
+                f"TARGET_RECALC_UNKNOWN_ANCHOR: {plan.get('symbol')} "
+                f"{plan.get('strategy')} {e} — REJECTING entry"
+            )
+            raise
         except Exception as e:
             logger.warning(f"Target recalculation failed: {e}, using original targets")
             return plan

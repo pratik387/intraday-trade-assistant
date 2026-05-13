@@ -58,6 +58,9 @@ from utils.price_utils import round_to_tick
 logger = get_agent_logger()
 
 
+_VALID_ANCHOR_TYPES = ("structural", "r_multiple", "or_range")
+
+
 class InvertedSLError(Exception):
     """Actual entry crossed the planned hard_sl — the trade is structurally
     broken (entered on the wrong side of the stop). Caller should immediate-
@@ -70,6 +73,29 @@ class InvertedSLError(Exception):
         super().__init__(
             f"Inverted SL: {side} actual_entry={actual_entry:.2f} "
             f"vs hard_sl={hard_sl:.2f}"
+        )
+
+
+class UnknownAnchorTypeError(ValueError):
+    """Raised when a detector emits a target_anchor_type the dispatcher
+    doesn't recognize.
+
+    History: until 2026-05-13 the dispatcher logged a warning and silently
+    fell through to `_recalc_structural`, which KEPT detect-time T1/T2
+    unchanged. Three detectors had set "arithmetic" (not in the dispatch
+    table) and shipped broken for months — delivery_pct lost ~Rs.70K on
+    Discovery alone because T2 was anchored to detect-bar close instead of
+    actual entry. Fail-fast prevents that class of bug.
+    """
+
+    def __init__(self, anchor_type, symbol=None, strategy=None):
+        self.anchor_type = anchor_type
+        self.symbol = symbol
+        self.strategy = strategy
+        super().__init__(
+            f"Unknown target_anchor_type={anchor_type!r} for "
+            f"{symbol or '?'}/{strategy or '?'}. "
+            f"Valid: {_VALID_ANCHOR_TYPES}"
         )
 
 
@@ -139,11 +165,11 @@ def recalculate_targets_for_actual_entry(
     if anchor_type == "or_range":
         return _recalc_or_range(adjusted, plan, actual_entry, side)
 
-    logger.warning(
-        f"TARGET_RECALC: unknown target_anchor_type={anchor_type!r} for "
-        f"{plan.get('symbol')} {plan.get('strategy')} — preserving structural"
+    raise UnknownAnchorTypeError(
+        anchor_type,
+        symbol=plan.get("symbol"),
+        strategy=plan.get("strategy"),
     )
-    return _recalc_structural(adjusted, plan, actual_entry, side, hard_sl)
 
 
 # ---------------------------------------------------------------------------
