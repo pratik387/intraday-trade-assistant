@@ -445,52 +445,103 @@ def download_monthly_cache(date_str):
 
 def download_index_ohlcv():
     """
-    Download index OHLCV feather from OCI Object Storage.
-    Required by DirectionalBiasTracker for backtest Nifty price lookups.
+    Download NIFTY 50 index OHLCV feathers (1m + daily) from OCI Object Storage.
 
-    Bucket path:  index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1minutes.feather
-    Local path:   /app/backtest-cache-download/index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1minutes.feather
+    Required by:
+      - DirectionalBiasTracker (1m): backtest Nifty price lookups
+      - MarketRegimeGate.compute_regime_multi_tf (daily): broad-market regime
+        — used by EVERY active setup via ctx.regime in detect()
+
+    Bucket paths:
+      index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1minutes.feather
+      index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1days.feather
     """
-    log("Downloading index OHLCV for directional bias...")
+    log("Downloading NIFTY 50 OHLCV (1m + daily) for directional bias + regime gate...")
 
     config = oci.config.from_file()
     os_client = oci.object_storage.ObjectStorageClient(config)
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+    local_dir = Path('/app/backtest-cache-download/index_ohlcv/NSE_NIFTY_50')
+    local_dir.mkdir(parents=True, exist_ok=True)
 
+    for object_name, local_name in [
+        ("index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1minutes.feather", "NSE_NIFTY_50_1minutes.feather"),
+        ("index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1days.feather",    "NSE_NIFTY_50_1days.feather"),
+    ]:
+        local_file = local_dir / local_name
+        try:
+            get_obj = os_client.get_object(
+                namespace_name=namespace,
+                bucket_name=bucket,
+                object_name=object_name,
+            )
+            with open(local_file, 'wb') as f:
+                for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                    f.write(chunk)
+            size_mb = local_file.stat().st_size / (1024 * 1024)
+            log(f"Downloaded {object_name}: {size_mb:.2f} MB")
+        except oci.exceptions.ServiceError as e:
+            if e.status == 404:
+                log(f"WARNING: {object_name} not found in OCI; regime/directional features degraded")
+            else:
+                log(f"ERROR downloading {object_name}: {e}")
+                raise
+        except Exception as e:
+            log(f"ERROR downloading {object_name}: {e}")
+            raise
+
+
+def download_earnings_calendar():
+    """Download earnings_events.parquet for the earnings_day_intraday_fade detector.
+
+    Single file (~700 KB) at `earnings_calendar/earnings_events.parquet`.
+    Loaded once at session start by services/earnings_calendar_loader._load()
+    and used by setup_universe.earnings_day_universe() + detector to decide
+    whether (symbol, T+0) is a BMO/AMC earnings day.
+
+    Built locally by tools/earnings_calendar/fetch_earnings.py from NSE
+    intimation feeds. Uploaded via oci/tools/upload_earnings_calendar.py
+    (mirror of upload_delivery_pct.py).
+
+    Bucket layout:
+        earnings_calendar/earnings_events.parquet
+
+    404 = file missing: detector silently no-fires every earnings signal
+    and earnings_day_universe returns empty set. This is exactly what
+    happened in the 20260513-153257_full OCI run (earnings_day=0 across
+    every single date) — the file existed locally but was never uploaded.
+    """
+    log("Downloading earnings_events parquet for earnings_day_intraday_fade...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
     namespace = os_client.get_namespace().data
     bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
 
-    object_name = "index_ohlcv/NSE_NIFTY_50/NSE_NIFTY_50_1minutes.feather"
+    object_name = "earnings_calendar/earnings_events.parquet"
+    local_dir = Path('/app/data/earnings_calendar')
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_file = local_dir / Path(object_name).name
 
     try:
         get_obj = os_client.get_object(
             namespace_name=namespace,
             bucket_name=bucket,
-            object_name=object_name
+            object_name=object_name,
         )
-
-        local_dir = Path('/app/backtest-cache-download/index_ohlcv/NSE_NIFTY_50')
-        local_dir.mkdir(parents=True, exist_ok=True)
-
-        local_file = local_dir / 'NSE_NIFTY_50_1minutes.feather'
-
         with open(local_file, 'wb') as f:
             for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
                 f.write(chunk)
-
         size_mb = local_file.stat().st_size / (1024 * 1024)
-        log(f"Downloaded index OHLCV: {size_mb:.1f} MB")
-
+        log(f"Downloaded {object_name}: {size_mb:.2f} MB")
     except oci.exceptions.ServiceError as e:
         if e.status == 404:
-            log(f"WARNING: Index OHLCV not found in OCI: {object_name}")
-            log("Directional bias will be disabled for this run")
+            log(f"WARNING: {object_name} not found in OCI cache; "
+                "earnings_day_intraday_fade detector will silently skip every signal. "
+                "Run oci/tools/upload_earnings_calendar.py to upload.")
         else:
-            log(f"ERROR downloading index OHLCV: {e}")
-            raise
-
-    except Exception as e:
-        log(f"ERROR downloading index OHLCV: {e}")
-        raise
+            log(f"ERROR downloading {object_name}: {e}")
 
 
 def download_option_chain(date_str):
@@ -891,6 +942,12 @@ def main():
     # bars for the in-detector RVOL calculation. Detector rejects with
     # "cross-day RVOL unavailable" if absent — every signal blocked.
     download_cross_day_rvol()
+
+    # Download earnings_events parquet for earnings_day_intraday_fade
+    # (~700 KB, single file). Without this the universe loader silently
+    # returns empty set and earnings_day fires ZERO entries across the
+    # entire run (see 20260513-153257_full for the bug we are fixing).
+    download_earnings_calendar()
 
     # Run backtest
     result = run_backtest(date_str)
