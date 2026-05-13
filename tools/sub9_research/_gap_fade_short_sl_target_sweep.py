@@ -37,6 +37,22 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from services.symbol_metadata import get_cap_segment            # noqa: E402
+from services.state.zerodha_mis_fetcher import ZerodhaMISFetcher  # noqa: E402
+
+
+_MIS_FETCHER = None
+
+
+def _get_mis_allowed_set() -> set:
+    """Production-parity MIS filter — current Zerodha MIS list as proxy."""
+    global _MIS_FETCHER
+    if _MIS_FETCHER is None:
+        _MIS_FETCHER = ZerodhaMISFetcher()
+        if not _MIS_FETCHER.load_from_zerodha():
+            print("  WARN: MIS list load failed — proceeding without MIS filter")
+            return set()
+        print(f"  MIS list loaded: {_MIS_FETCHER.count()} symbols")
+    return set(_MIS_FETCHER._mis_symbols.keys())
 from tools.sub7_validation.build_per_setup_pnl import calc_fee  # noqa: E402
 
 RISK_PER_TRADE_RUPEES = 1000
@@ -120,6 +136,10 @@ def detect_triggers_streaming(
         # Pre-filter by cap_segment via cap_map
         m["cap_segment"] = m["symbol"].map(cap_map)
         m = m[m["cap_segment"].isin(ALLOWED_CAPS)]
+        # MIS-eligibility filter (production parity — Zerodha MIS list)
+        _mis_set = _get_mis_allowed_set()
+        if _mis_set:
+            m = m[m["symbol"].isin(_mis_set)]
         if m.empty:
             del m
             continue

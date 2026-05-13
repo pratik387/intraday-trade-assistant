@@ -31,6 +31,23 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from services.symbol_metadata import get_cap_segment              # noqa: E402
+from services.state.zerodha_mis_fetcher import ZerodhaMISFetcher    # noqa: E402
+
+
+# MIS-eligibility helper (production parity — Zerodha MIS list applied as
+# proxy for the whole period to mirror early_mis_universe_filter).
+_MIS_FETCHER = None
+
+
+def _get_mis_allowed_set() -> set:
+    global _MIS_FETCHER
+    if _MIS_FETCHER is None:
+        _MIS_FETCHER = ZerodhaMISFetcher()
+        if not _MIS_FETCHER.load_from_zerodha():
+            print("  WARN: MIS list load failed — proceeding without MIS filter")
+            return set()
+        print(f"  MIS list loaded: {_MIS_FETCHER.count()} symbols")
+    return set(_MIS_FETCHER._mis_symbols.keys())
 from tools.sub7_validation.build_per_setup_pnl import calc_fee     # noqa: E402
 
 
@@ -211,6 +228,13 @@ def find_triggers(big5m: pd.DataFrame, universe: set, events: pd.DataFrame,
     df["cap_segment"] = df["nse_symbol"].apply(get_cap_segment)
     df = df[df["cap_segment"].isin(ALLOWED_CAPS)].copy()
     print(f"    F&O 200 + mid/small_cap: {len(df):,}")
+
+    # MIS-eligibility filter (production parity)
+    mis_set = _get_mis_allowed_set()
+    if mis_set:
+        before = len(df)
+        df = df[df["symbol"].isin(mis_set)].copy()
+        print(f"    after MIS filter: {len(df):,} (-{before-len(df):,})")
 
     # restrict 5m bars to (symbol, trade_date) in earnings events
     event_keys = set(zip(events["bare_symbol"], events["trade_date"]))

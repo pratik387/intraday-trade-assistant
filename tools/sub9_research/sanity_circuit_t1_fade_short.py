@@ -35,7 +35,23 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from services.symbol_metadata import get_cap_segment           # noqa: E402
+from services.state.zerodha_mis_fetcher import ZerodhaMISFetcher  # noqa: E402
 from tools.sub7_validation.build_per_setup_pnl import calc_fee  # noqa: E402
+
+
+# MIS-eligibility helper (production parity — see delivery_pct sanity docstring).
+_MIS_FETCHER = None
+
+
+def _get_mis_allowed_set() -> set:
+    global _MIS_FETCHER
+    if _MIS_FETCHER is None:
+        _MIS_FETCHER = ZerodhaMISFetcher()
+        if not _MIS_FETCHER.load_from_zerodha():
+            print("  WARN: MIS list load failed — proceeding without MIS filter")
+            return set()
+        print(f"  MIS list loaded: {_MIS_FETCHER.count()} symbols")
+    return set(_MIS_FETCHER._mis_symbols.keys())
 
 
 # ---- Config knobs (matching the §3.3 brief) ----
@@ -173,7 +189,14 @@ def detect_circuit_hits(daily: pd.DataFrame) -> pd.DataFrame:
     df["nse_symbol"] = "NSE:" + df["symbol"].astype(str)
     df["cap_segment"] = df["nse_symbol"].apply(get_cap_segment)
     df = df[df["cap_segment"].isin(ALLOWED_CAPS)]
-    print(f"    cap_segment ∈ {sorted(ALLOWED_CAPS)}:    {len(df):,}")
+    print(f"    cap_segment in {sorted(ALLOWED_CAPS)}:    {len(df):,}")
+
+    # MIS-eligibility filter (production parity)
+    mis_set = _get_mis_allowed_set()
+    if mis_set:
+        before = len(df)
+        df = df[df["symbol"].isin(mis_set)]
+        print(f"    after MIS filter:                       {len(df):,} (-{before-len(df):,})")
 
     return df.reset_index(drop=True)
 
