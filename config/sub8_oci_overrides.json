@@ -25,7 +25,8 @@
       "enabled": true
     },
     "expiry_pin_strike_reversal": {
-      "enabled": true
+      "_retired_2026_05_14": "Disabled in OCI override too — base config says enabled=False with _status_2026_05_12_RETIRED note. Override was leaking 2 fires/2yr (both losers, NET -Rs.6,130 MIS). Signal logic never sanity-validated. Keep disabled until someone runs the validation pass.",
+      "enabled": false
     },
     "circuit_t1_fade_short": {
       "enabled": true
