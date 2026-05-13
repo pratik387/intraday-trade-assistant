@@ -264,13 +264,9 @@ def _init_stage0_worker(config_dict):
         root.handlers.clear()
         root.addHandler(logging.NullHandler())
 
-        # Initialize scanner JSONL logger in subprocess so scanning.jsonl gets written
-        log_dir = config_dict.get("_log_dir")
-        if log_dir:
-            from pathlib import Path
-            from config.logging_config import JSONLLogger
-            import config.logging_config as _lc
-            _lc._scanner_logger = JSONLLogger(Path(log_dir) / "scanning.jsonl", "scanner")
+        # scanning.jsonl disabled 2026-05-12 (architectural refactor):
+        # Stage-0 shortlisting was replaced by universe-driven scanning,
+        # so per-symbol stage-0 logs are no longer meaningful.
 
         from services.scan.energy_scanner import EnergyScanner
 

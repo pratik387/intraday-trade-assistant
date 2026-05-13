@@ -11,6 +11,47 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-12 (#3) — Plan-as-source-of-truth is binding architecture; the gate chain accumulated cruft that anti-selected our setups
+
+**What went wrong:** The system had a 5-stage filter chain after detector accept:
+1. Stage-0 top-K (drops to top-1000 by intraday momentum — anti-selecting for our setups)
+2. RuleFilter (admit-all, no-op)
+3. CrossSectionalGate (RVOL + crowdedness — partly useful, partly redundant)
+4. ConvictionGate (XGBoost — rejected 90% of profitable trades; HIGH conv +50% per-trade but ~7x absolute profit lost)
+5. DedupGate (per-symbol cooloff — useful)
+
+The chain accumulated incrementally. Each gate solved a specific case at the time, but
+together they nullified the per-setup edge our sweeps proved. Smoke showed 8 detector
+accepts → 1 final admit on 2024-08-29 (87% rejected).
+
+Plus the executor had its own override forest (eod_scale_out, score_drop, generic
+time_stop, sl_time_widening) that overrode plan-owned exits — the trade that DID fire
+exited at 15:00 via eod_scale_out, not at the plan's locked 13:00 time_stop.
+
+**Rule:**
+1. **Each setup config is the SOLE authority** for: entry conditions, SL, targets,
+   qty_pct per target, time_stop_hhmm, trail, priority, capital_budget_pct,
+   max_concurrent, cooloff, rate-limit.
+2. **Executor honors ONLY plan fields** — no global overrides for time-stop or partial
+   qty. Global EOD remains as a hard safety cap (MIS auto-square), but plan's earlier
+   time_stop wins.
+3. **Universe-union is the shortlist** — Stage-0's intraday momentum ranking can't see
+   cross-day signals (circuit hits, earnings, delivery anomalies, gaps from PDC), so
+   it anti-selects for these setups. Each setup declares its qualifying universe;
+   union is the per-bar shortlist.
+4. **Bar-level scheduling resolves capital contention** via explicit priority
+   (setup_priority × detector.quality_score / 100). When capital is tight, high-PF
+   setups get first dibs. No black-box ML deciding which trades survive.
+5. **ConvictionGate's XGBoost may have value, but as a SCORER not a FILTER** — to
+   re-introduce, multiply plan.priority by predicted_r. Never use as a hard reject.
+   And retrain on POST-refactor data, not stale sub7+sub8 trades.
+
+**Lines saved by the refactor:** ~2000 LOC deleted (gate_chain/, cross_sectional/,
+conviction gate+scorer, executor exit cruft). System is leaner, plan is genuinely
+authoritative, model retraining is now optional (not a precondition for shipping).
+
+---
+
 ### 2026-05-12 (#2) — Detector implementation must EXACTLY mirror validated sanity logic — silent exit-logic divergence destroyed circuit_t1
 **What went wrong:** `circuit_t1_fade_short` sanity script (`tools/sub9_research/sanity_circuit_t1_fade_short.py`) validated a SINGLE-EXIT mechanic: enter short at T+1 10:30, ride to T2 (= t0_close = full gap fill) OR stop OR time-stop 15:10. No T1 partial, no breakeven trail. Reproduced PF=1.404 (Discovery) / 1.890 (Holdout). But the **production detector** + executor added a T1 partial at t1_open (`t1_qty_pct=0.5`) plus `exit_t1_book_pct` execution logic plus breakeven-trail-after-T1. Sweep finding (240 combos × 585 Discovery trades): production's `partial_50_be_trail` mode drops PF from 1.34 → **0.49** on the same trades. The 41% of trades that hit T1 partial then bounced into the BE-trail SL would have ridden to T2 in the validated mechanic. Production was actively losing money on its own validated trade set.
 
