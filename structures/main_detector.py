@@ -363,7 +363,12 @@ class MainDetector(BaseStructure):
             _t_resolve_ms = (_time_mod.perf_counter() - _t_resolve) * 1000
 
             # Convert to SetupCandidate objects
-            setup_candidates = self._convert_to_setup_candidates(final_events, symbol, context)
+            # all_detections (Dict[detector_name, StructureAnalysis]) carries the
+            # quality_score per detector so candidates can record it for the
+            # bar_scheduler priority formula.
+            setup_candidates = self._convert_to_setup_candidates(
+                final_events, symbol, context, all_detections,
+            )
 
             # Timing summary — log for slow symbols (>150ms) showing bottleneck detectors
             _total_det_ms = sum(_detector_times.values())
@@ -618,9 +623,16 @@ class MainDetector(BaseStructure):
         return final_events
 
     def _convert_to_setup_candidates(self, events: List[StructureEvent],
-                                   symbol: str, market_context: MarketContext) -> List[SetupCandidate]:
-        """Convert StructureEvent objects to SetupCandidate objects for the trading system."""
+                                   symbol: str, market_context: MarketContext,
+                                   analysis_by_detector: Optional[Dict[str, 'StructureAnalysis']] = None) -> List[SetupCandidate]:
+        """Convert StructureEvent objects to SetupCandidate objects for the trading system.
+
+        analysis_by_detector maps detector_name -> StructureAnalysis so each
+        candidate can carry the parent analysis's quality_score (used by
+        bar_scheduler priority formula).
+        """
         setup_candidates = []
+        analysis_by_detector = analysis_by_detector or {}
 
         for i, event in enumerate(events):
             try:
@@ -628,6 +640,7 @@ class MainDetector(BaseStructure):
 
                 # Create reasons list
                 reasons = []
+                detector_name = 'unknown'
                 if hasattr(event, 'context') and event.context:
                     detector_name = event.context.get('detector_name', 'unknown')
                     reasons.append(f"detector:{detector_name}")
@@ -671,6 +684,8 @@ class MainDetector(BaseStructure):
                             if isinstance(v, (str, int, float, bool, type(None)))
                         } or None
 
+                    parent_analysis = analysis_by_detector.get(detector_name)
+                    parent_quality = float(parent_analysis.quality_score) if parent_analysis is not None else 0.0
                     setup_candidates.append(SetupCandidate(
                         setup_type=setup_type,
                         strength=float(event.confidence),
@@ -686,6 +701,7 @@ class MainDetector(BaseStructure):
                         # plan_*_strategy can use it directly without re-calling
                         # detect(). Eliminates the double-detect bug class.
                         structure_event=event,
+                        quality_score=parent_quality,
                     ))
 
                     if entry_mode:

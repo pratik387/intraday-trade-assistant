@@ -163,6 +163,12 @@ class SetupCandidate:
     # rejects fail-fast — no fallback re-detect.
     structure_event: Optional[StructureEvent] = None
 
+    # StructureAnalysis.quality_score (0-100) for the detector that produced
+    # this candidate. Threaded into bar_scheduler priority formula
+    # (setup_cfg.priority * quality_score / 100). 0.0 = absent (legacy path
+    # or synthetic candidate) — bar_scheduler treats this as lowest priority.
+    quality_score: float = 0.0
+
 
 @dataclass(frozen=True)
 class GateDecision:

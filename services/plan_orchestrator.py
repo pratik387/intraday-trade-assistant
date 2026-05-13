@@ -238,6 +238,7 @@ class PlanOrchestrator:
         cap_segment: Optional[str] = None,
         daily_df: Optional[pd.DataFrame] = None,
         structure_event: Optional[Any] = None,
+        quality_score: float = 0.0,
     ) -> Optional[Dict[str, Any]]:
         """Build an orchestrator-shape plan dict from a sub7/sub8 detector.
 
@@ -366,6 +367,7 @@ class PlanOrchestrator:
             atr_val=atr_val,
             vol_z_val=vol_z_val,
             levels=levels,
+            quality_score=quality_score,
         )
 
     def _assemble_plan_dict(
@@ -382,6 +384,7 @@ class PlanOrchestrator:
         atr_val: Optional[float],
         vol_z_val: float,
         levels: Dict[str, float],
+        quality_score: float = 0.0,
     ) -> Dict[str, Any]:
         """Convert a detector TradePlan into the dict shape downstream code
         (gates, execution, analytics) expects. Encapsulates: entry-zone
@@ -526,13 +529,16 @@ class PlanOrchestrator:
             # Plan priority (2026-05-12 architectural refactor). Used by
             # bar_scheduler to order capital allocation when constrained.
             # Formula: setup_cfg.priority * detector.quality_score / 100.
-            # default priority=50 if setup hasn't been migrated yet.
-            # NOTE: quality_score (0-100) from StructureAnalysis would be ideal but
-            # is not threaded into this builder yet. trade_plan.confidence (0-1) is
-            # the closest available proxy. Wire-up: a follow-up task.
+            # quality_score is StructureAnalysis.quality_score (0-100) threaded
+            # from MainDetector through SetupCandidate. Falls back to
+            # trade_plan.confidence * 100 when missing (synthetic candidates,
+            # tests, or legacy paths that don't construct a StructureAnalysis).
             "priority": (
                 float(setup_cfg.get("priority", 50))
-                * float(getattr(trade_plan, "confidence", 0.5)) * 100.0
+                * (
+                    float(quality_score) if quality_score > 0.0
+                    else float(getattr(trade_plan, "confidence", 0.5)) * 100.0
+                )
                 / 100.0
             ),
 
@@ -637,6 +643,7 @@ class PlanOrchestrator:
         daily_score: float = 0.0,
         cap_segment: Optional[str] = None,
         structure_event: Optional[Any] = None,
+        quality_score: float = 0.0,
     ) -> Optional[Dict[str, Any]]:
         """Process one candidate. Returns plan dict (eligible=True/False) or
         None if the setup is unknown/disabled.
@@ -660,6 +667,7 @@ class PlanOrchestrator:
             cap_segment=cap_segment,
             daily_df=daily_df,
             structure_event=structure_event,
+            quality_score=quality_score,
         )
 
         # Reject diagnostics
@@ -716,6 +724,7 @@ class PlanOrchestrator:
             detected_level = getattr(cand, "detected_level", None)
             extras = getattr(cand, "extras", None)
             structure_event = getattr(cand, "structure_event", None)
+            cand_quality = float(getattr(cand, "quality_score", 0.0) or 0.0)
 
             cand_levels = dict(levels)
             if detected_level is not None:
@@ -731,6 +740,7 @@ class PlanOrchestrator:
                 daily_df=daily_df,
                 structure_event=structure_event,
                 cap_segment=cap_segment,
+                quality_score=cand_quality,
             )
             if plan and extras:
                 plan["extras"] = extras
@@ -782,6 +792,7 @@ class PlanOrchestrator:
                 detected_level = getattr(cand, "detected_level", None)
                 extras = getattr(cand, "extras", None)
                 structure_event = getattr(cand, "structure_event", None)
+                cand_quality = float(getattr(cand, "quality_score", 0.0) or 0.0)
 
                 cand_levels = dict(levels)
                 if detected_level is not None:
@@ -796,6 +807,7 @@ class PlanOrchestrator:
                     now=now,
                     daily_df=daily_df,
                     structure_event=structure_event,
+                    quality_score=cand_quality,
                 )
                 if plan and extras:
                     plan["extras"] = extras
