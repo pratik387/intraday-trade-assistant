@@ -62,8 +62,6 @@ from market_data.shared_ltp import SharedLTPCache
 
 # gates
 from services.gates.regime_gate import MarketRegimeGate
-from services.gates.event_policy_gate import EventPolicyGate
-from services.gates.news_spike_gate import NewsSpikeGate
 from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision as Decision
 
 # planning & ranking
@@ -154,29 +152,15 @@ def _init_worker(config_dict):
 
         from services.gates.trade_decision_gate import TradeDecisionGate
         from services.gates.regime_gate import MarketRegimeGate
-        from services.gates.event_policy_gate import EventPolicyGate
-        from services.gates.news_spike_gate import NewsSpikeGate
         from structures.main_detector import MainDetector
         from config.logging_config import get_agent_logger
 
-        news_cfg = config_dict.get("news_gate", {})
-
         regime_gate = MarketRegimeGate(cfg=config_dict)
-        event_gate = EventPolicyGate(cfg=config_dict)
-        news_gate = NewsSpikeGate(
-            window_bars=news_cfg.get("window_bars"),
-            vol_z_thresh=news_cfg.get("vol_z_thresh"),
-            ret_z_thresh=news_cfg.get("ret_z_thresh"),
-            body_atr_ratio_thresh=news_cfg.get("body_atr_ratio_thresh"),
-        )
         structure_detector = MainDetector(config_dict)
 
         _worker_decision_gate = TradeDecisionGate(
             structure_detector=structure_detector,
             regime_gate=regime_gate,
-            event_policy_gate=event_gate,
-            news_spike_gate=news_gate,
-            quality_filters=config_dict.get('quality_filters', {}),
         )
     except Exception as e:
         get_agent_logger().exception(f"Worker init failed: {e}")
@@ -566,22 +550,10 @@ class ScreenerLive:
 
         # Gates - Use MainDetector directly for structure detection
         self.detector = MainDetector(raw)
-        news_cfg = raw.get("news_gate")
         self.regime_gate = MarketRegimeGate(cfg=raw)
-        # Phase 4: Pass config to EventPolicyGate for session/event policies
-        self.event_gate = EventPolicyGate(cfg=raw)
-        self.news_gate = NewsSpikeGate(
-            window_bars=news_cfg.get("window_bars"),
-            vol_z_thresh=news_cfg.get("vol_z_thresh"),
-            ret_z_thresh=news_cfg.get("ret_z_thresh"),
-            body_atr_ratio_thresh=news_cfg.get("body_atr_ratio_thresh"),
-        )
         self.decision_gate = TradeDecisionGate(
             structure_detector=self.detector,
             regime_gate=self.regime_gate,
-            event_policy_gate=self.event_gate,
-            news_spike_gate=self.news_gate,
-            quality_filters=raw.get("quality_filters", {}),
         )
 
         # Directional bias tracker (Nifty green/red → position size modulation)
