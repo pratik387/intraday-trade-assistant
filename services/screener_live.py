@@ -774,6 +774,16 @@ class ScreenerLive:
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
+    def set_position_store(self, store) -> None:
+        """Replace screener-local PositionStore with the shared one from main.py.
+
+        Without this, SetupRiskTracker queries an empty store and
+        max_concurrent_positions never fires. Call right after main.py
+        constructs the authoritative PositionStore.
+        """
+        self.position_store = store
+        self.setup_risk._positions = store
+
     def start(self) -> None:
         """Connect WS and subscribe index symbols only (scan trigger + directional bias).
         Active trade symbols are subscribed dynamically via add_hot at enqueue time."""

@@ -385,6 +385,10 @@ def main() -> int:
     risk = RiskState(max_concurrent=int(cfg["max_concurrent_positions"]))
     positions = PositionStore()
 
+    # Share PositionStore with screener so SetupRiskTracker enforces
+    # max_concurrent_positions against actual open trades (not screener-local).
+    screener.set_position_store(positions)
+
     # Initialize API server for production monitoring
     api = get_api_server(port=args.health_port)
     api.set_state(SessionState.RECOVERING)
