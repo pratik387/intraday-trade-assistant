@@ -742,6 +742,22 @@ class ScreenerLive:
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
+    def _universe_union(self) -> Set[str]:
+        """Return symbols actually relevant for scanning today.
+
+        Combines cross-day setup universes (delivery_pct, circuit_t1,
+        earnings_day) built at session start with the lazy gap_fade
+        universe built at 09:15-09:30. Open positions are tracked
+        separately via WebSocket add_hot; they don't need to be in this
+        set (scan-time-only).
+        """
+        out: Set[str] = set()
+        for s in (self._setup_universes or {}).values():
+            out.update(s)
+        if self._gap_fade_universe:
+            out.update(self._gap_fade_universe)
+        return out
+
     def set_position_store(self, store) -> None:
         """Replace screener-local PositionStore with the shared one from main.py.
 
@@ -1290,7 +1306,12 @@ class ScreenerLive:
                     time.sleep(remaining_wait)
 
                 _t_api_start = time.perf_counter()
-                fetch_symbols = list(self.core_symbols)
+                # Narrow to universe-union (~99 symbols) instead of all core_symbols
+                # (~1500). Open-position exit tracking uses WebSocket add_hot, not
+                # this scan-time fetch. Falls back to full universe if universe-union
+                # is empty (pre-09:30 before gap_fade lazy-build completes).
+                _univ = self._universe_union()
+                fetch_symbols = sorted(_univ & set(self.core_symbols)) if _univ else list(self.core_symbols)
                 bar_ts = now.isoformat()
 
                 # Check shared Redis cache first
@@ -1402,8 +1423,8 @@ class ScreenerLive:
                     len(universe), len(df5_by_symbol), len(shortlist),
                 )
         except Exception as e:
-            logger.exception("Stage-0 process failed; fallback shortlist: %s", e)
-            shortlist = self._fallback_shortlist()
+            logger.exception("Universe scan failed; falling back to universe-union: %s", e)
+            shortlist = sorted(self._universe_union())
 
         # ---------- Universe-union (plan-as-source-of-truth, 2026-05-12) ----------
         # Add per-setup qualifying symbols to the shortlist so cross-day /
@@ -1468,10 +1489,10 @@ class ScreenerLive:
         api_sourced = sum(1 for s in df5_by_symbol if s in api_df5_cache)
         precomputed_sourced = sum(1 for s in df5_by_symbol if s not in api_df5_cache and self._precomputed_5m and s in self._precomputed_5m)
         bb_sourced = len(df5_by_symbol) - api_sourced - precomputed_sourced
-        logger.info("SCANNER_COMPLETE | Processed %d eligible of %d total symbols → %d shortlisted (%.1f%%) | "
-                   "data_source: api=%d precomputed=%d barbuilder=%d | Stage-0→Gates | TIME: %.2fs",
-                   eligible_symbols, total_symbols, shortlist_count,
-                   (shortlist_count/max(eligible_symbols,1))*100,
+        logger.info("SCANNER_COMPLETE | data_loaded=%d/%d universe_scanned=%d shortlist=%d | "
+                   "data_source: api=%d precomputed=%d barbuilder=%d | TIME: %.2fs",
+                   eligible_symbols, total_symbols,
+                   len(self._universe_union()), shortlist_count,
                    api_sourced, precomputed_sourced, bb_sourced, _t_scanner_end - _t_bar_start)
         if not shortlist:
             return
@@ -2215,10 +2236,12 @@ class ScreenerLive:
                 )
                 # Still compute PDH/PDL/PDC from pre-warmed daily data for level-based setups
                 # Only ORH/ORL will be NaN (which is fine since ORB setups are disabled after 10:30)
-                # IMPORTANT: Iterate over ALL core_symbols, not just df5_by_symbol
-                # PDH/PDL/PDC come from daily cache, don't need 5m bars
+                # Narrowed to universe-union — downstream lookup only queries shortlist
+                # (=universe-union) symbols, so PDH/PDL/PDC for non-universe symbols is waste.
+                _univ = self._universe_union()
+                _scan_syms = _univ if _univ else set(self.core_symbols)
                 levels_by_symbol = {}
-                for sym in self.core_symbols:
+                for sym in _scan_syms:
                     try:
                         df5 = df5_by_symbol.get(sym)  # May be None, that's OK for PDH/PDL/PDC
                         lvl = self._levels_for(sym, df5, now)
@@ -2267,13 +2290,23 @@ class ScreenerLive:
             # Return empty cache so app continues - ORB setups won't work until recovery completes
             return {}
 
-        logger.info(f"ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for all symbols once at {current_time} (session_date={session_date})")
+        # Narrow ORB compute to universe-union — universe is finalized by 09:30
+        # (cross-day at startup + gap_fade lazy at 09:15-09:30), ORB fires at
+        # 09:40, downstream lookup at line 1532 only queries symbols in
+        # shortlist (=universe-union). Computing levels for non-universe symbols
+        # is pure waste — they are never queried.
+        _univ = self._universe_union()
+        _scan_syms = (set(df5_by_symbol.keys()) & _univ) if _univ else set(df5_by_symbol.keys())
+        logger.info(
+            f"ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for {len(_scan_syms)} universe symbols at {current_time} (session_date={session_date})"
+        )
 
         levels_by_symbol = {}
         success_count = 0
         fail_count = 0
 
-        for sym, df5 in df5_by_symbol.items():
+        for sym in _scan_syms:
+            df5 = df5_by_symbol.get(sym)
             try:
                 lvl = self._levels_for(sym, df5, now)
                 # Only count as success if we got valid ORH/ORL (not NaN)
@@ -2339,7 +2372,13 @@ class ScreenerLive:
         success_count = 0
         fail_count = 0
 
-        for sym in self.core_symbols:
+        # Narrow recovery to universe-union — ORB levels are only queried for
+        # symbols in the scan shortlist (= universe-union). Fetching 1m
+        # historical for non-universe symbols just burns broker rate-limits.
+        _univ = self._universe_union()
+        _recover_syms = _univ if _univ else self.core_symbols
+        logger.info(f"ORB_RECOVERY | Recovering levels for {len(_recover_syms)} universe symbols")
+        for sym in _recover_syms:
             try:
                 # Fetch 1m historical data for opening range window
                 df_1m = self.sdk.get_historical_1m(sym, orb_start, orb_end)
@@ -2526,24 +2565,6 @@ class ScreenerLive:
             with self._levels_cache_lock:
                 self._levels_cache[key] = out
         return out
-
-    def _fallback_shortlist(self) -> List[str]:
-        """Safety net if Stage-0 fails — cheap breakout proxy over last ~2h."""
-        out: List[str] = []
-        for sym in self.core_symbols:
-            df5 = self.agg.get_df_5m_tail(sym, 25)
-            if df5 is None or df5.empty or len(df5) < 10:
-                continue
-            try:
-                enriched_df = mi.compute_intraday_breakout_score(df5)
-            except Exception as e:
-                # CRITICAL FIX: Log breakout score computation failures
-                logger.error(f"SCREENER: Failed to compute breakout score for {sym}: {e}")
-                continue
-            # If enrichment succeeded and DataFrame is not empty, include in fallback
-            if not enriched_df.empty:
-                out.append(sym)
-        return out[:60]
 
     def _load_api_warmup_cache(self) -> None:
         """

@@ -70,7 +70,11 @@ def _cfg(**overrides):
 
 @pytest.fixture(autouse=True)
 def _disable_wide_open(monkeypatch):
-    monkeypatch.setattr(detector_module, "_is_wide_open", lambda: False)
+    # detector calls services.config_loader.is_wide_open_for_setup at runtime
+    # (per-setup flag). Force False so cell filters (ADV, gap, active_window)
+    # remain enforced in unit tests regardless of configuration.json contents.
+    import services.config_loader as _cfg_mod
+    monkeypatch.setattr(_cfg_mod, "is_wide_open_for_setup", lambda *a, **kw: False)
 
 
 def _build_5m(
