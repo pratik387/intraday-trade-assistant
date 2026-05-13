@@ -95,12 +95,22 @@ class GapFadeShortStructure(BaseStructure):
         return time(int(h), int(m))
 
     def _get_atr(self, context: MarketContext) -> float:
-        """Extract ATR from indicators dict with fallback."""
-        if context.indicators and "atr" in context.indicators:
-            return float(context.indicators["atr"])
-        if context.df_5m is not None and len(context.df_5m) >= 14:
-            df = context.df_5m
-            return float((df["high"] - df["low"]).tail(14).mean())
+        """ATR proxy from session-start pre-entry bars ONLY.
+
+        Matches sanity sweep methodology
+        (tools/sub9_research/_gap_fade_short_sl_target_sweep.py:246-249):
+        ATR = mean (high - low) over bars from session start (09:15)
+        through the current 09:15-09:30 bar (1-3 bars).
+
+        Do NOT use context.indicators["atr"] (rolling ATR-14) — for an
+        opening-window setup it's 2-3x wider than the actual session
+        range, blowing stop_b = entry + ATR*mult out far beyond gap_high
+        and crushing the R-multiple to PDC. Sanity PF 2.36 vs production
+        1.57 in OCI Discovery is largely this single discrepancy.
+        """
+        df = context.df_5m
+        if df is not None and not df.empty:
+            return float((df["high"] - df["low"]).mean())
         return context.current_price * 0.01
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
@@ -382,15 +392,21 @@ class GapFadeShortStructure(BaseStructure):
     ) -> RiskParams:
         """Compute risk params for a SHORT entry at entry_price.
 
-        Stop is ABOVE entry (since shorting). Based on gap_high + ATR buffer.
+        Stop is ABOVE entry (since shorting). Use the same swept buffer
+        and ATR multiplier as plan_short_strategy — these were hardcoded
+        to 1.0025/1.5 before the 2026-05-12 sweep that lifted them to
+        config-driven values (0.001/2.0).
         """
         atr = self._get_atr(market_context)
         df = market_context.df_5m
         gap_high = float(df.iloc[0]["high"]) if df is not None and len(df) >= 1 else entry_price
         cap_seg = getattr(market_context, "cap_segment", None) or ""
-        gap_buf = 1.005 if cap_seg == "micro_cap" else 1.0025
+        if cap_seg == "micro_cap":
+            gap_buf = 1.0 + self.stop_buffer_above_gap_high_pct_micro
+        else:
+            gap_buf = 1.0 + self.stop_buffer_above_gap_high_pct_small_mid
         stop_a = gap_high * gap_buf
-        stop_b = entry_price + atr * 1.5
+        stop_b = entry_price + atr * self.stop_atr_multiplier
         hard_sl = max(stop_a, stop_b)
         stop_distance = max(hard_sl - entry_price, atr * 0.1)
         return RiskParams(
