@@ -451,7 +451,7 @@ class CapitulationLongMorningStructure(BaseStructure):
             confidence=event.confidence,
             notes=event.context,
             trade_id=event.trade_id,
-            target_anchor_type="arithmetic",
+            target_anchor_type="r_multiple",  # was "arithmetic" — silent dispatch typo (2026-05-13)
         )
 
     # ------------------------------------------------------------------

@@ -588,10 +588,15 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
             confidence=event.confidence,
             notes=event.context,
             trade_id=event.trade_id,
-            # R-multiple (arithmetic) targets — preserved across late fills
-            # by services/target_recalc.py recomputing T1/T2 from the actual
-            # entry using stored R multiples.
-            target_anchor_type="arithmetic",
+            # R-multiple targets — recomputed from actual entry by
+            # services/target_recalc.py using stored rr field on each target.
+            # NOTE 2026-05-13: was set to "arithmetic" which silently fell
+            # through target_recalc.py's dispatch (only "structural"/
+            # "r_multiple"/"or_range" recognized) and KEPT detect-time
+            # T1/T2 unchanged. Net effect: T2 anchored to close5 instead
+            # of entry_price, costing ~Rs.70K NET on Discovery (PF 0.903
+            # -> 0.987 just from this single-word fix).
+            target_anchor_type="r_multiple",
         )
 
     # ------------------------------------------------------------------

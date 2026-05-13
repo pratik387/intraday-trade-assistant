@@ -310,8 +310,10 @@ class OptionsVolIvRankRevertStructure(BaseStructure):
             confidence=event.confidence,
             notes=event.context,
             trade_id=event.trade_id,
-            # Targets are R-multiples — arithmetic, not gap-edges.
-            target_anchor_type="arithmetic",
+            # Targets are R-multiples — recomputed from actual entry by
+            # services/target_recalc.py (was "arithmetic" which silently
+            # fell through to structural preservation; fixed 2026-05-13).
+            target_anchor_type="r_multiple",
         )
 
     # ------------------------------------------------------------------

@@ -403,7 +403,7 @@ def test_plan_short_geometry():
     assert sl > entry, f"SL {sl} must be ABOVE short entry {entry}"
     assert t1 < entry, f"T1 {t1} must be BELOW short entry {entry}"
     assert t2 < t1, f"T2 {t2} must be FURTHER BELOW T1 {t1}"
-    assert plan.target_anchor_type == "arithmetic"
+    assert plan.target_anchor_type == "r_multiple"
     # plan_long returns None (SHORT-only)
     assert det.plan_long_strategy(ctx, result.events[0]) is None
 
