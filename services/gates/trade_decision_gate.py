@@ -32,13 +32,15 @@ from utils.perf_timer import perf
 
 logger = get_agent_logger()
 
-# Sub-project #5 (gauntlet v2): wide_open_mode is the master kill-switch
-# for edge measurement. The gate doesn't carry full config; load it lazily.
-def _get_wide_open_mode() -> bool:
-    """Return top-level wide_open_mode flag from base config, defaulting to False."""
+# Per-setup wide_open (2026-05-13): production-ready setups (gap_fade,
+# circuit_t1, earnings_day) run with wide_open=false (full filters);
+# research setups (delivery_pct) run with wide_open=true (capture mode).
+# Falls back to top-level wide_open_mode when setup_type missing or unset.
+def _get_wide_open_mode(setup_type: Optional[str] = None) -> bool:
+    """Return wide_open flag for a setup_type (or top-level fallback)."""
     try:
-        from services.config_loader import load_base_config
-        return bool(load_base_config().get("wide_open_mode", False))
+        from services.config_loader import is_wide_open_for_setup
+        return is_wide_open_for_setup(setup_type)
     except Exception:
         return False
 

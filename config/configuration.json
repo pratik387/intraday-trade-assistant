@@ -376,7 +376,8 @@
       "max_concurrent_positions": 5,
       "per_symbol_cooloff_min": 15,
       "max_fires_per_5min": 10,
-      "_audit_decision_2026_05_01": "TRUSTED -- validated production setup. NET PF=1.49 on 5,848 trades over 2-yr Discovery (sub-project #5 era). Indian-microstructure-specific: small-cap retail-driven gap-up exhaustion + structural opening-window mechanics + SHORT-only (aligned with SEBI FY23 long-bias-loses finding). Locked, no design changes."
+      "_audit_decision_2026_05_01": "TRUSTED -- validated production setup. NET PF=1.49 on 5,848 trades over 2-yr Discovery (sub-project #5 era). Indian-microstructure-specific: small-cap retail-driven gap-up exhaustion + structural opening-window mechanics + SHORT-only (aligned with SEBI FY23 long-bias-loses finding). Locked, no design changes.",
+      "wide_open": false
     },
     "expiry_pin_strike_reversal": {
       "enabled": false,
@@ -448,7 +449,8 @@
       "max_concurrent_positions": 3,
       "per_symbol_cooloff_min": 30,
       "max_fires_per_5min": 5,
-      "_research_notes": "Sub-project #9 first APPROVED setup. Asymmetry: post-circuit-hit retail FOMO + operator pump exhaustion in T+0 close, faded T+1 mid-session. Indian-microstructure-specific (NSE DPR flexing, no US/forex analog). Direction: short-only. 5 peer-reviewed sources (Guo JIFM 2023, Chen/Petukhov/Wang MIT WP, Tandfonline 2024, Sehgal PBFJ 2024, Chari 2017). Sanity check (tools/sub9_research/sanity_circuit_t1_fade_short.py): NET PF=1.473 on 654 trades over 2024. Brief: specs/2026-05-01-sub-project-9-brief-circuit_t1_fade_short.md."
+      "_research_notes": "Sub-project #9 first APPROVED setup. Asymmetry: post-circuit-hit retail FOMO + operator pump exhaustion in T+0 close, faded T+1 mid-session. Indian-microstructure-specific (NSE DPR flexing, no US/forex analog). Direction: short-only. 5 peer-reviewed sources (Guo JIFM 2023, Chen/Petukhov/Wang MIT WP, Tandfonline 2024, Sehgal PBFJ 2024, Chari 2017). Sanity check (tools/sub9_research/sanity_circuit_t1_fade_short.py): NET PF=1.473 on 654 trades over 2024. Brief: specs/2026-05-01-sub-project-9-brief-circuit_t1_fade_short.md.",
+      "wide_open": false
     },
     "options_vol_iv_rank_revert": {
       "enabled": false,
@@ -537,14 +539,15 @@
       "t1_partial_qty_pct": 0.5,
       "min_stop_distance_pct": 0.3,
       "min_bars_required": 4,
-      "entry_zone_pct": 0.10,
+      "entry_zone_pct": 0.1,
       "entry_zone_mode": "directional",
       "priority": 40,
       "capital_budget_pct": 15,
       "max_concurrent_positions": 3,
       "per_symbol_cooloff_min": 30,
       "max_fires_per_5min": 5,
-      "_research_notes": "Validated cell from delivery_pct anomaly cell-mining. SHORT only. Indian-microstructure anchor: NSE-published delivery percentage <20% + same-day pump >3% = retail/operator pump signature. Cross-day RVOL confirmation rejects intra-session false signals. Sanity: tools/sub9_research/sanity_nse_delivery_pct_anomaly.py. Brief: specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md."
+      "_research_notes": "Validated cell from delivery_pct anomaly cell-mining. SHORT only. Indian-microstructure anchor: NSE-published delivery percentage <20% + same-day pump >3% = retail/operator pump signature. Cross-day RVOL confirmation rejects intra-session false signals. Sanity: tools/sub9_research/sanity_nse_delivery_pct_anomaly.py. Brief: specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md.",
+      "wide_open": true
     },
     "earnings_day_intraday_fade": {
       "enabled": true,
@@ -561,12 +564,18 @@
       "stop_r_multiple": 2.5,
       "use_breakeven_trail_after_t1": true,
       "min_adv_cr": 10.0,
-      "allowed_caps": ["large_cap", "mid_cap"],
+      "allowed_caps": [
+        "large_cap",
+        "mid_cap"
+      ],
       "_comment_caps": "small_cap dropped to PF 0.87 in OOS — exclude per cell-lock. Do NOT broaden without re-running cell selection.",
-      "announce_time_classes": ["BMO", "AMC"],
+      "announce_time_classes": [
+        "BMO",
+        "AMC"
+      ],
       "risk_per_trade_inr": 1000,
       "min_bars_required": 4,
-      "entry_zone_pct": 0.10,
+      "entry_zone_pct": 0.1,
       "entry_zone_mode": "directional",
       "min_stop_distance_pct": 0.3,
       "priority": 100,
@@ -574,7 +583,8 @@
       "max_concurrent_positions": 3,
       "per_symbol_cooloff_min": 60,
       "max_fires_per_5min": 3,
-      "_research_notes": "Sub-9 ship #5. Indian-microstructure anchor: NSE single-stock-options + low retail tolerance for earnings uncertainty produces a 09:15 gap (any direction) that retail/option-buyers extend in the first hour. Inst-flow fades it 10:30-15:00 once the beat/miss is rationally priced. Universe: MIS-eligible + ADV>=10cr/day (the F&O 200 had n<floor; expanded universe lifted n past gate). Brief: specs/2026-05-06-sub-project-9-brief-earnings_day_intraday_fade.md. Sanity: tools/sub9_research/sanity_earnings_day_intraday_fade.py. R-multiples LOCKED (T1=1.0R T2=1.0R SL=2.5x) from 3D sweep — DO NOT modify without re-running gauntlet."
+      "_research_notes": "Sub-9 ship #5. Indian-microstructure anchor: NSE single-stock-options + low retail tolerance for earnings uncertainty produces a 09:15 gap (any direction) that retail/option-buyers extend in the first hour. Inst-flow fades it 10:30-15:00 once the beat/miss is rationally priced. Universe: MIS-eligible + ADV>=10cr/day (the F&O 200 had n<floor; expanded universe lifted n past gate). Brief: specs/2026-05-06-sub-project-9-brief-earnings_day_intraday_fade.md. Sanity: tools/sub9_research/sanity_earnings_day_intraday_fade.py. R-multiples LOCKED (T1=1.0R T2=1.0R SL=2.5x) from 3D sweep — DO NOT modify without re-running gauntlet.",
+      "wide_open": false
     }
   },
   "filters": {

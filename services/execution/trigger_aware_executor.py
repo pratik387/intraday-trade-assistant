@@ -76,11 +76,11 @@ class TriggerAwareExecutor:
 
             # Block duplicate — position may have been opened by another plan
             # between _add_pending_trade and now.
-            # Sub-project #7: wide_open_mode bypasses (mirror of the bypass at L1192-1195
-            # in _add_pending_trade). Without this, the same 171 cpr decisions that the
-            # add-time bypass let through get blocked here at execution time.
+            # Per-setup wide_open: research setups bypass duplicate-guard so
+            # every detector signal becomes a captured trade row.
+            from services.config_loader import is_wide_open_for_setup
             if (trade.symbol in self.risk.open_positions
-                    and not bool(self.cfg.get("wide_open_mode", False))):
+                    and not is_wide_open_for_setup(trade.plan.get("strategy"))):
                 logger.warning(f"DUPLICATE_BLOCKED | {trade.symbol} | Position already open at execution time")
                 trade.state = TradeState.EXPIRED
                 return False
@@ -644,13 +644,11 @@ class TriggerAwareExecutor:
 
                 entry_min, entry_max = sorted(entry_zone)
 
-                # Sub-project #7: under wide_open_mode, fire on the first available price
-                # without zone-membership check. The earlier wide_open bypasses skipped the
-                # must_conditions zone check and _is_price_in_entry_zone, but THIS poll path
-                # still gated triggers on `entry_min <= price <= entry_max`. With sub7 cpr's
-                # close±0.1% zone, the next 1m bar's cached close almost never lands in zone
-                # → 171/339 cpr decisions silently expired without ever attempting to trigger.
-                if bool(self.cfg.get("wide_open_mode", False)):
+                # Per-setup wide_open: research setups fire on the first available
+                # price without zone-membership check. Prod-ready setups keep zone
+                # discipline (price must enter entry_zone to trigger).
+                from services.config_loader import is_wide_open_for_setup
+                if is_wide_open_for_setup(trade.plan.get("strategy")):
                     self._try_trigger_on_tick(trade, price, current_ts)
                     continue
 
@@ -728,9 +726,10 @@ class TriggerAwareExecutor:
             bias = trade.plan.get("bias", "long")
             strategy = trade.plan.get("strategy", "unknown")
 
-            # Sub-project #7: under wide_open_mode, fire on the first tick without
-            # zone-membership check. Mirror of the bypass in _poll_all_pending_trades.
-            if bool(self.cfg.get("wide_open_mode", False)):
+            # Per-setup wide_open: research setups fire on the first tick without
+            # zone-membership check. Mirror of the poll-path bypass above.
+            from services.config_loader import is_wide_open_for_setup
+            if is_wide_open_for_setup(strategy):
                 logger.info(
                     f"WIDE_OPEN_TICK_TRIGGER: {symbol} {strategy} {bias} "
                     f"price={price:.2f} ts={ts.strftime('%H:%M:%S')} trade_id={trade.trade_id}"
@@ -803,11 +802,10 @@ class TriggerAwareExecutor:
                 return
 
             # Block duplicate entry — symbol already has an open position.
-            # Sub-project #7: wide_open_mode bypasses this guard so every detection
-            # produces its own trade outcome for the gauntlet. In live this guard is
-            # correct (don't double-stack a stock); under capture mode it silently
-            # drops repeat detections (smoke 13 saw 171 cpr decisions skipped here).
-            if symbol in self.risk.open_positions and not bool(self.cfg.get("wide_open_mode", False)):
+            # Per-setup wide_open: research setups bypass this guard so every
+            # detection produces its own trade outcome for cell-mining capture.
+            from services.config_loader import is_wide_open_for_setup
+            if symbol in self.risk.open_positions and not is_wide_open_for_setup(plan.get("strategy")):
                 logger.info(f"PLAN_SKIP | {symbol} | Already has open position, ignoring duplicate plan")
                 return
 
@@ -848,12 +846,10 @@ class TriggerAwareExecutor:
             
             with self._lock:
                 # Cancel any existing pending trades for same symbol if configured.
-                # Sub-project #7: wide_open_mode skips the cancel — under capture mode,
-                # EVERY detection must produce its own trade outcome for the gauntlet
-                # (cpr fires across 24 lunch bars, would otherwise leave only the last
-                # per symbol; smoke 12 saw 339 decisions collapse to 168 triggers from
-                # 186 unique syms, the 153 superseded ones silently cancelled).
-                _wide_open = bool(self.cfg.get("wide_open_mode", False))
+                # Per-setup wide_open: research setups skip the cancel so every
+                # detection produces its own trade outcome for cell-mining.
+                from services.config_loader import is_wide_open_for_setup
+                _wide_open = is_wide_open_for_setup(plan.get("strategy"))
                 if not _wide_open and self.cfg.get("cancel_existing_pending", True):
                     self._cancel_pending_for_symbol(symbol)
 
@@ -917,7 +913,10 @@ class TriggerAwareExecutor:
                         current_price = float(bar_1m.get("close", 0.0))
 
                     # CRITICAL: Check if price is within entry zone (like real traders)
-                    price_in_zone = self._is_price_in_entry_zone(current_price, entry_zone, trade.plan.get("bias"))
+                    price_in_zone = self._is_price_in_entry_zone(
+                        current_price, entry_zone, trade.plan.get("bias"),
+                        setup_type=trade.plan.get("strategy"),
+                    )
 
                     if price_in_zone:
                         # Price is in acceptable entry zone AND conditions met - TRIGGER!
@@ -939,7 +938,10 @@ class TriggerAwareExecutor:
             except Exception as e:
                 logger.exception(f"Trigger validation error for {symbol}: {e}")
 
-    def _is_price_in_entry_zone(self, current_price: float, entry_zone: List[float], bias: str) -> bool:
+    def _is_price_in_entry_zone(
+        self, current_price: float, entry_zone: List[float], bias: str,
+        setup_type: Optional[str] = None,
+    ) -> bool:
         """
         Check if current price is within acceptable entry zone (like real traders).
 
@@ -947,6 +949,7 @@ class TriggerAwareExecutor:
             current_price: Current market price
             entry_zone: [min_price, max_price] from plan
             bias: "long" or "short"
+            setup_type: plan["strategy"] used to look up per-setup wide_open
 
         Returns:
             True if price is in zone, False otherwise
@@ -955,11 +958,9 @@ class TriggerAwareExecutor:
             # No entry zone defined - allow trigger (fallback behavior)
             return True
 
-        # Sub-project #7: wide_open_mode bypasses zone check (mirrors the must_conditions
-        # bypass in trigger_validation_engine). Every plan with conditions met triggers
-        # at LTP — the zone discipline is intentionally suspended so the filter-search
-        # downstream sees outcomes for every detector signal.
-        if bool(self.cfg.get("wide_open_mode", False)):
+        # Per-setup wide_open: research setups bypass zone check.
+        from services.config_loader import is_wide_open_for_setup
+        if is_wide_open_for_setup(setup_type):
             return True
 
         min_price, max_price = sorted(entry_zone)  # Ensure min < max

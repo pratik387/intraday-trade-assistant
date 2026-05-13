@@ -164,21 +164,24 @@ def delivery_pct_universe(
     min_prior_day_return_pct = float(config.get("min_prior_day_return_pct", 3.0))
     qual: Set[str] = set()
     for sym, ddf in daily_dict.items():
-        if ddf is None or ddf.empty or "delivery_pct" not in ddf.columns:
+        if ddf is None or len(ddf) < 2 or "delivery_pct" not in ddf.columns:
             continue
         try:
-            # daily_dict is pre-filtered < session_date — last row is T-1.
+            # daily_dict is pre-filtered < session_date — last row is T-1, prior is T-2.
             t_minus_1 = ddf.iloc[-1]
+            t_minus_2 = ddf.iloc[-2]
             dp_val = t_minus_1.get("delivery_pct") if hasattr(t_minus_1, "get") else t_minus_1["delivery_pct"]
             dp = float(dp_val) if pd.notna(dp_val) else 100.0
             if dp > delivery_max:
                 continue
-            # Same-day pump check: (close - open) / open >= min_prior_day_return_pct
-            open_t1 = float(t_minus_1["open"]) if pd.notna(t_minus_1["open"]) else 0.0
+            # Day-over-day return: (T-1 close - T-2 close) / T-2 close.
+            # Matches sanity's daily_return_pct field — the pump-fade signal is
+            # the T-1 day-on-day pump >= 3% combined with low delivery_pct.
             close_t1 = float(t_minus_1["close"]) if pd.notna(t_minus_1["close"]) else 0.0
-            if open_t1 <= 0:
+            close_t2 = float(t_minus_2["close"]) if pd.notna(t_minus_2["close"]) else 0.0
+            if close_t2 <= 0:
                 continue
-            ret_pct = (close_t1 - open_t1) / open_t1 * 100.0
+            ret_pct = (close_t1 - close_t2) / close_t2 * 100.0
             if ret_pct < min_prior_day_return_pct:
                 continue
             qual.add(sym)

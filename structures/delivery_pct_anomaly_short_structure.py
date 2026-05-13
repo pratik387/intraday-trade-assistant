@@ -211,6 +211,9 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
             return None
 
         # 3) Liquidity band (ADV × close in Cr)
+        # Cell filter (not a signal filter) — bypassed under wide_open=true so
+        # cell-mining captures ALL liquidity bands. Compute ADV either way so
+        # the captured trade row carries adv_inr_cr in extras.
         if t1_idx < 20:
             return None
         vol_window = df_daily["volume"].iloc[t1_idx - 20: t1_idx]
@@ -219,8 +222,10 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
             adv_inr_cr = float((vol_window * close_window).mean()) / 1e7
         except Exception:
             return None
-        if not (self.min_adv_inr_cr <= adv_inr_cr <= self.max_adv_inr_cr):
-            return None
+        from services.config_loader import is_wide_open_for_setup
+        if not is_wide_open_for_setup(self.structure_type):
+            if not (self.min_adv_inr_cr <= adv_inr_cr <= self.max_adv_inr_cr):
+                return None
 
         return {
             "t_minus_1_close": t1_close,
@@ -315,10 +320,14 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
             return _empty("Insufficient bars")
 
         # ---- Active window ----
+        # Cell filter — under wide_open=true the window widens so cell-mining
+        # captures entries across the full intraday tape.
         last_ts = df.index[-1]
         cur_t = last_ts.time() if hasattr(last_ts, "time") else last_ts
-        if not (self.active_start <= cur_t <= self.active_end):
-            return _empty(f"Outside active window: {cur_t}")
+        from services.config_loader import is_wide_open_for_setup
+        if not is_wide_open_for_setup(self.structure_type):
+            if not (self.active_start <= cur_t <= self.active_end):
+                return _empty(f"Outside active window: {cur_t}")
 
         # ---- Latch ----
         session_date = ctx.session_date
@@ -376,10 +385,14 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
         if first_open <= 0:
             return _empty("session open invalid")
         gap_pct = (first_open / pdc - 1.0) * 100.0
-        if gap_pct < self.min_gap_pct:
-            return _empty(f"gap_pct={gap_pct:.2f} < min={self.min_gap_pct}")
-        if gap_pct > self.max_gap_pct:
-            return _empty(f"gap_pct={gap_pct:.2f} > max={self.max_gap_pct}")
+        # Cell filter (not signal) — bypassed under wide_open=true so cell-mining
+        # captures ALL gap_pct buckets.
+        from services.config_loader import is_wide_open_for_setup
+        if not is_wide_open_for_setup(self.structure_type):
+            if gap_pct < self.min_gap_pct:
+                return _empty(f"gap_pct={gap_pct:.2f} < min={self.min_gap_pct}")
+            if gap_pct > self.max_gap_pct:
+                return _empty(f"gap_pct={gap_pct:.2f} > max={self.max_gap_pct}")
 
         # ---- Confirmation candle (current bar) ----
         last = df.iloc[-1]

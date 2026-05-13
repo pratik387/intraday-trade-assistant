@@ -100,6 +100,35 @@ def load_base_config() -> Dict[str, Any]:
         raise ConfigurationError(f"Invalid JSON in {config_file}: {e}")
 
 
+def is_wide_open_for_setup(setup_type: Optional[str]) -> bool:
+    """Return wide_open flag for a specific setup_type.
+
+    Resolution order:
+      1. `setups.<setup_type>.wide_open` in configuration.json (per-setup override)
+      2. top-level `wide_open_mode` in configuration.json or base_config.json
+         (legacy global fallback)
+
+    Empty / unknown setup_type returns the top-level flag.
+
+    Per-setup wide_open enables a mixed-mode OCI capture: production-ready
+    setups (wide_open=false) keep tight entry-zone / duplicate-guard /
+    min_bars semantics; research setups (wide_open=true) bypass them so
+    every detector signal becomes a captured trade row.
+    """
+    try:
+        from config.filters_setup import load_filters
+        cfg = load_filters() or {}
+    except Exception:
+        cfg = {}
+    global_flag = bool(cfg.get("wide_open_mode", load_base_config().get("wide_open_mode", False)))
+    if not setup_type:
+        return global_flag
+    setup_cfg = ((cfg.get("setups") or {}).get(setup_type)) or {}
+    if "wide_open" in setup_cfg:
+        return bool(setup_cfg["wide_open"])
+    return global_flag
+
+
 def require_config(config: Dict[str, Any], *keys: str) -> Any:
     """Navigate nested config and raise ConfigurationError on missing keys.
 

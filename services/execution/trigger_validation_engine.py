@@ -67,12 +67,11 @@ class FastTriggerConditionFactory:
         breakout_immediate = self.cfg.get("breakout_immediate_execution", False)
         is_breakout = 'breakout' in strategy.lower()
 
-        # Sub-project #7: wide_open_mode skips entry_zone_check entirely so EVERY plan
-        # gets executed on the next 1m bar regardless of where price is. The whole point
-        # of wide_open_mode is to capture every detector signal as a real trade so the
-        # downstream filter-search has actual outcomes (PnL) for every admit. Without this,
-        # tight zones (e.g. cpr_mean_revert close±0.1%) make ~75% of plans expire unfilled.
-        wide_open = bool(self.cfg.get("wide_open_mode", False))
+        # Per-setup wide_open (2026-05-13): production-ready setups use full
+        # entry_zone_check; research setups bypass it so every detector signal
+        # becomes a captured trade row (capture mode for downstream cell-mining).
+        from services.config_loader import is_wide_open_for_setup
+        wide_open = is_wide_open_for_setup(strategy)
 
         # BREAKOUT STRATEGIES: Immediate execution, NO entry zone wait
         # Professional standard: Execute within <2 min, not 8 min delay
