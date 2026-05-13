@@ -146,7 +146,13 @@ def delivery_pct_universe(
     session_date: date,
     config: Dict[str, Any],
 ) -> Set[str]:
-    """Symbols with prior-day delivery_pct >= threshold (qualifying for T+1 fade).
+    """Symbols with prior-day LOW delivery_pct + price pump (qualifying for T+1 fade).
+
+    The validated cell-mined signal is LOW delivery (<=20%) + same-day pump
+    (>=3% return) = retail/operator pump signature → T+1 fade.
+    Earlier version used `delivery_pct_min=50.0` which filtered for HIGH delivery —
+    the inverse of the actual signal — populating the universe with non-qualifiers
+    and excluding the symbols the detector wants to short.
 
     Daily DataFrames must already be enriched with `delivery_pct` column
     (services.delivery_pct_enrichment runs this at seed time).
@@ -154,7 +160,8 @@ def delivery_pct_universe(
     if not daily_dict:
         return set()
 
-    delivery_min = float(config.get("delivery_pct_min", 50.0))
+    delivery_max = float(config.get("delivery_pct_max", 20.0))
+    min_prior_day_return_pct = float(config.get("min_prior_day_return_pct", 3.0))
     qual: Set[str] = set()
     for sym, ddf in daily_dict.items():
         if ddf is None or ddf.empty or "delivery_pct" not in ddf.columns:
@@ -163,11 +170,20 @@ def delivery_pct_universe(
             # daily_dict is pre-filtered < session_date — last row is T-1.
             t_minus_1 = ddf.iloc[-1]
             dp_val = t_minus_1.get("delivery_pct") if hasattr(t_minus_1, "get") else t_minus_1["delivery_pct"]
-            dp = float(dp_val) if pd.notna(dp_val) else 0.0
-            if dp >= delivery_min:
-                qual.add(sym)
-                if len(qual) >= MAX_EXTRA_PER_SETUP:
-                    break
+            dp = float(dp_val) if pd.notna(dp_val) else 100.0
+            if dp > delivery_max:
+                continue
+            # Same-day pump check: (close - open) / open >= min_prior_day_return_pct
+            open_t1 = float(t_minus_1["open"]) if pd.notna(t_minus_1["open"]) else 0.0
+            close_t1 = float(t_minus_1["close"]) if pd.notna(t_minus_1["close"]) else 0.0
+            if open_t1 <= 0:
+                continue
+            ret_pct = (close_t1 - open_t1) / open_t1 * 100.0
+            if ret_pct < min_prior_day_return_pct:
+                continue
+            qual.add(sym)
+            if len(qual) >= MAX_EXTRA_PER_SETUP:
+                break
         except Exception:
             continue
     logger.info("setup_universe.delivery_pct: %d qualifying symbols on %s",
