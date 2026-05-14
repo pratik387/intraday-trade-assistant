@@ -2,6 +2,13 @@
 
 This document is the **single source of truth** for setups that were prototyped, (believed-)validated, then retired. It exists so we don't burn weeks re-implementing dead theses.
 
+**Inventory:** 18 retired setups across 4 retire batches:
+
+- **Sub-5 ICT/SMC batch** (2026-04-25) — 3 setups: cargo-culted US/forex literature
+- **Sub-7 generic-pattern batch** (2026-04-25) — 5 setups: Indian-published but universal mechanics
+- **Sub-8 generic-pattern batch** (2026-04-26 to 2026-05-01) — 6 setups: same root cause as sub-7
+- **Sub-9 narrow-cell batch** (2026-05-07 to 2026-05-14) — 4 setups: each killed by a specific bug or threshold failure (look-ahead bias, regime non-reproducibility, never sanity-validated, Holdout n below floor)
+
 **Hard rule: do NOT re-implement any setup listed here without:**
 
 1. **Reading the retirement evidence below in full** — including the specific failure mode that killed it.
@@ -297,21 +304,85 @@ The IV-rank → underlying-revert thesis itself may have merit on a different da
 
 ---
 
-## Earlier retirements (pre-2026-05)
+## Sub-projects #5, #7, #8 — the 14-setup cargo-cult batch (2026-04 to 2026-05-01)
 
-The following setups were retired earlier and their code already deleted. Listed here for completeness — do not re-implement without reading the original brief and the lessons in `tasks/lessons.md`.
+Eleven setups failed across sub-projects #5/#7/#8. The post-mortem in `specs/2026-05-01-sub-project-9-microstructure-first-redesign.md` is the canonical reference; the summary below is for quick lookup.
 
-### From the 2026-04-15 to 2026-05-01 cleanup cycle
+### Shared root cause
 
-`mis_unwind_short`, `closing_hour_reversal`, `orb_15`, `pdh_pdl_reject`, `pdh_pdl_sweep_reclaim`, `gap_and_go_continuation`, `ema5_alert_pullback`, `camarilla_l3_reversal`, `cpr_mean_revert`, `narrow_cpr_breakout`, `vwap_first_pullback`
+Every failure was a **cargo-cult of a universal or Indian-published pattern** rather than an Indian-microstructure asymmetry. From the sub-9 redesign spec, §2:
 
-All source files DELETED in the commit cycle ending 2026-05-01. Common reasons: failed Phase B3 PF gates after the sub-7 / sub-8 cleanup audit, or invalidated by deeper review of the participant model.
+> "The research process was 'find an Indian-published setup → implement it'. Indian-published patterns are mostly translations of US/forex patterns, used by retail traders. **Retail usage ≠ institutional edge.** SEBI's FY23 study: 70% of cash intraday traders lose, 93% of F&O traders lose. The patterns retail uses are the patterns retail loses on."
 
-### From the 2026-05-12 first-wave retire (per task #123)
+Every survivor (`gap_fade_short`, `circuit_t1_fade_short`, `delivery_pct_anomaly_short`) exploits a **specific Indian-microstructure asymmetry** — small-cap retail FOMO at the open, single-day circuit-band post-FOMO mean reversion, NSE bhavcopy low-delivery-pump signature. Every failure is a generic pattern dressed up as Indian-specific because someone Indian published it.
 
-`capitulation_long_morning` ✓ (this doc), `expiry_pin_strike_reversal` ✓ (this doc).
+The §3.2 binding rule, post-failure: a candidate must satisfy ALL of:
+1. **Indian-specific** asymmetry (not a universal pattern)
+2. **Identifiable participants** on each side ("retail vs institutional", not "buyers vs sellers")
+3. **Persistence rationale** (regulatory / behavioral / structural)
+4. **Prior evidence** from academic / regulatory / institutional sources (SEBI, NSE, Zerodha Varsity, EPAT projects — NOT Subasish Pani / TraderCarnival / MyAlgomate alone)
+5. **Asymmetric direction** (long-only or short-only — two-sided setups inherit long-side losses)
 
-`circuit_t1_fade_short` was on the retire list but was subsequently re-validated via a corrected SL/target sweep (`tools/sub9_research/_circuit_t1_sl_target_sweep.py`) and is currently active at PF 1.50 in production OCI. Lesson: a "failed audit" tag is not final — a sweep that fixes the broken assumption can revive the setup.
+A new setup that doesn't pass §3.3 brief gate is not allowed code review.
+
+### Sub-5 ICT/SMC group — 3 setups
+
+Source: ICT/Smart-Money-Concepts literature (24/5 forex). Failed because session-open, T+1 settlement, gap risk, circuit halts, and asymmetric short rules in Indian equity break the structural assumptions ICT was built on.
+
+| Setup | Failure evidence |
+|---|---|
+| `order_block` (long + short) | Discovery NET PF 1.77 on n=71 — too thin to validate. Holdout: gauntlet drag. Retired with the broader Phase-1 cleanup. |
+| `premium_zone` | Discovery NET PF 1.27, n=6,741, NET +Rs.915K — biggest single contributor in sub-5. Failed because the "discount/premium" zone math is a Fibonacci-retracement re-skin with no Indian-specific edge; gauntlet v2 post-mortem concluded the apparent edge was joint-optimization variance against the unvalidated library. |
+| `vwap_lose_short` | Discovery NET PF 0.75, NET −Rs.16K — already losing at Discovery, dropped pre-OOS. |
+
+Predecessor doc: `specs/2026-04-25-sub-project-5-gauntlet-v2-postmortem.md` (named the cargo-cult problem; specs/2026-04-25/26/05-01 sub-projects #7/#8/#9 are direct responses).
+
+### Sub-7 generic-pattern group — 5 setups
+
+Sub-7 was meant to be the "Indian-native redesign" of the sub-5 library. It added 1 genuine Indian-microstructure setup (`gap_fade_short`, survived) and 4 generic patterns (all failed).
+
+| Setup | Original thesis | Failure evidence |
+|---|---|---|
+| `mis_unwind_short` | SEBI requires MIS positions square off by 3:20 PM → forced unwind in last 60-90 min creates asymmetric net-sell pressure (since retail is structurally net-long) | n=326 over 2yr Discovery — sample size below floor. Stop multiplier 0.8×ATR (vs source-cited 1.2-1.5×ATR for end-of-day high-vol window) — most signals stopped before the unwind began. Cap-segment filter (small/mid only) starved the sample. Thesis itself is plausible; the mechanic was wrong. The sub-9 candidate `closing_hour_reversal_short_redo` retries this thesis with different mechanic. |
+| `closing_hour_reversal` | Generic closing-bar reversal pattern (no Indian-specific anchor) | Universal pattern; failed Phase-1 floor (PF ≥ 1.10). The sub-9 redo brief at `specs/2026-05-07-sub-project-9-brief-closing_hour_reversal_short_redo.md` re-ran the R-sweep on a different mechanic; the redo is in `reports/sub9_sanity/closing_hour_reversal_short_redo_*` but did not ship to production. |
+| `narrow_cpr_breakout` | "Narrow Central Pivot Range expands → directional breakout follows" (CPR pivot trading is universal — Frank Ochoa's pattern, taught in Zerodha Varsity for Indian audiences) | Pivot indicator is universal; the Indian-published version is a translation. Failed Phase-1 with `cpr_mean_revert`. |
+| `vwap_first_pullback` | "Pull back to VWAP after a trend leg → continuation" — generic VWAP pullback pattern | Universal pattern; failed Phase-1 PF floor. |
+| `cpr_mean_revert` | Lunch lull (11:30-13:30) has low volume → range trading dominates → stocks mean-revert to CPR. Zerodha Varsity-documented | PF 0.64, n=247/day Discovery. Three root causes per sub-8 retrospective (`specs/2026-04-26-sub-project-8-indian-native-setups-extended-design.md:18-19`): (a) Stop multiplier 0.5×ATR vs source-cited 0.75-1.0×ATR (wicked out before mean reversion). (b) Single-shot exit at CPR midpoint — no T1 partial. (c) Wrong universe: ran on 1000+ symbols incl. micro-caps; CPR is a Bank Nifty / Nifty 50 heavyweight tool per Frank Ochoa. The fix path (right universe + tiered exits + correct stop) was deferred — the setup never shipped a v2. |
+
+Delete commits: `da7b978` (mis_unwind_short + closing_hour_reversal), `1579297` (cpr_mean_revert + mis_unwind_short structures), `2251396` (vestigial sub-7/8 cleanup).
+
+### Sub-8 generic-pattern group — 6 setups
+
+Sub-8 was meant to be the "extended" Indian-native library after sub-7's mixed results. Despite explicit binding rules ("every parameter Indian-source-cited", "no universal patterns as PRIMARY thesis"), all six new setups failed.
+
+| Setup | Origin / thesis | Failure |
+|---|---|---|
+| `orb_15` | Opening Range Breakout — first 15-minute range sets the day's institutional intent; full-bar close outside the range = breakout. Source: Toby Crabel (US), Algotest, In-the-Money by Zerodha | Universal pattern. Failed Phase-1 PF floor. Crabel's ORB has US-specific microstructure assumptions; the Indian translation didn't carry. |
+| `pdh_pdl_reject` | Price rejects at Prior Day High / Prior Day Low → continuation in the opposite direction | Universal level-rejection pattern. Failed Phase-1. |
+| `pdh_pdl_sweep_reclaim` | ICT-style sweep+reclaim: price takes out PDH/PDL liquidity then reclaims the level → reversal | Universal ICT pattern (same family as sub-5's `order_block`). Failed Phase-1. |
+| `gap_and_go_continuation` | LONG bias gap continuation: gap-up + first 15-min momentum → ride to PDC or VWAP-based target | This is **the losing flow per SEBI FY23**. Long-bias retail intraday flow systematically loses. The asymmetric-direction rule (binding rule §3.2 #5) was violated. Predictably failed. |
+| `ema5_alert_pullback` | Subasish Pani's 5-EMA pullback pattern — generic trend-pullback indicator | Indian-published, not Indian-microstructure-edged. Subasish Pani is a retail educator; this is a pattern retail uses (and loses on). Failed Phase-1. |
+| `camarilla_l3_reversal` | Camarilla pivots level 3 reversal — universal pivot indicator | Universal pattern; not Indian-specific. Failed Phase-1. |
+
+Delete commit: `9726fc7` ("chore(sub9): delete 6 failed sub-7/sub-8 detectors and all related code"). Predecessor task #57.
+
+Specs preserved (do not re-implement without reading these first):
+- `specs/2026-04-25-sub-project-7-indian-native-setups-design.md` — original sub-7 design
+- `specs/2026-04-25-sub-project-7-indian-native-setups-plan.md` — sub-7 plan
+- `specs/2026-04-26-sub-project-8-indian-native-setups-extended-design.md` — sub-8 design with binding rules
+- `specs/2026-04-26-sub-project-8-indian-native-setups-extended-plan.md` — sub-8 plan
+- `specs/2026-05-01-sub-project-9-microstructure-first-redesign.md` — the canonical post-mortem
+- `specs/2026-04-25-sub-project-5-gauntlet-v2-postmortem.md` — sub-5 ICT/SMC post-mortem
+
+### Conditions for revival (sub-5/7/8 group)
+
+These eleven setups have a **group-level retire reason** that's harder to overturn than the per-setup ones in the 2026-05-14 batch. The sub-9 spec's §3.2 binding rules apply: any revival must satisfy all five asymmetry attributes. In practice that means:
+
+1. **Don't revive the pattern; revive the asymmetry.** `mis_unwind_short` is the canonical example — the SEBI MIS-square-off thesis is real, but the mechanic (short above-VWAP names with negative 3-bar momentum at 15:00) was wrong. A revival has to come from the asymmetry side: what's the right entry signal for forced unwind flow? (E.g., institutional algos initiate VWAP liquidations starting 14:45 — if you can detect those algos' price impact, you have an edge. The generic "above VWAP with weakening momentum" doesn't detect them.)
+2. **Don't revive universal patterns at all.** ORB-15, PDH/PDL reject, PDH/PDL sweep, ema5 pullback, camarilla L3, vwap_first_pullback, narrow_cpr_breakout, cpr_mean_revert — these are universal patterns. They are not allowed to be the PRIMARY thesis of a new setup. They can be MECHANICS used to harvest an Indian-specific asymmetry — but the asymmetry has to come first.
+3. **The `circuit_t1_fade_short` precedent.** Circuit_t1 was on the retire list per task #123 but was subsequently revived via a corrected SL/target sweep and now ships at PF 1.50. That revival succeeded because the underlying asymmetry (post-FOMO mean-reversion on Indian-specific circuit-band stocks) was sound; only the SL/target geometry was broken. None of the 11 setups above have that profile — they fail on the asymmetry, not on geometry.
+
+---
 
 ---
 
