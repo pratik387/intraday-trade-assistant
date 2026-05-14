@@ -345,6 +345,13 @@
   "setups": {
     "gap_fade_short": {
       "enabled": true,
+      "regulatory_sensitivity": "rule_orthogonal",
+      "depends_on": [
+        "MIS_leverage",
+        "STT_drag",
+        "dpr_circuit"
+      ],
+      "_comment_depends_on": "Mechanism = small-cap retail-FOMO gap-up exhaustion. Edge is rule-orthogonal (no F&O dependency), but PnL break-even shifts with MIS leverage caps and STT rates. Re-validate on Apr-1-2026 STT hike.",
       "_status_2026_05_12_SWEEP_FIX": "T1/T2/SL/time-stop sweep (tools/sub9_research/_gap_fade_short_sl_target_sweep.py) ran 180 combos x 11,803 Discovery + 4,987 OOS + 2,443 Holdout triggers. Production was bleeding edge in 3 ways: (1) stop_buffer too wide (0.25% vs optimum 0.10%), (2) ATR mult locked at 1.5 vs optimum 2.0, (3) time_stop_at=10:15 cuts trades 30min after entry — gap-fade trades need hours to reach PDC. PROD baseline PF: Disc 1.47 / OOS 1.06 / Hold 1.41. LOCKED combo (sb=0.10 / am=2.0 / ts=13:00 / partial_50_be_trail) passes PF>=1.30 in ALL 3 periods: Disc 2.36 / OOS 1.71 / Hold 1.69. Net Discovery jumps from Rs.929k -> Rs.~3M. Also: per-trade hold time goes from 30min -> 4hr but time-stop rate drops 62.5% -> 37.5% (more T2 hits, fewer stuck trades).",
       "_status_2026_05_08_oci": "ENABLED for OCI wide_open run alongside circuit_t1 + capitulation + delivery_pct_anomaly. Production-validated via sub7/8 gauntlet.",
       "_comment_disabled_2026_05_06": "Disabled while sub-9 round-3 candidates (VWAP-deviation, index-vs-stock divergence, volume-spike reversal) are researched. Holdout NET ~Rs.41K/yr is small for non-trivial capital scale. Re-enable post-research-decision based on combined-setup portfolio composition.",
@@ -381,6 +388,13 @@
     },
     "circuit_t1_fade_short": {
       "enabled": true,
+      "regulatory_sensitivity": "rule_orthogonal",
+      "depends_on": [
+        "MIS_leverage",
+        "STT_drag",
+        "dpr_circuit"
+      ],
+      "_comment_depends_on": "Mechanism = post-circuit retail FOMO + operator pump exhaustion. NSE DPR/circuit rules are the load-bearing dependency. Edge is independent of F&O microstructure, so Oct-1-2025 didn't break it (validated by mid_cap subset PF 1.37→1.40 OOS→Holdout).",
       "_status_2026_05_12_SWEEP_FIX": "T1/T2/SL sweep (tools/sub9_research/_circuit_t1_sl_target_sweep.py) ran 240 combos x 585 Discovery trades + 61 Holdout trades. Production was running partial_50_be_trail (PF 0.49 Discovery / 0.91 Holdout — actively losing money). Sanity baseline (all_in, ride to T2=t0_close) reproduces PF 1.34 Discovery / 1.89 Holdout. Sweep optimum (sb=0.25, ms=0.5, all_in, ts=15:10) gives PF 1.74 Discovery / 1.88 Holdout. LOCKED: t1_qty_pct=0.0 (disable partial — ride to T2), stop_t1_high_buffer_pct=0.25, min_stop_distance_pct=0.5.",
       "_status_2026_05_08_oci": "ENABLED for OCI wide_open run. Holdout PF 1.89 (Oct'25-Apr'26) confirmed robust through war + regulatory regime.",
       "_status_2026_05_01": "NEW — sub-9 §3.3 sanity-check PASSED (PF=1.47 NET, n=654 over 12mo 2024). Phase-1 validation pending. enabled=false until production smoke + Phase-1 backtest confirm.",
@@ -420,6 +434,16 @@
     },
     "delivery_pct_anomaly_short": {
       "enabled": true,
+      "regulatory_sensitivity": "rule_dependent",
+      "depends_on": [
+        "MWPL",
+        "single_stock_FO",
+        "single_stock_FO_speculator_unwind",
+        "F&O_speculation",
+        "MIS_leverage",
+        "STT_drag"
+      ],
+      "_comment_depends_on": "Mechanism = fade post-pump speculator inventory unwind. CRITICAL dependency on F&O single-stock position math (MWPL). SEBI Oct 1, 2025 rules broke this (PF 1.245 OOS → 0.879 Holdout). Apr-1-2026 STT hike adds further fee pressure. Re-validate on every MWPL/position-limit change.",
       "_status_2026_05_14_paper_cell_B": "PAPER ONLY. Production-replay analysis (analytics.jsonl fee model) on Jan-Sep 2025 OCI showed Cell B (mid_cap × 09:30-10:30) PF=1.245 n=295. Holdout (Oct'25-Apr'26) PF=0.879 — SEBI Oct 1, 2025 F&O rule changes (tightened MWPL, single-stock position limits) broke the speculator-inventory-unwind mechanism this setup fades. Pre-SEBI edge real; post-SEBI edge degraded. Shipping narrow Cell B at paper to capture forward data; re-evaluate live/retire after 30 days of paper.",
       "_status_2026_05_08_enabled": "ENABLED for OCI smoke + Phase-1 backtest. Sub9 sanity Discovery PF 1.44 + OOS 1.90 + Holdout 1.13 + War-period 5.03 at tight targets. Push to OCI for trade capture in wide_open mode.",
       "_status_2026_05_08": "NEW — sub9 sanity passed Discovery PF=1.44 + OOS PF=1.90 + Holdout PF=1.13 + War-period PF=5.03 at TIGHT targets (0.25R/0.75R/TS=1300). Phase-1 validation pending.",
