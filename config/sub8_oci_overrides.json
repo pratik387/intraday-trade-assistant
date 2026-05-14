@@ -19,21 +19,13 @@
     "enabled": true,
     "min_distance_to_circuit_pct": 2.0
   },
-  "_comment_setups": "Wide-open OCI capture. Active capture for sub-project #9: gap_fade_short (TRUSTED baseline) + expiry_pin_strike_reversal (DEFERRED, capture-ready post option-chain fix d50b28f) + circuit_t1_fade_short (NEW sub-9 setup needing gauntlet/cell selection) + options_vol_iv_rank_revert (NEW sub-9 round-4 setup; SHORT-only, iv_rank>=0.85 cell, F&O 200, 11:00 entry; needs IV-rank parquet uploaded to options_iv/ bucket prefix). All four captured in one wide-open run so trades cross-analyze without confounding from separate captures. (Historical sub-7/sub-8 detectors that were retired post-Phase-1: mis_unwind_short, closing_hour_reversal, orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim, gap_and_go_continuation, ema5_alert_pullback, camarilla_l3_reversal, cpr_mean_revert, narrow_cpr_breakout, vwap_first_pullback — most source files DELETED in commit cycle ending 2026-05-01.)",
+  "_comment_setups": "OCI capture overrides. Active setups: gap_fade_short, circuit_t1_fade_short. (Note: delivery_pct_anomaly_short runs from base config with its per-setup wide_open=true flag; it doesn't need an override entry here.) Retired setups history: see docs/retired_setups.md for the four sub-9 setups removed 2026-05-14 (earnings_day_intraday_fade, capitulation_long_morning, expiry_pin_strike_reversal, options_vol_iv_rank_revert) plus the historical sub-7/sub-8 deletions from the 2026-05-01 cycle.",
   "setups": {
     "gap_fade_short": {
       "enabled": true
     },
-    "expiry_pin_strike_reversal": {
-      "_retired_2026_05_14": "Disabled in OCI override too — base config says enabled=False with _status_2026_05_12_RETIRED note. Override was leaking 2 fires/2yr (both losers, NET -Rs.6,130 MIS). Signal logic never sanity-validated. Keep disabled until someone runs the validation pass.",
-      "enabled": false
-    },
     "circuit_t1_fade_short": {
       "enabled": true
-    },
-    "options_vol_iv_rank_revert": {
-      "_retired_2026_05_07": "Round-4 candidate retired at Holdout (2025-10..2026-03). NET PF 1.436 passed but n=11 < 30-floor and WR delta +13.6pp > 10pp limit. See setups.options_vol_iv_rank_revert._status_2026_05_07_RETIRED in configuration.json. Override stays disabled to keep future OCI captures clean.",
-      "enabled": false
     }
   }
 }

@@ -205,78 +205,8 @@ def download_consolidated_daily_cache():
         raise
 
 
-def download_iv_rank():
-    """Download per-symbol 252-day IV-rank parquet for the sub-9 round-4
-    options_vol_iv_rank_revert detector.
-
-    Single file (~1 MB), keyed by the most recently uploaded
-    `options_iv/<from_year>_<to_year>_iv_rank.parquet`. The detector's
-    services.iv_rank_service auto-discovers the newest *_iv_rank.parquet
-    in `data/options_iv/` so the OCI pod just needs the file present.
-
-    Built locally by tools/option_chain/build_iv_rank.py from
-    `tools/option_chain/build_iv_timeseries.py` output. Uploaded via
-    oci/tools/upload_iv_rank.py.
-
-    Bucket layout:
-        options_iv/<from_year>_<to_year>_iv_rank.parquet
-
-    Per-date 404 (file missing) is logged at warning — the detector
-    tolerates absence (silently no-ops on every symbol) but the run
-    won't generate any IV-rank fires.
-    """
-    log("Downloading IV-rank parquet for options_vol_iv_rank_revert...")
-
-    config = oci.config.from_file()
-    os_client = oci.object_storage.ObjectStorageClient(config)
-    namespace = os_client.get_namespace().data
-    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
-
-    # List all objects under the options_iv/ prefix and pick the lexically
-    # latest *_iv_rank.parquet (filename embeds year-range, so lex sort
-    # works: 2022_2024 < 2023_2025 < 2024_2026, etc).
-    try:
-        list_obj = os_client.list_objects(
-            namespace_name=namespace,
-            bucket_name=bucket,
-            prefix="options_iv/",
-        )
-        names = [o.name for o in list_obj.data.objects
-                 if o.name.endswith("_iv_rank.parquet")]
-    except oci.exceptions.ServiceError as e:
-        if e.status in (403, 404):
-            log(f"WARNING: list_objects(options_iv/) failed ({e.status}); "
-                "options_vol_iv_rank_revert detector will silently skip every bar")
-            return
-        log(f"ERROR listing options_iv/: {e}")
-        return
-
-    if not names:
-        log("WARNING: no *_iv_rank.parquet found in options_iv/ prefix; "
-            "run oci/tools/upload_iv_rank.py")
-        return
-    object_name = sorted(names)[-1]
-
-    local_dir = Path('/app/data/options_iv')
-    local_dir.mkdir(parents=True, exist_ok=True)
-    local_file = local_dir / Path(object_name).name
-
-    try:
-        get_obj = os_client.get_object(
-            namespace_name=namespace,
-            bucket_name=bucket,
-            object_name=object_name,
-        )
-        with open(local_file, 'wb') as f:
-            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
-                f.write(chunk)
-        size_kb = local_file.stat().st_size / 1024
-        log(f"Downloaded {object_name}: {size_kb:.1f} KB")
-    except oci.exceptions.ServiceError as e:
-        if e.status == 404:
-            log(f"WARNING: {object_name} not found in OCI cache")
-        else:
-            log(f"ERROR downloading {object_name}: {e}")
+# download_iv_rank() removed 2026-05-14 with options_vol_iv_rank_revert retire
+# (see docs/retired_setups.md).
 
 
 def download_delivery_pct():
@@ -492,147 +422,9 @@ def download_index_ohlcv():
             raise
 
 
-def download_earnings_calendar():
-    """Download earnings_events.parquet for the earnings_day_intraday_fade detector.
-
-    Single file (~700 KB) at `earnings_calendar/earnings_events.parquet`.
-    Loaded once at session start by services/earnings_calendar_loader._load()
-    and used by setup_universe.earnings_day_universe() + detector to decide
-    whether (symbol, T+0) is a BMO/AMC earnings day.
-
-    Built locally by tools/earnings_calendar/fetch_earnings.py from NSE
-    intimation feeds. Uploaded via oci/tools/upload_earnings_calendar.py
-    (mirror of upload_delivery_pct.py).
-
-    Bucket layout:
-        earnings_calendar/earnings_events.parquet
-
-    404 = file missing: detector silently no-fires every earnings signal
-    and earnings_day_universe returns empty set. This is exactly what
-    happened in the 20260513-153257_full OCI run (earnings_day=0 across
-    every single date) — the file existed locally but was never uploaded.
-    """
-    log("Downloading earnings_events parquet for earnings_day_intraday_fade...")
-
-    config = oci.config.from_file()
-    os_client = oci.object_storage.ObjectStorageClient(config)
-    namespace = os_client.get_namespace().data
-    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
-
-    object_name = "earnings_calendar/earnings_events.parquet"
-    local_dir = Path('/app/data/earnings_calendar')
-    local_dir.mkdir(parents=True, exist_ok=True)
-    local_file = local_dir / Path(object_name).name
-
-    try:
-        get_obj = os_client.get_object(
-            namespace_name=namespace,
-            bucket_name=bucket,
-            object_name=object_name,
-        )
-        with open(local_file, 'wb') as f:
-            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
-                f.write(chunk)
-        size_mb = local_file.stat().st_size / (1024 * 1024)
-        log(f"Downloaded {object_name}: {size_mb:.2f} MB")
-    except oci.exceptions.ServiceError as e:
-        if e.status == 404:
-            log(f"WARNING: {object_name} not found in OCI cache; "
-                "earnings_day_intraday_fade detector will silently skip every signal. "
-                "Run oci/tools/upload_earnings_calendar.py to upload.")
-        else:
-            log(f"ERROR downloading {object_name}: {e}")
-
-
-def download_option_chain(date_str):
-    """Download NSE F&O OI parquet snapshots for the session date and the
-    prior ~14 days from OCI Object Storage.
-
-    Required by structures/expiry_pin_strike_reversal_structure: the detector
-    calls services.option_chain_loader.find_max_oi_strike() which reads
-    `data/option_chain/<YYYY>/<MM>/<YYYY-MM-DD>.parquet`. The detector's D-1
-    lookup walks backward up to 7 calendar days when D-1 is missing
-    (weekends + NSE holidays); we fetch a 14-day window to be safe across
-    long weekends.
-
-    Bucket layout:
-        option_chain/<YYYY>/<MM>/<YYYY-MM-DD>.parquet
-
-    Local layout (mirrors repo):
-        /app/data/option_chain/<YYYY>/<MM>/<YYYY-MM-DD>.parquet
-
-    Implementation note (2026-05-01): originally used `list_objects` to
-    discover files under a month prefix, but that requires the
-    OBJECT_INSPECT IAM permission — which the pod's instance principal
-    didn't have. Every other download in this entrypoint uses direct
-    `get_object` (only needs OBJECT_READ), so list_objects silently failed
-    while everything else worked, leaving expiry_pin_strike_reversal with
-    zero OI data across 102 expiry days in the 2026-04-30 capture (3,548
-    "pin strike unavailable" rejections per expiry day). Fixed by
-    enumerating candidate dates and using direct get_object — same auth
-    requirement as every other download in this file.
-
-    Per-date 404 (file genuinely missing for that date — weekend / holiday)
-    is logged at debug, not as a warning. Other errors stay as warnings.
-    The detector tolerates missing data: it returns
-    `pin strike unavailable from OI snapshot` and the rest of the detector
-    suite stays functional.
-    """
-    from datetime import timedelta
-
-    log(f"Downloading option_chain OI snapshots for {date_str} (+ 14-day walk-back)...")
-
-    config = oci.config.from_file()
-    os_client = oci.object_storage.ObjectStorageClient(config)
-
-    namespace = os_client.get_namespace().data
-    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
-
-    session_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-
-    # Walk-back window: session_date − 14 .. session_date. The detector caps
-    # at 7 calendar days, but we add slack for safety (long weekends, run-
-    # date drift). 15 candidate dates per pod is cheap (~75 KB each).
-    candidates = [session_date - timedelta(days=offset) for offset in range(15)]
-
-    total_downloaded = 0
-    total_skipped_404 = 0
-    total_bytes = 0
-    for d in candidates:
-        ym = f"{d.year:04d}/{d.month:02d}"
-        object_name = f"option_chain/{ym}/{d.isoformat()}.parquet"
-        local_dir = Path(f"/app/data/option_chain/{ym}")
-        local_dir.mkdir(parents=True, exist_ok=True)
-        local_file = local_dir / f"{d.isoformat()}.parquet"
-
-        if local_file.exists():
-            continue
-
-        try:
-            get_obj = os_client.get_object(
-                namespace_name=namespace,
-                bucket_name=bucket,
-                object_name=object_name,
-            )
-            with open(local_file, 'wb') as f:
-                for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
-                    f.write(chunk)
-            total_downloaded += 1
-            total_bytes += local_file.stat().st_size
-        except oci.exceptions.ServiceError as e:
-            if e.status == 404:
-                total_skipped_404 += 1
-                # Genuine miss (weekend / holiday) — silent.
-            else:
-                log(f"  WARNING: failed to download {object_name}: {e}")
-        except Exception as e:
-            log(f"  WARNING: failed to download {object_name}: {e}")
-
-    size_mb = total_bytes / (1024 * 1024)
-    log(
-        f"Downloaded {total_downloaded} OI snapshots ({size_mb:.1f} MB), "
-        f"skipped {total_skipped_404} not-found dates"
-    )
+# download_earnings_calendar() and download_option_chain() removed 2026-05-14
+# with earnings_day_intraday_fade + expiry_pin_strike_reversal retire
+# (see docs/retired_setups.md). No active setup consumes either feed.
 
 
 def generate_analytics(date_str):
@@ -921,15 +713,10 @@ def main():
     # Download index OHLCV for directional bias
     download_index_ohlcv()
 
-    # Download option_chain OI snapshots for expiry_pin_strike_reversal.
-    # Pulls the session's month + the prior month (~44 parquets, ~65 MB total)
-    # so the detector's D-1 walk-back lookup can find the latest available
-    # bhavcopy even on Monday-after-long-weekend.
-    download_option_chain(date_str)
-
-    # Download IV-rank parquet for options_vol_iv_rank_revert (~1 MB, single
-    # file). Detector auto-skips if absent — sub9 round-4 ship.
-    download_iv_rank()
+    # download_option_chain / download_iv_rank / download_earnings_calendar
+    # removed 2026-05-14 — no active setup consumes those feeds. The
+    # corresponding setups (expiry_pin_strike_reversal, options_vol_iv_rank_revert,
+    # earnings_day_intraday_fade) are retired. See docs/retired_setups.md.
 
     # Download NSE delivery-percentage history parquet for
     # delivery_pct_anomaly_short (~39 MB, single file). Detector auto-skips
@@ -942,12 +729,6 @@ def main():
     # bars for the in-detector RVOL calculation. Detector rejects with
     # "cross-day RVOL unavailable" if absent — every signal blocked.
     download_cross_day_rvol()
-
-    # Download earnings_events parquet for earnings_day_intraday_fade
-    # (~700 KB, single file). Without this the universe loader silently
-    # returns empty set and earnings_day fires ZERO entries across the
-    # entire run (see 20260513-153257_full for the bug we are fixing).
-    download_earnings_calendar()
 
     # Run backtest
     result = run_backtest(date_str)

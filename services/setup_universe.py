@@ -6,7 +6,6 @@ works for momentum setups, but cross-day / event-driven setups have
 qualifying signals INVISIBLE to Stage-0:
 
   - circuit_t1_fade_short: needs yesterday's circuit hit (cross-day)
-  - earnings_day_intraday_fade: needs earnings calendar (event)
   - delivery_pct_anomaly_short: needs yesterday's delivery_pct (cross-day)
   - gap_fade_short: needs gap-from-PDC (cross-day; Stage-0 ignores explicitly)
 
@@ -99,42 +98,8 @@ def circuit_t1_universe(
     return qual
 
 
-# ---------------------------------------------------------------------------
-# earnings_day_intraday_fade — today's BMO/AMC earnings (calendar)
-# ---------------------------------------------------------------------------
-
-def earnings_day_universe(
-    session_date: date,
-    config: Dict[str, Any],
-) -> Set[str]:
-    """Symbols with earnings event today (BMO or AMC announce time).
-
-    Uses services.earnings_calendar_loader._load() — the loader caches a set
-    of (bare_symbol, trade_date) tuples; we filter to T+0 matching the
-    validated sanity script (see loader module docstring).
-    """
-    try:
-        from services.earnings_calendar_loader import _load
-    except Exception as e:
-        logger.warning("setup_universe.earnings: loader unavailable: %s", e)
-        return set()
-
-    announce_classes = tuple(config.get("announce_time_classes", ("BMO", "AMC")))
-    lookup = _load(announce_classes)
-    if lookup is None:
-        return set()
-    # lookup contains (bare_symbol, trade_date). We need bare symbols whose
-    # trade_date == session_date. Re-prefix with "NSE:" to match the
-    # shortlist convention used everywhere else.
-    qual: Set[str] = {
-        f"NSE:{bare}" for (bare, td) in lookup if td == session_date
-    }
-    if len(qual) > MAX_EXTRA_PER_SETUP:
-        # Earnings days can have 50-100 announcements; cap to safety floor
-        qual = set(list(qual)[:MAX_EXTRA_PER_SETUP])
-    logger.info("setup_universe.earnings_day: %d qualifying symbols on %s",
-                len(qual), session_date)
-    return qual
+# earnings_day_universe removed 2026-05-14 (earnings_day_intraday_fade retired
+# — see docs/retired_setups.md).
 
 
 # ---------------------------------------------------------------------------
@@ -276,11 +241,6 @@ def compute_static_universes(
     cfg = (setups_cfg.get("circuit_t1_fade_short") or {})
     if cfg.get("enabled"):
         out["circuit_t1_fade_short"] = circuit_t1_universe(daily_dict, session_date, cfg)
-
-    # earnings_day
-    cfg = (setups_cfg.get("earnings_day_intraday_fade") or {})
-    if cfg.get("enabled"):
-        out["earnings_day_intraday_fade"] = earnings_day_universe(session_date, cfg)
 
     # delivery_pct
     cfg = (setups_cfg.get("delivery_pct_anomaly_short") or {})

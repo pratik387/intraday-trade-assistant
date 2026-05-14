@@ -379,40 +379,6 @@
       "_audit_decision_2026_05_01": "TRUSTED -- validated production setup. NET PF=1.49 on 5,848 trades over 2-yr Discovery (sub-project #5 era). Indian-microstructure-specific: small-cap retail-driven gap-up exhaustion + structural opening-window mechanics + SHORT-only (aligned with SEBI FY23 long-bias-loses finding). Locked, no design changes.",
       "wide_open": false
     },
-    "expiry_pin_strike_reversal": {
-      "enabled": false,
-      "_status_2026_05_12_RETIRED": "RETIRED 2026-05-12. Shipped without any validation of the actual signal logic. All sub9 OCI captures (phase1/oos/holdout) were wide_open which BYPASSES the RSI-decay confirmation, heavyweight universe filter, AND cap segment guard — making them noise (47k fires across 1,218 symbols in Discovery, when the real detector should fire on top-10 heavyweights only). Filtering wide_open captures to heavyweight universe post-hoc shows Discovery PF 0.526 n=377 (fails both PF>=1.10 AND n>=500 gates from spec line 202 'Phase B3 backtest pending'). 3D cell mining on wide_open captures found SHIP-eligible cell PF 1.43 Discovery but collapses to PF 0.80 OOS / 0 SELL trades with rank>=2.0 in Holdout — overfitting confirmed. Setup was never cell-mined and never had a sanity script that exercised RSI-decay logic. To revive: write tools/sub9_research/sanity_expiry_pin_strike_reversal.py replicating full detector logic on local 2023-2024 OI parquets (data/option_chain/2023/ already populated).",
-      "_enabled_2026_05_12": "Enabled after OI fix landed (commit d50b28f) + parquet store backfilled. Production smoke 2024-04-25 (monthly expiry Thursday) confirmed detector was completely silent (0 accepts AND 0 rejections) due to enabled=false skipping MainDetector init. With wide_open=false in production config, heavyweight universe + cap segment guards remain enforced; expiry-day check + pin lookup are mandatory regardless. OI loader verified locally (NIFTY monthly pin 22600 on 2024-04-24 D-1 snapshot).",
-      "active_window_start": "13:30",
-      "active_window_end": "15:15",
-      "min_spot_distance_to_pin_pct": 0.3,
-      "pin_index": "NIFTY",
-      "expiry_types": [
-        "weekly",
-        "monthly"
-      ],
-      "nifty_heavyweights_csv": "assets/nifty_heavyweights.csv",
-      "rsi_period": 14,
-      "rsi_overbought": 70,
-      "rsi_oversold": 30,
-      "stop_atr_multiplier": 0.5,
-      "t1_qty_pct": 0.5,
-      "t1_target_frac": 0.5,
-      "allowed_sides": [
-        "long",
-        "short"
-      ],
-      "allowed_cap_segments": [
-        "large_cap"
-      ],
-      "min_bars_required": 30,
-      "entry_zone_pct": 0.1,
-      "entry_zone_mode": "symmetric",
-      "min_stop_distance_pct": 0.3,
-      "_research_notes": "Calendar+OI driven pin-magnet reversal per specs/2026-04-29-research-new-indian-setup-candidates.md §Candidate 8. Sources: Wright Research, ICFM, OptionX, PL Capital. Mechanic: market-makers minimize gamma exposure by pulling spot to high-OI strike on Indian weekly+monthly expiry sessions post 13:30 IST. Detector fires only on expiry days (is_expiry_day true), only on NIFTY heavyweights (top 10 by weight — pin gravity is mediated through index basket constituents, not random F&O symbols), only when spot is ≥0.3% from pin (room for the magnet pull), and only after RSI extreme reading earlier in session (overbought → short towards pin from above; oversold → long towards pin from below). Stop = 0.5*ATR beyond entry. Tiered T1 50% qty at half-distance to pin; T2 100% qty at pin strike. First-trigger latch keyed on (symbol, side, session_date_iso). Monthly expiry uses last-Thursday-of-month rule via is_monthly_expiry; weekly is any other expiry day.",
-      "_live_status": "disabled — Phase 0 scaffolding; awaits Phase B3 backtest validation",
-      "_audit_decision_2026_05_01": "DEFERRED -- NOT disabled. Indian-specific F&O gamma-pin asymmetry; design is sound (NIFTY heavyweights + RSI decay + spot-vs-pin distance). Validation impossible on the 20260430-232414 OCI run because option_chain parquets failed to download (entrypoint list_objects bug; fixed in commit d50b28f). Re-run on next OCI capture (with OI download fix) for Phase-1 validation evidence."
-    },
     "circuit_t1_fade_short": {
       "enabled": true,
       "_status_2026_05_12_SWEEP_FIX": "T1/T2/SL sweep (tools/sub9_research/_circuit_t1_sl_target_sweep.py) ran 240 combos x 585 Discovery trades + 61 Holdout trades. Production was running partial_50_be_trail (PF 0.49 Discovery / 0.91 Holdout — actively losing money). Sanity baseline (all_in, ride to T2=t0_close) reproduces PF 1.34 Discovery / 1.89 Holdout. Sweep optimum (sb=0.25, ms=0.5, all_in, ts=15:10) gives PF 1.74 Discovery / 1.88 Holdout. LOCKED: t1_qty_pct=0.0 (disable partial — ride to T2), stop_t1_high_buffer_pct=0.25, min_stop_distance_pct=0.5.",
@@ -452,72 +418,6 @@
       "_research_notes": "Sub-project #9 first APPROVED setup. Asymmetry: post-circuit-hit retail FOMO + operator pump exhaustion in T+0 close, faded T+1 mid-session. Indian-microstructure-specific (NSE DPR flexing, no US/forex analog). Direction: short-only. 5 peer-reviewed sources (Guo JIFM 2023, Chen/Petukhov/Wang MIT WP, Tandfonline 2024, Sehgal PBFJ 2024, Chari 2017). Sanity check (tools/sub9_research/sanity_circuit_t1_fade_short.py): NET PF=1.473 on 654 trades over 2024. Brief: specs/2026-05-01-sub-project-9-brief-circuit_t1_fade_short.md.",
       "wide_open": false
     },
-    "options_vol_iv_rank_revert": {
-      "enabled": false,
-      "_status_2026_05_07_RETIRED": "Sub-9 round-4 candidate RETIRED at Holdout per brief's locked falsification criteria. Sanity (2yr 5m): aggregate PF 0.843 RETIRE; cell-select rescued SHORT × iv_rank>=0.85 PF 1.131 n=448. Discovery OCI (run 20260506-220013_full): NET PF 1.153 n=445 — held. OOS (run 20260507-082527_full, 2025-01..2025-09): iv>=0.85 cell PF 0.843 n=83 FAILED, but iv>=0.95 sub-cell PF 1.197 n=56 PASSED — tightened threshold 0.85->0.95 per pre-registered round4_iv_rank_cell_selection.md. Holdout (2025-10..2026-03): iv>=0.95 cell PF 1.436 n=11 — PF passes 1.10 floor BUT n=11 below 30-floor AND WR=63.6% vs OOS 50.0% (delta +13.6pp > 10pp limit). Q1 2026 monthly decay observed (2026-02 single losing trade, 2026-03 PF 0.77 over 4 trades). Two of three brief criteria FAILED. Falsification thresholds were locked pre-experiment so this retire is methodologically clean. SETUP RETIRED 2026-05-07. enabled=false permanently. Detector code + IV-rank infra preserved in repo (commit history) for future sub-projects that may revisit options-vol asymmetries on different data layers.",
-      "iv_rank_high_threshold": 0.95,
-      "_comment_threshold": "Tightened 0.85 -> 0.95 after OOS validation 2026-05-07. Discovery sanity 0.85 cell PF 1.131 (n=448) and 0.95 cell PF 1.192 (n=262). OOS 2025-01..2025-09 (run 20260507-082527_full): 0.85 cell PF 0.843 NET (n=83) FAILED, 0.95 cell PF 1.197 NET (n=56) PASSED. The 0.85-0.90 sub-bucket was the noise drag I flagged as yellow in sanity (n=59 too thin to trust). Holdout 2025-10..2026-03 will gate the final ship; falsify if Holdout NET PF < 1.10 or n < 30 or |WR delta vs OOS| > 10pp.",
-      "active_window_start": "11:00",
-      "active_window_end": "11:00",
-      "stop_pct": 0.01,
-      "t1_r_multiple": 1.0,
-      "t2_r_multiple": 2.0,
-      "t1_qty_pct": 0.5,
-      "time_stop_at": "15:10",
-      "allowed_cap_segments": [
-        "large_cap",
-        "mid_cap",
-        "small_cap"
-      ],
-      "_comment_cap": "F&O 200 universe is empirically large_cap-dominant (143/153 large, 4 mid, 0 small per sanity). Brief restriction to mid+small was infeasible. Allow all 3 caps; cap_segment break-down available in trade log if cell tightening needed post-OOS.",
-      "allowed_regimes": null,
-      "_comment_regime": "Cell-selection found regime=trend_down × iv_rank>=0.85 cell strongest (n=244 PF 1.242). Ship regime-agnostic for Discovery; tighten to trend_down-only post-OOS if PF holds.",
-      "universe_key": "fno_liquid_200",
-      "min_bars_required": 16,
-      "entry_zone_pct": 0.1,
-      "entry_zone_mode": "directional",
-      "min_stop_distance_pct": 0.5,
-      "_comment_min_stop_distance_pct": "Set to 0.5 (below the 1.0 stop_pct) to avoid the fp-rounding edge in enforce_min_stop_distance: with stop_pct=1% and min=1%, hard_sl=entry*1.01 produces stop_pct=0.999...%* for some entries (SAIL 112.4, GODREJCP 1077.1, LUPIN 1270.05, TCS 3810.45 — all rejected on smoke 2023-12-26). The guard exists for pivot-anchored stops that come out 0.01% from entry; our fixed 1% stop is already well above the qty-inflation floor.",
-      "_research_notes": "Sub-9 round-4 brief APPROVED for narrow-cell ship. Asymmetry: Indian single-stock-options ATM IV-rank extreme = retail F&O option-buyer concentration (per SEBI FY23 91-93% retail loss study). At iv_rank>=0.85 (top 15% of 252-day window) the underlying mean-reverts down on T+0 mid-session as institutional vol-arb desks unwind. Source data: NSE F&O bhavcopy → tools/option_chain/build_iv_rank.py → data/options_iv/<from>_<to>_iv_rank.parquet. SHORT-only ship — sanity LONG cell (iv_rank<=0.20 + NIFTY uptrend) PF 0.819, dragged aggregate to 0.843. Brief: specs/2026-05-06-sub-project-9-brief-options_vol_iv_rank_revert.md. Sanity script: tools/sub9_research/sanity_options_vol_iv_rank_revert.py. Cell select: tools/sub9_research/cell_select_round4.py."
-    },
-    "capitulation_long_morning": {
-      "enabled": false,
-      "_status_2026_05_12_RETIRED": "RETIRED 2026-05-12. Own sanity script (tools/sub9_research/sanity_capitulation_long_morning.py) shows aggregate PF 0.813 Discovery (n=7,471) and PF 0.899 Holdout (n=3,035) — fails Phase B3 floor (1.10) on its own validated data. Earlier ship decision relied on cell trend_down x mid_cap x liq=10-30cr (Discovery PF 1.238 n=443) but Holdout with that same cell + reproducible regime classifier (per-symbol close<SMA20 T-1) gave n=174 PF 0.631 — catastrophic failure. The cell was not robust across regime classifier definitions. Setup retired permanently. No fix path identified; the gap-down + reversal mechanic is not asymmetric enough to overcome friction in 2025-2026 conditions.",
-      "_status_2026_05_08": "ENABLED for OCI smoke + Phase-1 backtest. Sub9 sanity Discovery PF 1.238 (n=443 cell). Holdout aggregate PF 0.97; latest month (Apr 2026) PF 1.26 post-ceasefire. Push to OCI for trade capture in wide_open mode.",
-      "_status_2026_05_07": "NEW — sub-9 round-6 cell-ship. Aggregate sanity PF 0.813 (n=7,471) but cell trend_down × mid_cap × liq=10-30cr passed at PF 1.238, n=443 (~222/yr; 6mo holdout expects ~110 fires — proper statistical power). Mirror image of gap_fade_short (LONG fade of retail panic-capitulation on gap-down). enabled=false until OOS validation (Jan-Sep 2025) + holdout (Oct 2025-Mar 2026) confirm.",
-      "gap_min_pct": 1.5,
-      "gap_max_pct": 8.0,
-      "lower_wick_ratio_min": 0.5,
-      "body_size_max_pct": 30.0,
-      "active_window_start": "09:25",
-      "active_window_end": "10:00",
-      "stop_pct": 0.01,
-      "gap_low_buffer_pct": 0.5,
-      "atr_stop_multiple": 1.5,
-      "t1_r_multiple": 1.0,
-      "t2_r_multiple": 2.0,
-      "t1_qty_pct": 0.5,
-      "time_stop_at": "10:15",
-      "allowed_cap_segments": [
-        "mid_cap"
-      ],
-      "_comment_cap": "Cell-locked to mid_cap per round-6 cell selection. trend_down × mid_cap × liq=10-30cr was the only trivariate cell with n=443 PF 1.238 across all 7,471 aggregate trades. large_cap and small_cap fail PF (~0.75-0.85). DO NOT broaden without re-running cell selection on OOS data first.",
-      "allowed_regimes": [
-        "trend_down"
-      ],
-      "_comment_regime": "Cell-locked to NIFTY trend_down. trend_up cell PF=0.636 (n=2,776, biggest drag in aggregate). The brief did not pre-lock regime; cell selection on Discovery identified trend_down as the only regime where the asymmetry holds.",
-      "allowed_liquidity_band_cr": [
-        10.0,
-        30.0
-      ],
-      "_comment_liquidity_band": "Cell-locked to ADV_20d in [10, 30] Cr. liq=<3cr (PF 0.474), 3-10 (0.814), 10-30 (best, ~0.86 univariate; 1.238 with regime+cap), 30-100 (0.82), 100+ (0.81). Tight liquidity band excludes both retail-trap micro-caps (<3cr) AND large-cap names where institutional flow dominates.",
-      "universe_key": null,
-      "min_bars_required": 4,
-      "entry_zone_pct": 0.1,
-      "entry_zone_mode": "directional",
-      "min_stop_distance_pct": 0.3,
-      "_research_notes": "Sub-9 round-6 cell-ship. Mirror of gap_fade_short on the LONG-DOWN-side. Mechanic: 09:15 gap-down 1.5-8% on no-news (filter NOT enforced — cell stats showed news_status was orthogonal); confirmed by 09:25-10:00 5m bar with lower_wick/body>=0.5 + body<=30% + green + no fresh low. Stop = min(gap_low × 0.995, entry - ATR×1.5); T1=1R, T2=2R, time-stop 10:15 IST. Brief: specs/2026-05-07-sub-project-9-brief-capitulation_long_morning.md. Sanity: tools/sub9_research/sanity_capitulation_long_morning.py. Cell selection on aggregate trades CSV identified the trend_down × mid_cap × liq=10-30cr cell."
-    },
     "delivery_pct_anomaly_short": {
       "enabled": true,
       "_status_2026_05_08_enabled": "ENABLED for OCI smoke + Phase-1 backtest. Sub9 sanity Discovery PF 1.44 + OOS 1.90 + Holdout 1.13 + War-period 5.03 at tight targets. Push to OCI for trade capture in wide_open mode.",
@@ -548,43 +448,6 @@
       "max_fires_per_5min": 5,
       "_research_notes": "Validated cell from delivery_pct anomaly cell-mining. SHORT only. Indian-microstructure anchor: NSE-published delivery percentage <20% + same-day pump >3% = retail/operator pump signature. Cross-day RVOL confirmation rejects intra-session false signals. Sanity: tools/sub9_research/sanity_nse_delivery_pct_anomaly.py. Brief: specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md.",
       "wide_open": true
-    },
-    "earnings_day_intraday_fade": {
-      "enabled": true,
-      "_status_2026_05_12": "NEW — sub-9 ship #5. Bidirectional fade of BMO/AMC earnings-gap. Discovery PF 1.64 (n=1569) / OOS PF 1.53 (n=510) / Holdout PF 1.25 (n=298). Locked R-multiples T1=1.0R / T2=1.0R / SL=2.5x structural per 3D sweep. Enabled for OCI smoke + Phase-1 backtest.",
-      "gap_pct_min": 0.005,
-      "gap_pct_max": 0.06,
-      "entry_window_start_hhmm": "10:30",
-      "entry_window_end_hhmm": "15:00",
-      "time_stop_hhmm": "15:10",
-      "sl_buffer_pct": 0.005,
-      "min_stop_pct": 0.01,
-      "t1_r_multiple": 1.0,
-      "t2_r_multiple": 1.0,
-      "stop_r_multiple": 2.5,
-      "use_breakeven_trail_after_t1": true,
-      "min_adv_cr": 10.0,
-      "allowed_caps": [
-        "large_cap",
-        "mid_cap"
-      ],
-      "_comment_caps": "small_cap dropped to PF 0.87 in OOS — exclude per cell-lock. Do NOT broaden without re-running cell selection.",
-      "announce_time_classes": [
-        "BMO",
-        "AMC"
-      ],
-      "risk_per_trade_inr": 1000,
-      "min_bars_required": 4,
-      "entry_zone_pct": 0.1,
-      "entry_zone_mode": "directional",
-      "min_stop_distance_pct": 0.3,
-      "priority": 100,
-      "capital_budget_pct": 30,
-      "max_concurrent_positions": 3,
-      "per_symbol_cooloff_min": 60,
-      "max_fires_per_5min": 3,
-      "_research_notes": "Sub-9 ship #5. Indian-microstructure anchor: NSE single-stock-options + low retail tolerance for earnings uncertainty produces a 09:15 gap (any direction) that retail/option-buyers extend in the first hour. Inst-flow fades it 10:30-15:00 once the beat/miss is rationally priced. Universe: MIS-eligible + ADV>=10cr/day (the F&O 200 had n<floor; expanded universe lifted n past gate). Brief: specs/2026-05-06-sub-project-9-brief-earnings_day_intraday_fade.md. Sanity: tools/sub9_research/sanity_earnings_day_intraday_fade.py. R-multiples LOCKED (T1=1.0R T2=1.0R SL=2.5x) from 3D sweep — DO NOT modify without re-running gauntlet.",
-      "wide_open": false
     }
   },
   "filters": {

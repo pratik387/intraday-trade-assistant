@@ -257,20 +257,12 @@ def _init_stage0_worker(config_dict):
         _stage0_config = config_dict
 
         scanner_cfg = config_dict["energy_scanner"]
-        # IV-rank priority: prepend qualifying SHORT candidates so the sub-9
-        # options_vol_iv_rank_revert detector reaches per-bar evaluation
-        # regardless of generic momentum rank.
-        _iv_setup = (config_dict.get("setups") or {}).get("options_vol_iv_rank_revert") or {}
-        _iv_thr = (
-            float(_iv_setup["iv_rank_high_threshold"])
-            if _iv_setup.get("enabled") and "iv_rank_high_threshold" in _iv_setup
-            else None
-        )
+        # IV-rank prepend logic removed 2026-05-14 with options_vol_iv_rank_revert
+        # retire (see docs/retired_setups.md).
         _stage0_scanner = EnergyScanner(
             top_k_long=scanner_cfg["top_k_long"],
             top_k_short=scanner_cfg["top_k_short"],
             wide_open=bool(config_dict.get("wide_open_mode", False)),
-            iv_rank_short_threshold=_iv_thr,
         )
 
         # Pre-load cap mapping (same logic as ScreenerLive._load_cap_mapping)
@@ -561,19 +553,13 @@ class ScreenerLive:
         self.directional_bias = DirectionalBiasTracker(raw)
         set_tracker(self.directional_bias)  # Module-level singleton for pipeline access
 
-        # Stage-0 scanner
+        # Stage-0 scanner — iv_rank short-threshold path removed 2026-05-14
+        # with options_vol_iv_rank_revert retire (see docs/retired_setups.md).
         scanner_cfg = raw.get("energy_scanner")
-        _iv_setup = (raw.get("setups") or {}).get("options_vol_iv_rank_revert") or {}
-        _iv_thr = (
-            float(_iv_setup["iv_rank_high_threshold"])
-            if _iv_setup.get("enabled") and "iv_rank_high_threshold" in _iv_setup
-            else None
-        )
         self.scanner = EnergyScanner(
             top_k_long=scanner_cfg["top_k_long"],
             top_k_short=scanner_cfg["top_k_short"],
             wide_open=bool(raw.get("wide_open_mode", False)),
-            iv_rank_short_threshold=_iv_thr,
         )
 
         # CapitalManager for bar-level admission (2026-05-12 architectural refactor).
@@ -1470,11 +1456,10 @@ class ScreenerLive:
                     shortlist = shortlist + list(injected)
                     _extra_added = len(injected)
                     logger.info(
-                        "UNIVERSE_UNION | shortlist %d -> %d (+%d) | gap_fade=%d circuit_t1=%d earnings=%d delivery=%d",
+                        "UNIVERSE_UNION | shortlist %d -> %d (+%d) | gap_fade=%d circuit_t1=%d delivery=%d",
                         pre_count, len(shortlist), _extra_added,
                         len(self._gap_fade_universe or set()),
                         len(self._setup_universes.get("circuit_t1_fade_short", set())),
-                        len(self._setup_universes.get("earnings_day_intraday_fade", set())),
                         len(self._setup_universes.get("delivery_pct_anomaly_short", set())),
                     )
         except Exception as _e:

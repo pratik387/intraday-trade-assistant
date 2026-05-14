@@ -64,12 +64,11 @@ from config.logging_config import get_agent_logger, get_planning_logger
 # validation failure. See specs/2026-05-01-sub-project-9-microstructure-
 # first-redesign.md.
 from structures.gap_fade_short_structure import GapFadeShortStructure
-from structures.expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
 from structures.circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
-from structures.options_vol_iv_rank_revert_structure import OptionsVolIvRankRevertStructure
-from structures.capitulation_long_morning_structure import CapitulationLongMorningStructure
 from structures.delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
-from structures.earnings_day_intraday_fade_structure import EarningsDayIntradayFadeStructure
+# Retired setups removed 2026-05-14 (see docs/retired_setups.md):
+#   earnings_day_intraday_fade, capitulation_long_morning,
+#   expiry_pin_strike_reversal, options_vol_iv_rank_revert.
 from structures.data_models import MarketContext
 
 from services.symbol_metadata import get_cap_segment, get_mis_info
@@ -94,12 +93,8 @@ def _planning_logger():
 # is written — don't add entries here ahead of that gate.
 _DETECTOR_REGISTRY: Dict[str, Any] = {
     "gap_fade_short": GapFadeShortStructure,
-    "expiry_pin_strike_reversal": ExpiryPinStrikeReversalStructure,
     "circuit_t1_fade_short": CircuitT1FadeShortStructure,
-    "options_vol_iv_rank_revert": OptionsVolIvRankRevertStructure,
-    "capitulation_long_morning": CapitulationLongMorningStructure,
     "delivery_pct_anomaly_short": DeliveryPctAnomalyShortStructure,
-    "earnings_day_intraday_fade": EarningsDayIntradayFadeStructure,
 }
 
 ACTIVE_SETUPS: frozenset = frozenset(_DETECTOR_REGISTRY.keys())
@@ -281,14 +276,7 @@ class PlanOrchestrator:
 
             bar_timestamp = pd.to_datetime(df5m.index[-1])
 
-            # NIFTY 50 spot — needed by expiry_pin_strike_reversal for spot-vs-pin
-            # distance. None for non-expiry sessions / non-heavyweight symbols
-            # is fine; detector returns no-fire in that case.
-            from services.index_spot_loader import get_nifty_spot
-            nifty_spot = get_nifty_spot(bar_timestamp)
-            if nifty_spot is not None:
-                indicators["nifty_spot"] = nifty_spot
-
+            # NIFTY spot lookup removed 2026-05-14 with expiry_pin retire.
             current_price = float(df5m["close"].iloc[-1])
             if cap_segment is None:
                 cap_segment = get_cap_segment(symbol)

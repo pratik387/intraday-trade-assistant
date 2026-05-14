@@ -17,12 +17,13 @@ from .base_structure import BaseStructure
 from .data_models import StructureEvent, TradePlan, RiskParams, ExitLevels, MarketContext, StructureAnalysis
 from services.gates.trade_decision_gate import SetupCandidate
 from .gap_fade_short_structure import GapFadeShortStructure
-from .expiry_pin_strike_reversal_structure import ExpiryPinStrikeReversalStructure
 from .circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
-from .options_vol_iv_rank_revert_structure import OptionsVolIvRankRevertStructure
-from .capitulation_long_morning_structure import CapitulationLongMorningStructure
 from .delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
-from .earnings_day_intraday_fade_structure import EarningsDayIntradayFadeStructure
+# Retired setups removed 2026-05-14 (see docs/retired_setups.md):
+#   earnings_day_intraday_fade   — sanity look-ahead bias on SL placement
+#   capitulation_long_morning    — Holdout PF 0.631 with reproducible regime classifier
+#   expiry_pin_strike_reversal   — never sanity-validated; OCI wide-open captures = noise
+#   options_vol_iv_rank_revert   — Holdout n=11, WR delta +13.6pp > 10pp
 from services.symbol_metadata import get_cap_segment
 
 logger = get_agent_logger()
@@ -67,12 +68,8 @@ class MainDetector(BaseStructure):
         detector_configs = [
             # (setup_name, detector_class, detector_key)
             ("gap_fade_short", GapFadeShortStructure, "gap_fade_short"),
-            ("expiry_pin_strike_reversal", ExpiryPinStrikeReversalStructure, "expiry_pin_strike_reversal"),
             ("circuit_t1_fade_short", CircuitT1FadeShortStructure, "circuit_t1_fade_short"),
-            ("options_vol_iv_rank_revert", OptionsVolIvRankRevertStructure, "options_vol_iv_rank_revert"),
-            ("capitulation_long_morning", CapitulationLongMorningStructure, "capitulation_long_morning"),
             ("delivery_pct_anomaly_short", DeliveryPctAnomalyShortStructure, "delivery_pct_anomaly_short"),
-            ("earnings_day_intraday_fade", EarningsDayIntradayFadeStructure, "earnings_day_intraday_fade"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -160,8 +157,8 @@ class MainDetector(BaseStructure):
             regime: Broad-market regime label ("trend_up", "trend_down",
                 "chop", "squeeze") computed by the caller's regime gate.
                 Threaded onto MarketContext.regime so cell-locked detectors
-                (capitulation_long_morning, circuit_t1_fade_short, etc.) can
-                enforce their allowed_regimes filter inside detect(). None
+                (circuit_t1_fade_short, etc.) can enforce their
+                allowed_regimes filter inside detect(). None
                 is permitted only when wide_open_mode is on or when no
                 regime is available.
 
@@ -451,10 +448,9 @@ class MainDetector(BaseStructure):
         that don't need it.
 
         regime is forwarded onto ctx.regime so detectors that hard-filter
-        on broad-market regime (capitulation_long_morning, circuit_t1_fade_short,
-        options_vol_iv_rank_revert) can enforce their allowed_regimes set
-        inside detect(). The caller (TradeDecisionGate) computes regime
-        once per scan and threads it through here.
+        on broad-market regime (circuit_t1_fade_short) can enforce their
+        allowed_regimes set inside detect(). The caller (TradeDecisionGate)
+        computes regime once per scan and threads it through here.
         """
         try:
             # Ensure we have the required indicators
@@ -483,13 +479,8 @@ class MainDetector(BaseStructure):
             # BUGFIX: Use DataFrame timestamp instead of datetime.now() for backtesting compatibility
             bar_timestamp = pd.to_datetime(d.index[-1])
 
-            # NIFTY 50 spot at this bar — needed by expiry_pin_strike_reversal
-            # for spot-vs-pin distance computation. Same lazy-cached helper
-            # as the orchestrator path so both contexts agree.
-            from services.index_spot_loader import get_nifty_spot
-            nifty_spot = get_nifty_spot(bar_timestamp)
-            if nifty_spot is not None:
-                indicators['nifty_spot'] = nifty_spot
+            # NIFTY spot lookup removed 2026-05-14 with expiry_pin retire.
+            # No active setup consumes ctx.indicators["nifty_spot"].
 
             return MarketContext(
                 symbol=symbol,
@@ -821,33 +812,10 @@ class MainDetector(BaseStructure):
             'gap_fade_short': 'gap_fade_short',
             'cpr_mean_revert': 'cpr_mean_revert',
 
-            # Sub-project #8 / Sub-project #9 cleanup (2026-05-01):
-            # 6 sub-8 candidate detectors deleted after Phase-1 validation
-            # failure (orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim,
-            # gap_and_go_continuation, ema5_alert_pullback, camarilla_l3_reversal).
-            # Only expiry_pin_strike_reversal retained.
-            'expiry_pin_strike_reversal': 'expiry_pin_strike_reversal',
-
-            # Sub-project #9 first APPROVED setup (2026-05-03):
+            # Active setups after 2026-05-14 retirement cleanup.
+            # See docs/retired_setups.md for the 4 setups removed in that pass.
             'circuit_t1_fade_short': 'circuit_t1_fade_short',
-
-            # Sub-project #9 round-4 narrow-cell ship (2026-05-06):
-            'options_vol_iv_rank_revert': 'options_vol_iv_rank_revert',
-
-            # Sub-project #9 round-6 cell-ship (2026-05-07):
-            'capitulation_long_morning': 'capitulation_long_morning',
-
-            # Sub-project #9 round-7 cell-ship (2026-05-08):
-            # delivery_pct_anomaly_short — first sub9 candidate to pass all 3
-            # validation gates (Discovery PF=1.44, OOS PF=1.90, Holdout PF=1.13)
-            # at TIGHT targets (0.25R/0.75R/TS=1300). War-period PF=5.03.
             'delivery_pct_anomaly_short': 'delivery_pct_anomaly_short',
-
-            # Sub-project #9 ship #5 (2026-05-12):
-            # earnings_day_intraday_fade — bidirectional fade of BMO/AMC
-            # earnings gap. Discovery PF 1.64 / OOS PF 1.53 / Holdout PF 1.25.
-            # Locked R-multiples: T1=1.0R / T2=1.0R / SL=2.5× structural.
-            'earnings_day_intraday_fade': 'earnings_day_intraday_fade',
         }
 
         return direct_mappings.get(structure_type)

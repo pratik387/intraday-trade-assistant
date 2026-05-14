@@ -47,13 +47,13 @@ def test_schedule_returns_plans_in_priority_order():
 
     plans = [
         _plan("NSE:A", "gap_fade_short", priority=40),
-        _plan("NSE:B", "earnings_day_intraday_fade", priority=90),
+        _plan("NSE:B", "delivery_pct_anomaly_short", priority=90),
         _plan("NSE:C", "circuit_t1_fade_short", priority=70),
     ]
     cm = _FakeCapitalManager()
     rt = _FakeRisk()
     admitted = schedule_admits(plans, cm, rt, ts=pd.Timestamp("2024-08-29 09:20"))
-    # Earnings (90) > circuit (70) > gap (40)
+    # delivery (90) > circuit (70) > gap (40)
     assert [a["symbol"] for a in admitted] == ["NSE:B", "NSE:C", "NSE:A"]
 
 
@@ -62,7 +62,7 @@ def test_schedule_stops_when_capital_exhausted():
 
     plans = [
         _plan("NSE:A", "gap_fade_short", priority=40),
-        _plan("NSE:B", "earnings_day_intraday_fade", priority=90),
+        _plan("NSE:B", "delivery_pct_anomaly_short", priority=90),
     ]
     cm = _FakeCapitalManager(allow_all=False)   # all rejections
     rt = _FakeRisk()
