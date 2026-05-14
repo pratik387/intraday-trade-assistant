@@ -297,6 +297,127 @@ class KiteClient:
         self._rps = max(0.5, float(rps))
         self._rl_min_dt = 1.0 / self._rps
 
+    async def async_fetch_historical_5m_batch(
+        self,
+        symbols: List[str],
+        from_date: str,
+        to_date: str,
+        concurrency: int = 3,
+        rps: float = 2.5,
+    ) -> Dict[str, pd.DataFrame]:
+        """Async batch fetch 5m bars per symbol via Kite Historical API.
+
+        Mirrors Upstox's `async_fetch_historical_5m_batch` API so callers
+        can be sdk-agnostic. Used by `services.runtime_rvol_baseline` to
+        build the per-symbol cross-day RVOL baseline at session start.
+
+        Implementation notes:
+          - Kite's `historical_data()` is synchronous; we wrap each call in
+            `asyncio.to_thread` to interleave I/O without blocking the loop.
+          - `aiolimiter.AsyncLimiter(rps, 1.0)` enforces the documented
+            3 RPS cap (we default to 2.5 for safety margin, matching the
+            sync `_rate_limit()` behavior elsewhere in this client).
+          - Concurrency caps at 3 by default — useless to go higher when
+            the limiter caps to 2.5 RPS; over-concurrency just builds a
+            queue inside the limiter.
+          - 429 handling: Kite raises `kiteconnect.exceptions.NetworkException`
+            for rate-limit hits; we detect by error message and back off
+            exponentially (2^attempt seconds) up to 3 attempts.
+          - Token resolution failures (e.g., symbol not in instrument
+            list) silently skip the symbol — caller sees a missing entry.
+
+        Args:
+            symbols: List of "NSE:SYMBOL" strings.
+            from_date: YYYY-MM-DD inclusive.
+            to_date:   YYYY-MM-DD inclusive.
+            concurrency: Max concurrent in-flight requests (default 3).
+            rps: Requests per second cap (default 2.5; Kite's documented
+                 limit is 3).
+
+        Returns:
+            Dict[symbol, DataFrame]. DataFrame has a DatetimeIndex (naive)
+            and columns [open, high, low, close, volume]. Symbols with no
+            data or all-retry failure are silently omitted.
+        """
+        import asyncio
+        try:
+            from aiolimiter import AsyncLimiter
+        except ImportError as e:
+            raise RuntimeError(
+                "aiolimiter is required for async_fetch_historical_5m_batch; "
+                "pip install aiolimiter"
+            ) from e
+
+        # Resolve tokens up-front (sync, fast)
+        sym_to_token: Dict[str, int] = {}
+        for sym in symbols:
+            try:
+                sym_to_token[sym] = self._token_for(sym)
+            except Exception:
+                pass
+
+        if not sym_to_token:
+            return {}
+
+        limiter = AsyncLimiter(rps, 1.0)
+        sem = asyncio.Semaphore(concurrency)
+        results: Dict[str, pd.DataFrame] = {}
+        retries_429 = 0
+
+        async def _fetch_one(sym: str, token: int):
+            nonlocal retries_429
+            candles = None
+            for attempt in range(3):
+                try:
+                    async with sem:
+                        async with limiter:
+                            candles = await asyncio.to_thread(
+                                self._kc.historical_data,
+                                instrument_token=token,
+                                from_date=from_date,
+                                to_date=to_date,
+                                interval="5minute",
+                            )
+                    break  # success — exit retry loop
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "429" in msg or "too many" in msg or "rate" in msg:
+                        retries_429 += 1
+                        await asyncio.sleep(2 ** (attempt + 1))
+                        continue
+                    if attempt == 2:
+                        logger.warning(
+                            "async_kite_5m_batch: %s failed after 3 attempts: %s",
+                            sym, e,
+                        )
+                        return
+                    await asyncio.sleep(0.5 + 0.4 * attempt + random.random() * 0.2)
+                    continue
+
+            if not candles:
+                return
+            df = pd.DataFrame(candles)
+            df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=False)
+            if getattr(df["date"].dt, "tz", None) is not None:
+                df["date"] = df["date"].dt.tz_localize(None)
+            df = df.sort_values("date").set_index("date")
+            df = df[["open", "high", "low", "close", "volume"]].astype(float)
+            results[sym] = df
+
+        tasks = [_fetch_one(sym, tok) for sym, tok in sym_to_token.items()]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Mirror Upstox's `_last_batch_429s` for caller-side stat collection
+        self._last_batch_429s = retries_429
+
+        if retries_429 > 0:
+            logger.warning(
+                "ASYNC_HIST_5M_KITE | %d 429-throttle retries during batch of %d symbols",
+                retries_429, len(sym_to_token),
+            )
+
+        return results
+
     def prewarm_daily_cache(self, symbols: List[str] = None, days: int = 210) -> dict:
         """
         Pre-warm the daily data cache by fetching from Kite API.

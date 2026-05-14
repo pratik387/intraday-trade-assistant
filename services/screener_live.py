@@ -1238,6 +1238,34 @@ class ScreenerLive:
                 except Exception as _e:
                     logger.warning("setup_universe computation failed: %s", _e)
                     self._setup_universes = {}
+
+                # Cross-day RVOL baseline for delivery_pct (live/paper only).
+                # Backtest skips this and falls through to the parquet path in
+                # services/cross_day_rvol_enrichment.py (preserves existing
+                # behavior for `--dry-run`).
+                if not env.DRY_RUN:
+                    delivery_universe = self._setup_universes.get(
+                        "delivery_pct_anomaly_short", set(),
+                    )
+                    if delivery_universe:
+                        try:
+                            import asyncio
+                            from services.runtime_rvol_baseline import RuntimeRvolBaseline
+                            from services import cross_day_rvol_enrichment as _rvol
+                            rt = RuntimeRvolBaseline()
+                            stats = asyncio.run(rt.populate(
+                                self.sdk, sorted(delivery_universe), session_date_obj,
+                                hhmm_window=(930, 1000), rolling_days=20,
+                            ))
+                            _rvol.set_runtime_baseline(rt)
+                            logger.info(
+                                "RUNTIME_RVOL_INSTALLED | %s", stats,
+                            )
+                        except Exception as _e:
+                            logger.warning(
+                                "RUNTIME_RVOL | populate failed: %s — "
+                                "delivery_pct detector will silently no-fire", _e,
+                            )
                 _t_seed_fetch = time.perf_counter()
                 try:
                     with perf("scan", "daily_seed_broadcast", n_workers=self._structure_workers,

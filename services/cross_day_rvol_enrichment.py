@@ -39,6 +39,24 @@ _PARQUET = _REPO / "data" / "cross_day_rvol" / "rvol_baseline.parquet"
 _LOOKUP_BY_DATE: Dict[_date, Optional[Dict[Tuple[str, int], float]]] = {}
 _FILE_MISSING_LOGGED = False
 
+# Optional runtime override — populated at live/paper session start by
+# `services.runtime_rvol_baseline.RuntimeRvolBaseline.populate`. When set,
+# `get_baseline_vol` consults it first and falls through to the parquet
+# only if a (symbol, hhmm) miss happens. Backtest never sets this so the
+# existing parquet path is fully preserved.
+_RUNTIME_BASELINE = None  # type: ignore[var-annotated]
+
+
+def set_runtime_baseline(rt) -> None:
+    """Install a session-scoped RuntimeRvolBaseline. Pass None to clear."""
+    global _RUNTIME_BASELINE
+    _RUNTIME_BASELINE = rt
+
+
+def get_runtime_baseline():
+    """Return current runtime baseline (or None). Used by tests."""
+    return _RUNTIME_BASELINE
+
 
 def _load_for_date(target_date: _date) -> Optional[Dict[Tuple[str, int], float]]:
     """Load parquet filtered to `target_date` rows only; cache result.
@@ -80,15 +98,26 @@ def _load_for_date(target_date: _date) -> Optional[Dict[Tuple[str, int], float]]
 def get_baseline_vol(symbol: str, session_date: _date, hhmm: int) -> Optional[float]:
     """Return prior-20-session same-tod mean volume for (symbol, date, hhmm).
 
-    `symbol` may be "NSE:XXX" or bare "XXX"; both work — strips the prefix
-    once before lookup since the parquet uses bare tickers.
+    Dispatch order:
+      1. Runtime baseline (live/paper) — installed at session-start via
+         `set_runtime_baseline`. O(1) in-memory dict.
+      2. Parquet baseline (backtest, or runtime miss) — lazy per-date load
+         from `data/cross_day_rvol/rvol_baseline.parquet`.
+
+    `symbol` may be "NSE:XXX" or bare "XXX"; both work — the parquet uses
+    bare tickers.
 
     Returns None if:
-      - parquet file is missing (graceful no-op for environments without
-        the cache uploaded yet)
-      - the (symbol, date, hhmm) key isn't present (insufficient history,
-        symbol newly listed, weekend/holiday, etc.)
+      - both sources miss for this (symbol, hhmm)
+      - parquet file is missing AND no runtime baseline is installed
     """
+    # 1. Runtime path — live/paper installs this at daily-seed
+    if _RUNTIME_BASELINE is not None:
+        val = _RUNTIME_BASELINE.get_baseline_vol(symbol, session_date, int(hhmm))
+        if val is not None:
+            return val
+
+    # 2. Parquet path — backtest, or runtime miss
     lookup = _load_for_date(session_date)
     if lookup is None:
         return None
