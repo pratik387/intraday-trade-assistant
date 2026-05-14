@@ -99,20 +99,17 @@ def _staleness_days(parquet_max: "date | None", target: date) -> int:
 # ---------------------------------------------------------------------------
 
 
-def refresh_delivery(start: str, end: str) -> int:
-    """Re-fetch delivery_pct history from NSE bhavcopy archive.
+def _fetch_delivery_to(out_path: Path, start: str, end: str) -> int:
+    """Subprocess wrapper: fetch delivery_pct for [start, end] to `out_path`.
 
-    Note: the underlying tool rewrites the parquet from scratch (not
-    incremental). Always pass the full intended date range.
-
-    Returns exit code from the fetch tool.
+    The underlying tool rewrites the file at out_path (not incremental).
     """
     cmd = [
         sys.executable,
         "-m", "tools.delivery_pct.fetch_delivery",
         "--start", start,
         "--end", end,
-        "--out", str(_DELIVERY_PARQUET),
+        "--out", str(out_path),
         "--workers", "6",
         "--log-level", "INFO",
     ]
@@ -121,6 +118,72 @@ def refresh_delivery(start: str, end: str) -> int:
     rc = subprocess.run(cmd, cwd=str(_REPO)).returncode
     log.info("delivery_pct: done in %.1fs (rc=%d)", time.time() - t0, rc)
     return rc
+
+
+def refresh_delivery(start: str, end: str, *, rebuild: bool = False) -> int:
+    """Refresh delivery_pct, incremental by default.
+
+    Strategy:
+      1. If existing parquet missing or `--rebuild` flag → full fetch [start, end].
+      2. If existing parquet already covers `end` → no-op.
+      3. Else → fetch only (existing_max + 1)..end into a temp parquet,
+         merge with existing, dedupe on (symbol, date, series), write back.
+
+    A 1-day top-up takes ~3-10 seconds. A full cold rebuild takes 3-5 minutes.
+    """
+    end_d = datetime.strptime(end, "%Y-%m-%d").date()
+    existing_max = _parquet_max_date(_DELIVERY_PARQUET)
+
+    # Cold start or forced rebuild
+    if rebuild or existing_max is None:
+        log.info("delivery_pct: %s — full rebuild for [%s, %s]",
+                 "rebuild forced" if rebuild else "no existing parquet",
+                 start, end)
+        return _fetch_delivery_to(_DELIVERY_PARQUET, start, end)
+
+    # Already current
+    if existing_max >= end_d:
+        log.info("delivery_pct: already current (max_date=%s ≥ target=%s) — skip fetch",
+                 existing_max, end_d)
+        return 0
+
+    # Incremental top-up
+    new_start = (existing_max + timedelta(days=1)).isoformat()
+    log.info("delivery_pct: incremental top-up [%s..%s] (existing max=%s)",
+             new_start, end, existing_max)
+
+    temp_path = _DELIVERY_PARQUET.parent / f"_temp_delivery_{int(time.time())}.parquet"
+    try:
+        rc = _fetch_delivery_to(temp_path, new_start, end)
+        if rc != 0:
+            log.error("delivery_pct: fetch_delivery returned rc=%d — not merging", rc)
+            return rc
+        if not temp_path.exists():
+            log.error("delivery_pct: temp parquet missing after fetch — fetch returned 0 rows?")
+            return 1
+
+        # Merge: existing + new, dedupe on natural key
+        existing = pd.read_parquet(_DELIVERY_PARQUET)
+        new = pd.read_parquet(temp_path)
+        before_rows = len(existing)
+        merged = pd.concat([existing, new], ignore_index=True)
+        merged = merged.drop_duplicates(
+            subset=["symbol", "date", "series"], keep="last",
+        )
+        merged = merged.sort_values(["date", "symbol", "series"]).reset_index(drop=True)
+        merged.to_parquet(_DELIVERY_PARQUET, index=False)
+        log.info(
+            "delivery_pct: merged +%d new rows (%d → %d total). max_date=%s",
+            len(new), before_rows, len(merged),
+            pd.to_datetime(merged["date"]).max().date(),
+        )
+        return 0
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -193,11 +256,15 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--skip-delivery", action="store_true",
-        help="Skip the delivery_pct rebuild",
+        help="Skip the delivery_pct refresh",
     )
     parser.add_argument(
         "--skip-rvol", action="store_true",
         help="Skip the cross_day_rvol rebuild",
+    )
+    parser.add_argument(
+        "--rebuild-delivery", action="store_true",
+        help="Force full delivery_pct rebuild from --start (default: incremental top-up)",
     )
     parser.add_argument(
         "--log-level", default="INFO",
@@ -220,7 +287,7 @@ def main(argv=None) -> int:
     delivery_rc = 0
     if not args.skip_delivery:
         log.info("=== delivery_pct refresh ===")
-        delivery_rc = refresh_delivery(args.start, end_str)
+        delivery_rc = refresh_delivery(args.start, end_str, rebuild=args.rebuild_delivery)
     else:
         log.info("delivery_pct refresh SKIPPED per flag")
 
