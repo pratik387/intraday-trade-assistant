@@ -334,8 +334,12 @@ def find_triggers_for_day(
         # Need fully-warmed BB on trigger bar
         if pd.isna(trig["sma20"]) or pd.isna(trig["upper"]) or pd.isna(trig["lower"]):
             continue
-        # Confirmation bar must also be SAME day (don't cross day boundary)
-        if pd.Timestamp(trig["end_ts"]).date() != sd or pd.Timestamp(conf["end_ts"]).date() != sd:
+        # Confirmation bar must also be SAME day (don't cross day boundary).
+        # `sd` is datetime64 (from dt.floor("D")); compare via .floor("D") on the
+        # 15m end ts so both sides are datetime64 day-boundaries.
+        sd_floor = pd.Timestamp(sd).floor("D") if not isinstance(sd, pd.Timestamp) else sd.floor("D")
+        if (pd.Timestamp(trig["end_ts"]).floor("D") != sd_floor
+                or pd.Timestamp(conf["end_ts"]).floor("D") != sd_floor):
             continue
 
         # Trigger-window filter (15m end time)
