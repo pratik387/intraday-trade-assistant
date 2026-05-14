@@ -420,10 +420,16 @@
     },
     "delivery_pct_anomaly_short": {
       "enabled": true,
+      "_status_2026_05_14_paper_cell_B": "PAPER ONLY. Production-replay analysis (analytics.jsonl fee model) on Jan-Sep 2025 OCI showed Cell B (mid_cap × 09:30-10:30) PF=1.245 n=295. Holdout (Oct'25-Apr'26) PF=0.879 — SEBI Oct 1, 2025 F&O rule changes (tightened MWPL, single-stock position limits) broke the speculator-inventory-unwind mechanism this setup fades. Pre-SEBI edge real; post-SEBI edge degraded. Shipping narrow Cell B at paper to capture forward data; re-evaluate live/retire after 30 days of paper.",
       "_status_2026_05_08_enabled": "ENABLED for OCI smoke + Phase-1 backtest. Sub9 sanity Discovery PF 1.44 + OOS 1.90 + Holdout 1.13 + War-period 5.03 at tight targets. Push to OCI for trade capture in wide_open mode.",
       "_status_2026_05_08": "NEW — sub9 sanity passed Discovery PF=1.44 + OOS PF=1.90 + Holdout PF=1.13 + War-period PF=5.03 at TIGHT targets (0.25R/0.75R/TS=1300). Phase-1 validation pending.",
+      "allowed_cap_segments": [
+        "mid_cap"
+      ],
+      "_comment_allowed_cap_segments": "Cell B narrow: mid_cap only. Production-replay 9-month OOS PF=1.245 on mid_cap (vs 0.83 large_cap, 0.76 small_cap). Adding caps dilutes edge.",
       "active_window_start": "09:30",
-      "active_window_end": "10:00",
+      "active_window_end": "10:30",
+      "_comment_active_window": "Cell B: 09:30-10:30 entry window. Was 09:30-10:00 (tighter); cell-mining validated 10:30 cutoff with mid_cap × this hour as the strongest surface point.",
       "time_stop_at": "13:00",
       "delivery_pct_max": 20.0,
       "min_prior_day_return_pct": 3.0,
@@ -447,7 +453,7 @@
       "per_symbol_cooloff_min": 30,
       "max_fires_per_5min": 5,
       "_research_notes": "Validated cell from delivery_pct anomaly cell-mining. SHORT only. Indian-microstructure anchor: NSE-published delivery percentage <20% + same-day pump >3% = retail/operator pump signature. Cross-day RVOL confirmation rejects intra-session false signals. Sanity: tools/sub9_research/sanity_nse_delivery_pct_anomaly.py. Brief: specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md.",
-      "wide_open": true
+      "wide_open": false
     }
   },
   "filters": {

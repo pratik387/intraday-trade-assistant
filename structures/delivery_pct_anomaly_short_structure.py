@@ -121,6 +121,9 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
         # T+0 entry conditions
         self.active_start = self._parse_time(config["active_window_start"])
         self.active_end = self._parse_time(config["active_window_end"])
+        # Cell filter (mid_cap-only per Cell B 2026-05-14 verdict). Empty list/None
+        # = no cap filter (research mode). Bypassed under wide_open.
+        self.allowed_caps = set(config.get("allowed_cap_segments", []) or [])
         self.min_gap_pct = float(config["min_gap_pct"])
         self.max_gap_pct = float(config["max_gap_pct"])
         self.min_volume_ratio_to_20d_avg = float(
@@ -325,9 +328,20 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
         last_ts = df.index[-1]
         cur_t = last_ts.time() if hasattr(last_ts, "time") else last_ts
         from services.config_loader import is_wide_open_for_setup
-        if not is_wide_open_for_setup(self.structure_type):
+        _wide_open = is_wide_open_for_setup(self.structure_type)
+        if not _wide_open:
             if not (self.active_start <= cur_t <= self.active_end):
                 return _empty(f"Outside active window: {cur_t}")
+
+        # ---- Cap segment guard (bypassed under wide_open) ----
+        # Cell B verdict 2026-05-14: mid_cap-only. Production-replay OOS PF=1.245
+        # mid_cap vs 0.83 large_cap, 0.76 small_cap. Empty list = no filter.
+        if not _wide_open and self.allowed_caps:
+            if ctx.cap_segment not in self.allowed_caps:
+                return _empty(
+                    f"Cap segment {ctx.cap_segment!r} not in allowed set "
+                    f"{self.allowed_caps}"
+                )
 
         # ---- Latch ----
         session_date = ctx.session_date
