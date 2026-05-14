@@ -183,9 +183,13 @@ def simulate_one_event(ev: Dict, sl_buffer: float, t1_r: float, t2_r: float,
         high = float(bar["high"])
         low = float(bar["low"])
 
+        # After T1 hit, BE trail = stop level moves up (long) / down (short) to entry.
+        effective_sl_long = entry_price if t1_hit else hard_sl
+        effective_sl_short = entry_price if t1_hit else hard_sl
+
         if ev["direction"] == "long":
-            if low <= hard_sl:
-                sl_exit_price = entry_price if t1_hit else hard_sl
+            if low <= effective_sl_long:
+                sl_exit_price = effective_sl_long
                 break
             if not t1_hit and t1_qty_pct > 0 and high >= t1:
                 t1_hit = True
@@ -197,8 +201,8 @@ def simulate_one_event(ev: Dict, sl_buffer: float, t1_r: float, t2_r: float,
                 time_exit_price = float(bar["close"])
                 break
         else:
-            if high >= hard_sl:
-                sl_exit_price = entry_price if t1_hit else hard_sl
+            if high >= effective_sl_short:
+                sl_exit_price = effective_sl_short
                 break
             if not t1_hit and t1_qty_pct > 0 and low <= t1:
                 t1_hit = True

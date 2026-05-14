@@ -197,22 +197,18 @@ def simulate(big: pd.DataFrame, pdc_map: Dict, symbols: set) -> pd.DataFrame:
             high = float(bar["high"])
             low = float(bar["low"])
 
+            # After T1 hit, stop trails to break-even (entry). Before T1, hard SL.
+            effective_sl = entry_price if t1_hit else hard_sl
+
             if direction == "long":
-                # SL first (worst-case fill priority)
-                if low <= hard_sl:
-                    # If T1 not hit, full position stops out at SL
-                    # If T1 hit (BE trail), runner stops at entry
-                    if t1_hit:
-                        sl_exit_price = entry_price  # BE trail
-                    else:
-                        sl_exit_price = hard_sl
-                    exit_reasons.append("sl" if not t1_hit else "be_trail")
+                if low <= effective_sl:
+                    sl_exit_price = effective_sl
+                    exit_reasons.append("be_trail" if t1_hit else "sl")
                     break
                 if not t1_hit and high >= t1:
                     t1_hit = True
                     t1_exit_price = t1
                     exit_reasons.append("t1_partial")
-                    # continue holding runner
                 if high >= t2:
                     t2_exit_price = t2
                     exit_reasons.append("t2_full")
@@ -222,12 +218,9 @@ def simulate(big: pd.DataFrame, pdc_map: Dict, symbols: set) -> pd.DataFrame:
                     exit_reasons.append("time_stop")
                     break
             else:  # short
-                if high >= hard_sl:
-                    if t1_hit:
-                        sl_exit_price = entry_price
-                    else:
-                        sl_exit_price = hard_sl
-                    exit_reasons.append("sl" if not t1_hit else "be_trail")
+                if high >= effective_sl:
+                    sl_exit_price = effective_sl
+                    exit_reasons.append("be_trail" if t1_hit else "sl")
                     break
                 if not t1_hit and low <= t1:
                     t1_hit = True
