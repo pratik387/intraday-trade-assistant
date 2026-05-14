@@ -353,14 +353,14 @@ def simulate(events: pd.DataFrame, df15: pd.DataFrame, big5m: pd.DataFrame,
         sym: g for sym, g in df15.groupby("symbol", sort=False)
     }
 
-    # Index 5m by (symbol, session_date) for bar walk
-    big5m = big5m.copy()
-    big5m["session_date"] = big5m["date"].dt.date
-    big5m["hhmm"] = big5m["date"].dt.strftime("%H:%M")
-    sym_sess_5m: Dict[Tuple[str, date], pd.DataFrame] = {
-        k: g.sort_values("date").reset_index(drop=True)
-        for k, g in big5m.groupby(["symbol", "session_date"], sort=False)
-    }
+    # Index 5m by (symbol, session_date) for bar walk.
+    # AVOID full df copy + .dt.date materialization (pandas tried to convert
+    # to complex128 on 23.87M rows and OOM'd at 364 MiB allocation).
+    # Use dt.floor("D") which keeps datetime64 (cheap) and group by it inline.
+    sd_floor = big5m["date"].dt.floor("D")
+    sym_sess_5m: Dict[Tuple[str, date], pd.DataFrame] = {}
+    for (sym, sd_ts), g in big5m.groupby([big5m["symbol"], sd_floor], sort=False):
+        sym_sess_5m[(sym, sd_ts.date())] = g.sort_values("date").reset_index(drop=True)
 
     trades: List[dict] = []
 
@@ -439,7 +439,9 @@ def simulate(events: pd.DataFrame, df15: pd.DataFrame, big5m: pd.DataFrame,
             high = float(bar["high"])
             low = float(bar["low"])
             close = float(bar["close"])
-            hhmm = bar["hhmm"]
+            # hhmm column removed (was OOM-prone on 23M-row materialization).
+            # Compute on-demand from ts.
+            hhmm = ts.strftime("%H:%M") if hasattr(ts, "strftime") else pd.Timestamp(ts).strftime("%H:%M")
 
             active_sl = entry_price if t1_hit else hard_sl
 

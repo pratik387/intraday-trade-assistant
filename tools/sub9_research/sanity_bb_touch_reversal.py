@@ -204,9 +204,15 @@ def build_5m(start: date, end: date) -> pd.DataFrame:
     big["date"] = pd.to_datetime(big["date"])
     if big["date"].dt.tz is not None:
         big["date"] = big["date"].dt.tz_localize(None)
-    big["d"] = big["date"].dt.date
+    # OOM-safe session_date: keep as datetime64 via dt.floor("D"), avoid
+    # .dt.date which forced Python-object conversion + complex128 inference
+    # (OOM on 23.87M rows at 364 MiB allocation).
+    # Downstream code uses big["d"] for filtering — store as datetime64.
+    big["d"] = big["date"].dt.floor("D")
     # Trim to exact window
-    big = big[(big["d"] >= start) & (big["d"] <= end)].copy()
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    big = big[(big["d"] >= start_ts) & (big["d"] <= end_ts)].copy()
     big = big.sort_values(["symbol", "date"]).reset_index(drop=True)
     print(f"    total 5m bars in window: {len(big):,}")
     return big
