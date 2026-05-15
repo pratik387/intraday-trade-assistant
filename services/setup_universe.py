@@ -163,6 +163,74 @@ def delivery_pct_universe(
 # gap_fade_short — today's gap-up from PDC (computed at 09:15 bar)
 # ---------------------------------------------------------------------------
 
+def long_panic_gap_down_universe(
+    df5_today_by_symbol: Dict[str, pd.DataFrame],
+    daily_dict: Dict[str, pd.DataFrame],
+    session_date: date,
+    config: Dict[str, Any],
+    cap_map: Dict[str, str],
+) -> Set[str]:
+    """Symbols passing the BROADER long_panic_gap_down filter at the 09:15 bar.
+
+    Detector gates (broader filter — superset of narrow Cell B band):
+      - cap_segment in allowed (small/mid)
+      - first-5m gap_pct <= gap_pct_max (e.g. -1%)
+      - dist_from_pdh <= dist_from_pdh_pct_max (e.g. -5.5%)
+      - dist_from_pdl <= broader_dist_from_pdl_pct_max (e.g. -1.25%)
+
+    Returns the qualifying symbol set. Caller is responsible for adding to
+    the screener's scan extras AND for seeding services.regime_density_tracker
+    so the detector's regime guard activates BEFORE any per-symbol fire.
+
+    Built lazily once the 09:15 bar is observed; cached for the session.
+    """
+    allowed_caps = set(config.get("allowed_cap_segments", ["small_cap", "mid_cap"]))
+    gap_pct_max = float(config["gap_pct_max"])
+    dist_pdh_max = float(config["dist_from_pdh_pct_max"])
+    broader_dist_pdl_max = float(config["broader_dist_from_pdl_pct_max"])
+
+    qual: Set[str] = set()
+    for sym, df5 in df5_today_by_symbol.items():
+        if df5 is None or df5.empty:
+            continue
+        if cap_map.get(sym) not in allowed_caps:
+            continue
+        first_bar = df5.iloc[0]
+        try:
+            today_open = float(first_bar["open"])
+            today_close = float(first_bar["close"])
+        except Exception:
+            continue
+        ddf = daily_dict.get(sym)
+        if ddf is None or ddf.empty:
+            continue
+        try:
+            pdc = float(ddf.iloc[-1]["close"])
+            pdh = float(ddf.iloc[-1]["high"])
+            pdl = float(ddf.iloc[-1]["low"])
+        except Exception:
+            continue
+        if pdc <= 0 or pdh <= 0 or pdl <= 0:
+            continue
+        gap_pct = ((today_open - pdc) / pdc) * 100.0
+        if gap_pct > gap_pct_max:
+            continue
+        dist_pdh = ((today_close - pdh) / pdh) * 100.0
+        if dist_pdh > dist_pdh_max:
+            continue
+        dist_pdl = ((today_close - pdl) / pdl) * 100.0
+        if dist_pdl > broader_dist_pdl_max:
+            continue
+        qual.add(sym)
+        if len(qual) >= MAX_EXTRA_PER_SETUP:
+            break
+    logger.info(
+        "setup_universe.long_panic_gap_down: %d qualifying panic-gap-downs on %s",
+        len(qual), session_date,
+    )
+    return qual
+
+
 def gap_fade_universe(
     df5_today_by_symbol: Dict[str, pd.DataFrame],
     daily_dict: Dict[str, pd.DataFrame],
