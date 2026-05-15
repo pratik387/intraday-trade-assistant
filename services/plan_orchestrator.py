@@ -66,6 +66,7 @@ from config.logging_config import get_agent_logger, get_planning_logger
 from structures.gap_fade_short_structure import GapFadeShortStructure
 from structures.circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
 from structures.delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
+from structures.long_panic_gap_down_structure import LongPanicGapDownStructure
 # Retired setups removed 2026-05-14 (see docs/retired_setups.md):
 #   earnings_day_intraday_fade, capitulation_long_morning,
 #   expiry_pin_strike_reversal, options_vol_iv_rank_revert.
@@ -95,6 +96,11 @@ _DETECTOR_REGISTRY: Dict[str, Any] = {
     "gap_fade_short": GapFadeShortStructure,
     "circuit_t1_fade_short": CircuitT1FadeShortStructure,
     "delivery_pct_anomaly_short": DeliveryPctAnomalyShortStructure,
+    # 2026-05-15: LONG mean-revert on deep small/mid panic gap-downs.
+    # Edge validated across Disc/OOS/Holdout (PF 1.45/1.40/1.72). Regime
+    # guard wired via services/regime_density_tracker.py + universe
+    # contributor in services/setup_universe.py.
+    "long_panic_gap_down": LongPanicGapDownStructure,
 }
 
 ACTIVE_SETUPS: frozenset = frozenset(_DETECTOR_REGISTRY.keys())
