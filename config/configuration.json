@@ -480,6 +480,64 @@
       "wide_open": false
     }
   },
+  "edge_discovery": {
+    "_doc": "Edge-First Discovery Framework — see specs/2026-05-15-edge-first-discovery-framework-design.md",
+    "feature_library_version": "v1-tier-a",
+    "outcome_horizons_minutes": [5, 15, 30, 60, 120],
+    "outcome_eod": true,
+    "cost_model": {
+      "spread_by_cap_adv": {
+        "small_cap": {"adv_lt_100k": 0.0015, "adv_100k_500k": 0.0008, "adv_500k_2m": 0.0005, "adv_gt_2m": 0.0003},
+        "mid_cap":   {"adv_lt_100k": 0.0008, "adv_100k_500k": 0.0005, "adv_500k_2m": 0.0003, "adv_gt_2m": 0.0002},
+        "large_cap": {"adv_lt_100k": 0.0004, "adv_100k_500k": 0.0003, "adv_500k_2m": 0.0002, "adv_gt_2m": 0.0001}
+      },
+      "sl_slippage_bar_fraction": 0.5,
+      "sl_slippage_normal_pct": 0.001,
+      "market_impact_pct_per_pct_adv": 0.05,
+      "market_impact_cap_pct": 0.05
+    },
+    "ship_gate_standalone": {
+      "n_per_year_min": 300,
+      "pf_discovery_min": 1.30,
+      "pf_oos_min": 1.20,
+      "pf_holdout_min": 1.15,
+      "walk_forward_stability_min": 0.5,
+      "win_months_pct_min": 55,
+      "top_month_concentration_max_pct": 40
+    },
+    "ship_gate_ensemble": {
+      "n_per_year_min": 50,
+      "n_per_year_max": 299,
+      "effect_size_min_sigma": 0.4,
+      "walk_forward_stability_min": 0.5,
+      "live_setup_pf_lift_min": 0.15
+    },
+    "decay_monitor": {
+      "rolling_window_months": 6,
+      "caution_pf_threshold": 1.20,
+      "pause_pf_threshold": 1.00,
+      "retire_pf_threshold": 0.80,
+      "retire_consecutive_months": 2
+    },
+    "parity_gate": {
+      "pf_tolerance_pct": 10.0,
+      "wr_tolerance_pp": 5.0,
+      "n_tolerance_pct": 10.0
+    },
+    "walk_forward": {
+      "train_window_months": 6,
+      "test_window_months": 1,
+      "step_months": 1
+    },
+    "periods": {
+      "discovery_start": "2023-01-01",
+      "discovery_end": "2024-12-31",
+      "oos_start": "2025-01-01",
+      "oos_end": "2025-09-30",
+      "holdout_start": "2025-10-01",
+      "holdout_end": "2026-04-30"
+    }
+  },
   "filters": {
     "adx": {
       "lookback": 14,
