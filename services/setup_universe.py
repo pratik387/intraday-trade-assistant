@@ -195,7 +195,16 @@ def long_panic_gap_down_universe(
             continue
         if cap_map.get(sym) not in allowed_caps:
             continue
-        first_bar = df5.iloc[0]
+        # df5_today_by_symbol despite its name contains warmup bars from
+        # prior sessions (screener cache spans many days). Filter to TODAY
+        # before reading the 09:15 bar.
+        try:
+            today_bars = df5[df5.index.date == session_date]
+        except Exception:
+            continue
+        if today_bars.empty:
+            continue
+        first_bar = today_bars.iloc[0]
         try:
             today_open = float(first_bar["open"])
             today_close = float(first_bar["close"])

@@ -144,7 +144,13 @@ class LongPanicGapDownStructure(BaseStructure):
         if pdl is None or pdl <= 0:
             return _empty("PDL unavailable")
 
-        first_bar = df.iloc[0]
+        # df_5m may contain warmup bars from prior sessions. Filter to today's
+        # bars before reading the 09:15 bar — without this, df.iloc[0] is a
+        # stale prior-session bar and SL/gap geometry breaks.
+        today_bars = df[df.index.date == session_date]
+        if today_bars.empty:
+            return _empty("No bars for session date")
+        first_bar = today_bars.iloc[0]
         bar_open = float(first_bar["open"])
         bar_low = float(first_bar["low"])
         bar_close = float(first_bar["close"])
@@ -251,9 +257,20 @@ class LongPanicGapDownStructure(BaseStructure):
         df = context.df_5m
         if df is None or df.empty:
             return None
-        first_bar = df.iloc[0]
+        # Filter df_5m to today's bars only — warmup bars from prior days
+        # otherwise pollute df.iloc[0]/[-1] and break SL/target geometry.
+        session_date = context.session_date
+        if session_date is None:
+            session_date = pd.Timestamp(df.index[-1]).date()
+        today_bars = df[df.index.date == session_date]
+        if today_bars.empty:
+            return None
+        first_bar = today_bars.iloc[0]
         entry_bar_low = float(first_bar["low"])
-        close = float(df.iloc[-1]["close"])
+        # Entry is at the 09:15 bar's close (= 09:20 price). The setup fires
+        # only on the first bar of the session per active_window, so the
+        # 'first bar of today' IS the entry bar.
+        close = float(first_bar["close"])
 
         sl_from_low = entry_bar_low * (1.0 - self.sl_buffer_below_bar_low_pct / 100.0)
         sl_from_min = close * (1.0 - self.min_stop_pct / 100.0)
@@ -331,12 +348,23 @@ class LongPanicGapDownStructure(BaseStructure):
                 risk_per_share=entry_price * (self.min_stop_pct / 100.0),
                 atr=entry_price * 0.01,
             )
-        entry_bar_low = float(df.iloc[0]["low"])
+        # Filter to today's bars before reading the entry bar.
+        session_date = market_context.session_date
+        if session_date is None:
+            session_date = pd.Timestamp(df.index[-1]).date()
+        today_bars = df[df.index.date == session_date]
+        if today_bars.empty:
+            return RiskParams(
+                hard_sl=entry_price * (1.0 - self.min_stop_pct / 100.0),
+                risk_per_share=entry_price * (self.min_stop_pct / 100.0),
+                atr=entry_price * 0.01,
+            )
+        entry_bar_low = float(today_bars.iloc[0]["low"])
         sl_from_low = entry_bar_low * (1.0 - self.sl_buffer_below_bar_low_pct / 100.0)
         sl_from_min = entry_price * (1.0 - self.min_stop_pct / 100.0)
         hard_sl = min(sl_from_low, sl_from_min)
         stop_distance = max(entry_price - hard_sl, entry_price * 0.001)
-        atr_proxy = float((df["high"] - df["low"]).mean())
+        atr_proxy = float((today_bars["high"] - today_bars["low"]).mean())
         return RiskParams(
             hard_sl=hard_sl,
             risk_per_share=stop_distance,
