@@ -237,6 +237,53 @@ def test_broader_filter_match_increments_density():
     assert regime_density_tracker.get_density("long_panic_gap_down", session_date) == 1
 
 
+def test_warmup_bars_do_not_pollute_entry_bar():
+    """Regression: df_5m may contain prior-session warmup bars; iloc[0]
+    would otherwise grab a stale bar and break SL/gap geometry.
+
+    Background: in run_4a35702f_20260515_205310 MOTISONS exited at -8.5%
+    drawdown via time_stop because the SL was computed from a stale prior-day
+    bar at close=30.0 instead of today's 09:15 bar at close=33.6.
+    """
+    det = LongPanicGapDownStructure(_cfg())
+    today_ts = pd.Timestamp("2026-05-20 09:15:00")
+    # Warmup bars from a previous session — at completely different prices.
+    # If the detector reads df.iloc[0] without filtering, it would see
+    # close=30.0 (a stale price) and compute the wrong gap/SL.
+    warmup_ts = pd.Timestamp("2026-05-19 15:25:00")
+    df = pd.DataFrame({
+        "open":  [31.5, 94.0],
+        "high":  [32.0, 94.5],
+        "low":   [29.9, 89.5],
+        "close": [30.0, 91.0],   # stale 30.0 vs today's actual 91.0
+        "volume":[10000, 50000],
+    }, index=[warmup_ts, today_ts])
+    ctx = MarketContext(
+        symbol="TEST", current_price=91.0, timestamp=today_ts,
+        df_5m=df, session_date=today_ts.date(),
+        pdh=105.0, pdl=95.0, pdc=100.0, cap_segment="small_cap",
+    )
+    r = det.detect(ctx)
+    assert r.structure_detected, f"expected fire, got rejection: {r.rejection_reason}"
+    e = r.events[0]
+    # gap_pct must be computed from TODAY's bar (open=94 vs pdc=100 → -6%),
+    # NOT the stale warmup bar (open=31.5 vs pdc=100 → -68.5%).
+    assert abs(e.context["gap_pct"] - (-6.0)) < 1e-9, (
+        f"gap_pct should use today's bar (-6%), got {e.context['gap_pct']}"
+    )
+    # entry_bar_low/close in the event levels must be from today's bar.
+    assert e.levels["entry_bar_low"] == 89.5
+    assert e.levels["entry_bar_close"] == 91.0
+
+    # Plan SL must also be relative to today's bar
+    plan = det.plan_long_strategy(ctx, event=e)
+    assert plan is not None
+    # SL: min(89.5 × 0.995, 91.0 × 0.99) = min(89.0525, 90.09) = 89.0525
+    assert abs(plan.risk_params.hard_sl - 89.0525) < 1e-4, (
+        f"SL must be derived from today's bar, got {plan.risk_params.hard_sl}"
+    )
+
+
 def test_density_is_idempotent_per_symbol():
     """Re-noting the same (symbol, date) doesn't double-count."""
     det = LongPanicGapDownStructure(_cfg(regime_guard_max=80))
