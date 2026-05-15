@@ -39,6 +39,10 @@ class SymbolFeaturesTierA:
         "bar_body_pct",
         "bar_upper_wick_ratio",
         "bar_lower_wick_ratio",
+        "vwap_distance_pct",
+        "dist_from_20ema_pct",
+        "dist_from_50ema_pct",
+        "delivery_pct_t1",
     ]
 
     def compute(
@@ -50,6 +54,9 @@ class SymbolFeaturesTierA:
         pdl: Optional[float] = None,
         prior_close: Optional[float] = None,
         adv_shares: Optional[float] = None,
+        ema_20: Optional[float] = None,
+        ema_50: Optional[float] = None,
+        delivery_pct_t1: Optional[float] = None,
         **_: Any,
     ) -> Dict[str, Any]:
         symbol_meta = symbol_meta or {}
@@ -100,6 +107,21 @@ class SymbolFeaturesTierA:
         else:
             out["gap_pct"] = np.nan
             out["prior_session_pct_change"] = np.nan
+
+        # Session VWAP up to entry bar (volume-weighted typical price)
+        same_day = bars[bars["date"].dt.floor("D") == day_floor]
+        upto_entry = same_day[same_day["date"] <= event.event_time]
+        if len(upto_entry) > 0 and upto_entry["volume"].sum() > 0:
+            typical = (upto_entry["high"] + upto_entry["low"] + upto_entry["close"]) / 3.0
+            vwap = float((typical * upto_entry["volume"]).sum() / upto_entry["volume"].sum())
+            out["vwap_distance_pct"] = (entry_close - vwap) / vwap if vwap > 0 else np.nan
+        else:
+            out["vwap_distance_pct"] = np.nan
+
+        # EMA distances passed in via kwargs (computed at universe-scaffold level)
+        out["dist_from_20ema_pct"] = (entry_close - ema_20) / ema_20 if (ema_20 and ema_20 > 0) else np.nan
+        out["dist_from_50ema_pct"] = (entry_close - ema_50) / ema_50 if (ema_50 and ema_50 > 0) else np.nan
+        out["delivery_pct_t1"] = float(delivery_pct_t1) if delivery_pct_t1 is not None else np.nan
         return out
 
     def _empty(self, symbol_meta: Dict[str, Any]) -> Dict[str, Any]:
@@ -112,5 +134,8 @@ class SymbolFeaturesTierA:
                 "prior_session_pct_change", "gap_pct",
                 "bar_range_pct", "bar_body_pct",
                 "bar_upper_wick_ratio", "bar_lower_wick_ratio",
+                "vwap_distance_pct",
+                "dist_from_20ema_pct", "dist_from_50ema_pct",
+                "delivery_pct_t1",
             )},
         }

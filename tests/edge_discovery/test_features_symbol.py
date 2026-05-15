@@ -68,3 +68,35 @@ def test_bar_upper_wick_ratio_correctly_signed():
     out = sf.compute(event, bars, symbol_meta=meta, pdh=99.0, pdl=95.0, prior_close=99.5)
     # range = 2.5, upper wick = 102 - max(100, 100.5) = 1.5 → ratio 0.6
     assert abs(out["bar_upper_wick_ratio"] - 0.6) < 1e-9
+
+
+def test_vwap_distance_uses_session_vwap_to_entry_bar():
+    bars = _make_session_bars()
+    # Constant price → simple VWAP = price; distance = 0
+    bars["high"] = 100.0
+    bars["low"] = 100.0
+    bars["open"] = 100.0
+    bars["close"] = 100.0
+    bars["volume"] = 1000
+    event = Event(symbol="X", event_time=bars["date"].iloc[10], metadata={})
+    meta = {"cap_segment": "small_cap"}
+    sf = SymbolFeaturesTierA()
+    out = sf.compute(event, bars, symbol_meta=meta, pdh=99.0, pdl=95.0, prior_close=99.5)
+    assert abs(out["vwap_distance_pct"]) < 1e-9
+
+
+def test_dist_from_20ema_when_provided_via_kwargs():
+    bars = _make_session_bars()
+    event = Event(symbol="X", event_time=bars["date"].iloc[10], metadata={})
+    meta = {"cap_segment": "small_cap"}
+    sf = SymbolFeaturesTierA()
+    entry_close = float(bars["close"].iloc[10])
+    out = sf.compute(
+        event, bars, symbol_meta=meta, pdh=99.0, pdl=95.0, prior_close=99.5,
+        ema_20=entry_close * 0.99,  # entry is 1% above 20EMA
+        ema_50=entry_close * 0.97,
+        delivery_pct_t1=0.45,
+    )
+    assert abs(out["dist_from_20ema_pct"] - (1/0.99 - 1)) < 1e-6
+    assert abs(out["dist_from_50ema_pct"] - (1/0.97 - 1)) < 1e-6
+    assert out["delivery_pct_t1"] == 0.45
