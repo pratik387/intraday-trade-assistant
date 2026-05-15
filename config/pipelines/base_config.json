@@ -453,6 +453,14 @@
             "entry_time_column_aliases": ["entry_time", "trade_time", "datetime", "timestamp", "decision_ts"],
             "pnl_column_aliases": ["net_return", "net_pnl_inr", "net_pnl", "pnl"],
             "trade_parquet_dir": "reports/sub7_validation"
+        },
+        "report_generator": {
+            "_doc": "Decision report aggregator. See tools/edge_discovery/report.py and Task 20.",
+            "parity_setups": ["gap_fade", "circuit_t1", "delivery_pct"],
+            "discovery_targets": ["target_long_panic_gap_down"],
+            "ensemble_summary_filename": "target_ensemble_live_summary.json",
+            "decision_report_filename": "decision_report.md",
+            "top_n_target_regions_in_report": 10
         }
     }
 }
