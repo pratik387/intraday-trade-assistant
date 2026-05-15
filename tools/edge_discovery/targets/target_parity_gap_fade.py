@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -37,9 +38,14 @@ def _load_live_baseline(setup_name: str) -> dict:
     return {"pf": pf, "wr": wr, "n": n}
 
 
-def _compute_framework_stats(parquet_path: Path) -> dict:
-    """Compute PF/WR/N from a live setup's trade parquet."""
+def _compute_framework_stats(parquet_path: Path, cap_segment: Optional[str] = None) -> dict:
+    """Compute PF/WR/N from a live setup's trade parquet.
+
+    Optionally filter by cap_segment to match production setup restrictions.
+    """
     df = pd.read_parquet(parquet_path)
+    if cap_segment is not None and "cap_segment" in df.columns:
+        df = df[df["cap_segment"] == cap_segment]
     pnl_col = None
     for candidate in ("net_pnl_inr", "net_pnl", "pnl_net", "pnl", "net_return"):
         if candidate in df.columns:
@@ -63,7 +69,7 @@ def run_parity_gap_fade() -> dict:
         pq_path = _REPO / "reports" / "sub8_oos_holdout" / "gap_fade_short.parquet"
     if not pq_path.exists():
         raise FileNotFoundError(f"gap_fade_short parquet not found at {pq_path}")
-    framework = _compute_framework_stats(pq_path)
+    framework = _compute_framework_stats(pq_path, cap_segment="small_cap")
     live = _load_live_baseline("gap_fade_short")
     tol_cfg = cfg["edge_discovery"]["parity_gate"]
     tol = ParityTolerance(
