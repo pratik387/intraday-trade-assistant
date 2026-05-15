@@ -19,6 +19,7 @@ from services.gates.trade_decision_gate import SetupCandidate
 from .gap_fade_short_structure import GapFadeShortStructure
 from .circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
 from .delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
+from .long_panic_gap_down_structure import LongPanicGapDownStructure
 # Retired setups removed 2026-05-14 (see docs/retired_setups.md):
 #   earnings_day_intraday_fade   — sanity look-ahead bias on SL placement
 #   capitulation_long_morning    — Holdout PF 0.631 with reproducible regime classifier
@@ -70,6 +71,9 @@ class MainDetector(BaseStructure):
             ("gap_fade_short", GapFadeShortStructure, "gap_fade_short"),
             ("circuit_t1_fade_short", CircuitT1FadeShortStructure, "circuit_t1_fade_short"),
             ("delivery_pct_anomaly_short", DeliveryPctAnomalyShortStructure, "delivery_pct_anomaly_short"),
+            # 2026-05-15: long_panic_gap_down registered but enabled=false by default.
+            # Awaits universe-wide regime-guard plumbing (see config _status block).
+            ("long_panic_gap_down", LongPanicGapDownStructure, "long_panic_gap_down"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -816,6 +820,9 @@ class MainDetector(BaseStructure):
             # See docs/retired_setups.md for the 4 setups removed in that pass.
             'circuit_t1_fade_short': 'circuit_t1_fade_short',
             'delivery_pct_anomaly_short': 'delivery_pct_anomaly_short',
+            # 2026-05-15: LONG mean-revert on deep small/mid panic gap-downs.
+            # Ships disabled pending regime-guard orchestrator wiring.
+            'long_panic_gap_down': 'long_panic_gap_down',
         }
 
         return direct_mappings.get(structure_type)
