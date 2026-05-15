@@ -62,6 +62,9 @@ def build_report() -> str:
             lines.append(f"- **{setup}**: NO-DATA ({data['_error']})")
             continue
         v = data.get("verdict") or {}
+        if v.get("skipped"):
+            lines.append(f"- **{setup}**: SKIPPED ({v.get('reason', 'no reason given')})")
+            continue
         passed = v.get("passed", False)
         lines.append(
             f"- **{setup}**: {'PASS' if passed else 'FAIL'} "
