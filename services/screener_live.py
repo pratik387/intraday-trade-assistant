@@ -682,6 +682,7 @@ class ScreenerLive:
         # See services/setup_universe.py.
         self._setup_universes: Dict[str, Set[str]] = {}
         self._gap_fade_universe: Optional[Set[str]] = None  # set at 09:15 bar
+        self._long_panic_gap_down_universe: Optional[Set[str]] = None  # set at 09:15 bar
         self._daily_dict_cache: Dict[str, "pd.DataFrame"] = {}
 
         # Last-scan cutoff (parsed once). Backtest and paper both honor this — skips scans
@@ -742,6 +743,8 @@ class ScreenerLive:
             out.update(s)
         if self._gap_fade_universe:
             out.update(self._gap_fade_universe)
+        if self._long_panic_gap_down_universe:
+            out.update(self._long_panic_gap_down_universe)
         return out
 
     def set_position_store(self, store) -> None:
@@ -1419,12 +1422,15 @@ class ScreenerLive:
                 # Replaces Stage-0 top-K filter. Features computed only for the
                 # universe-union (~200 symbols/bar), not the full eligible pool (1500).
                 with perf("scan", "feature_compute", n_in=len(df5_by_symbol)):
-                    # Universe = static cross-day universes ∪ lazy gap_fade universe.
+                    # Universe = static cross-day universes ∪ lazy gap_fade universe
+                    # ∪ lazy long_panic_gap_down universe.
                     universe = set()
                     for u in (self._setup_universes or {}).values():
                         universe.update(u)
                     if self._gap_fade_universe:
                         universe.update(self._gap_fade_universe)
+                    if self._long_panic_gap_down_universe:
+                        universe.update(self._long_panic_gap_down_universe)
                     # Restrict to symbols that actually have 5m data for this bar.
                     universe &= set(df5_by_symbol.keys())
 
@@ -1469,11 +1475,50 @@ class ScreenerLive:
                     except Exception as _e:
                         logger.warning("gap_fade_universe lazy build failed: %s", _e)
                         self._gap_fade_universe = set()
+
+            # long_panic_gap_down lazy build at 09:15 bar — same pattern as
+            # gap_fade. Also seeds services.regime_density_tracker BEFORE any
+            # per-symbol detector fires, eliminating v1.0's sequential-ordering
+            # leak (where the first ~80 symbols/day still fired before the
+            # guard activated).
+            if (
+                self._long_panic_gap_down_universe is None
+                and _dtime(9, 15) <= current_t <= _dtime(9, 30)
+            ):
+                setups_cfg = (self.raw_cfg.get("setups") or {})
+                lpgd_cfg = setups_cfg.get("long_panic_gap_down") or {}
+                if lpgd_cfg.get("enabled"):
+                    try:
+                        from services.setup_universe import long_panic_gap_down_universe
+                        from services.symbol_metadata import get_cap_segment
+                        from services import regime_density_tracker
+                        cap_map = {s: get_cap_segment(s) for s in df5_by_symbol.keys()}
+                        session_date_obj = now.date() if hasattr(now, "date") else now
+                        qual = long_panic_gap_down_universe(
+                            df5_by_symbol,
+                            getattr(self, "_daily_dict_cache", {}) or {},
+                            session_date_obj, lpgd_cfg, cap_map,
+                        )
+                        self._long_panic_gap_down_universe = qual
+                        # Seed regime density tracker with the full broader-filter
+                        # set so all per-symbol fires this day see the FINAL count
+                        # (not an order-dependent partial count).
+                        regime_density_tracker.reset_date(session_date_obj)
+                        for sym in qual:
+                            regime_density_tracker.note(
+                                "long_panic_gap_down", session_date_obj, sym,
+                            )
+                    except Exception as _e:
+                        logger.warning("long_panic_gap_down_universe lazy build failed: %s", _e)
+                        self._long_panic_gap_down_universe = set()
+
             extras: Set[str] = set()
             for s in (self._setup_universes or {}).values():
                 extras.update(s)
             if self._gap_fade_universe:
                 extras.update(self._gap_fade_universe)
+            if self._long_panic_gap_down_universe:
+                extras.update(self._long_panic_gap_down_universe)
             if extras:
                 # Restrict to symbols we actually have 5m data for this bar
                 # (extras outside df5_by_symbol can't be processed anyway).
@@ -1484,11 +1529,12 @@ class ScreenerLive:
                     shortlist = shortlist + list(injected)
                     _extra_added = len(injected)
                     logger.info(
-                        "UNIVERSE_UNION | shortlist %d -> %d (+%d) | gap_fade=%d circuit_t1=%d delivery=%d",
+                        "UNIVERSE_UNION | shortlist %d -> %d (+%d) | gap_fade=%d circuit_t1=%d delivery=%d long_panic=%d",
                         pre_count, len(shortlist), _extra_added,
                         len(self._gap_fade_universe or set()),
                         len(self._setup_universes.get("circuit_t1_fade_short", set())),
                         len(self._setup_universes.get("delivery_pct_anomaly_short", set())),
+                        len(self._long_panic_gap_down_universe or set()),
                     )
         except Exception as _e:
             logger.warning("UNIVERSE_UNION failed: %s", _e)
