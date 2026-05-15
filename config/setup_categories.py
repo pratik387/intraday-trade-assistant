@@ -50,6 +50,10 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "ema5_alert_pullback": SetupCategory.MOMENTUM,
     "camarilla_l3_reversal": SetupCategory.REVERSION,
     # expiry_pin_strike_reversal entry removed 2026-05-14 (retired — see docs/retired_setups.md)
+
+    # 2026-05-15: LONG mean-revert on deep small/mid panic gap-downs. Ships
+    # disabled pending universe-wide regime-guard orchestrator wiring.
+    "long_panic_gap_down": SetupCategory.REVERSION,
 }
 
 
