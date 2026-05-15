@@ -51,6 +51,7 @@ def test_top_edge_regions_ranks_by_effect_size_x_sqrt_n():
         feature_names=["feature_a", "feature_b"],
         min_n=2,
         top_n=5,
+        max_dims=3,
     )
     assert len(regions) >= 1
     # The strongest region by effect-size × √n should be reported first
@@ -77,4 +78,6 @@ def test_top_edge_regions_raises_on_unknown_feature():
             outcome="outcome_post_cost",
             feature_names=["feature_a", "nonexistent_feature"],
             min_n=1,
+            top_n=5,
+            max_dims=3,
         )

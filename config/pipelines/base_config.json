@@ -403,6 +403,12 @@
             "test_window_months": 1,
             "step_months": 1
         },
+        "edge_region_scan": {
+            "_doc": "top_edge_regions scan parameters. min_n=minimum bucket sample size for stat power. top_n=number of regions returned. max_dims=highest combinatorial dimension (1D, 2D, 3D scans).",
+            "min_n": 50,
+            "top_n": 20,
+            "max_dims": 3
+        },
         "periods": {
             "discovery_start": "2023-01-01",
             "discovery_end": "2024-12-31",

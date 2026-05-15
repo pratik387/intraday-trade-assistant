@@ -63,11 +63,14 @@ class ConditionalOutcomeTable:
         self,
         outcome: str,
         feature_names: list,
-        min_n: int = 50,
-        top_n: int = 20,
-        max_dims: int = 3,
+        min_n: int,
+        top_n: int,
+        max_dims: int,
     ) -> list:
         """Rank candidate edge regions by |mean_return| * sqrt(n) (t-statistic proxy).
+
+        Callers must source min_n, top_n, and max_dims from
+        config/pipelines/base_config.json under edge_discovery.edge_region_scan.
 
         Scans 1D, 2D, 3D feature combinations up to max_dims. For each non-empty
         bucket meeting min_n, computes mean/std/n; ranks by abs(mean) * sqrt(n).
