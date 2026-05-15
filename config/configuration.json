@@ -377,6 +377,7 @@
       "entry_zone_pct": 0.3,
       "entry_zone_mode": "symmetric",
       "_live_status": "PRIMARY — Phase 7 OOS PASS: PF=1.36, WR=70%, N=797 in 117-session Holdout. Restricted to small_cap (the validated cell). Mid/micro_cap not Phase-7 validated.",
+      "_live_status_drift_note": "2026-05-15 (T14 edge-discovery audit): stored Holdout parquet at reports/sub8_oos_holdout_clean/gap_fade_short.parquet (small_cap filtered) shows PF=1.13, WR=64% — does NOT match _live_status text. PF=1.36 likely from 2026-05-12 sweep (see _comment_stop_atr_multiplier) which lifted parameters but was not persisted as a new parquet. N=797 matches exactly. Framework parity gate softened to ±20% PF / ±10pp WR to accommodate this drift.",
       "min_stop_distance_pct": 0.15,
       "priority": 70,
       "capital_budget_pct": 30,

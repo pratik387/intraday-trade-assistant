@@ -1,6 +1,18 @@
 """Parity gate Target: circuit_t1_fade_short reproduction on Holdout window.
 
-The live setup's Holdout statistics are captured in
+T14 (2026-05-15) RESOLUTION: PARITY SKIPPED for this setup.
+  - No sub8 holdout parquet exists for circuit_t1_fade_short (setup was added
+    post-sub8). Script will raise FileNotFoundError on `reports/sub8_oos_holdout*`.
+  - No `_live_status` baseline documented in config/configuration.json.
+  - Per T14 decision: rely on decay_monitor (rolling 6mo PF on live trade log)
+    going forward instead of historical parity. Setup pauses at PF<1.00,
+    retires at PF<0.80 for 2 consecutive months.
+
+This script is kept for future use: if a circuit_t1 baseline parquet is
+generated (e.g., by re-running the live config end-to-end on Holdout) and
+`_live_status` is populated, the parity gate will activate automatically.
+
+The live setup's Holdout statistics would be captured in
 config/configuration.json (setups.circuit_t1_fade_short._live_status). This script
 loads reports/sub8_oos_holdout_clean/circuit_t1_fade_short.parquet and compares.
 
