@@ -438,6 +438,21 @@
                 "adv_500k_2m": 1200000, "adv_gt_2m": 5000000,
                 "_fallback": 100000
             }
+        },
+        "target_ensemble_live_setups": {
+            "_doc": "Target 3 ensemble feature mining on the 3 live setups. See specs/2026-05-15-edge-first-discovery-framework-plan.md Task 19.",
+            "live_setups": ["gap_fade_short", "circuit_t1_fade_short", "delivery_pct_anomaly_short"],
+            "scan_min_n": 50,
+            "scan_top_n": 20,
+            "scan_max_dims": 2,
+            "scan_outcome": "outcome",
+            "scan_feature_names": [
+                "cap_segment", "is_expiry_week", "is_monthly_expiry_day",
+                "is_rbi_policy_day", "is_index_rebalance_day"
+            ],
+            "entry_time_column_aliases": ["entry_time", "trade_time", "datetime", "timestamp", "decision_ts"],
+            "pnl_column_aliases": ["net_return", "net_pnl_inr", "net_pnl", "pnl"],
+            "trade_parquet_dir": "reports/sub7_validation"
         }
     }
 }
