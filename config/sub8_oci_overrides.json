@@ -19,12 +19,15 @@
     "enabled": true,
     "min_distance_to_circuit_pct": 2.0
   },
-  "_comment_setups": "OCI capture overrides. Active setups: gap_fade_short, circuit_t1_fade_short. (Note: delivery_pct_anomaly_short runs from base config with its per-setup wide_open=true flag; it doesn't need an override entry here.) Retired setups history: see docs/retired_setups.md for the four sub-9 setups removed 2026-05-14 (earnings_day_intraday_fade, capitulation_long_morning, expiry_pin_strike_reversal, options_vol_iv_rank_revert) plus the historical sub-7/sub-8 deletions from the 2026-05-01 cycle.",
+  "_comment_setups": "OCI capture overrides. Active setups: gap_fade_short, circuit_t1_fade_short, long_panic_gap_down. (Note: delivery_pct_anomaly_short runs from base config with its per-setup wide_open=true flag; it doesn't need an override entry here.) long_panic_gap_down added 2026-05-15 — Cell B + regime-density guard + universe contributor wired (commits 6581a03..ab49a49). Retired setups history: see docs/retired_setups.md.",
   "setups": {
     "gap_fade_short": {
       "enabled": true
     },
     "circuit_t1_fade_short": {
+      "enabled": true
+    },
+    "long_panic_gap_down": {
       "enabled": true
     }
   }
