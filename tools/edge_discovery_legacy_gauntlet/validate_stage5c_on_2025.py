@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from tools.edge_discovery.data_loader import load_run
-from tools.edge_discovery.stages.stage5b_ruleset_simulation import apply_filter
-from tools.edge_discovery.stages.stage5c_cross_sectional_simulation import run_stage5c
+from tools.edge_discovery_legacy_gauntlet.data_loader import load_run
+from tools.edge_discovery_legacy_gauntlet.stages.stage5b_ruleset_simulation import apply_filter
+from tools.edge_discovery_legacy_gauntlet.stages.stage5c_cross_sectional_simulation import run_stage5c
 
 ROOT = Path(__file__).parent.parent.parent
 BACKTEST_DIR = ROOT / "20260421-134338_full"

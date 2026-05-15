@@ -22,7 +22,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-from tools.edge_discovery.periods import assign_fy
+from tools.edge_discovery_legacy_gauntlet.periods import assign_fy
 
 
 def _hour_bucket(minute_of_day):

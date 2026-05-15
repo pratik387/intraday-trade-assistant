@@ -20,7 +20,7 @@ from collections import defaultdict
 
 import pandas as pd
 
-from tools.edge_discovery.report_writer import write_json_artifact, append_section
+from tools.edge_discovery_legacy_gauntlet.report_writer import write_json_artifact, append_section
 
 
 def apply_filter(trades: pd.DataFrame, approved_rules: List[Dict[str, Any]]) -> pd.DataFrame:

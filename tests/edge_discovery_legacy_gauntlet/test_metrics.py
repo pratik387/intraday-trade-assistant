@@ -6,7 +6,7 @@ import pytest
 
 from datetime import date
 
-from tools.edge_discovery.metrics import (
+from tools.edge_discovery_legacy_gauntlet.metrics import (
     profit_factor,
     win_rate_pct,
     sharpe_ratio,

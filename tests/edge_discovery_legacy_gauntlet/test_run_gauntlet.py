@@ -4,8 +4,8 @@ from datetime import date
 from pathlib import Path
 import pytest
 
-from tests.edge_discovery.fixtures.make_fixtures import make_mini_run
-from tools.edge_discovery.run_gauntlet import run_gauntlet_all
+from tests.edge_discovery_legacy_gauntlet.fixtures.make_fixtures import make_mini_run
+from tools.edge_discovery_legacy_gauntlet.run_gauntlet import run_gauntlet_all
 
 
 @pytest.fixture

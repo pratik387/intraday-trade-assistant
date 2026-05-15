@@ -2,7 +2,7 @@
 from pathlib import Path
 import pytest
 
-from tools.edge_discovery.stages.stage5_narrative import generate_narrative_templates
+from tools.edge_discovery_legacy_gauntlet.stages.stage5_narrative import generate_narrative_templates
 
 
 def test_template_contains_all_required_sections(tmp_path):

@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.edge_discovery.gates.validation_gate import (
+from tools.edge_discovery_legacy_gauntlet.gates.validation_gate import (
     validate_rule,
     run_validation_gate,
 )

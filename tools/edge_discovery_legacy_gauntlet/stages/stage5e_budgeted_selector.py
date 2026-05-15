@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
-from tools.edge_discovery.report_writer import append_section, write_json_artifact
+from tools.edge_discovery_legacy_gauntlet.report_writer import append_section, write_json_artifact
 
 
 # ---------------------------------------------------------------------------

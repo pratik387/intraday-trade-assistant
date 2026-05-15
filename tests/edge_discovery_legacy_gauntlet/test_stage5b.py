@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.edge_discovery.stages.stage5b_ruleset_simulation import (
+from tools.edge_discovery_legacy_gauntlet.stages.stage5b_ruleset_simulation import (
     apply_filter,
     aggregate_stats,
     run_stage5b,

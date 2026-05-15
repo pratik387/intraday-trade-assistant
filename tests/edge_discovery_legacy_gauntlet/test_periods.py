@@ -7,7 +7,7 @@ Period config = dict {period_name: (start_inclusive, end_inclusive)}.
 from datetime import date
 import pytest
 
-from tools.edge_discovery.periods import (
+from tools.edge_discovery_legacy_gauntlet.periods import (
     assign_fy,
     get_discovery_subperiods,
     DiscoveryConfig,

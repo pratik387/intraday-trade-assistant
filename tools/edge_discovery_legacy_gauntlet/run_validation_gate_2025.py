@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from tools.edge_discovery.data_loader import load_run
-from tools.edge_discovery.gates.validation_gate import run_validation_gate
+from tools.edge_discovery_legacy_gauntlet.data_loader import load_run
+from tools.edge_discovery_legacy_gauntlet.gates.validation_gate import run_validation_gate
 
 ROOT = Path(__file__).parent.parent.parent
 # Sub-9 OOS validation: 2025 wide-open run (20260506-102336_full) tested

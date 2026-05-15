@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.edge_discovery.stages.stage5c_cross_sectional_simulation import (
+from tools.edge_discovery_legacy_gauntlet.stages.stage5c_cross_sectional_simulation import (
     run_stage5c,
     simulate_filter,
 )

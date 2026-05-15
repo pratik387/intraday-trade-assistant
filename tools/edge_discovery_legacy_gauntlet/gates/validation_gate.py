@@ -19,8 +19,8 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from tools.edge_discovery.metrics import profit_factor, win_rate_pct
-from tools.edge_discovery.report_writer import write_json_artifact
+from tools.edge_discovery_legacy_gauntlet.metrics import profit_factor, win_rate_pct
+from tools.edge_discovery_legacy_gauntlet.report_writer import write_json_artifact
 
 
 # Pass-criteria thresholds per design spec §3.4

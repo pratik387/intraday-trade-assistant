@@ -4,8 +4,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.edge_discovery.periods import DiscoveryConfig
-from tools.edge_discovery.stages.stage2_univariate import run_stage2
+from tools.edge_discovery_legacy_gauntlet.periods import DiscoveryConfig
+from tools.edge_discovery_legacy_gauntlet.stages.stage2_univariate import run_stage2
 
 
 def _cfg():

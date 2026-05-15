@@ -4,7 +4,7 @@ from datetime import date, datetime
 import pandas as pd
 import pytest
 
-from tools.edge_discovery.stages.stage5d_conviction_simulation import (
+from tools.edge_discovery_legacy_gauntlet.stages.stage5d_conviction_simulation import (
     simulate_conviction_filter,
 )
 

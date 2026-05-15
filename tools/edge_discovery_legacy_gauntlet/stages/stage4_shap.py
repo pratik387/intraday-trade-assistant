@@ -26,7 +26,7 @@ if str(_REPO_ROOT) not in sys.path:
 import numpy as np
 import pandas as pd
 
-from tools.edge_discovery.periods import DiscoveryConfig
+from tools.edge_discovery_legacy_gauntlet.periods import DiscoveryConfig
 
 
 # Conditioners that are already in Stage 3 — included in features as a sanity check
@@ -195,7 +195,7 @@ def main():
     """CLI entry point."""
     import argparse, json
     from datetime import date
-    from tools.edge_discovery.data_loader import load_run
+    from tools.edge_discovery_legacy_gauntlet.data_loader import load_run
 
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--backtest-dir", required=True)

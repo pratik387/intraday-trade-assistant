@@ -5,8 +5,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.edge_discovery.data_loader import load_run, GauntletData
-from tests.edge_discovery.fixtures.make_fixtures import make_mini_run
+from tools.edge_discovery_legacy_gauntlet.data_loader import load_run, GauntletData
+from tests.edge_discovery_legacy_gauntlet.fixtures.make_fixtures import make_mini_run
 
 
 @pytest.fixture

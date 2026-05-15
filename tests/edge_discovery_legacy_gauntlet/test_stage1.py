@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.edge_discovery.stages.stage1_universe_prune import run_stage1
+from tools.edge_discovery_legacy_gauntlet.stages.stage1_universe_prune import run_stage1
 
 
 def _synth_trades(setup_pnls: dict) -> pd.DataFrame:

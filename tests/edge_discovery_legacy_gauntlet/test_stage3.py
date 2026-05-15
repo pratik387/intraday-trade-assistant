@@ -10,8 +10,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.edge_discovery.periods import DiscoveryConfig
-from tools.edge_discovery.stages.stage3_conditional import run_stage3
+from tools.edge_discovery_legacy_gauntlet.periods import DiscoveryConfig
+from tools.edge_discovery_legacy_gauntlet.stages.stage3_conditional import run_stage3
 
 
 def _cfg():

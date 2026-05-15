@@ -24,9 +24,9 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
-from tools.edge_discovery.metrics import summary_stats, profit_factor
-from tools.edge_discovery.periods import DiscoveryConfig, get_discovery_subperiods
-from tools.edge_discovery.report_writer import write_stage_report, write_json_artifact
+from tools.edge_discovery_legacy_gauntlet.metrics import summary_stats, profit_factor
+from tools.edge_discovery_legacy_gauntlet.periods import DiscoveryConfig, get_discovery_subperiods
+from tools.edge_discovery_legacy_gauntlet.report_writer import write_stage_report, write_json_artifact
 
 
 MIN_N = 100
