@@ -461,6 +461,17 @@
             "ensemble_summary_filename": "target_ensemble_live_summary.json",
             "decision_report_filename": "decision_report.md",
             "top_n_target_regions_in_report": 10
+        },
+        "decay_monitor_runner": {
+            "_doc": "Runner that converts shipped-setup trade logs into monthly PF time-series and emits per-setup DecayStatus via decay_monitor.compute_status. See Task 21.",
+            "entry_time_column_aliases": ["entry_time", "trade_time", "datetime", "timestamp", "decision_ts", "session_date"],
+            "pnl_column_aliases": ["net_return", "net_pnl_inr", "net_pnl", "pnl"],
+            "inf_display_cap": 5.0,
+            "setup_trade_parquets": {
+                "gap_fade_short": "reports/sub8_oos_holdout_clean/gap_fade_short.parquet",
+                "circuit_t1_fade_short": "reports/sub8_oos_holdout_clean/circuit_t1_fade_short.parquet",
+                "delivery_pct_anomaly_short": "reports/sub8_oos_holdout_clean/delivery_pct_anomaly_short.parquet"
+            }
         }
     }
 }
