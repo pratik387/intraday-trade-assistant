@@ -416,6 +416,28 @@
             "oos_end": "2025-09-30",
             "holdout_start": "2025-10-01",
             "holdout_end": "2026-04-30"
+        },
+        "target_long_panic_gap_down": {
+            "_doc": "Target 2 LONG-side panic-gap-down scan parameters. See specs/2026-05-15-edge-first-discovery-framework-plan.md Task 18.",
+            "gap_down_pct_min": 0.01,
+            "order_size_pct_of_adv": 0.001,
+            "cost_horizon_minutes": 120,
+            "scan_min_n": 100,
+            "scan_top_n": 30,
+            "scan_max_dims": 3,
+            "scan_outcome": "ret_120m_post_cost",
+            "scan_feature_names": [
+                "cap_segment", "adv_bucket", "dist_from_pdh_pct", "dist_from_pdl_pct",
+                "gap_pct", "bar_range_pct", "bar_body_pct", "is_expiry_week", "is_rbi_policy_day"
+            ],
+            "forward_horizons_minutes": [15, 30, 60, 120],
+            "forward_eod": true,
+            "cap_segments": ["small_cap", "mid_cap"],
+            "adv_bucket_midpoints": {
+                "adv_lt_100k": 50000, "adv_100k_500k": 300000,
+                "adv_500k_2m": 1200000, "adv_gt_2m": 5000000,
+                "_fallback": 100000
+            }
         }
     }
 }
