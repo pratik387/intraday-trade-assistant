@@ -147,7 +147,8 @@ class LongPanicGapDownStructure(BaseStructure):
         # df_5m may contain warmup bars from prior sessions. Filter to today's
         # bars before reading the 09:15 bar — without this, df.iloc[0] is a
         # stale prior-session bar and SL/gap geometry breaks.
-        today_bars = df[df.index.date == session_date]
+        _sd = session_date.date() if hasattr(session_date, "date") else session_date
+        today_bars = df[df.index.date == _sd]
         if today_bars.empty:
             return _empty("No bars for session date")
         first_bar = today_bars.iloc[0]
@@ -262,7 +263,8 @@ class LongPanicGapDownStructure(BaseStructure):
         session_date = context.session_date
         if session_date is None:
             session_date = pd.Timestamp(df.index[-1]).date()
-        today_bars = df[df.index.date == session_date]
+        _sd = session_date.date() if hasattr(session_date, "date") else session_date
+        today_bars = df[df.index.date == _sd]
         if today_bars.empty:
             return None
         first_bar = today_bars.iloc[0]
@@ -352,7 +354,8 @@ class LongPanicGapDownStructure(BaseStructure):
         session_date = market_context.session_date
         if session_date is None:
             session_date = pd.Timestamp(df.index[-1]).date()
-        today_bars = df[df.index.date == session_date]
+        _sd = session_date.date() if hasattr(session_date, "date") else session_date
+        today_bars = df[df.index.date == _sd]
         if today_bars.empty:
             return RiskParams(
                 hard_sl=entry_price * (1.0 - self.min_stop_pct / 100.0),

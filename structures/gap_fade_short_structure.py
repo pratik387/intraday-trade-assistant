@@ -164,9 +164,18 @@ class GapFadeShortStructure(BaseStructure):
         if pdc is None or pdc <= 0:
             return _empty("PDC unavailable")
 
+        # df_5m may contain warmup bars from prior sessions. Filter to TODAY's
+        # bars before reading the opening bar — without this, df.iloc[0] is a
+        # stale prior-session bar, breaking gap_pct/gap_high computations.
+        # Caught 2026-05-15 via long_panic_gap_down debugging (same bug).
+        sd = session_date.date() if hasattr(session_date, "date") else session_date
+        today_bars = df[df.index.date == sd]
+        if today_bars.empty:
+            return _empty("No bars for session date")
+
         # --- Condition 3: Gap-up on opening bar ---
-        # The opening bar is bar 0 (first bar of df, assumed to be 09:15 bar).
-        opening_bar = df.iloc[0]
+        # The opening bar is the FIRST bar of TODAY (09:15).
+        opening_bar = today_bars.iloc[0]
         gap_open = float(opening_bar["open"])
         gap_pct = ((gap_open - pdc) / pdc) * 100.0
         if gap_pct < self.min_gap_pct:
@@ -179,7 +188,7 @@ class GapFadeShortStructure(BaseStructure):
             )
 
         # --- Condition 5: Exhaustion candle on current bar ---
-        last = df.iloc[-1]
+        last = today_bars.iloc[-1]
         bar_open = float(last["open"])
         bar_high = float(last["high"])
         bar_close = float(last["close"])
@@ -206,8 +215,8 @@ class GapFadeShortStructure(BaseStructure):
             )
 
         # --- Condition 6: Volume decline after opening bar ---
-        if self.require_vol_decline and len(df) >= 2:
-            opening_vol = float(df["volume"].iloc[0])
+        if self.require_vol_decline and len(today_bars) >= 2:
+            opening_vol = float(today_bars["volume"].iloc[0])
             current_vol = float(last["volume"])
             if current_vol >= opening_vol:
                 return _empty(
@@ -280,11 +289,20 @@ class GapFadeShortStructure(BaseStructure):
             return None
 
         df = context.df_5m
-        last = df.iloc[-1]
+        # Filter to today's bars — warmup from prior sessions otherwise
+        # pollutes df.iloc[0] (the "opening bar") and breaks gap_high/SL.
+        session_date = context.session_date
+        if session_date is None:
+            session_date = pd.Timestamp(df.index[-1]).date()
+        sd = session_date.date() if hasattr(session_date, "date") else session_date
+        today_bars = df[df.index.date == sd]
+        if today_bars.empty:
+            return None
+        last = today_bars.iloc[-1]
         close = float(last["close"])
         atr_val = self._get_atr(context)
 
-        opening_bar = df.iloc[0]
+        opening_bar = today_bars.iloc[0]
         gap_high = float(opening_bar["high"])
         gap_open = float(opening_bar["open"])
 
@@ -399,7 +417,17 @@ class GapFadeShortStructure(BaseStructure):
         """
         atr = self._get_atr(market_context)
         df = market_context.df_5m
-        gap_high = float(df.iloc[0]["high"]) if df is not None and len(df) >= 1 else entry_price
+        # Filter to today's bars — warmup from prior sessions otherwise
+        # pollutes df.iloc[0] (the "opening bar") used for gap_high.
+        if df is not None and len(df) >= 1:
+            session_date = market_context.session_date
+            if session_date is None:
+                session_date = pd.Timestamp(df.index[-1]).date()
+            sd = session_date.date() if hasattr(session_date, "date") else session_date
+            today_bars = df[df.index.date == sd]
+            gap_high = float(today_bars.iloc[0]["high"]) if not today_bars.empty else entry_price
+        else:
+            gap_high = entry_price
         cap_seg = getattr(market_context, "cap_segment", None) or ""
         if cap_seg == "micro_cap":
             gap_buf = 1.0 + self.stop_buffer_above_gap_high_pct_micro
