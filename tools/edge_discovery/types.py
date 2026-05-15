@@ -77,14 +77,15 @@ class ConditionalOutcomeTable:
         import math
         if outcome not in self.rows.columns:
             raise KeyError(f"Outcome '{outcome}' not in table columns")
+        missing = [f for f in feature_names if f not in self.rows.columns]
+        if missing:
+            raise KeyError(f"Features not in table columns: {missing}")
         regions: list = []
         for dim in range(1, min(max_dims, len(feature_names)) + 1):
             for combo in combinations(feature_names, dim):
                 # Bucket continuous features into quantiles before grouping
                 grouped = self.rows.copy()
                 for f in combo:
-                    if f not in grouped.columns:
-                        continue
                     if grouped[f].dtype.kind in "fc":
                         try:
                             grouped[f] = pd.qcut(grouped[f], q=5, duplicates="drop")

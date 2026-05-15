@@ -59,3 +59,22 @@ def test_top_edge_regions_ranks_by_effect_size_x_sqrt_n():
     assert "mean_return" in top
     assert "n" in top
     assert "t_proxy" in top
+    # Verify ranking contract: top region has the highest t_proxy
+    for i in range(len(regions) - 1):
+        assert regions[i]["t_proxy"] >= regions[i + 1]["t_proxy"], (
+            f"regions not sorted desc by t_proxy at index {i}"
+        )
+
+
+def test_top_edge_regions_raises_on_unknown_feature():
+    rows = pd.DataFrame({
+        "feature_a": ["x", "y"],
+        "outcome_post_cost": [0.01, -0.01],
+    })
+    table = ConditionalOutcomeTable(rows=rows)
+    with pytest.raises(KeyError, match="not in table columns"):
+        table.top_edge_regions(
+            outcome="outcome_post_cost",
+            feature_names=["feature_a", "nonexistent_feature"],
+            min_n=1,
+        )
