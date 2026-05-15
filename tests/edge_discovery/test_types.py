@@ -35,3 +35,27 @@ def test_conditional_outcome_table_slice_by_returns_aggregated_stats():
     assert abs(sliced.loc["a", "mean"] - 0.02) < 1e-9
     assert abs(sliced.loc["b", "mean"] + 0.0075) < 1e-9
     assert sliced.loc["a", "n"] == 2
+
+
+def test_top_edge_regions_ranks_by_effect_size_x_sqrt_n():
+    rows = pd.DataFrame({
+        "feature_a": ["x", "x", "x", "x", "y", "y", "y", "y", "z", "z"],
+        "feature_b": ["p", "p", "q", "q", "p", "p", "q", "q", "p", "p"],
+        "outcome_post_cost": [0.01, 0.02, 0.005, 0.01,    # x,p → mean 0.015 (n=2)
+                              -0.01, -0.02, -0.005, -0.01,  # ...
+                              0.001, 0.001],
+    })
+    table = ConditionalOutcomeTable(rows=rows)
+    regions = table.top_edge_regions(
+        outcome="outcome_post_cost",
+        feature_names=["feature_a", "feature_b"],
+        min_n=2,
+        top_n=5,
+    )
+    assert len(regions) >= 1
+    # The strongest region by effect-size × √n should be reported first
+    top = regions[0]
+    assert "feature_cut" in top
+    assert "mean_return" in top
+    assert "n" in top
+    assert "t_proxy" in top

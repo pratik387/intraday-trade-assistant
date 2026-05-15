@@ -58,3 +58,53 @@ class ConditionalOutcomeTable:
             "median": g.median(),
             "std": g.std(ddof=1),
         })
+
+    def top_edge_regions(
+        self,
+        outcome: str,
+        feature_names: list,
+        min_n: int = 50,
+        top_n: int = 20,
+        max_dims: int = 3,
+    ) -> list:
+        """Rank candidate edge regions by |mean_return| * sqrt(n) (t-statistic proxy).
+
+        Scans 1D, 2D, 3D feature combinations up to max_dims. For each non-empty
+        bucket meeting min_n, computes mean/std/n; ranks by abs(mean) * sqrt(n).
+        Returns top_n regions as dicts.
+        """
+        from itertools import combinations
+        import math
+        if outcome not in self.rows.columns:
+            raise KeyError(f"Outcome '{outcome}' not in table columns")
+        regions: list = []
+        for dim in range(1, min(max_dims, len(feature_names)) + 1):
+            for combo in combinations(feature_names, dim):
+                # Bucket continuous features into quantiles before grouping
+                grouped = self.rows.copy()
+                for f in combo:
+                    if f not in grouped.columns:
+                        continue
+                    if grouped[f].dtype.kind in "fc":
+                        try:
+                            grouped[f] = pd.qcut(grouped[f], q=5, duplicates="drop")
+                        except ValueError:
+                            pass
+                g = grouped.groupby(list(combo), dropna=False)[outcome]
+                stats = g.agg(["count", "mean", "std"]).reset_index()
+                stats = stats[stats["count"] >= min_n]
+                for _, row in stats.iterrows():
+                    n = int(row["count"])
+                    mean = float(row["mean"])
+                    std = float(row["std"]) if not pd.isna(row["std"]) else 0.0
+                    t_proxy = abs(mean) * math.sqrt(n) / max(std, 1e-9)
+                    cut = {f: row[f] for f in combo}
+                    regions.append({
+                        "feature_cut": cut,
+                        "n": n,
+                        "mean_return": mean,
+                        "std_return": std,
+                        "t_proxy": t_proxy,
+                    })
+        regions.sort(key=lambda r: r["t_proxy"], reverse=True)
+        return regions[:top_n]
