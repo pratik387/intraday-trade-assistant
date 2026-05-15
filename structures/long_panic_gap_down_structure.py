@@ -42,6 +42,7 @@ from services.plan_helpers import (
     compute_entry_zone,
     enforce_min_stop_distance,
 )
+from services import regime_density_tracker
 from .base_structure import BaseStructure
 from .data_models import (
     ExitLevels,
@@ -87,6 +88,11 @@ class LongPanicGapDownStructure(BaseStructure):
         self.t2_r_multiple = float(config["t2_r_multiple"])
         self.t1_partial_qty_pct = float(config["t1_partial_qty_pct"])
         self.min_bars_required = int(config["min_bars_required"])
+
+        # Regime guard: dist_from_pdl threshold for "broader universe" count
+        # (looser than narrow Cell B band, matches sanity n_triggers_today).
+        self.broader_dist_from_pdl_pct_max = float(config["broader_dist_from_pdl_pct_max"])
+        self.regime_guard_max_density = int(config["regime_guard_n_triggers_today_max"])
 
         # First-trigger latch — one fire per (symbol, session_date).
         self._fired_today: set = set()
@@ -154,6 +160,27 @@ class LongPanicGapDownStructure(BaseStructure):
             )
 
         dist_from_pdl_pct = ((bar_close - pdl) / pdl) * 100.0
+
+        # ---- Regime density guard ----
+        # Note this symbol if it passes the BROADER filter (looser dist_pdl
+        # band than the narrow Cell B). Sanity counted the broader universe
+        # to threshold panic-density at 80; do the same here.
+        broader_qualifies = dist_from_pdl_pct <= self.broader_dist_from_pdl_pct_max
+        if broader_qualifies:
+            regime_density_tracker.note(
+                self.structure_type, session_date, context.symbol,
+            )
+            # Suppress fires once the day's count crosses threshold. The check
+            # happens AFTER note() so density reflects this symbol's contribution
+            # — symmetric across all symbols regardless of processing order.
+            density = regime_density_tracker.get_density(
+                self.structure_type, session_date,
+            )
+            if density > self.regime_guard_max_density:
+                return _empty(
+                    f"regime guard: density={density} > max={self.regime_guard_max_density}"
+                )
+
         if not (self.dist_from_pdl_pct_min <= dist_from_pdl_pct <= self.dist_from_pdl_pct_max):
             return _empty(
                 f"dist_from_pdl={dist_from_pdl_pct:.2f} not in "

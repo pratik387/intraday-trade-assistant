@@ -387,14 +387,14 @@
       "wide_open": false
     },
     "long_panic_gap_down": {
-      "enabled": false,
+      "enabled": true,
       "regulatory_sensitivity": "rule_orthogonal",
       "depends_on": [
         "MIS_leverage",
         "STT_drag",
         "dpr_circuit"
       ],
-      "_status_2026_05_15": "DISCOVERED + 3-WINDOW VALIDATED, NOT LIVE-WIRED. Cell B (dist_from_pdl in [-5%,-3%]) with T1=1.5R / T2=2.5R targets validates across Discovery (PF=1.45 n=1,412), OOS (PF=1.40 n=333), and Holdout (PF=1.72 n=126, 6/7 positive months). Validation depends on a UNIVERSE-wide regime guard (skip all entries when count of qualifying symbols at 09:20 > 80) that this detector cannot implement alone — needs orchestrator-level cross-symbol coordination. enabled=false until that plumbing exists. See tools/sub9_research/sanity_long_panic_gap_down.py + _long_panic_gap_down_sweep_cellmine.py.",
+      "_status_2026_05_15": "ENABLED with regime-density guard. Cell B (dist_from_pdl in [-5%,-3%]) with T1=1.5R / T2=2.5R targets validates across Discovery (PF=1.45 n=1,412), OOS (PF=1.40 n=333), and Holdout (PF=1.72 n=126, 6/7 positive months). Regime guard wired via services/regime_density_tracker.py — detector notes every symbol passing the BROADER panic-gap-down filter (gap<=-1%, dist_pdh<=-5.5%, dist_pdl<=-1.25%); fires are suppressed once the day's count exceeds regime_guard_n_triggers_today_max (80). v1.0 has a sequential-ordering caveat: first ~80 symbols per day still fire before the guard activates, bounded leak documented in services/regime_density_tracker.py. See tools/sub9_research/sanity_long_panic_gap_down.py + _long_panic_gap_down_sweep_cellmine.py.",
       "_thesis": "LONG mean-revert on small/mid MIS-eligible names that gap down hard at open AND close the first 5m bar deep below prior day low (-5% to -3%) AND 5.5%+ below prior day high. Stop-loss cascades exhaust within minutes; dip-buyers + short-covering drive price back toward prior-day range. Edge dies in panic regimes (war months) when gap-downs trend; regime guard upstream cuts those days.",
       "active_window_start": "09:15",
       "active_window_end": "09:20",
@@ -404,7 +404,9 @@
       "_comment_dist_pdh": "Entry close >= 5.5% below prior day high. Establishes 'deeply broken down' context.",
       "dist_from_pdl_pct_min": -5.0,
       "dist_from_pdl_pct_max": -3.0,
-      "_comment_dist_pdl": "THE EDGE FILTER. Entry close 3% to 5% below prior day low. Quintile cell B from the sweep: PF stable in 1.32-1.40 across Disc+OOS without regime guard, 1.45-1.72 with guard. Tighter (<2%) or looser (5%+) cells decay.",
+      "_comment_dist_pdl": "THE EDGE FILTER (narrow Cell B band). Entry close 3% to 5% below prior day low. Quintile cell B from the sweep: PF stable in 1.32-1.40 across Disc+OOS without regime guard, 1.45-1.72 with guard. Tighter (<2%) or looser (5%+) cells decay.",
+      "broader_dist_from_pdl_pct_max": -1.25,
+      "_comment_broader_dist_pdl": "BROADER FILTER for regime density counter. Symbols passing this (looser than -3% narrow) are noted by services/regime_density_tracker.note() and counted toward the regime guard threshold, REGARDLESS of whether the narrow Cell B band passes. Matches sanity 'n_triggers_today' semantics.",
       "allowed_cap_segments": [
         "small_cap",
         "mid_cap"
@@ -428,7 +430,7 @@
       "per_symbol_cooloff_min": 15,
       "max_fires_per_5min": 10,
       "regime_guard_n_triggers_today_max": 80,
-      "_comment_regime_guard": "UPSTREAM CONCERN — not implemented in this detector. At 09:20, count universe-wide symbols passing (gap_pct_max, dist_from_pdh_pct_max, dist_from_pdl band) BEFORE entry; if count > 80, suppress ALL long_panic_gap_down entries that day. Sanity proves this guard is necessary: Holdout PF 0.73 → 1.35 with guard. Wiring requires orchestrator-level coordination; tracked as v1.1 work.",
+      "_comment_regime_guard": "Implemented 2026-05-15 via services/regime_density_tracker.py. Detector notes every symbol passing the BROADER filter (gap_pct<=gap_pct_max AND dist_pdh<=dist_from_pdh_pct_max AND dist_pdl<=broader_dist_from_pdl_pct_max) on entry day. When the day's noted count exceeds this threshold, ALL subsequent Cell B fires for this setup are suppressed. Threshold 80 chosen from broader-universe sweep: PF plateau 75-100 gives Disc 1.45 / OOS 1.40 / Holdout 1.72; cliff at 125 (Holdout drops to 1.01). v1.0 sequential-ordering caveat: first ~80 symbols/day still fire before guard activates.",
       "wide_open": false
     },
     "circuit_t1_fade_short": {

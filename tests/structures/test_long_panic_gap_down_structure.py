@@ -9,9 +9,18 @@ import pytest
 
 from structures.long_panic_gap_down_structure import LongPanicGapDownStructure
 from structures.data_models import MarketContext
+from services import regime_density_tracker
 
 
-def _cfg():
+@pytest.fixture(autouse=True)
+def _reset_regime_tracker():
+    """Reset cross-symbol density state between tests."""
+    regime_density_tracker.reset()
+    yield
+    regime_density_tracker.reset()
+
+
+def _cfg(regime_guard_max=80, broader_dist_pdl=-1.25):
     return {
         "_setup_name": "long_panic_gap_down",
         "enabled": True,
@@ -21,6 +30,8 @@ def _cfg():
         "dist_from_pdh_pct_max": -5.5,
         "dist_from_pdl_pct_min": -5.0,
         "dist_from_pdl_pct_max": -3.0,
+        "broader_dist_from_pdl_pct_max": broader_dist_pdl,
+        "regime_guard_n_triggers_today_max": regime_guard_max,
         "allowed_cap_segments": ["small_cap", "mid_cap"],
         "sl_buffer_below_bar_low_pct": 0.5,
         "min_stop_pct": 1.0,
@@ -178,3 +189,64 @@ def test_short_plan_returns_none():
                pdh=105.0, pdl=95.0, pdc=100.0)
     r = det.detect(ctx)
     assert det.plan_short_strategy(ctx, event=r.events[0]) is None
+
+
+def test_regime_guard_suppresses_fire_after_threshold():
+    """Once the broader-filter density exceeds the threshold, narrow Cell B
+    fires must be suppressed."""
+    # Use a low threshold so test only needs a few notes
+    det = LongPanicGapDownStructure(_cfg(regime_guard_max=2))
+    session_date = pd.Timestamp("2026-05-20 09:15:00").date()
+
+    # Pre-load tracker with 3 broader-matching symbols (over threshold of 2)
+    for sym in ("SYM_A", "SYM_B", "SYM_C"):
+        regime_density_tracker.note("long_panic_gap_down", session_date, sym)
+    assert regime_density_tracker.get_density("long_panic_gap_down", session_date) == 3
+
+    # A new symbol that would normally fire under Cell B should be suppressed
+    ctx = _ctx(symbol="SYM_D",
+               bar_open=94.0, bar_high=94.5, bar_low=89.5, bar_close=91.0,
+               pdh=105.0, pdl=95.0, pdc=100.0)
+    r = det.detect(ctx)
+    assert not r.structure_detected
+    assert "regime guard" in r.rejection_reason
+    assert "density=" in r.rejection_reason
+
+
+def test_broader_filter_match_increments_density():
+    """A symbol passing the broader filter (but NOT the narrow Cell B band)
+    should still increment the tracker density."""
+    det = LongPanicGapDownStructure(_cfg(regime_guard_max=80))
+    session_date = pd.Timestamp("2026-05-20 09:15:00").date()
+    assert regime_density_tracker.get_density("long_panic_gap_down", session_date) == 0
+
+    # Symbol passing broader (dist_pdl=-1.5%, ≤ -1.25 threshold) but NOT narrow
+    # (-3% to -5% band) → broader_qualifies=True, narrow=False
+    # close = 93.575 → dist_pdl = (93.575/95 - 1)*100 = -1.5%
+    # Need dist_pdh ≤ -5.5%: (93.575/pdh - 1) ≤ -0.055 → pdh ≥ 93.575/0.945 ≈ 99
+    # Use pdh=105: dist_pdh = (93.575/105 - 1)*100 = -10.88% ✓
+    # Need gap_pct ≤ -1%: open vs pdc=100 → open ≤ 99
+    ctx = _ctx(symbol="SYM_X",
+               bar_open=94.0, bar_high=94.5, bar_low=93.0, bar_close=93.575,
+               pdh=105.0, pdl=95.0, pdc=100.0)
+    r = det.detect(ctx)
+    # Narrow band: dist_pdl=-1.5 is NOT in [-5%, -3%] → rejection
+    assert not r.structure_detected
+    assert "dist_from_pdl" in r.rejection_reason
+    # But density should have been incremented
+    assert regime_density_tracker.get_density("long_panic_gap_down", session_date) == 1
+
+
+def test_density_is_idempotent_per_symbol():
+    """Re-noting the same (symbol, date) doesn't double-count."""
+    det = LongPanicGapDownStructure(_cfg(regime_guard_max=80))
+    session_date = pd.Timestamp("2026-05-20 09:15:00").date()
+    ctx = _ctx(symbol="SYM_Y",
+               bar_open=94.0, bar_high=94.5, bar_low=89.5, bar_close=91.0,
+               pdh=105.0, pdl=95.0, pdc=100.0)
+    # First detect: density=1
+    det.detect(ctx)
+    # Re-detect same symbol/date: density still 1 (latch already prevents fire,
+    # but tracker must also not double-count via the broader-filter note)
+    det.detect(ctx)
+    assert regime_density_tracker.get_density("long_panic_gap_down", session_date) == 1
