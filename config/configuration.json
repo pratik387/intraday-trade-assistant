@@ -1,4 +1,16 @@
 {
+  "mode": "production",
+  "_comment_mode": "Selects which mode_profiles entry's keys are applied on top of base config at load time. Override via env var RUN_MODE.",
+  "mode_profiles": {
+    "production": {},
+    "oci_research": {
+      "entry_cutoff_hhmm": "15:25",
+      "last_scan_hhmm": "15:25",
+      "eod_squareoff_hhmm": "15:25",
+      "max_trades_per_cycle": 10000,
+      "gate_input_logging": { "enabled": true }
+    }
+  },
   "min_breakout_atr_mult": 0.3,
   "width_window": 40,
   "expansion_ratio": 1.3,
