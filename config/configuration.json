@@ -1,18 +1,7 @@
 {
-  "k_atr": 0.2,
   "min_breakout_atr_mult": 0.3,
-  "hold_bars": 1,
-  "vol_z_required": 0.8,
   "width_window": 40,
   "expansion_ratio": 1.3,
-  "expiry_size_multiplier": 0.7,
-  "expiry_allow_breakout": false,
-  "expiry_allow_fade": true,
-  "regime_scores": {
-    "squeeze": 0.6,
-    "trend": 0.8,
-    "chop": 0.5
-  },
   "regime_thresholds": {
     "vwap_min_strength": 2.0,
     "vwap_min_adx": 8.0,
@@ -21,32 +10,6 @@
     "bo_min_vol_mult": 1.15,
     "ff_min_vol_mult": 0.9,
     "long_max_ema_distance_pct": 0.12
-  },
-  "ict_quality_filters": {
-    "_comment": "PROFESSIONAL ICT - Context over metrics (2025-11-18 - Full Professional Implementation)",
-    "_rationale": "Professional ICT requires sweep OR MSS (context), 2.0x volume (institutional), at structure levels. Old 1.1x volume produced 0 trades.",
-    "order_block": {
-      "min_block_size_pct": 0.0005,
-      "_size_comment": "Size less important with sweep/MSS validation",
-      "min_volume_ratio": 2.0,
-      "_volume_comment": "PROFESSIONAL: 2.0x = institutional standard (hardcoded in detection, not configurable anymore)",
-      "swing_tolerance_pct": 0.15,
-      "_swing_comment": "At swing structure (15% tolerance for NSE volatility)",
-      "min_rejection_wick_pct": 0.1,
-      "_wick_comment": "Rejection confirmation (10% minimum)"
-    },
-    "fair_value_gap": {
-      "min_gap_size_pct": 0.0005,
-      "_gap_comment": "Clean gap matters, not size",
-      "min_volume_ratio": 1.2,
-      "_fvg_volume_comment": "RELAXED (Dec 2024): 1.5->1.2 - only 1 detection in 6 months with 1.5x",
-      "max_wick_penetration_pct": 0.3,
-      "_penetration_comment": "RELAXED: Allow wick penetration (30% max, was 25%)",
-      "vwap_distance_tolerance_pct": 0.25,
-      "_vwap_comment": "RELAXED (Dec 2024): 0.15->0.25 - allow FVG further from VWAP",
-      "swing_tolerance_pct": 0.25,
-      "_swing_comment": "RELAXED (Dec 2024): 0.15->0.25 - allow FVG further from swing"
-    }
   },
   "liquidity_gates": {
     "_comment": "Market Cap Segmentation - Priority 1: Liquidity Filters (evidence-based thresholds). NOTE: Was silently broken until 2026-02-03 (symbol format bug). Disable until thresholds are re-evaluated against baseline.",
@@ -87,109 +50,6 @@
       "_rationale": "STRICTEST filters - 4x volume surge (vs 3x small-caps) to ensure tradeable liquidity. Baseline data: 43.8% WR, 1.63 PF, Rs.173/trade avg."
     }
   },
-  "cap_strategy_preferences": {
-    "_comment": "Market Cap Segmentation - Priority 2: Strategy-Cap Mapping (institutional evidence)",
-    "enabled": true,
-    "large_cap": {
-      "preferred": [
-        "vwap_mean_reversion_long",
-        "vwap_mean_reversion_short",
-        "failure_fade_long",
-        "failure_fade_short",
-        "range_rejection_long",
-        "range_rejection_short"
-      ],
-      "allowed": [
-        "breakout_long",
-        "breakout_short",
-        "trend_pullback_long",
-        "trend_pullback_short",
-        "gap_fill_long",
-        "gap_fill_short",
-        "orb_breakout_long",
-        "orb_breakout_short"
-      ],
-      "blocked": [
-        "momentum_breakout_long",
-        "momentum_breakout_short"
-      ],
-      "_rationale": "Large-caps mean-revert reliably (70% WR), move slowly on momentum. Institutional HFT keeps prices efficient."
-    },
-    "mid_cap": {
-      "preferred": [
-        "orb_breakout_long",
-        "orb_breakout_short",
-        "flag_continuation_long",
-        "flag_continuation_short",
-        "trend_pullback_long",
-        "trend_pullback_short"
-      ],
-      "allowed": [
-        "gap_fill_long",
-        "gap_fill_short",
-        "vwap_reclaim_long",
-        "vwap_lose_short",
-        "breakout_long",
-        "breakout_short",
-        "vwap_mean_reversion_long",
-        "vwap_mean_reversion_short",
-        "failure_fade_long",
-        "failure_fade_short"
-      ],
-      "blocked": [],
-      "_rationale": "Mid-caps: best balance of momentum + structure. All strategies viable."
-    },
-    "small_cap": {
-      "preferred": [
-        "momentum_breakout_long",
-        "momentum_breakout_short",
-        "orb_breakout_long",
-        "orb_breakout_short",
-        "squeeze_release_long",
-        "squeeze_release_short"
-      ],
-      "allowed": [
-        "gap_fill_long",
-        "gap_fill_short",
-        "breakout_long",
-        "breakout_short",
-        "flag_continuation_long",
-        "flag_continuation_short"
-      ],
-      "blocked": [
-        "vwap_mean_reversion_long",
-        "vwap_mean_reversion_short",
-        "failure_fade_long",
-        "failure_fade_short"
-      ],
-      "_rationale": "Small-caps momentum-driven (2-3x faster moves). Mean-reversion unreliable due to low liquidity + manipulation risk."
-    },
-    "micro_cap": {
-      "preferred": [
-        "failure_fade_long",
-        "failure_fade_short",
-        "volume_spike_reversal_long",
-        "volume_spike_reversal_short"
-      ],
-      "allowed": [
-        "orb_breakout_long",
-        "orb_breakout_short",
-        "squeeze_release_long",
-        "squeeze_release_short",
-        "momentum_breakout_long",
-        "momentum_breakout_short"
-      ],
-      "blocked": [
-        "vwap_mean_reversion_long",
-        "vwap_mean_reversion_short",
-        "trend_pullback_long",
-        "trend_pullback_short",
-        "range_rejection_long",
-        "range_rejection_short"
-      ],
-      "_rationale": "BASELINE PROVEN: 43.8% WR, 1.63 PF, Rs.173/trade (best segment!). failure_fade strategy DOMINATES micro-caps due to high volatility + retail-driven failed breakouts. Avoid range/pullback strategies (too choppy)."
-    }
-  },
   "cap_risk_adjustments": {
     "_comment": "Market Cap Segmentation - Priority 3: Risk Sizing by Cap (Van Tharp evidence)",
     "enabled": true,
@@ -218,127 +78,16 @@
       "_rationale": "REVERTED from 2.0x to 1.8x - wider stops were causing 800+ Rs losses"
     }
   },
-  "regime_cap_allocation": {
-    "_comment": "Market Cap Segmentation - Priority 4: Regime-Cap Interaction (institutional rotation + baseline data)",
-    "enabled": true,
-    "chop": {
-      "large_cap_weight": 0.5,
-      "mid_cap_weight": 0.15,
-      "small_cap_weight": 0.1,
-      "micro_cap_weight": 0.25,
-      "_rationale": "CHOP â†’ Large-caps + micro-caps excel (mean-reversion edge). Micro-caps 25% weight due to BASELINE: 43.8% WR, 1.63 PF with failure_fade strategy in chop conditions."
-    },
-    "trend_up": {
-      "large_cap_weight": 0.15,
-      "mid_cap_weight": 0.45,
-      "small_cap_weight": 0.25,
-      "micro_cap_weight": 0.15,
-      "_rationale": "TREND_UP â†’ Mid/Small-caps lead momentum. Micro-caps 15% (moderate allocation, prefer liquidity in trends)."
-    },
-    "trend_down": {
-      "large_cap_weight": 0.5,
-      "mid_cap_weight": 0.25,
-      "small_cap_weight": 0.15,
-      "micro_cap_weight": 0.1,
-      "_rationale": "TREND_DOWN â†’ Flight to quality, minimize micro-cap exposure. Micro-caps 10% (lowest allocation due to crash risk)."
-    },
-    "squeeze": {
-      "large_cap_weight": 0.35,
-      "mid_cap_weight": 0.3,
-      "small_cap_weight": 0.2,
-      "micro_cap_weight": 0.15,
-      "_rationale": "SQUEEZE â†’ Balanced allocation awaiting breakout direction. Micro-caps 15% (moderate, can explode either way)."
-    },
-    "_institutional_evidence": "Linda Raschke: market cap rotation patterns follow regime shifts. CTAs rotate from largeâ†’midâ†’small during trend, reverse during chop.",
-    "_baseline_evidence": "3-month baseline: micro-caps generated 84% of profits (Rs.5,550 / Rs.6,617 total). failure_fade strategy dominates micro-caps in CHOP conditions."
-  },
-  "decision_require_structure_event": true,
-  "news_min_hold_bars": 2,
-  "bar_1m_freq": "1min",
-  "bar_5m_freq": "5min",
-  "bar_5m_span_minutes": 5,
-  "ws_subscribe_batch_ms": 1500,
-  "ws_max_batch_size": 100,
-  "ws_flush_thread_enabled": true,
-  "ws_flush_interval_ms": 500,
-  "ws_max_retries": 5,
-  "ws_reconnect_backoff_secs": 2,
-  "submgr_debounce_ms": 1500,
-  "router_timestamp_fields": [
-    "timestamp",
-    "exchange_timestamp",
-    "last_trade_time",
-    "ts"
-  ],
-  "router_symbol_fields": [
-    "symbol",
-    "tradingsymbol"
-  ],
-  "router_price_fields": [
-    "ltp",
-    "price",
-    "last_price"
-  ],
-  "router_tradeqty_fields": [
-    "last_trade_qty",
-    "qty"
-  ],
-  "router_dayvolume_fields": [
-    "volume",
-    "total_volume_traded"
-  ],
-  "router_default_timezone": "Asia/Kolkata",
-  "router_assume_epoch_utc": true,
   "order_max_per_sec": 8,
   "order_max_per_min": 180,
   "order_max_per_day": 3000,
-  "order_loop_idle_ms": 10,
-  "order_retry_delay_ms": 50,
-  "order_exception_delay_ms": 100,
-  "scan_min_bars_5m": 30,
-  "scan_ret1_min": 0.002,
-  "scan_ret3_min": 0.004,
-  "scan_ret5_min": 0.006,
-  "scan_vol_z_window": 20,
-  "scan_vol_z_min": 0.5,
-  "scan_vwap_dist_bps_max": 80,
-  "scan_output_max_rows": 50,
   "session_open_hhmm": "0915",
-  "session_close_hhmm": "1530",
   "orb_minutes": 15,
-  "planner_atr_period": 14,
-  "planner_choppiness_lookback": 30,
-  "planner_choppiness_high": 61.8,
-  "planner_choppiness_low": 38.2,
-  "planner_max_gap_pct_for_trend": 3.0,
-  "planner_entry_zone_atr_frac": 0.08,
-  "_comment_entry_zone": "STRATEGY-SPECIFIC ENTRY ZONES: Breakout fix applied - wider zones for momentum continuation",
-  "planner_entry_zone_breakout_mult": 0.25,
-  "_comment_breakout_mult": "Breakout strategies: 0.25 ATR (3x wider for momentum). NOTE: Immediate execution enabled, zone used for fallback only.",
-  "planner_entry_zone_fade_mult": 0.08,
-  "_comment_fade_mult": "Failure fade strategies: 0.08 ATR (proven optimal with 35% trigger rate)",
-  "planner_entry_zone_default_mult": 0.15,
-  "_comment_default_mult": "Other strategies: 0.15 ATR (reverted from 0.25 - wider zones caused T1+ rate drop from 26% to 21% and avg T1+ PnL crash from Rs.684 to Rs.136)",
-  "planner_vwap_reclaim_min_bars_above": 3,
   "_comment_breakout_execution": "PHASE 1 FIX: Breakout immediate execution (professional standard)",
   "breakout_immediate_execution": true,
   "_comment_immediate": "True = Execute immediately on decision (no entry zone wait). Fixes 8-minute delay issue.",
-  "breakout_volume_surge_min": 1.5,
-  "_comment_volume_surge": "PHASE 4 REVERT: Back to 1.5x (TypeError fix resolved the 3.2% trigger issue, not filter strictness). Professional standard for volume confirmation.",
-  "breakout_momentum_candle_min_ratio": 2.0,
-  "_comment_momentum_candle": "PHASE 4 REVERT: Back to 2.0x - stricter filter for candle size ensures quality breakouts. TypeError was the real blocker, not this threshold.",
-  "breakout_volume_surge_min_short": 2.0,
-  "_comment_volume_short": "PHASE 4 REVERT: Back to 2.0x for shorts - short breakouts need stronger volume confirmation (institutional standard).",
-  "breakout_momentum_candle_min_ratio_short": 2.5,
-  "_comment_momentum_short": "PHASE 4 REVERT: Back to 2.5x for shorts - short breakouts require larger candles to avoid false breakdowns.",
   "risk_per_trade_rupees": 1000.0,
   "fees_slippage_bps": 5.0,
-  "fill_quality": {
-    "enabled": true,
-    "min_rr_to_t1": 0.3,
-    "max_slippage_pct": 0.75,
-    "_comment": "Reject fills that compress R:R below 0.3 or slip > 0.75%. T1 is partial (50% qty), so 0.3R still covers costs. 0.75% allows normal mid-cap slippage while catching liquidity gaps."
-  },
   "enable_lunch_pause": true,
   "lunch_start": "12:15",
   "lunch_end": "13:15",
@@ -749,24 +498,6 @@
       "sector_weakness_penalty": -0.1
     }
   },
-  "time_policy": {
-    "start_trade": "09:15",
-    "_comment_start_trade": "OPENING BELL FIX: Changed from 10:15 to 09:15 - allow entries from market open (premium_zone T1 hits at 09:15-09:30)",
-    "lunch_block_start": "12:00",
-    "lunch_block_end": "13:00",
-    "last_entry_cutoff": "14:45"
-  },
-  "structure": {
-    "max_structural_risk_pct_of_price": 0.003,
-    "prefer_levels": [
-      "ORL",
-      "PDL"
-    ],
-    "weaken_levels": [
-      "VWAP",
-      "ORH"
-    ]
-  },
   "ranking": {
     "min_rank": 0.62,
     "boosts": {
@@ -780,14 +511,6 @@
       "rsi_edge": -0.06
     }
   },
-  "news_gate": {
-    "window_bars": 30,
-    "vol_z_thresh": 5.0,
-    "ret_z_thresh": 2.5,
-    "body_atr_ratio_thresh": 2.0,
-    "require_retest_bars": 2,
-    "reduce_size_mult": 0.5
-  },
   "t1_rr": 1.5,
   "t2_rr": 3.0,
   "sl_atr_mult": 1.6,
@@ -795,8 +518,6 @@
   "exit_sl_atr_mult_min": 0,
   "_comment_exit_sl_atr_mult_min": "ATR SL adjustment disabled (0 = off). When >0, widens SL to at least N*ATR from entry. Was hardcoded to 1.0.",
   "sl_below_swing_ticks": 0.0,
-  "trail_to": "atr",
-  "_comment_trail": "REVERT: Trail disabled (T3=0) - trail was losing money in exit-opt-003. Full exit at T2.",
   "exit_t1_book_pct": 60.0,
   "_comment_t1": "Reverted to 60-40. 80-20 lost Rs.28K in 3yr backtest cross-reference (hurt range_bounce/resistance_bounce).",
   "exit_t2_book_pct": 40.0,
@@ -842,7 +563,6 @@
   "_comment_max_positions": "DIAGNOSTIC: Disabled limit (999) to see true setup performance without portfolio competition",
   "wide_open_mode": false,
   "_comment_wide_open": "MASTER FLAG: when true, all historical-PnL filters are bypassed so raw detector edge can be measured on a 3-year backtest. Disables: trade_quality_gates (hour 10 block + category floors), _check_validated_combinations (VC whitelist), ICT sweep/MSS prerequisite in order_block detector, _validate_htf_trend hard-coded calls in BOS/CHoCH/FVG, _validate_premium_discount_zone calls, event_policy_gate session/expiry policy, news_spike_gate size penalties, directional_bias multipliers (neutralized to 1.0), dedupe cooloff, blocked_regimes/caps/entirely in all pipeline configs. PRESERVED: risk math, exit logic (T1/T2/SL/trailing/EOD), MIS eligibility, timing infrastructure, detector firing conditions themselves. Set to false for normal production operation.",
-  "time_restricted_trading": true,
   "_comment_execution": "=== EXECUTION SETTINGS ===",
   "exec_order_mode": "MARKET",
   "exec_product": "MIS",
@@ -870,12 +590,10 @@
   "scanner_ret1_max": 0.035,
   "scanner_vol_persist_bars": 0,
   "scanner_vol_ratio_min": 0.0,
-  "_comment_dedupe": "=== DE-DUPLICATION ===",
-  "dedupe_cooloff_bars": 3,
-  "dedupe_require_setup_change": true,
   "_comment_websocket": "=== WEBSOCKET SETTINGS ===",
   "ws_batch_size": 100,
   "ws_flush_enabled": true,
+  "ws_flush_interval_ms": 500,
   "quality_filters": {
     "blocked_quality_statuses": [
       "fair"
@@ -1017,159 +735,9 @@
     "max_pending_per_symbol": 2,
     "validation_frequency_seconds": 5
   },
-  "trigger_conditions": {
-    "volume_ratio_min": 1.2,
-    "volume_persistence_bars": 2,
-    "rsi_range_min": 35,
-    "rsi_range_max": 65,
-    "adx_min_strength": 15,
-    "adx_min_trend": 20
-  },
-  "trigger_levels": {
-    "tolerance_pct_default": 0.1,
-    "vwap_minor_dip_pct": 0.05,
-    "break_tolerance_pct": 0.05,
-    "retest_tolerance_pct": 0.15,
-    "pullback_tolerance_pct": 0.15
-  },
-  "trigger_patterns": {
-    "consecutive_requirement_default": 2,
-    "pullback_min_bars": 2,
-    "break_hold_bars": 2,
-    "vwap_reclaim_bars": 3,
-    "rejection_confirmation_bars": 1
-  },
-  "trigger_monitoring": {
-    "log_status_interval_seconds": 30,
-    "detailed_logging": true,
-    "performance_tracking": true
-  },
-  "_enhanced_strategy_mappings": {
-    "_comment": "These map your planner strategies to trigger types",
-    "orb_pullback_long": {
-      "trigger_type": "pullback_to_level",
-      "primary_level": "ORH",
-      "confirmation_required": [
-        "vwap_above",
-        "volume_confirmation"
-      ],
-      "hold_bars": 2
-    },
-    "pdh_break_hold_long": {
-      "trigger_type": "break_and_hold",
-      "primary_level": "PDH",
-      "break_confirmation": true,
-      "allow_retest": true,
-      "hold_bars": 2
-    },
-    "pdl_break_hold_short": {
-      "trigger_type": "break_and_hold",
-      "primary_level": "PDL",
-      "direction": "short",
-      "rejection_retest": true,
-      "hold_bars": 2
-    },
-    "range_break_retest_short": {
-      "trigger_type": "break_retest_fail",
-      "primary_level": "ORL",
-      "pattern": "failed_retest",
-      "volume_decline_on_retest": true
-    }
-  },
-  "_logging_enhancements": {
-    "_comment": "Enhanced logging for trigger system",
-    "trigger_events": {
-      "log_pending_added": true,
-      "log_condition_checks": false,
-      "log_trigger_fired": true,
-      "log_execution": true,
-      "log_expiry": true
-    }
-  },
-  "market_sentiment": {
-    "enabled": true,
-    "nifty_momentum": {
-      "bullish_threshold": 0.3,
-      "bearish_threshold": -0.3,
-      "lookback_bars": 10,
-      "weight_factor": 1.5
-    },
-    "banknifty_momentum": {
-      "bullish_threshold": 0.4,
-      "bearish_threshold": -0.4,
-      "lookback_bars": 10,
-      "weight_factor": 1.3
-    },
-    "breadth_indicators": {
-      "advance_decline_ratio_bullish": 1.2,
-      "advance_decline_ratio_bearish": 0.8,
-      "new_highs_lows_ratio_bullish": 1.5,
-      "new_highs_lows_ratio_bearish": 0.7
-    },
-    "vix_sentiment": {
-      "fear_threshold": 20.0,
-      "greed_threshold": 12.0,
-      "extreme_fear_threshold": 30.0,
-      "extreme_greed_threshold": 10.0
-    },
-    "sector_strength": {
-      "enabled": true,
-      "min_relative_strength": 1.05,
-      "top_sectors_count": 5,
-      "lookback_days": 5
-    },
-    "sentiment_bias": {
-      "bullish_bias_multiplier": 1.2,
-      "bearish_bias_multiplier": 1.2,
-      "neutral_multiplier": 1.0,
-      "contrarian_mode_enabled": true,
-      "extreme_sentiment_fade": true
-    }
-  },
-  "use_enhanced_triggers": true,
   "trigger_expiry_minutes": 15,
   "cancel_existing_pending": true,
-  "validation_cache_max_symbols": 100,
-  "validation_cache_max_bars_per_symbol": 50,
-  "validation_max_time_ms": 50,
-  "trigger_default_consecutive_bars": 1,
-  "trigger_vwap_tolerance_pct": 0.02,
-  "trigger_level_tolerance_pct": 0.1,
-  "trigger_volume_min_ratio": 1.2,
-  "trigger_rsi_period": 14,
-  "trigger_adx_period": 14,
-  "trigger_ema_period": 9,
-  "orb_pullback_tolerance_pct": 0.15,
-  "orb_pullback_hold_bars": 2,
-  "orb_pullback_max_minutes": 90,
-  "orb_require_index_alignment": true,
-  "vwap_reclaim_min_consecutive": 3,
-  "vwap_reclaim_volume_confirmation": true,
-  "vwap_volume_persistence_bars": 3,
-  "vwap_min_resistance_distance_atr": 0.2,
-  "require_higher_timeframe_alignment": true,
-  "daily_trend_ema_period": 20,
-  "pdh_break_tolerance_pct": 0.05,
-  "pdh_hold_bars": 2,
-  "pdl_break_tolerance_pct": 0.05,
-  "range_break_retest_max_pct": 0.15,
-  "momentum_min_ema_slope": 0.001,
-  "rsi_bullish_min": 40,
-  "rsi_bullish_max": 70,
-  "rsi_bearish_min": 30,
-  "rsi_bearish_max": 55,
-  "adx_strength_min": 15,
-  "adx_trend_min": 20,
-  "volume_persistence_min_ratio": 1.3,
-  "volume_persistence_bars": 2,
-  "breakout_volume_min_ratio": 1.4,
-  "require_breakout_bar_volume_surge": true,
-  "rejection_min_body_pct": 0.6,
-  "condition_state_cleanup_hours": 24,
-  "cache_cleanup_interval_minutes": 60,
   "order_idle_ms": 250,
-  "order_rate_limit": 1,
-  "order_retry_max": 3,
   "acceptance": {
     "bars": 3,
     "retest_bpct": 2.5,
@@ -1188,31 +756,6 @@
     "orb_failed_breakout_buffer_or_pct": 0.3,
     "_comment_orb_failed_breakout": "Buffer as fraction of OR range before triggering failed breakout exit. 0.3 = close must be 30% of OR range above ORL (for shorts) to trigger exit. Prevents normal pullback retests from killing trades."
   },
-  "structure_manager": {
-    "enabled": true,
-    "min_structure_score": 25.0,
-    "max_structures_per_symbol": 3,
-    "structure_priorities": {
-      "orb": 10,
-      "vwap": 20,
-      "support_resistance": 30,
-      "trend": 40,
-      "volume": 50,
-      "gap": 60,
-      "range": 70,
-      "order_block": 80,
-      "liquidity": 90,
-      "pattern": 100
-    },
-    "logging": {
-      "log_all_detections": true,
-      "log_rejection_reasons": true,
-      "log_config_validation": true,
-      "performance_tracking": true
-    }
-  },
-  "min_entry_sl_distance_pct": 0.003,
-  "min_entry_sl_distance_abs": 0.05,
   "_comment_capital_management": "=== CAPITAL MANAGEMENT & MIS ===",
   "capital_management": {
     "enabled": false,
@@ -1268,16 +811,6 @@
     "_comment_mds_eod": "MDS builds daily bars from 1m data (9:15-15:30) and shuts down at this time (IST). 2 min buffer after market close to finalize last bar.",
     "orb_compute_trigger_hhmm": "0935",
     "_comment_orb_trigger": "5m bar start-timestamp that triggers ORB level computation. Bar 0935 covers [09:35-09:40) and fires at ~09:40 wall time, after opening range (0915-0930) is complete."
-  },
-  "_comment_execution_process": "=== EXECUTION PROCESS SEPARATION ===",
-  "execution_mode": "in_process",
-  "_comment_execution_mode": "in_process=all-in-one (default), separated=auto-spawn exec child process (shared logs), scan_only/exec_only=manual two-terminal. Backtest always forces in_process.",
-  "trade_plan_queue_key": "trade_plans:queue",
-  "_comment_trade_plan_queue": "Redis list key for trade plan handoff between scan and exec processes",
-  "exec_heartbeat": {
-    "key": "exec:heartbeat",
-    "interval_sec": 5,
-    "ttl_sec": 15
   },
   "_comment_tick_recording": "=== TICK RECORDING (Market Data Archive) ===",
   "tick_recording": {
@@ -1352,12 +885,6 @@
     "concurrency": 30,
     "fetch_all_symbols": true,
     "_note": "Fetch V3 intraday 5m bars for ALL core_symbols BEFORE Stage-0. Uses Historical API pipeline â€” guarantees backtest-live parity for both energy scoring and structure detection. Only active in live/paper mode (not backtest). 1500 symbols at 40 RPS = ~37s. Set fetch_all_symbols=false to revert to old behavior (fetch shortlisted only, after Stage-0)."
-  },
-  "bar_density_gate": {
-    "enabled": true,
-    "min_density_pct": 70.0,
-    "min_bars_before_check": 30,
-    "_note": "Filters illiquid symbols where WebSocket doesnt deliver all 1m candles. Density = closed_1m_bars / elapsed_minutes. Symbols below min_density_pct are excluded from screening. min_bars_before_check prevents false positives in early session."
   },
   "early_mis_universe_filter": {
     "enabled": true,
