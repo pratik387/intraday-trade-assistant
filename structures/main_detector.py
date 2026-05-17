@@ -20,6 +20,10 @@ from .gap_fade_short_structure import GapFadeShortStructure
 from .circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
 from .delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
 from .long_panic_gap_down_structure import LongPanicGapDownStructure
+from .circuit_release_fade_short_structure import CircuitReleaseFadeShortStructure
+from .round_number_sweep_short_structure import RoundNumberSweepShortStructure
+from .or_window_failure_fade_short_structure import OrWindowFailureFadeShortStructure
+from .mis_unwind_vwap_revert_short_structure import MisUnwindVwapRevertShortStructure
 # Retired setups removed 2026-05-14 (see docs/retired_setups.md):
 #   earnings_day_intraday_fade   — sanity look-ahead bias on SL placement
 #   capitulation_long_morning    — Holdout PF 0.631 with reproducible regime classifier
@@ -74,6 +78,25 @@ class MainDetector(BaseStructure):
             # 2026-05-15: long_panic_gap_down registered but enabled=false by default.
             # Awaits universe-wide regime-guard plumbing (see config _status block).
             ("long_panic_gap_down", LongPanicGapDownStructure, "long_panic_gap_down"),
+            # 2026-05-16: circuit_release_fade_short - passed sanity gauntlet (Disc PF 2.12,
+            # OOS PF 3.13, Holdout PF 4.53). Aggregate ships without cell filter; cell
+            # selection deferred to post-OCI. See specs/2026-05-16-new-setup-candidates.md.
+            ("circuit_release_fade_short", CircuitReleaseFadeShortStructure, "circuit_release_fade_short"),
+            # 2026-05-16: round_number_sweep_short - cell-locked (Rs.100-250 + small_cap +
+            # 11:00-12:30 + SHORT-only). R-sweep + 3-window stability: PF 1.24/1.21/1.17.
+            # Disc PF below 1.30 standalone floor; OOS+Hold pass. SHIPPED FOR OCI VALIDATION
+            # with retire-if-OCI-defers status. See specs/2026-05-16-new-setup-candidates.md C-02.
+            ("round_number_sweep_short", RoundNumberSweepShortStructure, "round_number_sweep_short"),
+            # 2026-05-16: or_window_failure_fade_short - cell-locked (small_cap + vol(8,15] +
+            # IB-window + SHORT-only). 3-window stability: PF 1.22/1.27/1.12 with Hold n=328
+            # above 200-floor. Marginal-ship-eligible with retire-if-OCI-defers status.
+            # See specs/2026-05-16-new-setup-candidates.md C-10.
+            ("or_window_failure_fade_short", OrWindowFailureFadeShortStructure, "or_window_failure_fade_short"),
+            # 2026-05-16: mis_unwind_vwap_revert_short - aggregate ships (no cell filter).
+            # All 3 windows STRONG PROCEED: Disc PF 1.92 (n=41K) / OOS 1.70 (n=20K) / Hold 1.60 (n=15K).
+            # Monotonic cell-mine gradient validates MIS-unwind mechanism. C-03-grade strength.
+            # See specs/2026-05-16-new-setup-candidates.md C-08.
+            ("mis_unwind_vwap_revert_short", MisUnwindVwapRevertShortStructure, "mis_unwind_vwap_revert_short"),
         ]
 
         # ICT-derived setups + ict_base_config: removed alongside ICT detector.
@@ -823,6 +846,20 @@ class MainDetector(BaseStructure):
             # 2026-05-15: LONG mean-revert on deep small/mid panic gap-downs.
             # Ships disabled pending regime-guard orchestrator wiring.
             'long_panic_gap_down': 'long_panic_gap_down',
+            # 2026-05-16: SHORT fade of failed re-test of morning circuit-pin
+            # in small/mid-cap names. Passed sanity gauntlet across 3 windows.
+            'circuit_release_fade_short': 'circuit_release_fade_short',
+            # 2026-05-16: SHORT fade of failed upside sweep of round-number levels
+            # in Rs.100-250 small_cap names during 11:00-12:30. Cell-locked,
+            # marginal-ship-eligible, retire-if-OCI-defers status.
+            'round_number_sweep_short': 'round_number_sweep_short',
+            # 2026-05-16: SHORT fade of failed ORH upside pierce in small_cap names
+            # during IB window (09:30-10:30), vol_ratio cell (8,15]. Marginal-stable,
+            # retire-if-OCI-defers status.
+            'or_window_failure_fade_short': 'or_window_failure_fade_short',
+            # 2026-05-16: SHORT fade of MIS-unwind window above-VWAP + RSI overbought +
+            # volume confirmation. C-03-grade aggregate strength across 3 windows.
+            'mis_unwind_vwap_revert_short': 'mis_unwind_vwap_revert_short',
         }
 
         return direct_mappings.get(structure_type)

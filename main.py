@@ -15,6 +15,7 @@ Paper Trading:
 Live:
   Uses KiteClient/KiteBroker.
 """
+import os
 import sys
 import time
 import signal
@@ -126,6 +127,14 @@ class _DryRunBroker:
 
 def main() -> int:
     global args, logger, trading_logger  # Access the module-level variables
+
+    # Diag-log skip for dry-run smoke tests: skips bulky detector_rejections.jsonl +
+    # screening.jsonl writes. Wallclock savings are minor (line-buffered writes are
+    # ~6us each so total saved is seconds, not minutes), but it saves ~100MB/day of
+    # disk churn and makes output dirs cleaner for diff-ing. Default ON for --dry-run
+    # unless --full-diag-logs is passed. OCI cloud runs are unaffected.
+    if args.dry_run and not args.full_diag_logs:
+        os.environ["BACKTEST_NO_DIAG_LOGS"] = "1"
 
     # Re-initialize loggers with run_prefix to create log files
     import config.logging_config as logging_config
@@ -617,6 +626,9 @@ def _hhmm_on(day_str: str, hhmm: str) -> str:
 def _parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="Use mock broker + archived ticks")
+    ap.add_argument("--full-diag-logs", action="store_true",
+                    help="Force-enable detector_rejections.jsonl + screening.jsonl in --dry-run "
+                         "(off by default to save ~100MB/day of disk churn; OCI cloud writes them)")
     ap.add_argument("--paper-trading", action="store_true", help="Paper trading mode: live data, simulated orders")
     ap.add_argument("--skip-prewarm", action="store_true", help="Skip daily data pre-warming (faster startup but 11-min delay at 09:40)")
     ap.add_argument("--with-capital-limits", action="store_true", help="Enable capital management for backtests (default: disabled for fast testing)")

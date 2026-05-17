@@ -123,19 +123,27 @@ def _init_worker(config_dict):
         if _log_dir:
             try:
                 from pathlib import Path
-                from config.logging_config import JSONLLogger
+                from config.logging_config import JSONLLogger, _NoopLogger, _diag_logs_disabled
                 import config.logging_config as _lc
                 _lc._timing_logger = JSONLLogger(Path(_log_dir) / "timing.jsonl", "timing")
                 # Also wire screening.jsonl logger so worker-side decisions write through
-                # via the buffered fork-safe path (consistent with other JSONL output)
-                _lc._screener_logger = JSONLLogger(Path(_log_dir) / "screening.jsonl", "screener")
+                # via the buffered fork-safe path (consistent with other JSONL output).
+                # Honors BACKTEST_NO_DIAG_LOGS=1 to substitute a noop (matches parent init).
+                _diag_off = _diag_logs_disabled()
+                _lc._screener_logger = (
+                    _NoopLogger(Path(_log_dir) / "screening.jsonl", "screener")
+                    if _diag_off
+                    else JSONLLogger(Path(_log_dir) / "screening.jsonl", "screener")
+                )
                 # Per-event detector accept/reject loggers (audit/14 + audit/15 logging
                 # infra). MainDetector runs inside this worker; without explicit wiring
                 # on Windows spawn mode, get_detector_rejections_logger() returns None
                 # and the per-event JSONL is silently empty. Same buffered fork-safe
                 # path as screener/timing loggers above.
-                _lc._detector_rejections_logger = JSONLLogger(
-                    Path(_log_dir) / "detector_rejections.jsonl", "detector_reject"
+                _lc._detector_rejections_logger = (
+                    _NoopLogger(Path(_log_dir) / "detector_rejections.jsonl", "detector_reject")
+                    if _diag_off
+                    else JSONLLogger(Path(_log_dir) / "detector_rejections.jsonl", "detector_reject")
                 )
                 _lc._detector_accepts_logger = JSONLLogger(
                     Path(_log_dir) / "detector_accepts.jsonl", "detector_accept"
@@ -683,6 +691,7 @@ class ScreenerLive:
         self._setup_universes: Dict[str, Set[str]] = {}
         self._gap_fade_universe: Optional[Set[str]] = None  # set at 09:15 bar
         self._long_panic_gap_down_universe: Optional[Set[str]] = None  # set at 09:15 bar
+        self._circuit_release_fade_universe: Optional[Set[str]] = None  # set at 10:30 bar (morning-pin)
         self._daily_dict_cache: Dict[str, "pd.DataFrame"] = {}
 
         # Last-scan cutoff (parsed once). Backtest and paper both honor this — skips scans
@@ -745,6 +754,8 @@ class ScreenerLive:
             out.update(self._gap_fade_universe)
         if self._long_panic_gap_down_universe:
             out.update(self._long_panic_gap_down_universe)
+        if self._circuit_release_fade_universe:
+            out.update(self._circuit_release_fade_universe)
         return out
 
     def set_position_store(self, store) -> None:
@@ -1512,6 +1523,31 @@ class ScreenerLive:
                         logger.warning("long_panic_gap_down_universe lazy build failed: %s", _e)
                         self._long_panic_gap_down_universe = set()
 
+            # circuit_release_fade_short lazy build at 10:30 bar - morning-pin
+            # detection requires bars from 09:15-10:30 to be complete. Same lazy
+            # pattern as gap_fade/long_panic_gap_down but triggered later.
+            if (
+                self._circuit_release_fade_universe is None
+                and _dtime(10, 30) <= current_t <= _dtime(10, 45)
+            ):
+                setups_cfg = (self.raw_cfg.get("setups") or {})
+                crf_cfg = setups_cfg.get("circuit_release_fade_short") or {}
+                if crf_cfg.get("enabled"):
+                    try:
+                        from services.setup_universe import circuit_release_fade_short_universe
+                        from services.symbol_metadata import get_cap_segment
+                        cap_map = {s: get_cap_segment(s) for s in df5_by_symbol.keys()}
+                        session_date_obj = now.date() if hasattr(now, "date") else now
+                        qual = circuit_release_fade_short_universe(
+                            df5_by_symbol,
+                            getattr(self, "_daily_dict_cache", {}) or {},
+                            session_date_obj, crf_cfg, cap_map,
+                        )
+                        self._circuit_release_fade_universe = qual
+                    except Exception as _e:
+                        logger.warning("circuit_release_fade_short_universe lazy build failed: %s", _e)
+                        self._circuit_release_fade_universe = set()
+
             extras: Set[str] = set()
             for s in (self._setup_universes or {}).values():
                 extras.update(s)
@@ -1519,6 +1555,8 @@ class ScreenerLive:
                 extras.update(self._gap_fade_universe)
             if self._long_panic_gap_down_universe:
                 extras.update(self._long_panic_gap_down_universe)
+            if self._circuit_release_fade_universe:
+                extras.update(self._circuit_release_fade_universe)
             if extras:
                 # Restrict to symbols we actually have 5m data for this bar
                 # (extras outside df5_by_symbol can't be processed anyway).
@@ -1609,14 +1647,32 @@ class ScreenerLive:
                 if not validate_df(df5, min_rows=min_bars_for_processing):
                     continue
                 # PERFORMANCE FIX: Use cached ORB levels if available
-                if levels_by_symbol and sym in levels_by_symbol:
-                    # Symbol was in cache - use cached levels
+                if levels_by_symbol and sym in levels_by_symbol and levels_by_symbol[sym]:
+                    # Symbol was in cache with valid levels - use cached.
+                    # (Empty dict {} means ORB cache built but this symbol had
+                    # NaN ORH/ORL at 09:40 - we still want PDC for it; fall
+                    # through to the on-the-fly path below.)
                     lvl = levels_by_symbol[sym]
                 elif levels_by_symbol is not None:
-                    # Cache was computed but symbol not in it (started trading late)
-                    # Use empty levels - don't try to compute ORB from incomplete data
-                    lvl = {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
-                           "ORH": float("nan"), "ORL": float("nan")}
+                    # Cache was computed but symbol not in it (added to universe
+                    # late, e.g. via 10:30 lazy-build for circuit_release_fade).
+                    # 2026-05-16 fix: compute on-the-fly via _levels_for().
+                    # PDH/PDL/PDC come from daily cache (which has these symbols);
+                    # ORH/ORL may be NaN if intraday window is insufficient, but
+                    # that's correct since OR is fixed at 09:30 and cannot be
+                    # backfilled. Symbols entered late simply don't get OR-based
+                    # signals - their PDC-based setups (e.g. circuit_release_fade)
+                    # work fine.
+                    try:
+                        lvl = self._levels_for(sym, df5, now)
+                    except Exception as _e:
+                        logger.warning(
+                            "LEVELS_LATE_ADD | %s on-the-fly compute failed: %s",
+                            sym, _e,
+                        )
+                        lvl = {"PDH": float("nan"), "PDL": float("nan"),
+                               "PDC": float("nan"), "ORH": float("nan"),
+                               "ORL": float("nan")}
                 else:
                     # OPENING BELL FIX: Before 09:40 - cache not ready yet
                     # During opening bell (09:20-09:30) with <3 bars, use empty levels to avoid warnings

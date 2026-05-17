@@ -20,7 +20,7 @@
     "enabled": true,
     "min_distance_to_circuit_pct": 2.0
   },
-  "_comment_setups": "OCI prod-ready-backtest setups. Active: gap_fade_short, circuit_t1_fade_short, long_panic_gap_down. (Note: delivery_pct_anomaly_short runs from base config with its per-setup wide_open=false flag; it doesn't need an override entry here.) long_panic_gap_down added 2026-05-15 — Cell B + regime-density guard + universe contributor wired (commits 6581a03..ab49a49). Retired setups history: see docs/retired_setups.md.",
+  "_comment_setups": "OCI prod-ready-backtest setups. Active: gap_fade_short, circuit_t1_fade_short, long_panic_gap_down, circuit_release_fade_short. (Note: delivery_pct_anomaly_short runs from base config with its per-setup wide_open=false flag; it doesn't need an override entry here.) long_panic_gap_down added 2026-05-15 — Cell B + regime-density guard + universe contributor wired. circuit_release_fade_short added 2026-05-16 — sanity gauntlet passed (Disc PF 2.12 / OOS 3.13 / Holdout 4.53) per specs/2026-05-16-new-setup-candidates.md C-03. Retired setups history: see docs/retired_setups.md.",
   "setups": {
     "gap_fade_short": {
       "enabled": true
@@ -29,6 +29,18 @@
       "enabled": true
     },
     "long_panic_gap_down": {
+      "enabled": true
+    },
+    "circuit_release_fade_short": {
+      "enabled": true
+    },
+    "round_number_sweep_short": {
+      "enabled": true
+    },
+    "or_window_failure_fade_short": {
+      "enabled": true
+    },
+    "mis_unwind_vwap_revert_short": {
       "enabled": true
     }
   }

@@ -2,7 +2,21 @@
 
 **Branch:** `research/post-sebi-edge-setups`
 **Started:** 2026-05-14
-**Status:** Roadmap drafted; execution deferred until after 2026-06-14 paper-window review.
+**Status:** Pruned to 3 candidates (2026-05-16). All 3 now resolved:
+- ✅ #5 COMPLETE — paper-trade comparison parked, see `specs/2026-05-16-gap-fade-short-paper-trade-validation.md`
+- ❌ #2 KILLED at falsifier stage — see `docs/retired_setups.md → fno_ban_t1_fade_short`
+- ❌ #4 KILLED at data-recon stage (NSE retired pre-open archive endpoint) — see `docs/retired_setups.md → pre_open_auction_direction_follow`
+
+**Net outcome of this research branch:** No new setups shipped to production. Existing 3-setup portfolio (`gap_fade_short`, `circuit_t1_fade_short`, `delivery_pct_anomaly_short`) remains the active configuration. Negative-knowledge captured in `docs/retired_setups.md` (2 more entries) and `memory/feedback_data_availability_pre_check.md` (n-check the parquet before scoring a brief).
+
+## Pruned candidates (2026-05-16 decision)
+
+Dropped from active research — kept below for archival reference only:
+- ❌ **#1 Post-MWPL-Recalc Forced Rebalance Fade** — sample too thin (3-4 events/yr), high data-scrape cost
+- ❌ **#3 Single-Stock F&O Removal Pre-Announcement Drift** — borderline sample (n=30-50), regulatory-window dependent
+- ❌ **#6 Lot-Size-Doubled NIFTY Pinning** — requires options-trading broker integration (currently cash-equity only)
+
+Active research order: **#5 (STT-aware gap_fade re-opt) → #2 (F&O Ban-Entry) → #4 (Pre-Open Auction).**
 
 ## Context
 

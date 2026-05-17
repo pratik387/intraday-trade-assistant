@@ -148,12 +148,14 @@ def _apply_costs_to_outcomes(
     return rows
 
 
-def run_target_long_panic_gap_down() -> dict:
+def run_target_long_panic_gap_down(window: str = "discovery") -> dict:
     cfg = load_base_config()
     edisc = cfg["edge_discovery"]
     periods = edisc["periods"]
-    discovery_start = date.fromisoformat(periods["discovery_start"])
-    discovery_end = date.fromisoformat(periods["discovery_end"])
+    if window not in {"discovery", "oos", "holdout"}:
+        raise ValueError(f"window must be discovery|oos|holdout, got {window!r}")
+    window_start = date.fromisoformat(periods[f"{window}_start"])
+    window_end = date.fromisoformat(periods[f"{window}_end"])
     cost_block = edisc["cost_model"]
     tcfg = edisc["target_long_panic_gap_down"]
 
@@ -174,10 +176,11 @@ def run_target_long_panic_gap_down() -> dict:
     universe = mis_eligible_universe(meta) & {
         s for s, m in meta.items() if m.get("cap_segment") in cap_segments
     }
+    print(f"[target2] window={window} ({window_start} → {window_end})")
     print(f"[target2] universe size: {len(universe):,}")
 
     events, bar_data, sym_meta, pdh_pdl, adv_by_sym = _build_events_for_window(
-        discovery_start, discovery_end, universe, meta,
+        window_start, window_end, universe, meta,
         gap_down_pct_min=gap_down_pct_min,
         cap_segments=cap_segments,
     )
@@ -205,15 +208,20 @@ def run_target_long_panic_gap_down() -> dict:
         top_n=scan_top_n,
         max_dims=scan_max_dims,
     )
-    out_path = _REPORT_DIR / "target_long_panic_gap_down.csv"
+    suffix = "" if window == "discovery" else f"_{window}"
+    out_path = _REPORT_DIR / f"target_long_panic_gap_down{suffix}.csv"
     table.rows.to_csv(out_path, index=False)
-    regions_path = _REPORT_DIR / "target_long_panic_gap_down_regions.json"
+    regions_path = _REPORT_DIR / f"target_long_panic_gap_down{suffix}_regions.json"
     with open(regions_path, "w", encoding="utf-8") as f:
         json.dump(regions, f, indent=2, default=str)
     print(f"[target2] wrote {out_path} ({len(table.rows):,} rows)")
     print(f"[target2] top edge regions written to {regions_path}")
-    return {"n_events": len(events), "n_rows": len(table.rows), "regions": regions[:5]}
+    return {"window": window, "n_events": len(events), "n_rows": len(table.rows), "regions": regions[:5]}
 
 
 if __name__ == "__main__":
-    run_target_long_panic_gap_down()
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--window", choices=("discovery", "oos", "holdout"), default="discovery")
+    args = p.parse_args()
+    run_target_long_panic_gap_down(window=args.window)

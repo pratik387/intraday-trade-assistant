@@ -53,7 +53,53 @@ def _get_mis_allowed_set() -> set:
             return set()
         print(f"  MIS list loaded: {_MIS_FETCHER.count()} symbols")
     return set(_MIS_FETCHER._mis_symbols.keys())
-from tools.sub7_validation.build_per_setup_pnl import calc_fee  # noqa: E402
+from tools.sub7_validation.build_per_setup_pnl import calc_fee as _calc_fee_base  # noqa: E402
+from tools.sub7_validation.build_per_setup_pnl import (  # noqa: E402
+    BROK_RATE, BROK_CAP, STT_RATE, EXCH_RATE, SEBI_RATE, IPFT_RATE, STAMP_RATE, GST_RATE,
+)
+import pandas as _pd_for_isna  # noqa: E402
+
+# Global STT multiplier (CLI override). 1.0 = current rates. 2.0 = hypothetical post-hike stress.
+_STT_MULT = 1.0
+
+
+def calc_fee(entry_price, exit_price, qty, side, mis_leverage=1.0):
+    """Wrapper around build_per_setup_pnl.calc_fee that allows scaling STT
+    via the module-level _STT_MULT (set by --stt-mult CLI arg).
+
+    When _STT_MULT == 1.0 this is bit-identical to the production fee model.
+    Higher multipliers stress-test the strategy against potential STT hikes
+    (e.g. Apr 1, 2026 F&O hike, or any hypothetical future cash-equity hike).
+    """
+    if qty <= 0 or entry_price is None or exit_price is None:
+        return 0.0
+    if _pd_for_isna.isna(entry_price) or _pd_for_isna.isna(exit_price):
+        return 0.0
+    lev = max(float(mis_leverage), 1.0)
+    qty_actual = int(round(int(qty) * lev))
+    entry_to = float(entry_price) * qty_actual
+    exit_to = float(exit_price) * qty_actual
+
+    eb = min(BROK_RATE * entry_to, BROK_CAP)
+    xb = min(BROK_RATE * exit_to, BROK_CAP)
+    brok = eb + xb
+
+    stt_rate_eff = STT_RATE * _STT_MULT
+    if side == "BUY":
+        stt = exit_to * stt_rate_eff
+        stamp = entry_to * STAMP_RATE
+    else:
+        stt = entry_to * stt_rate_eff
+        stamp = exit_to * STAMP_RATE
+
+    leg = entry_to + exit_to
+    exch = leg * EXCH_RATE
+    sebi = leg * SEBI_RATE
+    ipft = leg * IPFT_RATE
+    gst = (brok + exch + sebi + ipft) * GST_RATE
+
+    return brok + stt + exch + sebi + ipft + stamp + gst
+
 
 RISK_PER_TRADE_RUPEES = 1000
 ALLOWED_CAPS = {"small_cap"}      # production locked
@@ -87,7 +133,8 @@ def get_period(period: str):
     if period == "oos":
         return [(2025, m) for m in range(1, 10)], date(2025, 1, 1), date(2025, 9, 30)
     if period == "holdout":
-        return [(2025, m) for m in range(10, 13)] + [(2026, m) for m in range(1, 4)], date(2025, 10, 1), date(2026, 3, 31)
+        # Extended 2026-05-16 to include 2026-04 (OCI Discovery+OOS+Holdout pull through Apr 30).
+        return [(2025, m) for m in range(10, 13)] + [(2026, m) for m in range(1, 5)], date(2025, 10, 1), date(2026, 4, 30)
     raise ValueError(period)
 
 
@@ -347,7 +394,15 @@ def sweep(triggers: List[Dict], fw_map: Dict) -> pd.DataFrame:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--period", required=True, choices=["discovery", "oos", "holdout"])
+    ap.add_argument("--stt-mult", type=float, default=1.0,
+                    help="Multiplier on equity STT for fee stress test. 1.0=current. 2.0=stress (e.g. hypothetical post-hike). Default 1.0.")
     args = ap.parse_args()
+
+    global _STT_MULT
+    _STT_MULT = float(args.stt_mult)
+    if _STT_MULT != 1.0:
+        print(f"STT multiplier: {_STT_MULT}x (stress test mode)", flush=True)
+
     periods, date_lo, date_hi = get_period(args.period)
     print(f"Period: {args.period} ({date_lo}..{date_hi})  {len(periods)} months", flush=True)
 
@@ -376,7 +431,8 @@ def main():
 
     results = sweep(triggers, fw_map)
     results = results.sort_values("pf", ascending=False).reset_index(drop=True)
-    out = _REPO / "reports" / "sub9_sanity" / f"_gap_fade_short_sl_target_sweep_{args.period}.csv"
+    stt_suffix = "" if _STT_MULT == 1.0 else f"_stt{_STT_MULT:g}x"
+    out = _REPO / "reports" / "sub9_sanity" / f"_gap_fade_short_sl_target_sweep_{args.period}{stt_suffix}.csv"
     results.to_csv(out, index=False)
     print(f"\nResults: {out}", flush=True)
 
