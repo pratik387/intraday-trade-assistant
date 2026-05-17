@@ -106,6 +106,9 @@
   "setups": {
     "gap_fade_short": {
       "enabled": true,
+      "detector_class": "structures.gap_fade_short_structure.GapFadeShortStructure",
+      "universe_builder": "services.setup_universe.gap_fade_universe",
+      "universe_trigger": "bar:09:15",
       "regulatory_sensitivity": "rule_orthogonal",
       "depends_on": [
         "MIS_leverage",
@@ -150,6 +153,9 @@
     },
     "long_panic_gap_down": {
       "enabled": true,
+      "detector_class": "structures.long_panic_gap_down_structure.LongPanicGapDownStructure",
+      "universe_builder": "services.setup_universe.long_panic_gap_down_universe",
+      "universe_trigger": "bar:09:15",
       "regulatory_sensitivity": "rule_orthogonal",
       "depends_on": [
         "MIS_leverage",
@@ -197,6 +203,9 @@
     },
     "circuit_release_fade_short": {
       "enabled": true,
+      "detector_class": "structures.circuit_release_fade_short_structure.CircuitReleaseFadeShortStructure",
+      "universe_builder": "services.setup_universe.circuit_release_fade_short_universe",
+      "universe_trigger": "bar:10:30",
       "regulatory_sensitivity": "rule_orthogonal",
       "depends_on": [
         "MIS_leverage",
@@ -252,6 +261,9 @@
     },
     "mis_unwind_vwap_revert_short": {
       "enabled": true,
+      "detector_class": "structures.mis_unwind_vwap_revert_short_structure.MisUnwindVwapRevertShortStructure",
+      "universe_builder": "services.setup_universe.mis_unwind_vwap_revert_short_universe",
+      "universe_trigger": "session_start",
       "regulatory_sensitivity": "rule_orthogonal",
       "depends_on": [
         "MIS_leverage",
@@ -297,6 +309,9 @@
     },
     "or_window_failure_fade_short": {
       "enabled": true,
+      "detector_class": "structures.or_window_failure_fade_short_structure.OrWindowFailureFadeShortStructure",
+      "universe_builder": "services.setup_universe.or_window_failure_fade_short_universe",
+      "universe_trigger": "session_start",
       "regulatory_sensitivity": "rule_orthogonal",
       "depends_on": [
         "MIS_leverage",
@@ -341,6 +356,9 @@
     },
     "round_number_sweep_short": {
       "enabled": true,
+      "detector_class": "structures.round_number_sweep_short_structure.RoundNumberSweepShortStructure",
+      "universe_builder": "services.setup_universe.round_number_sweep_short_universe",
+      "universe_trigger": "session_start",
       "regulatory_sensitivity": "rule_orthogonal",
       "depends_on": [
         "MIS_leverage",
@@ -387,6 +405,9 @@
     },
     "circuit_t1_fade_short": {
       "enabled": true,
+      "detector_class": "structures.circuit_t1_fade_short_structure.CircuitT1FadeShortStructure",
+      "universe_builder": "services.setup_universe.circuit_t1_universe",
+      "universe_trigger": "session_start",
       "regulatory_sensitivity": "rule_orthogonal",
       "depends_on": [
         "MIS_leverage",
@@ -433,6 +454,9 @@
     },
     "delivery_pct_anomaly_short": {
       "enabled": true,
+      "detector_class": "structures.delivery_pct_anomaly_short_structure.DeliveryPctAnomalyShortStructure",
+      "universe_builder": "services.setup_universe.delivery_pct_universe",
+      "universe_trigger": "session_start",
       "regulatory_sensitivity": "rule_dependent",
       "depends_on": [
         "MWPL",
