@@ -57,23 +57,11 @@ import pandas as pd
 
 from config.logging_config import get_agent_logger, get_planning_logger
 
-# Active detector classes — every active setup is in this map.
-# Sub-9 cleanup (2026-05-01): the 6 sub-7/sub-8 candidate detectors
-# (orb_15, pdh_pdl_reject, pdh_pdl_sweep_reclaim, gap_and_go_continuation,
-# ema5_alert_pullback, camarilla_l3_reversal) were deleted after Phase-1
-# validation failure. See specs/2026-05-01-sub-project-9-microstructure-
-# first-redesign.md.
-from structures.gap_fade_short_structure import GapFadeShortStructure
-from structures.circuit_t1_fade_short_structure import CircuitT1FadeShortStructure
-from structures.delivery_pct_anomaly_short_structure import DeliveryPctAnomalyShortStructure
-from structures.long_panic_gap_down_structure import LongPanicGapDownStructure
-from structures.circuit_release_fade_short_structure import CircuitReleaseFadeShortStructure
-from structures.round_number_sweep_short_structure import RoundNumberSweepShortStructure
-from structures.or_window_failure_fade_short_structure import OrWindowFailureFadeShortStructure
-from structures.mis_unwind_vwap_revert_short_structure import MisUnwindVwapRevertShortStructure
 # Retired setups removed 2026-05-14 (see docs/retired_setups.md):
 #   earnings_day_intraday_fade, capitulation_long_morning,
 #   expiry_pin_strike_reversal, options_vol_iv_rank_revert.
+# Detector class imports removed 2026-05-17: SetupRegistry now resolves
+# detector_class_path strings via _import_path() — no hardcoded imports needed.
 from structures.data_models import MarketContext
 
 from services.symbol_metadata import get_cap_segment, get_mis_info
@@ -92,39 +80,28 @@ def _planning_logger():
     return get_planning_logger()
 
 
-# Setup → detector class. Adding a new setup = one entry here +
-# config/configuration.json setups.* block + the detector file.
-# Per sub-9 spec §3.3 a new setup requires a passing brief BEFORE code
-# is written — don't add entries here ahead of that gate.
-_DETECTOR_REGISTRY: Dict[str, Any] = {
-    "gap_fade_short": GapFadeShortStructure,
-    "circuit_t1_fade_short": CircuitT1FadeShortStructure,
-    "delivery_pct_anomaly_short": DeliveryPctAnomalyShortStructure,
-    # 2026-05-15: LONG mean-revert on deep small/mid panic gap-downs.
-    # Edge validated across Disc/OOS/Holdout (PF 1.45/1.40/1.72). Regime
-    # guard wired via services/regime_density_tracker.py + universe
-    # contributor in services/setup_universe.py.
-    "long_panic_gap_down": LongPanicGapDownStructure,
-    # 2026-05-16: SHORT fade of failed re-test of morning circuit-pin in
-    # small/mid-cap names. Aggregate PF 2.12/3.13/4.53 across Disc/OOS/Holdout.
-    # Ships without cell filter; cell selection deferred to post-OCI.
-    "circuit_release_fade_short": CircuitReleaseFadeShortStructure,
-    # 2026-05-16: SHORT fade of failed upside sweep of round-number levels in
-    # Rs.100-250 small_cap names during 11:00-12:30. Cell-locked + R-sweep
-    # geometry. PF 1.24/1.21/1.17 across Disc/OOS/Holdout. Marginal but stable.
-    # Shipped for OCI validation; retire if OCI run defers materially.
-    "round_number_sweep_short": RoundNumberSweepShortStructure,
-    # 2026-05-16: SHORT fade of failed ORH upside pierce in small_cap names
-    # during IB window (09:30-10:30), vol_ratio cell (8,15]. 3-window stability
-    # PF 1.22/1.27/1.12 (n=1104/490/328). Marginal-ship-eligible, retire-if-defers.
-    "or_window_failure_fade_short": OrWindowFailureFadeShortStructure,
-    # 2026-05-16: SHORT fade of MIS-unwind window (14:30-15:10) above-VWAP +
-    # RSI-overbought + volume-confirmation. Aggregate ships clean: Disc 1.92 (n=41K)
-    # / OOS 1.70 (n=20K) / Hold 1.60 (n=15K). C-03-grade strength.
-    "mis_unwind_vwap_revert_short": MisUnwindVwapRevertShortStructure,
-}
+# Setup name validation comes from SetupRegistry (services/dispatch/setup_registry.py).
+# Constructed at runtime from configuration.json — no dual source of truth.
+from services.dispatch.setup_registry import SetupRegistry, _import_path
 
-ACTIVE_SETUPS: frozenset = frozenset(_DETECTOR_REGISTRY.keys())
+_registry: "SetupRegistry | None" = None
+
+
+def _get_registry() -> SetupRegistry:
+    """Lazy-load registry to avoid circular imports."""
+    global _registry
+    if _registry is None:
+        _registry = SetupRegistry.load_from_config(_load_root_config())
+    return _registry
+
+
+def _is_active_setup(setup_type: str) -> bool:
+    """Replacement for `setup_type not in ACTIVE_SETUPS`."""
+    try:
+        spec = _get_registry().get(setup_type)
+        return spec.enabled
+    except KeyError:
+        return False
 
 
 class OrchestratorConfigError(Exception):
@@ -223,7 +200,11 @@ class PlanOrchestrator:
         if setup_type in self._detectors:
             return self._detectors[setup_type]
 
-        cls = _DETECTOR_REGISTRY.get(setup_type)
+        try:
+            spec = _get_registry().get(setup_type)
+            cls = _import_path(spec.detector_class_path) if spec.enabled else None
+        except KeyError:
+            cls = None
         if cls is None:
             logger.warning(f"[ORCH] Unknown setup_type={setup_type!r}")
             return None
@@ -668,8 +649,8 @@ class PlanOrchestrator:
         ranks by structural_rr only. Signature preserved so callers don't
         need to change in Commit 1.
         """
-        if setup_type not in ACTIVE_SETUPS:
-            logger.warning(f"[ORCH] {symbol}: setup_type={setup_type} not in ACTIVE_SETUPS")
+        if not _is_active_setup(setup_type):
+            logger.warning(f"[ORCH] {symbol}: setup_type={setup_type} not enabled in registry")
             return None
 
         plan = self.build_plan(

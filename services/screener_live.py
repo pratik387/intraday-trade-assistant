@@ -67,7 +67,7 @@ from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision a
 # planning & ranking
 from services import levels
 from services import metrics_intraday as mi
-from structures.main_detector import MainDetector
+# MainDetector removed (Task 12): dispatch path uses services.dispatch.worker directly.
 
 # Plan orchestrator (sub7/sub8 fast path; Phase C 2026-04-30)
 from services.plan_orchestrator import process_setup_candidates
@@ -170,18 +170,10 @@ def _init_worker(config_dict):
             else:
                 print("[CACHE] Worker process: Structure caching enabled")
 
-        from services.gates.trade_decision_gate import TradeDecisionGate
-        from services.gates.regime_gate import MarketRegimeGate
-        from structures.main_detector import MainDetector
-        from config.logging_config import get_agent_logger
-
-        regime_gate = MarketRegimeGate(cfg=config_dict)
-        structure_detector = MainDetector(config_dict)
-
-        _worker_decision_gate = TradeDecisionGate(
-            structure_detector=structure_detector,
-            regime_gate=regime_gate,
-        )
+        # MainDetector removed (Task 12): the _worker_decision_gate / _worker_process_batch
+        # path is dead code (replaced by dispatch_worker_batch). _init_worker is still
+        # called by _init_worker_combined for logging setup; no gate needed.
+        pass
     except Exception as e:
         get_agent_logger().exception(f"Worker init failed: {e}")
         raise
@@ -581,13 +573,8 @@ class ScreenerLive:
             self.agg._on_5m_close = lambda sym, bar: None  # disable LiveTickHandler scan trigger
             self.ws.set_5m_enriched_listener(self._on_5m_close)  # enriched replay triggers scan
 
-        # Gates - Use MainDetector directly for structure detection
-        self.detector = MainDetector(raw)
+        # Gates - MainDetector removed (Task 12): dispatch uses services.dispatch.worker.
         self.regime_gate = MarketRegimeGate(cfg=raw)
-        self.decision_gate = TradeDecisionGate(
-            structure_detector=self.detector,
-            regime_gate=self.regime_gate,
-        )
 
         # Directional bias tracker (Nifty green/red → position size modulation)
         from services.gates.directional_bias import DirectionalBiasTracker, set_tracker
