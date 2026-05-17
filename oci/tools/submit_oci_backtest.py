@@ -189,12 +189,7 @@ class OCIBacktestSubmitter:
             # symbol → 100% universe_filter rejections (OCI run 20260427-215557
             # captured zero sub8 detections this way).
             'assets/**/*.csv',
-            # tools/apply_oci_override.py is invoked by oci/docker/entrypoint.py
-            # at pod startup to merge sub8_oci_overrides.json into
-            # configuration.json — without it the OCI run reads the production
-            # configuration.json as-is (wide_open=false, only gap_fade_short
-            # enabled) and the gauntlet sees no signal from sub8 detectors.
-            'tools/apply_oci_override.py',
+
             'nse_all.json',
             'requirements.txt',
             '.env.development',
