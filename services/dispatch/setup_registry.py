@@ -64,3 +64,71 @@ class SetupSpec:
                 f"setup {self.name!r}: active_window_start <= active_window_end required; "
                 f"got start={start} end={end}"
             )
+
+
+import importlib
+
+
+def _import_path(path: str):
+    """Import 'module.submodule.Symbol' and return the Symbol."""
+    module_path, _, symbol = path.rpartition(".")
+    if not module_path:
+        raise ImportError(f"invalid import path {path!r}; expected 'module.Symbol'")
+    mod = importlib.import_module(module_path)
+    if not hasattr(mod, symbol):
+        raise ImportError(f"{path!r}: module {module_path!r} has no attribute {symbol!r}")
+    return getattr(mod, symbol)
+
+
+def _parse_hhmm(s: str) -> time:
+    h, m = s.split(":")
+    return time(int(h), int(m))
+
+
+REQUIRED_KEYS = (
+    "detector_class",
+    "universe_builder",
+    "universe_trigger",
+    "active_window_start",
+    "active_window_end",
+)
+
+
+class SetupRegistry:
+    """Single source of truth for setup metadata."""
+
+    def __init__(self, specs: dict):
+        self._specs: dict = specs
+
+    @classmethod
+    def load_from_config(cls, root_config: dict) -> "SetupRegistry":
+        setups = root_config.get("setups", {})
+        specs: dict = {}
+        for name, raw in setups.items():
+            if not isinstance(raw, dict):
+                continue  # skip non-dict entries (e.g., comments at this level)
+            for k in REQUIRED_KEYS:
+                if k not in raw:
+                    raise ValueError(f"setup {name!r}: missing required key {k!r}")
+            specs[name] = SetupSpec(
+                name=name,
+                enabled=bool(raw.get("enabled", False)),
+                detector_class_path=raw["detector_class"],
+                universe_builder_path=raw["universe_builder"],
+                universe_trigger=parse_trigger(raw["universe_trigger"]),
+                active_window=(_parse_hhmm(raw["active_window_start"]), _parse_hhmm(raw["active_window_end"])),
+                raw_config=raw,
+            )
+        return cls(specs)
+
+    def enabled(self) -> list:
+        return [s for s in self._specs.values() if s.enabled]
+
+    def get(self, name: str) -> SetupSpec:
+        return self._specs[name]
+
+    def validate(self) -> None:
+        """Import every enabled setup's detector_class + universe_builder. Fail fast."""
+        for spec in self.enabled():
+            _import_path(spec.detector_class_path)
+            _import_path(spec.universe_builder_path)
