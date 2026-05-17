@@ -44,3 +44,23 @@ def parse_trigger(spec: str) -> Trigger:
     if not m:
         raise ValueError(f"malformed trigger spec {spec!r}; expected 'session_start' or 'bar:HH:MM'")
     return Trigger.bar(time(int(m.group(1)), int(m.group(2))))
+
+
+@dataclass(frozen=True)
+class SetupSpec:
+    """All metadata for one setup. Single source of truth."""
+    name: str
+    enabled: bool
+    detector_class_path: str        # "structures.gap_fade_short_structure.GapFadeShortStructure"
+    universe_builder_path: str      # "services.setup_universe.gap_fade_universe"
+    universe_trigger: Trigger
+    active_window: tuple            # (start: time, end: time), inclusive
+    raw_config: dict
+
+    def __post_init__(self):
+        start, end = self.active_window
+        if start > end:
+            raise ValueError(
+                f"setup {self.name!r}: active_window_start <= active_window_end required; "
+                f"got start={start} end={end}"
+            )
