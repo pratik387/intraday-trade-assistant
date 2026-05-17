@@ -2260,6 +2260,7 @@ class ScreenerLive:
             regime=regime,
             cap_segment_map=cap_segment_map,
             regime_diagnostics=regime_diagnostics,
+            daily_dict=getattr(self, "_daily_dict_cache", None) or {},
         )
         if not plan_batches:
             logger.info("PLAN_EMPTY | bar %s", now)

@@ -24,12 +24,17 @@ class Batch:
     regime / regime_diagnostics were computed from index_df5 once per bar in
     the parent process and are forwarded to workers so detectors that read
     ctx.regime get consistent values without re-computing per worker.
+
+    daily_dict maps symbol -> yesterday's daily DataFrame so detectors like
+    circuit_t1_fade_short and delivery_pct_anomaly_short that read
+    ctx.df_daily receive valid data.
     """
     items: list = field(default_factory=list)
     bar_ts: Optional[datetime] = None
     session_date: Optional[object] = None   # datetime.date
     regime: str = "chop"
     regime_diagnostics: Optional[dict] = None
+    daily_dict: Optional[dict] = None       # sym -> pd.DataFrame of daily bars
 
 
 class DispatchPlanner:
@@ -49,6 +54,7 @@ class DispatchPlanner:
         regime: str = "chop",
         cap_segment_map: Optional[dict] = None,
         regime_diagnostics: Optional[dict] = None,
+        daily_dict: Optional[dict] = None,
     ) -> list:
         """Assemble per-bar work into ≤batch_size chunks.
 
@@ -60,6 +66,10 @@ class DispatchPlanner:
         Bar-level metadata (bar_ts, session_date, regime, regime_diagnostics)
         is stored on Batch and forwarded to worker.dispatch_worker_batch so
         workers can build a complete MarketContext without extra IPC.
+
+        daily_dict (sym -> pd.DataFrame) is stored at the Batch level so
+        workers can forward ctx.df_daily to detectors that need yesterday's
+        daily bars (e.g. circuit_t1_fade_short, delivery_pct_anomaly_short).
         """
         cap_segment_map = cap_segment_map or {}
         items: list = []
@@ -82,5 +92,6 @@ class DispatchPlanner:
                 session_date=session_date,
                 regime=regime,
                 regime_diagnostics=regime_diagnostics,
+                daily_dict=daily_dict,
             ))
         return batches

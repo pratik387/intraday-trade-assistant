@@ -50,6 +50,7 @@ def _build_market_context(
     session_date=None,
     regime: str = "chop",
     cap_segment: str = "unknown",
+    df_daily: Optional[pd.DataFrame] = None,
 ):
     """Build a real MarketContext for the detector.
 
@@ -90,6 +91,7 @@ def _build_market_context(
             timestamp=bar_timestamp,
             df_5m=d,
             session_date=_session_date,
+            df_daily=df_daily,
             orh=levels.get("ORH"),
             orl=levels.get("ORL"),
             pdh=levels.get("PDH"),
@@ -111,6 +113,7 @@ def _build_market_context(
             timestamp=bar_timestamp,
             df_5m=df5,
             session_date=_session_date,
+            df_daily=df_daily,
             orh=levels.get("ORH"),
             orl=levels.get("ORL"),
             pdh=levels.get("PDH"),
@@ -355,6 +358,8 @@ def dispatch_worker_batch(batch: Batch) -> list:
     session_date = getattr(batch, "session_date", None)
     bar_ts = getattr(batch, "bar_ts", None)
 
+    daily_dict = getattr(batch, "daily_dict", None) or {}
+
     for item in batch.items:
         # Support both old 4-tuple (sym, df5, levels, tags) and
         # new 5-tuple (sym, df5, levels, tags, cap_segment) for test compat.
@@ -364,6 +369,8 @@ def dispatch_worker_batch(batch: Batch) -> list:
             sym, df5, levels, tags = item
             cap_segment = "unknown"
 
+        df_daily = daily_dict.get(sym)
+
         try:
             ctx = _build_market_context(
                 sym, df5, levels,
@@ -371,6 +378,7 @@ def dispatch_worker_batch(batch: Batch) -> list:
                 session_date=session_date,
                 regime=regime,
                 cap_segment=cap_segment,
+                df_daily=df_daily,
             )
             all_analyses = []
             for det_name in tags:

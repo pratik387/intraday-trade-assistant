@@ -91,3 +91,40 @@ def test_plan_skips_symbols_without_df5():
                         levels_by_symbol={"NSE:A": _lvl()})
     syms_in_plan = [item[0] for b in plan for item in b.items]
     assert syms_in_plan == ["NSE:A"]
+
+
+def test_plan_carries_daily_dict_on_batch():
+    """daily_dict passed to plan() must be forwarded to each Batch so workers
+    can populate ctx.df_daily for detectors like circuit_t1_fade_short."""
+    tm = TagMap()
+    tm.add_universe("circuit_t1_fade_short", {"NSE:A", "NSE:B"})
+    tm.open_window("circuit_t1_fade_short")
+    daily_a = pd.DataFrame({"close": [95.0, 100.0]})
+    daily_dict = {"NSE:A": daily_a}   # NSE:B intentionally absent
+    planner = DispatchPlanner(batch_size=50)
+    plan = planner.plan(
+        datetime(2024, 5, 3, 9, 20), tm,
+        df5_by_symbol={"NSE:A": _df(), "NSE:B": _df()},
+        levels_by_symbol={"NSE:A": _lvl(), "NSE:B": _lvl()},
+        daily_dict=daily_dict,
+    )
+    assert len(plan) == 1
+    b = plan[0]
+    # Batch carries the full dict
+    assert b.daily_dict is daily_dict
+    # A has daily bars; B does not
+    assert b.daily_dict.get("NSE:A") is daily_a
+    assert b.daily_dict.get("NSE:B") is None
+
+
+def test_plan_daily_dict_defaults_to_none():
+    """When daily_dict is not passed, Batch.daily_dict is None (backward compat)."""
+    tm = TagMap()
+    tm.add_universe("gap_fade_short", {"NSE:A"})
+    tm.open_window("gap_fade_short")
+    planner = DispatchPlanner(batch_size=50)
+    plan = planner.plan(datetime(2024, 5, 3, 9, 20), tm,
+                        df5_by_symbol={"NSE:A": _df()},
+                        levels_by_symbol={"NSE:A": _lvl()})
+    assert len(plan) == 1
+    assert plan[0].daily_dict is None
