@@ -333,16 +333,6 @@ class DeliveryPctAnomalyShortStructure(BaseStructure):
             if not (self.active_start <= cur_t <= self.active_end):
                 return _empty(f"Outside active window: {cur_t}")
 
-        # ---- Cap segment guard (bypassed under wide_open) ----
-        # Cell B verdict 2026-05-14: mid_cap-only. Production-replay OOS PF=1.245
-        # mid_cap vs 0.83 large_cap, 0.76 small_cap. Empty list = no filter.
-        if not _wide_open and self.allowed_caps:
-            if ctx.cap_segment not in self.allowed_caps:
-                return _empty(
-                    f"Cap segment {ctx.cap_segment!r} not in allowed set "
-                    f"{self.allowed_caps}"
-                )
-
         # ---- Latch ----
         session_date = ctx.session_date
         if session_date is None:

@@ -179,18 +179,4 @@ def test_does_not_fire_with_strong_body():
     assert result.structure_detected is False
 
 
-# ---------------------------------------------------------------------------
-# Test 6: disallowed cap segment → no fire
-# ---------------------------------------------------------------------------
-
-def test_does_not_fire_in_disallowed_cap_segment():
-    """large_cap is not in allowed_cap_segments → no fire."""
-    cfg = _cfg()
-    det = GapFadeShortStructure(cfg)
-    pdc = 100.0
-    df = _build_df("09:20:00", pdc=pdc, gap_pct=2.5,
-                   upper_wick_ratio=0.8, body_pct=20.0,
-                   vol_bar0=50000, vol_bar1=30000)
-    ctx = _make_ctx(df, pdc=pdc, cap_segment="large_cap", atr=1.0)
-    result = det.detect(ctx)
-    assert result.structure_detected is False
+# cap_segment early-reject removed: universe builders filter before dispatch

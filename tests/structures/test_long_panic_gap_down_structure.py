@@ -96,14 +96,7 @@ def test_rejects_when_gap_too_small():
     assert "gap_pct" in r.rejection_reason
 
 
-def test_rejects_cap_segment_not_allowed():
-    """large_cap not in allowed_cap_segments → reject."""
-    det = LongPanicGapDownStructure(_cfg())
-    ctx = _ctx(bar_open=94.0, bar_high=94.5, bar_low=89.5, bar_close=91.0,
-               pdh=105.0, pdl=95.0, pdc=100.0, cap_segment="large_cap")
-    r = det.detect(ctx)
-    assert not r.structure_detected
-    assert "Cap segment" in r.rejection_reason
+# cap_segment early-reject removed: universe builders filter before dispatch
 
 
 def test_rejects_dist_from_pdh_too_shallow():

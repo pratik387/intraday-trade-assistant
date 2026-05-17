@@ -266,18 +266,7 @@ def test_does_not_fire_when_t1_gap_too_large():
 # Test 7: large_cap → no fire (cap filter; under wide_open=False)
 # ---------------------------------------------------------------------------
 
-def test_does_not_fire_on_large_cap():
-    """Setup is mid/small-cap only — large_caps rarely circuit and are
-    usually fundamental when they do."""
-    det = CircuitT1FadeShortStructure(_cfg())
-    t0_date = date(2024, 6, 5); t1_date = date(2024, 6, 6)
-    daily = _build_daily(t0_date, 106.0, 100.0, 106.0, 100000)
-    t1_5m = _build_t1_5m(t1_date, t1_open=108.65, peak=110.0,
-                          current_close=108.5, n_bars=16)
-    ctx = _make_ctx(t1_5m, daily, t1_date, cap_segment="large_cap")
-    result = det.detect(ctx)
-    assert not result.structure_detected
-    assert "cap" in (result.rejection_reason or "").lower()
+# cap_segment early-reject removed: universe builders filter before dispatch
 
 
 # ---------------------------------------------------------------------------

@@ -125,11 +125,6 @@ class MisUnwindVwapRevertShortStructure(BaseStructure):
         if df is None or len(df) < self.min_bars_required:
             return _empty("Insufficient bars")
 
-        _wide_open = _is_wide_open()
-
-        if not _wide_open and context.cap_segment not in self.allowed_caps:
-            return _empty(f"Cap segment {context.cap_segment!r} not in allowed set")
-
         last_ts = df.index[-1]
         cur_t = last_ts.time() if hasattr(last_ts, "time") else last_ts
         if not (self.active_start <= cur_t <= self.active_end):

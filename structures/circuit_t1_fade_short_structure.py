@@ -233,10 +233,6 @@ class CircuitT1FadeShortStructure(BaseStructure):
 
         _wide_open = _is_wide_open()
 
-        # ---- Cap segment guard (bypassed under wide_open) ----
-        if not _wide_open and ctx.cap_segment not in self.allowed_caps:
-            return _empty(f"Cap segment {ctx.cap_segment!r} not in allowed set")
-
         # ---- Universe guard (bypassed under wide_open; None = no filter) ----
         if (
             not _wide_open
