@@ -85,6 +85,18 @@ from services.bar_scheduler import schedule_admits
 from services.setup_risk import SetupRiskTracker
 from services.feature_computer import compute_bar_features
 
+# 2026-05-17 dispatch refactor — Phase 1 (Task 10)
+from services.dispatch.setup_registry import SetupRegistry, _import_path as _dispatch_import_path
+from services.dispatch.transition_calendar import TransitionCalendar
+from services.dispatch.tag_map import TagMap
+from services.dispatch.fetch_scope import FetchScopeManager
+from services.dispatch.planner import DispatchPlanner
+from services.dispatch.worker import dispatch_worker_batch, init_worker
+
+# Sentinel: "before market open" — used as the initial _last_dispatch_ts value
+# so the very first calendar walk (after=00:00, until=bar_t) fires all events
+# with at <= bar_t including the 09:15 build_universe events.
+_TIME_BEFORE_OPEN = __import__("datetime").time(0, 0)
 
 logger = get_agent_logger()
 
@@ -173,6 +185,27 @@ def _init_worker(config_dict):
     except Exception as e:
         get_agent_logger().exception(f"Worker init failed: {e}")
         raise
+
+def _init_worker_combined(config_dict, registry):
+    """Combined worker initializer: runs the existing _init_worker (logging + TradeDecisionGate)
+    AND the new dispatch init_worker (SetupRegistry → detector cache).
+
+    Called once per worker process at spawn time.
+    """
+    # 1) Existing init: sets up logging, TradeDecisionGate, etc.
+    try:
+        _init_worker(config_dict)
+    except Exception as e:
+        get_agent_logger().exception("_init_worker_combined: existing init failed: %s", e)
+        raise
+
+    # 2) New dispatch init: registers registry in the worker so _get_detector() works.
+    try:
+        init_worker(registry)
+    except Exception as e:
+        get_agent_logger().exception("_init_worker_combined: dispatch init_worker failed: %s", e)
+        # Non-fatal: dispatch path will error gracefully per-symbol if registry is None
+
 
 def _worker_process_symbol(symbol, df5_data, index_df5_data, levels, now, daily_df=None):
     """
@@ -676,10 +709,18 @@ class ScreenerLive:
         if _wd:
             worker_cfg["_log_dir"] = str(_wd)
 
+        # Build SetupRegistry BEFORE creating the executor so we can pass it as
+        # the initializer argument to each worker process.
+        self._dispatch_registry = SetupRegistry.load_from_config(self.raw_cfg)
+        try:
+            self._dispatch_registry.validate()
+        except Exception as _reg_e:
+            logger.warning("SetupRegistry validation warning (non-fatal): %s", _reg_e)
+
         self._executor = ProcessPoolExecutor(
             max_workers=structure_workers,
-            initializer=_init_worker,
-            initargs=(worker_cfg,)
+            initializer=_init_worker_combined,
+            initargs=(worker_cfg, self._dispatch_registry)
         )
         self._daily_cache_seeded = False
         # Per-setup qualifying-universe contributions (computed once at session
@@ -728,6 +769,20 @@ class ScreenerLive:
         # State for per-bar volume accumulation (fed to RVOL on bar transition)
         self._pending_bar_ts = None
         self._pending_bar_vols: Dict[str, int] = {}
+
+        # ------------------------------------------------------------------ #
+        # Dispatch refactor state (Phase 1 — Task 10, 2026-05-17)            #
+        # ------------------------------------------------------------------ #
+        # TransitionCalendar / TagMap / FetchScopeManager / DispatchPlanner  #
+        # drive the per-bar calendar-walk → tag dispatch path.               #
+        # The old hardcoded lazy-build if-blocks and _universe_union() are   #
+        # DEAD CODE after this but kept in place for Tasks 12-13 cleanup.    #
+        self._transition_calendar = TransitionCalendar.from_registry(self._dispatch_registry)
+        self._tag_map = TagMap()
+        self._fetch_scope = FetchScopeManager()
+        self._dispatch_planner = DispatchPlanner(batch_size=int(self.raw_cfg.get("dispatch_batch_size", 50)))
+        # Tracks which time slice the calendar has been walked to; reset each session.
+        self._last_dispatch_ts = None   # set to _TIME_BEFORE_OPEN on first scan
 
         logger.debug(
             "ScreenerLive init: universe=%d symbols, store5m=%d",
@@ -1429,12 +1484,27 @@ class ScreenerLive:
                 with perf("scan", "compute_orb_levels", n=len(df5_by_symbol)):
                     levels_by_symbol = self._compute_orb_levels_once(now, df5_by_symbol)
 
-                # ---------- Universe-driven scanning (2026-05-12 architectural refactor) ----------
-                # Replaces Stage-0 top-K filter. Features computed only for the
-                # universe-union (~200 symbols/bar), not the full eligible pool (1500).
-                with perf("scan", "feature_compute", n_in=len(df5_by_symbol)):
-                    # Universe = static cross-day universes ∪ lazy gap_fade universe
-                    # ∪ lazy long_panic_gap_down universe.
+                # ---- DISPATCH PATH (Task 10, 2026-05-17) ----
+                # Calendar-driven tag dispatch replaces universe-union + Stage-0.
+                # Returns None → SCAN_SKIPPED (no active detectors this bar).
+                # Returns dict  → decisions + symbol_data_map already collected.
+                _dispatch_result = self._run_dispatch_path(
+                    now, df5_by_symbol, levels_by_symbol, api_df5_cache,
+                    min_bars_for_processing=min_bars_for_processing,
+                )
+                if _dispatch_result is None:
+                    # No active detectors — skip the rest of the scan entirely.
+                    return
+                _dp_decisions = _dispatch_result["decisions"]
+                _dp_sdmap     = _dispatch_result["symbol_data_map"]
+                _dp_sc        = _dispatch_result["shortlist_count"]
+                _dp_sl        = _dispatch_result["shortlist"]
+                _dp_slog      = _dispatch_result["screener_logger"]
+
+                # ---- DEAD CODE below (was Universe-driven scanning) ----
+                # Tasks 12-13 will delete this block entirely.
+                # Kept here per spec so Tasks 12-13 have a clean target.
+                if False:  # noqa: E501  # DEAD CODE — Task 13 deletes
                     universe = set()
                     for u in (self._setup_universes or {}).values():
                         universe.update(u)
@@ -1442,371 +1512,48 @@ class ScreenerLive:
                         universe.update(self._gap_fade_universe)
                     if self._long_panic_gap_down_universe:
                         universe.update(self._long_panic_gap_down_universe)
-                    # Restrict to symbols that actually have 5m data for this bar.
                     universe &= set(df5_by_symbol.keys())
-
                     feats_df = compute_bar_features(
                         df5_by_symbol, universe, now, levels_by_symbol,
                     )
                     shortlist = feats_df["symbol"].tolist() if not feats_df.empty else []
-                logger.info(
-                    "UNIVERSE_SCAN | universe=%d, df5=%d, scanned=%d",
-                    len(universe), len(df5_by_symbol), len(shortlist),
-                )
+
         except Exception as e:
             logger.exception("Universe scan failed; falling back to universe-union: %s", e)
             shortlist = sorted(self._universe_union())
+            # In dispatch path, a top-level exception is fatal for this bar
+            if "_dp_decisions" not in dir():
+                return
 
-        # ---------- Universe-union (plan-as-source-of-truth, 2026-05-12) ----------
-        # Add per-setup qualifying symbols to the shortlist so cross-day /
-        # event-driven setups (whose signals Stage-0 can't see) never lose
-        # qualifying symbols. The detector itself still applies its full
-        # filter chain — this only guarantees VISIBILITY past Stage-0.
-        _extra_added = 0
-        try:
-            current_t = now.time() if hasattr(now, "time") else now
-            from datetime import time as _dtime
-            # gap_fade lazy-compute on first 09:15-window bar where df5_by_symbol
-            # is populated. Keep cached for session.
-            if self._gap_fade_universe is None and _dtime(9, 15) <= current_t <= _dtime(9, 30):
-                setups_cfg = (self.raw_cfg.get("setups") or {})
-                gf_cfg = setups_cfg.get("gap_fade_short") or {}
-                if gf_cfg.get("enabled"):
-                    try:
-                        from services.setup_universe import gap_fade_universe
-                        # Build cap_map for symbols we have data for
-                        from services.symbol_metadata import get_cap_segment
-                        cap_map = {s: get_cap_segment(s) for s in df5_by_symbol.keys()}
-                        session_date_obj = now.date() if hasattr(now, "date") else now
-                        self._gap_fade_universe = gap_fade_universe(
-                            df5_by_symbol,
-                            getattr(self, "_daily_dict_cache", {}) or {},
-                            session_date_obj, gf_cfg, cap_map,
-                        )
-                    except Exception as _e:
-                        logger.warning("gap_fade_universe lazy build failed: %s", _e)
-                        self._gap_fade_universe = set()
-
-            # long_panic_gap_down lazy build at 09:15 bar — same pattern as
-            # gap_fade. Also seeds services.regime_density_tracker BEFORE any
-            # per-symbol detector fires, eliminating v1.0's sequential-ordering
-            # leak (where the first ~80 symbols/day still fired before the
-            # guard activated).
-            if (
-                self._long_panic_gap_down_universe is None
-                and _dtime(9, 15) <= current_t <= _dtime(9, 30)
-            ):
-                setups_cfg = (self.raw_cfg.get("setups") or {})
-                lpgd_cfg = setups_cfg.get("long_panic_gap_down") or {}
-                if lpgd_cfg.get("enabled"):
-                    try:
-                        from services.setup_universe import long_panic_gap_down_universe
-                        from services.symbol_metadata import get_cap_segment
-                        from services import regime_density_tracker
-                        cap_map = {s: get_cap_segment(s) for s in df5_by_symbol.keys()}
-                        session_date_obj = now.date() if hasattr(now, "date") else now
-                        qual = long_panic_gap_down_universe(
-                            df5_by_symbol,
-                            getattr(self, "_daily_dict_cache", {}) or {},
-                            session_date_obj, lpgd_cfg, cap_map,
-                        )
-                        self._long_panic_gap_down_universe = qual
-                        # Seed regime density tracker with the full broader-filter
-                        # set so all per-symbol fires this day see the FINAL count
-                        # (not an order-dependent partial count).
-                        regime_density_tracker.reset_date(session_date_obj)
-                        for sym in qual:
-                            regime_density_tracker.note(
-                                "long_panic_gap_down", session_date_obj, sym,
-                            )
-                    except Exception as _e:
-                        logger.warning("long_panic_gap_down_universe lazy build failed: %s", _e)
-                        self._long_panic_gap_down_universe = set()
-
-            # circuit_release_fade_short lazy build at 10:30 bar - morning-pin
-            # detection requires bars from 09:15-10:30 to be complete. Same lazy
-            # pattern as gap_fade/long_panic_gap_down but triggered later.
-            if (
-                self._circuit_release_fade_universe is None
-                and _dtime(10, 30) <= current_t <= _dtime(10, 45)
-            ):
-                setups_cfg = (self.raw_cfg.get("setups") or {})
-                crf_cfg = setups_cfg.get("circuit_release_fade_short") or {}
-                if crf_cfg.get("enabled"):
-                    try:
-                        from services.setup_universe import circuit_release_fade_short_universe
-                        from services.symbol_metadata import get_cap_segment
-                        cap_map = {s: get_cap_segment(s) for s in df5_by_symbol.keys()}
-                        session_date_obj = now.date() if hasattr(now, "date") else now
-                        qual = circuit_release_fade_short_universe(
-                            df5_by_symbol,
-                            getattr(self, "_daily_dict_cache", {}) or {},
-                            session_date_obj, crf_cfg, cap_map,
-                        )
-                        self._circuit_release_fade_universe = qual
-                    except Exception as _e:
-                        logger.warning("circuit_release_fade_short_universe lazy build failed: %s", _e)
-                        self._circuit_release_fade_universe = set()
-
-            extras: Set[str] = set()
-            for s in (self._setup_universes or {}).values():
-                extras.update(s)
-            if self._gap_fade_universe:
-                extras.update(self._gap_fade_universe)
-            if self._long_panic_gap_down_universe:
-                extras.update(self._long_panic_gap_down_universe)
-            if self._circuit_release_fade_universe:
-                extras.update(self._circuit_release_fade_universe)
-            if extras:
-                # Restrict to symbols we actually have 5m data for this bar
-                # (extras outside df5_by_symbol can't be processed anyway).
-                pre_count = len(shortlist)
-                shortlist_set = set(shortlist)
-                injected = (extras & set(df5_by_symbol.keys())) - shortlist_set
-                if injected:
-                    shortlist = shortlist + list(injected)
-                    _extra_added = len(injected)
-                    logger.info(
-                        "UNIVERSE_UNION | shortlist %d -> %d (+%d) | gap_fade=%d circuit_t1=%d delivery=%d long_panic=%d",
-                        pre_count, len(shortlist), _extra_added,
-                        len(self._gap_fade_universe or set()),
-                        len(self._setup_universes.get("circuit_t1_fade_short", set())),
-                        len(self._setup_universes.get("delivery_pct_anomaly_short", set())),
-                        len(self._long_panic_gap_down_universe or set()),
-                    )
-        except Exception as _e:
-            logger.warning("UNIVERSE_UNION failed: %s", _e)
-
-        # ENHANCED LOGGING: Stage-0 completion with accurate counts
+        # ---- DISPATCH PATH BRIDGE (Task 10, 2026-05-17) ----
+        # Alias dispatch results into the variable names the downstream expects.
+        # The old universe-union + structure-prep + batch-submit blocks below are
+        # DEAD CODE — they are only reached on `if False:`.
+        # Tasks 12-13 will delete the dead blocks entirely.
+        decisions: List[Tuple[str, Decision]] = _dp_decisions
+        symbol_data_map: Dict[str, tuple] = _dp_sdmap
+        shortlist: List[str] = _dp_sl
+        shortlist_count: int = _dp_sc
+        screener_logger = _dp_slog
         _t_scanner_end = time.perf_counter()
-        eligible_symbols = len(df5_by_symbol) if df5_by_symbol else 0
-        total_symbols = len(self.core_symbols)
-        shortlist_count = len(shortlist)
+        _t_data_prep_end = _t_scanner_end  # No separate prep phase in dispatch path
+        _t_structure_end = _t_scanner_end
+        logger.info(
+            "SCANNER_COMPLETE | data_loaded=%d/%d dispatch_active=%d shortlist=%d | TIME: %.2fs",
+            len(df5_by_symbol) if df5_by_symbol else 0, len(self.core_symbols),
+            shortlist_count, shortlist_count, _t_scanner_end - _t_bar_start,
+        )
+        logger.info(
+            "PARALLEL_STRUCTURE_COMPLETE | Processed %d symbols, %d accepted (dispatch path)",
+            shortlist_count, len(decisions),
+        )
 
-        api_sourced = sum(1 for s in df5_by_symbol if s in api_df5_cache)
-        precomputed_sourced = sum(1 for s in df5_by_symbol if s not in api_df5_cache and self._precomputed_5m and s in self._precomputed_5m)
-        bb_sourced = len(df5_by_symbol) - api_sourced - precomputed_sourced
-        logger.info("SCANNER_COMPLETE | data_loaded=%d/%d universe_scanned=%d shortlist=%d | "
-                   "data_source: api=%d precomputed=%d barbuilder=%d | TIME: %.2fs",
-                   eligible_symbols, total_symbols,
-                   len(self._universe_union()), shortlist_count,
-                   api_sourced, precomputed_sourced, bb_sourced, _t_scanner_end - _t_bar_start)
-        if not shortlist:
-            return
-
-        # ---------- Directional bias: init prev_close once + update every scan ----------
-        if self.directional_bias.enabled:
-            index_sym = self.raw_cfg["directional_bias"]["index_symbol"]
-
-            # Set prev_close once (first scan only)
-            if self.directional_bias.prev_close is None:
-                if env.DRY_RUN:
-                    self.directional_bias.set_prev_close_for_date(now)
-                else:
-                    try:
-                        pdc = self.sdk.get_prevday_levels(index_sym).get("PDC", float("nan"))
-                        if pdc and not pd.isna(pdc):
-                            self.directional_bias.set_prev_close(pdc)
-                        else:
-                            logger.warning(f"DIR_BIAS | No prev close available for {index_sym}")
-                    except Exception as e:
-                        logger.error(f"DIR_BIAS | Failed to fetch prev close for {index_sym}: {e}")
-
-            # Update direction every scan (same logic for live and backtest)
-            if self.directional_bias.prev_close is not None:
-                if env.DRY_RUN:
-                    index_price = self.directional_bias.get_backtest_price_at(now)
-                else:
-                    index_price = self._shared_ltp_cache.get_ltp(index_sym)
-                if index_price is not None:
-                    self.directional_bias.update_price(index_price)
-
-        # ---------- Gate per candidate (structure + regime + events + news) ----------
-        index_df5 = self._index_df5()
-        decisions: List[Tuple[str, Decision]] = []
-        screener_logger = get_screener_logger()
-
-        # PARALLEL STRUCTURE DETECTION (Phase 1 Optimization)
-        # Use ProcessPoolExecutor to parallelize structure detection across symbols
-        # This reduces 50s bottleneck to ~15s (3.3x speedup)
-
-        # Prepare data for parallel processing
-        # daily_df is cached in worker processes (seeded once at session start)
-        with perf("scan", "structure_prep", n_shortlist=len(shortlist)):
-            symbol_data_map = {}
-            for sym in shortlist:
-                # Data source:
-                #  Paper/live: api_df5_cache
-                #  Backtest:   _precomputed_5m
-                if sym in api_df5_cache:
-                    df5 = api_df5_cache[sym]
-                elif self._precomputed_5m and sym in self._precomputed_5m:
-                    df5 = self._get_precomputed_5m(sym, now, self.cfg.screener_store_5m_max)
-                else:
-                    continue  # No enriched 5m data available
-                if not validate_df(df5, min_rows=min_bars_for_processing):
-                    continue
-                # PERFORMANCE FIX: Use cached ORB levels if available
-                if levels_by_symbol and sym in levels_by_symbol and levels_by_symbol[sym]:
-                    # Symbol was in cache with valid levels - use cached.
-                    # (Empty dict {} means ORB cache built but this symbol had
-                    # NaN ORH/ORL at 09:40 - we still want PDC for it; fall
-                    # through to the on-the-fly path below.)
-                    lvl = levels_by_symbol[sym]
-                elif levels_by_symbol is not None:
-                    # Cache was computed but symbol not in it (added to universe
-                    # late, e.g. via 10:30 lazy-build for circuit_release_fade).
-                    # 2026-05-16 fix: compute on-the-fly via _levels_for().
-                    # PDH/PDL/PDC come from daily cache (which has these symbols);
-                    # ORH/ORL may be NaN if intraday window is insufficient, but
-                    # that's correct since OR is fixed at 09:30 and cannot be
-                    # backfilled. Symbols entered late simply don't get OR-based
-                    # signals - their PDC-based setups (e.g. circuit_release_fade)
-                    # work fine.
-                    try:
-                        lvl = self._levels_for(sym, df5, now)
-                    except Exception as _e:
-                        logger.warning(
-                            "LEVELS_LATE_ADD | %s on-the-fly compute failed: %s",
-                            sym, _e,
-                        )
-                        lvl = {"PDH": float("nan"), "PDL": float("nan"),
-                               "PDC": float("nan"), "ORH": float("nan"),
-                               "ORL": float("nan")}
-                else:
-                    # OPENING BELL FIX: Before 09:40 - cache not ready yet
-                    # During opening bell (09:20-09:30) with <3 bars, use empty levels to avoid warnings
-                    if in_opening_bell and len(df5) < 3:
-                        lvl = {"PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
-                               "ORH": float("nan"), "ORL": float("nan")}
-                    else:
-                        # Enough bars to compute levels normally
-                        lvl = self._levels_for(sym, df5, now)
-
-                symbol_data_map[sym] = (df5, lvl)
-
-        if not symbol_data_map:
-            logger.info("GATES_COMPLETE | No symbols with sufficient data")
-            return
-
-        _t_data_prep_end = time.perf_counter()
-        logger.info("DATA_PREP_COMPLETE | Prepared %d symbols | TIME: %.2fs",
-                   len(symbol_data_map), _t_data_prep_end - _t_scanner_end)
-
-        # BATCH SUBMISSION: Submit symbols in batches of ~50 to reduce IPC overhead
-        # index_df5 pickled once per batch (not per symbol), daily_df read from worker cache
-        BATCH_SIZE = 50
-        all_items = [
-            (sym, df5, lvl)
-            for sym, (df5, lvl) in symbol_data_map.items()
-        ]
-        batches = [all_items[i:i + BATCH_SIZE] for i in range(0, len(all_items), BATCH_SIZE)]
-        _t_submit_start = time.perf_counter()
-        futures = []
-        with perf("scan", "structure_submit", n_batches=len(batches), n_symbols=len(all_items)):
-            for batch in batches:
-                future = self._executor.submit(_worker_process_batch, batch, index_df5, now)
-                futures.append((future, {s for s, _, _ in batch}))
-        _t_submit_end = time.perf_counter()
-        logger.info("BATCH_SUBMIT | %d batches (%d symbols, batch_size=%d) | submit_time=%.2fs",
-                   len(batches), len(all_items), BATCH_SIZE, _t_submit_end - _t_submit_start)
-
-        # Collect results from batch futures
-        _t_collect_start = time.perf_counter()
-        try:
-            for future, expected_syms in futures:
-                try:
-                    batch_results = future.result()
-                except Exception as e:
-                    logger.exception(f"Batch processing failed: {e}")
-                    continue
-
-                # DATA INTEGRITY CHECK: Verify batch completeness and symbol set
-                returned_syms = {s for s, _ in batch_results}
-                assert returned_syms == expected_syms, \
-                    f"Batch symbol mismatch! Expected {expected_syms}, got {returned_syms}"
-
-                for sym, decision in batch_results:
-                    if decision is None:
-                        logger.debug(f"Structure detection returned None for {sym}")
-                        continue
-
-                    df5 = symbol_data_map[sym][0]  # Get original df5 for logging
-
-                    if not decision.accept:
-                        top_reason = next((r for r in decision.reasons if r.startswith("regime_block:")), None) or \
-                                     (decision.reasons[0] if decision.reasons else "reject")
-                        logger.debug(
-                            "DECISION:REJECT sym=%s setup=%s regime=%s reason=%s | all=%s",
-                            sym, decision.setup_type, decision.regime, top_reason, ";".join(decision.reasons),
-                        )
-
-                        # Log screener rejection with detailed context
-                        if screener_logger:
-                            screener_logger.log_reject(
-                                sym,
-                                top_reason,
-                                timestamp=now.isoformat(),
-                                setup_type=decision.setup_type or "unknown",
-                                regime=decision.regime or "unknown",
-                                all_reasons=decision.reasons,
-                                structure_confidence=getattr(decision, 'structure_confidence', 0),
-                                current_price=df5['close'].iloc[-1] if not df5.empty else 0,
-                                regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
-                            )
-                        continue
-
-                    logger.debug(
-                        "DECISION:ACCEPT sym=%s setup=%s regime=%s size_mult=%.2f hold_bars=%d | %s",
-                        sym, decision.setup_type, decision.regime, decision.size_mult, decision.min_hold_bars,
-                        ";".join(decision.reasons),
-                    )
-
-                    # Log screener acceptance with detailed context
-                    if screener_logger:
-                        screener_logger.log_accept(
-                            sym,
-                            timestamp=now.isoformat(),
-                            setup_type=decision.setup_type or "unknown",
-                            regime=decision.regime or "unknown",
-                            size_mult=decision.size_mult,
-                            min_hold_bars=decision.min_hold_bars,
-                            all_reasons=decision.reasons,
-                            structure_confidence=getattr(decision, 'structure_confidence', 0),
-                            current_price=float(df5['close'].iloc[-1]) if not df5.empty else 0,
-                            vwap=float(df5.get('vwap', pd.Series([0])).iloc[-1]) if not df5.empty else 0,
-                            regime_diagnostics=getattr(decision, 'regime_diagnostics', None),
-                        )
-                    decisions.append((sym, decision))
-        except Exception as e:
-            logger.exception(f"Worker pool processing failed: {e}")
-
-        # Emit structure_collect timing event (manual because the loop body is huge and
-        # re-indenting it under a `with perf():` would be a large mechanical change).
-        _t_collect_end = time.perf_counter()
-        try:
-            from config.logging_config import get_timing_logger
-            _lg = get_timing_logger()
-            if _lg is not None:
-                from utils.perf_timer import is_enabled as _perf_enabled
-                if _perf_enabled():
-                    _lg.log_event(
-                        ts=time.time(), pid=os.getpid(),
-                        stage="scan", substage="structure_collect",
-                        duration_ms=round((_t_collect_end - _t_collect_start) * 1000.0, 3),
-                        n_batches=len(futures), n_symbols=len(all_items),
-                        n_accepted=len(decisions),
-                    )
-        except Exception:
-            pass
-
-        # DATA INTEGRITY CHECK: Verify all accepted symbols are in original shortlist
-        accepted_symbols = {sym for sym, _ in decisions}
-        assert accepted_symbols.issubset(set(shortlist)), \
-            f"Symbol integrity violation! Accepted symbols not in shortlist: {accepted_symbols - set(shortlist)}"
-
-        _t_structure_end = time.perf_counter()
-        logger.info(f"PARALLEL_STRUCTURE_COMPLETE | Processed {len(symbol_data_map)} symbols, {len(decisions)} accepted | TIME: %.2fs", _t_structure_end - _t_data_prep_end)
+        # ---- DEAD CODE START: Old universe-union + structure-prep + batch-submit ----
+        # Replaced by calendar-driven dispatch path (_run_dispatch_path).
+        # Tasks 12-13 delete this section.
+        # See git history for the full code that was here.
+        pass  # dispatch path bridge above already set decisions/symbol_data_map/etc.
+        # ---- DEAD CODE END ----
 
         # EOD check AFTER structure detection (which can take 20+ minutes)
         # Prevents hanging when structure completes after market close
@@ -2294,6 +2041,343 @@ class ScreenerLive:
             self._orb_cache_persistence.save(session_date, levels_by_symbol)
         except Exception as e:
             logger.warning(f"ORB_CACHE | Failed to save to disk: {e}")
+
+    # ------------------------------------------------------------------
+    # Calendar-driven dispatch path (Task 10, 2026-05-17)
+    # ------------------------------------------------------------------
+
+    def _run_dispatch_path(
+        self,
+        now,
+        df5_by_symbol: Dict[str, pd.DataFrame],
+        levels_by_symbol,
+        api_df5_cache: Dict[str, pd.DataFrame],
+        min_bars_for_processing: int = 3,
+    ):
+        """Per-bar dispatch pipeline: calendar walk → tagmap → fetch-scope → planner → executor.
+
+        Returns a dict with keys (decisions, symbol_data_map, shortlist_count, screener_logger)
+        or None if no active detectors at this bar (SCAN_SKIPPED).
+
+        This method is the entry point for the dispatch refactor (Phase 1 Task 10).
+        The OLD scan path (universe-union + _worker_process_batch) is DEAD CODE after
+        this method exists and is called; Tasks 12-13 delete it.
+        """
+        import time as _time_mod
+
+        now_t = now.time() if hasattr(now, "time") else now
+        session_date_obj = now.date() if hasattr(now, "date") else now
+
+        # ---- 1. Walk calendar → mutate TagMap ----
+        # Phase 1 (pre-dispatch): apply build_universe + open_window for all events in
+        # (last_t, now_t].  Apply close_window only for events STRICTLY BEFORE now_t
+        # (windows that closed in a prior bar).  Defer close_window events whose
+        # ev.at == now_t to Phase 2 (post-dispatch) so that one-shot setups whose
+        # active_window=[T, T] get their dispatch before the window is closed.
+        last_t = (
+            self._last_dispatch_ts.time()
+            if self._last_dispatch_ts is not None
+            else _TIME_BEFORE_OPEN
+        )
+        post_close_events = []
+        for ev in self._transition_calendar.events_in(after=last_t, until=now_t):
+            if ev.kind == "build_universe":
+                try:
+                    spec = self._dispatch_registry.get(ev.setup)
+                    builder_fn = _dispatch_import_path(spec.universe_builder_path)
+                    # Build cap_map {sym: cap_segment_str} for universe builders
+                    full_cap_map = self._load_cap_mapping()
+                    cap_map_str = {s: full_cap_map.get(s, {}).get("cap_segment", "unknown")
+                                   for s in df5_by_symbol.keys()}
+                    daily_dict = getattr(self, "_daily_dict_cache", {}) or {}
+                    # Universe builder signatures are not uniform:
+                    #   5-arg: (df5_today_by_symbol, daily_dict, session_date, config, cap_map)
+                    #     — gap_fade_universe, long_panic_gap_down_universe,
+                    #       circuit_release_fade_short_universe
+                    #   3-arg: (daily_dict, session_date, config)
+                    #     — round_number_sweep_short_universe,
+                    #       or_window_failure_fade_short_universe,
+                    #       mis_unwind_vwap_revert_short_universe
+                    # Detect by inspecting the first parameter name.
+                    import inspect as _inspect
+                    _sig_params = list(_inspect.signature(builder_fn).parameters.keys())
+                    if _sig_params and _sig_params[0] in ("df5_today_by_symbol", "df5_by_symbol"):
+                        syms = builder_fn(
+                            df5_by_symbol,
+                            daily_dict,
+                            session_date_obj,
+                            spec.raw_config,
+                            cap_map_str,
+                        )
+                    else:
+                        syms = builder_fn(
+                            daily_dict,
+                            session_date_obj,
+                            spec.raw_config,
+                        )
+                    self._tag_map.add_universe(ev.setup, set(syms or []))
+                    logger.info("DISPATCH_BUILD_UNIVERSE | %s | %d symbols", ev.setup, len(syms or []))
+                except Exception as build_e:
+                    logger.warning("UNIVERSE_BUILD_FAILED | %s | %s", ev.setup, build_e)
+                    self._tag_map.add_universe(ev.setup, set())
+            elif ev.kind == "open_window":
+                self._tag_map.open_window(ev.setup)
+                logger.info("DISPATCH_OPEN_WINDOW | %s", ev.setup)
+            elif ev.kind == "close_window":
+                if ev.at < now_t:
+                    # Window closed in a prior bar — apply immediately.
+                    self._tag_map.close_window(ev.setup)
+                    logger.info("DISPATCH_CLOSE_WINDOW | %s", ev.setup)
+                else:
+                    # Window ends exactly at this bar — defer until after dispatch so
+                    # the setup fires its last (or only) trade before the window closes.
+                    post_close_events.append(ev)
+                    logger.info("DISPATCH_CLOSE_WINDOW_DEFERRED | %s (will close post-dispatch)", ev.setup)
+
+        # ---- 2. Skip if no active detectors ----
+        active_syms = self._tag_map.active_symbols()
+        if not active_syms:
+            logger.info("SCAN_SKIPPED | no active detectors at bar %s", now)
+            # Still flush any deferred close_window events so TagMap stays consistent.
+            for ev in post_close_events:
+                self._tag_map.close_window(ev.setup)
+                logger.info("DISPATCH_CLOSE_WINDOW_POST | %s (closed after skip at bar %s)", ev.setup, now_t)
+            self._last_dispatch_ts = now
+            return None
+
+        # ---- 3. Restrict active syms to what has df5 data ----
+        active_syms_with_data = active_syms & set(df5_by_symbol.keys())
+        if not active_syms_with_data:
+            logger.info("SCAN_SKIPPED | active detectors exist but no df5 data for active syms | bar %s", now)
+            # Still flush any deferred close_window events so TagMap stays consistent.
+            for ev in post_close_events:
+                self._tag_map.close_window(ev.setup)
+                logger.info("DISPATCH_CLOSE_WINDOW_POST | %s (closed after skip at bar %s)", ev.setup, now_t)
+            self._last_dispatch_ts = now
+            return None
+
+        # ---- 4. Compute regime once (shared across all symbols in this bar) ----
+        index_df5 = self._index_df5()
+        regime = "chop"
+        regime_conf = 0.5
+        regime_diagnostics = None
+        try:
+            daily_idx = self.sdk.get_daily(
+                self.raw_cfg.get("directional_bias", {}).get("index_symbol", "NSE:NIFTY 50"), days=30
+            ) if not env.DRY_RUN else None
+            if hasattr(self.regime_gate, "compute_regime_multi_tf") and daily_idx is not None:
+                try:
+                    regime, regime_conf, regime_diagnostics = self.regime_gate.compute_regime_multi_tf(
+                        df5=index_df5, daily_df=daily_idx, symbol="INDEX",
+                    )
+                except Exception:
+                    regime, regime_conf = self.regime_gate.compute_regime(index_df5)
+            else:
+                regime, regime_conf = self.regime_gate.compute_regime(index_df5)
+        except Exception as regime_e:
+            logger.warning("DISPATCH_REGIME_FAILED | %s — defaulting to chop", regime_e)
+
+        # ---- 5. Directional bias update (mirrors old path) ----
+        if self.directional_bias.enabled:
+            index_sym = self.raw_cfg["directional_bias"]["index_symbol"]
+            if self.directional_bias.prev_close is None:
+                if env.DRY_RUN:
+                    self.directional_bias.set_prev_close_for_date(now)
+                else:
+                    try:
+                        pdc = self.sdk.get_prevday_levels(index_sym).get("PDC", float("nan"))
+                        if pdc and not pd.isna(pdc):
+                            self.directional_bias.set_prev_close(pdc)
+                    except Exception:
+                        pass
+            if self.directional_bias.prev_close is not None:
+                if env.DRY_RUN:
+                    index_price = self.directional_bias.get_backtest_price_at(now)
+                else:
+                    index_price = self._shared_ltp_cache.get_ltp(index_sym)
+                if index_price is not None:
+                    self.directional_bias.update_price(index_price)
+
+        # ---- 6. Build cap_segment_map for batch metadata ----
+        full_cap_map = self._load_cap_mapping()
+        cap_segment_map = {s: full_cap_map.get(s, {}).get("cap_segment", "unknown")
+                           for s in active_syms_with_data}
+
+        # ---- 7. Build symbol_data_map (mirrors old structure_prep block) ----
+        _t_data_prep_start = _time_mod.perf_counter()
+        symbol_data_map: Dict[str, tuple] = {}
+        screener_logger = get_screener_logger()
+        for sym in active_syms_with_data:
+            if sym in api_df5_cache:
+                df5 = api_df5_cache[sym]
+            elif self._precomputed_5m and sym in self._precomputed_5m:
+                df5 = self._get_precomputed_5m(sym, now, self.cfg.screener_store_5m_max)
+            elif sym in df5_by_symbol:
+                df5 = df5_by_symbol[sym]
+            else:
+                continue
+            if not validate_df(df5, min_rows=min_bars_for_processing):
+                continue
+            # Resolve levels
+            if levels_by_symbol and sym in levels_by_symbol and levels_by_symbol[sym]:
+                lvl = levels_by_symbol[sym]
+            elif levels_by_symbol is not None:
+                try:
+                    lvl = self._levels_for(sym, df5, now)
+                except Exception:
+                    lvl = {"PDH": float("nan"), "PDL": float("nan"),
+                           "PDC": float("nan"), "ORH": float("nan"), "ORL": float("nan")}
+            else:
+                lvl = self._levels_for(sym, df5, now)
+            symbol_data_map[sym] = (df5, lvl)
+
+        if not symbol_data_map:
+            logger.info("DISPATCH_DATA_EMPTY | No symbols with sufficient data at bar %s", now)
+            # Still flush any deferred close_window events so TagMap stays consistent.
+            for ev in post_close_events:
+                self._tag_map.close_window(ev.setup)
+                logger.info("DISPATCH_CLOSE_WINDOW_POST | %s (closed after data-empty at bar %s)", ev.setup, now_t)
+            self._last_dispatch_ts = now
+            return None
+
+        _t_data_prep_end = _time_mod.perf_counter()
+        shortlist = sorted(symbol_data_map.keys())
+        shortlist_count = len(shortlist)
+        logger.info(
+            "DISPATCH_SCAN | active_syms=%d with_data=%d regime=%s | bar %s",
+            len(active_syms), shortlist_count, regime, now,
+        )
+
+        # ---- 8. Plan batches ----
+        levels_for_plan = {sym: lvl for sym, (_, lvl) in symbol_data_map.items()}
+        df5_for_plan = {sym: df5 for sym, (df5, _) in symbol_data_map.items()}
+        plan_batches = self._dispatch_planner.plan(
+            now,
+            self._tag_map,
+            df5_for_plan,
+            levels_for_plan,
+            session_date=session_date_obj,
+            regime=regime,
+            cap_segment_map=cap_segment_map,
+            regime_diagnostics=regime_diagnostics,
+        )
+        if not plan_batches:
+            logger.info("PLAN_EMPTY | bar %s", now)
+            # Still flush any deferred close_window events so TagMap stays consistent.
+            for ev in post_close_events:
+                self._tag_map.close_window(ev.setup)
+                logger.info("DISPATCH_CLOSE_WINDOW_POST | %s (closed after plan-empty at bar %s)", ev.setup, now_t)
+            self._last_dispatch_ts = now
+            return {"decisions": [], "symbol_data_map": symbol_data_map,
+                    "shortlist_count": shortlist_count, "screener_logger": screener_logger,
+                    "shortlist": shortlist}
+
+        # ---- 9. Submit to ProcessPoolExecutor ----
+        _t_submit_start = _time_mod.perf_counter()
+        futures = []
+        with perf("scan", "dispatch_submit", n_batches=len(plan_batches), n_symbols=shortlist_count):
+            for batch in plan_batches:
+                fut = self._executor.submit(dispatch_worker_batch, batch)
+                futures.append((fut, {item[0] for item in batch.items}))
+        _t_submit_end = _time_mod.perf_counter()
+        logger.info(
+            "DISPATCH_BATCH_SUBMIT | %d batches (%d symbols) | submit_time=%.2fs",
+            len(futures), shortlist_count, _t_submit_end - _t_submit_start,
+        )
+
+        # ---- 10. Collect results ----
+        _t_collect_start = _time_mod.perf_counter()
+        all_sym_decisions: List[tuple] = []
+        for fut, _expected_syms in futures:
+            try:
+                batch_results = fut.result(timeout=60)
+                all_sym_decisions.extend(batch_results)
+            except Exception as fut_e:
+                logger.exception("DISPATCH_BATCH_FAILED | %s", fut_e)
+
+        _t_collect_end = _time_mod.perf_counter()
+        decisions_accept = [(sym, d) for sym, d in all_sym_decisions if d.accept]
+        decisions_reject = [(sym, d) for sym, d in all_sym_decisions if not d.accept]
+        logger.info(
+            "DISPATCH_COMPLETE | %d total → %d accept + %d reject | collect=%.2fs | bar %s",
+            len(all_sym_decisions), len(decisions_accept), len(decisions_reject),
+            _t_collect_end - _t_collect_start, now,
+        )
+
+        # Log screener accept/reject events (mirrors old path)
+        for sym, decision in all_sym_decisions:
+            df5 = symbol_data_map.get(sym, (None,))[0]
+            if decision.accept:
+                if screener_logger and df5 is not None and not df5.empty:
+                    try:
+                        screener_logger.log_accept(
+                            sym,
+                            timestamp=now.isoformat(),
+                            setup_type=decision.setup_type or "unknown",
+                            regime=decision.regime or "unknown",
+                            size_mult=decision.size_mult,
+                            min_hold_bars=decision.min_hold_bars,
+                            all_reasons=decision.reasons,
+                            structure_confidence=getattr(decision, "structure_confidence", 0),
+                            current_price=float(df5["close"].iloc[-1]) if not df5.empty else 0,
+                            vwap=float(df5.get("vwap", pd.Series([0])).iloc[-1]) if not df5.empty else 0,
+                            regime_diagnostics=getattr(decision, "regime_diagnostics", None),
+                        )
+                    except Exception:
+                        pass
+            else:
+                if screener_logger:
+                    top_reason = (
+                        next((r for r in decision.reasons if r.startswith("regime_block:")), None)
+                        or (decision.reasons[0] if decision.reasons else "reject")
+                    )
+                    try:
+                        screener_logger.log_reject(
+                            sym,
+                            top_reason,
+                            timestamp=now.isoformat(),
+                            setup_type=decision.setup_type or "unknown",
+                            regime=decision.regime or "unknown",
+                            all_reasons=decision.reasons,
+                            structure_confidence=getattr(decision, "structure_confidence", 0),
+                            current_price=float(df5["close"].iloc[-1]) if df5 is not None and not df5.empty else 0,
+                            regime_diagnostics=getattr(decision, "regime_diagnostics", None),
+                        )
+                    except Exception:
+                        pass
+
+        # Emit structure_collect timing event
+        try:
+            from config.logging_config import get_timing_logger
+            _lg = get_timing_logger()
+            if _lg is not None:
+                from utils.perf_timer import is_enabled as _perf_enabled
+                if _perf_enabled():
+                    _lg.log_event(
+                        ts=_time_mod.time(), pid=os.getpid(),
+                        stage="scan", substage="dispatch_collect",
+                        duration_ms=round((_t_collect_end - _t_collect_start) * 1000.0, 3),
+                        n_batches=len(futures), n_symbols=shortlist_count,
+                        n_accepted=len(decisions_accept),
+                    )
+        except Exception:
+            pass
+
+        # ---- Phase 2: close windows that ended at the just-dispatched bar ----
+        # These were deferred so dispatch could fire with the window still open.
+        for ev in post_close_events:
+            self._tag_map.close_window(ev.setup)
+            logger.info("DISPATCH_CLOSE_WINDOW_POST | %s (closed after dispatch at bar %s)", ev.setup, now_t)
+
+        self._last_dispatch_ts = now
+
+        return {
+            "decisions": decisions_accept,
+            "symbol_data_map": symbol_data_map,
+            "shortlist_count": shortlist_count,
+            "screener_logger": screener_logger,
+            "shortlist": shortlist,
+        }
 
     def _compute_orb_levels_once(self, now, df5_by_symbol: Dict[str, pd.DataFrame]) -> Optional[Dict[str, Dict[str, float]]]:
         """
