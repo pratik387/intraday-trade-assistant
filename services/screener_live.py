@@ -717,9 +717,6 @@ class ScreenerLive:
         # the Stage-0 shortlist per-bar so they're never silently dropped.
         # See services/setup_universe.py.
         self._setup_universes: Dict[str, Set[str]] = {}
-        self._gap_fade_universe: Optional[Set[str]] = None  # set at 09:15 bar
-        self._long_panic_gap_down_universe: Optional[Set[str]] = None  # set at 09:15 bar
-        self._circuit_release_fade_universe: Optional[Set[str]] = None  # set at 10:30 bar (morning-pin)
         self._daily_dict_cache: Dict[str, "pd.DataFrame"] = {}
 
         # Last-scan cutoff (parsed once). Backtest and paper both honor this — skips scans
@@ -762,8 +759,7 @@ class ScreenerLive:
         # ------------------------------------------------------------------ #
         # TransitionCalendar / TagMap / FetchScopeManager / DispatchPlanner  #
         # drive the per-bar calendar-walk → tag dispatch path.               #
-        # The old hardcoded lazy-build if-blocks and _universe_union() are   #
-        # DEAD CODE after this but kept in place for Tasks 12-13 cleanup.    #
+        # Hardcoded lazy-build if-blocks deleted by Task 13.                 #
         self._transition_calendar = TransitionCalendar.from_registry(self._dispatch_registry)
         self._tag_map = TagMap()
         self._fetch_scope = FetchScopeManager()
@@ -780,26 +776,6 @@ class ScreenerLive:
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
-    def _universe_union(self) -> Set[str]:
-        """Return symbols actually relevant for scanning today.
-
-        Combines cross-day setup universes (delivery_pct, circuit_t1,
-        earnings_day) built at session start with the lazy gap_fade
-        universe built at 09:15-09:30. Open positions are tracked
-        separately via WebSocket add_hot; they don't need to be in this
-        set (scan-time-only).
-        """
-        out: Set[str] = set()
-        for s in (self._setup_universes or {}).values():
-            out.update(s)
-        if self._gap_fade_universe:
-            out.update(self._gap_fade_universe)
-        if self._long_panic_gap_down_universe:
-            out.update(self._long_panic_gap_down_universe)
-        if self._circuit_release_fade_universe:
-            out.update(self._circuit_release_fade_universe)
-        return out
-
     def set_position_store(self, store) -> None:
         """Replace screener-local PositionStore with the shared one from main.py.
 
@@ -1376,11 +1352,9 @@ class ScreenerLive:
                     time.sleep(remaining_wait)
 
                 _t_api_start = time.perf_counter()
-                # Narrow to universe-union (~99 symbols) instead of all core_symbols
-                # (~1500). Open-position exit tracking uses WebSocket add_hot, not
-                # this scan-time fetch. Falls back to full universe if universe-union
-                # is empty (pre-09:30 before gap_fade lazy-build completes).
-                _univ = self._universe_union()
+                # Narrow to tag_map active symbols (~99) instead of all core_symbols
+                # (~1500). Falls back to full universe if tag_map is empty (pre-09:15).
+                _univ = self._tag_map.active_symbols()
                 fetch_symbols = sorted(_univ & set(self.core_symbols)) if _univ else list(self.core_symbols)
                 bar_ts = now.isoformat()
 
@@ -1488,35 +1462,13 @@ class ScreenerLive:
                 _dp_sl        = _dispatch_result["shortlist"]
                 _dp_slog      = _dispatch_result["screener_logger"]
 
-                # ---- DEAD CODE below (was Universe-driven scanning) ----
-                # Tasks 12-13 will delete this block entirely.
-                # Kept here per spec so Tasks 12-13 have a clean target.
-                if False:  # noqa: E501  # DEAD CODE — Task 13 deletes
-                    universe = set()
-                    for u in (self._setup_universes or {}).values():
-                        universe.update(u)
-                    if self._gap_fade_universe:
-                        universe.update(self._gap_fade_universe)
-                    if self._long_panic_gap_down_universe:
-                        universe.update(self._long_panic_gap_down_universe)
-                    universe &= set(df5_by_symbol.keys())
-                    feats_df = compute_bar_features(
-                        df5_by_symbol, universe, now, levels_by_symbol,
-                    )
-                    shortlist = feats_df["symbol"].tolist() if not feats_df.empty else []
-
         except Exception as e:
-            logger.exception("Universe scan failed; falling back to universe-union: %s", e)
-            shortlist = sorted(self._universe_union())
+            logger.exception("Universe scan failed; dispatch path error at this bar: %s", e)
             # In dispatch path, a top-level exception is fatal for this bar
             if "_dp_decisions" not in dir():
                 return
 
-        # ---- DISPATCH PATH BRIDGE (Task 10, 2026-05-17) ----
-        # Alias dispatch results into the variable names the downstream expects.
-        # The old universe-union + structure-prep + batch-submit blocks below are
-        # DEAD CODE — they are only reached on `if False:`.
-        # Tasks 12-13 will delete the dead blocks entirely.
+        # ---- DISPATCH PATH: alias results into downstream variable names ----
         decisions: List[Tuple[str, Decision]] = _dp_decisions
         symbol_data_map: Dict[str, tuple] = _dp_sdmap
         shortlist: List[str] = _dp_sl
@@ -2431,9 +2383,9 @@ class ScreenerLive:
                 )
                 # Still compute PDH/PDL/PDC from pre-warmed daily data for level-based setups
                 # Only ORH/ORL will be NaN (which is fine since ORB setups are disabled after 10:30)
-                # Narrowed to universe-union — downstream lookup only queries shortlist
-                # (=universe-union) symbols, so PDH/PDL/PDC for non-universe symbols is waste.
-                _univ = self._universe_union()
+                # Narrowed to tag_map active symbols — downstream lookup only queries
+                # shortlist symbols, so PDH/PDL/PDC for non-universe symbols is waste.
+                _univ = self._tag_map.active_symbols()
                 _scan_syms = _univ if _univ else set(self.core_symbols)
                 levels_by_symbol = {}
                 for sym in _scan_syms:
@@ -2488,9 +2440,8 @@ class ScreenerLive:
         # Narrow ORB compute to universe-union — universe is finalized by 09:30
         # (cross-day at startup + gap_fade lazy at 09:15-09:30), ORB fires at
         # 09:40, downstream lookup at line 1532 only queries symbols in
-        # shortlist (=universe-union). Computing levels for non-universe symbols
-        # is pure waste — they are never queried.
-        _univ = self._universe_union()
+        # shortlist symbols — computing levels for non-universe symbols is pure waste.
+        _univ = self._tag_map.active_symbols()
         _scan_syms = (set(df5_by_symbol.keys()) & _univ) if _univ else set(df5_by_symbol.keys())
         logger.info(
             f"ORB_CACHE | Computing ORH/ORL/PDH/PDL/PDC for {len(_scan_syms)} universe symbols at {current_time} (session_date={session_date})"
@@ -2570,7 +2521,7 @@ class ScreenerLive:
         # Narrow recovery to universe-union — ORB levels are only queried for
         # symbols in the scan shortlist (= universe-union). Fetching 1m
         # historical for non-universe symbols just burns broker rate-limits.
-        _univ = self._universe_union()
+        _univ = self._tag_map.active_symbols()
         _recover_syms = _univ if _univ else self.core_symbols
         logger.info(f"ORB_RECOVERY | Recovering levels for {len(_recover_syms)} universe symbols")
         for sym in _recover_syms:
