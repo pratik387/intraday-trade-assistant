@@ -257,7 +257,9 @@
       "max_concurrent_positions": 3,
       "per_symbol_cooloff_min": 15,
       "max_fires_per_5min": 10,
-      "wide_open": false
+      "wide_open": false,
+      "immediate_execution": true,
+      "_comment_immediate_execution": "2026-05-18: skip entry_zone retest, fire market-order on first bar after detection. Thesis (failed retest of morning pin) IS the confirmation; waiting for ANOTHER retest is double-counting and was dropping production PF from sanity 2.12 to OCI 1.13 because high-conviction momentum rejections never retested."
     },
     "mis_unwind_vwap_revert_short": {
       "enabled": true,

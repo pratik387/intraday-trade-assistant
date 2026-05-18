@@ -100,6 +100,11 @@ T2_R = 2.0
 EXIT_BAR_HHMM = "15:10"
 RISK_PER_TRADE_RUPEES = 1000
 
+# Entry-zone semantics (mode A only). Default Mode B = next-bar-open (idealized).
+ENTRY_MODE = "B"                # "A" | "B" — set by --entry-mode
+ENTRY_ZONE_PCT = 0.3            # symmetric, matches setups.circuit_release_fade_short.entry_zone_pct
+TRIGGER_EXPIRY_BARS = 3         # 15 minutes = 3 x 5m bars (matches trigger_expiry_minutes=15)
+
 # Windows
 WINDOWS = {
     "discovery": (date(2023, 1, 1), date(2024, 12, 31)),
@@ -233,16 +238,47 @@ def _simulate_one(daily_row, day_bars: pd.DataFrame) -> Optional[dict]:
     signal_close_px = float(rej_bar["close"])
     signal_ts = rej_bar["date"]
 
-    # REALISTIC EXECUTION (2026-05-17 fix): production cannot enter at the
-    # signal bar's close (it's already past). Entry is at the NEXT bar's
-    # open, matching how the production executor fills orders placed after
-    # a bar closes. Previous "enter at signal close" was a methodological
-    # idealization that over-stated PF (OCI Discovery PF dropped 2.12 -> 0.89).
+    # Entry semantics — see ENTRY_MODE module constant.
+    # Mode B (default, idealized): fill at next-bar OPEN. Production's actual
+    #   behavior pre-2026-05-18 — over-states PF for momentum signals that
+    #   never re-test the rejection level.
+    # Mode A (tick-zone-touch): walk subsequent bars; fill when range
+    #   intersects entry_zone (signal_close ± ENTRY_ZONE_PCT). EXPIRE after
+    #   TRIGGER_EXPIRY_BARS without touch. Matches production's tick-aware
+    #   trigger if we ship that fix.
     if rejection_idx + 1 >= len(afternoon):
         return None  # no next bar to enter on
-    entry_bar = afternoon.iloc[rejection_idx + 1]
-    entry_ts = entry_bar["date"]
-    entry_price = float(entry_bar["open"])
+
+    if ENTRY_MODE == "B":
+        entry_bar = afternoon.iloc[rejection_idx + 1]
+        entry_ts = entry_bar["date"]
+        entry_price = float(entry_bar["open"])
+        entry_offset = 1  # bars after rejection_idx
+    else:
+        # Mode A
+        zone_min = signal_close_px * (1.0 - ENTRY_ZONE_PCT / 100.0)
+        zone_max = signal_close_px * (1.0 + ENTRY_ZONE_PCT / 100.0)
+        entry_price = None
+        entry_ts = None
+        entry_offset = None
+        for j in range(1, min(1 + TRIGGER_EXPIRY_BARS, len(afternoon) - rejection_idx)):
+            cand = afternoon.iloc[rejection_idx + j]
+            cand_open = float(cand["open"])
+            cand_high = float(cand["high"])
+            cand_low = float(cand["low"])
+            # If open is already in zone, fill at open
+            if zone_min <= cand_open <= zone_max:
+                entry_price = cand_open
+            elif cand_low <= zone_max and cand_high >= zone_min:
+                # Range intersects zone — for SHORT, conservative fill = zone_min
+                # (price crossed up into zone from below, fill on entry-zone cross)
+                entry_price = max(cand_low, zone_min)
+            if entry_price is not None:
+                entry_ts = cand["date"]
+                entry_offset = j
+                break
+        if entry_price is None:
+            return None  # EXPIRED — no zone touch within trigger window
 
     hard_sl = rejection_high * (1.0 + SL_PCT_ABOVE_REJECTION_HIGH / 100.0)
     R = hard_sl - entry_price
@@ -252,8 +288,9 @@ def _simulate_one(daily_row, day_bars: pd.DataFrame) -> Optional[dict]:
     t1_target = entry_price - T1_R * R
     t2_target = entry_price - T2_R * R
 
-    # Path walk from entry bar onwards (next bar after signal)
-    after = afternoon.iloc[rejection_idx + 1:].copy()
+    # Path walk from ENTRY bar onwards (entry at bar's open; same bar's high/low
+    # eligible for SL/T2; entry_offset is 1 for Mode B, 1-3 for Mode A).
+    after = afternoon.iloc[rejection_idx + entry_offset:].copy()
 
     mfe_price = entry_price  # for SHORT, lower = more favorable
     mae_price = entry_price  # for SHORT, higher = more adverse
@@ -343,7 +380,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--window", choices=list(WINDOWS.keys()), default="discovery")
     parser.add_argument("--out", default=None)
+    parser.add_argument("--entry-mode", choices=["B", "A"], default="B",
+                        help="Entry model: B=next-bar-open (default, idealized); "
+                             "A=tick-zone-touch (walk subsequent bars, fill when range "
+                             "intersects entry_zone, EXPIRE if no touch within 3 bars)")
     args = parser.parse_args()
+    global ENTRY_MODE
+    ENTRY_MODE = args.entry_mode
 
     WINDOW_LABEL = args.window
     WINDOW_START, WINDOW_END = WINDOWS[WINDOW_LABEL]

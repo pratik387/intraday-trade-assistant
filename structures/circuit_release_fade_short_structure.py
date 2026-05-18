@@ -181,14 +181,25 @@ class CircuitReleaseFadeShortStructure(BaseStructure):
                 f"(no rejection wick)"
             )
 
-        # Volume confirmation: bar.volume >= median of prior `lookback` bars' volume
-        if len(today_bars) > self.volume_confirm_lookback + 1:
-            lookback_bars = today_bars.iloc[-(self.volume_confirm_lookback + 1):-1]
-            recent_vol_median = float(lookback_bars["volume"].median())
-            if recent_vol_median > 0 and bar_volume < recent_vol_median:
-                return _empty(
-                    f"bar_volume={bar_volume:.0f} < recent_median={recent_vol_median:.0f}"
-                )
+        # Volume confirmation: bar.volume >= median of prior `lookback` AFTERNOON
+        # bars' volume. Restricting to active_window bars (12:00+) matches the
+        # sanity script's logic — comparing a "rejection of morning pin" to
+        # AFTERNOON bars is the meaningful comparison; morning pre-lunch bars
+        # have different volume profile and bias the median wrong.
+        # Bug found 2026-05-18: full-day lookback caused production to fire
+        # 5+ minutes earlier than sanity (lower median → easier to pass volume
+        # gate) → larger R → T2 further → 59 sanity-T2 trades became OCI
+        # time_stop, dragging PF from sanity's 2.12 to OCI's 1.13.
+        afternoon_bars = today_bars[today_bars.index.time >= self.active_start]
+        # Need at least 2 afternoon bars (1 prior + current) to compute median.
+        if len(afternoon_bars) >= 2:
+            lookback_bars = afternoon_bars.iloc[-(self.volume_confirm_lookback + 1):-1]
+            if len(lookback_bars) > 0:
+                recent_vol_median = float(lookback_bars["volume"].median())
+                if recent_vol_median > 0 and bar_volume < recent_vol_median:
+                    return _empty(
+                        f"bar_volume={bar_volume:.0f} < recent_median={recent_vol_median:.0f}"
+                    )
 
         # ----- Signal passes - emit SHORT event -----
         confidence = min(1.0, (bar_high - bar_close) / max(bar_high - float(current_bar["low"]), 1e-9))

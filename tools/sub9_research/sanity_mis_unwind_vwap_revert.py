@@ -60,7 +60,7 @@ from tools.sub7_validation.build_per_setup_pnl import calc_fee       # noqa: E40
 ALLOWED_CAPS = {"small_cap", "mid_cap"}
 
 ACTIVE_START_HHMM = "14:30"
-ACTIVE_END_HHMM = "15:10"
+ACTIVE_END_HHMM = "15:00"  # 2026-05-17: tightened from 15:10 (matches production fix)
 
 VWAP_EXTENSION_PCT = 0.5    # current_price / vwap - 1 >= 0.5%
 RSI_OVERBOUGHT = 65
@@ -71,6 +71,11 @@ T1_R = 1.0
 T2_R = 2.0
 EXIT_BAR_HHMM = "15:10"
 RISK_PER_TRADE_RUPEES = 1000
+
+# Entry-zone semantics (mode A only). Default Mode B = next-bar-open.
+ENTRY_MODE = "B"                # "A" | "B" — set by --entry-mode
+ENTRY_ZONE_PCT = 0.2            # symmetric, matches setups.mis_unwind_vwap_revert_short.entry_zone_pct
+TRIGGER_EXPIRY_BARS = 3         # 15 minutes = 3 x 5m bars
 
 WINDOWS = {
     "discovery": (date(2023, 1, 1), date(2024, 12, 31)),
@@ -153,17 +158,43 @@ def _simulate_day(symbol, day_bars, cap_segment):
             continue
 
         # Signal qualifies - fire SHORT
-        # REALISTIC EXECUTION (2026-05-17 fix): production cannot enter at the
-        # signal bar's close (it's already past). Entry is at the NEXT bar's
-        # open, matching how the production executor fills orders placed
-        # after a bar closes. Sanity now mirrors this; previous "enter at
-        # signal close" was a methodological idealization that over-stated PF.
-        if i + 1 >= len(bars):
-            continue  # no next bar to enter on
-        entry_bar = bars.iloc[i + 1]
-        entry_ts_actual = entry_bar["date"]
-        entry_price = float(entry_bar["open"])
+        # Entry semantics — see ENTRY_MODE module constant.
+        # Mode B (default, idealized): fill at next-bar OPEN.
+        # Mode A (tick-zone-touch): walk subsequent bars; fill when range
+        #   intersects entry_zone (signal_close ± ENTRY_ZONE_PCT). EXPIRE
+        #   after TRIGGER_EXPIRY_BARS without touch.
         signal_close_px = close_px  # store for metadata
+
+        if ENTRY_MODE == "B":
+            if i + 1 >= len(bars):
+                continue
+            entry_bar = bars.iloc[i + 1]
+            entry_ts_actual = entry_bar["date"]
+            entry_price = float(entry_bar["open"])
+            entry_offset = 1
+        else:
+            # Mode A
+            zone_min = signal_close_px * (1.0 - ENTRY_ZONE_PCT / 100.0)
+            zone_max = signal_close_px * (1.0 + ENTRY_ZONE_PCT / 100.0)
+            entry_price = None
+            entry_ts_actual = None
+            entry_offset = None
+            for j in range(1, min(1 + TRIGGER_EXPIRY_BARS, len(bars) - i)):
+                cand = bars.iloc[i + j]
+                cand_open = float(cand["open"])
+                cand_high = float(cand["high"])
+                cand_low = float(cand["low"])
+                if zone_min <= cand_open <= zone_max:
+                    entry_price = cand_open
+                elif cand_low <= zone_max and cand_high >= zone_min:
+                    entry_price = max(cand_low, zone_min)
+                if entry_price is not None:
+                    entry_ts_actual = cand["date"]
+                    entry_offset = j
+                    break
+            if entry_price is None:
+                continue  # EXPIRED — no zone touch within trigger window
+
         hard_sl = entry_price * (1.0 + SL_PCT_ABOVE_ENTRY / 100.0)
         R = hard_sl - entry_price
         if R <= 0:
@@ -172,7 +203,7 @@ def _simulate_day(symbol, day_bars, cap_segment):
         t1_target = entry_price - T1_R * R
         t2_target = entry_price - T2_R * R
 
-        after = bars.iloc[i + 1:].copy()
+        after = bars.iloc[i + entry_offset:].copy()
         after = after[after["hhmm"] <= exit_cutoff]
         if after.empty:
             return None
@@ -252,7 +283,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--window", choices=list(WINDOWS.keys()), default="discovery")
     parser.add_argument("--out", default=None)
+    parser.add_argument("--entry-mode", choices=["B", "A"], default="B",
+                        help="B=next-bar-open (default, idealized); "
+                             "A=tick-zone-touch (matches a tick-aware production trigger)")
     args = parser.parse_args()
+    global ENTRY_MODE
+    ENTRY_MODE = args.entry_mode
     WINDOW_LABEL = args.window
     WINDOW_START, WINDOW_END = WINDOWS[WINDOW_LABEL]
 
