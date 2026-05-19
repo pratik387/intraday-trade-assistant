@@ -213,10 +213,7 @@ _STRUCTURE_TO_SETUP_TYPE: dict[str, str] = {
     "circuit_t1_fade_short": "circuit_t1_fade_short",
     "delivery_pct_anomaly_short": "delivery_pct_anomaly_short",
     "long_panic_gap_down": "long_panic_gap_down",
-    "circuit_release_fade_short": "circuit_release_fade_short",
-    "round_number_sweep_short": "round_number_sweep_short",
     "or_window_failure_fade_short": "or_window_failure_fade_short",
-    "mis_unwind_vwap_revert_short": "mis_unwind_vwap_revert_short",
 }
 
 

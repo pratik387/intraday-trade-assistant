@@ -351,109 +351,6 @@ def _cap_mis_static_universe(
     return qual
 
 
-def circuit_release_fade_short_universe(
-    df5_today_by_symbol: Dict[str, pd.DataFrame],
-    daily_dict: Dict[str, pd.DataFrame],
-    session_date: date,
-    config: Dict[str, Any],
-    cap_map: Dict[str, str],
-) -> Set[str]:
-    """C-03 universe: small/mid cap + MIS + morning-pin signature.
-
-    Dynamic - must be called at/after the 10:30 IST bar. Filters:
-      - cap_segment in allowed_caps (typically small_cap, mid_cap)
-      - MIS-eligible (caller may pre-filter via cap_map)
-      - session_high reached by 10:30 IST AND
-      - session_high / PDC >= min_day_gain_pct (e.g. 4.5% = circuit-pin proxy)
-
-    Returns the qualifying symbol set. Caller is responsible for caching
-    this for the session and adding to the screener's scan extras.
-
-    Built lazily once the 10:30 bar is observed - mirrors the LPGD 09:15
-    lazy-build pattern.
-    """
-    from services.symbol_metadata import get_mis_info
-
-    allowed_caps = set(config.get("allowed_cap_segments", ["small_cap", "mid_cap"]))
-    min_day_gain_pct = float(config.get("min_day_gain_pct", 4.5))
-    morning_high_by_hhmm = config.get("morning_high_by_hhmm", "10:30")
-    # Parse time
-    try:
-        h, m = morning_high_by_hhmm.split(":")
-        morning_cutoff = time(int(h), int(m))
-    except Exception:
-        morning_cutoff = time(10, 30)
-
-    qual: Set[str] = set()
-    for sym, df5 in df5_today_by_symbol.items():
-        if df5 is None or df5.empty:
-            continue
-        if cap_map.get(sym) not in allowed_caps:
-            continue
-        # MIS check
-        nse_sym = sym if sym.startswith("NSE:") else f"NSE:{sym}"
-        try:
-            if not get_mis_info(nse_sym).get("mis_enabled", False):
-                continue
-        except Exception:
-            continue
-
-        # Filter to TODAY's bars before morning_cutoff
-        try:
-            today_bars = df5[df5.index.date == session_date]
-        except Exception:
-            continue
-        if today_bars.empty:
-            continue
-        morning_bars = today_bars[today_bars.index.time <= morning_cutoff]
-        if morning_bars.empty:
-            continue
-
-        morning_high = float(morning_bars["high"].max())
-        # PDC from daily_dict
-        ddf = daily_dict.get(sym)
-        if ddf is None or ddf.empty:
-            ddf = daily_dict.get(nse_sym)
-        if ddf is None or ddf.empty:
-            continue
-        try:
-            pdc = float(ddf.iloc[-1]["close"])
-        except Exception:
-            continue
-        if pdc <= 0:
-            continue
-        day_gain_pct = (morning_high / pdc - 1.0) * 100.0
-        if day_gain_pct < min_day_gain_pct:
-            continue
-
-        # qual.add(sym) preserves the df5_today_by_symbol key format (matches
-        # screener core_symbols format - typically NSE-prefixed).
-        qual.add(sym)
-        if len(qual) >= 500:  # raised from MAX_EXTRA_PER_SETUP=200; ~111 typical candidates per day
-            break
-
-    logger.info(
-        "setup_universe.circuit_release_fade_short: %d morning-pin candidates on %s",
-        len(qual), session_date,
-    )
-    return qual
-
-
-def round_number_sweep_short_universe(daily_dict, session_date, config):
-    """C-02 universe: small_cap + MIS + price Rs.100-250 (static, PDC proxy).
-
-    Price band is highly restrictive (~50-100 symbols), so MAX_EXTRA cap (200)
-    is never hit. No max_symbols override needed.
-    """
-    qual = _cap_mis_static_universe(
-        daily_dict, config,
-        min_price=float(config.get("min_price", 100.0)),
-        max_price=float(config.get("max_price", 250.0)),
-    )
-    logger.info("setup_universe.round_number_sweep_short: %d symbols on %s", len(qual), session_date)
-    return qual
-
-
 def or_window_failure_fade_short_universe(daily_dict, session_date, config):
     """C-10 universe: small_cap + MIS-eligible (static).
 
@@ -462,17 +359,6 @@ def or_window_failure_fade_short_universe(daily_dict, session_date, config):
     """
     qual = _cap_mis_static_universe(daily_dict, config, max_symbols=1000)
     logger.info("setup_universe.or_window_failure_fade_short: %d symbols on %s", len(qual), session_date)
-    return qual
-
-
-def mis_unwind_vwap_revert_short_universe(daily_dict, session_date, config):
-    """C-08 universe: small+mid cap + MIS-eligible (static).
-
-    Universe is ~800-1000 small+mid cap MIS-eligible symbols. Raise cap above
-    default MAX_EXTRA_PER_SETUP=200 to avoid silent truncation.
-    """
-    qual = _cap_mis_static_universe(daily_dict, config, max_symbols=1500)
-    logger.info("setup_universe.mis_unwind_vwap_revert_short: %d symbols on %s", len(qual), session_date)
     return qual
 
 
@@ -503,25 +389,14 @@ def compute_static_universes(
     if cfg.get("enabled"):
         out["delivery_pct_anomaly_short"] = delivery_pct_universe(daily_dict, session_date, cfg)
 
-    # round_number_sweep_short (C-02, static cap+MIS+price filter)
-    cfg = (setups_cfg.get("round_number_sweep_short") or {})
-    if cfg.get("enabled"):
-        out["round_number_sweep_short"] = round_number_sweep_short_universe(daily_dict, session_date, cfg)
+    # round_number_sweep_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
 
     # or_window_failure_fade_short (C-10, static cap+MIS filter)
     cfg = (setups_cfg.get("or_window_failure_fade_short") or {})
     if cfg.get("enabled"):
         out["or_window_failure_fade_short"] = or_window_failure_fade_short_universe(daily_dict, session_date, cfg)
 
-    # mis_unwind_vwap_revert_short (C-08, static cap+MIS filter)
-    cfg = (setups_cfg.get("mis_unwind_vwap_revert_short") or {})
-    if cfg.get("enabled"):
-        out["mis_unwind_vwap_revert_short"] = mis_unwind_vwap_revert_short_universe(daily_dict, session_date, cfg)
-
-    # NOTE: circuit_release_fade_short (C-03) requires intraday morning-pin
-    # detection (day_high reached by 10:30). Cannot be pre-built at session
-    # start. Needs lazy-build at 10:30 IST in screener_live (similar to
-    # long_panic_gap_down at 09:15). Defer wiring until after OCI validation
-    # confirms the setup's edge.
+    # mis_unwind_vwap_revert_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
+    # circuit_release_fade_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
 
     return out

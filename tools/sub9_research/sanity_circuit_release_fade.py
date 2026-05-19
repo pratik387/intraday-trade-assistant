@@ -81,17 +81,29 @@ from tools.sub7_validation.build_per_setup_pnl import calc_fee       # noqa: E40
 ALLOWED_CAPS = {"small_cap", "mid_cap"}
 
 # Day filter (heuristic upper-circuit pin signature)
-# NOTE: close_off_high_pct day-filter REMOVED 2026-05-16 (look-ahead bias - uses
-# day_close which is unknown at entry time). Only filter on day_gain_pct (uses
-# day_high, which is locked by 10:30 per the morning-pin filter below).
-MIN_DAY_GAIN_PCT = 4.5            # day_high/PDC - 1 >= 4.5% (consistent with circuit pin)
-DAY_HIGH_BY_HHMM = "10:30"        # day_high must be reached by this time (morning pin)
+# 2026-05-18 fix: removed two more look-ahead biases:
+#   - "morning_high < day_high * 0.999" rejected days where EOD high > morning_high
+#     (impossible to know at signal time — production uses session_high_so_far)
+#   - "day_gain_pct >= 4.5%" was computed from EOD day_high, not session_high at signal bar
+# Both now use session_high_so_far at signal time, matching production
+# (structures/circuit_release_fade_short_structure.py:144-160).
+MIN_DAY_GAIN_PCT = 4.5            # session_high_so_far/PDC - 1 >= 4.5% AT SIGNAL TIME
+DAY_HIGH_BY_HHMM = "10:30"        # morning bars: morning_high = max(high before this time)
+MORNING_HIGH_TOLERANCE_PCT = 0.1  # session_high_so_far * (1 - tol/100) <= morning_high (no new high since)
 
 # Re-test detection
 RETEST_AFTER_HHMM = "12:00"       # only consider re-tests after this time (afternoon)
-RETEST_TOL_PCT = 0.3              # bar.high >= day_high * (1 - tol/100) qualifies as re-test
+RETEST_TOL_PCT = 0.3              # bar.high >= session_high_so_far * (1 - tol/100) qualifies as re-test
 REJECTION_CLOSE_PCT = 0.3         # bar.close <= bar.high * (1 - this/100) = rejection
 VOLUME_CONFIRM_BARS = 5           # rolling median of last N bars
+
+# Optional strictness filter (proposed remediation 2026-05-18):
+# Requires LOW retracement from morning_high BEFORE the retest is allowed.
+# Filters out "consolidation near morning_high → breakout" (the 197 OCI-only
+# losers in circuit_release) and keeps only "real weakness then retest"
+# patterns. Set to 0 to disable.
+#   min_low_between_morning_and_signal <= morning_high * (1 - this_pct/100)
+MIN_RETRACE_PCT_FROM_MORNING_HIGH = 0.0  # default off; sweep 0/1.5/2.0/3.0
 
 # Trade geometry
 SL_PCT_ABOVE_REJECTION_HIGH = 0.3
@@ -188,9 +200,14 @@ def _cap_segment(bare_symbol: str) -> str:
 # ----- Simulation -----
 
 def _simulate_one(daily_row, day_bars: pd.DataFrame) -> Optional[dict]:
-    """Simulate one circuit-pin-failed-retest SHORT trade."""
-    day_high = float(daily_row["high"])
-    day_low = float(daily_row["low"])
+    """Simulate one circuit-pin-failed-retest SHORT trade.
+
+    All "as-of-signal-time" checks use session_high_so_far (running max of all
+    bars from session open through the current candidate bar) rather than the
+    EOD day_high. This matches production logic in
+    structures/circuit_release_fade_short_structure.py:144-160 and removes the
+    look-ahead bias that made sanity reject failed-pin days post-hoc.
+    """
     pdc = float(daily_row["pdc"])
 
     if day_bars.empty:
@@ -200,35 +217,71 @@ def _simulate_one(daily_row, day_bars: pd.DataFrame) -> Optional[dict]:
     day_bars["hhmm"] = day_bars["date"].dt.strftime("%H%M").astype(int)
     day_bars = day_bars.sort_values("date").reset_index(drop=True)
 
-    # CONFIRM day-high was reached BY DAY_HIGH_BY_HHMM (morning pin)
+    # Morning bars used to compute morning_high (no look-ahead — morning is
+    # locked by 10:30, so reading max(high) of morning bars is fine).
     morning_cutoff = int(DAY_HIGH_BY_HHMM.replace(":", ""))
     morning_bars = day_bars[day_bars["hhmm"] <= morning_cutoff]
     if morning_bars.empty:
         return None
     morning_high = float(morning_bars["high"].max())
-    if morning_high < day_high * 0.999:
-        return None  # day_high reached AFTER morning -> not a morning pin
 
-    # Find re-test in afternoon (after RETEST_AFTER_HHMM)
+    # Iterate afternoon bars; at each candidate, compute session_high_so_far
+    # using only data available AT that bar (production-equivalent).
     retest_cutoff = int(RETEST_AFTER_HHMM.replace(":", ""))
     exit_cutoff = int(EXIT_BAR_HHMM.replace(":", ""))
     afternoon = day_bars[(day_bars["hhmm"] >= retest_cutoff) & (day_bars["hhmm"] <= exit_cutoff)].reset_index(drop=True)
     if afternoon.empty:
         return None
 
-    retest_threshold = day_high * (1.0 - RETEST_TOL_PCT / 100.0)
+    # Precompute running max(high) over the full intraday series for fast
+    # session_high_so_far lookup at any signal bar.
+    day_bars["session_high_so_far"] = day_bars["high"].cummax()
+    # Same for cumulative min(low) used by optional strictness filter.
+    day_bars["session_low_after_morning"] = day_bars["low"].where(
+        day_bars["hhmm"] > morning_cutoff
+    ).cummin()
+
+    # Build a lookup: afternoon bar timestamp -> session metrics at that bar.
+    # Use index alignment by date column.
+    sess_high_map = dict(zip(day_bars["date"], day_bars["session_high_so_far"]))
+    sess_low_after_morning_map = dict(zip(day_bars["date"], day_bars["session_low_after_morning"]))
 
     rejection_idx = None
+    session_high_at_signal = None
     for i, bar in afternoon.iterrows():
-        if bar["high"] >= retest_threshold:
-            # Rejection: close meaningfully below this bar's high
-            if bar["close"] <= bar["high"] * (1.0 - REJECTION_CLOSE_PCT / 100.0):
-                # Volume confirmation: bar volume >= recent median
-                lookback_start = max(0, i - VOLUME_CONFIRM_BARS)
-                recent_vol_median = float(afternoon.iloc[lookback_start:i]["volume"].median()) if i > 0 else 0.0
-                if recent_vol_median > 0 and bar["volume"] >= recent_vol_median:
-                    rejection_idx = i
-                    break
+        session_high = float(sess_high_map[bar["date"]])
+
+        # Production check 1: day_gain_pct using session_high (not EOD)
+        if (session_high / pdc - 1.0) * 100.0 < MIN_DAY_GAIN_PCT:
+            continue
+        # Production check 2: morning_high still holds (no new high since)
+        if morning_high < session_high * (1.0 - MORNING_HIGH_TOLERANCE_PCT / 100.0):
+            continue
+        # Production check 3: retest threshold against session_high
+        retest_threshold = session_high * (1.0 - RETEST_TOL_PCT / 100.0)
+        if bar["high"] < retest_threshold:
+            continue
+        # Rejection: close meaningfully below this bar's high
+        if bar["close"] > bar["high"] * (1.0 - REJECTION_CLOSE_PCT / 100.0):
+            continue
+        # Volume confirmation: bar volume >= recent median
+        lookback_start = max(0, i - VOLUME_CONFIRM_BARS)
+        recent_vol_median = float(afternoon.iloc[lookback_start:i]["volume"].median()) if i > 0 else 0.0
+        if not (recent_vol_median > 0 and bar["volume"] >= recent_vol_median):
+            continue
+        # Optional strictness filter: require low retracement from morning_high
+        # BEFORE the retest is allowed (proposed remediation 2026-05-18).
+        if MIN_RETRACE_PCT_FROM_MORNING_HIGH > 0.0:
+            sess_low = sess_low_after_morning_map.get(bar["date"])
+            if sess_low is None or pd.isna(sess_low):
+                continue
+            required_low = morning_high * (1.0 - MIN_RETRACE_PCT_FROM_MORNING_HIGH / 100.0)
+            if sess_low > required_low:
+                continue
+
+        rejection_idx = i
+        session_high_at_signal = session_high
+        break
 
     if rejection_idx is None:
         return None
@@ -344,8 +397,9 @@ def _simulate_one(daily_row, day_bars: pd.DataFrame) -> Optional[dict]:
         "symbol": daily_row["symbol"],
         "side": "SHORT",
         "signal_type": "circuit_release_failed_retest",
-        "day_high": day_high,
-        "day_low": day_low,
+        "day_high": float(daily_row["high"]),       # EOD (metadata only, not used for filtering)
+        "day_low": float(daily_row["low"]),         # EOD (metadata only)
+        "session_high_at_signal": session_high_at_signal,
         "day_close": float(daily_row["close"]),
         "pdc": pdc,
         "day_gain_pct": float(daily_row["day_gain_pct"]),

@@ -767,6 +767,177 @@ Reinforces that **intermarket-arbitrage signals operate at slower timescales tha
 
 ---
 
+## `mis_unwind_vwap_revert_short` (C-08) — RETIRED 2026-05-19 (Holdout collapse)
+
+**Thesis (original):** SEBI requires MIS positions to be auto-squared by 15:20 IST. Retail LONGS in overbought small/mid-cap stocks at 15:00+ face forced-sell flow during 15:15-15:25, creating a 10-minute window of concentrated sell-side pressure that SHORT entries before 15:15 can capture.
+
+**Mechanism research (2026-05-19, Phase 1):** Heterogeneous broker auto-square is REAL:
+- Upstox/Angel One: 15:15 IST auto-square
+- Zerodha: 15:20 IST (drifts to 15:24)
+- ICICI Direct: 15:15-15:20 IST
+- All charge ~₹50+GST = ₹59 penalty per auto-squared position
+
+Volume profile (Discovery 2-yr, 374K symbol-days): confirmed bulge at 15:15-15:25 is real — small/mid-cap mean volume at 2.5-3.0x the 11:00-13:00 baseline. Forced-liquidation signature is unambiguous.
+
+**Universe + filters tested:**
+- Cap: small_cap + mid_cap, MIS-eligible
+- VWAP extension >= 0.5%
+- RSI >= 85 (TIGHTENED from original 75 after cell-sweep)
+- vol_ratio >= 15x cum-vol (TIGHTENED from original 7x)
+- SL: 0.5% above entry
+- T2: 3.0R (full exit)
+- Active window: 15:00-15:10 entry, 15:15 5m-bar close exit (= 15:20:00 IST, just before Zerodha auto-square — no penalty)
+
+**Validation chain (locked cell, all anti-bias guards verified):**
+- Discovery (2023-01..2024-12): n=622, PF_realized=1.50, PF_net=**1.213**, WR=39%, 19/24 winning months, +Rs 72,728
+- OOS (2025-01..09):              n=261, PF_realized=1.49, PF_net=**1.216**, WR=35%, 7/9 winning months,  +Rs 32,195
+- Holdout (2025-10..2026-04):     n=198, PF_realized=0.91, PF_net=**0.751**, WR=32%, ? mwin,           **-Rs 34,562** ❌
+
+**Failure mode: regulatory regime break (same pattern as `delivery_pct_anomaly_short`).**
+
+Discovery + OOS both PREDATE the SEBI Oct 2025 rule changes (MWPL tightening, F&O position limits cut, single-stock SLB changes). PF parity Disc 1.213 ↔ OOS 1.216 was misleading because both periods reflect the SAME pre-SEBI retail MIS-positioning regime.
+
+Holdout (Oct 2025 onwards) covers post-SEBI: retail MIS concentration in small/mid-cap dropped, the forced-sell pressure mechanism weakened, multi-bar subset PF also collapsed (3.43 Disc → 4.14 OOS → 1.47 HO). Setup is **regulatory-decay-dead**.
+
+**Diagnostic depth notes:**
+- 71-73% of trades same-bar exit (entry bar 15:05 hit either SL or T2 within 5 min). High vol_ratio≥15 cells are inherently volatile.
+- Same-bar subset PF_net 0.84 (Disc) / 0.86 (OOS) / 0.60 (HO) — sanity's pessimistic same-bar-SL-priority rule made these net-negative. Production tick-level execution could differ.
+- Multi-bar subset PF_net 3.43 (Disc) / 4.14 (OOS) / 1.47 (HO) — even the "clean" carve-out collapsed in HO.
+- Signal-bar range as a pre-entry filter for same-bar prediction: tested 9 thresholds, monotonically HURTS PF (wider cap = higher PF). No clean predictor found.
+
+**Code files removed:**
+- `structures/mis_unwind_vwap_revert_short_structure.py`
+- `tools/sub9_research/sanity_mis_unwind_vwap_revert.py`
+- Function `mis_unwind_vwap_revert_short_universe` in `services/setup_universe.py`
+- Config block `setups.mis_unwind_vwap_revert_short` in `config/configuration.json`
+- Entry in `services/dispatch/worker.py:_STRUCTURE_TO_SETUP_TYPE`
+- Comment refs in `services/setup_universe.py:compute_static_universes` and `services/screener_live.py:_run_dispatch_path`
+
+**Preserved (negative-knowledge artifacts):**
+- `tools/sub9_research/sanity_mis_unwind_REAL_window.py` — the proper Phase-4 sanity with anti-bias guards
+- `tools/sub9_research/_phase2_empirical_signature.py` — Phase-2 Indian-markets empirical signature check
+- `reports/sub9_sanity/_mis_unwind_locked_trades_{discovery,oos,holdout}.csv` — 3-period evidence trail
+- `reports/sub9_sanity/_phase2_mis_unwind_drift_records.csv` — 374K symbol-day population data
+
+**Conditions for revival:**
+This setup should NOT be re-implemented unless:
+1. **A new post-SEBI regulatory event creates a different MIS-unwind mechanism** (e.g., new auto-square timing, new forced-deliverability rule). Then run Phase 1 research again with the new mechanism.
+2. **Live tick-level reproduction shows same-bar trades are NOT 50/50** (i.e., genuine tick-order info makes them profitable in production where 5m sanity rates them noise). Then re-test with tick-level sanity.
+3. **A new cell beyond RSI/vol_ratio is discovered** (e.g., gap_pct conditioning, NIFTY-direction conditioning, sector flow) that survives Discovery + OOS + Holdout. The Phase-3-style brief in `tasks/lessons.md` 2026-05-12 ship gate applies.
+
+## `round_number_sweep_short` (C-02) — RETIRED 2026-05-19 (all 3 periods fail)
+
+**Thesis (original):** Indian retail traders cluster stop-losses at round-number prices (Rs.100, 150, 200, 250) far more than at PDH/PDL because retail-education courses teach this (Subasish Pani, Powerof Stocks, Zerodha Varsity). Rs.100-250 stocks are prime retail territory (cheap, accessible, hyped on YouTube). When intraday price pokes above a round number briefly and closes back below, the upside stop-cluster has failed — retail breakout buyers are trapped. Their panic-sell cascades down for a SHORT fade.
+
+**Universe + filters (production cell-lock):**
+- Cap: small_cap MIS-eligible
+- Price band: Rs.100-250 (cheap-stock retail territory)
+- Round-number increment: Rs.50 (50, 100, 150, 200, 250)
+- Poke pct: 0.15% (bar pierces RN by ≥ this)
+- Volume ratio: ≥ 2.0× session-cumulative-mean
+- Active window: 11:00-12:30 IST
+- SL: 0.5% above sweep_high
+- T1=1R FULL EXIT (100% qty at T1, T2=2R retained as backup but inert with qty_pct=0)
+- Time stop: 15:00 IST
+
+**Claimed validation (`_status_2026_05_16`):** 3-window PFs Disc 1.24 (n=300) / OOS 1.21 (n=176) / Holdout 1.17 (n=126). Cell-locked from aggregate sanity which failed all 3 windows (PF 0.80/0.84/0.81).
+
+**Actual production result (OCI 17-month run, 2025-01 → 2026-04):**
+- ALL: n=217, PF_real **1.075**, WR 50%, net +Rs 5,135 over 16 months, mwin **8/16 (50%)**
+- IS (9mo): n=118, PF 1.06, mwin 5/9 (56%)
+- HO (7mo): n=99, PF 1.09, mwin **3/7 (43%)**
+
+PF marginally above 1.0 realized, but after Indian fee stack (~0.5% round-trip), PF_net falls below 1.0. Monthly winning months in HO collapse to 43%, below the 67% gate.
+
+**Audit (2026-05-19): cell-locked re-evaluation on aggregate sanity CSVs**
+
+Applied production cell-lock filter (11:00-12:30, small_cap, Rs.100-250) + production T1-full-exit geometry to the existing aggregate sanity CSVs:
+
+| Period | n | PF_real | PF_net | WR | mwin | Net PnL |
+|---|---|---|---|---|---|---|
+| Discovery (2yr) | 683 | 0.86 | **0.69** | 45% | **4/24 (17%)** | -Rs 91,144 |
+| OOS (9mo) | 314 | 0.85 | **0.69** | 46% | **0/9 (0%)** | -Rs 44,439 |
+| HO (7mo) | 270 | 0.94 | **0.73** | 48% | **1/7 (14%)** | -Rs 29,711 |
+
+**ALL THREE PERIODS NET-LOSING.** No period produces a winning result on PF_net. Monthly winning months 0-17% across the chain. The `_status_2026_05_16` claim (3-window PFs 1.24/1.21/1.17) does NOT reproduce under disciplined cell-lock + T1-full-exit geometry.
+
+**Failure mode:** Cell-mining illusion. The original "cell-locked" claim was found by sweeping 37K Discovery aggregate trades for cell+R-geometry combos. The cell that appeared to pass was data-mined — when the same filter + R-geometry is applied to a clean evaluation of the same data, PF_net is 0.69 not 1.24. The `_status_2026_05_16` numbers were not reproducible from the underlying CSVs.
+
+**Sanity script bug (minor):** `tools/sub9_research/sanity_round_number_sweep.py` walked from `entry_idx = i+1` while entry_price was `i+1.close` — bar i+1's high/low (which happened BEFORE entry-at-close) were used for SL/T2 checks. Same-bar rate was only 0.3%, so net impact small. Bug noted but not the dominant cause of retirement.
+
+**Code files removed:**
+- `structures/round_number_sweep_short_structure.py`
+- `tools/sub9_research/sanity_round_number_sweep.py`
+- Function `round_number_sweep_short_universe` in `services/setup_universe.py`
+- Config block `setups.round_number_sweep_short` in `config/configuration.json`
+- Entry in `services/dispatch/worker.py:_STRUCTURE_TO_SETUP_TYPE`
+- Comment refs in `services/setup_universe.py:compute_static_universes` and `services/screener_live.py:_run_dispatch_path`
+
+**Preserved (negative-knowledge artifacts):**
+- `reports/sub9_sanity/_round_number_sweep_trades_{discovery,oos,holdout}.csv` — original aggregate sanity (37K Disc / 17K OOS / 11K HO)
+- `reports/sub9_sanity/_round_number_sweep_cells_*.csv` — cell-mining outputs that produced the (non-reproducible) shipped claim
+
+**Conditions for revival:**
+This setup should NOT be re-implemented unless:
+1. **The reproducibility gap is explained** — why does the existing aggregate sanity recompute to PF_net 0.69 across all periods while the `_status_2026_05_16` claim was PF 1.24? Need to identify the methodological gap and confirm it's not an OOS-overfit artifact.
+2. **A genuinely new mechanism is found** for round-number price clustering. The Subasish Pani / Powerof Stocks precedent is YouTube-anecdotal, not data-confirmed. Phase-2 empirical signature check on Discovery would need to demonstrate retail stop-clustering signature is detectable in NSE intraday data.
+3. **A different price band or window** shows stable 3-window edge. Sweeps to date have only found data-mined cells.
+
+## `circuit_release_fade_short` (C-03) — RETIRED 2026-05-19 (regulatory decay, pre-war)
+
+**Thesis (original):** SHORT fade of failed re-test of morning circuit-pin in small/mid-cap NSE names. Indian retail FOMO drives a stock to upper circuit-band (5/10/20%) early. Sellers appear mid-day, price drops 1-2% from pin. Retail buyers re-engage, price re-tests day high from below. When the re-test FAILS, trapped FOMO buyers panic-sell, cascade-down.
+
+**Validation chain (claimed Disc 2.12 / OOS 3.13 / Holdout 4.53 — but those were aggregate WIDE_OPEN PFs, not production-config performance).**
+
+**Actual production results (OCI 17-month run, full 6-setup portfolio, 2025-01..2026-04):**
+
+Per-period breakdown (raw PnL):
+
+| Period | n | PF_real | Avg/trade | Sum |
+|---|---|---|---|---|
+| Discovery (2023-24) | 1,414 | 1.19 | +Rs 83 | +Rs 117,924 |
+| OOS (Jan-Sep 2025) | 472 | 1.26 | +Rs 112 | +Rs 52,716 |
+| **HO_pre_war (Oct-Dec 2025)** | 110 | **0.84** ❌ | -Rs 84 | **-Rs 9,207** |
+| **HO_war (Jan-Apr 2026)** | 159 | **0.60** ❌ | -Rs 222 | **-Rs 35,271** |
+
+After MIS leverage + Indian fees + 31.2% tax (OOS+HO combined): **-Rs 63,429 NET (LOSING)**. Per `analysis/reports/3year_backtest/run_20260519_130847/detailed_report.txt`.
+
+**Failure mode: regulatory decay starting Oct 2025 (pre-war).** The HO_pre_war period (Oct-Dec 2025) is post-SEBI-Oct-2025 changes but BEFORE the Jan 2026 war volatility. PF dropped 1.26 → 0.84 in this 3-month window. The war period (Jan-Apr 2026) deepened decay to 0.60 but did NOT cause it.
+
+This pattern is distinct from `circuit_t1_fade_short` (which was PROFITABLE in HO_pre_war at PF 1.88, only war hurt it) and matches `mis_unwind_vwap_revert_short` (decay started post-SEBI cutover, deepened in war).
+
+**Cell salvage attempts (2026-05-19 exhaustive sweep):**
+
+Per the methodology used for `mis_unwind` and `round_number`, ran 1D, 2D, and 3D cell sweeps on day_gain_pct, rejection_pct, entry_hour, cap_segment.
+
+| Best cell tried | Disc | OOS | HO_pre | HO_war |
+|---|---|---|---|---|
+| hour=12 + rej_pct 0.4-1.0 (post-hoc winner) | 1.25 | 1.44 | 1.44 (n=31) | **0.53** ❌ |
+| hour=13 (Disc/OOS-locked winner) | 1.34 | 1.32 | **0.53** ❌ | 0.55 ❌ |
+| All day_gain bands | 1.02-1.31 | 1.04-1.51 | 0.69-1.03 | 0.49-0.94 |
+
+**NO 3D cell with n>=20 + PF>1.10 ships in ALL 4 periods.** Cell-mining illusion confirmed: the "hour=12 cell that survives HO_pre" was a post-hoc artifact — if locked on Disc+OOS independently, hour 13 would've won and that cell broke harder in HO_pre.
+
+**Code files removed:**
+- `structures/circuit_release_fade_short_structure.py`
+- Function `circuit_release_fade_short_universe()` in `services/setup_universe.py`
+- Config block `setups.circuit_release_fade_short` in `config/configuration.json`
+- Entry in `services/dispatch/worker.py:_STRUCTURE_TO_SETUP_TYPE`
+- Comment refs in `services/setup_universe.py` and `services/screener_live.py`
+
+**Preserved (negative-knowledge artifacts):**
+- `tools/sub9_research/sanity_circuit_release_fade.py` — anti-bias-fixed sanity script (Phase A look-ahead removed May 18-19, useful for any future revival attempt)
+- `tools/sub9_research/_circuit_release_fade_sweep_cellmine.py` — cell-mining tool
+- `tools/sub9_research/_tmp_retrace_sweep*.py` — retrace-filter remediation attempts (didn't help; documented for future reference)
+- `reports/sub9_sanity/_circuit_release_fade_short_trades_oos_{CLEAN,MODE_A,PHASE_A,PHASE_B2}.csv` — sanity reproducibility evidence trail
+- `reports/sub9_sanity/_circuit_release_fade_short_trades_holdout_PHASE_A.csv` — holdout under fixed-anti-bias sanity
+
+**Conditions for revival:**
+This setup should NOT be re-implemented unless:
+1. **A new post-Oct-2025 mechanism emerges** that restores retail circuit-pin behavior (e.g., SEBI loosening F&O / leverage rules)
+2. **Holdout regime stabilizes** (war volatility recedes) AND **a tightened cell** shows PF >= 1.10 in 6-month rolling window with n >= 100
+3. **Mode-A execution (tick zone re-touch) testing reveals** the production was systematically failing on entry mechanics distinct from regime (we tested Mode A in May 2026 — PF only dropped 14%, so not the cause)
+
 ## Maintenance protocol
 
 When a new setup is retired:
