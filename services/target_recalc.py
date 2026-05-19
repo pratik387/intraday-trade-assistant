@@ -213,6 +213,8 @@ def _recalc_structural(
 
     if "stop" in adjusted and isinstance(adjusted["stop"], dict):
         adjusted["stop"]["risk_per_share"] = round(actual_rps, 2)
+    if "sizing" in adjusted and isinstance(adjusted["sizing"], dict):
+        adjusted["sizing"]["risk_per_share"] = round(actual_rps, 2)
     adjusted["risk_per_share"] = round(actual_rps, 2)
     adjusted["actual_entry"] = round_to_tick(actual_entry)
 
@@ -302,6 +304,8 @@ def _recalc_r_multiple(
     ]
     if "stop" in adjusted and isinstance(adjusted["stop"], dict):
         adjusted["stop"]["risk_per_share"] = round(actual_rps, 2)
+    if "sizing" in adjusted and isinstance(adjusted["sizing"], dict):
+        adjusted["sizing"]["risk_per_share"] = round(actual_rps, 2)
     adjusted["risk_per_share"] = round(actual_rps, 2)
     adjusted["actual_entry"] = round_to_tick(actual_entry)
 
@@ -400,6 +404,8 @@ def _recalc_or_range(
     if "stop" in adjusted and isinstance(adjusted["stop"], dict):
         adjusted["stop"]["hard"] = round(new_sl, 2)
         adjusted["stop"]["risk_per_share"] = round(new_rps, 2)
+    if "sizing" in adjusted and isinstance(adjusted["sizing"], dict):
+        adjusted["sizing"]["risk_per_share"] = round(new_rps, 2)
     adjusted["risk_per_share"] = round(new_rps, 2)
     adjusted["actual_entry"] = round_to_tick(actual_entry)
 

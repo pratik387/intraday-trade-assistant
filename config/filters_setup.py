@@ -1,5 +1,6 @@
 # config/filters_setup.py
 import json
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -37,6 +38,19 @@ def load_filters(force_reload: bool = False) -> dict:
 
     cfg = {}
     cfg.update(entry)
+
+    # Apply mode_profiles overrides on top of base config.
+    # Mode = env RUN_MODE (if set), else cfg["mode"], else "production".
+    _mode = os.environ.get("RUN_MODE") or cfg.get("mode", "production")
+    _profiles = cfg.get("mode_profiles", {})
+    if _mode not in _profiles:
+        raise ValueError(f"unknown mode {_mode!r}; available: {list(_profiles.keys())}")
+    _overrides = _profiles[_mode]
+    # Shallow merge: profile keys replace top-level keys
+    for k, v in _overrides.items():
+        cfg[k] = v
+    cfg["_effective_mode"] = _mode  # for debugging
+
     _CFG = cfg
     return cfg
 

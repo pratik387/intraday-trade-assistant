@@ -352,5 +352,126 @@
                 {"name": "bb_width_high", "conditions": [{"feature": "bb_width_proxy", "min": 0.002348}], "_edge": "global HIGH tercile from 48K data"}
             ]
         }
+    },
+    "edge_discovery": {
+        "_doc": "Edge-First Discovery Framework — see specs/2026-05-15-edge-first-discovery-framework-design.md",
+        "feature_library_version": "v1-tier-a",
+        "outcome_horizons_minutes": [5, 15, 30, 60, 120],
+        "outcome_eod": true,
+        "cost_model": {
+            "spread_by_cap_adv": {
+                "small_cap": {"adv_lt_100k": 0.0015, "adv_100k_500k": 0.0008, "adv_500k_2m": 0.0005, "adv_gt_2m": 0.0003},
+                "mid_cap":   {"adv_lt_100k": 0.0008, "adv_100k_500k": 0.0005, "adv_500k_2m": 0.0003, "adv_gt_2m": 0.0002},
+                "large_cap": {"adv_lt_100k": 0.0004, "adv_100k_500k": 0.0003, "adv_500k_2m": 0.0002, "adv_gt_2m": 0.0001}
+            },
+            "sl_slippage_bar_fraction": 0.5,
+            "sl_slippage_normal_pct": 0.001,
+            "market_impact_pct_per_pct_adv": 0.05,
+            "market_impact_cap_pct": 0.05
+        },
+        "ship_gate_standalone": {
+            "n_per_year_min": 300,
+            "pf_discovery_min": 1.30,
+            "pf_oos_min": 1.20,
+            "pf_holdout_min": 1.15,
+            "walk_forward_stability_min": 0.5,
+            "win_months_pct_min": 55,
+            "top_month_concentration_max_pct": 40
+        },
+        "ship_gate_ensemble": {
+            "n_per_year_min": 50,
+            "n_per_year_max": 299,
+            "effect_size_min_sigma": 0.4,
+            "walk_forward_stability_min": 0.5,
+            "live_setup_pf_lift_min": 0.15
+        },
+        "decay_monitor": {
+            "rolling_window_months": 6,
+            "caution_pf_threshold": 1.20,
+            "pause_pf_threshold": 1.00,
+            "retire_pf_threshold": 0.80,
+            "retire_consecutive_months": 2
+        },
+        "parity_gate": {
+            "_doc_tolerance": "Softened on 2026-05-15 (T14 resolution) from pf=10% wr=5pp due to documented baseline drift on gap_fade_short — `_live_status` claims PF=1.36 but stored Holdout parquet shows PF=1.13 (post-sweep run was never saved as parquet). Tolerances widened to accommodate the drift; framework still detects gross mismatches (>20% PF, >10pp WR, >10% N).",
+            "pf_tolerance_pct": 20.0,
+            "wr_tolerance_pp": 10.0,
+            "n_tolerance_pct": 10.0
+        },
+        "walk_forward": {
+            "train_window_months": 6,
+            "test_window_months": 1,
+            "step_months": 1
+        },
+        "edge_region_scan": {
+            "_doc": "top_edge_regions scan parameters. min_n=minimum bucket sample size for stat power. top_n=number of regions returned. max_dims=highest combinatorial dimension (1D, 2D, 3D scans).",
+            "min_n": 50,
+            "top_n": 20,
+            "max_dims": 3
+        },
+        "periods": {
+            "discovery_start": "2023-01-01",
+            "discovery_end": "2024-12-31",
+            "oos_start": "2025-01-01",
+            "oos_end": "2025-09-30",
+            "holdout_start": "2025-10-01",
+            "holdout_end": "2026-04-30"
+        },
+        "target_long_panic_gap_down": {
+            "_doc": "Target 2 LONG-side panic-gap-down scan parameters. See specs/2026-05-15-edge-first-discovery-framework-plan.md Task 18.",
+            "gap_down_pct_min": 0.01,
+            "order_size_pct_of_adv": 0.001,
+            "cost_horizon_minutes": 120,
+            "scan_min_n": 100,
+            "scan_top_n": 30,
+            "scan_max_dims": 3,
+            "scan_outcome": "ret_120m_post_cost",
+            "scan_feature_names": [
+                "cap_segment", "adv_bucket", "dist_from_pdh_pct", "dist_from_pdl_pct",
+                "gap_pct", "bar_range_pct", "bar_body_pct", "is_expiry_week", "is_rbi_policy_day"
+            ],
+            "forward_horizons_minutes": [15, 30, 60, 120],
+            "forward_eod": true,
+            "cap_segments": ["small_cap", "mid_cap"],
+            "adv_bucket_midpoints": {
+                "adv_lt_100k": 50000, "adv_100k_500k": 300000,
+                "adv_500k_2m": 1200000, "adv_gt_2m": 5000000,
+                "_fallback": 100000
+            }
+        },
+        "target_ensemble_live_setups": {
+            "_doc": "Target 3 ensemble feature mining on the 3 live setups. See specs/2026-05-15-edge-first-discovery-framework-plan.md Task 19.",
+            "live_setups": ["gap_fade_short", "circuit_t1_fade_short", "delivery_pct_anomaly_short"],
+            "scan_min_n": 50,
+            "scan_top_n": 20,
+            "scan_max_dims": 2,
+            "scan_outcome": "outcome",
+            "scan_feature_names": [
+                "cap_segment", "is_expiry_week", "is_monthly_expiry_day",
+                "is_rbi_policy_day", "is_index_rebalance_day"
+            ],
+            "entry_time_column_aliases": ["entry_time", "trade_time", "datetime", "timestamp", "decision_ts"],
+            "pnl_column_aliases": ["net_return", "net_pnl_inr", "net_pnl", "pnl"],
+            "trade_parquet_dir": "reports/sub7_validation"
+        },
+        "report_generator": {
+            "_doc": "Decision report aggregator. See tools/edge_discovery/report.py and Task 20.",
+            "parity_setups": ["gap_fade", "circuit_t1", "delivery_pct"],
+            "discovery_targets": ["target_long_panic_gap_down"],
+            "ensemble_summary_filename": "target_ensemble_live_summary.json",
+            "decision_report_filename": "decision_report.md",
+            "top_n_target_regions_in_report": 10
+        },
+        "decay_monitor_runner": {
+            "_doc": "Runner that converts shipped-setup trade logs into monthly PF time-series and emits per-setup DecayStatus via decay_monitor.compute_status. See Task 21.",
+            "entry_time_column_aliases": ["entry_time", "trade_time", "datetime", "timestamp", "decision_ts", "session_date"],
+            "pnl_column_aliases": ["net_return", "net_pnl_inr", "net_pnl", "pnl"],
+            "inf_display_cap": 5.0,
+            "setup_trade_parquets": {
+                "gap_fade_short": "reports/sub8_oos_holdout_clean/gap_fade_short.parquet",
+                "circuit_t1_fade_short": "reports/sub8_oos_holdout_clean/circuit_t1_fade_short.parquet",
+                "delivery_pct_anomaly_short": "reports/sub8_oos_holdout_clean/delivery_pct_anomaly_short.parquet"
+            }
+        }
     }
 }

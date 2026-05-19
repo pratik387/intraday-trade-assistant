@@ -297,31 +297,106 @@ def gap_fade_universe(
 # Aggregate
 # ---------------------------------------------------------------------------
 
+def _cap_mis_static_universe(
+    daily_dict: Dict[str, pd.DataFrame],
+    config: Dict[str, Any],
+    *,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    max_symbols: Optional[int] = None,
+) -> Set[str]:
+    """Generic static universe builder: filter by cap_segment + MIS + optional price band.
+
+    Used by setups whose universe needs are purely static at session start
+    (no intraday signal required for inclusion). Detector's per-bar filters
+    still kick in to determine signal eligibility.
+
+    Returns symbols in the SAME FORMAT as the keys of `daily_dict` (typically
+    NSE-prefixed, e.g. "NSE:RELIANCE"). This must match the screener's
+    `core_symbols` format - returning bare symbols here causes a silent
+    intersection-with-core mismatch that drops the entire universe (bug
+    discovered 2026-05-16 smoke test).
+    """
+    from services.symbol_metadata import get_cap_segment, get_mis_info
+
+    allowed_caps = set(config.get("allowed_cap_segments", ["small_cap", "mid_cap"]))
+    cap = int(max_symbols) if max_symbols is not None else MAX_EXTRA_PER_SETUP
+    qual: Set[str] = set()
+    for sym, ddf in daily_dict.items():
+        # symbol may be "NSE:XYZ" or "XYZ" — daily_dict keys vary by source.
+        # Preserve the original key format in the returned set so it matches
+        # whatever the screener uses as core_symbols.
+        bare = sym.replace("NSE:", "")
+        nse_sym = f"NSE:{bare}"
+        try:
+            if get_cap_segment(nse_sym) not in allowed_caps:
+                continue
+            if not get_mis_info(nse_sym).get("mis_enabled", False):
+                continue
+        except Exception:
+            continue
+        # Price band filter using yesterday's close (PDC) as proxy
+        if (min_price is not None or max_price is not None) and ddf is not None and not ddf.empty:
+            try:
+                pdc = float(ddf.iloc[-1]["close"])
+                if min_price is not None and pdc < min_price:
+                    continue
+                if max_price is not None and pdc > max_price:
+                    continue
+            except Exception:
+                continue
+        qual.add(sym)  # ← preserve the daily_dict key format (NSE-prefixed)
+        if len(qual) >= cap:
+            break
+    return qual
+
+
+def or_window_failure_fade_short_universe(daily_dict, session_date, config):
+    """C-10 universe: small_cap + MIS-eligible (static).
+
+    Universe is ~500-700 small_cap MIS-eligible symbols. Raise cap above
+    default MAX_EXTRA_PER_SETUP=200 to avoid silent truncation.
+    """
+    qual = _cap_mis_static_universe(daily_dict, config, max_symbols=1000)
+    logger.info("setup_universe.or_window_failure_fade_short: %d symbols on %s", len(qual), session_date)
+    return qual
+
+
 def compute_static_universes(
     setups_cfg: Dict[str, Dict[str, Any]],
     daily_dict: Dict[str, pd.DataFrame],
     session_date: date,
 ) -> Dict[str, Set[str]]:
-    """Compute session-start universes (cross-day setups only).
+    """Compute session-start universes (cross-day + static-filter setups).
 
-    gap_fade is dynamic (needs 09:15 bar) — call gap_fade_universe separately.
+    Dynamic setups (gap_fade, long_panic_gap_down, circuit_release_fade) are
+    lazy-built later — call their specific universe functions separately.
 
     Returns dict: {setup_name: set_of_symbols}. Setups with no universe
-    contribution (e.g. gap_fade, or any setup that relies on Stage-0
-    momentum) are absent from the result.
+    contribution (e.g. gap_fade pre-09:15) are absent from the result.
     """
     out: Dict[str, Set[str]] = {}
     if not setups_cfg or not daily_dict:
         return out
 
-    # circuit_t1
+    # circuit_t1 (cross-day)
     cfg = (setups_cfg.get("circuit_t1_fade_short") or {})
     if cfg.get("enabled"):
         out["circuit_t1_fade_short"] = circuit_t1_universe(daily_dict, session_date, cfg)
 
-    # delivery_pct
+    # delivery_pct (cross-day)
     cfg = (setups_cfg.get("delivery_pct_anomaly_short") or {})
     if cfg.get("enabled"):
         out["delivery_pct_anomaly_short"] = delivery_pct_universe(daily_dict, session_date, cfg)
+
+    # round_number_sweep_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
+
+    # or_window_failure_fade_short (C-10, static cap+MIS filter)
+    cfg = (setups_cfg.get("or_window_failure_fade_short") or {})
+    if cfg.get("enabled"):
+        out["or_window_failure_fade_short"] = or_window_failure_fade_short_universe(daily_dict, session_date, cfg)
+
+    # mis_unwind_vwap_revert_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
+    # circuit_release_fade_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
 
     return out

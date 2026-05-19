@@ -384,7 +384,559 @@ These eleven setups have a **group-level retire reason** that's harder to overtu
 
 ---
 
+## `fno_ban_t1_fade_short` — RETIRED 2026-05-16 (pre-implementation)
+
+**Retired:** 2026-05-16
+**Predecessor spec:** Candidate #2 of `specs/2026-05-14-research-post-sebi-edges.md`
+**Status:** Never implemented as a detector. Killed at falsifier stage before any sanity-script or detector code was written.
+
+### Original thesis
+
+Under SEBI's Nov 3, 2025 intraday FutEq OI monitoring framework, stocks can enter the F&O ban list at any of 4 random intraday MWPL snapshots. Once a stock enters ban, fresh positions are blocked — only existing-position closures allowed. This creates a one-way exit flow with no fresh buying, leading to predictable downside drift on the ban-entry day and/or T+1 session.
+
+**Direction:** SHORT on/after ban-entry.
+**Falsifier (pre-registered):** WR ≥ 55% AND median T+1 return ≤ −0.5%.
+
+### Universe + filters
+
+- All F&O underlyings that appear in the daily NSE F&O ban list
+- Window for falsifier: 2025-10-01 → 2026-04-30 (full post-SEBI rule-change window)
+- Data: `data/fno_ban_history/fno_ban_events.parquet` (EOD-resolution only; intraday endpoint not found)
+
+### Falsifier evidence (n=19, after 2 missing-bar drops)
+
+Path-A (intraday on ban_date, open → close):
+- WR 52.6%, median **−0.46%**, mean −0.33%, PF (short view) 1.29
+- Misses both thresholds (WR < 55%, median > −0.5%).
+
+Path-B (close ban_date → close ban_date+1, literal "T+1" reading):
+- WR **47.4%**, median **+0.57%**, mean +1.11%, PF (short view) **0.375**
+- INVERSE direction — the literal hypothesis goes the wrong way. T+1 mean-reverts UP on news already priced in by EOD ban_date.
+
+Path-C (full ban-window, open ban_date → close exit−1):
+- WR 52.6%, median −0.18%, mean +1.35%, PF (short view) 0.586
+
+Per-event CSV: `reports/sub9_sanity/_fno_ban_falsifier_per_event.csv`
+Falsifier script: `tools/sub9_research/_fno_ban_falsifier.py`
+
+### Why retired (the actual failure)
+
+1. **Sample is fatally thin.** Only 21 ban-entry events across 5 symbols in the full 7-month post-SEBI window. The original brief assumed n=200+ achievable. The reality (21 EOD-resolution events) is an order of magnitude smaller.
+2. **Symbol concentration is fatal.** SAMMAANCAP (10) + SAIL (6) = 14/19 events. Two-symbol risk masquerades as a "pattern."
+3. **Outlier-driven mean.** KAYNES (−13.66%) drives most of Path A's negative mean. Without that one event, mean ≈ +0.30% (LONG bias, not SHORT).
+4. **Path B is inverse.** The literal "T+1 fade" interpretation has mean +1.11% — i.e., the stock RECOVERS after the ban day. Whatever mechanism the brief proposed for forced selling is dominated by the next-day rebound from over-extended selling on ban_date itself.
+5. **Even the closest-to-passing path (A) is below transaction-cost economics.** Median −0.46% gross vs ~0.15-0.20% round-trip MIS fees = net ~−0.25%/trade. With 19 trades over 7 months ≈ 3 trades/month, this is operationally pointless even if the gross PF held.
+
+### Conditions for revival
+
+1. **Intraday ban-list endpoint must be found.** The EOD-only data inherently misses the actual "first moment" the ban activates (one of 4 random intraday snapshots per SEBI Nov 3 2025 framework). The mechanism the brief describes is INTRADAY (no fresh buying within the session that the snapshot triggers), but EOD data tests next-day behavior — that's the wrong window.
+2. **Sample must be ≥ 100 events.** The current 21 across 5 symbols cannot support even a basic falsifier. Need at least intraday-resolution data + a wider F&O universe + a longer window (12+ months post-SEBI).
+3. **Mechanism reformulation.** The data suggests the OPPOSITE of the original thesis on Path B (T+1 is a LONG). If revived, the candidate should be tested as a SHORT-ON-BAN-DAY-INTRADAY only, with the falsifier raised to PF ≥ 1.40 to compensate for transaction costs at this small return size.
+4. **Symbol diversification.** ≤ 30% of events from any single symbol. The current 53% SAMMAANCAP+SAIL share would have to drop.
+
+If any of those four are missing, the setup stays retired.
+
+### Files of record
+
+- `tools/sub9_research/_fno_ban_falsifier.py` — falsifier script (retained for future revival reference)
+- `reports/sub9_sanity/_fno_ban_falsifier_per_event.csv` — per-event returns table
+- `data/fno_ban_history/fno_ban_events.parquet` — source data (retained — still relevant to other candidates that consume F&O ban events as a covariate, not as a primary signal)
+- No detector code, no sanity script, no config keys — nothing to remove.
+
 ---
+
+## `pre_open_auction_direction_follow` — RETIRED 2026-05-16 (pre-implementation)
+
+**Retired:** 2026-05-16
+**Predecessor spec:** Candidate #4 of `specs/2026-05-14-research-post-sebi-edges.md`
+**Status:** Never implemented. Killed at data-recon — the required upstream data feed is unavailable.
+
+### Original thesis
+
+Feb 1, 2025 SEBI rule eliminated leverage on long options. Retail option-buying flow that used to position pre-open is now gone or much smaller. Pre-open auction depth and pattern should have shifted predictably — opening gap behavior in retail-favorite names should be more reliable post-rule.
+
+**Direction:** Both LONG and SHORT, based on first-15-minute follow-through after pre-open auction direction in NIFTY-50 names.
+**Falsifier (pre-registered):** WR ≥ 60% on next-60-min prediction from (pre-open direction + first 5m bar direction).
+
+### Data state at recon (2026-05-16)
+
+1. `data/pre_open_auction/pre_open_events.parquet` — **does not exist**. Backfill (`tools/pre_open_auction/fetch_pre_open.py`) attempted 25/818 sessions, all returned 404 across legacy / 2024 / nsearchives URL forms.
+2. Scraper docstring explicitly states: *"NSE has retired the public pre-open archive endpoint. None of the documented URLs resolve for historical dates."* This was already documented in May 2026 when the scraper was written; the candidate brief in `specs/2026-05-14-research-post-sebi-edges.md` overlooked that note.
+3. `cache/ohlcv_archive/RELIANCE.NS/*_1minutes.feather` — **0 bars before 09:15** across 809 sessions. The pre-open call-auction window (09:00-09:15) is not in our intraday archive either. Same is true for all symbols (the broker pipeline starts ingesting at 09:15 market open).
+4. Live API mode (`--use-live-api`) exists in the scraper but only snapshots T-0 (current day), which cannot build a historical dataset.
+
+### Why retired (the actual failure)
+
+The brief's hypothesis falsifier ("pre-open direction + first 5m bar direction predicts next-60min with WR ≥ 60%") cannot be tested — we have **zero historical observations of pre-open IEP, imbalance quantity, or pre-09:15 bars**. The brief's "~7000 events" sample-availability estimate assumed the scrape would succeed; it did not, and the upstream endpoint has been retired.
+
+Unlike #2 (where 21 thin events still let us run a falsifier), this candidate has no path to even a single data point. There is nothing to score.
+
+### Conditions for revival
+
+1. **Wire up the live-API snapshotter as a daily cron** at 09:14:30 IST. After 60-90 trading days (~3-4 months), a forward-only sample exists. The current `fetch_pre_open.py --use-live-api` flag is the entry point.
+2. **Once n ≥ 200 sessions × 50 NIFTY-50 stocks ≈ 10K events**, re-run the falsifier on forward-only data. If WR ≥ 60% on the (pre-open direction + first 5m bar) → next-60-min signal, proceed to sanity-script and Discovery/OOS phases.
+3. **Recognize this is now a 2026-Q4+ project**, not a 2026-Q2 project. Earliest realistic ship date is end-2026 if the cron starts today.
+4. **Even with data, the post-Feb-2025 option-rule-change thesis is the WEAKEST mechanism in the original candidate list** — it's a "should have shifted" hypothesis, not a "must have shifted" one. Before investing the cron-collection time, write a stronger mechanism statement OR explicitly accept that this is an exploratory data-mining project.
+
+If any of those four are missing, the setup stays retired.
+
+### Files of record
+
+- `tools/pre_open_auction/fetch_pre_open.py` — scraper (kept, also useful for future forward-only collection)
+- `tools/pre_open_auction/verify_pre_open.py` — verification stub
+- `data/pre_open_auction/_backfill.log` — evidence of failed backfill attempt
+- No detector code, no sanity script, no config keys — nothing to remove.
+
+---
+
+---
+
+## `block_deal_accumulation` (C-01) — RETIRED 2026-05-16 (at sanity)
+
+**Retired:** 2026-05-16
+**Predecessor spec:** CANDIDATE-01 of `specs/2026-05-16-new-setup-candidates.md`
+**Status:** Sanity script run on all 3 windows (Discovery / OOS / Holdout) in both directions (LONG and SHORT). Mechanism doesn't generalize. No detector code written. No production wiring.
+
+### Original thesis
+
+When a confirmed NSE institutional BUY block deal (>= Rs. 5 cr) prints at price X on day T, that price becomes a "defended" level on subsequent retests within the same session. The institution that took size at X is unlikely to let price materially cross X (they'll defend or add at that level). Pro-Indian-trader interpretation: morning blocks (08:45-09:00 IST) are reported by ~10:00, actionable from 10:30 IST onwards with 30 min buffer for confirmation. The retest from above (price went up after block, came back to X) is the entry trigger.
+
+### Universe + filters
+
+- NSE-listed, MIS-enabled
+- Block trade_value_cr >= 5.0 (SEBI institutional-block minimum)
+- BUY rows (one row per block)
+- 5m bars cached for the symbol
+- Discovery: 2023-01-01 to 2024-12-31
+- OOS: 2025-01-01 to 2025-09-30
+- Holdout: 2025-10-01 to 2026-04-30 (block deal data backfilled 2026-05-16 specifically for this evaluation)
+
+### Trade simulation
+
+- Disclosure cutoff: 10:30 IST
+- AWAY-move: bar high after 10:30 must reach >= block_price * 1.005
+- Entry: first bar after AWAY-move where bar.low <= block_price (limit fill at level)
+- SL: 0.5% from entry (above for short, below for long)
+- T1: 1R, T2: 2R
+- Time stop: 15:10
+- Risk per trade: Rs.1000
+
+### Cross-window results (both directions tested)
+
+| Window | LONG direction (candidate spec) | SHORT direction (inverse-edge test) |
+|---|---|---|
+| Discovery (n=236) | PF **0.56**, WR 29.2%, NET -Rs.73K | PF **1.35**, WR 51.7%, NET +Rs.42K |
+| OOS (n=217) | PF 0.80, WR 38.7%, NET -Rs.22K | PF **0.29**, WR 19.8%, NET -Rs.128K |
+| Holdout (n=80) | PF 1.12, WR 43.8%, NET +Rs.5K | PF 0.31, WR 26.2%, NET -Rs.38K |
+
+Trade CSVs preserved in `reports/sub9_sanity/_block_deal_accumulation_{long,short}_trades_{window}.csv`.
+
+### Why retired (the actual failure)
+
+**The mechanism doesn't generalize across regimes.** Both directions fail at least one window:
+
+1. **LONG direction (candidate spec):** Fails Discovery (PF 0.56, WR 29.2%) — classic inverse-edge signature where MAE median (1.77R) significantly exceeded MFE median (0.86R). Holdout PF 1.12 looks marginally OK but n=80 is below the 200-floor for any statistical confidence, AND the cell breakdown shows large_cap losing while small/mid win — opposite to where institutional block deals concentrate (large_cap dominates the sample by 60%).
+
+2. **SHORT direction (inverse test):** Looked promising on Discovery (PF 1.35) but **catastrophically collapsed in both OOS (PF 0.29) and Holdout (PF 0.31)**. 30+ percentage point WR drop (51.7% -> 19.8%). This is a clear sign that the Discovery edge was a regime artifact of 2023-24 (FII-outflow-dominated period), not a stationary signal.
+
+3. **Direction-flipping across regimes is the signature of an unstable mechanism**, not a real edge. A stationary edge should hold the same direction (positive or negative) across windows even if magnitude varies.
+
+### Mechanism-level diagnosis (what's actually happening)
+
+The candidate spec's claim that "institutions defend block_price on retest" is incorrect for intraday cash equity. The block-deal disclosure event is NOT sufficient signal to predict intraday price behavior. Likely reasons:
+
+1. **Block-deal participants are often longer-term holders** — they don't actively defend intraday positions. They took size for portfolio rebalancing or strategic accumulation; they don't sit at the level adding more.
+2. **Many block deals are portfolio-rebalancing** between AMC schemes (e.g., HDFC Liquid Fund -> HDFC Mid Cap Fund) — no directional positioning at all; level has no defender.
+3. **By the time disclosure is public (10:00+), the level has already been digested** by HFT and market makers within minutes of execution. Pro-trader 10:30 entry is too late for any same-session edge.
+4. **The ICT-style "institutional level defense" thesis is mostly retail education**, not market mechanics. Institutions don't behave like the folk theory suggests — they're not constantly active at every price they touched.
+
+### Conditions for revival
+
+If revived in the future, would need to address ALL of the following:
+
+1. **Filter to TRUE STRATEGIC accumulation blocks** (not portfolio rebalancing). This requires client_name enrichment — classify each block as "long-only mutual fund acquisition" vs "intra-fund transfer" vs "PMS rebalance" vs "promoter pledge release." Without this enrichment, all blocks look the same in the data, but only a small fraction are mechanistically defended.
+2. **Test T+1 retest, not same-session.** Same-session edge appears arbed-away within minutes of disclosure. Strategic positions may show T+1 defense (next session after institution has settled in).
+3. **Find a stable direction.** Both LONG and SHORT failed in different windows. Without finding ONE direction that works across all 3 windows, this is not a tradeable signal.
+4. **Cap-segment specialization may help** — small/mid_cap blocks in Holdout LONG showed PF 1.57 (mid) and 3.82 (small), but with n=18 and 9 respectively, this is below any statistical floor. Could test with a longer accumulation window.
+
+### Files of record
+
+- `tools/sub9_research/sanity_block_deal_accumulation_long.py` (handles both LONG and SHORT via --direction flag, despite the legacy filename)
+- `reports/sub9_sanity/_block_deal_accumulation_long_trades_{discovery,oos,holdout}.csv`
+- `reports/sub9_sanity/_block_deal_accumulation_short_trades_{discovery,oos,holdout}.csv`
+- `data/block_deals/block_deals_events.parquet` (kept — useful for other research that may consume block deal data as covariate)
+- No detector code, no test code, no config keys — nothing to remove.
+
+### Lesson
+
+Confirms that the inverse-edge memory rule (`feedback_inverse_edge_signature.md`) saved time here. The Discovery LONG result alone (PF 0.56, WR 29%) would have been a retire — but flipping to SHORT immediately revealed Discovery PF 1.35. Without the OOS check, this would have shipped as a SHORT setup. OOS revealed the Discovery SHORT was a regime artifact. Net: gauntlet did its job, the methodology held up, and we learn the C-01 thesis is broken in 3 windows.
+
+---
+
+## `volume_spike_reversal_midsession` (C-09) — RETIRED 2026-05-16 (at sanity)
+
+**Retired:** 2026-05-16
+**Predecessor spec:** CANDIDATE-09 of `specs/2026-05-16-new-setup-candidates.md`
+**Status:** Sanity script tested across 2 universes (large_cap only with ADV>=500cr, and large+mid_cap with ADV>=100cr). Both fail decisively. No detector code written. No production wiring.
+
+### Original thesis
+
+During mid-session (10:30-13:30 IST) when morning retail FOMO has settled but MIS-unwind has not yet started, large-cap institutional VWAP-tracking algorithm flows can exhaust at intraday extremes - manifesting as a volume-spike bar with rejection wick near session VWAP. Different participant than gap_fade_short's retail-FOMO exhaustion: this should capture institutional algo flow exhaustion. Mechanism backed by HFT/microstructure literature on order flow toxicity (Easley/Lopez de Prado/O'Hara).
+
+### Filters tested
+
+Universe v1: large_cap, MIS-eligible, 20-day ADV >= Rs.500 cr (122 symbols)
+Universe v2: large_cap + mid_cap, MIS-eligible, 20-day ADV >= Rs.100 cr (461 symbols)
+
+Signal bar (both universes): vol_z >= 2.0 AND vol_ratio (vs 20-bar median) >= 3.0 AND body >= 0.3% of price AND wick rejection >= 50% on the move's extreme AND price within 2x ATR of VWAP. Active window 10:30-13:30 IST. R-multiple trade geometry: SL = 0.3% beyond wick, T1=1R, T2=2R, time-stop 15:10.
+
+### Discovery results (both universes fail)
+
+| Universe | n | PF | WR | LONG | SHORT |
+|---|---|---|---|---|---|
+| large_cap (122 sym) | 86 | 0.604 | 37.2% | WR 24%, PF 0.35 | WR 49%, PF 0.92 |
+| large+mid (461 sym) | 737 | 0.790 | 42.3% | WR 39%, PF 0.70 | WR 44%, PF 0.84 |
+
+Both directions lose in both universes. Aggregate PF 0.60-0.79.
+
+### Why retired (mechanism-level diagnosis)
+
+The candidate spec's claim - "institutional algo flow exhaustion creates mean-reversion at VWAP" - does NOT manifest in Indian intraday cash equity. The empirical pattern is the OPPOSITE: a volume-spike bar with a rejection wick in mid-session is more often a **momentum-continuation signal** (the move that created the wick continues) than a reversal signal.
+
+This makes mechanical sense in retrospect:
+1. Institutional VWAP-anchored algos execute regardless of price - they don't "exhaust" at extensions; they just keep buying/selling on schedule.
+2. Mid-session volume spikes in large-caps are typically driven by news, block-deal anticipation, or sectoral rotation - all of which create CONTINUATION pressure, not exhaustion.
+3. The "wick rejection" interpretation assumes a single large order met an opposing wall and bounced. In reality, intraday volume spikes are aggregated activity (many small orders), not single-block exhaustion.
+4. The HFT/microstructure literature backing (Easley/Lopez de Prado on order flow toxicity) operates at tick-scale, not 5-minute-bar scale. At 5m bars, the aggregation washes out the toxicity signature.
+
+### Comparison to gap_fade_short (which DOES work)
+
+gap_fade_short captures retail-FOMO exhaustion in SMALL-CAPS at the OPEN (09:25-10:00 specifically). Different mechanism entirely:
+- Small-cap retail FOMO is mechanically distinct from large-cap institutional algo flow
+- Morning open is the highest-emotion window of the day; mid-session is the lowest
+- The "exhaustion candle" with wick rejection IS the retail-FOMO signature, but only in the small-cap + open-window context
+
+C-09 tried to generalize this pattern to a different universe + timing, but the participant mix is fundamentally different, and the mechanism doesn't carry.
+
+### Conditions for revival
+
+Genuinely none under the current filter geometry. A revived version would need to:
+1. **Find a different anchor than wick-rejection-at-VWAP.** Wick rejection in mid-session large-caps does NOT predict reversal. A revived version would need a fundamentally different mechanic.
+2. **Identify a specific participant group whose behavior creates exhaustion.** Institutional VWAP-tracking algos don't exhaust. Block-deal-anticipation flows? Sectoral-rotation flows? Need a clear participant hypothesis with regulatory or behavioral backing.
+3. **Test mid_cap-only or specific high-RVOL sub-cells.** The current data may have edge in some narrow cell we didn't slice. But after Discovery showing both directions lose in both universes, the burden of proof for a revival is high.
+
+### Files of record
+
+- `tools/sub9_research/sanity_volume_spike_reversal.py` - sanity script (retained for future revival reference)
+- `reports/sub9_sanity/_volume_spike_reversal_trades_discovery.csv` - per-trade outputs
+- No detector code, no test code, no config keys - nothing to remove.
+
+### Lesson
+
+Reinforces the binding rule from earlier sub-9 work: **mechanism must come BEFORE filters**. The candidate spec specified the trade geometry (vol_z, wick ratio, VWAP proximity, ATR) thoroughly but couldn't articulate a SPECIFIC participant whose behavior creates intraday large-cap exhaustion. Without that participant story, the geometry was data-mining a pattern that doesn't have an underlying mechanism in this universe.
+
+---
+
+## `compression_fii_anchor_breakout` (C-06) — RETIRED 2026-05-16 (at data recon)
+
+**Retired:** 2026-05-16
+**Predecessor spec:** CANDIDATE-06 of `specs/2026-05-16-new-setup-candidates.md`
+**Status:** Killed at data-recon stage before any sanity script was written. No data exists to evaluate the candidate.
+
+### Original thesis
+
+When a NIFTY-50 stock enters a tight intraday range (height < 0.7% over 20+ bars) during the 11:30-13:30 lunchtime regime, the eventual breakout direction is predictable from concurrent FII net cash flow direction. Institutional flow concentrating on one side during low-vol periods should tip the squeeze in their favor when liquidity returns post-13:30.
+
+### Data state at recon (2026-05-16)
+
+The candidate hinges on **intraday FII/DII net cash flow data**. We have:
+- T-1 EOD FII/DII data via NSE bhavcopy (next-day-available, not real-time intraday)
+- NO intraday FII/DII feed in `data/` or any current scraper
+
+NSE publishes intraday FII/DII updates ONLY on the live website (paywalled / scraping-fragile). Moneycontrol displays "live FII activity" but it's also delayed and not exposed via clean API. We do not have this scraper built.
+
+### Why retired (the actual failure)
+
+The mechanism requires the directional anchor (FII flow sign) to be observable AT ENTRY TIME (post-13:30 IST). Without intraday FII data, we cannot make that observation. The candidate's entire premise collapses without the anchor.
+
+Like `pre_open_auction_direction_follow` (retired 2026-05-16) and `fno_ban_t1_fade_short` (retired 2026-05-16), this candidate dies at the data-availability stage. The pre-registered candidate spec assumed the data was attainable; data-recon revealed otherwise.
+
+### Conditions for revival
+
+1. **Wire up an intraday FII scraper** — possible sources: Moneycontrol's live-activity page (HTML scraping with rate limits), Bloomberg/Reuters terminal subscriptions, NSE intraday bhavcopy if it exists. Note: latency is the killer here — even if a scraper works, FII updates published 30+ minutes after execution may be too late to anchor a 13:30 entry decision.
+2. **Test on forward-collected data once available** — minimum 60-90 trading days of paired (compression-event, concurrent-FII-direction) observations.
+3. **Independent validation** that NIFTY-50 lunchtime compression events have meaningful predictive value at all. The compression-then-expansion mechanism is academically real (volatility clustering); the FII-direction anchor is theoretical — would need to test compression events even without the FII anchor to establish a baseline.
+
+### Files of record
+
+- No sanity script, no detector code, no test code, no config keys.
+- The candidate spec in `specs/2026-05-16-new-setup-candidates.md` is preserved for revival reference.
+
+### Why compression-alone is not a valid fallback
+
+A natural question: "Without the FII anchor, the candidate is still a compression-then-expansion trade. Why not test that on its own?"
+
+Answer: That mechanism was already tested as `narrow_cpr_breakout` (sub-7, retired) and failed Phase-1. Compression-alone without an external directional anchor is direction-blind: the volatility-clustering mechanism (low-vol periods followed by high-vol periods) is academically real, but predicting WHICH direction the expansion takes is essentially 50/50 without an external signal. Re-running compression-alone in this candidate would be a re-test of a known retire, not new research.
+
+The FII-anchor was THE differentiating feature of C-06. Without it, there's no novel research path to pursue. Hence retire-at-recon is correct.
+
+### Lesson
+
+Three of the candidates that surfaced from the old_main review (#6 F&O ban T+1, #4 pre-open auction, C-06 here) all died at data recon because their proposed external-data anchors were not actually available in the system. The lesson encoded in `memory/feedback_data_availability_pre_check.md` (always print df.shape + symbol concentration before scoring a brief) needs to extend to: **always verify the required external data feed exists in `data/` or has a working scraper, before assigning any confidence rating to a candidate.**
+
+---
+
+## `sectoral_lag_catchup_long` (C-05) — RETIRED 2026-05-16 (at sanity)
+
+**Retired:** 2026-05-16
+**Predecessor spec:** CANDIDATE-05 of `specs/2026-05-16-new-setup-candidates.md`
+**Status:** Full 6-step LPGD cycle completed (sanity Discovery / OOS / Holdout + inverse-edge + per-sector cell analysis). No salvageable cell holds across all 3 windows. No detector code written, no production wiring.
+
+### Original thesis
+
+When a NIFTY sectoral index (NIFTY Bank, NIFTY IT, NIFTY Auto, etc.) breaks its prior-day-high with volume conviction, the heaviest-weighted constituents that have NOT yet broken their own PDH have a documented tendency to catch up within 30-60 min. Index-level conviction drags lagging constituents on positioning rebalance flow.
+
+### Implementation details
+
+- Sectoral universe: 11 NIFTY sectoral lists (Bank, IT, Auto, Pharma, FMCG, Metal, Energy, Finance, Realty, Oilgas, PSUBank). 163 unique constituents total.
+- Sectoral proxy: equal-weighted aggregate of constituent closes (normalized to first-bar-of-day = 1.0). NOT actual NSE market-cap-weighted index.
+- Active window: 10:30 - 14:30 IST
+- Signal: sectoral aggregate breaks morning_high (max sectoral level by 10:00) by >= 0.05% AND constituent is BELOW own PDH at that moment.
+- LONG entry on lagging constituent.
+- SL: 0.3% below signal-bar low; T1=constituent PDH (structural); T2=PDH + 0.5*ATR.
+
+### 3-window aggregate results
+
+| Window | n | PF | WR | NET |
+|---|---|---|---|---|
+| Discovery (2023-24) | 33,174 | 0.96 | 40.1% | -Rs. 864K |
+| OOS (2025 Q1-Q3) | 12,053 | **0.83** | 38.7% | -Rs.1.27M |
+| Holdout (2025-10 to 26-04) | 8,427 | **1.10** | 43.4% | +Rs. 477K |
+
+### Inverse-edge test
+
+- Original LONG: PF 0.96, WR 40.1% (Discovery)
+- INVERSE-SHORT: PF 0.50, WR 18.0% — CATASTROPHIC, original direction is correct
+
+### Per-sector cross-window cell stability (Discovery-passing sectors)
+
+| Sector | Disc | OOS | Hold | Cross-window |
+|---|---|---|---|---|
+| NIFTY_PSUBANK | 1.10 | **0.67** | 1.18 | OOS crashes |
+| NIFTY_AUTO | 1.03 | 0.94 | 0.95 | drifts down |
+| NIFTY_METAL | 1.03 | **0.72** | 1.21 | OOS crashes then recovers |
+| NIFTY_REALTY | 1.04 | 0.91 | 1.57 | OOS dips then recovers |
+| NIFTY_IT | 0.95 | 1.16 | 0.92 | Only OOS-positive (anti-pattern) |
+
+**No sector holds PF >= 1.00 in all 3 windows.** Holdout shows broad recovery (8/11 sectors >= 1.00) but Discovery + OOS aggregate both fail.
+
+### Why retired
+
+1. **Aggregate fails Discovery (0.96) AND OOS (0.83).** Even with Holdout pass (1.10), 2/3 windows below floor is a clean fail.
+2. **Per-sector cells don't generalize.** PSUBANK and METAL CRASHED in OOS (PF 0.67, 0.72) then recovered in Holdout (1.18, 1.21). This is regime-dependent noise, not stationary edge.
+3. **Holdout-only positive pattern is suspicious.** Holdout window includes post-SEBI Oct 2025 + war months (Feb-Apr 2026) - regime with unusual sectoral correlations from sectoral leadership rotation, FII flow shifts, and rate-cut anticipation. The recovery is likely regime-specific, not mechanism-driven.
+4. **Inverse-edge test failed.** Original direction is correct; flipping makes it worse. Edge is real-ish but unstable.
+
+### Mechanism-level diagnosis
+
+The intermarket-arbitrage thesis (sectoral index breaks PDH → lagging constituents catch up) IS academically real on **daily** timeframes (multiple SSRN papers document this for US markets). The failure here is the **intraday 5m-bar timeframe** AND the **equal-weighted constituent proxy** for the sectoral index.
+
+Two issues:
+1. **Equal-weighted aggregate doesn't match NSE's market-cap-weighted index calculation.** The actual sectoral index has very different intraday dynamics than my proxy. A NIFTY_BANK heavyweight (HDFC, ICICI) moves the actual index 10-30x more than a smaller constituent. The equal-weighted proxy treats all constituents equally, blurring the true index move.
+2. **Intraday catch-up effects are weak.** On daily timeframes, "lagging constituents catch up" plays out over 1-3 days, not 30-60 min. The candidate spec was overly optimistic about intraday speed.
+
+### Conditions for revival
+
+Genuinely thin. If revived in the future, would need:
+1. **Direct sectoral index intraday data** (not constituent aggregation proxy). NSE publishes intraday index values; would need a separate scraper.
+2. **Market-cap-weighted aggregate at minimum** (not equal-weighted) if direct index data unavailable.
+3. **Longer holding window** (intraday 60-120 min vs current 30-60 min) - daily lag-catchup takes longer than intraday.
+4. **Re-evaluate after the war-regime is over.** The Holdout pattern (2025-10 to 2026-04) overlaps with regime change events; can't separate edge from regime.
+
+If those four don't change, the setup stays retired.
+
+### Files of record
+
+- `tools/sub9_research/sanity_sectoral_lag_catchup.py` (retained for future revival reference)
+- `reports/sub9_sanity/_sectoral_lag_catchup_trades_{discovery,oos,holdout}.csv`
+- No detector code, no production wiring, no config keys.
+
+### Lesson
+
+Reinforces that **intermarket-arbitrage signals operate at slower timescales than intraday 5m**. Daily lag-catchup is real (academic literature confirms); intraday lag-catchup in 30-60 min is wishful thinking. Future intermarket candidates should be validated on multi-bar (e.g., 30min/60min) bars before assuming 5m granularity.
+
+---
+
+## `mis_unwind_vwap_revert_short` (C-08) — RETIRED 2026-05-19 (Holdout collapse)
+
+**Thesis (original):** SEBI requires MIS positions to be auto-squared by 15:20 IST. Retail LONGS in overbought small/mid-cap stocks at 15:00+ face forced-sell flow during 15:15-15:25, creating a 10-minute window of concentrated sell-side pressure that SHORT entries before 15:15 can capture.
+
+**Mechanism research (2026-05-19, Phase 1):** Heterogeneous broker auto-square is REAL:
+- Upstox/Angel One: 15:15 IST auto-square
+- Zerodha: 15:20 IST (drifts to 15:24)
+- ICICI Direct: 15:15-15:20 IST
+- All charge ~₹50+GST = ₹59 penalty per auto-squared position
+
+Volume profile (Discovery 2-yr, 374K symbol-days): confirmed bulge at 15:15-15:25 is real — small/mid-cap mean volume at 2.5-3.0x the 11:00-13:00 baseline. Forced-liquidation signature is unambiguous.
+
+**Universe + filters tested:**
+- Cap: small_cap + mid_cap, MIS-eligible
+- VWAP extension >= 0.5%
+- RSI >= 85 (TIGHTENED from original 75 after cell-sweep)
+- vol_ratio >= 15x cum-vol (TIGHTENED from original 7x)
+- SL: 0.5% above entry
+- T2: 3.0R (full exit)
+- Active window: 15:00-15:10 entry, 15:15 5m-bar close exit (= 15:20:00 IST, just before Zerodha auto-square — no penalty)
+
+**Validation chain (locked cell, all anti-bias guards verified):**
+- Discovery (2023-01..2024-12): n=622, PF_realized=1.50, PF_net=**1.213**, WR=39%, 19/24 winning months, +Rs 72,728
+- OOS (2025-01..09):              n=261, PF_realized=1.49, PF_net=**1.216**, WR=35%, 7/9 winning months,  +Rs 32,195
+- Holdout (2025-10..2026-04):     n=198, PF_realized=0.91, PF_net=**0.751**, WR=32%, ? mwin,           **-Rs 34,562** ❌
+
+**Failure mode: regulatory regime break (same pattern as `delivery_pct_anomaly_short`).**
+
+Discovery + OOS both PREDATE the SEBI Oct 2025 rule changes (MWPL tightening, F&O position limits cut, single-stock SLB changes). PF parity Disc 1.213 ↔ OOS 1.216 was misleading because both periods reflect the SAME pre-SEBI retail MIS-positioning regime.
+
+Holdout (Oct 2025 onwards) covers post-SEBI: retail MIS concentration in small/mid-cap dropped, the forced-sell pressure mechanism weakened, multi-bar subset PF also collapsed (3.43 Disc → 4.14 OOS → 1.47 HO). Setup is **regulatory-decay-dead**.
+
+**Diagnostic depth notes:**
+- 71-73% of trades same-bar exit (entry bar 15:05 hit either SL or T2 within 5 min). High vol_ratio≥15 cells are inherently volatile.
+- Same-bar subset PF_net 0.84 (Disc) / 0.86 (OOS) / 0.60 (HO) — sanity's pessimistic same-bar-SL-priority rule made these net-negative. Production tick-level execution could differ.
+- Multi-bar subset PF_net 3.43 (Disc) / 4.14 (OOS) / 1.47 (HO) — even the "clean" carve-out collapsed in HO.
+- Signal-bar range as a pre-entry filter for same-bar prediction: tested 9 thresholds, monotonically HURTS PF (wider cap = higher PF). No clean predictor found.
+
+**Code files removed:**
+- `structures/mis_unwind_vwap_revert_short_structure.py`
+- `tools/sub9_research/sanity_mis_unwind_vwap_revert.py`
+- Function `mis_unwind_vwap_revert_short_universe` in `services/setup_universe.py`
+- Config block `setups.mis_unwind_vwap_revert_short` in `config/configuration.json`
+- Entry in `services/dispatch/worker.py:_STRUCTURE_TO_SETUP_TYPE`
+- Comment refs in `services/setup_universe.py:compute_static_universes` and `services/screener_live.py:_run_dispatch_path`
+
+**Preserved (negative-knowledge artifacts):**
+- `tools/sub9_research/sanity_mis_unwind_REAL_window.py` — the proper Phase-4 sanity with anti-bias guards
+- `tools/sub9_research/_phase2_empirical_signature.py` — Phase-2 Indian-markets empirical signature check
+- `reports/sub9_sanity/_mis_unwind_locked_trades_{discovery,oos,holdout}.csv` — 3-period evidence trail
+- `reports/sub9_sanity/_phase2_mis_unwind_drift_records.csv` — 374K symbol-day population data
+
+**Conditions for revival:**
+This setup should NOT be re-implemented unless:
+1. **A new post-SEBI regulatory event creates a different MIS-unwind mechanism** (e.g., new auto-square timing, new forced-deliverability rule). Then run Phase 1 research again with the new mechanism.
+2. **Live tick-level reproduction shows same-bar trades are NOT 50/50** (i.e., genuine tick-order info makes them profitable in production where 5m sanity rates them noise). Then re-test with tick-level sanity.
+3. **A new cell beyond RSI/vol_ratio is discovered** (e.g., gap_pct conditioning, NIFTY-direction conditioning, sector flow) that survives Discovery + OOS + Holdout. The Phase-3-style brief in `tasks/lessons.md` 2026-05-12 ship gate applies.
+
+## `round_number_sweep_short` (C-02) — RETIRED 2026-05-19 (all 3 periods fail)
+
+**Thesis (original):** Indian retail traders cluster stop-losses at round-number prices (Rs.100, 150, 200, 250) far more than at PDH/PDL because retail-education courses teach this (Subasish Pani, Powerof Stocks, Zerodha Varsity). Rs.100-250 stocks are prime retail territory (cheap, accessible, hyped on YouTube). When intraday price pokes above a round number briefly and closes back below, the upside stop-cluster has failed — retail breakout buyers are trapped. Their panic-sell cascades down for a SHORT fade.
+
+**Universe + filters (production cell-lock):**
+- Cap: small_cap MIS-eligible
+- Price band: Rs.100-250 (cheap-stock retail territory)
+- Round-number increment: Rs.50 (50, 100, 150, 200, 250)
+- Poke pct: 0.15% (bar pierces RN by ≥ this)
+- Volume ratio: ≥ 2.0× session-cumulative-mean
+- Active window: 11:00-12:30 IST
+- SL: 0.5% above sweep_high
+- T1=1R FULL EXIT (100% qty at T1, T2=2R retained as backup but inert with qty_pct=0)
+- Time stop: 15:00 IST
+
+**Claimed validation (`_status_2026_05_16`):** 3-window PFs Disc 1.24 (n=300) / OOS 1.21 (n=176) / Holdout 1.17 (n=126). Cell-locked from aggregate sanity which failed all 3 windows (PF 0.80/0.84/0.81).
+
+**Actual production result (OCI 17-month run, 2025-01 → 2026-04):**
+- ALL: n=217, PF_real **1.075**, WR 50%, net +Rs 5,135 over 16 months, mwin **8/16 (50%)**
+- IS (9mo): n=118, PF 1.06, mwin 5/9 (56%)
+- HO (7mo): n=99, PF 1.09, mwin **3/7 (43%)**
+
+PF marginally above 1.0 realized, but after Indian fee stack (~0.5% round-trip), PF_net falls below 1.0. Monthly winning months in HO collapse to 43%, below the 67% gate.
+
+**Audit (2026-05-19): cell-locked re-evaluation on aggregate sanity CSVs**
+
+Applied production cell-lock filter (11:00-12:30, small_cap, Rs.100-250) + production T1-full-exit geometry to the existing aggregate sanity CSVs:
+
+| Period | n | PF_real | PF_net | WR | mwin | Net PnL |
+|---|---|---|---|---|---|---|
+| Discovery (2yr) | 683 | 0.86 | **0.69** | 45% | **4/24 (17%)** | -Rs 91,144 |
+| OOS (9mo) | 314 | 0.85 | **0.69** | 46% | **0/9 (0%)** | -Rs 44,439 |
+| HO (7mo) | 270 | 0.94 | **0.73** | 48% | **1/7 (14%)** | -Rs 29,711 |
+
+**ALL THREE PERIODS NET-LOSING.** No period produces a winning result on PF_net. Monthly winning months 0-17% across the chain. The `_status_2026_05_16` claim (3-window PFs 1.24/1.21/1.17) does NOT reproduce under disciplined cell-lock + T1-full-exit geometry.
+
+**Failure mode:** Cell-mining illusion. The original "cell-locked" claim was found by sweeping 37K Discovery aggregate trades for cell+R-geometry combos. The cell that appeared to pass was data-mined — when the same filter + R-geometry is applied to a clean evaluation of the same data, PF_net is 0.69 not 1.24. The `_status_2026_05_16` numbers were not reproducible from the underlying CSVs.
+
+**Sanity script bug (minor):** `tools/sub9_research/sanity_round_number_sweep.py` walked from `entry_idx = i+1` while entry_price was `i+1.close` — bar i+1's high/low (which happened BEFORE entry-at-close) were used for SL/T2 checks. Same-bar rate was only 0.3%, so net impact small. Bug noted but not the dominant cause of retirement.
+
+**Code files removed:**
+- `structures/round_number_sweep_short_structure.py`
+- `tools/sub9_research/sanity_round_number_sweep.py`
+- Function `round_number_sweep_short_universe` in `services/setup_universe.py`
+- Config block `setups.round_number_sweep_short` in `config/configuration.json`
+- Entry in `services/dispatch/worker.py:_STRUCTURE_TO_SETUP_TYPE`
+- Comment refs in `services/setup_universe.py:compute_static_universes` and `services/screener_live.py:_run_dispatch_path`
+
+**Preserved (negative-knowledge artifacts):**
+- `reports/sub9_sanity/_round_number_sweep_trades_{discovery,oos,holdout}.csv` — original aggregate sanity (37K Disc / 17K OOS / 11K HO)
+- `reports/sub9_sanity/_round_number_sweep_cells_*.csv` — cell-mining outputs that produced the (non-reproducible) shipped claim
+
+**Conditions for revival:**
+This setup should NOT be re-implemented unless:
+1. **The reproducibility gap is explained** — why does the existing aggregate sanity recompute to PF_net 0.69 across all periods while the `_status_2026_05_16` claim was PF 1.24? Need to identify the methodological gap and confirm it's not an OOS-overfit artifact.
+2. **A genuinely new mechanism is found** for round-number price clustering. The Subasish Pani / Powerof Stocks precedent is YouTube-anecdotal, not data-confirmed. Phase-2 empirical signature check on Discovery would need to demonstrate retail stop-clustering signature is detectable in NSE intraday data.
+3. **A different price band or window** shows stable 3-window edge. Sweeps to date have only found data-mined cells.
+
+## `circuit_release_fade_short` (C-03) — RETIRED 2026-05-19 (regulatory decay, pre-war)
+
+**Thesis (original):** SHORT fade of failed re-test of morning circuit-pin in small/mid-cap NSE names. Indian retail FOMO drives a stock to upper circuit-band (5/10/20%) early. Sellers appear mid-day, price drops 1-2% from pin. Retail buyers re-engage, price re-tests day high from below. When the re-test FAILS, trapped FOMO buyers panic-sell, cascade-down.
+
+**Validation chain (claimed Disc 2.12 / OOS 3.13 / Holdout 4.53 — but those were aggregate WIDE_OPEN PFs, not production-config performance).**
+
+**Actual production results (OCI 17-month run, full 6-setup portfolio, 2025-01..2026-04):**
+
+Per-period breakdown (raw PnL):
+
+| Period | n | PF_real | Avg/trade | Sum |
+|---|---|---|---|---|
+| Discovery (2023-24) | 1,414 | 1.19 | +Rs 83 | +Rs 117,924 |
+| OOS (Jan-Sep 2025) | 472 | 1.26 | +Rs 112 | +Rs 52,716 |
+| **HO_pre_war (Oct-Dec 2025)** | 110 | **0.84** ❌ | -Rs 84 | **-Rs 9,207** |
+| **HO_war (Jan-Apr 2026)** | 159 | **0.60** ❌ | -Rs 222 | **-Rs 35,271** |
+
+After MIS leverage + Indian fees + 31.2% tax (OOS+HO combined): **-Rs 63,429 NET (LOSING)**. Per `analysis/reports/3year_backtest/run_20260519_130847/detailed_report.txt`.
+
+**Failure mode: regulatory decay starting Oct 2025 (pre-war).** The HO_pre_war period (Oct-Dec 2025) is post-SEBI-Oct-2025 changes but BEFORE the Jan 2026 war volatility. PF dropped 1.26 → 0.84 in this 3-month window. The war period (Jan-Apr 2026) deepened decay to 0.60 but did NOT cause it.
+
+This pattern is distinct from `circuit_t1_fade_short` (which was PROFITABLE in HO_pre_war at PF 1.88, only war hurt it) and matches `mis_unwind_vwap_revert_short` (decay started post-SEBI cutover, deepened in war).
+
+**Cell salvage attempts (2026-05-19 exhaustive sweep):**
+
+Per the methodology used for `mis_unwind` and `round_number`, ran 1D, 2D, and 3D cell sweeps on day_gain_pct, rejection_pct, entry_hour, cap_segment.
+
+| Best cell tried | Disc | OOS | HO_pre | HO_war |
+|---|---|---|---|---|
+| hour=12 + rej_pct 0.4-1.0 (post-hoc winner) | 1.25 | 1.44 | 1.44 (n=31) | **0.53** ❌ |
+| hour=13 (Disc/OOS-locked winner) | 1.34 | 1.32 | **0.53** ❌ | 0.55 ❌ |
+| All day_gain bands | 1.02-1.31 | 1.04-1.51 | 0.69-1.03 | 0.49-0.94 |
+
+**NO 3D cell with n>=20 + PF>1.10 ships in ALL 4 periods.** Cell-mining illusion confirmed: the "hour=12 cell that survives HO_pre" was a post-hoc artifact — if locked on Disc+OOS independently, hour 13 would've won and that cell broke harder in HO_pre.
+
+**Code files removed:**
+- `structures/circuit_release_fade_short_structure.py`
+- Function `circuit_release_fade_short_universe()` in `services/setup_universe.py`
+- Config block `setups.circuit_release_fade_short` in `config/configuration.json`
+- Entry in `services/dispatch/worker.py:_STRUCTURE_TO_SETUP_TYPE`
+- Comment refs in `services/setup_universe.py` and `services/screener_live.py`
+
+**Preserved (negative-knowledge artifacts):**
+- `tools/sub9_research/sanity_circuit_release_fade.py` — anti-bias-fixed sanity script (Phase A look-ahead removed May 18-19, useful for any future revival attempt)
+- `tools/sub9_research/_circuit_release_fade_sweep_cellmine.py` — cell-mining tool
+- `tools/sub9_research/_tmp_retrace_sweep*.py` — retrace-filter remediation attempts (didn't help; documented for future reference)
+- `reports/sub9_sanity/_circuit_release_fade_short_trades_oos_{CLEAN,MODE_A,PHASE_A,PHASE_B2}.csv` — sanity reproducibility evidence trail
+- `reports/sub9_sanity/_circuit_release_fade_short_trades_holdout_PHASE_A.csv` — holdout under fixed-anti-bias sanity
+
+**Conditions for revival:**
+This setup should NOT be re-implemented unless:
+1. **A new post-Oct-2025 mechanism emerges** that restores retail circuit-pin behavior (e.g., SEBI loosening F&O / leverage rules)
+2. **Holdout regime stabilizes** (war volatility recedes) AND **a tightened cell** shows PF >= 1.10 in 6-month rolling window with n >= 100
+3. **Mode-A execution (tick zone re-touch) testing reveals** the production was systematically failing on entry mechanics distinct from regime (we tested Mode A in May 2026 — PF only dropped 14%, so not the cause)
 
 ## Maintenance protocol
 

@@ -48,14 +48,40 @@ def download_nse_holidays():
             logger.error("❌ No holiday entries found in API response.")
             raise ValueError("Empty holiday data from API.")
 
-        # Write items out as JSON
+        # MERGE with existing entries (don't overwrite). NSE API only returns
+        # the current year's forward calendar; an overwrite would wipe
+        # historical holidays needed for backtest date filtering. Dedupe by
+        # `tradingDate`; entries already on disk take precedence over the API
+        # response (preserves any manual hand-curated descriptions).
+        existing = []
+        if HOLIDAY_FILE.exists():
+            try:
+                with open(HOLIDAY_FILE, "r", encoding="utf-8") as f:
+                    existing = json.load(f) or []
+            except Exception as load_err:
+                logger.warning(
+                    "Existing holiday file unreadable, treating as empty: %s",
+                    load_err,
+                )
+                existing = []
+        existing_dates = {h.get("tradingDate") for h in existing if isinstance(h, dict)}
+        new_items = [
+            h for h in items
+            if isinstance(h, dict) and h.get("tradingDate") not in existing_dates
+        ]
+        combined = existing + new_items
+
         HOLIDAY_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(HOLIDAY_FILE, "w", encoding="utf-8") as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
+            json.dump(combined, f, ensure_ascii=False, indent=2)
 
-        count = len(items)
-        logger.info(f"✅ NSE holidays saved to {HOLIDAY_FILE} ({count} entries)")
-        return {"status": "success", "count": count}
+        added = len(new_items)
+        total = len(combined)
+        logger.info(
+            "✅ NSE holidays merged into %s | added=%d new | total=%d entries",
+            HOLIDAY_FILE, added, total,
+        )
+        return {"status": "success", "added": added, "total": total}
 
     except Exception as e:
         logger.exception("❌ Failed to download NSE holidays via API: %s", e)

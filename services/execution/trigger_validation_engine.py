@@ -73,16 +73,25 @@ class FastTriggerConditionFactory:
         from services.config_loader import is_wide_open_for_setup
         wide_open = is_wide_open_for_setup(strategy)
 
-        # BREAKOUT STRATEGIES: Immediate execution, NO entry zone wait
-        # Professional standard: Execute within <2 min, not 8 min delay
-        if (is_breakout and breakout_immediate) or wide_open:
+        # Per-setup immediate-execution flag (2026-05-18). Set on setups whose
+        # thesis is "rejection bar IS the confirmation, don't wait for retest".
+        # Without this, the entry_zone_check below dropped C-03 PF from sanity
+        # 2.44 to OCI 1.13 — production trigger waited for retest that
+        # high-conviction momentum rejections never delivered.
+        setups_cfg = self.cfg.get("setups", {}) or {}
+        setup_cfg = setups_cfg.get(strategy, {}) or {}
+        immediate_per_setup = bool(setup_cfg.get("immediate_execution", False))
+
+        # BREAKOUT / WIDE-OPEN / PER-SETUP-IMMEDIATE: no entry-zone wait,
+        # fire on first qualifying bar after PENDING.
+        if (is_breakout and breakout_immediate) or wide_open or immediate_per_setup:
             must_conditions = [
                 TriggerCondition(
                     ConditionType.TIME_BASED,
                     {"type": "market_hours"},
                     "Market hours check"
                 )
-                # NO entry_zone_check for breakouts / wide_open — execute immediately on decision
+                # NO entry_zone_check for breakouts / wide_open / immediate-execution
             ]
         # FADE & OTHER STRATEGIES: Keep existing entry zone logic (35% trigger rate proves it works)
         else:

@@ -205,6 +205,24 @@ def build_csv_from_events(log_dir: Path | None = None,
         row["last_exit_ts"]   = exits[-1].get("ts") if exits else None
         row["last_exit_reason"]= (_g(exits[-1],"exit","reason") if exits else None)
 
+        # Recompute risk_per_share from actual entry and hard_sl so the CSV reflects
+        # post-fill R geometry. DECISION-event plan.sizing.risk_per_share is computed
+        # against the planned entry_ref and goes stale once the fill price differs.
+        # See services/target_recalc.py which adjusts hard_sl/T1/T2 at fill time.
+        ep = row.get("entry_price")
+        hsl = row.get("hard_sl")
+        side0 = (row.get("side") or "").upper()
+        if ep is not None and hsl is not None:
+            try:
+                if side0 == "BUY":
+                    actual_rps = float(ep) - float(hsl)
+                else:
+                    actual_rps = float(hsl) - float(ep)
+                if actual_rps > 0:
+                    row["risk_per_share"] = round(actual_rps, 2)
+            except (TypeError, ValueError):
+                pass
+
         rows.append(row)
 
     df = pd.DataFrame(rows)

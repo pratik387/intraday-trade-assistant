@@ -222,6 +222,23 @@ Shortcut patterns to avoid: "v1 baseline to measure against," "ship scaffolding 
 4. Peer-reviewed evidence is necessary but not sufficient. **Real-world precedent at our infrastructure is the second gate.** A setup that academia validates but pros don't trade is either (a) recently-decayed, (b) requires infra we lack, or (c) execution-arb-only edge. None are workable for us.
 5. Sanity-check budget is precious. Spending it on a candidate that fails the feasibility-precedent gate is the same waste class as variant-shopping on validation data (lessons 2026-04-22 + 2026-05-01).
 
+### 2026-05-19 — Discovery+OOS parity is necessary but NOT sufficient when both predate a regulatory cutover
+
+**What went wrong:** I re-validated retired `mis_unwind_vwap_revert_short` by sweeping cells on OOS data, finding a "shippable" cell (RSI≥85 + vol≥15 + SL=0.5 + T2=3.0). To test for OOS-overfit, I ran the same locked cell on Discovery (2023-24). Discovery PF_net 1.213 vs OOS PF_net 1.216 — near-perfect parity (-0.003 drift). This looked like genuine, stable edge across 2.75 years. I declared the mechanism "real" and proposed shipping.
+
+The Holdout test (Oct 2025 → Apr 2026) collapsed PF_net to 0.751 — catastrophic. Same trajectory as previously-retired `delivery_pct_anomaly_short`.
+
+**Why:** Discovery + OOS both PREDATE the SEBI Oct 1, 2025 rule changes (MWPL tightening, F&O position limits cut). Both reflected the SAME pre-SEBI retail MIS-positioning regime. Their parity was confirming "the regime is consistent across 2.75 years" — which it was — but NOT "the mechanism survives the regulatory break." Holdout was the only honest test of post-SEBI viability, and it failed.
+
+This is also the SAME failure mode I'd documented in the post-SEBI research brief (`specs/2026-05-14-research-post-sebi-edges.md`): "Regulatory regimes break setups silently. Gauntlets must NEVER straddle a high/critical rule change for any of the strategy's depends_on tags." I had the warning but didn't apply it to my own validation pipeline.
+
+**Rule:**
+1. **When Discovery + OOS both predate a known regulatory cutover, Disc↔OOS parity proves regime-internal consistency, NOT regime-transition robustness.** The "validation" claim must include the cutover.
+2. **For any setup with `regulatory_sensitivity != rule_orthogonal` OR `depends_on` including post-cutover-sensitive tags (MIS_leverage, F&O OI, STT_drag, mis_auto_square, dpr_circuit, etc.):** require Holdout PF gates as STRICTLY as Discovery — Holdout PF_net >= 1.10 is binding, not informational.
+3. **Run `services.regime_break_detector.check_window` BEFORE any Disc+OOS celebration.** If the window straddles a cutover, the parity result is informational only — never sufficient for ship.
+4. **Look at depends_on tags explicitly:** mis_unwind had `depends_on=["MIS_leverage", "STT_drag", "mis_auto_square"]` — ALL THREE were affected by 2025-26 SEBI changes. I should have predicted this from the depends_on tags alone.
+5. **The "shippable Discovery+OOS cell with similar PF" finding is a known overfit pattern under regulatory regimes**, not validated edge. Don't celebrate parity until Holdout post-cutover confirms.
+
 ### 2026-04-29 — Commit per logical phase, not per task
 **What went wrong:** While implementing pdh_pdl_sweep_reclaim with manual per-task discipline, I made 14 commits for one plan (one per task: config block, register category, sub8_oci, opening_bell, scaffold, fixture, state machine, mirror test, negative tests, gap-context, multi-day, plan_*_strategy, wide_open, register, wire). User pushed back: "this is not best way to commit". Compare to orb_15 which was 3 commits (Phase 0 + Phase 1 + lessons) and was cleaner.
 **Why:** Per-task commits create noisy git history. A reviewer reading `git log --oneline` for one plan sees 14 lines of "Task 1.4 / Task 1.5 / Task 1.6" instead of 3 meaningful units. Bisect / revert / squash all become harder. The plan's `commit per task` instruction was meant as a TDD-discipline cue (don't batch all changes into one mega-commit), not a literal "every task is its own commit." The real rule: commit per LOGICAL feature unit. For a detector implementation, that's typically ~3 commits: Phase 0 (configs + registry), Phase 1 (detector + tests + conftest), Phase 2 (wiring).

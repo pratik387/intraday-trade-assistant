@@ -33,11 +33,24 @@ def calc_fee(entry_price: float, exit_price: float, qty: int, side: str,
              mis_leverage: float = 1.0) -> float:
     """Compute round-trip fees for one Indian intraday equity trade.
 
-    IMPORTANT: `qty` is the BASE share count (sized for unleveraged Rs.1000
-    risk). When MIS leverage is enabled, the broker holds qty*mis_leverage
-    shares and charges fees on that full notional. Pass mis_leverage so the
-    Rs.20/leg brokerage cap is evaluated against the real position size;
-    otherwise fees undercount by ~2-3x on typical trades.
+    `qty` here is the ACTUAL share count traded (the broker holds exactly
+    `qty` shares — MIS leverage only reduces margin requirement, it does NOT
+    multiply your position). Fees scale with `qty * price`, never multiplied
+    by leverage.
+
+    The `mis_leverage` parameter is retained for backward compat with callers
+    that pass it, but it scales qty internally — which is INCORRECT for the
+    typical pipeline where `qty` is already actual shares. Leave at default
+    1.0 unless you know your `qty` is base/unleveraged and broker holds
+    `qty * leverage` (unusual — production capital_manager and trading_logger
+    treat qty as actual). See `services/logging/trading_logger.py:63` for
+    the authoritative fee model.
+
+    Audit 2026-05-14: confirmed against production analytics.jsonl that
+    fees use qty directly with no leverage multiplication. The 2026-05-13
+    "fee undercount fix" in comprehensive_run_analyzer was about a separate
+    reporting bug — not relevant to sanity/sweep scripts that mirror
+    production trade sizing.
     """
     if qty <= 0 or entry_price is None or exit_price is None:
         return 0.0

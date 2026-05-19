@@ -2083,7 +2083,8 @@ class ExitExecutor:
             return False
 
         # Calculate profit in terms of RPS (risk per share)
-        rps = pos.plan.get("sizing", {}).get("risk_per_share", 0.0)
+        # Prefer top-level (post-recalc) over sizing.rps (decision-time stale value)
+        rps = pos.plan.get("risk_per_share") or pos.plan.get("stop", {}).get("risk_per_share") or pos.plan.get("sizing", {}).get("risk_per_share", 0.0)
         if rps <= 0:
             return False
 

@@ -109,51 +109,6 @@ def download_code():
         sys.exit(1)
 
 
-def apply_oci_config_override():
-    """Fold sub8_oci_overrides.json into configuration.json (in place).
-
-    Bundled in the code tarball; missing override is a hard failure rather
-    than silent skip — running OCI without the override gives a misleading
-    "everything works" result while actually capturing only gap_fade_short.
-
-    Single canonical override file — edit the file's setups for each new
-    capture run. Git history records what was active at each capture
-    commit. No env-var or sub-N file proliferation.
-
-    Delegates to tools/apply_oci_override.py which has unit tests and is
-    usable for local wide-open smoke runs too. Same merge logic both ways.
-    """
-    base_path = Path('/app/config/configuration.json')
-    override_path = Path('/app/config/sub8_oci_overrides.json')
-
-    if not base_path.exists():
-        log(f"ERROR: base config not found: {base_path}")
-        sys.exit(1)
-    if not override_path.exists():
-        log(f"ERROR: OCI override not found: {override_path}")
-        log("       (Should be bundled in the code tarball — check submit_oci_backtest.py include_patterns)")
-        sys.exit(1)
-
-    log(f"Applying OCI config override: {override_path} -> {base_path}")
-    cmd = [
-        sys.executable,
-        '/app/tools/apply_oci_override.py',
-        '--base', str(base_path),
-        '--override', str(override_path),
-    ]
-    try:
-        result = subprocess.run(
-            cmd, check=True, capture_output=True, text=True,
-            env={**os.environ, 'PYTHONPATH': '/app'},
-        )
-        # Surface the utility's one-line summary in OCI logs.
-        for line in (result.stdout or '').splitlines():
-            log(f"  {line}")
-    except subprocess.CalledProcessError as e:
-        log(f"ERROR applying OCI override:")
-        log(f"  stdout: {e.stdout}")
-        log(f"  stderr: {e.stderr}")
-        sys.exit(1)
 
 
 def download_consolidated_daily_cache():
@@ -695,14 +650,10 @@ def main():
     # Download code
     download_code()
 
-    # Apply OCI config override (sub8_oci_overrides.json -> configuration.json).
-    # The override file flips wide_open_mode + 8 sub7+sub8 detector enables on
-    # so the OCI capture sees all candidate signals. Without this step, the
-    # container would read the production configuration.json as-is (wide_open=
-    # false, only gap_fade_short enabled) and the gauntlet would see no signal
-    # from the new sub8 detectors. Implemented as a separate utility so the
-    # same merge logic is used by local wide-open smoke runs too.
-    apply_oci_config_override()
+    # Switch to OCI research mode: enables wide_open_mode + all candidate detectors
+    # via the mode_profiles.oci_research block in configuration.json.
+    os.environ["RUN_MODE"] = "oci_research"
+    log("OCI mode: set RUN_MODE=oci_research")
 
     # Download consolidated daily cache (shared across all dates)
     download_consolidated_daily_cache()

@@ -35,6 +35,28 @@ dir_path = None
 _global_run_prefix = ""  # Global run prefix to be set before any logger initialization
 
 
+def _diag_logs_disabled() -> bool:
+    """True when BACKTEST_NO_DIAG_LOGS=1: skips bulky diagnostic JSONLs
+    (detector_rejections.jsonl + screening.jsonl) for local smoke runs. Saves
+    ~100MB+ of disk per session (rejection JSONL alone is ~100MB/day at 8 detectors
+    x 739 symbols x 72 bars). Wallclock impact is small (~few seconds) since writes
+    are buffered, but cuts disk churn and makes diff-ing trade outcomes easier.
+    Accept logs + trade events + events.jsonl + gate_input.jsonl still written."""
+    return os.environ.get("BACKTEST_NO_DIAG_LOGS", "0") == "1"
+
+
+class _NoopLogger:
+    """Drop-all logger used in place of JSONLLogger when diag logs are disabled.
+    Same surface (log_accept / log_reject / log_event) but every call is a no-op."""
+    def __init__(self, file_path=None, stage_name: str = "noop"):
+        self.file_path = file_path
+        self.stage = stage_name
+    def log_accept(self, *_, **__): pass
+    def log_reject(self, *_, **__): pass
+    def log_event(self, *_, **__): pass
+    def _close(self): pass
+
+
 class JSONLLogger:
     """Buffered JSONL logger with persistent file handle.
 
@@ -226,7 +248,11 @@ def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
 
     # Stage JSONL Loggers
     _scanner_logger = JSONLLogger(log_dir / "scanning.jsonl", "scanner")
-    _screener_logger = JSONLLogger(log_dir / "screening.jsonl", "screener")
+    _screener_logger = (
+        _NoopLogger(log_dir / "screening.jsonl", "screener")
+        if _diag_logs_disabled()
+        else JSONLLogger(log_dir / "screening.jsonl", "screener")
+    )
     _ranking_logger = JSONLLogger(log_dir / "ranking.jsonl", "ranking")
     _planning_logger = JSONLLogger(log_dir / "planning.jsonl", "planning")
     _events_decision_logger = JSONLLogger(log_dir / "events_decisions.jsonl", "events_decision")
@@ -239,7 +265,11 @@ def _initialize_loggers(run_prefix: str = "", force_reinit: bool = False):
     # Per-event detector decision loggers (for post-OCI gauntlet analysis).
     # Trivial rejections (insufficient data, no pattern matched) are filtered
     # out at the call site; only diagnostically useful events are logged.
-    _detector_rejections_logger = JSONLLogger(log_dir / "detector_rejections.jsonl", "detector_reject")
+    _detector_rejections_logger = (
+        _NoopLogger(log_dir / "detector_rejections.jsonl", "detector_reject")
+        if _diag_logs_disabled()
+        else JSONLLogger(log_dir / "detector_rejections.jsonl", "detector_reject")
+    )
     _detector_accepts_logger = JSONLLogger(log_dir / "detector_accepts.jsonl", "detector_accept")
 
 def get_agent_logger(run_prefix: str = "", force_reinit: bool = False):
@@ -468,5 +498,9 @@ def initialize_child_loggers(log_dir: Path, process_tag: str):
 
     # Per-event detector decision loggers (exec child writes to same files
     # as parent; O_APPEND atomicity handles interleaving across processes)
-    _detector_rejections_logger = JSONLLogger(log_dir / "detector_rejections.jsonl", "detector_reject")
+    _detector_rejections_logger = (
+        _NoopLogger(log_dir / "detector_rejections.jsonl", "detector_reject")
+        if _diag_logs_disabled()
+        else JSONLLogger(log_dir / "detector_rejections.jsonl", "detector_reject")
+    )
     _detector_accepts_logger = JSONLLogger(log_dir / "detector_accepts.jsonl", "detector_accept")
