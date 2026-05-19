@@ -1,5 +1,69 @@
 [
   {
+    "tradingDate": "26-Jan-2023",
+    "weekDay": "Thursday",
+    "description": "Republic Day",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "07-Mar-2023",
+    "weekDay": "Tuesday",
+    "description": "Holi",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "30-Mar-2023",
+    "weekDay": "Thursday",
+    "description": "Ram Navami",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "04-Apr-2023",
+    "weekDay": "Tuesday",
+    "description": "Mahavir Jayanti",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "07-Apr-2023",
+    "weekDay": "Friday",
+    "description": "Good Friday",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "14-Apr-2023",
+    "weekDay": "Friday",
+    "description": "Dr. Ambedkar Jayanti",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "01-May-2023",
+    "weekDay": "Monday",
+    "description": "Maharashtra Day",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "29-Jun-2023",
+    "weekDay": "Thursday",
+    "description": "Bakri Id",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
     "tradingDate": "15-Aug-2023",
     "weekDay": "Tuesday",
     "description": "Independence Day",
