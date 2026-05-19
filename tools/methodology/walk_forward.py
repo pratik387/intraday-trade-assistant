@@ -131,12 +131,15 @@ def run_walk_forward(
 
     trades_df must have columns: signal_date (date or YYYY-MM-DD str), pnl_pct.
     """
-    if not pd.api.types.is_object_dtype(trades_df["signal_date"]) and \
-       not pd.api.types.is_datetime64_any_dtype(trades_df["signal_date"]):
-        trades_df = trades_df.copy()
-        trades_df["signal_date"] = pd.to_datetime(trades_df["signal_date"]).dt.date
+    required_cols = {"signal_date", "pnl_pct"}
+    missing = required_cols - set(trades_df.columns)
+    if missing:
+        raise ValueError(f"trades_df missing required columns: {sorted(missing)}")
 
     trades_df = trades_df.copy()
+    # Always convert signal_date to datetime.date — string columns and
+    # Timestamp columns both produce the same date objects for window filtering.
+    trades_df["signal_date"] = pd.to_datetime(trades_df["signal_date"]).dt.date
     trades_df["pnl_pct_net"] = trades_df["pnl_pct"].apply(
         lambda x: _compute_per_trade_net_pnl(x, fee_pct_round_trip, mis_leverage)
     )

@@ -54,6 +54,47 @@ def test_classify_tier_green_at_13_of_13():
     assert classify_tier(pass_rate=1.0, n_windows_total=13) == Tier.GREEN
 
 
+def test_run_walk_forward_handles_string_signal_date_column():
+    """Object-dtype signal_date column (e.g., strings from CSV with no date parsing)
+    must be converted, not silently broken."""
+    trades = pd.DataFrame({
+        "signal_date": ["2023-02-15", "2023-02-20", "2023-03-10",
+                        "2024-06-15", "2024-06-20", "2024-07-10",
+                        "2025-06-15", "2025-06-20", "2025-07-10",
+                        "2025-12-15", "2025-12-20", "2026-01-10"] * 5,
+        "symbol": ["SYM01"] * 60,
+        "pnl_pct": [0.5, -0.3, 0.4, 0.6, -0.2, 0.5, -0.4, -0.5, -0.6, -0.3, -0.4, -0.5] * 5,
+    })
+    # Note: signal_date is object dtype (strings) — NOT datetime
+
+    result = run_walk_forward(
+        setup_name="dtype_test",
+        trades_df=trades,
+        start=date(2023, 1, 1),
+        end=date(2026, 3, 31),
+        window_months=3, n_windows=13,
+        bootstrap_n=200,
+    )
+
+    # Should not raise. Verify it ran end-to-end.
+    assert result.windows_total == 13
+    # At least one window should have trades (not all n=0)
+    assert any(w.n > 0 for w in result.windows)
+
+
+def test_run_walk_forward_raises_on_missing_columns():
+    """Missing required column → ValueError with clear message."""
+    trades = pd.DataFrame({"signal_date": ["2023-01-15"], "wrong_pnl": [0.5]})
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        run_walk_forward(
+            setup_name="missing_cols",
+            trades_df=trades,
+            start=date(2023, 1, 1),
+            end=date(2026, 3, 31),
+        )
+
+
 def test_run_walk_forward_on_fixture_detects_regime_break():
     """Fixture has positive edge pre-2025, negative post-2025.
     Walk-forward should classify as AMBER (mixed) or RED."""
