@@ -11,6 +11,146 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-19 (#9) — Cache directory is BACKTEST-ONLY; live/paper must touch zero feathers
+
+**What went wrong:** During paper-trade readiness audit I listed `cache/ohlcv_archive/` and `cache/preaggregate/` as VM deployment requirements. User pushed back: "I don't think we use cache folder any way in live trading. If we are then it's wrong." Audit confirmed: cache is correctly gated, but the assumption that it might be needed was sloppy — I hadn't traced the production data path before recommending VM setup.
+
+**Why:** In live/paper, the data path is `WebSocket → 1m bars → 5m aggregate → DispatchPlanner → detectors`. Zero feather reads. Cache exists ONLY for backtest replay (`_precomputed_5m` initialized only inside `if env.DRY_RUN:` block at `services/screener_live.py:563-564`). All cache truthiness checks (`elif self._precomputed_5m and s in ...`) safely fail in live (empty dict).
+
+**Rule:**
+1. **Before recommending any deployment artifact, trace the live data path end-to-end** — don't pattern-match from backtest setup docs to live VM checklist.
+2. **Every cache/feather/precomputed access must be gated by `env.DRY_RUN`** OR safely fall through (empty container truthiness check). Verify by grep at every regression-prone change to data loading.
+3. **VM paper deployment surface**: `nse_all.json`, `broker/kite/token.txt`, `assets/nse_holidays.json`, `config/configuration.json`, requirements.txt, env vars. NOT cache/.
+4. **Defensive guard candidate**: add startup assertion `assert not args.paper_trading or not self._precomputed_5m` if regression in cache gating ever fires.
+
+### 2026-05-19 (#8) — Setup retirement protocol: deletion is part of the architectural discipline
+
+**What went wrong:** Retired 3 setups in one session (mis_unwind_vwap_revert_short, round_number_sweep_short, circuit_release_fade_short). Each retirement required updating 7 places: detector file, sanity script, universe builder function, config block, dispatch worker map, retired_setups.md, analysis/backtest_findings.md. Easy to miss one and leave dead code or stale config.
+
+**Why:** Setup config is multi-referenced by design (dispatch refactor reduced this from 7 to 4 but still spreads). Half-retired setups create silent footguns — a future audit may resurrect a setup whose universe builder still exists but detector doesn't, or vice versa.
+
+**Rule — retirement checklist (mandatory all 7):**
+1. Delete `structures/<setup>_structure.py`
+2. Delete `tools/sub9_research/sanity_<setup>.py` (UNLESS the sanity has anti-bias-fix work worth preserving — then KEEP and note in retired_setups.md "preserved as artifact")
+3. Delete function `<setup>_universe()` in `services/setup_universe.py`
+4. Delete `setups.<setup>` block in `config/configuration.json`
+5. Delete entry in `services/dispatch/worker.py:_STRUCTURE_TO_SETUP_TYPE`
+6. Add entry to `docs/retired_setups.md` — must include thesis, claimed validation, actual production result, failure mode + evidence, code files removed, preserved artifacts, conditions for revival
+7. Update `analysis/backtest_findings.md` with corrected verdict + reference back to retired_setups.md
+
+**Verify cleanly**: `python -c "import json; assert '<setup>' not in json.load(open('config/configuration.json'))['setups']"` + `grep -rE "<setup>" services/ structures/ | wc -l` should be ≤1 (only the comment in `setup_universe.py:compute_static_universes`).
+
+### 2026-05-19 (#7) — FinalNet (Gross × MIS − Charges − Tax) is the only deployment-relevant metric
+
+**What went wrong:** Reported PF 1.07 and "+Rs 5K net" for `round_number_sweep_short` and was about to retire. User pointed at `comprehensive_run_analyzer` output showing the full Indian fee + tax stack on the same setup: **−Rs 63K net (LOSING after charges).** Raw realized PF doesn't survive Indian fees — and `realized_pnl` × 5x MIS leverage further skews vs unleveraged charges if you size off raw R-multiples.
+
+**Why:** Indian retail trading economics:
+- MIS leverage multiplies PnL (both wins and losses) but charges scale on UNLEVERAGED notional × qty.
+- STT (0.025% on sell-side for short equity), brokerage (Rs 20 capped per order × 2 legs), exchange fees, SEBI, IPFT, stamp duty, plus 18% GST on (brokerage + exchange + SEBI + IPFT) — total ~0.05-0.10% per round-trip.
+- Income tax at 31.2% on NET annual speculative income (FY April-March, Section 73 — losses offset profits within same FY, net losses carry forward 4 years).
+- A setup with PF 1.07 realized → typically PF_net ~0.85 after fees → -tax → break-even or losing.
+
+**Rule:**
+1. **NEVER report PF/profit using raw `realized_pnl`** when assessing ship readiness. Always run `comprehensive_run_analyzer` or use `tools/report_utils.calculate_per_trade_final_pnl()` which applies the full stack.
+2. **Ship-gate PF threshold is PF_NET ≥ 1.15** (not realized). Tighter for setups with high trade frequency (charges scale linearly with trade count).
+3. **Annual ROI on Rs 5L paper capital is the headline metric** for whether to deploy at retail-individual scale. Below ~50%/yr the setup is not worth the operational overhead.
+4. **Per-setup FinalNet from analyzer Section 4B** decides which setups stay enabled. Setup with negative Avg/trade (Status: LOSS) gets retired unless decay is regime-only (war period).
+
+### 2026-05-19 (#6) — Systematic debugging Phase 1: no fixes without root cause evidence
+
+**What went wrong:** When OCI showed 34% hard_sl in production for `circuit_release_fade_short` while sanity showed 0%, I initially hypothesized "tick-level intra-bar SL checks fire on transients the 5m bar high doesn't record." User shut this down: "dont speculate." Followed `superpowers:systematic-debugging` Phase 1 properly — picked ONE specific overlap trade, looked at actual bar data, and discovered the truth: the 197 OCI-only trades had `day_high > morning_high` (post-morning new high) — sanity's `morning_high < day_high * 0.999` was hindsight filtering. Speculation would have wasted hours on wrong fix.
+
+**Why:** "Tick-level execution" or "intra-bar volatility" is a generic-sounding explanation that pattern-matches lots of real-world bugs. It's easy to land on as a hypothesis. But Phase 1 evidence (one trade, walk the bars, see what differs) cuts directly to the real issue — usually something specific and unromantic (filter uses hindsight aggregate, off-by-one in path walk, etc.).
+
+**Rule:**
+1. **`superpowers:systematic-debugging` Phase 1 is mandatory before proposing any fix** — and "I think it might be X" counts as a fix proposal.
+2. **Pick ONE specific data point** (one trade, one event, one bar) and trace it END-TO-END before generalizing. Aggregate stats lie about which mechanism is dominant.
+3. **When stuck, the user's "stop guessing" / "don't speculate" / "look at the data" feedback is THE signal** — return to Phase 1 evidence gathering immediately.
+4. **Hypothesis quality test**: can you predict (before checking) what specific bars/values will show? If "well, it's probably tick noise" — that's not a hypothesis, it's a wave-of-the-hand. A real hypothesis predicts a SPECIFIC measurable.
+
+### 2026-05-19 (#5) — Sanity script anti-bias checklist (the 6 recurring failure modes)
+
+**What went wrong:** Re-discovered the SAME sanity-script biases that retired_setups.md documents in its "common failure modes" section. mis_unwind sanity had 88% same-bar look-ahead. round_number sanity walked from `i+1` when entry was at `i+1.close`. circuit_release sanity used EOD `day_high` for morning-pin check.
+
+**Why:** Sanity scripts are written quickly during research; each one adopts a convention slightly differently. Without an explicit guard checklist, the same six bugs recur.
+
+**Rule — every new/edited sanity script must explicitly verify against `retired_setups.md` failure modes:**
+1. **Intraday aggregate look-ahead**: NEVER use `day_high`, `day_low`, `day_vwap`, `day_close` as filters. Use `session_high_so_far = bars[:i+1].high.max()` at signal time. Rule of thumb: "what value would I have known at this exact bar's close?" — anything later is leakage.
+2. **Volume baseline**: `cum_vol_mean = bars.volume.expanding(min_periods=2).mean().shift(1)` (current bar EXCLUDED) OR `prior_bars.iloc[:-1].volume.mean()`. Including the signal bar in its own baseline inflates the vol_ratio at the most volatile bars.
+3. **Mode B entry walk**: `entry_idx = i + 1`, `path_walk = bars.iloc[i + 1:]` only AFTER the entry bar. If entry is at `bars[i+1].open`, walking starts at `bars[i+1]` is OK (entry happened at bar's open, the bar's full intra-bar range happens AFTER entry). If entry is at `bars[i+1].close`, walking must start at `i+2` (entry happened at end of bar i+1).
+4. **Same-bar exit ambiguity**: when both `hi >= hard_sl` AND `lo <= t2_target` on the same bar, sanity must pick stop (pessimistic). Production tick path could go either way; sanity must not assume the favorable outcome.
+5. **Cell-locked filters at signal time**: filter must reproduce in production exactly. If sanity uses `cum_vol_mean` and production uses `prior_bars.mean()`, results diverge silently.
+6. **Reproducibility floor**: same trade IDs in (sanity, production) must produce same realized_pnl ±Rs 10. Per-trade-match diff is the audit tool when aggregate PF diverges.
+
+### 2026-05-19 (#4) — Indian-market microstructure facts that drive setup design
+
+**What went wrong:** Designed `sanity_mis_unwind_REAL_window.py` assuming "Zerodha auto-square at 15:20 IST means forced-sell window is 15:20-15:25." User pointed out Upstox/Angel auto-square at **15:15** — entire 10-minute window of MIS unwinding pressure starts 5 minutes earlier than my assumption. Set EXIT_BAR_HHMM accordingly only after the correction.
+
+**Why:** Indian retail brokers have non-uniform MIS auto-square timing, and the user's mental model is "Indian retail flow happens during the union of all broker windows." Single-broker assumptions miss the full forcing function.
+
+**Rule — Indian-microstructure facts to encode into any setup research:**
+1. **Broker MIS auto-square timing (heterogeneous):**
+   - Upstox: 15:15 (₹50+GST penalty for auto-squared positions)
+   - Angel One: 15:15 (~₹50)
+   - Zerodha: 15:20-15:24 (₹50+GST)
+   - ICICI Direct: 15:15-15:20 (~₹50-100)
+   - For setups that fade retail MIS-long flow: pressure window is **15:15-15:25**, not 15:20-15:25.
+2. **MIS leverage**: SEBI minimum 20% margin = max 5x leverage. Retail brokers typically offer 4-5x for stocks, less for high-volatility names.
+3. **NSE intraday volume profile** (J/U-shape from Monash NSE liquidity paper): 09:15-09:30 is 5x baseline, 11:00-13:00 is 1.0 (mid-day quiet), 15:00-15:15 is 1.8-2.0x, **15:15-15:25 is 2.5-3.0x** baseline (last bin includes closing auction).
+4. **Retail concentration** is highest in small/mid-cap (<Rs 250 stocks especially). SEBI 2024 study: 76% of intraday traders under 30 lose money.
+5. **Regulatory cutover dates that broke setups** (track in `data/sebi_calendar/`):
+   - **Oct 1, 2025**: SEBI F&O rule changes (MWPL tightened, single-stock position limits cut) — broke `delivery_pct_anomaly_short`, `mis_unwind_vwap_revert_short`, `circuit_release_fade_short`.
+   - **Apr 1, 2026**: STT hike (futures 0.02%→0.05%, options premium 0.1%→0.15%) — further fee compression.
+6. **War period (Jan-Apr 2026)**: high realized vol hurt short-bias setups. PF aggregate dropped 1.46 → 0.88. Distinguishes regulatory decay (pre-war drop, structural) from regime-temporary decay (war-only, kept active for revival post-war).
+
+### 2026-05-19 (#3) — Phase 1-5 disciplined research chain for new/revived setups
+
+**What went wrong:** First attempt at "saving" `mis_unwind_vwap_revert_short` was ad-hoc cell sweeping on OOS data. Found `RSI≥85 + vol≥15 + SL=0.5 + T2=3.0` cell with PF 1.31 — looked shippable. User pushed back: "go through lessons.md… how we work on new setups first." Restarted with disciplined chain.
+
+**Why:** Ad-hoc cell sweeps on OOS are data-mining (lessons.md 2026-04-22, 2026-05-01). The disciplined chain locks the methodology BEFORE seeing the data — that's the only path to a real edge claim.
+
+**Rule — for any new or revived setup, run all 5 phases IN ORDER, NEVER skipping:**
+
+**Phase 1 — Indian-market research (~15 min web/precedent):**
+- Operating mechanism: what real-world Indian flow does this fade/catch? Cite ≥2 retail/pro Indian sources.
+- Data feasibility (Gate B from lessons.md 2026-05-05): list exact data inputs; verify each is on disk OR has clear acquisition path.
+- Regulatory sensitivity: which SEBI/STT/MIS rules govern the mechanism? Flag if a 2024-26 cutover affects it.
+
+**Phase 2 — Empirical signature check on Discovery (~10 min compute):**
+- Quantify the mechanism in raw data BEFORE writing the sanity. Volume bulge? Directional drift? Effect size?
+- If signature doesn't exist or is weak (<0.1% net drift), abandon — no methodology will rescue a non-existent edge.
+
+**Phase 3 — Mechanism brief (one sentence + falsifiers):**
+- Mechanism statement: ONE sentence describing the captured edge with Indian-microstructure anchor.
+- Falsifiers: 3 conditions that would invalidate the thesis (mechanism, regime, infra).
+- Pro/retail precedent: ≥2 Indian sources operationalize this on retail-MIS infra.
+
+**Phase 4 — Sanity v2 with explicit anti-bias guards:**
+- Apply the 6-failure-mode checklist (#5 lesson). Document each guard in the script header.
+- Discovery-only run: 2-yr Discovery window with locked filter set.
+
+**Phase 5 — Cell mine on Discovery, lock cell, then OOS one-shot, then HO:**
+- Cell sweep ONLY on Discovery. Lock the winning (filter × R-multiple) cell.
+- Run OOS ONCE on locked cell. If passes ship gate (PF_net ≥ 1.10), proceed.
+- Run HO ONCE on locked cell. If passes ship gate, write the brief + add to production config.
+- If HO fails: classify (war-only collapse → pause; pre-war decay → retire).
+
+**Total time: ~2 hours of disciplined work** (mostly async compute). NEVER take a shortcut.
+
+### 2026-05-19 (#2) — Cell-mining illusion: post-hoc selection ≠ validated edge
+
+**What went wrong:** Searching for a salvage cell in `circuit_release_fade_short` after Holdout collapse. Found `hour=12 + rejection_pct 0.4-1.0` survives HO_pre_war at PF 1.44. Almost shipped it. But this cell was SELECTED AFTER seeing HO data — if I'd locked on Disc+OOS independently, the best cell would have been **hour=13** (Disc 1.34, OOS 1.32). That cell broke HARDER in HO_pre (PF 0.53).
+
+**Why:** Cell-mining is a confirmation tool, not a discovery tool. The same mechanism that produces look-ahead bias in features produces overfitting in cells: ANY large enough cell grid will surface "winners" by chance, and choosing AFTER seeing the data is post-hoc.
+
+**Rule:**
+1. **Lock cell on Discovery + OOS independently** — pretend Holdout doesn't exist when selecting. The cell that wins on Disc+OOS combined is the cell you test on HO. Not the other way around.
+2. **If no cell with n≥200 + PF≥1.20 wins on Disc+OOS combined**, the setup is dead. Don't dig further — that's how illusions are born.
+3. **Post-hoc cell selection is structurally equivalent to p-hacking**. The "hour=12 survives HO_pre" finding has the same epistemic status as "let me try one more conditioner" (2026-05-01 lesson).
+4. **3D cell sweep with PF gate**: across all (cap × time × feature) intersections with n≥20 each in ALL 4 periods (Disc, OOS, HO_pre, HO_war), require PF_net ≥ 1.10 in each. If zero cells pass, retire. circuit_release: zero. round_number: zero. mis_unwind: had one but HO killed it.
+
+---
+
 ### 2026-05-12 (#3) — Plan-as-source-of-truth is binding architecture; the gate chain accumulated cruft that anti-selected our setups
 
 **What went wrong:** The system had a 5-stage filter chain after detector accept:
