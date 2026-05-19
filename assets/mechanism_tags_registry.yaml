@@ -1,0 +1,70 @@
+# Mechanism tags registry
+#
+# Controlled vocabulary for `mechanism_tags` in setup metadata
+# (config/configuration.json setups.<name>.mechanism_tags).
+#
+# Per spec docs/superpowers/specs/2026-05-19-walk-forward-methodology-design.md.
+# Adding a tag requires updating this file + brief justification in commit
+# message + (eventually) live-computable predicate for runtime gating.
+#
+# Schema per tag:
+#   description: free-text
+#   source: where the data comes from
+#   live_computable: bool (true if can be evaluated at runtime)
+
+tags:
+  # FII / FPI flow regimes — depend on data/fii_flow/ scraper (separate work)
+  FII_net_flow_positive_30d:
+    description: "FII net equity flow positive over trailing 30 calendar days"
+    source: "NSDL FPI flow data (data/fii_flow/)"
+    live_computable: true
+  FII_net_flow_negative_30d:
+    description: "FII net equity flow negative over trailing 30 calendar days"
+    source: "NSDL FPI flow data (data/fii_flow/)"
+    live_computable: true
+  FII_net_flow_positive_60d:
+    description: "FII net equity flow positive over trailing 60 calendar days"
+    source: "NSDL FPI flow data (data/fii_flow/)"
+    live_computable: true
+
+  # SEBI regulatory regimes — discrete one-way transitions
+  SEBI_FO_rule_version_1:
+    description: "Pre-Oct 2024 F&O regime: multi-index weekly expiries, smaller lots"
+    source: "data/sebi_calendar/rule_changes.csv"
+    live_computable: true
+  SEBI_FO_rule_version_2:
+    description: "Post-Nov 2024 F&O regime: 1 weekly per exchange, 3x lot sizes"
+    source: "data/sebi_calendar/rule_changes.csv"
+    live_computable: true
+  MWPL_formula_pre_2025_10:
+    description: "MWPL utilization formula before Oct 2025 revision"
+    source: "data/sebi_calendar/rule_changes.csv"
+    live_computable: true
+  MWPL_formula_post_2025_10:
+    description: "MWPL utilization formula after Oct 2025 revision"
+    source: "data/sebi_calendar/rule_changes.csv"
+    live_computable: true
+
+  # Volatility regimes — derived from India VIX feed
+  VIX_above_20:
+    description: "India VIX above 20 (elevated volatility regime)"
+    source: "NSE India VIX feed"
+    live_computable: true
+  VIX_below_15:
+    description: "India VIX below 15 (low volatility regime)"
+    source: "NSE India VIX feed"
+    live_computable: true
+
+  # Macro / event regimes — some manual flags, some computed
+  war_volatility_active:
+    description: "India geopolitical conflict elevated-volatility regime; manual flag set in assets/macro_regime_calendar.yaml"
+    source: "Manual flag (assets/macro_regime_calendar.yaml)"
+    live_computable: true
+  midcap_correction_active:
+    description: "Nifty Midcap 150 drawdown > 15% from trailing 60d high"
+    source: "Computed from sectoral index data"
+    live_computable: true
+  election_period_active:
+    description: "Lok Sabha or major state election within ±2 weeks"
+    source: "Manual flag (assets/macro_regime_calendar.yaml)"
+    live_computable: true
