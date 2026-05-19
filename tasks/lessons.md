@@ -11,7 +11,73 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
-### 2026-05-19 (#9) — Cache directory is BACKTEST-ONLY; live/paper must touch zero feathers
+### 2026-05-19 (#12) — Walk-forward methodology replaces chronological 3-period validation
+
+**What changed:** Replaced 3-period chronological validation (Disc 24mo / OOS 9mo / HO 7mo) with walk-forward (13 × 3-month windows + per-window bootstrap CI + 3-tier classification GREEN/AMBER/RED). Triggered by recognizing that 5 of 5 recently-retired setups followed the same 2-of-3-pass pattern with the failing period aligned to known Indian regime breaks (SEBI Oct 2024, FII Jan-Mar 2025, war Jan-Apr 2026). The old methodology couldn't distinguish "edge gone" from "one bad regime window dominated PF."
+
+**New discipline:**
+1. **Walk-forward is mandatory for all new Phase 5 validation.** No more single-OOS/single-HO ship gate. Implementation in `tools/methodology/walk_forward.py`.
+2. **Mechanism pre-registration via git timestamp is mandatory for AMBER tier.** `mechanism_tags` field in setup config must be committed BEFORE walk-forward runs; engine refuses otherwise (`tools/methodology/pre_registration.py`). Prevents post-hoc rationalization.
+3. **Three-tier outcome:** GREEN ≥ 9 of 13 windows → ship full size. AMBER 6-8 of 13 + mechanism docs → 90-day forward-validation at 25% size. RED ≤ 5 of 13 → retired.
+4. **Per-window bootstrap CI gate.** Window passes iff PF_net ≥ 1.10 AND 95% bootstrap CI lower bound > 1.0. Defends against small-n noise.
+5. **Circuit breaker is the live safety net.** Daily-EOD `jobs/check_circuit_breakers.py` computes trailing-60d NET PnL per setup; auto-disables if below threshold (mean − 2σ of backtest window distribution). Manual re-enable required.
+6. **Active setup consistency check (Option C):** active setups below GREEN tier are NOT proactively retired — they stay live at full size AND get circuit breaker monitoring AND go on a watch list (`docs/active_setups_review.md`). Drawdown is the signal, not retroactive retirement.
+7. **OOS+HO combined NET PnL is still the most damning indicator** for retirement (lesson #11). Walk-forward + circuit breaker don't replace this gut check.
+
+**Reference docs:**
+- Spec: `docs/superpowers/specs/2026-05-19-walk-forward-methodology-design.md`
+- Plan: `docs/superpowers/plans/2026-05-19-walk-forward-methodology.md`
+- Methodology runbook: `docs/methodology_walk_forward.md`
+- Active review: `docs/active_setups_review.md` (populated during Phase 3)
+
+### 2026-05-19 (#11) — Monthly breakdown is mandatory pre-retirement, but data-classification hypotheses MUST be falsified before retiring or shipping
+
+**What went wrong (4-layer investigation chain):**
+
+I retired `pre_results_t1_fade` on Layer 1 (period aggregates: Disc 1.10 / OOS 0.82 / HO 1.15). User asked: "did u check month by month? i see a pattern... discovery is similar to ho and oos is different altogether... maybe some kind of indian market shift?"
+
+- **Layer 2 (monthly breakdown):** OOS is the outlier, Disc + HO are similar (medians 1.36 / 0.79 / 1.61). Suggested structural cause.
+- **Layer 3 (data audit):** NSE `announcements_fr` source died after Mar 2025. AMC events for 2025+ got demoted to "scheduled" class. **Hypothesis: setup missed events due to source-priority misclassification.**
+- **Layer 4 (conservative re-run with corrected `{AMC, scheduled}` filter):** Recovered ~50% more OOS events. **OOS PF_net got WORSE (0.816 → 0.784).** Demoted events were ALSO losers. Hypothesis falsified.
+
+**Final verdict: RETIRE (confirmed). Real failure mode: regime-conditioned edge with FII-positioning dependency** — setup mechanism (institutional T-1 de-risking) requires FIIs net-LONG to have something to de-risk. Jan-Mar 2025 FII outflow (~₹1L cr) destroyed the mechanism. Even when AMC universe restored, the events fired during FII-out regime were structurally losers.
+
+**Why this matters as a lesson:** The user's monthly-breakdown instinct caught a LEGITIMATE data quality concern that I should have caught myself. But the data-correction hypothesis turned out to be wrong — the events WERE misclassified, but those events were ALSO losers. Two truths can be simultaneously valid: (a) data ingestion has issues; (b) the underlying mechanism is regime-broken. Conflating them is the trap.
+
+**Rules:**
+
+1. **Phase 5 MUST include monthly within-period breakdown.** Always compute median monthly PF + Q25-Q75 + losing-months count. If a period's median differs by ≥0.30 from other periods, investigate STRUCTURAL cause before final retire/ship.
+
+2. **Outlier-month structural-cause hypothesis is required.** Cross-reference outlier months with:
+   - Indian-market regime (FII flows, SEBI rule changes, election cycles, sector corrections, war/macro shocks)
+   - Data-source coverage (calendar mutation history, scrape completeness, `.bak_*` files, dead endpoints)
+   - Mechanism dependencies (e.g., setup depends on FIIs LONG → fails when FIIs net-sell)
+
+3. **Hypotheses MUST be falsified, not just observed.** If you propose "OOS bleed = data classification artifact," CONFIRM by re-running with the correction. If the correction makes OOS PF *worse* or *unchanged*, the hypothesis is dead → retire. If it makes OOS PF *better*, validate via stationary-edge check before ship.
+
+4. **Earnings calendar / event-data freshness is a load-bearing dependency.** Setups keyed on `data/earnings_calendar/`, `data/fno_ban_history/`, etc. must verify per-period coverage AND source-priority completeness in Phase 5. NSE endpoints DO die (e.g., `announcements:Financial Result Updates` returned 0 rows for all 2025-04+ chunks).
+
+5. **Source-priority audits are part of Phase 5.** Print `df.groupby([period, source]).size()` for every period. Missing high-priority sources is a smoking gun for misclassification — but requires Layer 4 (re-run with corrected filter) to determine if it actually drove the result.
+
+6. **OOS+HO combined NET PnL is the single most damning gate.** v1 result was -Rs 92K (already retired-worthy). v2 result with corrected filter: -Rs 290K (3x worse). A setup that loses money across all post-Discovery data combined is not shippable, regardless of HO standalone passing other gates.
+
+7. **Conservative re-run (Path 2) beats trust-the-correction (Path 1).** When user is offered "trust the fix" vs "re-run + re-validate," default to re-validate. User chose Path 2 here and the conservative approach revealed v1 retirement was correct (just for partly wrong reasons). Path 1 would have shipped a corrected filter without re-validating the underlying edge.
+
+8. **"Non-stationary edge" is the wrong default label.** The right vocabulary: "regime-conditioned edge with structural dependency on X" — where X is a specific identifiable macro/regulatory factor. Naming the mechanism dependency is part of the retire verdict.
+
+### 2026-05-19 (#10) — Phase 1-5 discipline does NOT make a setup ship; the HO ship gate does
+
+**What went wrong:** Ran a full disciplined Phase 1-5 revival of `capitulation_long_morning` (renamed v2). Phase 1 Indian-market research (intradaylab.com gap-down recovery). Phase 2 empirical signature on 21,548 Discovery 2023-24 gap events confirmed mid_cap × gap [-5,-3] sweet spot. Phase 4 sanity v2 with anti-bias guards (Mode B entry from i+1, anti-look-ahead, locked filters before sweep). Phase 5 3-period parity: Disc PF_net 1.13, OOS PF_net **1.62** ⭐, HO PF_net **1.03** ❌. Trajectory was structurally identical to `mis_unwind_vwap_revert_short` (Disc 1.21 → OOS 1.22 → HO 0.75) — the exact pattern lesson #1 was written to prevent. Revival fell into the same trap despite full process discipline.
+
+**Why:** Process discipline (Phase 1-5 chain) makes the EVIDENCE reliable. It does NOT make the EDGE real. A setup can pass every Phase 1-5 gate honestly and still die at the HO ship gate because OOS happened to be a favorable-regime window. The Disc+OOS-favorable-regime illusion is a property of the data, not a property of the methodology. Phase 1-5 discipline is necessary but NOT sufficient.
+
+**Rule:**
+1. **The HO ship gate is the ONLY gate that matters for production decisions.** Disc and OOS are evidence-gathering; HO is the verdict. If HO PF_net < 1.10 OR mwin < 4/7 OR |WR delta OOS→HO| > 10pp, retire — regardless of how disciplined the chain was.
+2. **Disc+OOS parity ≠ HO survival, FULL STOP.** Even Disc+OOS+favorable-direction-pattern (OOS > Disc, suggesting "improving edge") is NOT a green light. v2 OOS at 1.62 was a 50% premium over Disc 1.13 — that gap should have been a red flag, not encouragement.
+3. **War-period resilience is interesting but insufficient.** v2 HO_war PF 1.12 beat 4 of 5 production SHORT setups in the same window. That hints volatility-favoring LONG complement, but standalone PF_net 1.03 still fails ship-gate. Portfolio-correlation thesis is the only path forward, and that requires correlation analysis, not standalone ship.
+4. **When you see Disc 1.1 → OOS 1.6 → HO 1.0 pattern emerge, retire FAST.** Don't try variant-tweaks (tighter cell, news filter, different TS). That's the cell-mining illusion lesson #2 in a new costume — chasing HO after the fact is data-mining.
+
+
 
 **What went wrong:** During paper-trade readiness audit I listed `cache/ohlcv_archive/` and `cache/preaggregate/` as VM deployment requirements. User pushed back: "I don't think we use cache folder any way in live trading. If we are then it's wrong." Audit confirmed: cache is correctly gated, but the assumption that it might be needed was sloppy — I hadn't traced the production data path before recommending VM setup.
 

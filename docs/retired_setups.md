@@ -2,12 +2,13 @@
 
 This document is the **single source of truth** for setups that were prototyped, (believed-)validated, then retired. It exists so we don't burn weeks re-implementing dead theses.
 
-**Inventory:** 18 retired setups across 4 retire batches:
+**Inventory:** 20 retired setups across 5 retire batches:
 
 - **Sub-5 ICT/SMC batch** (2026-04-25) — 3 setups: cargo-culted US/forex literature
 - **Sub-7 generic-pattern batch** (2026-04-25) — 5 setups: Indian-published but universal mechanics
 - **Sub-8 generic-pattern batch** (2026-04-26 to 2026-05-01) — 6 setups: same root cause as sub-7
 - **Sub-9 narrow-cell batch** (2026-05-07 to 2026-05-14) — 4 setups: each killed by a specific bug or threshold failure (look-ahead bias, regime non-reproducibility, never sanity-validated, Holdout n below floor)
+- **Sub-9 regulatory-regime batch** (2026-05-19) — 3 setups + 2 revival fails: `mis_unwind_vwap_revert_short`, `round_number_sweep_short`, `circuit_release_fade_short` (each shipped to production then collapsed in Holdout post-SEBI-Oct-2025); `capitulation_long_v2` (Phase 1-5 revival of earlier `capitulation_long_morning` — failed at Holdout ship gate); `pre_results_t1_fade` (Phase 1-5 candidate — failed v2 conservative re-run after data-classification correction; regime-conditioned edge with FII-positioning dependency)
 
 **Hard rule: do NOT re-implement any setup listed here without:**
 
@@ -938,14 +939,281 @@ This setup should NOT be re-implemented unless:
 2. **Holdout regime stabilizes** (war volatility recedes) AND **a tightened cell** shows PF >= 1.10 in 6-month rolling window with n >= 100
 3. **Mode-A execution (tick zone re-touch) testing reveals** the production was systematically failing on entry mechanics distinct from regime (we tested Mode A in May 2026 — PF only dropped 14%, so not the cause)
 
+## `capitulation_long_v2` — RETIRED 2026-05-19 (revival attempt failed at Holdout)
+
+**Retired:** 2026-05-19 (never reached production — failed at sanity Phase 5 Holdout)
+**Predecessor:** `capitulation_long_morning` (retired earlier in sub-9 batch). v2 was a disciplined Phase 1-5 revival under the chain documented in `tasks/lessons.md` 2026-05-19 #3.
+**Sanity scripts (preserved):** `tools/sub9_research/sanity_capitulation_long_v2.py`, `tools/sub9_research/_phase2_capitulation_signature.py`
+
+### Original thesis (v2)
+
+Indian small/mid-cap MIS-eligible stocks gapping down -3% to -5% (per intradaylab.com Phase-1 research: large gap-downs recover more reliably than -1.5/-2% danger zone). Phase 2 empirical signature on 21,548 Discovery 2023-24 gap events confirmed mid_cap × gap [-5%, -3%] is the sweet spot (MFE/MAE 1.57, mean +0.47% return at 14:30). LONG bias on exhaustion candle (09:25-10:00 window, lower_wick/body ≥ 0.5, body ≤ 30%, green, no new low) with Mode B next-bar-open entry.
+
+### Universe + filters (locked from Phase 2)
+
+- MIS-eligible + mid_cap (cap_segment lookup from `services/symbol_metadata`)
+- 09:15 gap from PDC in [-5.0%, -3.0%] (gap-size-only filter, no news filter per user accept)
+- Exhaustion candle 09:25-10:00 IST (lower_wick/body ≥ 0.5, body ≤ 30%, green, no new low)
+- Mode B: entry at next-bar OPEN from i+1, path walk from i+1
+- Locked cell (from Discovery sweep): SL=0.7%, T2=3.0R, TS=13:00, ride-to-T2 geometry
+
+### Validation chain (3-period locked cell)
+
+| Period | n | PF_real | **PF_net** | WR | mwin | Net |
+|---|---|---|---|---|---|---|
+| Discovery (2yr) | 527 | 1.30 | **1.127** | 43.3% | 12/24 (50%) | +Rs 35,283 |
+| OOS (Jan-Sep 2025) | 350 | 1.87 | **1.617** ⭐ | 51.1% | 5/9 (56%) | +Rs 96,996 |
+| **HO (Oct'25-Apr'26)** | 216 | 1.19 | **1.031** ❌ | 40.3% | **3/7 (43%)** | +Rs 3,943 |
+
+**HO war vs pre-war breakdown:**
+- HO pre-war (Oct-Dec 2025): n=20, PF_net 1.030, WR 35.0%, +Rs 372
+- HO war (Jan-Apr 2026): n=196, PF_net **1.116**, WR 38.3%, +Rs 13,816
+
+War period generated 91% of HO trades; war-period PF (1.12) actually exceeded HO pre-war (1.03). LONG bias benefits from gap-down volatility — the war did NOT hurt this setup.
+
+### Ship gate evaluation
+
+| Gate | Required | Actual | Pass? |
+|---|---|---|---|
+| HO PF_net | ≥ 1.10 | 1.031 | ❌ FAIL (below floor) |
+| HO mwin | ≥ 4/7 (57%) | 3/7 (43%) | ❌ FAIL |
+| WR delta OOS→HO | ≤ 10pp | -10.8pp | ❌ MARGINAL FAIL |
+| HO n | ≥ 100 | 216 | ✅ |
+| Same-bar % | < 30% | 1.4% | ✅ |
+
+### Failure mode — Disc/OOS-favorable-regime illusion (same pattern as `mis_unwind`)
+
+Discovery PF_net 1.13 → OOS PF_net 1.62 → HO PF_net 1.03 trajectory is **structurally identical to `mis_unwind_vwap_revert_short`** (Disc 1.21 → OOS 1.22 → HO 0.75). The OOS strength (PF 1.62) was a favorable-regime artifact, not validated edge. HO returned to Discovery-like marginal performance.
+
+This is the **Disc+OOS parity ≠ HO survival** failure that `tasks/lessons.md` #1 (2026-05-19) was written to prevent — and this revival fell into it anyway. Both periods (Disc and HO) cluster at PF_net ~1.03-1.13 (effectively break-even after fees + tax); OOS was the outlier on the positive side, not Discovery on the negative side.
+
+### Notable positive signal (preserved for future revival)
+
+War-period PF_net 1.12 outperforms most existing production SHORT setups in the same window:
+- `gap_fade_short` HO war: 1.08
+- `delivery_pct_anomaly_short` HO war: 1.09
+- `or_window_failure_fade_short` HO war: 0.92
+- `circuit_t1_fade_short` HO war: 0.53
+
+The setup is **complementary** (LONG-side, volatility-favoring) — just not above the ship-gate floor on its own.
+
+### Code state
+
+**No detector code was ever written** — v2 stopped at sanity-validation phase. Nothing to remove from production. The following research artifacts are preserved as negative-knowledge:
+
+**Preserved:**
+- `tools/sub9_research/_phase2_capitulation_signature.py` — empirical signature analysis on 21,548 Discovery 2023-24 gap-down events (confirms mid_cap × gap [-5,-3] sweet spot)
+- `tools/sub9_research/sanity_capitulation_long_v2.py` — disciplined anti-bias sanity (full Phase 1-5 chain, Mode B from i+1, locked cell sweeps)
+- `reports/sub9_sanity/_phase2_capitulation_signature.csv` — Phase 2 signature output
+- `reports/sub9_sanity/_capitulation_long_v2_grid_{discovery,oos,holdout}.csv` — full grid sweep outputs
+- `reports/sub9_sanity/_capitulation_long_v2_trades_{discovery,oos,holdout}.csv` — locked-cell trade ledgers
+
+### Conditions for revival
+
+This setup should NOT be re-implemented unless:
+
+1. **Post-war regime cleanup** — re-test after war volatility recedes (Q3-Q4 2026 fresh Holdout). The HO war PF 1.12 hints volatility-favoring behavior; calmer regime may still produce PF_net < 1.10 (the pre-war HO sub-cell already showed 1.03).
+2. **A genuinely additive filter** lifts HO PF_net above 1.10 floor — e.g., news-event filter restricting to non-news gaps (was deferred for v2 per user accept on gap-size-only). Adding a filter post-hoc to chase HO is data-mining; the filter must be pre-registered AND tested on fresh untouched HO.
+3. **Portfolio diversification thesis** — if existing 5-setup portfolio's HO drawdown is dominated by SHORT correlation, adding even a marginal LONG (PF_net 1.03) at small size might still improve portfolio-level Sharpe. Requires correlation analysis, not standalone ship-gate.
+4. **The Disc/HO-cluster vs OOS-outlier asymmetry is explained** — why was OOS PF 1.62 a 50% premium over both Disc and HO? Until the cause is identified, the 1.10 ship gate is the only defense against OOS-outlier shipping.
+
+## `pre_results_t1_fade` — RETIRED 2026-05-19 (regime-conditioned edge; OOS confirmed fail with corrected filter)
+
+**Status: RETIRED. Retirement was briefly reversed (data classification concern), then re-confirmed via conservative re-run with corrected filter.**
+
+### Investigation chain (4 layers)
+
+1. **Layer 1 — Period aggregates:** OOS PF_net 0.82 vs Disc 1.10 / HO 1.15. Initial retirement (premature).
+2. **Layer 2 — Monthly breakdown (user's challenge):** OOS is the OUTLIER, Disc + HO are similar. Suggested structural shift, not non-stationary edge.
+3. **Layer 3 — Data audit:** NSE `announcements_fr` source died after Mar 2025. AMC events for 2025+ got demoted to "scheduled" class via lower-priority `board_meetings` source. Hypothesis: setup's `AMC-only` filter missed the demoted-AMC events.
+4. **Layer 4 — Conservative re-run (Path 2 — Phase 4 grid + Phase 5 with corrected `{AMC, scheduled}` filter):** Recovered ~50% more OOS events. OOS PF_net got WORSE (0.816 → **0.784**). Demoted events were ALSO losers. Hypothesis falsified.
+
+### Final v2 evidence (corrected filter)
+
+| Period | n_v2 | PF_real | PF_net | WR | mwin | Net (after tax) | Median monthly PF |
+|---|---|---|---|---|---|---|---|
+| Discovery (24mo) | 1,940 | 1.388 | 1.103 | 52.7% | 20/23 | Rs +365K | 1.438 |
+| **OOS (9mo)** | 766 | 0.990 | **0.784** ❌ | 45.0% | 4/9 | **-Rs 509K** | 0.976 |
+| HO (7mo) | 755 | 1.449 | 1.159 | 52.6% | 4/6 | +Rs 219K | 1.482 |
+
+**OOS+HO combined NET: -Rs 290K LOSS** (16 post-Discovery months).
+
+### Ship gate evaluation
+
+| Gate | Required | Actual | Pass? |
+|---|---|---|---|
+| HO PF_net | ≥ 1.10 | 1.159 | ✅ |
+| HO mwin | ≥ 4/7 (57%) | 4/6 | ✅ |
+| WR delta OOS→HO | ≤ 10pp | 7.5pp | ✅ |
+| HO n | ≥ 100 | 755 | ✅ |
+| Same-bar % | < 30% | 29.9% | ✅ (barely) |
+| **OOS+HO combined NET** | > 0 | -Rs 290K | ❌ |
+| **Stationarity max-min PF_net** | ≤ 0.30 | 0.375 | ❌ |
+
+### Failure mode — regime-conditioned edge with FII-positioning dependency
+
+The setup mechanism (institutional T-1 de-risking → SHORT signal) **requires institutions to be net-LONG** to have de-risking flow to fade. When FIIs are net-sellers (e.g., Jan-Mar 2025: ~₹1L cr outflow), there's no LONG positioning to unwind → setup has no signal → losses.
+
+Monthly evidence supports this: 2025-07 (FII return month) was the strongest non-Disc month at PF 2.20. HO Nov 2025+ recovery aligns with sustained FII inflows.
+
+**This is structurally different from prior retirements:**
+
+| Pattern | Disc | OOS | HO | Examples |
+|---|---|---|---|---|
+| Disc/OOS-favorable-regime illusion (lesson #1, #10) | high | very high ⭐ | low ❌ | capitulation_long_v2, mis_unwind |
+| Disc-only overfit (cell-mining illusion #2) | high | low | low | round_number_sweep_short |
+| Regulatory decay | high | high | low ❌ | circuit_release_fade_short |
+| **Regime-conditioned (FII-dependent)** | high | **low (FII-out regime)** | high (FII-in regime) | **pre_results_t1_fade** |
+
+### Original (v1) retirement evidence (preserved for traceability — version superseded by v2)
+
+| Period | v1 n | PF_real | PF_net |
+|---|---|---|---|
+| Discovery | 1879 | 1.381 | 1.097 |
+| OOS | 509 | 1.030 | 0.816 |
+| HO | 679 | 1.440 | 1.153 |
+
+### Code state
+
+**No detector code was ever written.** All Phase 1-5 artifacts preserved as negative-knowledge:
+
+- `tools/sub9_research/phase2_pre_results_t1_signature.py` — Phase 2 empirical signature
+- `tools/sub9_research/sanity_pre_results_t1_fade.py` — v1 sanity (AMC-only filter)
+- `tools/sub9_research/sanity_pre_results_t1_fade_v2.py` — v2 sanity (AMC + scheduled filter)
+- `tools/sub9_research/phase5_pre_results_t1_validation.py` — v1 Phase 5 driver
+- `tools/sub9_research/phase5_pre_results_t1_validation_v2.py` — v2 Phase 5 driver
+- `reports/sub9_sanity/_phase2_pre_results_t1_signature.csv` — Phase 2 signature
+- `reports/sub9_sanity/_pre_results_t1_grid_discovery.csv` — v1 Phase 4 grid
+- `reports/sub9_sanity/_pre_results_t1_v2_grid_discovery.csv` — v2 Phase 4 grid
+- `reports/sub9_sanity/_pre_results_t1_trades_{discovery,oos,holdout}.csv` — v1 trade ledgers
+- `reports/sub9_sanity/_pre_results_t1_v2_trades_{discovery,oos,holdout}.csv` — v2 trade ledgers
+- `reports/sub9_sanity/_pre_results_t1_monthly_breakdown.csv` — monthly stability evidence
+
+### Conditions for revival
+
+This setup should NOT be re-implemented unless:
+
+1. **FII-flow gate is added to the universe filter** — only fire when FII net flow has been positive for the prior 30 days. Requires FII data infrastructure (NSDL FPI flow file or equivalent). Even with gating, the post-2025 data shows the setup's "active" regime is narrower than originally assumed.
+2. **Mechanism revalidation in post-war regime** — re-test on fresh Holdout (Q3-Q4 2026) AFTER war volatility recedes AND FII positioning stabilizes. The HO war period showed PF 1.504 but war is a non-replicable forward state.
+3. **Stationarity gate must clear** — corrected filter showed max-min PF_net of 0.375 across 3 periods. Any revival must demonstrate ≤ 0.30 across Disc/OOS/HO with the FII-gate applied.
+4. **OOS+HO combined NET must be positive** — non-negotiable. The v2 result shows -Rs 290K combined, which would be production-fatal.
+
+## Maintenance protocol
+**Predecessor:** First-pass thesis (no prior version). Phase 1-5 disciplined revival chain documented in `tasks/lessons.md` 2026-05-19 #3.
+**Sanity scripts (preserved):** `tools/sub9_research/phase2_pre_results_t1_signature.py`, `tools/sub9_research/sanity_pre_results_t1_fade.py`, `tools/sub9_research/phase5_pre_results_t1_validation.py`
+
+### Original thesis
+
+Pre-results-day T-1 institutional-de-risking SHORT. SEBI LODR Reg. 30 forces results disclosure 30+ minutes before/after trading hours → institutional desks de-risk on the trading day BEFORE results (T-1) → produces directional intraday selling pressure on names with results pending at T+0. Trade fires during T-1 trading hours, exits by EOD (MIS-compatible, not overnight).
+
+### Universe + filters (locked from Phase 2 BEFORE Phase 4 sweep)
+
+- MIS-eligible + cap ∈ {large_cap, mid_cap, unknown} (loose filter to include F&O liquid names like M&M/BAJAJ-AUTO that tag unknown due to missing market_cap_cr)
+- `announce_class == "AMC"` (Phase 2: n=3,957 / 57.3% negative / -0.348% mean — cleanest signal with largest n)
+- `prior_5d_ret_pct > 0.0` (Phase 2 Table C: momentum filter — institutions de-risk what they're sitting on profits in; prior_5d > +5% → 61% negative)
+- T-1 trading day has ≥ 30 bars (data quality)
+
+### Phase 2 empirical signature (Discovery 2023-01..2024-12, n=4,179 measured)
+
+| Metric | Value |
+|---|---|
+| T-1 mean intraday return | -0.351% |
+| Random-day baseline mean | +0.238% |
+| Delta (signal − baseline) | **-0.589%** |
+| AMC class % negative days | 57.3% (n=3,957) |
+| Strongest momentum bucket | prior_5d > +5% → 61.3% negative (n=569) |
+
+Phase 2 verdict: STRONG SIGNAL. Proceeded to Phase 4.
+
+### Phase 4 locked cell (Discovery sweep, 192 combos)
+
+```
+window=(10:00, 12:00), SL=0.3%, T2=2.5R, T1_partial=0.5, TS=15:10
+Discovery: n=1879, PF_real=1.381, PF_net=1.097, WR=52.7%, mwin=18/20 (90%), +Rs 332K
+Exit mix: SL=73.7% T2=25.8% TS=0.5% SameBar=35.5%
+```
+
+Discovery passed both gates (PF ≥ 1.10, mwin ≥ 12/24). Proceeded to Phase 5.
+
+### Phase 5 validation chain (the trap)
+
+| Period | n | PF_real | **PF_net** | WR | mwin | Net (after tax) |
+|---|---|---|---|---|---|---|
+| Discovery (24mo) | 1879 | 1.381 | **1.097** | 52.7% | 18/20 | +Rs 332K |
+| **OOS (9mo)** | 509 | 1.030 | **0.816** ❌ | 46.0% | 4/9 | **-Rs 283K** |
+| HO (7mo) | 679 | 1.440 | **1.153** | 52.3% | 4/6 | +Rs 191K |
+
+**OOS+HO combined (16 post-Discovery months): NET -Rs 92K LOSS.**
+
+**HO sub-periods:**
+- HO pre-war (Oct'25-Dec'25): n=186, PF_real 1.269, +Rs 23,559
+- HO war (Jan'26-Apr'26): n=493, PF_real **1.504**, +Rs 117,870
+
+War-period strength drove HO recovery. OOS (no war) was the catastrophic window.
+
+### Ship gate evaluation
+
+| Gate | Required | Actual | Pass? |
+|---|---|---|---|
+| HO PF_net | ≥ 1.10 | 1.153 | ✅ |
+| HO mwin | ≥ 4/7 (57%) | 4/6 (66.7%) | ✅ |
+| WR delta OOS→HO | ≤ 10pp | 6.3pp | ✅ |
+| HO n | ≥ 100 | 679 | ✅ |
+| **Same-bar %** | **< 30%** | **30.3%** | ❌ (by 0.3pp) |
+
+**Technically fails 1 of 5 gates. But the REAL retirement signal is the trajectory pattern.**
+
+### Failure mode — NEW pattern: OOS-catastrophic / HO-recovery (non-stationary edge)
+
+Distinct from prior retirements:
+
+| Pattern | Disc PF_net | OOS PF_net | HO PF_net | Examples |
+|---|---|---|---|---|
+| Disc/OOS-favorable-regime illusion | high | very high ⭐ | low ❌ | capitulation_long_v2, mis_unwind_vwap_revert_short |
+| Disc-only overfit | high | low | low | round_number_sweep_short |
+| Regulatory decay | high | high | low ❌ | circuit_release_fade_short |
+| **Non-stationary edge (this)** | **marginal** | **low ❌** | **high** | **pre_results_t1_fade** |
+
+**Key insight:** The Disc → OOS → HO trajectory is non-monotonic AND high-magnitude (PF_net swings 1.10 → 0.82 → 1.15). Edge appears in Discovery, vanishes in OOS, reappears in HO (war-period). Ship a setup like this and you don't know which regime you're in until 9 months of drawdown educates you. **A real edge should be approximately stationary across periods** — non-monotonic ±0.3-PF swings indicate the apparent edge is regime-conditioned, not a stable mechanism.
+
+**Architectural fragility (Phase 4 red flag confirmed):** Tight SL 0.3% won the Phase 4 grid (classic overfit pattern). Same-bar exit rate climbed regime-sensitively: Disc 35.5% → OOS 44.0% → HO 30.3% — the entry-bar volatility-eats-stop problem is non-stationary too.
+
+**Borrowed-mechanism risk (Phase 1 yellow flag confirmed):** No Indian academic literature documents T-1 pre-earnings institutional de-risking. Closest analog is US Ben-Rephael (2024). The Indian-market mechanism remains unproven; what we measured in Phase 2 may be a regime artifact, not a stationary participant behavior.
+
+### Code state
+
+**No detector code was ever written** — stopped at sanity-validation phase. Nothing to remove from production. Research artifacts preserved as negative-knowledge:
+
+**Preserved:**
+- `tools/sub9_research/phase2_pre_results_t1_signature.py` — empirical signature (4,179 Discovery events, T-1 mean -0.35% vs baseline +0.24%)
+- `tools/sub9_research/sanity_pre_results_t1_fade.py` — disciplined anti-bias sanity (Mode B, path walk from i+2, same-bar SL priority, full locked filters)
+- `tools/sub9_research/phase5_pre_results_t1_validation.py` — Phase 5 driver
+- `reports/sub9_sanity/_phase2_pre_results_t1_signature.csv` — Phase 2 per-event signature
+- `reports/sub9_sanity/_pre_results_t1_grid_discovery.csv` — 192-combo Phase 4 grid
+- `reports/sub9_sanity/_pre_results_t1_trades_{discovery,oos,holdout}.csv` — locked-cell trade ledgers
+
+### Conditions for revival
+
+This setup should NOT be re-implemented unless:
+
+1. **Stationary-edge demonstration** — find a configuration where Disc / OOS / HO PF_net are all within ±0.15 of each other. The 0.82-1.15 PF_net swing in this attempt is the disqualifier. Variance across periods this large = no stable mechanism.
+2. **Indian-market literature backing** — locate a published Indian-market study (NSE research, academic paper, broker quant report) documenting the T-1 institutional de-risking pattern. Without it, this is borrowed-mechanism speculation.
+3. **Architecturally robust SL** — current sanity locked SL=0.3% (tightest grid value), which is fee-stack-fragile and same-bar-prone. Revival needs a wider SL that survives at PF_net ≥ 1.10 across all 3 periods, not a tight scalp.
+4. **Regime explanation for OOS catastrophe** — explain WHY OOS (Jan-Sep 2025) lost -Rs 283K while HO (Oct'25-Apr'26) made +Rs 191K. What mechanism produces opposite signals in adjacent periods? Until this is answered, the setup is regime-roulette.
+
 ## Maintenance protocol
 
 When a new setup is retired:
 
-1. Add a section here with the four standard fields: thesis, universe+filters, claimed validation, actual failure mode + evidence.
-2. List the specific code files removed.
-3. Add the "conditions for revival" — what would have to be true for someone to legitimately try this again.
-4. Move the original brief from `specs/` to `specs/archived/` (or delete if low-value).
-5. Update `tasks/lessons.md` with any pattern that other setups should watch for.
+1. **Run walk-forward FIRST.** Per `docs/superpowers/specs/2026-05-19-walk-forward-methodology-design.md` and lesson #12: a retirement requires a walk-forward result with tier = RED (≤ 5/13 windows pass), or AMBER with documented mechanism that explains failure AND forward-validation (90 days at 25% size) also failing.
+2. Add a section here with the four standard fields: thesis, universe+filters, claimed validation, actual failure mode + evidence.
+3. **Include the walk-forward table** (13 windows × per-window stats) as the primary retirement evidence.
+4. **Include mechanism_tags + mechanism_notes** that were pre-registered before walk-forward ran (verify via `git log` on the config file).
+5. List the specific code files removed.
+6. Add the "conditions for revival" — what would have to be true for someone to legitimately try this again (e.g., regime returns to a state where the mechanism works).
+7. Move the original brief from `specs/` to `specs/archived/` (or delete if low-value).
+8. Update `tasks/lessons.md` with any new failure pattern that other setups should watch for.
+
+**3-period chronological validation (Discovery/OOS/Holdout) is DEPRECATED for retirement decisions.** Walk-forward (13 × 3-month windows) is the new standard. Existing retirement entries written under the old methodology are preserved as historical record; new entries must use walk-forward evidence.
 
 The point of this document is **negative knowledge** — what does NOT work and why. It is at least as valuable as the active-setup documentation.
