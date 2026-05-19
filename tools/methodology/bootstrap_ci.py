@@ -56,15 +56,29 @@ def bootstrap_pf_ci(
     point = _profit_factor(pnls)
 
     rng = np.random.default_rng(seed)
-    resampled_pfs = []
-    for _ in range(n_resamples):
-        sample = rng.choice(pnls, size=len(pnls), replace=True)
-        resampled_pfs.append(_profit_factor(sample))
+    n_trades = len(pnls)
+    # Vectorized: shape (n_resamples, n_trades) — ~10-50x faster than a Python loop
+    samples = rng.choice(pnls, size=(n_resamples, n_trades), replace=True)
+    pos_sums = np.where(samples > 0, samples, 0.0).sum(axis=1)
+    neg_sums = -np.where(samples < 0, samples, 0.0).sum(axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        resampled_pfs = np.where(
+            neg_sums > 0,
+            pos_sums / neg_sums,
+            np.where(pos_sums > 0, np.inf, 1.0),
+        )
 
-    arr = np.array(resampled_pfs)
+    arr = resampled_pfs
     finite = arr[np.isfinite(arr)]
-    if len(finite) < n_resamples * 0.95:
-        ci_lower, ci_upper = point, point
+    if not np.isfinite(point):
+        # All-wins window: PF is genuinely inf. CI is trivially [inf, inf].
+        ci_lower = float("inf")
+        ci_upper = float("inf")
+    elif len(finite) < 10:
+        # Bootstrap distribution too degenerate to compute meaningful CI.
+        # Fail-safe: lower=1.0 means window does not pass the >1.0 gate from CI alone.
+        ci_lower = 1.0
+        ci_upper = float(np.percentile(finite, 97.5)) if len(finite) > 0 else float("inf")
     else:
         ci_lower = float(np.percentile(finite, 2.5))
         ci_upper = float(np.percentile(finite, 97.5))
