@@ -12,12 +12,16 @@ Caller invokes once per bar after structure detection produces plans.
 """
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, List
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+from config.logging_config import get_agent_logger
+
+# Route to agent.log so admission rejections are visible alongside other
+# pipeline events. Previously used logging.getLogger(__name__) which had no
+# handler attached, silently dropping all BAR_SCHED / BAR_SCHED_BLOCK lines.
+logger = get_agent_logger()
 
 
 def schedule_admits(

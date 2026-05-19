@@ -1929,9 +1929,19 @@ class ScreenerLive:
             if etf_count > 0:
                 logger.info(f"ETF_FILTER | Excluded {etf_count} ETF symbols from trading universe")
 
-            # Early MIS filter — reduces WS subscriptions, Stage-0, daily cache, ORB
+            # Early MIS filter — reduces WS subscriptions, Stage-0, daily cache, ORB.
+            # SKIPPED in backtest mode: the live Zerodha MIS sheet reflects today's
+            # eligibility, not the historical session date's. Applying it to a
+            # multi-year backtest strips symbols that WERE MIS-eligible at signal
+            # time but were removed from Zerodha's live list later — caused
+            # circuit_release_fade_short to miss 58/256 sanity-only signals.
+            # Universe builders still check per-symbol MIS via `nse_all.json`
+            # (date-anchored snapshot) at universe-build time, so eligibility
+            # filtering still happens correctly downstream.
             mis_filter_cfg = self.raw_cfg.get("early_mis_universe_filter", {})
-            if mis_filter_cfg.get("enabled", False) and self._mis_fetcher and self._mis_fetcher.is_loaded():
+            if env.DRY_RUN:
+                logger.info("MIS_UNIVERSE | DRY_RUN: skipping live Zerodha MIS filter (use nse_all.json downstream)")
+            elif mis_filter_cfg.get("enabled", False) and self._mis_fetcher and self._mis_fetcher.is_loaded():
                 before = len(self.core_symbols)
                 self.core_symbols = [s for s in self.core_symbols if self._mis_fetcher.is_mis_allowed(s)]
                 filtered_set = set(self.core_symbols)
@@ -1944,15 +1954,88 @@ class ScreenerLive:
         return self.token_map
 
     def _index_symbols(self) -> List[str]:
-        return []
+        # Configured index drives market-wide regime classification.
+        idx_sym = (self.raw_cfg.get("directional_bias", {}) or {}).get("index_symbol")
+        return [idx_sym] if idx_sym else []
 
     def _index_df5(self) -> pd.DataFrame:
         idx = self.agg.index_df_5m()
         if isinstance(idx, dict):
             for _, df in idx.items():
-                return df
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    return df
+            idx = pd.DataFrame()
+        if isinstance(idx, pd.DataFrame) and not idx.empty:
+            return idx
+        # Backtest fallback: the aggregator never receives index ticks in DRY_RUN
+        # because there's no websocket subscription. Synthesize a market-wide
+        # 5m DataFrame by aggregating across the precomputed universe so the
+        # regime classifier has actual price action to work with rather than
+        # short-circuiting to "chop". Without this, every backtest bar produces
+        # regime=chop regardless of actual market state.
+        if env.DRY_RUN and self._precomputed_5m:
+            try:
+                return self._synthesize_market_df5()
+            except Exception as e:
+                logger.debug("INDEX_DF5_SYNTH_FAILED | %s", e)
+        return pd.DataFrame()
+
+    def _synthesize_market_df5(self) -> pd.DataFrame:
+        """Build a market-wide 5m DF by equal-weighted aggregation across the
+        precomputed universe. Used as a NIFTY-50 proxy in backtest mode where
+        no index symbol is available in the cache."""
+        # Cache the synthesized DF per-session to avoid rebuilding every bar.
+        cache_key = getattr(self, "_synth_market_session_date", None)
+        cached_df = getattr(self, "_synth_market_df5", None)
+        try:
+            session_date = getattr(self.sdk, "_dry_session_date", None) or self.raw_cfg.get("session_date")
+            session_date = pd.to_datetime(session_date).date() if session_date else None
+        except Exception:
+            session_date = None
+        if cached_df is not None and cache_key == session_date:
+            return cached_df
+
+        # Pick up to N most-liquid symbols by mean volume in the cache to keep
+        # the synthesis cheap and representative of broad-market state.
+        max_syms = 50
+        candidates = []
+        for sym, df in self._precomputed_5m.items():
+            if df is None or df.empty:
+                continue
+            try:
+                v = float(df["volume"].mean())
+                candidates.append((v, sym))
+            except Exception:
+                continue
+        candidates.sort(reverse=True)
+        selected = [s for _, s in candidates[:max_syms]]
+        if not selected:
             return pd.DataFrame()
-        return idx if isinstance(idx, pd.DataFrame) else pd.DataFrame()
+
+        frames = []
+        for s in selected:
+            df = self._precomputed_5m.get(s)
+            if df is None or df.empty:
+                continue
+            # Normalize prices so cross-symbol aggregation is meaningful
+            base = float(df["close"].iloc[0]) if len(df) > 0 else None
+            if not base or base <= 0:
+                continue
+            d = df[["open", "high", "low", "close", "volume"]].copy()
+            d["open"] /= base
+            d["high"] /= base
+            d["low"] /= base
+            d["close"] /= base
+            frames.append(d)
+        if not frames:
+            return pd.DataFrame()
+
+        # Index-aligned mean across symbols, treating missing bars as NaN.
+        combined = pd.concat(frames).groupby(level=0).mean()
+        combined = combined.sort_index()
+        self._synth_market_df5 = combined
+        self._synth_market_session_date = session_date
+        return combined
 
     def _load_orb_cache_from_disk(self) -> None:
         """
@@ -2034,9 +2117,7 @@ class ScreenerLive:
                     #     — gap_fade_universe, long_panic_gap_down_universe,
                     #       circuit_release_fade_short_universe
                     #   3-arg: (daily_dict, session_date, config)
-                    #     — round_number_sweep_short_universe,
-                    #       or_window_failure_fade_short_universe,
-                    #       mis_unwind_vwap_revert_short_universe
+                    #     — or_window_failure_fade_short_universe
                     # Detect by inspecting the first parameter name.
                     import inspect as _inspect
                     _sig_params = list(_inspect.signature(builder_fn).parameters.keys())
@@ -2097,6 +2178,14 @@ class ScreenerLive:
 
         # ---- 4. Compute regime once (shared across all symbols in this bar) ----
         index_df5 = self._index_df5()
+        # Filter synthesized/index DF to history up to current bar so the regime
+        # is computed from data actually available at this point in the session
+        # (no look-ahead in backtest where the synthesized DF spans the full day).
+        try:
+            if isinstance(index_df5, pd.DataFrame) and not index_df5.empty and now is not None:
+                index_df5 = index_df5.loc[index_df5.index <= now]
+        except Exception:
+            pass
         regime = "chop"
         regime_conf = 0.5
         regime_diagnostics = None
@@ -2360,16 +2449,24 @@ class ScreenerLive:
 
         # LATE START DETECTION: Check if we have opening range bars (09:15-09:30)
         # If not, we likely started late and need to recover from historical data
+        # In backtest, df5 is multi-day; df5.index[0] is yesterday's bar, so we must
+        # filter to today's bars before checking the earliest bar's time.
         has_opening_range_bars = False
         orb_end_time = dtime(9, 30)
 
         for sym, df5 in df5_by_symbol.items():
-            if df5 is not None and len(df5) >= 3:
-                # Check if any bar is from before 09:30 (indicating we have opening range data)
-                earliest_bar_time = df5.index[0].time() if hasattr(df5.index[0], 'time') else None
-                if earliest_bar_time and earliest_bar_time < orb_end_time:
-                    has_opening_range_bars = True
-                    break
+            if df5 is None or len(df5) < 1:
+                continue
+            try:
+                today_bars = df5[df5.index.date == session_date]
+            except Exception:
+                today_bars = df5
+            if len(today_bars) < 1:
+                continue
+            earliest_bar_time = today_bars.index[0].time() if hasattr(today_bars.index[0], 'time') else None
+            if earliest_bar_time and earliest_bar_time < orb_end_time:
+                has_opening_range_bars = True
+                break
 
         if not has_opening_range_bars:
             # Late start detected - check if recovery is even worth it
@@ -2487,6 +2584,78 @@ class ScreenerLive:
 
         return levels_by_symbol
 
+    def _recover_orb_levels_from_precomputed_5m(self, session_date) -> Dict[str, Dict[str, float]]:
+        """Backtest fallback: compute ORB from precomputed 5m feathers (no broker API)."""
+        import time as time_module
+        from datetime import time as dtime
+
+        start_time = time_module.perf_counter()
+        precomputed = getattr(self, "_precomputed_5m", None) or {}
+        orb_start_t = dtime(9, 15)
+        orb_end_t = dtime(9, 30)
+
+        _univ = self._tag_map.active_symbols()
+        _recover_syms = _univ if _univ else self.core_symbols
+        logger.info(
+            f"ORB_RECOVERY_PRECOMPUTED | Recovering ORB for {len(_recover_syms)} "
+            f"symbols from precomputed 5m bars."
+        )
+
+        levels_by_symbol = {}
+        success_count = 0
+        fail_count = 0
+        for sym in _recover_syms:
+            try:
+                df5_full = precomputed.get(sym)
+                if df5_full is None or len(df5_full) < 1:
+                    orh = orl = float("nan")
+                else:
+                    today_bars = df5_full[df5_full.index.date == session_date]
+                    orb_window = today_bars[
+                        (today_bars.index.time >= orb_start_t)
+                        & (today_bars.index.time < orb_end_t)
+                    ]
+                    if len(orb_window) >= 1:
+                        orh = float(orb_window["high"].max())
+                        orl = float(orb_window["low"].min())
+                    else:
+                        orh = orl = float("nan")
+
+                daily = self.sdk.get_daily(sym, days=210)
+                level_dict = get_previous_day_levels(
+                    daily_df=daily,
+                    session_date=session_date,
+                    fallback_df=None,
+                    enable_fallback=False,
+                )
+                pdh = level_dict.get("PDH", float("nan"))
+                pdl = level_dict.get("PDL", float("nan"))
+                pdc = level_dict.get("PDC", float("nan"))
+
+                levels_by_symbol[sym] = {
+                    "ORH": orh, "ORL": orl,
+                    "PDH": pdh, "PDL": pdl, "PDC": pdc,
+                }
+                if not (pd.isna(orh) or pd.isna(orl)):
+                    success_count += 1
+                else:
+                    fail_count += 1
+            except Exception as e:
+                logger.warning(f"ORB_RECOVERY_PRECOMPUTED | {sym}: Failed - {e}")
+                levels_by_symbol[sym] = {
+                    "ORH": float("nan"), "ORL": float("nan"),
+                    "PDH": float("nan"), "PDL": float("nan"), "PDC": float("nan"),
+                }
+                fail_count += 1
+
+        elapsed = time_module.perf_counter() - start_time
+        logger.info(
+            f"ORB_RECOVERY_PRECOMPUTED | Done. Recovered ORH/ORL for "
+            f"{success_count}/{len(_recover_syms)} symbols | Failed: {fail_count} | "
+            f"Time: {elapsed:.2f}s"
+        )
+        return levels_by_symbol
+
     def _recover_orb_levels_from_historical(self, session_date) -> Dict[str, Dict[str, float]]:
         """
         Recover ORH/ORL from historical 1-minute data when server starts late.
@@ -2503,8 +2672,17 @@ class ScreenerLive:
         import time as time_module
         from datetime import datetime as dt, time as dtime
 
-        # Check if SDK supports historical 1m fetch
+        # Check if SDK supports historical 1m fetch.
+        # In backtest, MockBroker lacks this — fall back to the precomputed 5m
+        # feathers we already loaded for today's 09:15-09:30 window.
         if not hasattr(self.sdk, 'get_historical_1m'):
+            precomputed = getattr(self, "_precomputed_5m", None)
+            if precomputed:
+                logger.info(
+                    "ORB_RECOVERY | SDK lacks get_historical_1m — falling back to "
+                    "precomputed 5m bars for ORB recovery (backtest mode)."
+                )
+                return self._recover_orb_levels_from_precomputed_5m(session_date)
             logger.warning("ORB_RECOVERY | SDK doesn't support get_historical_1m. ORB levels unavailable.")
             return {}
 
@@ -2705,9 +2883,18 @@ class ScreenerLive:
         # Only cache if we have at least PDH+PDL (essential for structure detection).
         # If daily data wasn't available yet (SDK warming up), don't cache NaN —
         # allow retry next 5m cycle when data may be ready.
-        # ORH/ORL being NaN is acceptable to cache (opening range is fixed from first bars).
+        # ORH/ORL: only cache once ORB period (09:30) has finalized. Caching NaN
+        # ORH/ORL pre-09:30 poisons the cache for the rest of the session — every
+        # afternoon trade on the symbol then sees NaN even though the ORB bars
+        # arrive later. Force recomputation until 09:30 has passed.
         has_prev_day = not (pd.isna(pdh) or pd.isna(pdl))
-        if has_prev_day:
+        has_orb = not (pd.isna(orh) or pd.isna(orl))
+        try:
+            now_time = now.time() if hasattr(now, "time") else None
+        except Exception:
+            now_time = None
+        orb_finalized = (now_time is not None and now_time >= dtime(9, 30))
+        if has_prev_day and (has_orb or orb_finalized):
             with self._levels_cache_lock:
                 self._levels_cache[key] = out
         return out
