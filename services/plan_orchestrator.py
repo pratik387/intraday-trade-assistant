@@ -174,6 +174,37 @@ def _get_selection_rules() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Setup-fire gate helper
+# ---------------------------------------------------------------------------
+
+
+def _setup_should_fire(setup_cfg: dict) -> tuple[bool, float]:
+    """Decide if a setup should fire and at what position-size multiplier.
+
+    Reads:
+      - enabled: bool (existing — required True for fire)
+      - cb_state: 'enabled' | 'forward_validation' | 'disabled' (default 'enabled')
+      - position_size_multiplier: float (default 1.0)
+
+    Returns (should_fire, size_multiplier).
+    A setup fires iff enabled AND cb_state in {'enabled', 'forward_validation'}.
+
+    Per walk-forward methodology spec
+    docs/superpowers/specs/2026-05-19-walk-forward-methodology-design.md.
+    """
+    if not setup_cfg.get("enabled", False):
+        return False, 0.0
+    cb_state = setup_cfg.get("cb_state", "enabled")
+    if cb_state == "disabled":
+        return False, 0.0
+    multiplier = float(setup_cfg.get("position_size_multiplier", 1.0))
+    if cb_state == "forward_validation" and multiplier == 1.0:
+        # AMBER tier defaults to 0.25 if not explicitly set
+        multiplier = 0.25
+    return True, multiplier
+
+
+# ---------------------------------------------------------------------------
 # PlanOrchestrator — singleton
 # ---------------------------------------------------------------------------
 
@@ -213,8 +244,11 @@ class PlanOrchestrator:
             full_cfg = _load_root_config()
             setups_cfg = full_cfg.get("setups") or {}
             setup_cfg = setups_cfg.get(setup_type) or {}
-            if not setup_cfg.get("enabled", False):
-                logger.debug(f"[ORCH] {setup_type} disabled in configuration.json — skipping")
+            should_fire, _size_mult = _setup_should_fire(setup_cfg)
+            if not should_fire:
+                cb_state = setup_cfg.get("cb_state", "enabled")
+                reason = "disabled" if not setup_cfg.get("enabled", False) else f"cb_state={cb_state}"
+                logger.debug(f"[ORCH] {setup_type} not firing ({reason}) — skipping")
                 return None
 
             # Inject _setup_name so the detector identifies itself the same
