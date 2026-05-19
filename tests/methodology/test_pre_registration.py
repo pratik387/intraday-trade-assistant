@@ -81,3 +81,16 @@ def test_pre_registration_fails_when_tags_added_in_head_commit(tmp_path):
 
     with pytest.raises(PreRegistrationError, match="post-hoc"):
         check_mechanism_pre_registered(repo_root=tmp_path, config_path=cfg, setup_name="my_setup")
+
+
+def test_pre_registration_wraps_git_errors_as_pre_registration_error(tmp_path):
+    """Non-git directory raises PreRegistrationError (not CalledProcessError)."""
+    # tmp_path is NOT a git repo
+    cfg = tmp_path / "config.json"
+    cfg.write_text(
+        '{"setups": {"my_setup": {"mechanism_tags": ["FII_net_flow_positive_30d"]}}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PreRegistrationError, match="git command failed"):
+        check_mechanism_pre_registered(repo_root=tmp_path, config_path=cfg, setup_name="my_setup")

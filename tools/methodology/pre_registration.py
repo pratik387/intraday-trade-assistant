@@ -74,17 +74,25 @@ def check_mechanism_pre_registered(
             f"{config_path} BEFORE running walk-forward."
         )
 
-    # Search for the first tag string as a proxy for when mechanism_tags was added
-    search_key = f'"{tags[0]}"'
-    intro_sha = _git_commit_for_file_string(repo_root, config_path, search_key)
-    if intro_sha is None:
-        raise PreRegistrationError(
-            f"Could not find any commit introducing mechanism_tags for "
-            f"'{setup_name}' in git log for {config_path}. Pre-register first."
-        )
+    try:
+        # Search for the mechanism_tags key itself — invariant across tag rotations
+        search_key = '"mechanism_tags"'
+        intro_sha = _git_commit_for_file_string(repo_root, config_path, search_key)
+        if intro_sha is None:
+            raise PreRegistrationError(
+                f"Could not find any commit introducing mechanism_tags for "
+                f"'{setup_name}' in git log for {config_path}. Pre-register first."
+            )
 
-    head = _git_head_sha(repo_root)
-    commits_between = _git_commit_count_between(repo_root, intro_sha, head)
+        head = _git_head_sha(repo_root)
+        commits_between = _git_commit_count_between(repo_root, intro_sha, head)
+    except subprocess.CalledProcessError as e:
+        raise PreRegistrationError(
+            f"git command failed while checking pre-registration: {e.cmd} "
+            f"(exit code {e.returncode}). Ensure {repo_root} is a git repo "
+            f"with commits, and git is on PATH."
+        ) from e
+
     if commits_between < 1:
         raise PreRegistrationError(
             f"Setup '{setup_name}' mechanism_tags was added in HEAD commit "
