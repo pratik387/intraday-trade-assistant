@@ -579,6 +579,146 @@ def adapt_delivery_pct_anomaly_short(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Adapter: long_panic_gap_down (active)
+# ---------------------------------------------------------------------------
+
+# Trade CSVs: reports/sub9_sanity/long_panic_gap_down_trades{,_oos,_holdout}.csv
+# Note: sanity outputs are AGGREGATE (10395+5094+1835 = 17324 trades). The
+# shipped production setup is cell-locked to dist_from_pdl [-5%, -3%] which
+# yields ~1412+333+126 = 1871 trades. Canonical walk-forward here reflects
+# AGGREGATE, not the production cell.
+#
+# - side: LONG only
+# - No T1 partial logic (no hit_t1 column)
+# - exit_reason 't2_full_gap_fill' = T2 hit via gap-fill; maps to canonical t2
+
+_LONG_PANIC_EXIT_REASON_MAP = {
+    "stop": "sl",
+    "time_stop": "time_stop",
+    "t2_full_gap_fill": "t2",
+    "last_bar": "eod",
+}
+
+
+def adapt_long_panic_gap_down(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize long_panic_gap_down trades CSV → canonical schema.
+
+    LONG-side gap-down panic exhaustion fade with PDL-relative entry zone.
+    Canonical output reflects AGGREGATE sanity (no cell filter); production
+    uses narrower dist_from_pdl cell.
+    """
+    out = pd.DataFrame()
+    out["signal_date"] = pd.to_datetime(df["T0_signal_date"]).dt.date.astype(str)
+    out["symbol"] = _ensure_nse_prefix(df["symbol"])
+    out["side"] = df["side"].astype(str).str.upper()
+    entry = df["entry_price"].astype(float)
+    exit_ = df["exit_price"].astype(float)
+    qty = df["qty"].astype(int)
+    out["entry_price"] = entry
+    out["exit_price"] = exit_
+    out["qty"] = qty
+    out["pnl_pct"] = (exit_ - entry) / entry * 100.0  # LONG
+
+    same_bar = pd.to_datetime(df["entry_ts"]) == pd.to_datetime(df["exit_ts"])
+    out["exit_reason"] = _normalize_exit_reason(
+        df["exit_reason"], same_bar,
+        mapping=_LONG_PANIC_EXIT_REASON_MAP,
+    )
+    out["same_bar"] = same_bar.astype(bool)
+
+    # Optional passthrough
+    if "cap_segment" in df.columns:
+        out["cap_segment"] = df["cap_segment"]
+    if "entry_ts" in df.columns:
+        out["entry_ts"] = df["entry_ts"]
+    if "exit_ts" in df.columns:
+        out["exit_ts"] = df["exit_ts"]
+    if "realized_pnl" in df.columns:
+        out["realized_pnl_inr"] = df["realized_pnl"].astype(float)
+    if "fee" in df.columns:
+        out["fee_inr"] = df["fee"].astype(float)
+    if "net_pnl" in df.columns:
+        out["net_pnl_inr"] = df["net_pnl"].astype(float)
+    if "t1_target" in df.columns:
+        out["t1_target"] = df["t1_target"].astype(float)
+    if "t2_target" in df.columns:
+        out["t2_target"] = df["t2_target"].astype(float)
+    if "hard_sl" in df.columns:
+        out["hard_sl"] = df["hard_sl"].astype(float)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Adapter: or_window_failure_fade_short (active)
+# ---------------------------------------------------------------------------
+
+# Trade CSVs: reports/sub9_sanity/_or_window_failure_fade_trades_{discovery,oos,holdout}.csv
+# Note: file prefix is "or_window_failure_fade" (no "_short"). Sanity is
+# BIDIRECTIONAL (13654 LONG + 11340 SHORT in disc). Adapter filters to
+# SHORT-only (matches shipped setups.or_window_failure_fade_short).
+#
+# - exit_reason: stop, time_stop, t2_full, last_bar
+# - No T1 partial logic
+# - signal_date = trade_date
+
+_OR_WINDOW_EXIT_REASON_MAP = {
+    "stop": "sl",
+    "t2_full": "t2",
+    "time_stop": "time_stop",
+    "last_bar": "eod",
+}
+
+
+def adapt_or_window_failure_fade_short(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize or_window_failure_fade trades CSV → canonical schema.
+
+    Filters to SHORT trades (matches shipped production setup
+    setups.or_window_failure_fade_short).
+    """
+    df = df[df["side"].astype(str).str.upper() == "SHORT"].reset_index(drop=True)
+    out = pd.DataFrame()
+    out["signal_date"] = pd.to_datetime(df["trade_date"]).dt.date.astype(str)
+    out["symbol"] = _ensure_nse_prefix(df["symbol"])
+    out["side"] = "SHORT"
+    entry = df["entry_price"].astype(float)
+    exit_ = df["exit_price"].astype(float)
+    qty = df["qty"].astype(int)
+    out["entry_price"] = entry
+    out["exit_price"] = exit_
+    out["qty"] = qty
+    out["pnl_pct"] = (entry - exit_) / entry * 100.0  # SHORT
+
+    same_bar = pd.to_datetime(df["entry_ts"]) == pd.to_datetime(df["exit_ts"])
+    out["exit_reason"] = _normalize_exit_reason(
+        df["exit_reason"], same_bar,
+        mapping=_OR_WINDOW_EXIT_REASON_MAP,
+    )
+    out["same_bar"] = same_bar.astype(bool)
+
+    if "cap_segment" in df.columns:
+        out["cap_segment"] = df["cap_segment"]
+    if "entry_ts" in df.columns:
+        out["entry_ts"] = df["entry_ts"]
+    if "exit_ts" in df.columns:
+        out["exit_ts"] = df["exit_ts"]
+    if "realized_pnl" in df.columns:
+        out["realized_pnl_inr"] = df["realized_pnl"].astype(float)
+    if "fee" in df.columns:
+        out["fee_inr"] = df["fee"].astype(float)
+    if "net_pnl" in df.columns:
+        out["net_pnl_inr"] = df["net_pnl"].astype(float)
+    if "t1_target" in df.columns:
+        out["t1_target"] = df["t1_target"].astype(float)
+    if "t2_target" in df.columns:
+        out["t2_target"] = df["t2_target"].astype(float)
+    if "hard_sl" in df.columns:
+        out["hard_sl"] = df["hard_sl"].astype(float)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Adapter registry
 # ---------------------------------------------------------------------------
 
@@ -591,6 +731,8 @@ ADAPTERS: Dict[str, Callable[[pd.DataFrame], pd.DataFrame]] = {
     "circuit_release_fade_short": adapt_circuit_release_fade_short,
     "capitulation_long_morning": adapt_capitulation_long_morning,
     "delivery_pct_anomaly_short": adapt_delivery_pct_anomaly_short,
+    "long_panic_gap_down": adapt_long_panic_gap_down,
+    "or_window_failure_fade_short": adapt_or_window_failure_fade_short,
 }
 
 
