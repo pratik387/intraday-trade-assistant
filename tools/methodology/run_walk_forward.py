@@ -25,6 +25,7 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from tools.methodology.data_health import check_all as data_health_check
 from tools.methodology.pre_registration import (
     check_mechanism_pre_registered, PreRegistrationError,
 )
@@ -53,6 +54,11 @@ def main(argv=None):
     p.add_argument("--bootstrap-n", type=int, default=1000)
     p.add_argument("--skip-pre-registration-check", action="store_true",
                    help="DANGER: skip git-timestamp check. Only for dry-runs.")
+    p.add_argument("--skip-data-health", action="store_true",
+                   help="DANGER: skip data_health.py drift detection. Only for dry-runs.")
+    p.add_argument("--data-health-log-dir", type=Path,
+                   default=REPO_ROOT / "reports" / "data_health",
+                   help="Directory to write JSONL audit log of health issues.")
     args = p.parse_args(argv)
 
     # Pre-registration check
@@ -77,6 +83,27 @@ def main(argv=None):
             file=sys.stderr,
         )
         return 3
+
+    # Data health check (Layers 1 + 3 on trades CSV; Layer 2 requires
+    # explicit source data — caller adds via separate script).
+    # Pass start/end so data_health uses the same window range as walk-forward
+    # (prevents partial leading/trailing quarters from triggering false anomalies).
+    if not args.skip_data_health:
+        report = data_health_check(
+            trades, args.setup,
+            audit_log_dir=args.data_health_log_dir,
+            start_date=args.start, end_date=args.end,
+        )
+        if report.issues:
+            print(f"\n{report.summary()}")
+        if report.has_blocking_issues:
+            print(
+                f"\nDATA HEALTH BLOCKED — refusing to run walk-forward. "
+                f"Investigate {report.n_block} blocking issue(s) above. "
+                f"Override with --skip-data-health (NOT RECOMMENDED for ship decisions).",
+                file=sys.stderr,
+            )
+            return 5
 
     # Run walk-forward
     print(f"[walk-forward] setup={args.setup} n_trades={len(trades)} "
