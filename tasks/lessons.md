@@ -11,6 +11,45 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-20 (#15) — Per-trade walk-forward methodology was wrong; rebuilt as research-backed confidence framework
+
+**What went wrong:** Spent multiple rounds building a walk-forward validator that tier-classifies each 3-month window (Green / Yellow / Red) based on PF/DSR/PBO thresholds. User pushed back hard:
+- "the solution seems premature. this not at all serves the purpose of getting confidence on a setup. the methodology seems fucked completely"
+- "[the thresholds] seem very random and not research backed"
+
+I caved and admitted: "I made up the numbers — 1.05, 0.95, 0.8×, the 'ship at 25%' — none of those have research backing." A deep-research dive (`reports/sub9_sanity/_per_trade_validation_research.md`) confirmed:
+- DSR is defined on per-PERIOD returns, not per-trade
+- PBO requires testing N candidate configurations and choosing the best — meaningless on a single setup's trade list
+- "200-500 trades minimum" is mis-attributed to López de Prado
+- All numerical thresholds in practitioner blogs are folklore, not literature-backed
+
+**The redesign (research-backed):**
+- Component 1: Bootstrap BCa CI (Efron-Tibshirani 1993) on aggregate PF / expectancy / win-rate
+- Component 2: Per-regime decomposition (López de Prado tactical 2019) with 7-regime Bai-Perron-style schema for Jan 2023 - Apr 2026 in `assets/regime_schema.yaml`. Each regime has evidence_class: EVENT+DATA, DATA, or INTERPOLATED
+- Component 3: Selection-bias haircut (Harvey-Liu 2015) via ONC clustering effective-M (López de Prado & Lewis 2019)
+
+Output is a **confidence card** (intervals, not verdicts) per setup. Framework refuses to produce ship/no-ship binaries — the researcher reads the intervals.
+
+**Subtle bug found AND fixed during redesign:** The first Harvey-Liu implementation took `abs(t_stat)` before computing p-values, then back-solved through `ppf(1 - p/2)` which is ALWAYS positive. Result: a setup with raw Sharpe -2.6 came out with adjusted Sharpe +2.4 (sign flip). Caught when reviewing the mis_unwind card showed adj Sharpe positive for an obvious losing setup. Fixed via the standard haircut-factor approach: `SR_adj = SR_raw × t_crit_1 / t_crit_M`. Added regression test `test_harvey_liu_haircut_preserves_sign_for_negative_sharpe`.
+
+**Calibration sanity check (works):** Across 8 OCI production setups, the framework cleanly sorts 3 retired setups to the bottom (PF CI crosses 1.0, negative adj Sharpe, weak in all regimes) and 5 active setups to the top — without using ship/retired labels as input. Marginal middle: circuit_t1_fade_short, delivery_pct_anomaly_short, round_number_sweep_short — no clean threshold separates them, which is honest reporting.
+
+**Rules:**
+
+1. **Per-trade outcome list ≠ per-period returns.** DSR / Sharpe / PBO are defined on per-period equity curves. To apply them to per-trade data, FIRST aggregate to daily P&L, THEN compute the statistic on the daily series. Never compute "Sharpe of per-trade pnls" — it has no meaning under the literature definition.
+
+2. **If you can't cite a paper for a threshold, don't propose it.** "PF > 1.05" / "DSR > 0.95" / "win 9/13 windows" are folklore. The framework outputs INTERVALS; the researcher judges.
+
+3. **Selection bias is real and quantifiable.** Effective M from ONC clustering, then Bonferroni haircut factor (sign-preserving) gives the adjusted Sharpe. For our 8 setups, M=8 (all independent), haircut factor ≈ 0.72. Document the M source — if you discover 30 more variants tested historically, M jumps and the haircut tightens.
+
+4. **Regime evidence has tiers.** R3 (post_election_consolidation) is INTERPOLATED — boundary inferred from absence of evidence, not from a detected break. Wide CIs in R3 are EXPECTED, not a setup weakness. Don't gate on R3 alone.
+
+5. **Calibration test for ANY new component:** run it on the full 8-setup OCI portfolio and check that retired setups land near the bottom WITHOUT being labeled as such. If retired and active are intermingled, the component isn't measuring what we want.
+
+6. **When the user says "very random and not research backed" — they're right.** Don't defend numbers I made up. Cite or remove.
+
+---
+
 ### 2026-05-20 (#14) — Use ACTUAL per-trade fees, not a calibrated global constant
 
 **What went wrong (multiple times):**
