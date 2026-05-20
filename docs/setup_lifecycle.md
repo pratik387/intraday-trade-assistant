@@ -240,6 +240,44 @@ This stage has TWO sweeps over Discovery data — a **filter cell sweep** and an
 
 **MIS-leveraged fee math (Failure mode #7 from `retired_setups.md`):** the R-multiple sweep MUST include MIS-leveraged fees, not base-qty fees. Discovery PFs that were computed on base-qty fees are over-stated by ~Rs 650K on 2-year aggregates.
 
+**Use the shared helper (`tools/methodology/cell_sweep.py`).** Replaces the ad-hoc per-setup `_*_sweep_cellmine.py` scripts that each re-implemented the same pattern with slightly different bugs. The helper:
+
+- Validates the candidates schema BEFORE sweeping — blocks `day_*` / `close_off_high_*` look-ahead dimensions (Failure mode #1), enforces sign convention on `mfe_r` / `mae_r`.
+- `simulate_exit(...)` implements same-bar pessimism: when both stop and target hit on one bar, stop wins (Failure mode #4).
+- `run_cell_sweep(candidates_df, cfg)` sweeps (R-grid × filter cells) with 1D + 2D combinations (3D blocked — overfitting risk).
+- `select_best_cell(...)` returns `None` if no cell meets ship-eligibility (kill signal — Lesson #2 anti-salvage). Caller must NOT downgrade thresholds to find a winner.
+- `lock_cell(...)` writes JSON; refuses overwrite without `force=True` (lock-once discipline).
+
+Candidates DataFrame contract: per-row `entry_ts`, `entry_price`, `qty` (already MIS-sized), `mfe_r` (unsigned), `mae_r` (unsigned), `R_per_share`, `close_at_<HHMM>` for each time-stop in the grid, plus filter dimensions as columns.
+
+Minimum usage example:
+
+```python
+from tools.methodology.cell_sweep import (
+    CellSweepConfig, run_cell_sweep, select_best_cell, lock_cell,
+)
+
+cfg = CellSweepConfig(
+    side="SHORT",
+    r_grid=[
+        (1.0, 2.0, 1500, "baseline (1.0/2.0)"),
+        (0.5, 1.5, 1500, "asym (0.5/1.5)"),
+        (1.0, 2.0, 1400, "baseline + TS=14:00"),
+    ],
+    dim_pool=["cap_segment", "dow", "vol_ratio_bucket"],
+    n_min_floor=100, pf_min_floor=1.10,
+    n_min_ship=200,  pf_min_ship=1.30,
+)
+results = run_cell_sweep(disc_candidates, cfg)
+best = select_best_cell(results, cfg)
+if best is None:
+    raise SystemExit("KILL: no ship-eligible cell on Discovery")
+lock_cell(best, setup_name="<setup>", window_label="Discovery",
+          output_path=REPO / "tools/sub9_research/<setup>_cell_selection_locked.json")
+```
+
+After Stage 5 locks the cell, re-run the sanity at the locked `(filter_cell, T1, T2, TS)` to emit the final canonical trade CSV for Stage 6 (sanity confidence card).
+
 ### Stage 6 — Confidence card on sanity
 
 
