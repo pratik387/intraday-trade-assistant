@@ -196,8 +196,29 @@ def _recalc_structural(
     side: str,
     hard_sl: float,
 ) -> Dict[str, Any]:
-    """Keep target levels; update only rps + actual_entry."""
-    if side.upper() == "BUY":
+    """Keep target levels; update only rps + actual_entry.
+
+    Target-side validation (2026-05-20): detectors apply a "favorable side"
+    override against their detection-time `close`. But the trade actually
+    enters at `actual_entry` (post-tick-trigger), which can be inside the
+    entry zone — i.e., below `close` for SHORT or above `close` for LONG.
+    If a structural target sits between `actual_entry` and `close`, the
+    detector's override missed it: the target ends up on the ADVERSE side
+    of the actual entry. T2 then fires immediately as a small loss labeled
+    "target_t2_full".
+
+    Pattern observed in OCI 20260519-115855_full + 20260519-123643_full:
+    19 of 1,170 gap_fade_short T2_FULL exits (1.6%), -Rs 958 aggregate.
+    Concrete cases: NSE:INFOBEAN (2023-01-04), NSE:MALLCOM (2023-01-05),
+    NSE:KKCL (2024-12-02 reproduction).
+
+    Fix: detect any target on the wrong side of actual_entry and override
+    using the same fallback formula the detector uses (actual_entry +/- R).
+    The override is sign-symmetric to the detector's logic, just anchored
+    at actual_entry instead of detection-time close.
+    """
+    side_is_long = side.upper() == "BUY"
+    if side_is_long:
         actual_rps = actual_entry - hard_sl
     else:
         actual_rps = hard_sl - actual_entry
@@ -217,6 +238,52 @@ def _recalc_structural(
         adjusted["sizing"]["risk_per_share"] = round(actual_rps, 2)
     adjusted["risk_per_share"] = round(actual_rps, 2)
     adjusted["actual_entry"] = round_to_tick(actual_entry)
+
+    # ---- Target-side validation: override targets that landed on the
+    # wrong side of actual_entry. SHORT: targets must be < actual_entry;
+    # LONG: targets must be > actual_entry. R-multiple fallback uses
+    # T1 = 0.5R, T2 = 1.0R favorable from actual_entry (matches the
+    # default detector fallback at gap_fade_short_structure.py:326-328).
+    targets = adjusted.get("targets") or []
+    if targets and isinstance(targets, list):
+        overrode = []
+        for t in targets:
+            if not isinstance(t, dict):
+                continue
+            t_level = t.get("level")
+            if t_level is None:
+                continue
+            try:
+                t_level = float(t_level)
+            except (TypeError, ValueError):
+                continue
+            wrong_side = (
+                (side_is_long and t_level <= actual_entry) or
+                (not side_is_long and t_level >= actual_entry)
+            )
+            if not wrong_side:
+                continue
+            # Override: T1 → 0.5R favorable; T2 (or anything else) → 1.0R.
+            r_mult = 0.5 if str(t.get("name", "")).upper() == "T1" else 1.0
+            if side_is_long:
+                new_level = actual_entry + r_mult * actual_rps
+            else:
+                new_level = actual_entry - r_mult * actual_rps
+            old_level = t_level
+            t["level"] = round(new_level, 2)
+            # Update rr to match the new level
+            t["rr"] = round(r_mult, 2)
+            overrode.append(
+                f"{t.get('name', '?')}: {old_level:.2f}→{t['level']:.2f}"
+            )
+        if overrode:
+            logger.warning(
+                f"STRUCTURAL_TARGET_OVERRIDE: {plan.get('symbol')} "
+                f"{plan.get('strategy')} entry={actual_entry:.2f} "
+                f"hard_sl={hard_sl:.2f} side={side} | "
+                f"targets on adverse side: {'; '.join(overrode)}"
+            )
+            adjusted["targets"] = targets
 
     logger.info(
         f"STRUCTURAL_TARGET_PRESERVED: {plan.get('symbol')} "
