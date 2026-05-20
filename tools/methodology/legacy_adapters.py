@@ -393,6 +393,104 @@ def adapt_circuit_release_fade_short(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Adapter: capitulation_long_morning
+# ---------------------------------------------------------------------------
+
+# Trade CSVs: reports/sub9_sanity/capitulation_long_morning_trades.csv (Disc only,
+#             Jan 2023 - Dec 2024) + ..._trades_holdout.csv (Oct 2025 - Apr 2026)
+# NO OOS file — walk-forward will have empty windows for Jan-Sep 2025.
+#
+# Columns observed (2026-05-20):
+#   T0_signal_date, symbol, bare_symbol, cap_segment, side, news_status,
+#   gap_pct, pdc, open_09_15, low_09_15, vol_09_15, adv_20d_cr,
+#   confirmation_ts, confirmation_hhmm, lower_wick_ratio, body_size_pct,
+#   entry_ts, entry_price, hard_sl, atr_proxy, t1_target, t2_target,
+#   hit_t1, exit_ts, exit_price, exit_reason, stop_distance, qty,
+#   realized_pnl, fee, net_pnl, _month
+#
+# - side: LONG (explicit column)
+# - symbol: ALREADY has NSE: prefix
+# - hit_t1 marks T1-partial-booked trades, but UNLIKE pre_results_t1, the
+#   sanity script encodes the BLENDED outcome in exit_price (effective
+#   weighted-avg exit). So (exit-entry)/entry*100 already gives the correct
+#   blended return for LONG. Verified 2026-05-20: row 0 breakeven_trail
+#   pnl matches T1-leg-only profit (the breakeven leg contributes 0).
+# - exit_reason 'breakeven_trail' = T1 booked, SL moved to BE, BE hit.
+#   Maps to canonical 'breakeven_stop' (requires t1_partial_booked=True).
+
+_CAPITULATION_LONG_MORNING_EXIT_REASON_MAP = {
+    "stop": "sl",
+    "t2": "t2",
+    "time_stop": "time_stop",
+    "breakeven_trail": "breakeven_stop",
+}
+
+
+def adapt_capitulation_long_morning(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize capitulation_long_morning trades CSV → canonical schema.
+
+    LONG-side gap-down panic exhaustion fade. Has T1 partial logic, but
+    sanity script encodes blended outcome in exit_price (unlike v2 sanity
+    pre_results_t1 which has the buggy entry==exit pattern). So pnl_pct
+    computed from prices is already correct; no recomputation needed.
+    """
+    out = pd.DataFrame()
+
+    out["signal_date"] = pd.to_datetime(df["T0_signal_date"]).dt.date.astype(str)
+    # Symbol already has NSE: prefix
+    out["symbol"] = _ensure_nse_prefix(df["symbol"])
+    out["side"] = df["side"].astype(str).str.upper()
+    entry = df["entry_price"].astype(float)
+    exit_ = df["exit_price"].astype(float)
+    qty = df["qty"].astype(int)
+    out["entry_price"] = entry
+    out["exit_price"] = exit_
+    out["qty"] = qty
+    # LONG: pnl_pct = (exit - entry) / entry * 100
+    # The sanity script encodes blended T1+exit in exit_price, so this is
+    # already the correct blended return.
+    out["pnl_pct"] = (exit_ - entry) / entry * 100.0
+
+    # Derive same_bar from entry_ts == exit_ts (script doesn't emit it)
+    same_bar = pd.to_datetime(df["entry_ts"]) == pd.to_datetime(df["exit_ts"])
+
+    out["exit_reason"] = _normalize_exit_reason(
+        df["exit_reason"], same_bar,
+        mapping=_CAPITULATION_LONG_MORNING_EXIT_REASON_MAP,
+    )
+    out["same_bar"] = same_bar.astype(bool)
+
+    # T1 partial booking flag (hit_t1 == True). Required by canonical schema
+    # for any breakeven_stop exit_reason row.
+    if "hit_t1" in df.columns:
+        out["t1_partial_booked"] = df["hit_t1"].astype(bool)
+
+    # Optional passthrough
+    if "cap_segment" in df.columns:
+        out["cap_segment"] = df["cap_segment"]
+    if "confirmation_ts" in df.columns:
+        out["signal_ts"] = df["confirmation_ts"]
+    if "entry_ts" in df.columns:
+        out["entry_ts"] = df["entry_ts"]
+    if "exit_ts" in df.columns:
+        out["exit_ts"] = df["exit_ts"]
+    if "realized_pnl" in df.columns:
+        out["realized_pnl_inr"] = df["realized_pnl"].astype(float)
+    if "fee" in df.columns:
+        out["fee_inr"] = df["fee"].astype(float)
+    if "net_pnl" in df.columns:
+        out["net_pnl_inr"] = df["net_pnl"].astype(float)
+    if "t1_target" in df.columns:
+        out["t1_target"] = df["t1_target"].astype(float)
+    if "t2_target" in df.columns:
+        out["t2_target"] = df["t2_target"].astype(float)
+    if "hard_sl" in df.columns:
+        out["hard_sl"] = df["hard_sl"].astype(float)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Adapter registry
 # ---------------------------------------------------------------------------
 
@@ -403,6 +501,7 @@ ADAPTERS: Dict[str, Callable[[pd.DataFrame], pd.DataFrame]] = {
     "capitulation_long_v2": adapt_capitulation_long_v2,
     "mis_unwind_vwap_revert_short": adapt_mis_unwind_vwap_revert_short,
     "circuit_release_fade_short": adapt_circuit_release_fade_short,
+    "capitulation_long_morning": adapt_capitulation_long_morning,
 }
 
 

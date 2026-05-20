@@ -17,6 +17,7 @@ from tools.methodology.legacy_adapters import (
     adapt_capitulation_long_v2,
     adapt_mis_unwind_vwap_revert_short,
     adapt_circuit_release_fade_short,
+    adapt_capitulation_long_morning,
     get_adapter,
     ADAPTERS,
 )
@@ -381,6 +382,73 @@ def test_circuit_release_adapter_last_bar_maps_to_eod(circuit_release_discovery_
     last_bar_mask = df_in["exit_reason"] == "last_bar"
     if last_bar_mask.any():
         assert (df_out.loc[last_bar_mask, "exit_reason"] == "eod").all()
+
+
+# ---------------------------------------------------------------------------
+# Adapter: capitulation_long_morning
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def capitulation_long_morning_df() -> pd.DataFrame:
+    p = _REPO_ROOT / "reports" / "sub9_sanity" / "capitulation_long_morning_trades.csv"
+    if not p.exists():
+        pytest.skip(f"Legacy CSV missing: {p}")
+    return pd.read_csv(p)
+
+
+def test_capitulation_long_morning_adapter_preserves_row_count(capitulation_long_morning_df):
+    df_out = adapt_capitulation_long_morning(capitulation_long_morning_df)
+    assert len(df_out) == len(capitulation_long_morning_df)
+
+
+def test_capitulation_long_morning_adapter_output_passes_validator(capitulation_long_morning_df):
+    df_out = adapt_capitulation_long_morning(capitulation_long_morning_df)
+    result = validate(df_out, setup_name="capitulation_long_morning", layer="filtered_trades")
+    assert result.is_valid, f"validation failed:\n{result.summary()}"
+
+
+def test_capitulation_long_morning_adapter_sets_side_long(capitulation_long_morning_df):
+    df_out = adapt_capitulation_long_morning(capitulation_long_morning_df)
+    assert (df_out["side"] == "LONG").all()
+
+
+def test_capitulation_long_morning_adapter_pnl_pct_matches_long(capitulation_long_morning_df):
+    """LONG pnl_pct = (exit-entry)/entry*100. Sanity script encodes blended
+    T1+exit in effective exit_price, so this formula works for both single-leg
+    and multi-leg trades."""
+    df_out = adapt_capitulation_long_morning(capitulation_long_morning_df)
+    sample = df_out.sample(n=min(100, len(df_out)), random_state=20260520)
+    computed = (sample["exit_price"] - sample["entry_price"]) / sample["entry_price"] * 100.0
+    diff = (sample["pnl_pct"] - computed).abs()
+    assert (diff < 0.10).all(), (
+        f"sign-convention failed on {(diff >= 0.10).sum()} rows. Max diff: {diff.max():.4f}pp"
+    )
+
+
+def test_capitulation_long_morning_adapter_breakeven_trail_maps_to_breakeven_stop(capitulation_long_morning_df):
+    """'breakeven_trail' (legacy) → 'breakeven_stop' (canonical). All such
+    rows must have t1_partial_booked=True."""
+    df_in = capitulation_long_morning_df
+    df_out = adapt_capitulation_long_morning(df_in)
+    bt_mask = df_in["exit_reason"] == "breakeven_trail"
+    if not bt_mask.any():
+        pytest.skip("No breakeven_trail rows in fixture")
+    assert (df_out.loc[bt_mask, "exit_reason"] == "breakeven_stop").all()
+    # All these rows had hit_t1=True (verified by inspection)
+    assert df_out.loc[bt_mask, "t1_partial_booked"].all()
+
+
+def test_capitulation_long_morning_adapter_t1_partial_booked_mirrors_hit_t1(capitulation_long_morning_df):
+    df_in = capitulation_long_morning_df
+    df_out = adapt_capitulation_long_morning(df_in)
+    assert (df_out["t1_partial_booked"].values == df_in["hit_t1"].astype(bool).values).all()
+
+
+def test_capitulation_long_morning_adapter_exit_reason_canonical(capitulation_long_morning_df):
+    from tools.methodology.sanity_csv_schema import EXIT_REASONS
+    df_out = adapt_capitulation_long_morning(capitulation_long_morning_df)
+    bad = ~df_out["exit_reason"].isin(EXIT_REASONS)
+    assert not bad.any()
 
 
 def test_pre_results_t1_adapter_exit_reason_canonical(pre_results_t1_discovery_df):
