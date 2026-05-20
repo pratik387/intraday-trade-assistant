@@ -74,21 +74,88 @@ def test_pre_results_t1_adapter_symbol_has_nse_prefix(pre_results_t1_discovery_d
     assert df_out["symbol"].str.startswith("NSE:").all()
 
 
-def test_pre_results_t1_adapter_pnl_pct_matches_prices(pre_results_t1_discovery_df):
-    """For SHORT trades, pnl_pct should equal (entry-exit)/entry*100 within float tolerance.
-    This is the sign-convention invariant — if it fails, the adapter has a bug
-    that would cause walk-forward to silently invert verdicts.
+def test_pre_results_t1_adapter_pnl_pct_matches_prices_for_single_leg(pre_results_t1_discovery_df):
+    """For SHORT single-leg trades (NOT t1_booked), pnl_pct should equal
+    (entry-exit)/entry*100 within float tolerance. This is the sign-convention
+    invariant.
+
+    Multi-leg trades (t1_partial_booked=True) are excluded — their pnl_pct
+    is blended and cannot be derived from single entry/exit.
     """
     df_out = adapt_pre_results_t1_fade(pre_results_t1_discovery_df)
-    # Random sample of 100 rows for speed
-    sample = df_out.sample(n=min(100, len(df_out)), random_state=20260520)
+    # Filter to single-leg rows only
+    single_leg = df_out[~df_out["t1_partial_booked"]]
+    sample = single_leg.sample(n=min(100, len(single_leg)), random_state=20260520)
     computed = (sample["entry_price"] - sample["exit_price"]) / sample["entry_price"] * 100.0
     diff = (sample["pnl_pct"] - computed).abs()
-    # Tolerance: 0.10pp (matches validator)
     assert (diff < 0.10).all(), (
-        f"sign-convention check failed on {(diff >= 0.10).sum()} of {len(sample)} rows. "
+        f"sign-convention check failed on {(diff >= 0.10).sum()} of {len(sample)} single-leg rows. "
         f"Max diff: {diff.max():.4f}pp"
     )
+
+
+def test_pre_results_t1_adapter_blends_pnl_pct_for_t1_booked(pre_results_t1_discovery_df):
+    """For t1_booked rows where entry==exit (breakeven hit), the legacy CSV
+    has pnl_pct=0 (BUG), but the adapter recomputes pnl_pct from realized_pnl
+    so it reflects the T1 partial profit.
+
+    The CRITICAL regression test: post-adapter pnl_pct for these rows must
+    be > 0 (T1 partial profit on half qty), not 0 (legacy bug).
+    """
+    df_in = pre_results_t1_discovery_df
+    df_out = adapt_pre_results_t1_fade(df_in)
+
+    # Find rows that were buggy in legacy: t1_booked=True AND entry==exit AND stop
+    legacy_bug_mask = (
+        (df_in["t1_booked"].astype(bool))
+        & (df_in["entry_price"] == df_in["exit_price"])
+        & (df_in["exit_reason"] == "stop")
+    )
+    if not legacy_bug_mask.any():
+        pytest.skip("No buggy-scratch rows in fixture (unexpected)")
+
+    # In input: legacy pnl_pct was 0 for these
+    assert (df_in.loc[legacy_bug_mask, "pnl_pct"] == 0.0).all()
+
+    # In output: pnl_pct should be positive (T1 partial profit booked) for these
+    out_pnl = df_out.loc[legacy_bug_mask, "pnl_pct"]
+    assert (out_pnl > 0).all(), (
+        f"adapter failed to blend pnl_pct for {(out_pnl <= 0).sum()} buggy-scratch rows"
+    )
+    # Magnitude check: for a 0.3% SL and 50% T1 partial, blended ~= 0.15%
+    # Sanity: blended should be in [0.05%, 0.30%] range
+    assert (out_pnl > 0.05).all() and (out_pnl < 0.30).all(), (
+        f"blended pnl_pct out of expected range [0.05, 0.30]: "
+        f"min={out_pnl.min():.4f}, max={out_pnl.max():.4f}"
+    )
+
+
+def test_pre_results_t1_adapter_emits_breakeven_stop_exit_reason(pre_results_t1_discovery_df):
+    """For t1_booked + entry==exit + legacy='stop', adapter emits 'breakeven_stop'."""
+    df_in = pre_results_t1_discovery_df
+    df_out = adapt_pre_results_t1_fade(df_in)
+
+    bes_input_mask = (
+        (df_in["t1_booked"].astype(bool))
+        & (df_in["entry_price"] == df_in["exit_price"])
+        & (df_in["exit_reason"] == "stop")
+    )
+    if not bes_input_mask.any():
+        pytest.skip("No buggy-scratch rows in fixture")
+
+    # All these rows in output should have exit_reason='breakeven_stop'
+    assert (df_out.loc[bes_input_mask, "exit_reason"] == "breakeven_stop").all()
+    # And t1_partial_booked=True
+    assert df_out.loc[bes_input_mask, "t1_partial_booked"].all()
+
+
+def test_pre_results_t1_adapter_sets_t1_partial_booked_correctly(pre_results_t1_discovery_df):
+    """t1_partial_booked output column should mirror the legacy t1_booked column."""
+    df_in = pre_results_t1_discovery_df
+    df_out = adapt_pre_results_t1_fade(df_in)
+    legacy = df_in["t1_booked"].astype(bool).values
+    new = df_out["t1_partial_booked"].astype(bool).values
+    assert (legacy == new).all()
 
 
 def test_pre_results_t1_adapter_exit_reason_canonical(pre_results_t1_discovery_df):

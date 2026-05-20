@@ -76,21 +76,60 @@ _PRE_RESULTS_EXIT_REASON_MAP = {
 
 
 def adapt_pre_results_t1_fade(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize pre_results_t1_fade v2 trades CSV → canonical schema."""
+    """Normalize pre_results_t1_fade v2 trades CSV → canonical schema.
+
+    Critical fix (2026-05-20): the legacy v2 sanity script emits a BUGGY
+    pnl_pct for trades where T1 partial was booked then SL moved to
+    breakeven fired. For those trades:
+      - exit_price = entry_price (breakeven hit)
+      - legacy pnl_pct = (entry-exit)/entry*100 = 0   ← WRONG (misses T1 profit)
+      - actual blended return = realized_pnl / (entry * qty_total) * 100
+
+    25% of pre_results_t1 trades are in this state (515/1940 Discovery rows).
+    The adapter:
+      1. Detects t1_booked=True rows
+      2. Recomputes pnl_pct from realized_pnl (which IS correctly blended)
+      3. Emits exit_reason='breakeven_stop' for the entry==exit subset
+      4. Sets t1_partial_booked=True so validator skips the sign cross-check
+    """
     out = pd.DataFrame()
+    n = len(df)
 
     # Required columns
     out["signal_date"] = pd.to_datetime(df["signal_date"]).dt.date.astype(str)
     out["symbol"] = _ensure_nse_prefix(df["symbol"])
     out["side"] = "SHORT"
-    out["entry_price"] = df["entry_price"].astype(float)
-    out["exit_price"] = df["exit_price"].astype(float)
-    out["qty"] = df["qty"].astype(int)
+    entry = df["entry_price"].astype(float)
+    exit_ = df["exit_price"].astype(float)
+    qty = df["qty"].astype(int)
+    out["entry_price"] = entry
+    out["exit_price"] = exit_
+    out["qty"] = qty
+
+    # Detect multi-leg (T1 partial booked) rows and recompute pnl_pct
+    t1_booked = df["t1_booked"].astype(bool) if "t1_booked" in df.columns else pd.Series(False, index=df.index)
+    realized = df["realized_pnl"].astype(float) if "realized_pnl" in df.columns else None
+
     out["pnl_pct"] = df["pnl_pct"].astype(float)
-    out["exit_reason"] = _normalize_exit_reason(
+    if realized is not None:
+        # For t1_booked rows, recompute pnl_pct as blended return.
+        # blended_pnl_pct = realized_pnl / (entry_price * qty_total) * 100
+        notional = entry * qty
+        blended = realized / notional * 100.0
+        out.loc[t1_booked, "pnl_pct"] = blended.loc[t1_booked].values
+
+    out["t1_partial_booked"] = t1_booked
+
+    # Normalize exit_reason. For t1_booked rows with entry==exit and legacy
+    # exit_reason='stop', emit 'breakeven_stop'. For others, use the normal map.
+    base_reason = _normalize_exit_reason(
         df["exit_reason"], df["same_bar_exit"],
         mapping=_PRE_RESULTS_EXIT_REASON_MAP,
     )
+    # breakeven_stop: t1_booked=True AND entry==exit AND legacy=='stop'
+    bes_mask = t1_booked & (entry == exit_) & (df["exit_reason"] == "stop")
+    base_reason = base_reason.where(~bes_mask, "breakeven_stop")
+    out["exit_reason"] = base_reason
     out["same_bar"] = df["same_bar_exit"].astype(bool)
 
     # Optional columns (passthrough with renames)

@@ -348,3 +348,73 @@ def test_rupee_pnl_consistent_passes():
     # No rupee warnings
     rupee_warnings = [i for i in result.issues if i.code.startswith("rupee_pnl")]
     assert len(rupee_warnings) == 0
+
+
+# ---------------------------------------------------------------------------
+# Multi-leg trades: t1_partial_booked + blended pnl_pct
+# ---------------------------------------------------------------------------
+
+def test_t1_partial_booked_true_skips_sign_check():
+    """When t1_partial_booked=True, validator skips the (exit-entry)/entry
+    cross-check because pnl_pct is blended across two legs."""
+    # SHORT trade: entry 100, T1 booked at 99 on half qty, breakeven exit at 100.
+    # Blended pnl_pct = T1 profit on half: (100-99)*half_qty / (100*total_qty) * 100
+    #                 = 0.5 * 0.5% = +0.5% blended? No wait, let me recompute:
+    # T1 partial profit per share = 100 - 99 = 1.0 (+1% per share)
+    # On half qty: 1.0 * 0.5 * qty
+    # On total notional 100*qty: blended_pct = (1.0 * 0.5) / 100 * 100 = +0.5%
+    df = _df([{
+        "signal_date": "2024-06-15", "symbol": "NSE:RELIANCE", "side": "SHORT",
+        "entry_price": 100.0, "exit_price": 100.0, "qty": 100,
+        "pnl_pct": 0.5,  # blended (T1 partial)
+        "exit_reason": "breakeven_stop", "same_bar": False,
+        "t1_partial_booked": True,
+    }])
+    result = validate(df, setup_name="test", layer="filtered_trades")
+    # The stored pnl_pct=0.5 does NOT match (entry-exit)/entry*100=0,
+    # but because t1_partial_booked=True, validator skips that check.
+    assert result.is_valid, result.summary()
+
+
+def test_t1_partial_booked_false_still_enforces_sign_check():
+    """t1_partial_booked=False rows still get the sign cross-check."""
+    df = _df([{
+        "signal_date": "2024-06-15", "symbol": "NSE:RELIANCE", "side": "SHORT",
+        "entry_price": 100.0, "exit_price": 100.0, "qty": 100,
+        "pnl_pct": 0.5,  # WRONG — would only be valid if t1_partial_booked=True
+        "exit_reason": "sl", "same_bar": False,
+        "t1_partial_booked": False,
+    }])
+    result = validate(df, setup_name="test", layer="filtered_trades")
+    assert not result.is_valid
+    assert "pnl_pct.sign_or_magnitude_mismatch" in [i.code for i in result.issues]
+
+
+def test_breakeven_stop_requires_t1_partial_booked():
+    """exit_reason='breakeven_stop' is only valid when t1_partial_booked=True."""
+    df = _df([{
+        "signal_date": "2024-06-15", "symbol": "NSE:RELIANCE", "side": "SHORT",
+        "entry_price": 100.0, "exit_price": 100.0, "qty": 100,
+        "pnl_pct": 0.5,
+        "exit_reason": "breakeven_stop", "same_bar": False,
+        "t1_partial_booked": False,  # INCONSISTENT
+    }])
+    result = validate(df, setup_name="test", layer="filtered_trades")
+    assert not result.is_valid
+    codes = [i.code for i in result.issues]
+    assert "breakeven_stop.t1_partial_booked_false" in codes
+
+
+def test_breakeven_stop_without_t1_partial_booked_column_fails():
+    """exit_reason='breakeven_stop' without the t1_partial_booked column = error."""
+    df = _df([{
+        "signal_date": "2024-06-15", "symbol": "NSE:RELIANCE", "side": "SHORT",
+        "entry_price": 100.0, "exit_price": 100.0, "qty": 100,
+        "pnl_pct": 0.5,
+        "exit_reason": "breakeven_stop", "same_bar": False,
+        # NO t1_partial_booked column
+    }])
+    result = validate(df, setup_name="test", layer="filtered_trades")
+    assert not result.is_valid
+    codes = [i.code for i in result.issues]
+    assert "breakeven_stop.missing_t1_partial_booked" in codes

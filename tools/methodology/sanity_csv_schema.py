@@ -65,18 +65,26 @@ OPTIONAL_COLUMNS = (
     "t1_target",
     "t2_target",
     "hard_sl",
+    "t1_partial_booked",      # bool — True iff a T1 partial profit was booked before
+                              # the final exit. When True, pnl_pct is BLENDED across
+                              # both legs (T1 partial qty + final exit qty) and CANNOT
+                              # be derived from a single entry/exit pair. Validator
+                              # skips the sign cross-check when this is True.
 )
 
 ALLOWED_SIDES = ("LONG", "SHORT")
 
 EXIT_REASONS = (
-    "sl",            # stop-loss hit (multi-bar path)
-    "same_bar_sl",   # stop-loss hit in entry bar itself
-    "t1",            # T1 target hit (partial exit)
-    "t2",            # T2 target hit (full exit if no partial; second half if partial)
-    "time_stop",     # time stop fired
-    "eod",           # forced EOD exit (15:20 MIS auto-square)
-    "manual",        # forced exit (rare; manual intervention modeled in sanity)
+    "sl",              # stop-loss hit (multi-bar path)
+    "same_bar_sl",     # stop-loss hit in entry bar itself
+    "breakeven_stop",  # SL moved to breakeven after T1 partial; final leg exited at BE.
+                       # Carries non-zero blended pnl_pct (T1 partial profit on half, 0 on remainder).
+                       # When this exit_reason fires, t1_partial_booked MUST be True.
+    "t1",              # T1 target hit (partial exit)
+    "t2",              # T2 target hit (full exit if no partial; second half if partial)
+    "time_stop",       # time stop fired
+    "eod",             # forced EOD exit (15:20 MIS auto-square)
+    "manual",          # forced exit (rare; manual intervention modeled in sanity)
 )
 
 # Date range we expect — walk-forward is built on Jan 2023 - Apr 2026
@@ -329,13 +337,25 @@ def validate(
         # Sign-convention cross-check: compute pnl_pct from prices+side,
         # compare to stored. This catches LONG/SHORT inversion AND any
         # contamination from fees/leverage.
+        #
+        # SKIP this check for rows where t1_partial_booked=True — those rows
+        # have a BLENDED pnl_pct (T1 partial profit qty + final exit qty)
+        # which cannot be derived from a single entry/exit pair. The adapter
+        # is responsible for computing the blended pnl_pct correctly from
+        # realized_pnl_inr; we trust the adapter for these rows.
         if "entry_price" in df.columns and "exit_price" in df.columns and "side" in df.columns:
             try:
                 ep = pd.to_numeric(df["entry_price"], errors="coerce")
                 xp = pd.to_numeric(df["exit_price"], errors="coerce")
                 s = df["side"].astype(str)
-                # Only validate rows with valid prices + side
-                ok = (ep > 0) & xp.notna() & np.isfinite(ep) & np.isfinite(xp) & s.isin(ALLOWED_SIDES)
+                # t1_partial_booked: skip cross-check on those rows
+                if "t1_partial_booked" in df.columns:
+                    t1pb = df["t1_partial_booked"].astype(bool)
+                else:
+                    t1pb = pd.Series(False, index=df.index)
+                # Only validate single-leg rows with valid prices + side
+                ok = ((ep > 0) & xp.notna() & np.isfinite(ep) & np.isfinite(xp)
+                      & s.isin(ALLOWED_SIDES) & ~t1pb)
                 if ok.any():
                     long_mask = ok & (s == "LONG")
                     short_mask = ok & (s == "SHORT")
@@ -407,6 +427,36 @@ def validate(
                 ),
                 row_indices=df.index[bad_er].tolist(),
             ))
+
+    # ---- exit_reason=breakeven_stop requires t1_partial_booked=True ----
+    if "exit_reason" in df.columns:
+        er = df["exit_reason"].astype(str)
+        bes_mask = er == "breakeven_stop"
+        if bes_mask.any():
+            if "t1_partial_booked" not in df.columns:
+                issues.append(ValidationIssue(
+                    severity="error",
+                    code="breakeven_stop.missing_t1_partial_booked",
+                    message=(
+                        f"{int(bes_mask.sum())} rows have exit_reason='breakeven_stop' "
+                        f"but t1_partial_booked column is missing. breakeven_stop is "
+                        f"only valid when a T1 partial was booked first."
+                    ),
+                    row_indices=df.index[bes_mask].tolist(),
+                ))
+            else:
+                t1pb = df["t1_partial_booked"].astype(bool)
+                bad = bes_mask & ~t1pb
+                if bad.any():
+                    issues.append(ValidationIssue(
+                        severity="error",
+                        code="breakeven_stop.t1_partial_booked_false",
+                        message=(
+                            f"{int(bad.sum())} rows have exit_reason='breakeven_stop' "
+                            f"but t1_partial_booked=False. Inconsistent — adapter bug."
+                        ),
+                        row_indices=df.index[bad].tolist(),
+                    ))
 
     # ---- same_bar: bool ----
     if "same_bar" in df.columns:
