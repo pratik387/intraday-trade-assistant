@@ -11,35 +11,45 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
-### 2026-05-20 (#14) — Calibrate the fee model against REAL trades, not estimates
+### 2026-05-20 (#14) — Use ACTUAL per-trade fees, not a calibrated global constant
 
-**What went wrong:** Walk-forward engine defaulted `fee_pct_round_trip = 0.5` (% of capital basis). I picked 0.5 early in the project as a "conservative round number." When the user said "your system is broken somehow," I traced ONE actual trade through the formula and found:
+**What went wrong (multiple times):**
 
-- Real Indian fee per trade on capital basis: **0.2484%** (std 0.0002 across 100 trades — extremely tight)
-- My default 0.5%: **2x too high**
+**Round 1:** Walk-forward defaulted `fee_pct_round_trip = 0.5` (% of capital basis), picked as a "conservative round number." User said "I think your system is broken somehow." Traced 100 trades from pre_results_t1 single-leg — measured fee_pct_capital = 0.2484 (std 0.0002). Changed default to 0.25, felt confident. Lesson #14 v1 was triumphalist about "calibration."
 
-Impact: every trade was 0.25pp net worse in walk-forward than reality. Across hundreds of trades per quarter, this distorted PF enough to FLIP `or_window_failure_fade_short` (a production-GREEN active setup) to RED on walk-forward. Other active setups also showed unjustified RED.
+**Round 2:** User said "I still think there are bugs." Did a per-SETUP audit. Discovered fee_pct varies dramatically:
+  - pre_results_t1 single-leg: 0.248 <- my 100-trace was biased to this
+  - mis_unwind: 0.296
+  - capitulation_long_v2: 0.437
+  - circuit_release: 0.411
+  - long_panic_gap_down: 0.461
+  - or_window_failure: 0.444
+  - delivery_pct: 0.488
+  - capitulation_long_morning T1-partial: 0.531
 
-After fix (fee=0.25):
-- or_window_failure_fade_short: RED 3/13 → **GREEN 9/13** (matches production)
-- capitulation_long_v2: RED 3/13 → RED 5/13 (more marginal)
-- mis_unwind_vwap_revert_short: RED 1/13 → RED 2/13
-- circuit_release_fade_short: GREEN 9/13 → GREEN 10/13
-- 4 setups unchanged (genuinely RED — fee didn't matter)
+  My "calibration" to 0.25 was wrong by 0.1-0.3pp for every setup except pre_results_t1 single-leg. The "fix" made some verdicts WORSE.
 
-**Why I missed this for so long:** I had 100+ tests passing, schema discipline, data_health, mechanism tags, sanity validation. EVERY piece of the pipeline was tested EXCEPT the fee constant. The most consequential parameter in the entire walk-forward was a magic number with no calibration test.
+**Final fix:** walk_forward now uses per-trade ACTUAL fees (`fee_inr` column from canonical CSV) when available. Falls back to flat 0.25 only if fee_inr missing. **Verdicts under per-trade fees revert closer to the original 0.5 verdicts** because real fees average ~0.4 across setups, much closer to 0.5 than 0.25.
 
-**Rules:**
+**Why fee % varies by setup:**
+- Brokerage cap (Rs 20/order) bites differently at different trade sizes
+- T1-partial trades have 3 orders, not 2 (more brokerage)
+- STT is side-asymmetric (sell-only), affecting LONG vs SHORT
+- Stamp duty is side-asymmetric (buy-only)
 
-1. **EVERY parameter that affects the verdict must have a calibration test** that ties it to real-world data. fee_pct_round_trip is now locked at 0.25 with `test_compute_per_trade_net_pnl_default_fee_matches_real_indian_intraday`. Without that test, the value could drift again.
+**Painful meta-lesson:**
 
-2. **When tracing a "broken" pipeline, do ONE end-to-end trace** of a single trade against the truth before changing anything else. The 100-trace I did took 5 minutes and found a bug that would have invalidated every walk-forward verdict.
+1. **A "verified against real data" calibration can still be wrong if the sample is biased.** I sampled 100 trades but they were all the same setup, same side, same partial mode. The variation I missed was across DIFFERENT setups.
 
-3. **Default constants are claims about reality.** They need evidence. "Conservative round number" is not evidence. A 0.5%/0.25%/0.10% choice changes whether a setup ships. The right default is the EMPIRICALLY MEASURED value from the actual fee stack, not a guess.
+2. **Calibration sample must span the diversity it will be applied to.** A global constant calibrated on one slice is a constant, not a calibration.
 
-4. **User-caught regressions are gold.** The user's "I think your system is broken somehow" was the highest-value signal of the session. Test infrastructure caught zero of the bugs that the user caught. Build systems that surface "this number doesn't match reality" automatically — calibration regression tests are one mechanism.
+3. **When the cost of being wrong is high, don't generalize a constant — use per-trade actuals.** Fee data is already in the CSV. Use it.
 
-5. **For Indian retail intraday SPECIFICALLY:** ~0.05% fee on notional × MIS leverage = fee_pct on capital. For 5x MIS: 0.25%. For 4x: 0.20%. For 3x: 0.15%. Re-calibrate when MIS regulatory environment changes.
+4. **Repeat user pushback is signal, not noise.** The user said "broken" twice. The first time I found one bug but my fix introduced another. The second time forced me to look at the structure (per-setup variation) instead of the constant.
+
+5. **"100 tests passing" is not a verdict on correctness.** All 100+ tests passed both with fee=0.5 AND fee=0.25 AND now with per-trade actuals. They tested the formula, not the parameter calibration. Calibration tests need to test the EVIDENCE behind the parameter, not just that the formula computes.
+
+6. **For Indian retail intraday SPECIFICALLY:** use per-trade `fee_inr` column. Don't use a flat fee_pct unless you absolutely must (e.g., synthetic fixture data without fee column). When forced to use a flat default, 0.40 is closer to the per-setup median than 0.25 or 0.5.
 
 ### 2026-05-20 (#13) — Sanity Mode B walk-forward systematically OVER-ESTIMATES production PF
 

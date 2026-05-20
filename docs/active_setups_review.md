@@ -12,18 +12,20 @@ Per **lesson #13** (sanity Mode B over-optimism): canonical walk-forward on sani
 
 ## Walk-forward tier per active setup
 
-**IMPORTANT 2026-05-20 update:** Fee model in walk-forward engine was
-calibrated against real Indian retail intraday fees — default `fee_pct_round_trip`
-went from 0.5 (wrong by 2x) to 0.25 (verified against 100 sampled trades).
-Tier column below shows the CORRECTED verdicts. See commit 4a47ee0.
+**IMPORTANT 2026-05-20 update (final):** Walk-forward now uses per-trade
+ACTUAL fees from the canonical CSV `fee_inr` column, not a flat constant.
+Earlier "fix" to fee=0.25 (commit 4a47ee0) was based on a biased calibration
+sample (only pre_results_t1 single-leg). Per-setup audit showed fee_pct
+varies 0.25-0.53; flat constant is structurally wrong. Verdicts below are
+final per-trade-fee verdicts. See commit 0ae619c.
 
-| Setup | Sanity walk-forward tier (corrected fees) | Trades (sanity) | Production status (per config) | Disposition |
+| Setup | Sanity walk-forward tier (per-trade actual fees) | Trades (sanity) | Production status (per config) | Disposition |
 |---|---|---|---|---|
 | gap_fade_short | N/A — no per-trade CSV available | — | Disc 2.36 / OOS 1.71 / HO 1.69 (post-sweep, small_cap only) | Keep running. Watch list. |
 | circuit_t1_fade_short | N/A — only 12 months of data (2024 + HO) | 646 (insufficient) | Disc 1.74 / OOS 0.98 / HO 1.89 (per agent analysis, 2026-05-19) | Keep running. Watch list. |
-| delivery_pct_anomaly_short | RED 0/13 (sanity SHORT-only aggregate, fee=0.25) | 2856 SHORT | Disc 1.49 / OOS 1.40 / HO 1.46 (aggregate, no cell) | Keep running. Aggregate-vs-cell mismatch. Watch list. |
-| long_panic_gap_down | RED 3/13 (sanity aggregate, fee=0.25) | 17324 | Disc 1.45 / OOS 1.40 / HO 1.72 (Cell B narrow: dist_from_pdl [-5,-3]) | Keep running. Cell B is much narrower than sanity aggregate. Watch list. |
-| **or_window_failure_fade_short** | **🟢 GREEN 9/13** (sanity SHORT-only aggregate, fee=0.25) | 19925 | Disc 1.22 / OOS 1.27 / HO 1.12 (Cell B narrow: vol-ratio (8,15]) | **Confirmed GREEN.** Sanity walk-forward now agrees with production. |
+| delivery_pct_anomaly_short | RED 0/13 (sanity SHORT-only aggregate) | 2856 SHORT | Disc 1.49 / OOS 1.40 / HO 1.46 (aggregate, no cell) | Keep running. Aggregate-vs-cell mismatch. Watch list. |
+| long_panic_gap_down | RED 3/13 (sanity aggregate) | 17324 | Disc 1.45 / OOS 1.40 / HO 1.72 (Cell B narrow: dist_from_pdl [-5,-3]) | Keep running. Cell B narrower than aggregate. Watch list. |
+| or_window_failure_fade_short | RED 3/13 (sanity SHORT-only aggregate) | 19925 | Disc 1.22 / OOS 1.27 / HO 1.12 (Cell B narrow: vol-ratio (8,15]) | Keep running. Cell B narrower than aggregate. Watch list. |
 
 ## Why all 5 are on the watch list
 
