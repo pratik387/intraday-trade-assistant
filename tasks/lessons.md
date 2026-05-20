@@ -11,6 +11,36 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-20 (#14) — Calibrate the fee model against REAL trades, not estimates
+
+**What went wrong:** Walk-forward engine defaulted `fee_pct_round_trip = 0.5` (% of capital basis). I picked 0.5 early in the project as a "conservative round number." When the user said "your system is broken somehow," I traced ONE actual trade through the formula and found:
+
+- Real Indian fee per trade on capital basis: **0.2484%** (std 0.0002 across 100 trades — extremely tight)
+- My default 0.5%: **2x too high**
+
+Impact: every trade was 0.25pp net worse in walk-forward than reality. Across hundreds of trades per quarter, this distorted PF enough to FLIP `or_window_failure_fade_short` (a production-GREEN active setup) to RED on walk-forward. Other active setups also showed unjustified RED.
+
+After fix (fee=0.25):
+- or_window_failure_fade_short: RED 3/13 → **GREEN 9/13** (matches production)
+- capitulation_long_v2: RED 3/13 → RED 5/13 (more marginal)
+- mis_unwind_vwap_revert_short: RED 1/13 → RED 2/13
+- circuit_release_fade_short: GREEN 9/13 → GREEN 10/13
+- 4 setups unchanged (genuinely RED — fee didn't matter)
+
+**Why I missed this for so long:** I had 100+ tests passing, schema discipline, data_health, mechanism tags, sanity validation. EVERY piece of the pipeline was tested EXCEPT the fee constant. The most consequential parameter in the entire walk-forward was a magic number with no calibration test.
+
+**Rules:**
+
+1. **EVERY parameter that affects the verdict must have a calibration test** that ties it to real-world data. fee_pct_round_trip is now locked at 0.25 with `test_compute_per_trade_net_pnl_default_fee_matches_real_indian_intraday`. Without that test, the value could drift again.
+
+2. **When tracing a "broken" pipeline, do ONE end-to-end trace** of a single trade against the truth before changing anything else. The 100-trace I did took 5 minutes and found a bug that would have invalidated every walk-forward verdict.
+
+3. **Default constants are claims about reality.** They need evidence. "Conservative round number" is not evidence. A 0.5%/0.25%/0.10% choice changes whether a setup ships. The right default is the EMPIRICALLY MEASURED value from the actual fee stack, not a guess.
+
+4. **User-caught regressions are gold.** The user's "I think your system is broken somehow" was the highest-value signal of the session. Test infrastructure caught zero of the bugs that the user caught. Build systems that surface "this number doesn't match reality" automatically — calibration regression tests are one mechanism.
+
+5. **For Indian retail intraday SPECIFICALLY:** ~0.05% fee on notional × MIS leverage = fee_pct on capital. For 5x MIS: 0.25%. For 4x: 0.20%. For 3x: 0.15%. Re-calibrate when MIS regulatory environment changes.
+
 ### 2026-05-20 (#13) — Sanity Mode B walk-forward systematically OVER-ESTIMATES production PF
 
 **What went wrong:** Ran canonical walk-forward on `_circuit_release_fade_short_trades_*.csv` (post-Stage-2 adapter). Result: GREEN 9/13 with HO_war PF 4.35. Retired_setups.md cited production HO_pre PF 0.84 / HO_war PF 0.60 — net LOSING -Rs 63K. The 4x+ discrepancy in same time window suggested either an adapter bug, a cell mismatch, or methodology drift. **Root cause** (from production config comment, already documented at retirement): sanity Mode B (next-bar-OPEN entry) captures ALL signals as trades. Production uses `entry_zone retest` filter (price must return UP within 0.3% of signal close before entry triggers). For SHORT setups, this filter has selection bias — fast-mover winners (price drops immediately) never retest, so production MISSES them. Sanity sees the winners and reports inflated PF.
