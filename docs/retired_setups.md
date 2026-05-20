@@ -1203,11 +1203,11 @@ This setup should NOT be re-implemented unless:
 
 ## Maintenance protocol
 
-**Updated 2026-05-20.** Walk-forward tier classification (RED / AMBER / GREEN) is DEPRECATED. The thresholds (≤ 5/13 windows pass = RED, etc.) were folklore, not literature-backed. See `tasks/lessons.md` #15 and `docs/setup_lifecycle.md` Stage 13.
+**Updated 2026-05-20.** Walk-forward tier classification (RED / AMBER / GREEN) is DEPRECATED. The thresholds (≤ 5/13 windows pass = RED, etc.) were folklore, not literature-backed. See `tasks/lessons.md` #15 and `docs/setup_lifecycle.md` Stage 14.
 
 When a new setup is retired:
 
-1. **Read the confidence card.** Per `docs/setup_lifecycle.md` Stage 13, retirement requires evidence from `reports/confidence_cards/<setup>_confidence_card.md` generated on OCI canonical data via `tools/methodology/confidence/confidence_card.py`. Any one of these intervals is sufficient evidence — researcher confirms:
+1. **Read the confidence card.** Per `docs/setup_lifecycle.md` Stage 14, retirement requires evidence from `reports/confidence_cards/<setup>_confidence_card.md` generated on OCI canonical data via `tools/methodology/confidence/confidence_card.py`. Any one of these intervals is sufficient evidence — researcher confirms:
    - PF CI lower bound below 0.95 on OCI canonical with n > 500 in the most recent 12-month window
    - Adjusted Sharpe (Harvey-Liu) flips negative on OCI canonical
    - Per-regime breakdown shows the edge has collapsed to a single regime AND that regime has ended
