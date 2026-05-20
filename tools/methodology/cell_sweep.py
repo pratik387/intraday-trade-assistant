@@ -61,10 +61,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from itertools import combinations
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
+import yaml
 
 _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
@@ -101,6 +102,9 @@ _REQ_COLS_BY_UNIT: Dict[str, Tuple[str, ...]] = {
     "structural": ("entry_ts", "entry_price", "qty", "mfe_r", "mae_r",
                    "R_per_share", "t1_price", "t2_price"),
 }
+
+# Default registry path. Overridable via load_setup_dim_registry(path=...).
+_DEFAULT_REGISTRY_PATH = _REPO / "assets" / "setup_dimension_registry.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +204,114 @@ def validate_candidates_schema(
                 "error", "negative_mae",
                 "mae_pct must be UNSIGNED adverse excursion in % (>= 0)",
             ))
+
+    is_valid = not any(i.severity == "error" for i in issues)
+    return SchemaValidation(is_valid=is_valid, issues=tuple(issues))
+
+
+# ---------------------------------------------------------------------------
+# Per-setup dimension registry
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class SetupDimSpec:
+    name: str
+    target_unit: str               # R | pct | structural
+    side: str                      # LONG | SHORT
+    status: str                    # active | retired | candidate
+    allowed_dims: frozenset       # canonical dim names for this setup
+    forbidden_dims: frozenset     # dims explicitly rejected (with documented reason)
+
+
+def load_setup_dim_registry(path: Optional[Path] = None) -> Dict[str, SetupDimSpec]:
+    """Load the per-setup dimension registry from YAML.
+
+    Returns a dict {setup_name: SetupDimSpec}. The registry file is the single
+    source of truth for what filter dimensions each setup uses in cell sweep.
+    """
+    path = Path(path) if path else _DEFAULT_REGISTRY_PATH
+    if not path.exists():
+        raise FileNotFoundError(f"setup dimension registry not found at {path}")
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or "setups" not in payload:
+        raise ValueError(f"{path} must have a top-level 'setups' mapping")
+
+    registry: Dict[str, SetupDimSpec] = {}
+    for setup_name, spec in (payload.get("setups") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        allowed = frozenset(
+            d["name"] for d in (spec.get("dims") or []) if isinstance(d, dict) and "name" in d
+        )
+        forbidden = frozenset(
+            d["name"] for d in (spec.get("forbidden_dims") or []) if isinstance(d, dict) and "name" in d
+        )
+        registry[setup_name] = SetupDimSpec(
+            name=setup_name,
+            target_unit=str(spec.get("target_unit", "R")),
+            side=str(spec.get("side", "SHORT")),
+            status=str(spec.get("status", "candidate")),
+            allowed_dims=allowed,
+            forbidden_dims=forbidden,
+        )
+    return registry
+
+
+def validate_dim_pool_against_registry(
+    setup_name: str,
+    dim_pool: Sequence[str],
+    registry: Optional[Dict[str, SetupDimSpec]] = None,
+) -> SchemaValidation:
+    """Compare dim_pool against the registered dims for setup_name.
+
+    Surfaces:
+      - error: any dim in dim_pool that's in the setup's forbidden_dims list
+        (documented look-ahead or rejected dim)
+      - warn: any dim in dim_pool not present in the registry's allowed_dims
+        (likely a new dim — confirm it's not a look-ahead before sweeping)
+      - warn: any registered dim missing from dim_pool (you may be skipping
+        a dimension the setup historically uses)
+
+    Returns SchemaValidation with these issues. Errors are blocking; warnings
+    are informational (caller decides).
+    """
+    issues: List[SchemaIssue] = []
+    registry = registry if registry is not None else load_setup_dim_registry()
+
+    if setup_name not in registry:
+        issues.append(SchemaIssue(
+            "warn", "setup_not_registered",
+            f"setup '{setup_name}' has no entry in setup_dimension_registry.yaml; "
+            f"skipping registry cross-check",
+        ))
+        return SchemaValidation(is_valid=True, issues=tuple(issues))
+
+    spec = registry[setup_name]
+    pool = set(dim_pool)
+
+    for dim in pool & spec.forbidden_dims:
+        issues.append(SchemaIssue(
+            "error", "forbidden_dim",
+            f"dim '{dim}' is on '{setup_name}' forbidden_dims list — check "
+            f"registry notes for the look-ahead / rejection reason",
+        ))
+
+    unknown = pool - spec.allowed_dims - spec.forbidden_dims
+    for dim in unknown:
+        issues.append(SchemaIssue(
+            "warn", "unregistered_dim",
+            f"dim '{dim}' is not in '{setup_name}' allowed_dims; if it's a new "
+            f"dimension, add it to setup_dimension_registry.yaml after confirming "
+            f"it's not look-ahead",
+        ))
+
+    missing = spec.allowed_dims - pool
+    for dim in missing:
+        issues.append(SchemaIssue(
+            "warn", "missing_registered_dim",
+            f"registered dim '{dim}' for '{setup_name}' is missing from this sweep's "
+            f"dim_pool; intentional or oversight?",
+        ))
 
     is_valid = not any(i.severity == "error" for i in issues)
     return SchemaValidation(is_valid=is_valid, issues=tuple(issues))
@@ -542,12 +654,19 @@ def run_cell_sweep(
     cfg: CellSweepConfig,
     *,
     fee_fn: Callable = calc_fee,
+    setup_name: Optional[str] = None,
+    registry: Optional[Dict[str, SetupDimSpec]] = None,
 ) -> pd.DataFrame:
     """Sweep (grid × filter cells) on the candidates df.
 
     Returns a DataFrame of CellResult rows sorted by PF desc then n desc.
     Raises ValueError if schema validation fails — refuses to score against
     a malformed candidates df.
+
+    If `setup_name` is provided, also cross-checks dim_pool against the
+    per-setup dimension registry (assets/setup_dimension_registry.yaml).
+    Errors (forbidden dims) abort. Warnings (unregistered/missing dims) are
+    printed but do not abort.
     """
     ts_hhmms = [g.ts_hhmm for g in cfg.grid]
     validation = validate_candidates_schema(
@@ -558,6 +677,21 @@ def run_cell_sweep(
         errs = "\n".join(f"  [{i.severity}] {i.code}: {i.message}"
                          for i in validation.issues)
         raise ValueError(f"candidates_df failed schema validation:\n{errs}")
+
+    if setup_name is not None:
+        reg_check = validate_dim_pool_against_registry(
+            setup_name, cfg.dim_pool, registry=registry,
+        )
+        if not reg_check.is_valid:
+            errs = "\n".join(f"  [{i.severity}] {i.code}: {i.message}"
+                             for i in reg_check.issues if i.severity == "error")
+            raise ValueError(f"dim_pool failed registry check for '{setup_name}':\n{errs}")
+        # Print warnings — non-fatal
+        warns = [i for i in reg_check.issues if i.severity == "warn"]
+        if warns:
+            print(f"[registry warn] {setup_name}:", file=sys.stderr)
+            for i in warns:
+                print(f"  - {i.code}: {i.message}", file=sys.stderr)
 
     df = candidates_df.copy()
     rows: List[CellResult] = []

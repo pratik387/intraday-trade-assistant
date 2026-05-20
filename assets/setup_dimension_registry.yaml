@@ -1,0 +1,259 @@
+# Per-setup filter dimension registry.
+#
+# Single source of truth for which filter dimensions each setup uses in its
+# Phase 5 cell sweep (tools/methodology/cell_sweep.py). When a sanity script
+# declares dim_pool, the helper compares against this registry and warns on
+# drift (unrecognized dim, or registry dim missing from pool).
+#
+# Schema per setup:
+#   <setup_name>:
+#     status: active | retired | candidate
+#     side: LONG | SHORT
+#     target_unit: R | pct | structural
+#     dims:
+#       - name: <column name>
+#         source: signal_time | session_time | per_row_at_signal | precomputed
+#         notes: optional context
+#     forbidden_dims: [optional list of dims that were tried and rejected, with reason]
+#
+# Convention:
+#   - "source: signal_time" means value is computable from bars[:i+1] at signal bar i
+#   - "source: session_time" means value is a session-aggregate computed only
+#     from bars BEFORE signal (e.g., morning_high, opening_range_high)
+#   - "source: per_row_at_signal" means value is per-trade row metadata (cap_segment, dow)
+#   - "source: precomputed" means value comes from a prior session aggregate
+#     (PDC, prior_5d_ret, ADV) — always safe
+#
+# Survey reference: tools/methodology/cell_sweep.py audit 2026-05-20.
+
+setups:
+
+  # ===== ACTIVE SETUPS =====
+
+  gap_fade_short:
+    status: active
+    side: SHORT
+    target_unit: structural   # T1 = midpoint(entry, PDC), T2 = PDC
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: gap_pct_bucket
+        source: signal_time      # gap_pct = (open - PDC) / PDC, known at 09:15
+      - name: dim_wick
+        source: signal_time      # wick/body ratios computed from signal bar OHLC
+      - name: dim_body
+        source: signal_time
+      - name: dim_atr
+        source: precomputed      # ATR from prior 14-day session aggregates
+      - name: dim_gap_vs_pdh
+        source: precomputed
+      - name: dim_prior_pct
+        source: precomputed      # prior_5d_ret_pct
+      - name: dim_vol_ratio
+        source: signal_time      # vol_ratio = bar.volume / prior_session_mean
+      - name: rank_score_bucket
+        source: signal_time      # composite rank from above
+    forbidden_dims:
+      - name: close_off_high_bucket
+        reason: uses EOD close — removed 2026-05-16 (look-ahead)
+
+  long_panic_gap_down:
+    status: active
+    side: LONG
+    target_unit: R           # t1_r_multiple=1.5; SL = MIN(entry_bar_low*0.995, entry*0.99)
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: gap_pct_bucket
+        source: signal_time      # (open - PDC) / PDC at 09:15
+      - name: dist_pdh_bucket
+        source: precomputed      # distance from prior-day high
+      - name: dist_pdl_bucket
+        source: precomputed
+      - name: dow
+        source: per_row_at_signal
+      - name: return_bucket
+        source: signal_time
+      - name: adv_bucket
+        source: precomputed
+
+  or_window_failure_fade_short:
+    status: active
+    side: SHORT
+    target_unit: R           # t1_r_multiple=1.0
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: vol_ratio_bucket
+        source: signal_time
+      - name: entry_hhmm_bucket
+        source: per_row_at_signal
+      - name: or_range_pct_bucket
+        source: session_time     # opening range completed before entry window
+
+  circuit_t1_fade_short:
+    status: active
+    side: SHORT
+    target_unit: structural   # T1 = t1_open, T2 = t0_close
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: t0_gain_bucket
+        source: precomputed      # T-1 day's circuit gain (yesterday's EOD)
+      - name: gap_open_bucket
+        source: signal_time      # T-0 opening gap
+
+  delivery_pct_anomaly_short:
+    status: active
+    side: SHORT
+    target_unit: R
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: delivery_pct_bucket
+        source: precomputed      # PREVIOUS day's delivery % (T-1 known overnight)
+      - name: dow
+        source: per_row_at_signal
+      - name: gap_open_bucket
+        source: signal_time
+
+  # ===== RETIRED SETUPS (preserved for re-implementation reference) =====
+
+  circuit_release_fade_short:
+    status: retired
+    side: SHORT
+    target_unit: R           # t1_r_multiple sweep; SL = rejection_high * 1.005
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: dow
+        source: per_row_at_signal
+      - name: day_gain_at_signal_bucket
+        source: signal_time      # day_gain_pct using session_high_so_far at signal
+        notes: |
+          REPLACES day_gain_bucket (which used EOD day_gain_pct — look-ahead).
+          Production detector uses session_high_so_far at the rejection-bar
+          signal time. sanity_circuit_release_fade.py emits both
+          day_gain_at_signal_pct (safe) and day_gain_pct_eod (metadata only,
+          never use as a filter dim).
+      - name: rejection_hhmm_bucket
+        source: per_row_at_signal
+    forbidden_dims:
+      - name: day_gain_bucket
+        reason: EOD-derived bucket; replaced by day_gain_at_signal_bucket
+      - name: close_off_high_bucket
+        reason: uses EOD close — removed 2026-05-16
+
+  mis_unwind_vwap_revert_short:
+    status: retired
+    side: SHORT
+    target_unit: R
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: dow
+        source: per_row_at_signal
+      - name: rsi_bucket
+        source: signal_time
+      - name: vol_ratio_bucket
+        source: signal_time
+      - name: entry_hhmm_bucket
+        source: per_row_at_signal
+
+  round_number_sweep_short:
+    status: retired
+    side: SHORT
+    target_unit: R
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: dist_round_pct_bucket
+        source: signal_time
+      - name: vol_ratio_bucket
+        source: signal_time
+
+  capitulation_long_v2:
+    status: retired
+    side: LONG
+    target_unit: R           # T1=t1_r * R, SL = signal_bar_low * (1 - sl_pct/100)
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: gap_pct_bucket
+        source: signal_time
+      - name: wick_ratio_bucket
+        source: signal_time
+
+  pre_results_t1_fade_v2:
+    status: retired
+    side: SHORT
+    target_unit: R
+    dims:
+      - name: announce_class
+        source: precomputed      # T-1 known the day before announcement
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: prior_5d_ret_bucket
+        source: precomputed
+
+  block_deal_accumulation_long:
+    status: retired
+    side: LONG
+    target_unit: R
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: signal_type
+        source: signal_time
+      - name: trade_value_cr_bucket
+        source: signal_time
+
+  volume_spike_reversal_midsession:
+    status: retired
+    side: SHORT
+    target_unit: R
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: vol_ratio_bucket
+        source: signal_time
+      - name: dist_from_vwap_bucket
+        source: signal_time
+      - name: body_pct_bucket
+        source: signal_time
+
+  expiry_pin_strike_reversal:
+    status: retired
+    side: SHORT
+    target_unit: R
+    dims:
+      - name: direction
+        source: signal_time
+      - name: hhmm_bucket
+        source: per_row_at_signal
+      - name: bar_n_range_bucket
+        source: signal_time
+
+  # ===== PERCENTAGE-TARGET SETUPS (block_deal variants) =====
+
+  block_deal_t0_short:
+    status: retired
+    side: SHORT
+    target_unit: pct
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: signal_type
+        source: signal_time
+      - name: trade_value_cr_bucket
+        source: signal_time
+
+  block_deal_continuation_short:
+    status: retired
+    side: SHORT
+    target_unit: pct
+    dims:
+      - name: cap_segment
+        source: per_row_at_signal
+      - name: signal_type
+        source: signal_time

@@ -255,7 +255,7 @@ The helper:
 - `partial_mode` is a swept grid parameter, not a config-wide constant. Three options:
   - `"all_in"` — full qty, T1 doesn't fire; only T2 / SL / TS resolve
   - `"partial_50_no_trail"` — 50% at T1, 50% to T2 or TS close
-  - `"partial_50_be_trail"` — 50% at T1; remaining 50% exits at BE if mae stayed close to SL post-T1 (conservative approximation — exact post-T1 path requires richer MFE/MAE columns)
+  - `"partial_50_be_trail"` — 50% at T1; remaining 50% exits at BE if mae stayed close to SL post-T1 (conservative approximation when only summary `mfe_r`/`mae_r` are present; exact when `mfe_r_pre_t1` + `mae_r_post_t1` are also emitted — these are OPTIONAL_COLUMNS in `tools/methodology/sanity_csv_schema.py`)
 - `select_best_cell` returns `None` if no cell meets ship-eligibility — kill signal, not silent-pick-best (Lesson #2 anti-salvage).
 - `lock_cell` writes JSON; refuses overwrite without `force=True` (lock-once discipline).
 
@@ -268,6 +268,20 @@ The helper:
 | `structural` | `entry_ts`, `entry_price`, `qty`, `mfe_r`, `mae_r`, `R_per_share`, `t1_price`, `t2_price`, `close_at_<HHMM>` |
 
 Plus the filter dimensions as columns (declared in `dim_pool`).
+
+**Per-setup dimension registry (`assets/setup_dimension_registry.yaml`).** Central record of what filter dimensions each setup uses, what their data source is (`signal_time` / `session_time` / `per_row_at_signal` / `precomputed`), and what dimensions have been explicitly forbidden (with the look-ahead / rejection reason).
+
+Pass `setup_name=` to `run_cell_sweep(...)` to cross-check `dim_pool` against the registry:
+- Errors on any dim in `dim_pool` that's in the setup's `forbidden_dims` (e.g., `day_gain_bucket` on `circuit_release_fade_short` — uses EOD value, replaced by `day_gain_at_signal_bucket`).
+- Warns on any dim not in the registry's `allowed_dims` (likely a new dim — confirm it's not a look-ahead, then add it to the YAML).
+- Warns on any registered dim missing from `dim_pool` (intentional skip or oversight?).
+
+```python
+results = run_cell_sweep(
+    disc_candidates, cfg,
+    setup_name="circuit_release_fade_short",   # triggers registry cross-check
+)
+```
 
 **Usage example (R-mode setup, e.g. circuit_release_fade_short):**
 

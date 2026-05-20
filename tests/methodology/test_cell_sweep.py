@@ -16,11 +16,14 @@ from tools.methodology.cell_sweep import (
     FORBIDDEN_DIM_EXACT,
     FORBIDDEN_DIM_PREFIXES,
     GridEntry,
+    SetupDimSpec,
+    load_setup_dim_registry,
     lock_cell,
     run_cell_sweep,
     select_best_cell,
     simulate_exit,
     validate_candidates_schema,
+    validate_dim_pool_against_registry,
 )
 
 
@@ -477,3 +480,97 @@ def test_lock_cell_allows_force_overwrite(tmp_path):
     lock_cell(sel, setup_name="s", window_label="Discovery", output_path=out)
     lock_cell(sel, setup_name="s", window_label="Discovery",
               output_path=out, force=True)
+
+
+# ---------------------------------------------------------------------------
+# Per-setup dimension registry
+# ---------------------------------------------------------------------------
+
+def test_load_setup_dim_registry_returns_known_setups():
+    """Registry must load and contain the active setups we use."""
+    reg = load_setup_dim_registry()
+    assert "gap_fade_short" in reg
+    assert "long_panic_gap_down" in reg
+    assert "circuit_release_fade_short" in reg
+
+
+def test_registry_marks_circuit_release_day_gain_bucket_as_forbidden():
+    """REGRESSION: day_gain_bucket used EOD value; documented as forbidden
+    for circuit_release_fade_short with day_gain_at_signal_bucket as the
+    safe replacement."""
+    reg = load_setup_dim_registry()
+    spec = reg["circuit_release_fade_short"]
+    assert "day_gain_bucket" in spec.forbidden_dims
+    assert "day_gain_at_signal_bucket" in spec.allowed_dims
+
+
+def test_registry_records_correct_target_unit_per_setup():
+    reg = load_setup_dim_registry()
+    assert reg["gap_fade_short"].target_unit == "structural"
+    assert reg["long_panic_gap_down"].target_unit == "R"
+    assert reg["block_deal_t0_short"].target_unit == "pct"
+
+
+def test_validate_dim_pool_against_registry_errors_on_forbidden_dim():
+    reg = load_setup_dim_registry()
+    result = validate_dim_pool_against_registry(
+        "circuit_release_fade_short",
+        dim_pool=["cap_segment", "day_gain_bucket"],  # forbidden
+        registry=reg,
+    )
+    assert not result.is_valid
+    assert any(i.code == "forbidden_dim" for i in result.issues)
+
+
+def test_validate_dim_pool_against_registry_warns_on_unknown_dim():
+    reg = load_setup_dim_registry()
+    result = validate_dim_pool_against_registry(
+        "long_panic_gap_down",
+        dim_pool=["cap_segment", "made_up_dim"],
+        registry=reg,
+    )
+    # Warning, not error
+    assert result.is_valid
+    assert any(i.code == "unregistered_dim" and "made_up_dim" in i.message
+               for i in result.issues)
+
+
+def test_validate_dim_pool_against_registry_warns_on_missing_dim():
+    reg = load_setup_dim_registry()
+    spec = reg["long_panic_gap_down"]
+    # Use only a subset of allowed dims — registry should warn about missing
+    result = validate_dim_pool_against_registry(
+        "long_panic_gap_down",
+        dim_pool=["cap_segment"],   # missing the rest
+        registry=reg,
+    )
+    assert result.is_valid
+    assert any(i.code == "missing_registered_dim" for i in result.issues)
+
+
+def test_validate_dim_pool_against_registry_no_setup_entry():
+    reg = load_setup_dim_registry()
+    result = validate_dim_pool_against_registry(
+        "fictional_new_setup",
+        dim_pool=["cap_segment"],
+        registry=reg,
+    )
+    # Should warn but not block
+    assert result.is_valid
+    assert any(i.code == "setup_not_registered" for i in result.issues)
+
+
+def test_run_cell_sweep_blocks_on_forbidden_registry_dim():
+    """End-to-end: registry forbidden_dim check kicks in via run_cell_sweep."""
+    # Build a synthetic df that has the forbidden dim
+    df = _synthetic_R_candidates(n=200)
+    df["day_gain_bucket"] = "5-10"
+
+    cfg = CellSweepConfig(
+        side="SHORT", target_unit="R",
+        dim_pool=["cap_segment", "day_gain_bucket"],
+        grid=[_grid_R()],
+        n_min_floor=20,
+    )
+    with pytest.raises(ValueError, match="forbidden_dim"):
+        run_cell_sweep(df, cfg, setup_name="circuit_release_fade_short")
