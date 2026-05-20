@@ -346,6 +346,36 @@
       "max_fires_per_5min": 5,
       "_research_notes": "Validated cell from delivery_pct anomaly cell-mining. SHORT only. Indian-microstructure anchor: NSE-published delivery percentage <20% + same-day pump >3% = retail/operator pump signature. Cross-day RVOL confirmation rejects intra-session false signals. Sanity: tools/sub9_research/sanity_nse_delivery_pct_anomaly.py. Brief: specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md.",
       "wide_open": false
+    },
+    "pre_results_t1_fade": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-19; walk-forward re-validation pending. Block only carries pre-registered mechanism docs — no live detector.",
+      "mechanism_tags": ["FII_net_flow_positive_30d", "SEBI_FO_rule_version_1"],
+      "mechanism_notes": "Setup mechanism (institutional T-1 de-risking before AMC results) requires FIIs net-LONG so there's positioning to de-risk. Fails when FIIs net-sellers for 30d+ (e.g., Jan-Mar 2025 ~Rs.1L cr outflow). Also fragile to post-SEBI Oct 2025 disclosure-window changes which altered the institutional hedging flow."
+    },
+    "capitulation_long_v2": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-19; walk-forward re-validation. Phase 1-5 disciplined revival of capitulation_long_morning. Block only carries pre-registered mechanism docs.",
+      "mechanism_tags": ["midcap_correction_active", "war_volatility_active"],
+      "mechanism_notes": "LONG-bias on gap-down exhaustion (mid_cap × gap [-5%, -3%]). Mechanism degrades during deep midcap corrections (Sep'24-Mar'25) when there's no exhaustion bottom; war-period vol amplifies risk. Best regime: stable midcap + elevated-but-not-war vol."
+    },
+    "capitulation_long_morning": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-12; walk-forward re-validation. Block only carries pre-registered mechanism docs.",
+      "mechanism_tags": ["midcap_correction_active"],
+      "mechanism_notes": "Original LONG-side gap-down panic capitulation. Same mechanism as v2. Failed both regime classifier non-reproducibility AND aggregate PF. Retired 2026-05-12; v2 revival also failed. This walk-forward re-validation completes the methodology cycle on the original."
+    },
+    "mis_unwind_vwap_revert_short": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-19; walk-forward re-validation. Block only carries pre-registered mechanism docs.",
+      "mechanism_tags": ["MWPL_formula_pre_2025_10", "SEBI_FO_rule_version_1"],
+      "mechanism_notes": "MIS-margin auto-square-off SHORT setup. Mechanism depends on retail-MIS unwind pressure 14:55-15:15 IST which was structurally altered by SEBI Oct 2025 MWPL formula revision + F&O rule changes. Pre-SEBI regime: setup worked. Post-SEBI: PF collapse in HO (1.22 → 0.75)."
+    },
+    "circuit_release_fade_short": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-19; walk-forward re-validation. Block only carries pre-registered mechanism docs.",
+      "mechanism_tags": ["SEBI_FO_rule_version_1"],
+      "mechanism_notes": "SHORT fade of failed circuit-pin re-tests. Indian retail-FOMO + operator-pump exhaustion mechanism. Decayed pre-war (PF 1.26 OOS → 0.84 HO_pre_war Oct-Dec 2025) right after SEBI Oct 2024 F&O reforms. War period (Jan-Apr 2026) deepened the decay but didn't cause it."
     }
   },
   "filters": {
