@@ -11,7 +11,178 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
-### 2026-05-19 (#9) — Cache directory is BACKTEST-ONLY; live/paper must touch zero feathers
+### 2026-05-20 (#15) — Per-trade walk-forward methodology was wrong; rebuilt as research-backed confidence framework
+
+**What went wrong:** Spent multiple rounds building a walk-forward validator that tier-classifies each 3-month window (Green / Yellow / Red) based on PF/DSR/PBO thresholds. User pushed back hard:
+- "the solution seems premature. this not at all serves the purpose of getting confidence on a setup. the methodology seems fucked completely"
+- "[the thresholds] seem very random and not research backed"
+
+I caved and admitted: "I made up the numbers — 1.05, 0.95, 0.8×, the 'ship at 25%' — none of those have research backing." A deep-research dive (`reports/sub9_sanity/_per_trade_validation_research.md`) confirmed:
+- DSR is defined on per-PERIOD returns, not per-trade
+- PBO requires testing N candidate configurations and choosing the best — meaningless on a single setup's trade list
+- "200-500 trades minimum" is mis-attributed to López de Prado
+- All numerical thresholds in practitioner blogs are folklore, not literature-backed
+
+**The redesign (research-backed):**
+- Component 1: Bootstrap BCa CI (Efron-Tibshirani 1993) on aggregate PF / expectancy / win-rate
+- Component 2: Per-regime decomposition (López de Prado tactical 2019) with 7-regime Bai-Perron-style schema for Jan 2023 - Apr 2026 in `assets/regime_schema.yaml`. Each regime has evidence_class: EVENT+DATA, DATA, or INTERPOLATED
+- Component 3: Selection-bias haircut (Harvey-Liu 2015) via ONC clustering effective-M (López de Prado & Lewis 2019)
+
+Output is a **confidence card** (intervals, not verdicts) per setup. Framework refuses to produce ship/no-ship binaries — the researcher reads the intervals.
+
+**Subtle bug found AND fixed during redesign:** The first Harvey-Liu implementation took `abs(t_stat)` before computing p-values, then back-solved through `ppf(1 - p/2)` which is ALWAYS positive. Result: a setup with raw Sharpe -2.6 came out with adjusted Sharpe +2.4 (sign flip). Caught when reviewing the mis_unwind card showed adj Sharpe positive for an obvious losing setup. Fixed via the standard haircut-factor approach: `SR_adj = SR_raw × t_crit_1 / t_crit_M`. Added regression test `test_harvey_liu_haircut_preserves_sign_for_negative_sharpe`.
+
+**Calibration sanity check (works):** Across 8 OCI production setups, the framework cleanly sorts 3 retired setups to the bottom (PF CI crosses 1.0, negative adj Sharpe, weak in all regimes) and 5 active setups to the top — without using ship/retired labels as input. Marginal middle: circuit_t1_fade_short, delivery_pct_anomaly_short, round_number_sweep_short — no clean threshold separates them, which is honest reporting.
+
+**Rules:**
+
+1. **Per-trade outcome list ≠ per-period returns.** DSR / Sharpe / PBO are defined on per-period equity curves. To apply them to per-trade data, FIRST aggregate to daily P&L, THEN compute the statistic on the daily series. Never compute "Sharpe of per-trade pnls" — it has no meaning under the literature definition.
+
+2. **If you can't cite a paper for a threshold, don't propose it.** "PF > 1.05" / "DSR > 0.95" / "win 9/13 windows" are folklore. The framework outputs INTERVALS; the researcher judges.
+
+3. **Selection bias is real and quantifiable.** Effective M from ONC clustering, then Bonferroni haircut factor (sign-preserving) gives the adjusted Sharpe. For our 8 setups, M=8 (all independent), haircut factor ≈ 0.72. Document the M source — if you discover 30 more variants tested historically, M jumps and the haircut tightens.
+
+4. **Regime evidence has tiers.** R3 (post_election_consolidation) is INTERPOLATED — boundary inferred from absence of evidence, not from a detected break. Wide CIs in R3 are EXPECTED, not a setup weakness. Don't gate on R3 alone.
+
+5. **Calibration test for ANY new component:** run it on the full 8-setup OCI portfolio and check that retired setups land near the bottom WITHOUT being labeled as such. If retired and active are intermingled, the component isn't measuring what we want.
+
+6. **When the user says "very random and not research backed" — they're right.** Don't defend numbers I made up. Cite or remove.
+
+---
+
+### 2026-05-20 (#14) — Use ACTUAL per-trade fees, not a calibrated global constant
+
+**What went wrong (multiple times):**
+
+**Round 1:** Walk-forward defaulted `fee_pct_round_trip = 0.5` (% of capital basis), picked as a "conservative round number." User said "I think your system is broken somehow." Traced 100 trades from pre_results_t1 single-leg — measured fee_pct_capital = 0.2484 (std 0.0002). Changed default to 0.25, felt confident. Lesson #14 v1 was triumphalist about "calibration."
+
+**Round 2:** User said "I still think there are bugs." Did a per-SETUP audit. Discovered fee_pct varies dramatically:
+  - pre_results_t1 single-leg: 0.248 <- my 100-trace was biased to this
+  - mis_unwind: 0.296
+  - capitulation_long_v2: 0.437
+  - circuit_release: 0.411
+  - long_panic_gap_down: 0.461
+  - or_window_failure: 0.444
+  - delivery_pct: 0.488
+  - capitulation_long_morning T1-partial: 0.531
+
+  My "calibration" to 0.25 was wrong by 0.1-0.3pp for every setup except pre_results_t1 single-leg. The "fix" made some verdicts WORSE.
+
+**Final fix:** walk_forward now uses per-trade ACTUAL fees (`fee_inr` column from canonical CSV) when available. Falls back to flat 0.25 only if fee_inr missing. **Verdicts under per-trade fees revert closer to the original 0.5 verdicts** because real fees average ~0.4 across setups, much closer to 0.5 than 0.25.
+
+**Why fee % varies by setup:**
+- Brokerage cap (Rs 20/order) bites differently at different trade sizes
+- T1-partial trades have 3 orders, not 2 (more brokerage)
+- STT is side-asymmetric (sell-only), affecting LONG vs SHORT
+- Stamp duty is side-asymmetric (buy-only)
+
+**Painful meta-lesson:**
+
+1. **A "verified against real data" calibration can still be wrong if the sample is biased.** I sampled 100 trades but they were all the same setup, same side, same partial mode. The variation I missed was across DIFFERENT setups.
+
+2. **Calibration sample must span the diversity it will be applied to.** A global constant calibrated on one slice is a constant, not a calibration.
+
+3. **When the cost of being wrong is high, don't generalize a constant — use per-trade actuals.** Fee data is already in the CSV. Use it.
+
+4. **Repeat user pushback is signal, not noise.** The user said "broken" twice. The first time I found one bug but my fix introduced another. The second time forced me to look at the structure (per-setup variation) instead of the constant.
+
+5. **"100 tests passing" is not a verdict on correctness.** All 100+ tests passed both with fee=0.5 AND fee=0.25 AND now with per-trade actuals. They tested the formula, not the parameter calibration. Calibration tests need to test the EVIDENCE behind the parameter, not just that the formula computes.
+
+6. **For Indian retail intraday SPECIFICALLY:** use per-trade `fee_inr` column. Don't use a flat fee_pct unless you absolutely must (e.g., synthetic fixture data without fee column). When forced to use a flat default, 0.40 is closer to the per-setup median than 0.25 or 0.5.
+
+### 2026-05-20 (#13) — Sanity Mode B walk-forward systematically OVER-ESTIMATES production PF
+
+**What went wrong:** Ran canonical walk-forward on `_circuit_release_fade_short_trades_*.csv` (post-Stage-2 adapter). Result: GREEN 9/13 with HO_war PF 4.35. Retired_setups.md cited production HO_pre PF 0.84 / HO_war PF 0.60 — net LOSING -Rs 63K. The 4x+ discrepancy in same time window suggested either an adapter bug, a cell mismatch, or methodology drift. **Root cause** (from production config comment, already documented at retirement): sanity Mode B (next-bar-OPEN entry) captures ALL signals as trades. Production uses `entry_zone retest` filter (price must return UP within 0.3% of signal close before entry triggers). For SHORT setups, this filter has selection bias — fast-mover winners (price drops immediately) never retest, so production MISSES them. Sanity sees the winners and reports inflated PF.
+
+**Quote from production config:** "Sanity Mode B (PF 2.44) was wrong because it assumed all signals = good signals."
+
+**Why this matters now:** The whole point of Schema Stage 2 was to build trustworthy walk-forward on sanity data. But sanity data carries a systematic optimism bias for setups where execution semantics matter. circuit_release sanity showed GREEN but production was RED. If we'd un-retired based on sanity walk-forward, we'd ship a losing setup with 5x MIS leverage.
+
+**Rule:**
+
+1. **Walk-forward on sanity Mode B output OVER-ESTIMATES production PF systematically.** Especially for SHORT setups where the entry_zone retest filter has selection bias against fast-mover winners. A GREEN tier on sanity data is necessary but NOT sufficient for production ship.
+
+2. **Cross-check sanity walk-forward verdict against production OCI data BEFORE acting.** For un-retire decisions: require that the OCI production trade_report.csv ALSO shows GREEN tier on walk-forward. If sanity is GREEN but production is RED, the sanity is over-optimistic — investigate execution-semantics gap.
+
+3. **Going forward, walk-forward should consume `trade_report.csv` from OCI runs**, not sanity outputs. The trade_report.csv has real execution outcomes including entry_zone filtering, slippage, latency. Stage 5 of the walk-forward methodology project should be reframed: validate setups via production-data walk-forward, not sanity-data walk-forward.
+
+4. **Mode B sanity validations are still useful for the OTHER direction.** If sanity Mode B shows RED, production will be even more RED (since production has less-favorable execution). RED on sanity = honest retirement; GREEN on sanity = needs further validation.
+
+5. **Document `_comment_no_immediate_execution`-style findings on the SETUP's config block.** This circuit_release comment captured the critical sanity-vs-production execution-semantics gap. Future setups should have similar `_comment_sanity_vs_production_drift` blocks if a delta is observed.
+
+**Examples from current session (2026-05-20):**
+- circuit_release_fade_short: sanity GREEN 9/13, production RED (HO PF 0.84/0.60). Discrepancy was the entry_zone retest filter. Retirement stands.
+- pre_results_t1_fade: sanity RED 0/13, production RED. Mode B optimism didn't save it. Honest retirement.
+- capitulation_long_v2: sanity RED 3/13, retirement matches.
+- mis_unwind_vwap_revert_short: sanity RED 1/13, retirement matches.
+
+### 2026-05-19 (#12) — Walk-forward methodology replaces chronological 3-period validation
+
+**What changed:** Replaced 3-period chronological validation (Disc 24mo / OOS 9mo / HO 7mo) with walk-forward (13 × 3-month windows + per-window bootstrap CI + 3-tier classification GREEN/AMBER/RED). Triggered by recognizing that 5 of 5 recently-retired setups followed the same 2-of-3-pass pattern with the failing period aligned to known Indian regime breaks (SEBI Oct 2024, FII Jan-Mar 2025, war Jan-Apr 2026). The old methodology couldn't distinguish "edge gone" from "one bad regime window dominated PF."
+
+**New discipline:**
+1. **Walk-forward is mandatory for all new Phase 5 validation.** No more single-OOS/single-HO ship gate. Implementation in `tools/methodology/walk_forward.py`.
+2. **Mechanism pre-registration via git timestamp is mandatory for AMBER tier.** `mechanism_tags` field in setup config must be committed BEFORE walk-forward runs; engine refuses otherwise (`tools/methodology/pre_registration.py`). Prevents post-hoc rationalization.
+3. **Three-tier outcome:** GREEN ≥ 9 of 13 windows → ship full size. AMBER 6-8 of 13 + mechanism docs → 90-day forward-validation at 25% size. RED ≤ 5 of 13 → retired.
+4. **Per-window bootstrap CI gate.** Window passes iff PF_net ≥ 1.10 AND 95% bootstrap CI lower bound > 1.0. Defends against small-n noise.
+5. **Circuit breaker is the live safety net.** Daily-EOD `jobs/check_circuit_breakers.py` computes trailing-60d NET PnL per setup; auto-disables if below threshold (mean − 2σ of backtest window distribution). Manual re-enable required.
+6. **Active setup consistency check (Option C):** active setups below GREEN tier are NOT proactively retired — they stay live at full size AND get circuit breaker monitoring AND go on a watch list (`docs/active_setups_review.md`). Drawdown is the signal, not retroactive retirement.
+7. **OOS+HO combined NET PnL is still the most damning indicator** for retirement (lesson #11). Walk-forward + circuit breaker don't replace this gut check.
+
+**Reference docs:**
+- Spec: `docs/superpowers/specs/2026-05-19-walk-forward-methodology-design.md`
+- Plan: `docs/superpowers/plans/2026-05-19-walk-forward-methodology.md`
+- Methodology runbook: `docs/methodology_walk_forward.md`
+- Active review: `docs/active_setups_review.md` (populated during Phase 3)
+
+### 2026-05-19 (#11) — Monthly breakdown is mandatory pre-retirement, but data-classification hypotheses MUST be falsified before retiring or shipping
+
+**What went wrong (4-layer investigation chain):**
+
+I retired `pre_results_t1_fade` on Layer 1 (period aggregates: Disc 1.10 / OOS 0.82 / HO 1.15). User asked: "did u check month by month? i see a pattern... discovery is similar to ho and oos is different altogether... maybe some kind of indian market shift?"
+
+- **Layer 2 (monthly breakdown):** OOS is the outlier, Disc + HO are similar (medians 1.36 / 0.79 / 1.61). Suggested structural cause.
+- **Layer 3 (data audit):** NSE `announcements_fr` source died after Mar 2025. AMC events for 2025+ got demoted to "scheduled" class. **Hypothesis: setup missed events due to source-priority misclassification.**
+- **Layer 4 (conservative re-run with corrected `{AMC, scheduled}` filter):** Recovered ~50% more OOS events. **OOS PF_net got WORSE (0.816 → 0.784).** Demoted events were ALSO losers. Hypothesis falsified.
+
+**Final verdict: RETIRE (confirmed). Real failure mode: regime-conditioned edge with FII-positioning dependency** — setup mechanism (institutional T-1 de-risking) requires FIIs net-LONG to have something to de-risk. Jan-Mar 2025 FII outflow (~₹1L cr) destroyed the mechanism. Even when AMC universe restored, the events fired during FII-out regime were structurally losers.
+
+**Why this matters as a lesson:** The user's monthly-breakdown instinct caught a LEGITIMATE data quality concern that I should have caught myself. But the data-correction hypothesis turned out to be wrong — the events WERE misclassified, but those events were ALSO losers. Two truths can be simultaneously valid: (a) data ingestion has issues; (b) the underlying mechanism is regime-broken. Conflating them is the trap.
+
+**Rules:**
+
+1. **Phase 5 MUST include monthly within-period breakdown.** Always compute median monthly PF + Q25-Q75 + losing-months count. If a period's median differs by ≥0.30 from other periods, investigate STRUCTURAL cause before final retire/ship.
+
+2. **Outlier-month structural-cause hypothesis is required.** Cross-reference outlier months with:
+   - Indian-market regime (FII flows, SEBI rule changes, election cycles, sector corrections, war/macro shocks)
+   - Data-source coverage (calendar mutation history, scrape completeness, `.bak_*` files, dead endpoints)
+   - Mechanism dependencies (e.g., setup depends on FIIs LONG → fails when FIIs net-sell)
+
+3. **Hypotheses MUST be falsified, not just observed.** If you propose "OOS bleed = data classification artifact," CONFIRM by re-running with the correction. If the correction makes OOS PF *worse* or *unchanged*, the hypothesis is dead → retire. If it makes OOS PF *better*, validate via stationary-edge check before ship.
+
+4. **Earnings calendar / event-data freshness is a load-bearing dependency.** Setups keyed on `data/earnings_calendar/`, `data/fno_ban_history/`, etc. must verify per-period coverage AND source-priority completeness in Phase 5. NSE endpoints DO die (e.g., `announcements:Financial Result Updates` returned 0 rows for all 2025-04+ chunks).
+
+5. **Source-priority audits are part of Phase 5.** Print `df.groupby([period, source]).size()` for every period. Missing high-priority sources is a smoking gun for misclassification — but requires Layer 4 (re-run with corrected filter) to determine if it actually drove the result.
+
+6. **OOS+HO combined NET PnL is the single most damning gate.** v1 result was -Rs 92K (already retired-worthy). v2 result with corrected filter: -Rs 290K (3x worse). A setup that loses money across all post-Discovery data combined is not shippable, regardless of HO standalone passing other gates.
+
+7. **Conservative re-run (Path 2) beats trust-the-correction (Path 1).** When user is offered "trust the fix" vs "re-run + re-validate," default to re-validate. User chose Path 2 here and the conservative approach revealed v1 retirement was correct (just for partly wrong reasons). Path 1 would have shipped a corrected filter without re-validating the underlying edge.
+
+8. **"Non-stationary edge" is the wrong default label.** The right vocabulary: "regime-conditioned edge with structural dependency on X" — where X is a specific identifiable macro/regulatory factor. Naming the mechanism dependency is part of the retire verdict.
+
+### 2026-05-19 (#10) — Phase 1-5 discipline does NOT make a setup ship; the HO ship gate does
+
+**What went wrong:** Ran a full disciplined Phase 1-5 revival of `capitulation_long_morning` (renamed v2). Phase 1 Indian-market research (intradaylab.com gap-down recovery). Phase 2 empirical signature on 21,548 Discovery 2023-24 gap events confirmed mid_cap × gap [-5,-3] sweet spot. Phase 4 sanity v2 with anti-bias guards (Mode B entry from i+1, anti-look-ahead, locked filters before sweep). Phase 5 3-period parity: Disc PF_net 1.13, OOS PF_net **1.62** ⭐, HO PF_net **1.03** ❌. Trajectory was structurally identical to `mis_unwind_vwap_revert_short` (Disc 1.21 → OOS 1.22 → HO 0.75) — the exact pattern lesson #1 was written to prevent. Revival fell into the same trap despite full process discipline.
+
+**Why:** Process discipline (Phase 1-5 chain) makes the EVIDENCE reliable. It does NOT make the EDGE real. A setup can pass every Phase 1-5 gate honestly and still die at the HO ship gate because OOS happened to be a favorable-regime window. The Disc+OOS-favorable-regime illusion is a property of the data, not a property of the methodology. Phase 1-5 discipline is necessary but NOT sufficient.
+
+**Rule:**
+1. **The HO ship gate is the ONLY gate that matters for production decisions.** Disc and OOS are evidence-gathering; HO is the verdict. If HO PF_net < 1.10 OR mwin < 4/7 OR |WR delta OOS→HO| > 10pp, retire — regardless of how disciplined the chain was.
+2. **Disc+OOS parity ≠ HO survival, FULL STOP.** Even Disc+OOS+favorable-direction-pattern (OOS > Disc, suggesting "improving edge") is NOT a green light. v2 OOS at 1.62 was a 50% premium over Disc 1.13 — that gap should have been a red flag, not encouragement.
+3. **War-period resilience is interesting but insufficient.** v2 HO_war PF 1.12 beat 4 of 5 production SHORT setups in the same window. That hints volatility-favoring LONG complement, but standalone PF_net 1.03 still fails ship-gate. Portfolio-correlation thesis is the only path forward, and that requires correlation analysis, not standalone ship.
+4. **When you see Disc 1.1 → OOS 1.6 → HO 1.0 pattern emerge, retire FAST.** Don't try variant-tweaks (tighter cell, news filter, different TS). That's the cell-mining illusion lesson #2 in a new costume — chasing HO after the fact is data-mining.
+
+
 
 **What went wrong:** During paper-trade readiness audit I listed `cache/ohlcv_archive/` and `cache/preaggregate/` as VM deployment requirements. User pushed back: "I don't think we use cache folder any way in live trading. If we are then it's wrong." Audit confirmed: cache is correctly gated, but the assumption that it might be needed was sloppy — I hadn't traced the production data path before recommending VM setup.
 

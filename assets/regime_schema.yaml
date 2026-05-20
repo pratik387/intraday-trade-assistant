@@ -1,0 +1,149 @@
+# Indian equity regime schema for trading-strategy validation
+# Jan 2023 - Apr 2026 (data range of our OCI production runs)
+#
+# Each regime has a defined date range, a mechanism (event/structural driver),
+# and an evidence_class indicating how the boundary was determined:
+#   EVENT+DATA:    Anchored to a known event AND confirmed by structural-break test on Nifty proxy
+#   DATA:          Detected by structural-break test, no specific named event
+#   INTERPOLATED:  No strong evidence; bounded by adjacent regimes (weakest, R3 only)
+#
+# Methodology: Bai-Perron-style breakpoint tests (PELT, Binseg, Window from `ruptures`)
+# on equal-weighted heavyweight proxy (RELIANCE, HDFCBANK, ICICIBANK, TCS, SBIN)
+# since NIFTY 50 spot index was not in local cache. Multi-signal tests on raw returns,
+# |returns|, 20d vol, 60d vol. Convergent breaks across ≥2 methods qualify.
+#
+# Research: `reports/sub9_sanity/_indian_regime_schema_research.md`
+# Global events validation: `reports/sub9_sanity/_indian_regime_global_events_research.md`
+
+version: 1
+last_updated: 2026-05-20
+
+regimes:
+  - id: R1
+    name: pre_election_calm
+    start: 2023-01-02
+    end: 2024-05-30
+    days: ~360
+    evidence_class: EVENT+DATA
+    mechanism: |
+      Pre-Lok-Sabha election baseline. Low VIX (mean 13.5). FII net buyer.
+      No major regulatory or geopolitical shocks. Structural-break tests cluster
+      end-date around Lok Sabha result vol spike (2024-05-31 to 2024-06-04).
+    references:
+      - Lok Sabha 2024 election timeline
+      - Bai-Perron detected break at 2024-05-31
+
+  - id: R2
+    name: election_vol_spike
+    start: 2024-05-31
+    end: 2024-07-15
+    days: ~32
+    evidence_class: EVENT+DATA
+    mechanism: |
+      Lok Sabha 2024 election result day (Jun 4): Nifty -6%, India VIX +50%.
+      Mean-reverting high-vol period. Coalition uncertainty resolves by mid-July.
+    references:
+      - "https://www.angelone.in/news/market-updates/election-result-day-and-market-volatility"
+
+  - id: R3
+    name: post_election_consolidation
+    start: 2024-07-16
+    end: 2024-09-26
+    days: ~50
+    evidence_class: INTERPOLATED
+    mechanism: |
+      Post-election calm before global Fed pivot. R2->R3 boundary is
+      INTERPOLATED — no specific event marks the transition. This is the
+      WEAKEST regime in the schema. Bootstrap CIs in R3 will be wide for
+      lower-frequency setups due to limited trade count.
+    references:
+      - No strong event; structural-break test ambiguous on this boundary
+    sensitivity_note: |
+      Consider collapsing R3 into R2 if per-regime sample size too thin.
+      Alternative: extend R2 end-date to 2024-09-26 (election-aftermath bucket).
+
+  - id: R4
+    name: fed_pivot_china_rotation_FII_exit
+    start: 2024-09-27
+    end: 2025-04-03
+    days: ~130
+    evidence_class: EVENT+DATA
+    mechanism: |
+      Composite global+local regime change:
+      - 2024-09-18: Fed 50bp rate cut (first cut, larger than expected)
+      - 2024-09-24/26: China Politburo "bazooka" stimulus
+      - 2024-10: ₹1.14 lakh crore FII outflow from India (largest in history,
+        beating COVID March 2020). Driver: FII rotation OUT of India INTO China.
+      - 2024-09 to 2025-03: Nifty Midcap 150 -20.5%, Smallcap 250 -25.4%
+        peak-to-trough drawdown.
+      - 2025-01 to 2025-03: continued FII selling (~₹78,027 cr in Jan 2025 alone).
+      Earlier framing as "midcap_correction_FII_exit" was India-centric; the actual
+      driver is global Fed-pivot + China-stimulus rotation.
+    references:
+      - "https://www.wrightresearch.in/blog/why-are-mid-and-small-cap-stocks-crashing-in-2025/"
+      - Fed Sep 18 2024 50bp cut
+      - China Politburo Sep 24-26 2024 stimulus
+
+  - id: R5
+    name: tariff_recovery_rally
+    start: 2025-04-04
+    end: 2025-06-12
+    days: ~50
+    evidence_class: EVENT+DATA
+    mechanism: |
+      Trump reciprocal tariff EO signed April 2, 2025. Initial shock followed by
+      recovery rally as markets priced in actual implementation timelines.
+      High-vol trend-up period (vol 17.9%). FII flows turn back to net buyer
+      starting April 2025.
+    references:
+      - "https://www.congress.gov/crs-product/R48549 (Trump tariff timeline)"
+
+  - id: R6
+    name: post_tariff_consolidation
+    start: 2025-06-13
+    end: 2026-02-18
+    days: ~180
+    evidence_class: DATA
+    mechanism: |
+      Lowest-vol period in the dataset (10.0%). Steady drift up. Tariff effects
+      absorbed; pre-war calm. No specific event anchors the start; structural-
+      break tests place transition around mid-June 2025.
+    references:
+      - PELT structural break detected at 2025-06-11/13
+
+  - id: R7
+    name: war_vol_2026
+    start: 2026-02-19
+    end: 2026-04-30
+    days: ~50
+    evidence_class: EVENT+DATA
+    mechanism: |
+      India-Pakistan geopolitical conflict beginning Feb 19 2026. High-vol
+      drawdown regime (vol 23.0%). End-date is data cutoff (not a confirmed
+      regime end). True regime end may extend past Apr 30 2026.
+    references:
+      - Structural-break test confirms 2026-02-19 boundary
+
+# Usage notes
+# -----------
+# When bucketing trades by signal_date:
+#   - Find the regime where signal_date in [regime.start, regime.end]
+#   - Assign that trade's regime label
+#
+# When reporting per-regime statistics:
+#   - Compute trade count + bootstrap CI on PF + Sharpe + net Rs
+#   - Flag any regime with n < 30 as "underpowered — CI too wide for ship decision"
+#   - For setups firing on specific event triggers (e.g., earnings, F&O ban),
+#     regime windows may have very few trades and large CIs. That's honest.
+#
+# What this schema is NOT
+# -----------------------
+# - Not a substitute for live forward-validation
+# - Not a guarantee that R7 (war) regime characteristics persist past Apr 30 2026
+# - Not validated on micro/small-cap behavior — proxy is large-cap only
+#
+# When to revise
+# --------------
+# - When a structural break test on FRESHER data (post Apr 2026) identifies new boundary
+# - When a regulatory event with clear date hits (e.g., a new SEBI cutover)
+# - When data cutoff extends past 2026-04-30 (R7 end-date needs revision)

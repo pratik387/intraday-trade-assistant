@@ -8,7 +8,9 @@
       "last_scan_hhmm": "15:25",
       "eod_squareoff_hhmm": "15:25",
       "max_trades_per_cycle": 10000,
-      "gate_input_logging": { "enabled": true }
+      "gate_input_logging": {
+        "enabled": true
+      }
     }
   },
   "min_breakout_atr_mult": 0.3,
@@ -106,6 +108,8 @@
   "setups": {
     "gap_fade_short": {
       "enabled": true,
+      "mechanism_tags": ["SEBI_FO_rule_version_2"],
+      "mechanism_notes": "SHORT fade of small-cap retail-FOMO gap-ups. Edge mechanism is rule-orthogonal in principle (no F&O dependency on the gap-fade itself), but small-cap retail behavior has shifted post-Nov 2024 SEBI F&O reforms (lot size 3x, weekly options cull reduced retail speculation). Walk-forward should examine pre-Nov-2024 vs post-Nov-2024 windows separately to surface any regime sensitivity.",
       "detector_class": "structures.gap_fade_short_structure.GapFadeShortStructure",
       "universe_builder": "services.setup_universe.gap_fade_universe",
       "universe_trigger": "bar:09:15",
@@ -153,6 +157,8 @@
     },
     "long_panic_gap_down": {
       "enabled": true,
+      "mechanism_tags": ["midcap_correction_active"],
+      "mechanism_notes": "LONG gap-down panic exhaustion fade in mid_cap+small_cap. LONG-bias mechanism degrades during deep midcap corrections (e.g., Sep'24-Mar'25 -20% Nifty Midcap 150 drawdown) when there's no exhaustion bottom — every dip continues lower. Walk-forward should examine performance during midcap_correction_active windows separately.",
       "detector_class": "structures.long_panic_gap_down_structure.LongPanicGapDownStructure",
       "universe_builder": "services.setup_universe.long_panic_gap_down_universe",
       "universe_trigger": "bar:09:15",
@@ -203,6 +209,8 @@
     },
     "or_window_failure_fade_short": {
       "enabled": true,
+      "mechanism_tags": ["rule_orthogonal"],
+      "mechanism_notes": "SHORT fade of failed ORH upside pierces in small_cap MIS-eligible stocks during IB window (09:30-10:30 IST), cell-locked to vol-ratio (8, 15]. Pure intraday breakout-failure mechanism, no F&O dependency, no SEBI rule dependency, no FII flow dependency. Edge is independent of regulatory regime — primarily depends on small-cap intraday liquidity dynamics which have been stable across 2023-2026.",
       "detector_class": "structures.or_window_failure_fade_short_structure.OrWindowFailureFadeShortStructure",
       "universe_builder": "services.setup_universe.or_window_failure_fade_short_universe",
       "universe_trigger": "session_start",
@@ -250,6 +258,8 @@
     },
     "circuit_t1_fade_short": {
       "enabled": true,
+      "mechanism_tags": ["SEBI_FO_rule_version_2"],
+      "mechanism_notes": "SHORT fade T+1 after upper-circuit pin in small/mid-cap. Same retail-FOMO + operator-pump-exhaustion mechanism as the (retired) circuit_release_fade_short but acts on next-day mid-session rather than intraday retest. Mechanism is sensitive to retail F&O speculation levels which shifted post-Nov 2024 SEBI reforms — circuit-pin behavior may attenuate as retail leverage caps tighten further.",
       "detector_class": "structures.circuit_t1_fade_short_structure.CircuitT1FadeShortStructure",
       "universe_builder": "services.setup_universe.circuit_t1_universe",
       "universe_trigger": "session_start",
@@ -299,6 +309,8 @@
     },
     "delivery_pct_anomaly_short": {
       "enabled": true,
+      "mechanism_tags": ["rule_orthogonal"],
+      "mechanism_notes": "SHORT fade of next-day price action after a delivery_pct anomaly (delivery <20% + same-day pump >3% = retail/operator pump signature). Pure intraday mechanism. No F&O dependency, no FII flow dependency. Edge depends on NSE-published delivery percentage data continuing to be available daily — see _comment_depends_on for NSE-disclosure assumption.",
       "detector_class": "structures.delivery_pct_anomaly_short_structure.DeliveryPctAnomalyShortStructure",
       "universe_builder": "services.setup_universe.delivery_pct_universe",
       "universe_trigger": "session_start",
@@ -346,6 +358,114 @@
       "max_fires_per_5min": 5,
       "_research_notes": "Validated cell from delivery_pct anomaly cell-mining. SHORT only. Indian-microstructure anchor: NSE-published delivery percentage <20% + same-day pump >3% = retail/operator pump signature. Cross-day RVOL confirmation rejects intra-session false signals. Sanity: tools/sub9_research/sanity_nse_delivery_pct_anomaly.py. Brief: specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md.",
       "wide_open": false
+    },
+    "pre_results_t1_fade": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-19; walk-forward re-validation pending. Block only carries pre-registered mechanism docs — no live detector.",
+      "mechanism_tags": [
+        "FII_net_flow_positive_30d",
+        "SEBI_FO_rule_version_1"
+      ],
+      "mechanism_notes": "Setup mechanism (institutional T-1 de-risking before AMC results) requires FIIs net-LONG so there's positioning to de-risk. Fails when FIIs net-sellers for 30d+ (e.g., Jan-Mar 2025 ~Rs.1L cr outflow). Also fragile to post-SEBI Oct 2025 disclosure-window changes which altered the institutional hedging flow.",
+      "walk_forward_results": {
+        "windows_pass": 0,
+        "windows_total": 13,
+        "pass_rate": 0.0,
+        "tier": "RED",
+        "evaluated_at": "2026-05-20",
+        "engine_version": "1.0"
+      },
+      "cb_drawdown_threshold": -191.37150592990787,
+      "cb_lookback_days": 60,
+      "cb_min_trades_for_signal": 30,
+      "cb_state": "disabled",
+      "position_size_multiplier": 0.0
+    },
+    "capitulation_long_v2": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-19; walk-forward re-validation. Phase 1-5 disciplined revival of capitulation_long_morning. Block only carries pre-registered mechanism docs.",
+      "mechanism_tags": [
+        "midcap_correction_active",
+        "war_volatility_active"
+      ],
+      "mechanism_notes": "LONG-bias on gap-down exhaustion (mid_cap × gap [-5%, -3%]). Mechanism degrades during deep midcap corrections (Sep'24-Mar'25) when there's no exhaustion bottom; war-period vol amplifies risk. Best regime: stable midcap + elevated-but-not-war vol.",
+      "walk_forward_results": {
+        "windows_pass": 3,
+        "windows_total": 13,
+        "pass_rate": 0.23076923076923078,
+        "tier": "RED",
+        "evaluated_at": "2026-05-20",
+        "engine_version": "1.0"
+      },
+      "cb_drawdown_threshold": -336.7306433939441,
+      "cb_lookback_days": 60,
+      "cb_min_trades_for_signal": 30,
+      "cb_state": "disabled",
+      "position_size_multiplier": 0.0
+    },
+    "capitulation_long_morning": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-12; walk-forward re-validation. Block only carries pre-registered mechanism docs.",
+      "mechanism_tags": [
+        "midcap_correction_active"
+      ],
+      "mechanism_notes": "Original LONG-side gap-down panic capitulation. Same mechanism as v2. Failed both regime classifier non-reproducibility AND aggregate PF. Retired 2026-05-12; v2 revival also failed. This walk-forward re-validation completes the methodology cycle on the original.",
+      "walk_forward_results": {
+        "windows_pass": 0,
+        "windows_total": 13,
+        "pass_rate": 0.0,
+        "tier": "RED",
+        "evaluated_at": "2026-05-20",
+        "engine_version": "1.0"
+      },
+      "cb_drawdown_threshold": -670.5437589724469,
+      "cb_lookback_days": 60,
+      "cb_min_trades_for_signal": 30,
+      "cb_state": "disabled",
+      "position_size_multiplier": 0.0
+    },
+    "mis_unwind_vwap_revert_short": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-19; walk-forward re-validation. Block only carries pre-registered mechanism docs.",
+      "mechanism_tags": [
+        "MWPL_formula_pre_2025_10",
+        "SEBI_FO_rule_version_1"
+      ],
+      "mechanism_notes": "MIS-margin auto-square-off SHORT setup. Mechanism depends on retail-MIS unwind pressure 14:55-15:15 IST which was structurally altered by SEBI Oct 2025 MWPL formula revision + F&O rule changes. Pre-SEBI regime: setup worked. Post-SEBI: PF collapse in HO (1.22 → 0.75).",
+      "walk_forward_results": {
+        "windows_pass": 1,
+        "windows_total": 13,
+        "pass_rate": 0.07692307692307693,
+        "tier": "RED",
+        "evaluated_at": "2026-05-20",
+        "engine_version": "1.0"
+      },
+      "cb_drawdown_threshold": -87.15213195960308,
+      "cb_lookback_days": 60,
+      "cb_min_trades_for_signal": 30,
+      "cb_state": "disabled",
+      "position_size_multiplier": 0.0
+    },
+    "circuit_release_fade_short": {
+      "enabled": false,
+      "_status": "RETIRED 2026-05-19; walk-forward re-validation. Block only carries pre-registered mechanism docs.",
+      "mechanism_tags": [
+        "SEBI_FO_rule_version_1"
+      ],
+      "mechanism_notes": "SHORT fade of failed circuit-pin re-tests. Indian retail-FOMO + operator-pump exhaustion mechanism. Decayed pre-war (PF 1.26 OOS → 0.84 HO_pre_war Oct-Dec 2025) right after SEBI Oct 2024 F&O reforms. War period (Jan-Apr 2026) deepened the decay but didn't cause it.",
+      "walk_forward_results": {
+        "windows_pass": 9,
+        "windows_total": 13,
+        "pass_rate": 0.6923076923076923,
+        "tier": "GREEN",
+        "evaluated_at": "2026-05-20",
+        "engine_version": "1.0"
+      },
+      "cb_drawdown_threshold": -28.27827055313267,
+      "cb_lookback_days": 60,
+      "cb_min_trades_for_signal": 30,
+      "cb_state": "enabled",
+      "position_size_multiplier": 1.0
     }
   },
   "filters": {
