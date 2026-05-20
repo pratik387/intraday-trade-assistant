@@ -46,6 +46,8 @@ This document records the cell-sweep outcome.
 
 ## Phase 5 cell sweep outcome
 
+### v1: R-mode (T1/T2 sweep, SL fixed at 1R)
+
 Sweep space:
   - Grid entries: 24 (T1 in {0.5R, 1R, 1.5R} x T2 in {1R, 1.5R, 2R}
     with t2>t1 constraint, x TS in {14:30, 15:00} x partial_mode in
@@ -54,8 +56,28 @@ Sweep space:
     hhmm_bucket, bar_return_bin
   - k_max=2 (1D + 2D filter cells)
   - Floor: n>=200, PF_net>=1.10
+  - SL: FIXED at 1R = (entry - hard_sl) from sanity bar geometry
 
 Result: ZERO cells passed floor across all (grid x dim) combinations.
+
+### v2: pct-mode (full SL + T1 + T2 sweep)
+
+User asked: 'did you check R multiplier checks as well?' — meaning also
+sweep SL distance, not just T1/T2. Built a pct-mode rerun:
+
+  - Grid entries: 360
+    - SL in {0.3, 0.5, 0.7, 1.0, 1.5}% of entry (5 values)
+    - T1 in {0.2, 0.5, 0.7, 1.0}% favorable (4 values)
+    - T2 in {0.5, 1.0, 1.5, 2.0}% favorable (4 values, t2>t1 constraint)
+    - TS in {14:30, 15:00}
+    - partial_mode in {partial_50_no_trail, partial_50_be_trail, all_in}
+  - Same dim_pool + k_max=2
+
+  Derived mfe_pct + mae_pct = mfe_r * R_per_share / entry_price * 100
+  from existing sanity output (no re-run needed).
+
+Result: ZERO cells passed floor across all ~36,000 (cell, grid-tuple)
+combinations tested. KILL CONFIRMED.
 
 ## Why
 
