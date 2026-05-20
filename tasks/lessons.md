@@ -11,6 +11,32 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-20 (#13) — Sanity Mode B walk-forward systematically OVER-ESTIMATES production PF
+
+**What went wrong:** Ran canonical walk-forward on `_circuit_release_fade_short_trades_*.csv` (post-Stage-2 adapter). Result: GREEN 9/13 with HO_war PF 4.35. Retired_setups.md cited production HO_pre PF 0.84 / HO_war PF 0.60 — net LOSING -Rs 63K. The 4x+ discrepancy in same time window suggested either an adapter bug, a cell mismatch, or methodology drift. **Root cause** (from production config comment, already documented at retirement): sanity Mode B (next-bar-OPEN entry) captures ALL signals as trades. Production uses `entry_zone retest` filter (price must return UP within 0.3% of signal close before entry triggers). For SHORT setups, this filter has selection bias — fast-mover winners (price drops immediately) never retest, so production MISSES them. Sanity sees the winners and reports inflated PF.
+
+**Quote from production config:** "Sanity Mode B (PF 2.44) was wrong because it assumed all signals = good signals."
+
+**Why this matters now:** The whole point of Schema Stage 2 was to build trustworthy walk-forward on sanity data. But sanity data carries a systematic optimism bias for setups where execution semantics matter. circuit_release sanity showed GREEN but production was RED. If we'd un-retired based on sanity walk-forward, we'd ship a losing setup with 5x MIS leverage.
+
+**Rule:**
+
+1. **Walk-forward on sanity Mode B output OVER-ESTIMATES production PF systematically.** Especially for SHORT setups where the entry_zone retest filter has selection bias against fast-mover winners. A GREEN tier on sanity data is necessary but NOT sufficient for production ship.
+
+2. **Cross-check sanity walk-forward verdict against production OCI data BEFORE acting.** For un-retire decisions: require that the OCI production trade_report.csv ALSO shows GREEN tier on walk-forward. If sanity is GREEN but production is RED, the sanity is over-optimistic — investigate execution-semantics gap.
+
+3. **Going forward, walk-forward should consume `trade_report.csv` from OCI runs**, not sanity outputs. The trade_report.csv has real execution outcomes including entry_zone filtering, slippage, latency. Stage 5 of the walk-forward methodology project should be reframed: validate setups via production-data walk-forward, not sanity-data walk-forward.
+
+4. **Mode B sanity validations are still useful for the OTHER direction.** If sanity Mode B shows RED, production will be even more RED (since production has less-favorable execution). RED on sanity = honest retirement; GREEN on sanity = needs further validation.
+
+5. **Document `_comment_no_immediate_execution`-style findings on the SETUP's config block.** This circuit_release comment captured the critical sanity-vs-production execution-semantics gap. Future setups should have similar `_comment_sanity_vs_production_drift` blocks if a delta is observed.
+
+**Examples from current session (2026-05-20):**
+- circuit_release_fade_short: sanity GREEN 9/13, production RED (HO PF 0.84/0.60). Discrepancy was the entry_zone retest filter. Retirement stands.
+- pre_results_t1_fade: sanity RED 0/13, production RED. Mode B optimism didn't save it. Honest retirement.
+- capitulation_long_v2: sanity RED 3/13, retirement matches.
+- mis_unwind_vwap_revert_short: sanity RED 1/13, retirement matches.
+
 ### 2026-05-19 (#12) — Walk-forward methodology replaces chronological 3-period validation
 
 **What changed:** Replaced 3-period chronological validation (Disc 24mo / OOS 9mo / HO 7mo) with walk-forward (13 × 3-month windows + per-window bootstrap CI + 3-tier classification GREEN/AMBER/RED). Triggered by recognizing that 5 of 5 recently-retired setups followed the same 2-of-3-pass pattern with the failing period aligned to known Indian regime breaks (SEBI Oct 2024, FII Jan-Mar 2025, war Jan-Apr 2026). The old methodology couldn't distinguish "edge gone" from "one bad regime window dominated PF."
