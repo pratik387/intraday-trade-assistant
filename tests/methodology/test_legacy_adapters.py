@@ -16,6 +16,7 @@ from tools.methodology.legacy_adapters import (
     adapt_pre_results_t1_fade,
     adapt_capitulation_long_v2,
     adapt_mis_unwind_vwap_revert_short,
+    adapt_circuit_release_fade_short,
     get_adapter,
     ADAPTERS,
 )
@@ -316,6 +317,70 @@ def test_mis_unwind_adapter_same_bar_sl_promotion(mis_unwind_discovery_df):
     legacy_sb_sl = (df_in["exit_reason"] == "stop") & (df_in["same_bar"].astype(bool))
     if legacy_sb_sl.any():
         assert (df_out.loc[legacy_sb_sl, "exit_reason"] == "same_bar_sl").all()
+
+
+# ---------------------------------------------------------------------------
+# Adapter: circuit_release_fade_short
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def circuit_release_discovery_df() -> pd.DataFrame:
+    p = _REPO_ROOT / "reports" / "sub9_sanity" / "_circuit_release_fade_short_trades_discovery.csv"
+    if not p.exists():
+        pytest.skip(f"Legacy CSV missing: {p}")
+    return pd.read_csv(p)
+
+
+def test_circuit_release_adapter_preserves_row_count(circuit_release_discovery_df):
+    df_out = adapt_circuit_release_fade_short(circuit_release_discovery_df)
+    assert len(df_out) == len(circuit_release_discovery_df)
+
+
+def test_circuit_release_adapter_output_passes_validator(circuit_release_discovery_df):
+    df_out = adapt_circuit_release_fade_short(circuit_release_discovery_df)
+    result = validate(df_out, setup_name="circuit_release_fade_short", layer="filtered_trades")
+    assert result.is_valid, f"validation failed:\n{result.summary()}"
+
+
+def test_circuit_release_adapter_uses_explicit_side(circuit_release_discovery_df):
+    """side column is explicit in legacy CSV — adapter uses it (uppercased)."""
+    df_out = adapt_circuit_release_fade_short(circuit_release_discovery_df)
+    assert (df_out["side"] == "SHORT").all()
+
+
+def test_circuit_release_adapter_pnl_pct_matches_short(circuit_release_discovery_df):
+    df_out = adapt_circuit_release_fade_short(circuit_release_discovery_df)
+    sample = df_out.sample(n=min(100, len(df_out)), random_state=20260520)
+    computed = (sample["entry_price"] - sample["exit_price"]) / sample["entry_price"] * 100.0
+    diff = (sample["pnl_pct"] - computed).abs()
+    assert (diff < 0.10).all(), (
+        f"sign-convention failed on {(diff >= 0.10).sum()} rows. Max diff: {diff.max():.4f}pp"
+    )
+
+
+def test_circuit_release_adapter_derives_same_bar(circuit_release_discovery_df):
+    """same_bar column not in legacy CSV — adapter derives from entry_ts == exit_ts."""
+    df_in = circuit_release_discovery_df
+    df_out = adapt_circuit_release_fade_short(df_in)
+    # Expected: same_bar = True iff entry_ts == exit_ts
+    expected = (pd.to_datetime(df_in["entry_ts"]) == pd.to_datetime(df_in["exit_ts"])).values
+    actual = df_out["same_bar"].values
+    assert (expected == actual).all()
+
+
+def test_circuit_release_adapter_exit_reason_canonical(circuit_release_discovery_df):
+    from tools.methodology.sanity_csv_schema import EXIT_REASONS
+    df_out = adapt_circuit_release_fade_short(circuit_release_discovery_df)
+    bad = ~df_out["exit_reason"].isin(EXIT_REASONS)
+    assert not bad.any()
+
+
+def test_circuit_release_adapter_last_bar_maps_to_eod(circuit_release_discovery_df):
+    df_in = circuit_release_discovery_df
+    df_out = adapt_circuit_release_fade_short(df_in)
+    last_bar_mask = df_in["exit_reason"] == "last_bar"
+    if last_bar_mask.any():
+        assert (df_out.loc[last_bar_mask, "exit_reason"] == "eod").all()
 
 
 def test_pre_results_t1_adapter_exit_reason_canonical(pre_results_t1_discovery_df):

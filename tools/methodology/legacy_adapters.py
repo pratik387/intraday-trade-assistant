@@ -309,6 +309,90 @@ def adapt_mis_unwind_vwap_revert_short(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Adapter: circuit_release_fade_short
+# ---------------------------------------------------------------------------
+
+# Trade CSVs: reports/sub9_sanity/_circuit_release_fade_short_trades_{discovery,oos,holdout}.csv
+# (base files — the _CLEAN/_MODE_A/_PHASE_A/_PHASE_B2 variants are intermediate
+# experimentation outputs and NOT used here)
+#
+# Columns observed (2026-05-20):
+#   trade_date, signal_ts, signal_close, symbol, side, signal_type,
+#   day_high, day_low, day_close, pdc, day_gain_pct, close_off_high_pct,
+#   entry_ts, entry_price, rejection_high, hard_sl, t1_target, t2_target,
+#   R_per_share, qty, exit_ts, exit_price, exit_reason, mfe_r, mae_r,
+#   close_at_1300, close_at_1400, close_at_1500, realized_pnl, fee, net_pnl,
+#   cap_segment
+#
+# - side: SHORT (explicit column; verified)
+# - No T1 partial logic; no blended-pnl bug.
+# - No same_bar column — DERIVED from entry_ts == exit_ts
+# - exit_reason values: stop, t2_full, time_stop, last_bar (path-walk-end)
+
+_CIRCUIT_RELEASE_EXIT_REASON_MAP = {
+    "stop": "sl",
+    "t2_full": "t2",
+    "time_stop": "time_stop",
+    "last_bar": "eod",
+}
+
+
+def adapt_circuit_release_fade_short(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize circuit_release_fade_short trades CSV → canonical schema.
+
+    SHORT-side failed-circuit-retest fade. No T1 partial logic.
+    same_bar derived from entry_ts == exit_ts (sanity script doesn't emit it).
+    """
+    out = pd.DataFrame()
+
+    out["signal_date"] = pd.to_datetime(df["trade_date"]).dt.date.astype(str)
+    out["symbol"] = _ensure_nse_prefix(df["symbol"])
+    # Trust the explicit side column (verified SHORT in samples)
+    out["side"] = df["side"].astype(str).str.upper()
+    entry = df["entry_price"].astype(float)
+    exit_ = df["exit_price"].astype(float)
+    qty = df["qty"].astype(int)
+    out["entry_price"] = entry
+    out["exit_price"] = exit_
+    out["qty"] = qty
+    # SHORT: pnl_pct = (entry - exit) / entry * 100
+    out["pnl_pct"] = (entry - exit_) / entry * 100.0
+
+    # Derive same_bar from entry_ts == exit_ts (script doesn't emit it)
+    same_bar = pd.to_datetime(df["entry_ts"]) == pd.to_datetime(df["exit_ts"])
+
+    out["exit_reason"] = _normalize_exit_reason(
+        df["exit_reason"], same_bar,
+        mapping=_CIRCUIT_RELEASE_EXIT_REASON_MAP,
+    )
+    out["same_bar"] = same_bar.astype(bool)
+
+    # Optional passthrough
+    if "cap_segment" in df.columns:
+        out["cap_segment"] = df["cap_segment"]
+    if "signal_ts" in df.columns:
+        out["signal_ts"] = df["signal_ts"]
+    if "entry_ts" in df.columns:
+        out["entry_ts"] = df["entry_ts"]
+    if "exit_ts" in df.columns:
+        out["exit_ts"] = df["exit_ts"]
+    if "realized_pnl" in df.columns:
+        out["realized_pnl_inr"] = df["realized_pnl"].astype(float)
+    if "fee" in df.columns:
+        out["fee_inr"] = df["fee"].astype(float)
+    if "net_pnl" in df.columns:
+        out["net_pnl_inr"] = df["net_pnl"].astype(float)
+    if "t1_target" in df.columns:
+        out["t1_target"] = df["t1_target"].astype(float)
+    if "t2_target" in df.columns:
+        out["t2_target"] = df["t2_target"].astype(float)
+    if "hard_sl" in df.columns:
+        out["hard_sl"] = df["hard_sl"].astype(float)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Adapter registry
 # ---------------------------------------------------------------------------
 
@@ -318,6 +402,7 @@ ADAPTERS: Dict[str, Callable[[pd.DataFrame], pd.DataFrame]] = {
     "pre_results_t1_fade": adapt_pre_results_t1_fade,
     "capitulation_long_v2": adapt_capitulation_long_v2,
     "mis_unwind_vwap_revert_short": adapt_mis_unwind_vwap_revert_short,
+    "circuit_release_fade_short": adapt_circuit_release_fade_short,
 }
 
 
