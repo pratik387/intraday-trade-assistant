@@ -239,6 +239,76 @@ def adapt_capitulation_long_v2(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Adapter: mis_unwind_vwap_revert_short
+# ---------------------------------------------------------------------------
+
+# Trade CSVs: reports/sub9_sanity/_mis_unwind_locked_trades_{discovery,oos,holdout}.csv
+# Columns observed (2026-05-20):
+#   trade_date, signal_ts, symbol, cap_segment, rsi, vol_ratio, vwap_ext_pct,
+#   entry_ts, entry_price, exit_ts, exit_price, exit_reason, same_bar,
+#   R_per_share, r_multiple, qty, realized_pnl, fee, net_pnl, ym
+#
+# - side: SHORT (MIS auto-square-off retail-unwind fade in last 15min)
+# - No T1 partial logic; no blended-pnl bug.
+# - exit_reason values: stop, t2_full, time_stop
+# - High same_bar rate (~71% Discovery) — confirms tight-SL fragility
+#   noted in retired_setups.md retirement evidence.
+
+_MIS_UNWIND_EXIT_REASON_MAP = {
+    "stop": "sl",
+    "t2_full": "t2",
+    "time_stop": "time_stop",
+}
+
+
+def adapt_mis_unwind_vwap_revert_short(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize mis_unwind_vwap_revert_short trades CSV → canonical schema.
+
+    SHORT-side late-session MIS auto-square unwind fade. No T1 partial logic.
+    pnl_pct computed from entry/exit with SHORT sign convention.
+    """
+    out = pd.DataFrame()
+
+    out["signal_date"] = pd.to_datetime(df["trade_date"]).dt.date.astype(str)
+    out["symbol"] = _ensure_nse_prefix(df["symbol"])
+    out["side"] = "SHORT"
+    entry = df["entry_price"].astype(float)
+    exit_ = df["exit_price"].astype(float)
+    qty = df["qty"].astype(int)
+    out["entry_price"] = entry
+    out["exit_price"] = exit_
+    out["qty"] = qty
+    # SHORT: pnl_pct = (entry - exit) / entry * 100
+    out["pnl_pct"] = (entry - exit_) / entry * 100.0
+
+    out["exit_reason"] = _normalize_exit_reason(
+        df["exit_reason"], df["same_bar"],
+        mapping=_MIS_UNWIND_EXIT_REASON_MAP,
+    )
+    out["same_bar"] = df["same_bar"].astype(bool)
+
+    # Optional passthrough
+    if "cap_segment" in df.columns:
+        out["cap_segment"] = df["cap_segment"]
+    if "signal_ts" in df.columns:
+        out["signal_ts"] = df["signal_ts"]
+    if "entry_ts" in df.columns:
+        out["entry_ts"] = df["entry_ts"]
+    if "exit_ts" in df.columns:
+        out["exit_ts"] = df["exit_ts"]
+    if "realized_pnl" in df.columns:
+        out["realized_pnl_inr"] = df["realized_pnl"].astype(float)
+    if "fee" in df.columns:
+        out["fee_inr"] = df["fee"].astype(float)
+    if "net_pnl" in df.columns:
+        out["net_pnl_inr"] = df["net_pnl"].astype(float)
+    if "r_multiple" in df.columns:
+        out["r_multiple"] = df["r_multiple"].astype(float)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Adapter registry
 # ---------------------------------------------------------------------------
 
@@ -247,6 +317,7 @@ def adapt_capitulation_long_v2(df: pd.DataFrame) -> pd.DataFrame:
 ADAPTERS: Dict[str, Callable[[pd.DataFrame], pd.DataFrame]] = {
     "pre_results_t1_fade": adapt_pre_results_t1_fade,
     "capitulation_long_v2": adapt_capitulation_long_v2,
+    "mis_unwind_vwap_revert_short": adapt_mis_unwind_vwap_revert_short,
 }
 
 

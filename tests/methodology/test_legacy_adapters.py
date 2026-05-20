@@ -15,6 +15,7 @@ import pytest
 from tools.methodology.legacy_adapters import (
     adapt_pre_results_t1_fade,
     adapt_capitulation_long_v2,
+    adapt_mis_unwind_vwap_revert_short,
     get_adapter,
     ADAPTERS,
 )
@@ -249,6 +250,72 @@ def test_capitulation_long_v2_adapter_no_t1_partial_booked(capitulation_long_v2_
     df_out = adapt_capitulation_long_v2(capitulation_long_v2_discovery_df)
     if "t1_partial_booked" in df_out.columns:
         assert not df_out["t1_partial_booked"].any()
+
+
+# ---------------------------------------------------------------------------
+# Adapter: mis_unwind_vwap_revert_short
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mis_unwind_discovery_df() -> pd.DataFrame:
+    p = _REPO_ROOT / "reports" / "sub9_sanity" / "_mis_unwind_locked_trades_discovery.csv"
+    if not p.exists():
+        pytest.skip(f"Legacy CSV missing: {p}")
+    return pd.read_csv(p)
+
+
+def test_mis_unwind_adapter_preserves_row_count(mis_unwind_discovery_df):
+    df_out = adapt_mis_unwind_vwap_revert_short(mis_unwind_discovery_df)
+    assert len(df_out) == len(mis_unwind_discovery_df)
+
+
+def test_mis_unwind_adapter_output_passes_validator(mis_unwind_discovery_df):
+    df_out = adapt_mis_unwind_vwap_revert_short(mis_unwind_discovery_df)
+    result = validate(df_out, setup_name="mis_unwind_vwap_revert_short", layer="filtered_trades")
+    assert result.is_valid, f"validation failed:\n{result.summary()}"
+
+
+def test_mis_unwind_adapter_sets_side_to_short(mis_unwind_discovery_df):
+    df_out = adapt_mis_unwind_vwap_revert_short(mis_unwind_discovery_df)
+    assert (df_out["side"] == "SHORT").all()
+
+
+def test_mis_unwind_adapter_pnl_pct_matches_short_formula(mis_unwind_discovery_df):
+    """SHORT pnl_pct = (entry-exit)/entry*100. Sign convention check."""
+    df_out = adapt_mis_unwind_vwap_revert_short(mis_unwind_discovery_df)
+    sample = df_out.sample(n=min(100, len(df_out)), random_state=20260520)
+    computed = (sample["entry_price"] - sample["exit_price"]) / sample["entry_price"] * 100.0
+    diff = (sample["pnl_pct"] - computed).abs()
+    assert (diff < 0.10).all(), (
+        f"sign-convention failed on {(diff >= 0.10).sum()} rows. Max diff: {diff.max():.4f}pp"
+    )
+
+
+def test_mis_unwind_adapter_realized_pnl_consistent_with_short(mis_unwind_discovery_df):
+    """Cross-check: realized_pnl_inr should equal (entry-exit)*qty for SHORT."""
+    df_out = adapt_mis_unwind_vwap_revert_short(mis_unwind_discovery_df)
+    sample = df_out.sample(n=min(50, len(df_out)), random_state=20260520)
+    computed = (sample["entry_price"] - sample["exit_price"]) * sample["qty"]
+    diff = (sample["realized_pnl_inr"] - computed).abs()
+    assert (diff < 1.0).all(), (
+        f"realized_pnl_inr inconsistent with SHORT formula on {(diff >= 1.0).sum()} rows"
+    )
+
+
+def test_mis_unwind_adapter_exit_reason_canonical(mis_unwind_discovery_df):
+    from tools.methodology.sanity_csv_schema import EXIT_REASONS
+    df_out = adapt_mis_unwind_vwap_revert_short(mis_unwind_discovery_df)
+    bad = ~df_out["exit_reason"].isin(EXIT_REASONS)
+    assert not bad.any()
+
+
+def test_mis_unwind_adapter_same_bar_sl_promotion(mis_unwind_discovery_df):
+    """'stop' + same_bar=True should map to 'same_bar_sl'."""
+    df_in = mis_unwind_discovery_df
+    df_out = adapt_mis_unwind_vwap_revert_short(df_in)
+    legacy_sb_sl = (df_in["exit_reason"] == "stop") & (df_in["same_bar"].astype(bool))
+    if legacy_sb_sl.any():
+        assert (df_out.loc[legacy_sb_sl, "exit_reason"] == "same_bar_sl").all()
 
 
 def test_pre_results_t1_adapter_exit_reason_canonical(pre_results_t1_discovery_df):
