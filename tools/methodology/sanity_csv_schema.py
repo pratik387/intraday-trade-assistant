@@ -70,6 +70,31 @@ OPTIONAL_COLUMNS = (
                               # both legs (T1 partial qty + final exit qty) and CANNOT
                               # be derived from a single entry/exit pair. Validator
                               # skips the sign cross-check when this is True.
+    # ---- Cell-sweep helper fields (BE-trail v3 enablement, 2026-05-20) ----
+    # When present, tools/methodology/cell_sweep.py can compute exact BE-trail
+    # exit reasons instead of the v2 conservative approximation (which assumes
+    # mae_r >= 0.75 post-T1 triggers BE). Sanity scripts that track these
+    # should populate them; otherwise leave absent and the helper falls back
+    # to the conservative path.
+    "mfe_r",                  # float >= 0 — max favorable excursion in R across full trade
+    "mae_r",                  # float >= 0 — max adverse excursion in R across full trade
+    "mfe_r_pre_t1",           # float >= 0 — MFE in R BEFORE T1 was hit (NaN if T1 never hit)
+    "mae_r_post_t1",          # float >= 0 — MAE in R AFTER T1 was hit (NaN if T1 never hit).
+                              # When mae_r_post_t1 >= 1.0 AND t1_partial_booked, BE trail
+                              # tripped the post-T1 leg in production.
+    "R_per_share",            # float > 0 — Rs distance from entry to SL (1R in Rs)
+    # ---- Look-ahead-prone EOD columns (metadata only) ----
+    # These are present in some sanity outputs for AUDIT purposes only. They
+    # must NEVER be used as cell-mining filter dimensions. cell_sweep.py's
+    # FORBIDDEN_DIM_PREFIXES/EXACT blocks the obvious ones; the registry at
+    # assets/setup_dimension_registry.yaml carries the per-setup forbidden list.
+    "day_high",               # EOD session high — for cross-check only
+    "day_low",                # EOD session low — for cross-check only
+    "day_close",              # EOD close — for cross-check only
+    "day_gain_pct_eod_metadata",  # EOD day_gain_pct — metadata only, DO NOT FILTER ON THIS
+    # Safe signal-time equivalents (preferred for filtering):
+    "session_high_at_signal", # max(bar.high for bar in bars[:signal_bar]) — safe
+    "day_gain_at_signal_pct", # (session_high_at_signal / pdc - 1) * 100 — safe
 )
 
 ALLOWED_SIDES = ("LONG", "SHORT")
