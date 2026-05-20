@@ -31,6 +31,37 @@ def _pos_tid(pos: Position) -> str:
     return str(tid) if tid else f"sym:{pos.symbol}"
 
 
+def classify_sl_exit_reason(st: dict, *, default_no_t1: str = "hard_sl") -> str:
+    """Classify SL exit reason based on T1/T2 booking state.
+
+    `sl_post_t1` and `sl_post_t2` must reflect ACTUAL partial bookings. Both
+    flags also fire when partials were SKIPPED (low-R or plan-zero qty_pct=0),
+    in which case the SL fires at the ORIGINAL hard_sl level — semantically
+    a hard_sl, not a post-T1 stop.
+
+    Args:
+        st: position._state dict
+        default_no_t1: label when no T1 done at all. "tick_sl" for per-tick
+            checks, "hard_sl" for bar-boundary checks.
+
+    Bug context (2026-05-20): prior inline logic checked t1_skipped_low_r but
+    missed t1_skipped_plan_zero. ~150 OCI trades for setups with
+    t1_partial_qty_pct=0 (circuit_release, or_window_failure) got labeled
+    sl_post_t1 despite NEVER booking a T1 partial. Aggregate -Rs 170K was
+    expected -1R stop losses, mis-attributed as post-T1 BE-trail failures.
+    """
+    if st.get("t2_done"):
+        return "sl_post_t2"
+    t1_done = st.get("t1_done", False)
+    if t1_done and not (
+        st.get("t1_skipped_low_r") or st.get("t1_skipped_plan_zero")
+    ):
+        return "sl_post_t1"
+    if t1_done:
+        return "hard_sl"
+    return default_no_t1
+
+
 # ---------- ExitExecutor (LTP-only exits + tick-TS EOD) ----------
 
 class ExitExecutor:
@@ -218,14 +249,8 @@ class ExitExecutor:
                         # Set exit_pending BEFORE placing order to prevent race
                         st["exit_pending"] = True
                         pos.plan["_state"] = st
-                        # Match bar-level convention: sl_post_t2 > sl_post_t1 > tick_sl
-                        if st.get("t2_done"):
-                            sl_reason = "sl_post_t2"
-                        elif st.get("t1_done"):
-                            # T1 skipped (low R) = original SL still in place → this is a hard SL
-                            sl_reason = "hard_sl" if st.get("t1_skipped_low_r") else "sl_post_t1"
-                        else:
-                            sl_reason = "tick_sl"
+                        # Classify SL reason — see classify_sl_exit_reason() docstring.
+                        sl_reason = classify_sl_exit_reason(st, default_no_t1="tick_sl")
                         logger.info(f"TICK_SL_HIT: {symbol} {pos.side} price={tick_price:.2f} sl={plan_sl:.2f} reason={sl_reason}")
                         self._exit(symbol, pos, tick_price, ts_pd, sl_reason)
                         continue
@@ -469,14 +494,8 @@ class ExitExecutor:
                         sl_ltp = sl_px
                         # Enhanced SL exit logging with T1/T2 awareness
                         slippage = abs(sl_ltp - plan_sl)
-                        # Differentiate SL hit: after T2 partial > after T1 partial > initial SL
-                        if t2_done:
-                            exit_reason = "sl_post_t2"
-                        elif t1_done:
-                            # T1 skipped (low R) = original SL still in place → this is a hard SL
-                            exit_reason = "hard_sl" if st.get("t1_skipped_low_r") else "sl_post_t1"
-                        else:
-                            exit_reason = "hard_sl"
+                        # Classify SL reason — see classify_sl_exit_reason() docstring.
+                        exit_reason = classify_sl_exit_reason(st, default_no_t1="hard_sl")
 
                         # Set exit_pending BEFORE placing order to prevent race
                         st["exit_pending"] = True
