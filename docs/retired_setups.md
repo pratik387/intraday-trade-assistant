@@ -1203,17 +1203,29 @@ This setup should NOT be re-implemented unless:
 
 ## Maintenance protocol
 
+**Updated 2026-05-20.** Walk-forward tier classification (RED / AMBER / GREEN) is DEPRECATED. The thresholds (≤ 5/13 windows pass = RED, etc.) were folklore, not literature-backed. See `tasks/lessons.md` #15 and `docs/setup_lifecycle.md` Stage 13.
+
 When a new setup is retired:
 
-1. **Run walk-forward FIRST.** Per `docs/superpowers/specs/2026-05-19-walk-forward-methodology-design.md` and lesson #12: a retirement requires a walk-forward result with tier = RED (≤ 5/13 windows pass), or AMBER with documented mechanism that explains failure AND forward-validation (90 days at 25% size) also failing.
-2. Add a section here with the four standard fields: thesis, universe+filters, claimed validation, actual failure mode + evidence.
-3. **Include the walk-forward table** (13 windows × per-window stats) as the primary retirement evidence.
-4. **Include mechanism_tags + mechanism_notes** that were pre-registered before walk-forward ran (verify via `git log` on the config file).
-5. List the specific code files removed.
-6. Add the "conditions for revival" — what would have to be true for someone to legitimately try this again (e.g., regime returns to a state where the mechanism works).
-7. Move the original brief from `specs/` to `specs/archived/` (or delete if low-value).
-8. Update `tasks/lessons.md` with any new failure pattern that other setups should watch for.
+1. **Read the confidence card.** Per `docs/setup_lifecycle.md` Stage 13, retirement requires evidence from `reports/confidence_cards/<setup>_confidence_card.md` generated on OCI canonical data via `tools/methodology/confidence/confidence_card.py`. Any one of these intervals is sufficient evidence — researcher confirms:
+   - PF CI lower bound below 0.95 on OCI canonical with n > 500 in the most recent 12-month window
+   - Adjusted Sharpe (Harvey-Liu) flips negative on OCI canonical
+   - Per-regime breakdown shows the edge has collapsed to a single regime AND that regime has ended
 
-**3-period chronological validation (Discovery/OOS/Holdout) is DEPRECATED for retirement decisions.** Walk-forward (13 × 3-month windows) is the new standard. Existing retirement entries written under the old methodology are preserved as historical record; new entries must use walk-forward evidence.
+2. Add a section here with the four standard fields: thesis, universe+filters, claimed validation, actual failure mode + evidence.
+
+3. **Include the OCI confidence card snapshot** (or sanity card with the Lesson #13 caveat if no OCI data exists): aggregate PF CI, per-regime table, raw Sharpe + adjusted Sharpe. This is the primary retirement evidence.
+
+4. **Include mechanism_tags + mechanism_notes** that were pre-registered (verify via `git log` on the config file). If the actual decay cause differs from the pre-registered mechanism, document the divergence — that's a Lesson candidate.
+
+5. List the specific code files removed.
+
+6. Add the "conditions for revival" — what would have to be true for someone to legitimately try this again. Be specific: which regime would have to return, which mechanism would have to be re-validated by fresh data.
+
+7. Move the original brief from `specs/` to `specs/archived/` (or delete if low-value).
+
+8. Update `tasks/lessons.md` ONLY if a new failure pattern was discovered. Repeat patterns (e.g., "regime-conditioned edge") do not warrant a new lesson.
+
+**Historical retirement entries** were written under earlier methodologies (3-period chronological then walk-forward tier classification). They are preserved as historical record. New entries must use the confidence framework.
 
 The point of this document is **negative knowledge** — what does NOT work and why. It is at least as valuable as the active-setup documentation.

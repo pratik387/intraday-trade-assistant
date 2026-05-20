@@ -1,8 +1,26 @@
-# Walk-Forward Methodology — End-to-End Guide
+# Walk-Forward Methodology — End-to-End Guide [DEPRECATED]
 
-This document is the runbook for validating a new setup or re-validating an existing one under the walk-forward methodology established 2026-05-19.
+> **STATUS: DEPRECATED as of 2026-05-20.**
+>
+> The per-window tier-classification methodology described below was abandoned.
+> The thresholds (PF ≥ 1.10, CI lower > 1.0, GREEN ≥ 9/13, AMBER 6-8/13, RED ≤ 5/13)
+> were not literature-backed — they were folklore. See `tasks/lessons.md` #15.
+>
+> **The current runbook is `docs/setup_lifecycle.md`.** Decision-making at every gate
+> now uses the confidence framework (`tools/methodology/confidence/`), which outputs
+> intervals (BCa CI, per-regime breakdown, Harvey-Liu sign-preserving haircut) rather
+> than tier classifications. The researcher reads the intervals and judges.
+>
+> This document is preserved as historical record. Do NOT use it to drive new
+> retirement or shipping decisions.
 
-**Status:** Active. Replaces 3-period chronological (Discovery / OOS / Holdout) validation as of lesson #12.
+---
+
+## Original document (historical)
+
+This document was the runbook for validating a new setup or re-validating an existing one under the walk-forward methodology established 2026-05-19.
+
+**Status:** ~~Active. Replaces 3-period chronological (Discovery / OOS / Holdout) validation as of lesson #12.~~ DEPRECATED 2026-05-20.
 
 ## When to use
 
