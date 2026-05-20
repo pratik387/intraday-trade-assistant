@@ -100,24 +100,54 @@ def _compute_per_trade_net_pnl(
 ) -> float:
     """Apply MIS leverage then subtract fees, both on CAPITAL basis.
 
-    `pnl_pct` is the raw per-share % return (price move only). The position
-    is `mis_leverage` x larger than capital, so `pnl_pct * mis_leverage` is
-    the gross return on capital. `fee_pct` is the round-trip fee burden as
-    % of capital (which equals fee% of notional × mis_leverage).
+    DEPRECATED for use with mixed-setup trades — fee_pct varies by setup
+    (0.25-0.53% on capital depending on trade size, T1-partial frequency,
+    side). Use `_compute_per_trade_net_pnl_from_columns` instead when the
+    trades DataFrame has `realized_pnl_inr`, `fee_inr`, `entry_price`, `qty`.
 
-    Calibration (verified against real Indian retail intraday trades 2026-05-20):
-    - Zerodha fee on notional: ~0.05% round-trip (after Rs 20 brokerage cap)
-    - On capital at 5x MIS leverage: 0.05% × 5 = 0.25% — the default `fee_pct`.
-    - Std across 100 sampled trades: 0.0002pp (very stable across trade sizes).
+    Per-setup fee_pct measurements (Discovery samples 2026-05-20):
+      pre_results_t1 single-leg: 0.248
+      pre_results_t1 T1-partial: 0.319
+      mis_unwind: 0.296
+      capitulation_long_v2: 0.437
+      circuit_release: 0.411
+      long_panic_gap_down: 0.461
+      or_window_failure: 0.444
+      delivery_pct_anomaly: 0.488
+      capitulation_long_morning single: 0.426
+      capitulation_long_morning T1: 0.531
 
-    Per project memory + tools/report_utils.py:
-    - Brokerage: min(0.03% × order_value, Rs 20) per leg
-    - STT: 0.025% sell side only
-    - Exchange + SEBI + IPFT + Stamp duty + 18% GST on top
+    A flat fee_pct is a rough approximation. Use per-trade actual fees
+    via _compute_per_trade_net_pnl_from_columns for production verdicts.
     """
     gross_leveraged = pnl_pct * mis_leverage
     net = gross_leveraged - fee_pct
     return net
+
+
+def _compute_per_trade_net_pnl_from_columns(
+    pnl_pct: pd.Series,
+    entry_price: pd.Series,
+    qty: pd.Series,
+    fee_inr: pd.Series,
+    mis_leverage: float,
+) -> pd.Series:
+    """Vectorized per-trade net % on capital, using ACTUAL per-trade fees.
+
+    capital_per_trade = notional / leverage = entry × qty / leverage
+    gross_pnl_capital_pct = pnl_pct × leverage  (price move scales by L on capital basis)
+    fee_capital_pct = fee_inr / capital × 100   (real fee normalized to capital)
+    net_pct_capital = gross_pnl_capital_pct - fee_capital_pct
+
+    This is exact — no fee model approximation. Use whenever the sanity CSV
+    carries actual fee_inr per trade.
+    """
+    notional = entry_price.astype(float) * qty.astype(int)
+    capital = notional / mis_leverage
+    gross_leveraged_pct = pnl_pct.astype(float) * mis_leverage
+    fee_pct_capital = fee_inr.astype(float) / capital * 100.0
+    net_pct = gross_leveraged_pct - fee_pct_capital
+    return net_pct
 
 
 def _profit_factor_from_series(pnls: pd.Series) -> float:
@@ -155,9 +185,26 @@ def run_walk_forward(
     # Always convert signal_date to datetime.date — string columns and
     # Timestamp columns both produce the same date objects for window filtering.
     trades_df["signal_date"] = pd.to_datetime(trades_df["signal_date"]).dt.date
-    trades_df["pnl_pct_net"] = trades_df["pnl_pct"].apply(
-        lambda x: _compute_per_trade_net_pnl(x, fee_pct_round_trip, mis_leverage)
+
+    # Net PnL computation: prefer per-trade actual fees (exact) over flat fee_pct.
+    # Use _compute_per_trade_net_pnl_from_columns when fee_inr + entry_price +
+    # qty are all available in the canonical CSV. This is the accurate path.
+    # Falls back to flat fee_pct_round_trip only when fee data missing.
+    has_actual_fees = all(
+        c in trades_df.columns for c in ("fee_inr", "entry_price", "qty")
     )
+    if has_actual_fees:
+        trades_df["pnl_pct_net"] = _compute_per_trade_net_pnl_from_columns(
+            pnl_pct=trades_df["pnl_pct"],
+            entry_price=trades_df["entry_price"],
+            qty=trades_df["qty"],
+            fee_inr=trades_df["fee_inr"],
+            mis_leverage=mis_leverage,
+        )
+    else:
+        trades_df["pnl_pct_net"] = trades_df["pnl_pct"].apply(
+            lambda x: _compute_per_trade_net_pnl(x, fee_pct_round_trip, mis_leverage)
+        )
 
     windows = build_windows(start, end, window_months, n_windows)
     stats_list: List[WindowStats] = []
