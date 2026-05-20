@@ -68,3 +68,12 @@ tags:
     description: "Lok Sabha or major state election within ±2 weeks"
     source: "Manual flag (assets/macro_regime_calendar.yaml)"
     live_computable: true
+
+  # Explicit no-dependency declaration — for setups whose mechanism is
+  # genuinely rule-orthogonal (no F&O, no FII flow, no SEBI regulatory
+  # dependency). Documenting this explicitly is preferable to leaving
+  # mechanism_tags empty (which the validator would refuse).
+  rule_orthogonal:
+    description: "Setup has NO known external mechanism dependency. Edge is independent of F&O rules, FII flows, regulatory regime, sectoral correlations. Use sparingly — most Indian equity setups have at least one regime dependency on close inspection."
+    source: "Explicit researcher declaration"
+    live_computable: true
