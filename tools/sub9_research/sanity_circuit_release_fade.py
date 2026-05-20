@@ -390,6 +390,14 @@ def _simulate_one(daily_row, day_bars: pd.DataFrame) -> Optional[dict]:
     fee = calc_fee(entry_price, baseline_exit_price, qty, "SELL")
     net_pnl = realized_pnl - fee
 
+    # Compute SAFE signal-time day_gain (uses session_high_at_signal, not EOD high).
+    # The EOD `day_gain_pct` from daily_row is preserved separately as
+    # `day_gain_pct_eod_metadata` for cross-check audit ONLY. Cell-mining must
+    # filter on `day_gain_at_signal_pct` (the safe value). The cellmine script
+    # tools/sub9_research/_circuit_release_fade_sweep_cellmine.py was previously
+    # filtering on EOD `day_gain_pct` — a look-ahead bug fixed by this commit.
+    day_gain_at_signal_pct = (session_high_at_signal / pdc - 1.0) * 100.0
+
     return {
         "trade_date": daily_row["d"],
         "signal_ts": signal_ts,
@@ -397,13 +405,16 @@ def _simulate_one(daily_row, day_bars: pd.DataFrame) -> Optional[dict]:
         "symbol": daily_row["symbol"],
         "side": "SHORT",
         "signal_type": "circuit_release_failed_retest",
-        "day_high": float(daily_row["high"]),       # EOD (metadata only, not used for filtering)
-        "day_low": float(daily_row["low"]),         # EOD (metadata only)
-        "session_high_at_signal": session_high_at_signal,
+        # ---- EOD aggregates (METADATA ONLY — NEVER use as filter dim) ----
+        "day_high": float(daily_row["high"]),
+        "day_low": float(daily_row["low"]),
         "day_close": float(daily_row["close"]),
+        "day_gain_pct_eod_metadata": float(daily_row["day_gain_pct"]),
+        "close_off_high_pct_eod_metadata": float(daily_row["close_off_high_pct"]),
+        # ---- Signal-time values (SAFE — use these as filter dims) ----
+        "session_high_at_signal": session_high_at_signal,
+        "day_gain_at_signal_pct": day_gain_at_signal_pct,
         "pdc": pdc,
-        "day_gain_pct": float(daily_row["day_gain_pct"]),
-        "close_off_high_pct": float(daily_row["close_off_high_pct"]),
         "entry_ts": entry_ts,
         "entry_price": entry_price,
         "rejection_high": rejection_high,
