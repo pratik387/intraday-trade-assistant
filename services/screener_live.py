@@ -1440,6 +1440,11 @@ class ScreenerLive:
 
                     if validate_df(df5, min_rows=min_bars_for_processing):
                         df5_by_symbol[s] = df5
+            if not df5_by_symbol:
+                # Early-session symbols may not yet have min_bars_for_processing.
+                # Skip silently rather than falling through to the dispatch path,
+                # which would raise UnboundLocalError on _dp_decisions below.
+                return
             if df5_by_symbol:
                 # Compute ORB levels once at 09:40 and cache for entire day
                 with perf("scan", "compute_orb_levels", n=len(df5_by_symbol)):
