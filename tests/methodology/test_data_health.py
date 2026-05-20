@@ -73,17 +73,46 @@ def test_layer1_passes_when_uniform_distribution():
 
 
 def test_layer1_blocks_catastrophic_drop():
-    """A 50%+ drop in one quarter is BLOCKED (this is the earnings-day pattern)."""
-    df = _trades_with_quarter_distribution({
+    """A 50%+ drop AND >3sigma below mean blocks (the earnings-day pattern).
+
+    Stable baseline (12 quarters at 200) with sudden collapse to 23 is the
+    announcements_fr scenario: long low-variance baseline + huge sudden drop.
+    """
+    distribution = {
         "2023-01": 200, "2023-04": 200, "2023-07": 200, "2023-10": 200,
-        "2024-01": 200, "2024-04": 200,
-        "2025-04": 23,   # CATASTROPHIC: 23 vs 200 mean = ~88% drop
+        "2024-01": 200, "2024-04": 200, "2024-07": 200, "2024-10": 200,
+        "2025-01": 200, "2025-04": 200, "2025-07": 200, "2025-10": 200,
+        "2026-01": 23,    # CATASTROPHIC after 12 quarters of stable baseline
+    }
+    df = _trades_with_quarter_distribution(distribution)
+    issues = check_trade_count_anomaly(df, "test_setup")
+    block_issues = [i for i in issues if i.severity == "block"]
+    assert len(block_issues) >= 1, f"expected block, got: {[i.code for i in issues]}"
+    assert any(i.window_label == "2026-01" for i in block_issues)
+    assert all(i.code == "trade_count.catastrophic_drop" for i in block_issues)
+
+
+def test_layer1_does_not_block_event_driven_setup_natural_variability():
+    """Event-driven setups (gap-down LONGs etc.) have high natural variance
+    in trade count per quarter. Layer 1 must NOT flag normal regime-driven
+    variability as catastrophic.
+
+    Test: mean=80, sigma=49 with windows ranging 20-200. None should block
+    even though some are >50% below mean — because they're within 3sigma."""
+    df = _trades_with_quarter_distribution({
+        "2023-01": 80, "2023-04": 29, "2023-07": 36, "2023-10": 130,
+        "2024-01": 80, "2024-04": 50, "2024-07": 100, "2024-10": 75,
+        "2025-01": 90, "2025-04": 197, "2025-07": 34, "2025-10": 20,
+        "2026-01": 122,
     })
     issues = check_trade_count_anomaly(df, "test_setup")
     block_issues = [i for i in issues if i.severity == "block"]
-    assert len(block_issues) >= 1
-    assert any(i.window_label == "2025-04" for i in block_issues)
-    assert all(i.code == "trade_count.catastrophic_drop" for i in block_issues)
+    # No blocks — natural event-driven variance, even though several windows
+    # are >50% below mean, they're all within ~3sigma
+    assert len(block_issues) == 0, (
+        f"Unexpected blocks on event-driven setup: "
+        f"{[(i.window_label, i.metric_value, i.metric_baseline) for i in block_issues]}"
+    )
 
 
 def test_layer1_warns_on_outlier_but_not_block():
@@ -256,26 +285,29 @@ def test_layer3_warns_on_missing_columns():
 
 def test_check_all_combines_all_layers():
     """check_all runs Layer 1 + Layer 3 (and Layer 2 if source data provided)."""
-    df = _trades_with_quarter_distribution({
+    distribution = {
         "2023-01": 200, "2023-04": 200, "2023-07": 200, "2023-10": 200,
-        "2024-01": 200, "2024-04": 200,
-        "2025-04": 23,  # Layer 1 should block
-    })
+        "2024-01": 200, "2024-04": 200, "2024-07": 200, "2024-10": 200,
+        "2025-01": 200, "2025-04": 200, "2025-07": 200, "2025-10": 200,
+        "2026-01": 23,  # Layer 1 should block
+    }
+    df = _trades_with_quarter_distribution(distribution)
     report = check_all(df, "test_setup")
     assert isinstance(report, HealthReport)
-    assert report.has_blocking_issues
-    # Should be at least one Layer 1 block
+    assert report.has_blocking_issues, f"expected block; got issues: {[i.code for i in report.issues]}"
     layer1_blocks = [i for i in report.issues if i.layer == 1 and i.severity == "block"]
     assert len(layer1_blocks) >= 1
 
 
 def test_check_all_writes_audit_log(tmp_path):
     """When audit_log_dir is provided, JSONL audit log is written."""
-    df = _trades_with_quarter_distribution({
+    distribution = {
         "2023-01": 200, "2023-04": 200, "2023-07": 200, "2023-10": 200,
-        "2024-01": 200, "2024-04": 200,
-        "2025-04": 23,
-    })
+        "2024-01": 200, "2024-04": 200, "2024-07": 200, "2024-10": 200,
+        "2025-01": 200, "2025-04": 200, "2025-07": 200, "2025-10": 200,
+        "2026-01": 23,
+    }
+    df = _trades_with_quarter_distribution(distribution)
     report = check_all(df, "test_setup", audit_log_dir=tmp_path)
     files = list(tmp_path.glob("test_setup_*.jsonl"))
     assert len(files) == 1

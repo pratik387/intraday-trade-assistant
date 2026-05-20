@@ -125,6 +125,7 @@ def check_trade_count_anomaly(
     setup_name: str,
     *,
     block_drop_pct: float = 0.50,
+    block_sigma: float = 3.0,
     warn_sigma: float = 2.0,
     min_baseline_rows: int = 100,
     start_date: Optional[date] = None,
@@ -135,9 +136,15 @@ def check_trade_count_anomaly(
     Args:
         trades_df: must have `signal_date` column (any date format pandas can parse)
         setup_name: for issue messages
-        block_drop_pct: BLOCK if a window's count is <= (1-block_drop_pct) * mean.
-                        Default 0.50 = 50% drop blocks.
-        warn_sigma: WARN if a window's count is > warn_sigma * std from mean
+        block_drop_pct: BLOCK requires count <= (1-block_drop_pct) * mean
+                        (default 0.50 = 50% drop). MUST also satisfy
+                        block_sigma threshold below.
+        block_sigma: BLOCK also requires count < mean - block_sigma * std
+                     (default 3.0). Combining %-drop AND sigma prevents
+                     false positives on event-driven setups where trade
+                     frequency naturally varies by regime. Both conditions
+                     must hold for block.
+        warn_sigma: WARN if abs(count - mean) > warn_sigma * std
         min_baseline_rows: skip checks if total trades < min_baseline_rows
         start_date / end_date: if provided, restrict analysis to trades in
             [start, end]. Filters out partial leading/trailing quarters that
@@ -173,13 +180,20 @@ def check_trade_count_anomaly(
     std = float(counts.std(ddof=0))
 
     for window_label, count in counts.items():
-        # Block: anomalous drop below threshold
-        if count <= mean * (1 - block_drop_pct):
+        # BLOCK requires BOTH: (a) >block_drop_pct below mean
+        #                     AND (b) >block_sigma below mean
+        # This avoids false positives on event-driven setups where trade
+        # frequency naturally varies by regime (e.g., gap-down LONGs fire
+        # 5x more in volatile quarters than calm ones).
+        pct_threshold = mean * (1 - block_drop_pct)
+        sigma_threshold = mean - block_sigma * std if std > 0 else float("-inf")
+        if count <= pct_threshold and count < sigma_threshold:
             issues.append(HealthIssue(
                 severity="block", layer=1, code="trade_count.catastrophic_drop",
                 message=(
                     f"Window {window_label} has {int(count)} trades — "
-                    f">{int(block_drop_pct*100)}% below mean ({mean:.0f}). "
+                    f">{int(block_drop_pct*100)}% below mean ({mean:.0f}) AND "
+                    f"more than {block_sigma:.1f}sigma below (sigma={std:.0f}). "
                     f"Likely silent data issue. Investigate before running walk-forward."
                 ),
                 metric_value=float(count),

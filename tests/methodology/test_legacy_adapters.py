@@ -13,7 +13,10 @@ import pandas as pd
 import pytest
 
 from tools.methodology.legacy_adapters import (
-    adapt_pre_results_t1_fade, get_adapter, ADAPTERS,
+    adapt_pre_results_t1_fade,
+    adapt_capitulation_long_v2,
+    get_adapter,
+    ADAPTERS,
 )
 from tools.methodology.sanity_csv_schema import validate
 
@@ -156,6 +159,96 @@ def test_pre_results_t1_adapter_sets_t1_partial_booked_correctly(pre_results_t1_
     legacy = df_in["t1_booked"].astype(bool).values
     new = df_out["t1_partial_booked"].astype(bool).values
     assert (legacy == new).all()
+
+
+# ---------------------------------------------------------------------------
+# Adapter: capitulation_long_v2
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def capitulation_long_v2_discovery_df() -> pd.DataFrame:
+    p = _REPO_ROOT / "reports" / "sub9_sanity" / "_capitulation_long_v2_trades_discovery.csv"
+    if not p.exists():
+        pytest.skip(f"Legacy CSV missing: {p}")
+    return pd.read_csv(p)
+
+
+def test_capitulation_long_v2_adapter_preserves_row_count(capitulation_long_v2_discovery_df):
+    """Adapter must not silently drop rows."""
+    df_in = capitulation_long_v2_discovery_df
+    df_out = adapt_capitulation_long_v2(df_in)
+    assert len(df_out) == len(df_in)
+
+
+def test_capitulation_long_v2_adapter_output_passes_validator(capitulation_long_v2_discovery_df):
+    """Critical: adapter output must validate cleanly (zero errors)."""
+    df_out = adapt_capitulation_long_v2(capitulation_long_v2_discovery_df)
+    result = validate(df_out, setup_name="capitulation_long_v2", layer="filtered_trades")
+    assert result.is_valid, f"validation failed:\n{result.summary()}"
+
+
+def test_capitulation_long_v2_adapter_sets_side_to_long(capitulation_long_v2_discovery_df):
+    """This is a LONG setup — every row must say LONG."""
+    df_out = adapt_capitulation_long_v2(capitulation_long_v2_discovery_df)
+    assert (df_out["side"] == "LONG").all()
+
+
+def test_capitulation_long_v2_adapter_pnl_pct_matches_long_formula(capitulation_long_v2_discovery_df):
+    """LONG pnl_pct = (exit-entry)/entry*100. Critical sign-convention check."""
+    df_out = adapt_capitulation_long_v2(capitulation_long_v2_discovery_df)
+    sample = df_out.sample(n=min(100, len(df_out)), random_state=20260520)
+    computed = (sample["exit_price"] - sample["entry_price"]) / sample["entry_price"] * 100.0
+    diff = (sample["pnl_pct"] - computed).abs()
+    assert (diff < 0.10).all(), (
+        f"sign-convention failed on {(diff >= 0.10).sum()} rows. Max diff: {diff.max():.4f}pp"
+    )
+
+
+def test_capitulation_long_v2_adapter_realized_pnl_consistent_with_long(capitulation_long_v2_discovery_df):
+    """Cross-check: realized_pnl_inr should equal (exit - entry) * qty for LONG."""
+    df_out = adapt_capitulation_long_v2(capitulation_long_v2_discovery_df)
+    sample = df_out.sample(n=min(50, len(df_out)), random_state=20260520)
+    computed = (sample["exit_price"] - sample["entry_price"]) * sample["qty"]
+    diff = (sample["realized_pnl_inr"] - computed).abs()
+    # 1 rupee tolerance
+    assert (diff < 1.0).all(), (
+        f"realized_pnl_inr inconsistent with LONG formula on {(diff >= 1.0).sum()} rows"
+    )
+
+
+def test_capitulation_long_v2_adapter_exit_reason_canonical(capitulation_long_v2_discovery_df):
+    """All exit_reason values must be in canonical set after adapter."""
+    from tools.methodology.sanity_csv_schema import EXIT_REASONS
+    df_out = adapt_capitulation_long_v2(capitulation_long_v2_discovery_df)
+    bad = ~df_out["exit_reason"].isin(EXIT_REASONS)
+    assert not bad.any(), (
+        f"non-canonical exit_reason: {sorted(df_out.loc[bad, 'exit_reason'].unique())}"
+    )
+
+
+def test_capitulation_long_v2_adapter_last_bar_maps_to_eod(capitulation_long_v2_discovery_df):
+    """'last_bar' exit_reason (path-walk-end fallback) should map to 'eod'."""
+    df_in = capitulation_long_v2_discovery_df
+    df_out = adapt_capitulation_long_v2(df_in)
+    last_bar_mask = df_in["exit_reason"] == "last_bar"
+    if not last_bar_mask.any():
+        pytest.skip("No last_bar rows in discovery sample")
+    assert (df_out.loc[last_bar_mask, "exit_reason"] == "eod").all()
+
+
+def test_capitulation_long_v2_adapter_symbol_has_nse_prefix(capitulation_long_v2_discovery_df):
+    """Symbol must be NSE:XYZ format after adapter."""
+    df_out = adapt_capitulation_long_v2(capitulation_long_v2_discovery_df)
+    assert df_out["symbol"].str.startswith("NSE:").all()
+
+
+def test_capitulation_long_v2_adapter_no_t1_partial_booked(capitulation_long_v2_discovery_df):
+    """v2 has no T1 partial logic — t1_partial_booked column should NOT
+    exist in output (or all be False if it does). This ensures we don't
+    accidentally inherit the blended-pnl pathway from pre_results_t1."""
+    df_out = adapt_capitulation_long_v2(capitulation_long_v2_discovery_df)
+    if "t1_partial_booked" in df_out.columns:
+        assert not df_out["t1_partial_booked"].any()
 
 
 def test_pre_results_t1_adapter_exit_reason_canonical(pre_results_t1_discovery_df):

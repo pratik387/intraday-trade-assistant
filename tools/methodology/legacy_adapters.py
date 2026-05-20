@@ -158,6 +158,87 @@ def adapt_pre_results_t1_fade(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Adapter: capitulation_long_v2
+# ---------------------------------------------------------------------------
+
+# Source: tools/sub9_research/sanity_capitulation_long_v2.py
+# Trade CSVs: reports/sub9_sanity/_capitulation_long_v2_trades_{discovery,oos,holdout}.csv
+# Columns observed (2026-05-20):
+#   trade_date, signal_ts, entry_ts, exit_ts, symbol, cap_segment, gap_pct,
+#   entry_price, hard_sl, t1_target, t2_target, exit_price, exit_reason,
+#   r_multiple, qty, realized_pnl, fee, net_pnl, same_bar, had_t1_partial
+#
+# - side: LONG (gap-down exhaustion fade LONG-side)
+# - had_t1_partial is ALWAYS False in the v2 sanity outputs (no T1 partial
+#   logic). No blended-pnl bug like pre_results_t1.
+# - pnl_pct must be computed from entry/exit (not in CSV).
+# - exit_reason values: stop, t2_full, time_stop, last_bar
+# - 'last_bar' = path-walk-end fallback (sanity emits this when no other
+#   condition fires; the last bar's close is used as exit). Treat as 'eod'.
+
+_CAPITULATION_LONG_V2_EXIT_REASON_MAP = {
+    "stop": "sl",
+    "t2_full": "t2",
+    "time_stop": "time_stop",
+    "last_bar": "eod",
+}
+
+
+def adapt_capitulation_long_v2(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize capitulation_long_v2 trades CSV → canonical schema.
+
+    LONG-side gap-down exhaustion fade. No T1 partial logic in v2; pnl_pct
+    computed cleanly from entry/exit with LONG sign convention.
+    """
+    out = pd.DataFrame()
+
+    # Required columns
+    out["signal_date"] = pd.to_datetime(df["trade_date"]).dt.date.astype(str)
+    out["symbol"] = _ensure_nse_prefix(df["symbol"])
+    out["side"] = "LONG"
+    entry = df["entry_price"].astype(float)
+    exit_ = df["exit_price"].astype(float)
+    qty = df["qty"].astype(int)
+    out["entry_price"] = entry
+    out["exit_price"] = exit_
+    out["qty"] = qty
+    # LONG: pnl_pct = (exit - entry) / entry * 100
+    out["pnl_pct"] = (exit_ - entry) / entry * 100.0
+
+    out["exit_reason"] = _normalize_exit_reason(
+        df["exit_reason"], df["same_bar"],
+        mapping=_CAPITULATION_LONG_V2_EXIT_REASON_MAP,
+    )
+    out["same_bar"] = df["same_bar"].astype(bool)
+
+    # Optional columns (passthrough with renames)
+    if "cap_segment" in df.columns:
+        out["cap_segment"] = df["cap_segment"]
+    if "signal_ts" in df.columns:
+        out["signal_ts"] = df["signal_ts"]
+    if "entry_ts" in df.columns:
+        out["entry_ts"] = df["entry_ts"]
+    if "exit_ts" in df.columns:
+        out["exit_ts"] = df["exit_ts"]
+    if "realized_pnl" in df.columns:
+        out["realized_pnl_inr"] = df["realized_pnl"].astype(float)
+    if "fee" in df.columns:
+        out["fee_inr"] = df["fee"].astype(float)
+    if "net_pnl" in df.columns:
+        out["net_pnl_inr"] = df["net_pnl"].astype(float)
+    if "r_multiple" in df.columns:
+        out["r_multiple"] = df["r_multiple"].astype(float)
+    if "t1_target" in df.columns:
+        out["t1_target"] = df["t1_target"].astype(float)
+    if "t2_target" in df.columns:
+        out["t2_target"] = df["t2_target"].astype(float)
+    if "hard_sl" in df.columns:
+        out["hard_sl"] = df["hard_sl"].astype(float)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Adapter registry
 # ---------------------------------------------------------------------------
 
@@ -165,6 +246,7 @@ def adapt_pre_results_t1_fade(df: pd.DataFrame) -> pd.DataFrame:
 # look up the adapter here.
 ADAPTERS: Dict[str, Callable[[pd.DataFrame], pd.DataFrame]] = {
     "pre_results_t1_fade": adapt_pre_results_t1_fade,
+    "capitulation_long_v2": adapt_capitulation_long_v2,
 }
 
 
