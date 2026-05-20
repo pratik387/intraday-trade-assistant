@@ -49,7 +49,10 @@ def main(argv=None):
     p.add_argument("--end", type=_parse_date, default=date(2026, 3, 31))
     p.add_argument("--n-windows", type=int, default=13)
     p.add_argument("--window-months", type=int, default=3)
-    p.add_argument("--fee-pct", type=float, default=0.5)
+    p.add_argument("--fee-pct", type=float, default=0.25,
+                   help="Round-trip fee on CAPITAL basis (default 0.25%). "
+                        "Verified against real trades 2026-05-20: 0.05% on notional "
+                        "x 5x MIS leverage = 0.25%% on capital.")
     p.add_argument("--mis-leverage", type=float, default=5.0)
     p.add_argument("--bootstrap-n", type=int, default=1000)
     p.add_argument("--skip-pre-registration-check", action="store_true",

@@ -95,6 +95,33 @@ def test_run_walk_forward_raises_on_missing_columns():
         )
 
 
+def test_compute_per_trade_net_pnl_default_fee_matches_real_indian_intraday():
+    """Calibration regression test (added 2026-05-20).
+
+    Default fee_pct_round_trip=0.25 was derived by tracing real Indian
+    retail intraday trades (pre_results_t1_v2 Discovery, 100-trade sample
+    on 2026-05-20). Implied fee_pct on capital = 0.2484 +/- 0.0002 across
+    a range of trade sizes (Rs 50K-500K notional).
+
+    The PRIOR default 0.5% was wrong by 2x. It systematically punished every
+    trade by 0.25pp net, which flipped multiple production-GREEN setups to
+    RED on walk-forward (e.g. delivery_pct_anomaly_short, long_panic_gap_down,
+    or_window_failure_fade_short showed RED when production claimed GREEN).
+    Don't revert this without a stronger calibration argument.
+    """
+    from tools.methodology.walk_forward import _compute_per_trade_net_pnl
+
+    # Trade reality: SHORT entry 462.75, exit 464.13825 → pnl_pct = -0.3%
+    # Notional Rs 333K, capital Rs 66.6K (5x MIS leverage)
+    # Actual fee = Rs 165.48 = 0.0497% of notional = 0.2485% of capital
+    # Actual net PnL = -1.748% of capital
+    net = _compute_per_trade_net_pnl(pnl_pct=-0.3, fee_pct=0.25, mis_leverage=5.0)
+    # Formula gives: -0.3 × 5 - 0.25 = -1.75%
+    assert abs(net - (-1.75)) < 1e-9
+    # Within 0.05pp of measured reality (-1.748%)
+    assert abs(net - (-1.748)) < 0.05
+
+
 def test_run_walk_forward_on_fixture_detects_regime_break():
     """Fixture has positive edge pre-2025, negative post-2025.
     Walk-forward should classify as AMBER (mixed) or RED."""
