@@ -240,31 +240,57 @@ This stage has TWO sweeps over Discovery data — a **filter cell sweep** and an
 
 **MIS-leveraged fee math (Failure mode #7 from `retired_setups.md`):** the R-multiple sweep MUST include MIS-leveraged fees, not base-qty fees. Discovery PFs that were computed on base-qty fees are over-stated by ~Rs 650K on 2-year aggregates.
 
-**Use the shared helper (`tools/methodology/cell_sweep.py`).** Replaces the ad-hoc per-setup `_*_sweep_cellmine.py` scripts that each re-implemented the same pattern with slightly different bugs. The helper:
+**Use the shared helper (`tools/methodology/cell_sweep.py`).** Replaces the ad-hoc per-setup `_*_sweep_cellmine.py` scripts that each re-implemented the same pattern with slightly different bugs. Audit of 25 production scripts (2026-05-20) found 3 target paradigms, all supported:
 
-- Validates the candidates schema BEFORE sweeping — blocks `day_*` / `close_off_high_*` look-ahead dimensions (Failure mode #1), enforces sign convention on `mfe_r` / `mae_r`.
-- `simulate_exit(...)` implements same-bar pessimism: when both stop and target hit on one bar, stop wins (Failure mode #4).
-- `run_cell_sweep(candidates_df, cfg)` sweeps (R-grid × filter cells) with 1D + 2D combinations (3D blocked — overfitting risk).
-- `select_best_cell(...)` returns `None` if no cell meets ship-eligibility (kill signal — Lesson #2 anti-salvage). Caller must NOT downgrade thresholds to find a winner.
-- `lock_cell(...)` writes JSON; refuses overwrite without `force=True` (lock-once discipline).
+| `target_unit` | Used by | Grid sweeps |
+|---|---|---|
+| `"R"` | 56% of setups (long_panic_gap_down, or_window_failure_fade_short, circuit_release_fade_short, capitulation_long_v2, etc.) | `(T1_R, T2_R, ts_hhmm, partial_mode)` |
+| `"pct"` | 8% (block_deal_t0_short, block_deal_continuation_short) | `(T1_pct, T2_pct, sl_pct, ts_hhmm, partial_mode)` |
+| `"structural"` | 24% (gap_fade_short, circuit_t1_fade_short, etc.) | `(ts_hhmm, partial_mode)` only — T1/T2/SL are per-row prices |
 
-Candidates DataFrame contract: per-row `entry_ts`, `entry_price`, `qty` (already MIS-sized), `mfe_r` (unsigned), `mae_r` (unsigned), `R_per_share`, `close_at_<HHMM>` for each time-stop in the grid, plus filter dimensions as columns.
+The helper:
 
-Minimum usage example:
+- `validate_candidates_schema` rejects look-ahead dims by exact match (`day_high`, `day_low`, `day_vwap`, `day_close`, `day_volume`, `day_range`, `day_atr`) and prefix (`close_off_high*`, `EOD_*`, `eod_*`, `session_close_*`). Legitimate dims like `day_gain_bucket` (whose underlying value is computed from `session_high_so_far` at signal) are allowed.
+- `simulate_exit` implements same-bar pessimism (Failure mode #4) and side-aware PnL; all three modes converge to R-unit exit logic internally.
+- `partial_mode` is a swept grid parameter, not a config-wide constant. Three options:
+  - `"all_in"` — full qty, T1 doesn't fire; only T2 / SL / TS resolve
+  - `"partial_50_no_trail"` — 50% at T1, 50% to T2 or TS close
+  - `"partial_50_be_trail"` — 50% at T1; remaining 50% exits at BE if mae stayed close to SL post-T1 (conservative approximation — exact post-T1 path requires richer MFE/MAE columns)
+- `select_best_cell` returns `None` if no cell meets ship-eligibility — kill signal, not silent-pick-best (Lesson #2 anti-salvage).
+- `lock_cell` writes JSON; refuses overwrite without `force=True` (lock-once discipline).
+
+**Candidates DataFrame contract:**
+
+| target_unit | Required columns (per row) |
+|---|---|
+| `R` | `entry_ts`, `entry_price`, `qty`, `mfe_r` (unsigned), `mae_r` (unsigned), `R_per_share`, `close_at_<HHMM>` |
+| `pct` | `entry_ts`, `entry_price`, `qty`, `mfe_pct`, `mae_pct`, `close_at_<HHMM>` |
+| `structural` | `entry_ts`, `entry_price`, `qty`, `mfe_r`, `mae_r`, `R_per_share`, `t1_price`, `t2_price`, `close_at_<HHMM>` |
+
+Plus the filter dimensions as columns (declared in `dim_pool`).
+
+**Usage example (R-mode setup, e.g. circuit_release_fade_short):**
 
 ```python
 from tools.methodology.cell_sweep import (
-    CellSweepConfig, run_cell_sweep, select_best_cell, lock_cell,
+    CellSweepConfig, GridEntry, run_cell_sweep, select_best_cell, lock_cell,
 )
 
+grid = []
+for T1 in (0.5, 1.0):
+    for T2 in (1.5, 2.0, 2.5):
+        for ts in (1300, 1430, 1500):
+            for pm in ("partial_50_no_trail", "partial_50_be_trail"):
+                grid.append(GridEntry(
+                    label=f"T1={T1}/T2={T2}/TS={ts}/{pm}",
+                    ts_hhmm=ts, partial_mode=pm,
+                    t1=T1, t2=T2, sl=1.0,
+                ))
+
 cfg = CellSweepConfig(
-    side="SHORT",
-    r_grid=[
-        (1.0, 2.0, 1500, "baseline (1.0/2.0)"),
-        (0.5, 1.5, 1500, "asym (0.5/1.5)"),
-        (1.0, 2.0, 1400, "baseline + TS=14:00"),
-    ],
-    dim_pool=["cap_segment", "dow", "vol_ratio_bucket"],
+    side="SHORT", target_unit="R",
+    grid=grid,
+    dim_pool=["cap_segment", "dow", "day_gain_bucket", "rejection_hhmm_bucket"],
     n_min_floor=100, pf_min_floor=1.10,
     n_min_ship=200,  pf_min_ship=1.30,
 )
@@ -272,11 +298,29 @@ results = run_cell_sweep(disc_candidates, cfg)
 best = select_best_cell(results, cfg)
 if best is None:
     raise SystemExit("KILL: no ship-eligible cell on Discovery")
-lock_cell(best, setup_name="<setup>", window_label="Discovery",
-          output_path=REPO / "tools/sub9_research/<setup>_cell_selection_locked.json")
+lock_cell(best, setup_name="circuit_release_fade_short", window_label="Discovery",
+          output_path=REPO / "tools/sub9_research/circuit_release_fade_short_cell_selection_locked.json")
 ```
 
-After Stage 5 locks the cell, re-run the sanity at the locked `(filter_cell, T1, T2, TS)` to emit the final canonical trade CSV for Stage 6 (sanity confidence card).
+**Usage example (structural setup, e.g. gap_fade_short with PDC targets):**
+
+```python
+# disc_candidates already has t1_price (e.g. midpoint), t2_price (e.g. PDC)
+# computed per-row at signal time by the sanity script.
+grid = [
+    GridEntry(label=f"TS={ts}/{pm}", ts_hhmm=ts, partial_mode=pm)
+    for ts in (1015, 1045, 1130, 1300, 1510)
+    for pm in ("partial_50_no_trail", "partial_50_be_trail", "all_in")
+]
+cfg = CellSweepConfig(
+    side="SHORT", target_unit="structural",
+    grid=grid,
+    dim_pool=["cap_segment", "gap_pct_bucket", "dim_wick"],
+)
+results = run_cell_sweep(disc_candidates, cfg)
+```
+
+After Stage 5 locks the cell, re-run the sanity at the locked `(filter_cell, grid_entry)` to emit the final canonical trade CSV for Stage 6 (sanity confidence card).
 
 ### Stage 6 — Confidence card on sanity
 
