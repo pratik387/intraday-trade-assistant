@@ -491,6 +491,94 @@ def adapt_capitulation_long_morning(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Adapter: delivery_pct_anomaly_short (active)
+# ---------------------------------------------------------------------------
+
+# Trade CSVs: reports/sub9_sanity/nse_delivery_pct_anomaly_trades{,_oos,_holdout}.csv
+# Note: file prefix is "nse_delivery_pct_anomaly" but config setup name is
+# "delivery_pct_anomaly_short". Sanity is BIDIRECTIONAL (both LONG and SHORT
+# trades) but the SHIPPED active setup is SHORT only. Adapter filters to
+# SHORT only to match production.
+#
+# Columns observed (2026-05-20):
+#   symbol, t_day, t1_date, side, t_day_close, open_09_15, high_09_15,
+#   low_09_15, gap_pct, entry_ts, entry_price, hard_sl, stop_distance,
+#   t1_target, t2_target, qty, hit_t1, t1_exit_price, exit_ts, exit_price,
+#   exit_reason, gross_pnl, fee, net_pnl, mfe_r, mae_r,
+#   close_at_1100..1525, signal_type, delivery_pct, daily_return_pct, adv_20d_cr
+#
+# - t_day: observation day (delivery_pct anomaly detected)
+# - t1_date: trade day (next-day fade) — use as signal_date
+# - hit_t1: T1 partial booking flag
+# - exit_reasons: stop, t2, time_stop, eod
+# - gross_pnl: rupee gross (not "realized_pnl" — different name from other adapters)
+
+_DELIVERY_PCT_EXIT_REASON_MAP = {
+    "stop": "sl",
+    "t2": "t2",
+    "time_stop": "time_stop",
+    "eod": "eod",
+}
+
+
+def adapt_delivery_pct_anomaly_short(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize delivery_pct_anomaly trades CSV → canonical schema.
+
+    Filters to SHORT trades only (matches shipped production setup
+    setups.delivery_pct_anomaly_short).
+    """
+    # Filter to SHORT only
+    df = df[df["side"].astype(str).str.upper() == "SHORT"].reset_index(drop=True)
+
+    out = pd.DataFrame()
+    out["signal_date"] = pd.to_datetime(df["t1_date"]).dt.date.astype(str)
+    out["symbol"] = _ensure_nse_prefix(df["symbol"])
+    out["side"] = "SHORT"
+    entry = df["entry_price"].astype(float)
+    exit_ = df["exit_price"].astype(float)
+    qty = df["qty"].astype(int)
+    out["entry_price"] = entry
+    out["exit_price"] = exit_
+    out["qty"] = qty
+    # SHORT: pnl_pct = (entry - exit) / entry * 100
+    # The sanity script encodes blended T1+exit in effective exit_price
+    # (verified pattern matches capitulation_long_morning).
+    out["pnl_pct"] = (entry - exit_) / entry * 100.0
+
+    # Derive same_bar from entry_ts == exit_ts
+    same_bar = pd.to_datetime(df["entry_ts"]) == pd.to_datetime(df["exit_ts"])
+
+    out["exit_reason"] = _normalize_exit_reason(
+        df["exit_reason"], same_bar,
+        mapping=_DELIVERY_PCT_EXIT_REASON_MAP,
+    )
+    out["same_bar"] = same_bar.astype(bool)
+
+    if "hit_t1" in df.columns:
+        out["t1_partial_booked"] = df["hit_t1"].astype(bool)
+
+    # Optional passthrough
+    if "entry_ts" in df.columns:
+        out["entry_ts"] = df["entry_ts"]
+    if "exit_ts" in df.columns:
+        out["exit_ts"] = df["exit_ts"]
+    if "gross_pnl" in df.columns:
+        out["realized_pnl_inr"] = df["gross_pnl"].astype(float)
+    if "fee" in df.columns:
+        out["fee_inr"] = df["fee"].astype(float)
+    if "net_pnl" in df.columns:
+        out["net_pnl_inr"] = df["net_pnl"].astype(float)
+    if "t1_target" in df.columns:
+        out["t1_target"] = df["t1_target"].astype(float)
+    if "t2_target" in df.columns:
+        out["t2_target"] = df["t2_target"].astype(float)
+    if "hard_sl" in df.columns:
+        out["hard_sl"] = df["hard_sl"].astype(float)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Adapter registry
 # ---------------------------------------------------------------------------
 
@@ -502,6 +590,7 @@ ADAPTERS: Dict[str, Callable[[pd.DataFrame], pd.DataFrame]] = {
     "mis_unwind_vwap_revert_short": adapt_mis_unwind_vwap_revert_short,
     "circuit_release_fade_short": adapt_circuit_release_fade_short,
     "capitulation_long_morning": adapt_capitulation_long_morning,
+    "delivery_pct_anomaly_short": adapt_delivery_pct_anomaly_short,
 }
 
 

@@ -451,6 +451,67 @@ def test_capitulation_long_morning_adapter_exit_reason_canonical(capitulation_lo
     assert not bad.any()
 
 
+# ---------------------------------------------------------------------------
+# Adapter: delivery_pct_anomaly_short (active)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def delivery_pct_discovery_df() -> pd.DataFrame:
+    p = _REPO_ROOT / "reports" / "sub9_sanity" / "nse_delivery_pct_anomaly_trades.csv"
+    if not p.exists():
+        pytest.skip(f"Legacy CSV missing: {p}")
+    return pd.read_csv(p)
+
+
+def test_delivery_pct_adapter_filters_to_short_only(delivery_pct_discovery_df):
+    """Sanity is bidirectional; adapter filters to SHORT (matches shipped setup)."""
+    from tools.methodology.legacy_adapters import adapt_delivery_pct_anomaly_short
+    df_in = delivery_pct_discovery_df
+    df_out = adapt_delivery_pct_anomaly_short(df_in)
+    short_count = (df_in["side"].astype(str).str.upper() == "SHORT").sum()
+    assert len(df_out) == short_count
+    assert (df_out["side"] == "SHORT").all()
+
+
+def test_delivery_pct_adapter_output_passes_validator(delivery_pct_discovery_df):
+    from tools.methodology.legacy_adapters import adapt_delivery_pct_anomaly_short
+    df_out = adapt_delivery_pct_anomaly_short(delivery_pct_discovery_df)
+    result = validate(df_out, setup_name="delivery_pct_anomaly_short", layer="filtered_trades")
+    assert result.is_valid, f"validation failed:\n{result.summary()}"
+
+
+def test_delivery_pct_adapter_pnl_pct_matches_short(delivery_pct_discovery_df):
+    from tools.methodology.legacy_adapters import adapt_delivery_pct_anomaly_short
+    df_out = adapt_delivery_pct_anomaly_short(delivery_pct_discovery_df)
+    # Only single-leg rows (no T1 partial)
+    if "t1_partial_booked" in df_out.columns:
+        single_leg = df_out[~df_out["t1_partial_booked"]]
+    else:
+        single_leg = df_out
+    sample = single_leg.sample(n=min(50, len(single_leg)), random_state=20260520)
+    computed = (sample["entry_price"] - sample["exit_price"]) / sample["entry_price"] * 100.0
+    diff = (sample["pnl_pct"] - computed).abs()
+    assert (diff < 0.10).all()
+
+
+def test_delivery_pct_adapter_signal_date_uses_t1_date(delivery_pct_discovery_df):
+    """signal_date should reflect t1_date (the actual trade day), not t_day."""
+    from tools.methodology.legacy_adapters import adapt_delivery_pct_anomaly_short
+    df_in = delivery_pct_discovery_df
+    df_in_short = df_in[df_in["side"].astype(str).str.upper() == "SHORT"].reset_index(drop=True)
+    df_out = adapt_delivery_pct_anomaly_short(df_in)
+    expected = pd.to_datetime(df_in_short["t1_date"]).dt.date.astype(str)
+    assert (df_out["signal_date"].values == expected.values).all()
+
+
+def test_delivery_pct_adapter_exit_reason_canonical(delivery_pct_discovery_df):
+    from tools.methodology.legacy_adapters import adapt_delivery_pct_anomaly_short
+    from tools.methodology.sanity_csv_schema import EXIT_REASONS
+    df_out = adapt_delivery_pct_anomaly_short(delivery_pct_discovery_df)
+    bad = ~df_out["exit_reason"].isin(EXIT_REASONS)
+    assert not bad.any()
+
+
 def test_pre_results_t1_adapter_exit_reason_canonical(pre_results_t1_discovery_df):
     """All exit_reason values must be in canonical set after adapter."""
     from tools.methodology.sanity_csv_schema import EXIT_REASONS
