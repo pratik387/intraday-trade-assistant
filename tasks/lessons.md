@@ -11,6 +11,43 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-22 (#18) — Sanity vs OCI parity has THREE root causes, layered, with universe-data-source asymmetry as DOMINANT
+
+**What went wrong:** Continued the OCI vs sanity parity investigation for `below_vwap_volume_revert_long` after Lesson #17 fixed legacy filters. Found that even after universe-filter alignment, OCI PF (0.965, net loser) still diverged from corrected sanity PF (1.32). I suspected "per-bar signal divergence" (different VWAP, vol_ratio, latch). Spent time looking at specific bars (RPPINFRA 2026-03-30 14:55) and confirmed the DETECTOR criteria fire identically. The real divergence was elsewhere.
+
+**Root cause hierarchy (in order of magnitude):**
+
+| Cause | Direction | Impact on below_vwap HO |
+|---|---|---|
+| **A. Universe-data-source asymmetry** — sanity uses 5m feather coverage (`>=80% of HO days`); production uses `consolidated_daily.feather` (independent coverage) | Sanity → narrower (rejects newly-tracked SME) | **235 of 260 OCI fires (90%) on symbols sanity wholly rejected** |
+| **B. cap_segment default for nse_all-missing symbols = "unknown"** | Sanity → wider (wrongly) | 151 spurious sanity inclusions; PF 0.83 drags overall PF DOWN |
+| **C. True per-bar signal divergence on same-universe subset** | Sanity → optimistic | Possibly real (OCI PF 0.80 vs sanity 1.32 on the 23 trades both saw) but small n |
+
+**The "5m archive vs daily archive coverage" asymmetry** (Lesson #16 reprise): `consolidated_daily.feather` has cap=unknown symbols going back to 2023. `monthly/*_5m_enriched.feather` only has 5m bars for SME names since ~Dec 2025. Production's universe builder uses consolidated_daily → symbol passes. Production's screener uses monthly feathers → has bars from Dec onward → fires. Sanity uses 5m feathers as its universe-gate (via the 80% window-coverage filter) → rejects symbols with only 5 months of bars → never even tries to detect.
+
+**Concrete proof:** For 5 OCI-only fire cases (RPPINFRA, SIMPLEXINF, TRACXN, KAMOPAINTS, CIFL):
+- All 5 in nse_all.json with cap=unknown + mis_enabled=True
+- All 5 in consolidated_daily.feather since 2023 (152 HO days each)
+- All 5 in monthly 5m feathers ONLY from 2025-12 onwards (5 of 10 HO months)
+- Sanity's `days_per_sym >= 144` (80% of 180 HO days) rejects them at ~100 days
+- Production's per-date filter accepts them
+
+**Implication:** sanity PF claims for SME-heavy cell-locked setups (`cap=unknown`) are inflated by SURVIVORSHIP — they're computed only on the "older tracked" sub-cohort of cap=unknown. The newer SME names that production fires on have different edge dynamics. OCI PF is the realistic forward expectation; sanity PF is optimistic.
+
+**Rules:**
+
+1. **The DOMINANT root cause of sanity vs production parity gap is universe-data-source asymmetry.** Not per-bar detector logic. Verify by computing the OCI-only vs sanity-only fire counts and segment by 5m-feather coverage. If most OCI-only fires are on symbols with partial 5m coverage, the universe gate is the issue.
+
+2. **Sanity's universe filter is a SURVIVORSHIP filter.** Window-level coverage thresholds reject newly-tracked symbols entirely. Production's per-date rolling filter accepts them once they cross the threshold. These give different universes. For honest sanity-to-OCI comparison: align sanity to use per-date rolling coverage (NOT window-level), OR use the SAME data source (consolidated_daily.feather) for the universe gate.
+
+3. **Don't trust sanity PF for SME-heavy cell-locked setups.** When the cell targets `cap=unknown` (where 5m archive coverage is most sparse), sanity backtest is computed on a non-representative sub-cohort. The setup may have completely different forward edge once production fires on the newer SME names. Trust OCI PF as the realistic expectation.
+
+4. **For `below_vwap_volume_revert_long`:** OCI HO PF 0.965 (NET LOSER on 141 trades). Sanity HO PF 1.32 is computed on a DIFFERENT universe than production trades. **Do NOT activate for live capital** based on sanity numbers alone — paper-trade validation phase is required, and the realistic expectation should be the OCI number, not the sanity number.
+
+5. **For `close_dn_overnight_long`:** less affected because the cell accepts large+mid+small+unknown caps. Only unknown sub-cohort hit by the 5m coverage gap. 10.3% rejection rate (vs below_vwap's 26.2%). Still needs an OCI run on the latest code (with legacy filters zeroed via commit `35b0c96`) before paper-trade activation.
+
+---
+
 ### 2026-05-21 (#17) — Legacy universe filters (min_trading_days, min_daily_avg_volume) are inappropriate for cell-locked setups — remove them
 
 **What went wrong:** OCI vs sanity parity diagnostic for `below_vwap_volume_revert_long` showed:
