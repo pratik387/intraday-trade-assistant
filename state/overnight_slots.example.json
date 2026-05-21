@@ -1,0 +1,27 @@
+{
+  "max_slots": 4,
+  "margin_per_slot_inr": 100000,
+  "max_new_per_day": 2,
+  "slots": [
+    {"slot_id": 1, "status": "free", "symbol": null, "product": null, "leverage": 1.0,
+     "margin_inr": 0.0, "notional_inr": 0.0, "buy_fill_price": null, "buy_fill_ts": null,
+     "buy_order_id": null, "amo_sell_order_id": null, "expected_exit_date": null,
+     "sell_fill_price": null, "sell_fill_ts": null, "realized_pnl_inr": null,
+     "fees_inr": null, "interest_inr": null, "reserved_today": null},
+    {"slot_id": 2, "status": "free", "symbol": null, "product": null, "leverage": 1.0,
+     "margin_inr": 0.0, "notional_inr": 0.0, "buy_fill_price": null, "buy_fill_ts": null,
+     "buy_order_id": null, "amo_sell_order_id": null, "expected_exit_date": null,
+     "sell_fill_price": null, "sell_fill_ts": null, "realized_pnl_inr": null,
+     "fees_inr": null, "interest_inr": null, "reserved_today": null},
+    {"slot_id": 3, "status": "free", "symbol": null, "product": null, "leverage": 1.0,
+     "margin_inr": 0.0, "notional_inr": 0.0, "buy_fill_price": null, "buy_fill_ts": null,
+     "buy_order_id": null, "amo_sell_order_id": null, "expected_exit_date": null,
+     "sell_fill_price": null, "sell_fill_ts": null, "realized_pnl_inr": null,
+     "fees_inr": null, "interest_inr": null, "reserved_today": null},
+    {"slot_id": 4, "status": "free", "symbol": null, "product": null, "leverage": 1.0,
+     "margin_inr": 0.0, "notional_inr": 0.0, "buy_fill_price": null, "buy_fill_ts": null,
+     "buy_order_id": null, "amo_sell_order_id": null, "expected_exit_date": null,
+     "sell_fill_price": null, "sell_fill_ts": null, "realized_pnl_inr": null,
+     "fees_inr": null, "interest_inr": null, "reserved_today": null}
+  ]
+}

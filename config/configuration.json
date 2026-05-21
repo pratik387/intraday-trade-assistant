@@ -415,6 +415,26 @@
       "max_fires_per_5min": 5,
       "_research_notes": "Validated cell from delivery_pct anomaly cell-mining. SHORT only. Indian-microstructure anchor: NSE-published delivery percentage <20% + same-day pump >3% = retail/operator pump signature. Cross-day RVOL confirmation rejects intra-session false signals. Sanity: tools/sub9_research/sanity_nse_delivery_pct_anomaly.py. Brief: specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md.",
       "wide_open": false
+    },
+    "close_dn_overnight_long": {
+      "enabled": false,
+      "paper_enabled": true,
+      "_status": "Paper-trade infrastructure scaffolding in progress 2026-05-21. Detector NOT registered yet (Task 4). Capital pool + state file plumbing landed in Task 3. Cell #5: closing_30m_volume_z=extreme x prior_day_return=up_gt_3pct. Pooled PF 2.44 (CI 2.16-2.74), HO 1.52. See specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.md.",
+      "capital_allocation": {
+        "active_margin_inr": 400000,
+        "cushion_inr": 100000,
+        "max_concurrent_slots": 4,
+        "margin_per_slot_inr": 100000,
+        "max_new_positions_per_day": 2,
+        "state_file": "state/overnight_slots.json"
+      },
+      "mtf": {
+        "approved_list_snapshot_path": "data/mtf_universe/approved_mtf_securities_2026-05-21.json",
+        "interest_pct_per_day": 0.0004,
+        "exclude_etf": true,
+        "fallback_to_cnc_if_not_mtf": true,
+        "stale_snapshot_warn_days": 7
+      }
     }
   },
   "filters": {

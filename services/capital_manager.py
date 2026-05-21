@@ -647,3 +647,253 @@ class CapitalManager:
         except Exception as e:
             logger.warning(f"CAPITAL | Failed to save final report: {e}")
             return None
+
+
+# ============================================================================
+# Overnight Slot Pool (close_dn_overnight_long setup)
+# ----------------------------------------------------------------------------
+# The overnight setup runs as a cron-triggered short-lived script (NOT a
+# long-lived daemon). Slot state must therefore live in a JSON file so each
+# cron invocation can load -> mutate -> persist atomically. This block is
+# deliberately decoupled from CapitalManager (which tracks MIS intraday budget)
+# to avoid entanglement between two unrelated capital cycles.
+# ============================================================================
+
+from dataclasses import dataclass, asdict
+from datetime import date
+
+
+@dataclass
+class OvernightSlot:
+    """One slot in the overnight capital pool.
+
+    Lifecycle: free -> t0_open (BUY filled) -> t1_settling (AMO SELL filled,
+    cash pending T+2 settlement) -> free (T+2 settle morning).
+
+    All timestamps are IST-naive ISO 8601 strings.
+    All dates are ISO 8601 date strings (YYYY-MM-DD).
+    """
+    slot_id: int
+    status: str = "free"               # 'free' | 't0_open' | 't1_settling'
+    symbol: Optional[str] = None       # e.g. "NSE:RELIANCE"
+    product: Optional[str] = None      # 'MTF' | 'CNC'
+    leverage: float = 1.0              # 1.0 for CNC, 2.0-5.0 for MTF
+    margin_inr: float = 0.0
+    notional_inr: float = 0.0
+    buy_fill_price: Optional[float] = None
+    buy_fill_ts: Optional[str] = None        # IST-naive ISO
+    buy_order_id: Optional[str] = None
+    amo_sell_order_id: Optional[str] = None
+    expected_exit_date: Optional[str] = None  # ISO date (next trading day)
+    sell_fill_price: Optional[float] = None
+    sell_fill_ts: Optional[str] = None
+    realized_pnl_inr: Optional[float] = None
+    fees_inr: Optional[float] = None
+    interest_inr: Optional[float] = None
+    reserved_today: Optional[str] = None     # ISO date when reserve() was called
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "OvernightSlot":
+        return cls(**d)
+
+
+class OvernightSlotPool:
+    """4-slot rolling overnight capital pool with JSON-persisted state.
+
+    Each invocation of the entry/verify-exit cron jobs:
+      1. Loads state from `state_path` (or creates empty pool if absent)
+      2. Mutates state via reserve / attach_buy_fill / attach_amo_sell / settle / release
+      3. Persists back to `state_path` before exit
+
+    This avoids any in-memory state machine — the file is the source of truth.
+    """
+
+    def __init__(self, state_path: Path, max_slots: int, margin_per_slot: float,
+                 max_new_per_day: int):
+        if max_slots <= 0:
+            raise ValueError(f"max_slots must be positive, got {max_slots}")
+        if margin_per_slot <= 0:
+            raise ValueError(f"margin_per_slot must be positive, got {margin_per_slot}")
+        if max_new_per_day <= 0:
+            raise ValueError(f"max_new_per_day must be positive, got {max_new_per_day}")
+        self._state_path = Path(state_path)
+        self._max_slots = int(max_slots)
+        self._margin_per_slot = float(margin_per_slot)
+        self._max_new_per_day = int(max_new_per_day)
+        self._slots: list[OvernightSlot] = self._load_or_init()
+
+    # ---------- Persistence ----------
+
+    def _load_or_init(self) -> list[OvernightSlot]:
+        if not self._state_path.exists():
+            return [OvernightSlot(slot_id=i) for i in range(1, self._max_slots + 1)]
+        try:
+            with open(self._state_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"OvernightSlotPool: state file {self._state_path} is corrupt "
+                f"(invalid JSON): {e}. Fix or delete the file manually."
+            )
+        if not isinstance(data, dict) or "slots" not in data:
+            raise ValueError(
+                f"OvernightSlotPool: state file {self._state_path} has unexpected "
+                f"shape (expected dict with 'slots' key). Fix or delete manually."
+            )
+        slots = [OvernightSlot.from_dict(s) for s in data["slots"]]
+        # Validate slot count matches config (fail fast on drift)
+        if len(slots) != self._max_slots:
+            raise ValueError(
+                f"OvernightSlotPool: state file has {len(slots)} slots but config "
+                f"specifies max_slots={self._max_slots}. Migrate state manually."
+            )
+        return slots
+
+    def _persist(self) -> None:
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "max_slots": self._max_slots,
+            "margin_per_slot_inr": self._margin_per_slot,
+            "max_new_per_day": self._max_new_per_day,
+            "slots": [s.to_dict() for s in self._slots],
+        }
+        # Write to temp + rename for atomicity (avoids partial writes on crash)
+        tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        tmp.replace(self._state_path)
+
+    # ---------- Public lifecycle ----------
+
+    def reserve(self, symbol: str, product: str, leverage: float,
+                today: date) -> Optional[OvernightSlot]:
+        """Reserve a free slot for a new BUY.
+
+        Returns the slot if (a) a free slot exists and (b) max_new_per_day cap not hit.
+        Returns None if no capacity. Caller must check return value.
+        Mutated state is NOT persisted automatically — caller must call .persist().
+        """
+        if self.new_today_count(today) >= self._max_new_per_day:
+            return None
+        for slot in self._slots:
+            if slot.status == "free":
+                slot.status = "t0_open"
+                slot.symbol = symbol
+                slot.product = product
+                slot.leverage = float(leverage)
+                slot.margin_inr = self._margin_per_slot
+                slot.notional_inr = self._margin_per_slot * float(leverage)
+                slot.reserved_today = today.isoformat()
+                return slot
+        return None
+
+    def attach_buy_fill(self, slot_id: int, fill_price: float,
+                        fill_ts_iso: str, order_id: str) -> None:
+        slot = self._get_slot(slot_id)
+        if slot.status != "t0_open":
+            raise ValueError(
+                f"attach_buy_fill: slot {slot_id} status is {slot.status!r}, "
+                f"expected 't0_open'"
+            )
+        slot.buy_fill_price = float(fill_price)
+        slot.buy_fill_ts = fill_ts_iso
+        slot.buy_order_id = order_id
+
+    def attach_amo_sell(self, slot_id: int, amo_order_id: str,
+                        expected_exit_date: date) -> None:
+        slot = self._get_slot(slot_id)
+        if slot.status != "t0_open":
+            raise ValueError(
+                f"attach_amo_sell: slot {slot_id} status is {slot.status!r}, "
+                f"expected 't0_open'"
+            )
+        slot.amo_sell_order_id = amo_order_id
+        slot.expected_exit_date = expected_exit_date.isoformat()
+
+    def settle(self, slot_id: int, sell_fill_price: float, sell_fill_ts_iso: str,
+               fees_inr: float, interest_inr: float) -> None:
+        """T+1 morning: AMO filled. Compute realized PnL, transition to t1_settling."""
+        slot = self._get_slot(slot_id)
+        if slot.status != "t0_open":
+            raise ValueError(
+                f"settle: slot {slot_id} status is {slot.status!r}, expected 't0_open'"
+            )
+        if slot.buy_fill_price is None or slot.notional_inr <= 0:
+            raise ValueError(
+                f"settle: slot {slot_id} missing buy_fill_price or notional"
+            )
+        # Compute qty from notional and buy fill price (avoids storing qty separately)
+        qty = int(round(slot.notional_inr / slot.buy_fill_price))
+        gross_pnl = (float(sell_fill_price) - slot.buy_fill_price) * qty
+        net_pnl = gross_pnl - float(fees_inr) - float(interest_inr)
+        slot.sell_fill_price = float(sell_fill_price)
+        slot.sell_fill_ts = sell_fill_ts_iso
+        slot.fees_inr = float(fees_inr)
+        slot.interest_inr = float(interest_inr)
+        slot.realized_pnl_inr = net_pnl
+        slot.status = "t1_settling"
+
+    def release(self, slot_id: int, cash_back_date: date) -> None:
+        """T+2 morning: cash settled, slot transitions to free."""
+        slot = self._get_slot(slot_id)
+        if slot.status != "t1_settling":
+            raise ValueError(
+                f"release: slot {slot_id} status is {slot.status!r}, "
+                f"expected 't1_settling'"
+            )
+        # Reset slot fields
+        slot.status = "free"
+        slot.symbol = None
+        slot.product = None
+        slot.leverage = 1.0
+        slot.margin_inr = 0.0
+        slot.notional_inr = 0.0
+        slot.buy_fill_price = None
+        slot.buy_fill_ts = None
+        slot.buy_order_id = None
+        slot.amo_sell_order_id = None
+        slot.expected_exit_date = None
+        slot.sell_fill_price = None
+        slot.sell_fill_ts = None
+        slot.realized_pnl_inr = None
+        slot.fees_inr = None
+        slot.interest_inr = None
+        slot.reserved_today = None
+
+    # ---------- Queries ----------
+
+    def _get_slot(self, slot_id: int) -> OvernightSlot:
+        for s in self._slots:
+            if s.slot_id == slot_id:
+                return s
+        raise KeyError(f"slot_id {slot_id} not found")
+
+    def active(self) -> list[OvernightSlot]:
+        """All slots with status != 'free'."""
+        return [s for s in self._slots if s.status != "free"]
+
+    def free_count(self) -> int:
+        return sum(1 for s in self._slots if s.status == "free")
+
+    def settling_count(self) -> int:
+        return sum(1 for s in self._slots if s.status == "t1_settling")
+
+    def open_count(self) -> int:
+        return sum(1 for s in self._slots if s.status == "t0_open")
+
+    def new_today_count(self, today: date) -> int:
+        iso = today.isoformat()
+        return sum(
+            1 for s in self._slots
+            if s.reserved_today == iso and s.status != "free"
+        )
+
+    def overnight_capital_committed_inr(self) -> float:
+        return sum(s.margin_inr for s in self._slots if s.status != "free")
+
+    def persist(self) -> None:
+        """Public persist hook — call after a batch of mutations."""
+        self._persist()

@@ -81,6 +81,10 @@ docs/*
 .claude/
 .claude/settings.local.json
 state/closed_trades.json
+state/overnight_slots.json
+state/overnight_slots.json.tmp
+logs/overnight_entry.log
+logs/overnight_verify.log
 models/conviction/*.parquet
 models/conviction/*-xgboost.json
 models/conviction/*-training-metrics.json
