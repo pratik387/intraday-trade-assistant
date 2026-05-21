@@ -1,0 +1,614 @@
+"""Cron-triggered handlers for overnight setups (close_dn_overnight_long).
+
+Two short-lived entry points called by cron once per trading day:
+  - run_entry(): 15:25 IST. Compute signal, place MOC BUY + AMO SELL.
+  - run_verify_exit(): 09:30 IST next day. Verify fills, settle, release.
+
+Both are idempotent — safe to re-run on missed cron fires.
+
+Spec: specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.md
+"""
+from __future__ import annotations
+
+import logging
+import time as _time_mod
+from datetime import date, datetime, time, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+def _next_trading_day(d: date) -> date:
+    """Naive next-trading-day: Mon-Thu -> +1 day, Fri -> +3 days (skip weekend).
+
+    Public holidays NOT handled — broker AMO accepts the order regardless;
+    the actual fill happens on the next exchange session. Caller must
+    update via NSE calendar lookup if precision needed.
+    """
+    weekday = d.weekday()  # Mon=0, Fri=4, Sat=5, Sun=6
+    if weekday == 4:       # Friday -> Monday
+        return d + timedelta(days=3)
+    if weekday == 5:       # Saturday -> Monday
+        return d + timedelta(days=2)
+    if weekday == 6:       # Sunday -> Monday
+        return d + timedelta(days=1)
+    return d + timedelta(days=1)
+
+
+def _select_overnight_setups(config: dict, *, paper_mode: bool) -> list:
+    """Return SetupSpec list for setups with mode='overnight' that are eligible.
+
+    In paper_mode, a setup is eligible if its raw_config has paper_enabled=True.
+    In live mode, a setup is eligible if it is enabled=True.
+
+    Note: get_active_setups() filters strictly by enabled=True, which doesn't
+    work for paper-only setups (enabled=False, paper_enabled=True). We filter
+    the full spec list directly so paper-mode can run setups that aren't yet
+    live-active.
+    """
+    from services.dispatch.setup_registry import SetupRegistry
+    registry = SetupRegistry.load_from_config(config)
+    out: list = []
+    for spec in registry._specs.values():  # noqa: SLF001
+        if spec.mode != "overnight":
+            continue
+        if paper_mode:
+            if bool(spec.raw_config.get("paper_enabled", False)):
+                out.append(spec)
+        else:
+            if bool(spec.enabled):
+                out.append(spec)
+    return out
+
+
+def run_entry(
+    config: dict,
+    broker,
+    *,
+    now_ist: Optional[pd.Timestamp] = None,
+    paper_mode: bool = True,
+) -> dict:
+    """At 15:25 IST: compute signal, place orders, persist state.
+
+    Returns a summary dict for logging/testing.
+    """
+    from utils.time_util import _now_naive_ist
+    from services.capital_manager import OvernightSlotPool
+    from services.dispatch.setup_registry import _import_path
+    from services.setup_universe import close_dn_overnight_long_universe
+
+    now = pd.Timestamp(now_ist) if now_ist is not None else _now_naive_ist()
+    today = now.date()
+
+    summary: dict = {
+        "now_ist": str(now), "today": str(today),
+        "paper_mode": paper_mode,
+        "fired_count": 0, "skipped_count": 0, "rejected_count": 0,
+        "events": [],
+    }
+
+    paper_enabled_setups = _select_overnight_setups(config, paper_mode=paper_mode)
+    if not paper_enabled_setups:
+        logger.info("run_entry: no overnight setups active (paper_mode=%s); exit", paper_mode)
+        return summary
+
+    # Pool (shared across overnight setups — currently only close_dn_overnight_long)
+    slot_cfg = paper_enabled_setups[0].raw_config["capital_allocation"]
+    state_path = Path(slot_cfg["state_file"])
+    pool = OvernightSlotPool(
+        state_path,
+        max_slots=int(slot_cfg["max_concurrent_slots"]),
+        margin_per_slot=float(slot_cfg["margin_per_slot_inr"]),
+        max_new_per_day=int(slot_cfg["max_new_positions_per_day"]),
+    )
+
+    # Iterate setups (currently only close_dn_overnight_long; loop is generic)
+    for spec in paper_enabled_setups:
+        detector_cls = _import_path(spec.detector_class_path)
+        # Detector reads its params from the raw_config block; pass setup name via private key.
+        detector = detector_cls({**spec.raw_config, "_setup_name": spec.name})
+
+        # Universe (currently hardcoded for close_dn_overnight_long; this is the only
+        # registered overnight setup. Future overnight setups will need a dispatch on
+        # spec.universe_builder_path here.)
+        daily_dict = _gather_daily_dict(broker, spec.raw_config)
+        try:
+            universe = close_dn_overnight_long_universe(daily_dict, today, spec.raw_config)
+        except Exception as e:
+            logger.exception("run_entry: universe builder failed for %s: %s", spec.name, e)
+            continue
+        logger.info("run_entry: universe size for %s = %d", spec.name, len(universe))
+
+        # Iterate symbols
+        for symbol in universe:
+            ctx = _build_market_context(broker, symbol, now, today, spec.raw_config)
+            if ctx is None:
+                summary["skipped_count"] += 1
+                continue
+            try:
+                analysis = detector.detect(ctx)
+            except Exception as e:
+                logger.warning("run_entry: detector.detect failed for %s: %s", symbol, e)
+                summary["rejected_count"] += 1
+                continue
+            if not analysis.structure_detected or not analysis.events:
+                summary["rejected_count"] += 1
+                continue
+            evt = analysis.events[0]
+            try:
+                plan = detector.plan_long_strategy(ctx, evt)
+            except Exception as e:
+                logger.warning("run_entry: plan_long_strategy failed for %s: %s", symbol, e)
+                plan = None
+            if plan is None:
+                summary["rejected_count"] += 1
+                continue
+
+            # Reserve slot (fails if capacity or per-day cap hit)
+            slot = pool.reserve(
+                symbol=symbol,
+                product=evt.context["product"],
+                leverage=float(evt.context["leverage"]),
+                today=today,
+            )
+            if slot is None:
+                logger.info(
+                    "run_entry: slot capacity hit (free=%d, new_today=%d); skipping %s",
+                    pool.free_count(), pool.new_today_count(today), symbol,
+                )
+                summary["skipped_count"] += 1
+                continue
+
+            # Place MOC BUY
+            try:
+                buy_order_id = _place_buy(
+                    broker, symbol=symbol, qty=plan.qty,
+                    product=evt.context["product"],
+                    paper_mode=paper_mode,
+                    trade_id=f"OVERNIGHT_{today.isoformat()}_{slot.slot_id}",
+                )
+            except Exception as e:
+                logger.error("run_entry: BUY failed for %s: %s; releasing reservation", symbol, e)
+                # Roll back the reservation by directly resetting (free) — slot
+                # never transitioned past t0_open, so cleanest is to release.
+                # Since release() requires t1_settling, we directly reset fields:
+                slot.status = "free"
+                slot.symbol = None
+                slot.product = None
+                slot.leverage = 1.0
+                slot.margin_inr = 0.0
+                slot.notional_inr = 0.0
+                slot.reserved_today = None
+                summary["skipped_count"] += 1
+                continue
+
+            # Determine fill price
+            if paper_mode:
+                fill_price = _paper_fill_price_entry(broker, symbol, today)
+                if fill_price is None:
+                    logger.warning(
+                        "run_entry: paper fill price unavailable for %s; using plan.entry_price",
+                        symbol,
+                    )
+                    fill_price = plan.entry_price
+            else:
+                fill_price = _live_poll_fill(broker, buy_order_id, timeout_sec=60)
+                if fill_price is None:
+                    logger.warning(
+                        "run_entry: %s BUY order %s did not fill within timeout",
+                        symbol, buy_order_id,
+                    )
+                    # Leave the slot in t0_open with no buy_fill — verify-exit
+                    # will detect the orphan and decide.
+                    summary["skipped_count"] += 1
+                    pool.persist()
+                    continue
+
+            pool.attach_buy_fill(
+                slot.slot_id,
+                fill_price=float(fill_price),
+                fill_ts_iso=now.isoformat(),
+                order_id=str(buy_order_id),
+            )
+
+            # Place AMO SELL for next trading day
+            next_day = _next_trading_day(today)
+            try:
+                amo_order_id = _place_amo_sell(
+                    broker, symbol=symbol, qty=plan.qty,
+                    product=evt.context["product"],
+                    paper_mode=paper_mode,
+                    trade_id=f"OVERNIGHT_AMO_{today.isoformat()}_{slot.slot_id}",
+                )
+            except Exception as e:
+                logger.error(
+                    "run_entry: AMO SELL failed for %s: %s; slot left at t0_open without amo_order_id",
+                    symbol, e,
+                )
+                # Persist what we have so far so the orphan is recoverable on
+                # next cron fire (verify-exit reads the state).
+                pool.persist()
+                summary["skipped_count"] += 1
+                continue
+            pool.attach_amo_sell(slot.slot_id, str(amo_order_id), next_day)
+
+            summary["fired_count"] += 1
+            summary["events"].append({
+                "symbol": symbol, "qty": plan.qty,
+                "product": evt.context["product"],
+                "buy_fill_price": float(fill_price),
+                "amo_sell_order_id": str(amo_order_id),
+                "expected_exit_date": next_day.isoformat(),
+            })
+
+    # Persist
+    pool.persist()
+    logger.info(
+        "run_entry: complete | fired=%d skipped=%d rejected=%d",
+        summary["fired_count"], summary["skipped_count"], summary["rejected_count"],
+    )
+    return summary
+
+
+def run_verify_exit(
+    config: dict,
+    broker,
+    *,
+    now_ist: Optional[pd.Timestamp] = None,
+    paper_mode: bool = True,
+) -> dict:
+    """At 09:30 IST: verify AMO fills, settle, release.
+
+    Idempotent — safe to re-run after a missed cron fire.
+    """
+    from utils.time_util import _now_naive_ist
+    from services.capital_manager import OvernightSlotPool
+    from tools.sub7_validation.build_per_setup_pnl import (
+        calc_fee_cnc, calc_fee_mtf, MTF_INTEREST_RATE_PER_DAY,
+    )
+
+    now = pd.Timestamp(now_ist) if now_ist is not None else _now_naive_ist()
+    today = now.date()
+
+    summary: dict = {
+        "now_ist": str(now), "today": str(today),
+        "paper_mode": paper_mode,
+        "settled_count": 0, "released_count": 0,
+        "orphan_t0_count": 0, "events": [],
+    }
+
+    paper_enabled_setups = _select_overnight_setups(config, paper_mode=paper_mode)
+    if not paper_enabled_setups:
+        logger.info("run_verify_exit: no overnight setups active; exit")
+        return summary
+
+    slot_cfg = paper_enabled_setups[0].raw_config["capital_allocation"]
+    state_path = Path(slot_cfg["state_file"])
+    if not state_path.exists():
+        logger.info("run_verify_exit: no state file at %s; nothing to verify", state_path)
+        return summary
+
+    pool = OvernightSlotPool(
+        state_path,
+        max_slots=int(slot_cfg["max_concurrent_slots"]),
+        margin_per_slot=float(slot_cfg["margin_per_slot_inr"]),
+        max_new_per_day=int(slot_cfg["max_new_positions_per_day"]),
+    )
+
+    # Phase 1: settle T0 slots whose AMO has executed (expected_exit_date <= today)
+    for slot in list(pool.active()):
+        if slot.status != "t0_open":
+            continue
+        if slot.expected_exit_date is None:
+            logger.warning(
+                "run_verify_exit: slot %d in t0_open without expected_exit_date -- orphan",
+                slot.slot_id,
+            )
+            summary["orphan_t0_count"] += 1
+            continue
+        expected_exit = date.fromisoformat(slot.expected_exit_date)
+        if today < expected_exit:
+            logger.info(
+                "run_verify_exit: slot %d not yet eligible (expected_exit=%s, today=%s)",
+                slot.slot_id, expected_exit, today,
+            )
+            continue
+        if slot.buy_fill_price is None or slot.notional_inr <= 0:
+            logger.warning(
+                "run_verify_exit: slot %d missing buy_fill_price/notional -- orphan",
+                slot.slot_id,
+            )
+            summary["orphan_t0_count"] += 1
+            continue
+
+        # Determine sell fill price
+        if paper_mode:
+            sell_price = _paper_fill_price_exit(broker, slot.symbol, expected_exit)
+            if sell_price is None:
+                logger.warning(
+                    "run_verify_exit: paper fill unavailable for %s on %s",
+                    slot.symbol, expected_exit,
+                )
+                continue
+        else:
+            sell_price = _live_check_amo_fill(broker, slot.amo_sell_order_id)
+            if sell_price is None:
+                logger.warning(
+                    "run_verify_exit: live AMO %s did not fill; placing failsafe SELL",
+                    slot.amo_sell_order_id,
+                )
+                # Failsafe: place a regular market SELL at current LTP
+                qty_for_failsafe = int(round(slot.notional_inr / slot.buy_fill_price))
+                try:
+                    _place_failsafe_sell(
+                        broker,
+                        symbol=slot.symbol, qty=qty_for_failsafe,
+                        product=slot.product or "CNC",
+                    )
+                    sell_price = float(broker.get_ltp(slot.symbol))
+                except Exception as e:
+                    logger.error(
+                        "run_verify_exit: failsafe SELL failed for slot %d: %s",
+                        slot.slot_id, e,
+                    )
+                    continue
+
+        # Compute fees + interest
+        qty = int(round(slot.notional_inr / slot.buy_fill_price))
+        buy_value = slot.buy_fill_price * qty
+        sell_value = float(sell_price) * qty
+        if (slot.product or "").upper() == "MTF":
+            buy_day = (
+                date.fromisoformat(slot.reserved_today)
+                if slot.reserved_today is not None else expected_exit
+            )
+            hold_days = max(1, (expected_exit - buy_day).days)
+            fees_total = calc_fee_mtf(buy_value, sell_value, slot.margin_inr, hold_days)
+            borrowed = max(0.0, buy_value - slot.margin_inr)
+            interest = borrowed * MTF_INTEREST_RATE_PER_DAY * hold_days
+            fees_only = max(0.0, fees_total - interest)
+        else:
+            fees_only = calc_fee_cnc(buy_value, sell_value)
+            interest = 0.0
+
+        pool.settle(
+            slot_id=slot.slot_id,
+            sell_fill_price=float(sell_price),
+            sell_fill_ts_iso=now.isoformat(),
+            fees_inr=float(fees_only),
+            interest_inr=float(interest),
+        )
+        summary["settled_count"] += 1
+        settled = pool._get_slot(slot.slot_id)  # noqa: SLF001
+        summary["events"].append({
+            "slot_id": slot.slot_id,
+            "symbol": slot.symbol,
+            "buy_price": slot.buy_fill_price,
+            "sell_price": float(sell_price),
+            "realized_pnl": settled.realized_pnl_inr,
+        })
+
+    # Phase 2: release T1 slots whose T+2 cash settle date has arrived
+    for slot in list(pool.active()):
+        if slot.status != "t1_settling":
+            continue
+        if slot.expected_exit_date is None:
+            continue
+        expected_exit = date.fromisoformat(slot.expected_exit_date)
+        t2_settle_day = _next_trading_day(expected_exit)
+        if today >= t2_settle_day:
+            pool.release(slot.slot_id, today)
+            summary["released_count"] += 1
+
+    pool.persist()
+    logger.info(
+        "run_verify_exit: complete | settled=%d released=%d orphan_t0=%d",
+        summary["settled_count"], summary["released_count"], summary["orphan_t0_count"],
+    )
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _gather_daily_dict(broker, setup_cfg: dict) -> Dict[str, pd.DataFrame]:
+    """Build a daily_dict for the universe builder.
+
+    In paper/live mode the broker exposes get_daily() (per-symbol cache) plus
+    list_symbols(). The overnight universe builder consults nse_all.json
+    (cap_segment + MIS) and daily history (volume + coverage). We pre-fetch
+    daily history for ALL listed NSE EQ symbols here.
+    """
+    if not hasattr(broker, "list_symbols"):
+        logger.warning("_gather_daily_dict: broker has no list_symbols(); returning empty dict")
+        return {}
+    symbols = broker.list_symbols(exchange="NSE", instrument_type="EQ")
+    days = int(setup_cfg.get("min_trading_days_required", 30)) + 5
+    daily_dict: Dict[str, pd.DataFrame] = {}
+    for sym in symbols:
+        nse_sym = sym if str(sym).startswith("NSE:") else f"NSE:{sym}"
+        try:
+            ddf = broker.get_daily(nse_sym, days=days)
+            if ddf is not None and not ddf.empty:
+                daily_dict[nse_sym] = ddf
+        except Exception:
+            continue
+    return daily_dict
+
+
+def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
+                          setup_cfg: dict):
+    """Build a MarketContext for a single symbol at the current bar timestamp."""
+    from structures.data_models import MarketContext
+
+    # 5m bars
+    df_5m: Optional[pd.DataFrame] = None
+    if hasattr(broker, "_load_enriched_5m"):
+        try:
+            all_enriched = broker._load_enriched_5m()
+            bare = symbol.replace("NSE:", "")
+            df_5m = all_enriched.get(bare)
+            if df_5m is None:
+                df_5m = all_enriched.get(symbol)
+        except Exception as e:
+            logger.warning("_build_market_context: 5m load failed for %s: %s", symbol, e)
+            df_5m = None
+    else:
+        df_5m = _get_5m_for_symbol_live(broker, symbol, today, setup_cfg)
+
+    if df_5m is None or df_5m.empty:
+        return None
+    # Filter to bars on or before `now`
+    df_5m = df_5m[df_5m.index <= now]
+    if df_5m.empty:
+        return None
+
+    # cap_segment (optional; detector tolerates None)
+    cap_seg = None
+    try:
+        from services.symbol_metadata import get_cap_segment
+        cap_seg = get_cap_segment(symbol)
+    except Exception:
+        cap_seg = None
+
+    return MarketContext(
+        symbol=symbol,
+        current_price=float(df_5m["close"].iloc[-1]),
+        timestamp=df_5m.index[-1],
+        df_5m=df_5m,
+        session_date=pd.Timestamp(today),
+        cap_segment=cap_seg,
+    )
+
+
+def _get_5m_for_symbol_live(broker, symbol: str, today: date, setup_cfg: dict) -> Optional[pd.DataFrame]:
+    """Fetch today's 5m bars from a live broker (Kite API)."""
+    if not hasattr(broker, "fetch_candles"):
+        return None
+    try:
+        candles = broker.fetch_candles(symbol, interval="5minute", token=None)
+        df = pd.DataFrame(candles, columns=["date", "open", "high", "low", "close", "volume"])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        return df
+    except Exception as e:
+        logger.warning("_get_5m_for_symbol_live: fetch_candles failed for %s: %s", symbol, e)
+        return None
+
+
+def _place_buy(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
+               trade_id: str) -> str:
+    """Place a MOC BUY order (variety=regular, product=MTF or CNC)."""
+    order_id = broker.place_order(
+        symbol=symbol, side="BUY", qty=qty,
+        order_type="MARKET", product=product, variety="regular",
+        trade_id=trade_id, check_margins=(product == "MIS"),
+    )
+    return str(order_id)
+
+
+def _place_amo_sell(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
+                    trade_id: str) -> str:
+    """Place an AMO SELL for next-day pre-open execution."""
+    order_id = broker.place_order(
+        symbol=symbol, side="SELL", qty=qty,
+        order_type="MARKET", product=product, variety="amo",
+        trade_id=trade_id, check_margins=False,
+    )
+    return str(order_id)
+
+
+def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str) -> str:
+    """Failsafe regular market SELL when AMO did not execute."""
+    order_id = broker.place_order(
+        symbol=symbol, side="SELL", qty=qty,
+        order_type="MARKET", product=product, variety="regular",
+        check_margins=False,
+    )
+    return str(order_id)
+
+
+def _paper_fill_price_entry(broker, symbol: str, today: date) -> Optional[float]:
+    """In paper mode, the 15:25 bar's CLOSE is the MOC fill price (= 15:30 IST close)."""
+    if not hasattr(broker, "_load_enriched_5m"):
+        return None
+    try:
+        bare = symbol.replace("NSE:", "")
+        all_enriched = broker._load_enriched_5m()
+        df = all_enriched.get(bare)
+        if df is None:
+            df = all_enriched.get(symbol)
+        if df is None or df.empty:
+            return None
+        target_ts = pd.Timestamp.combine(today, time(15, 25))
+        if target_ts in df.index:
+            return float(df.loc[target_ts, "close"])
+        # Closest match strictly at-or-before
+        before = df[df.index <= target_ts]
+        if before.empty:
+            return None
+        return float(before["close"].iloc[-1])
+    except Exception as e:
+        logger.warning("_paper_fill_price_entry failed for %s: %s", symbol, e)
+        return None
+
+
+def _paper_fill_price_exit(broker, symbol: str, exit_date: date) -> Optional[float]:
+    """In paper mode, AMO SELL fills at next-day 09:15 bar's OPEN."""
+    if not hasattr(broker, "_load_enriched_5m"):
+        return None
+    try:
+        bare = symbol.replace("NSE:", "")
+        all_enriched = broker._load_enriched_5m()
+        df = all_enriched.get(bare)
+        if df is None:
+            df = all_enriched.get(symbol)
+        if df is None or df.empty:
+            return None
+        target_ts = pd.Timestamp.combine(exit_date, time(9, 15))
+        if target_ts in df.index:
+            return float(df.loc[target_ts, "open"])
+        # First bar at-or-after target
+        after = df[df.index >= target_ts]
+        if after.empty:
+            return None
+        return float(after["open"].iloc[0])
+    except Exception as e:
+        logger.warning("_paper_fill_price_exit failed for %s: %s", symbol, e)
+        return None
+
+
+def _live_poll_fill(broker, order_id: str, timeout_sec: int = 60) -> Optional[float]:
+    """Poll broker for order status until filled or timeout. Returns avg fill price."""
+    if not hasattr(broker, "get_order_status"):
+        logger.warning("_live_poll_fill: broker has no get_order_status; returning None")
+        return None
+    deadline = _time_mod.time() + timeout_sec
+    while _time_mod.time() < deadline:
+        try:
+            status = broker.get_order_status(order_id)
+            if status and status.get("status") == "COMPLETE":
+                return float(status.get("average_price", 0.0))
+        except Exception as e:
+            logger.warning("_live_poll_fill: status check failed: %s", e)
+        _time_mod.sleep(2)
+    return None
+
+
+def _live_check_amo_fill(broker, amo_order_id: str) -> Optional[float]:
+    """Check whether an AMO order has filled. Returns avg fill price or None."""
+    if not hasattr(broker, "get_order_status"):
+        return None
+    try:
+        status = broker.get_order_status(amo_order_id)
+        if status and status.get("status") == "COMPLETE":
+            return float(status.get("average_price", 0.0))
+    except Exception as e:
+        logger.warning("_live_check_amo_fill failed: %s", e)
+    return None

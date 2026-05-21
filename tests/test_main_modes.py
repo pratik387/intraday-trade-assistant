@@ -40,15 +40,16 @@ def test_overnight_mode_with_run_action_errors():
     assert "daemon" in r.stderr.lower() or "no daemon" in r.stderr.lower()
 
 
-def test_overnight_entry_stub_exits_cleanly():
-    """--mode=overnight --action=entry should hit the stub and exit code 0."""
-    r = _run(["--mode", "overnight", "--action", "entry"], timeout=10)
-    assert r.returncode == 0
-    assert "STUB" in r.stderr or "stub" in r.stderr.lower()
+def test_overnight_verify_exit_dry_run_exits_cleanly():
+    """--dry-run --mode=overnight --action=verify-exit should exit code 0.
 
-
-def test_overnight_verify_exit_stub_exits_cleanly():
-    """--mode=overnight --action=verify-exit should hit the stub and exit code 0."""
-    r = _run(["--mode", "overnight", "--action", "verify-exit"], timeout=10)
-    assert r.returncode == 0
-    assert "STUB" in r.stderr or "stub" in r.stderr.lower()
+    No state file is required: handler returns early with zero settled.
+    Verifies wiring works end-to-end through the CLI.
+    """
+    r = _run(
+        ["--dry-run", "--mode", "overnight", "--action", "verify-exit",
+         "--session-date", "2024-03-15"],
+        timeout=60,
+    )
+    assert r.returncode == 0, f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    assert "overnight verify-exit" in r.stderr.lower() or "settled=" in r.stderr.lower()

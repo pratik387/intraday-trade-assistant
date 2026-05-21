@@ -675,14 +675,47 @@ if __name__ == "__main__":
         print(f"error: {parser_error}", file=sys.stderr)
         sys.exit(2)
 
-    # Overnight handlers are stubs for now (Task 6 wires them up). Exit cleanly
-    # BEFORE the daemon initializes so cron doesn't pay the startup cost.
+    # Overnight handlers run as short-lived cron-triggered scripts; bypass the
+    # intraday daemon entirely so cron doesn't pay the startup cost.
     if args.mode == "overnight":
+        from services.execution.overnight_handlers import run_entry, run_verify_exit
+        cfg = load_base_config()
+        if args.dry_run or args.paper_trading:
+            # Paper / dry-run: use MockBroker for both data and (no-op) orders
+            slip_bps = float(cfg.get("fees_slippage_bps", 0.0))
+            broker = MockBroker(
+                path_json="nse_all.json",
+                from_date=args.session_date,
+                to_date=args.session_date,
+                slippage_bps=slip_bps,
+            )
+            if args.session_date:
+                broker.set_session_date(args.session_date)
+            paper_mode = True
+        else:
+            # Live mode: use KiteBroker (lazy import to avoid kiteconnect cost in dry-run/Lambda)
+            from broker.kite.kite_broker import KiteBroker  # noqa: WPS433
+            broker = KiteBroker(
+                api_key=os.environ.get("KITE_API_KEY"),
+                access_token=os.environ.get("KITE_ACCESS_TOKEN"),
+            )
+            paper_mode = False
+
         if args.action == "entry":
-            print("STUB: overnight entry handler not yet implemented (Task 6)", file=sys.stderr)
+            summary = run_entry(cfg, broker, paper_mode=paper_mode)
+            print(
+                f"[overnight entry] fired={summary['fired_count']} "
+                f"skipped={summary['skipped_count']} rejected={summary['rejected_count']}",
+                file=sys.stderr,
+            )
             sys.exit(0)
         elif args.action == "verify-exit":
-            print("STUB: overnight verify-exit handler not yet implemented (Task 6)", file=sys.stderr)
+            summary = run_verify_exit(cfg, broker, paper_mode=paper_mode)
+            print(
+                f"[overnight verify-exit] settled={summary['settled_count']} "
+                f"released={summary['released_count']} orphan_t0={summary['orphan_t0_count']}",
+                file=sys.stderr,
+            )
             sys.exit(0)
 
     sys.exit(main())
