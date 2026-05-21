@@ -216,41 +216,41 @@
       "paper_enabled": true,
       "universe_max_symbols": 1500,
       "_status": "Paper-trade validation phase started 2026-05-21. See specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md. Do NOT enable in live until paper passes acceptance criteria.",
-      "mechanism_tags": ["volume_imbalance_revert", "afternoon_cohort"],
+      "mechanism_tags": [
+        "volume_imbalance_revert",
+        "afternoon_cohort"
+      ],
       "mechanism_notes": "LONG mean-revert on stocks trading >=2% below cumulative session VWAP with 10x+ same-time-of-day volume in the afternoon (13:00-14:55). 3D cell-locked to cap_segment=unknown (small/SME-tier names per nse_all.json). Disc PF 1.587 / OOS 1.782 / HO 1.606 across 2023-2026.",
       "detector_class": "structures.below_vwap_volume_revert_long_structure.BelowVwapVolumeRevertLongStructure",
       "universe_builder": "services.setup_universe.below_vwap_volume_revert_long_universe",
       "universe_trigger": "session_start",
       "regulatory_sensitivity": "rule_orthogonal",
-      "depends_on": ["MIS_leverage", "STT_drag"],
-
+      "depends_on": [
+        "MIS_leverage",
+        "STT_drag"
+      ],
       "active_window_start": "10:00",
       "active_window_end": "14:55",
       "vwap_dev_pct_max": -2.0,
       "confidence_depth_band_floor_pct": -6.0,
       "vol_ratio_min": 3.0,
-
       "cell_lock_cap_segment": "unknown",
       "cell_lock_vol_ratio_min": 10.0,
       "cell_lock_hhmm_min": "13:00",
       "cell_lock_hhmm_max": "14:55",
-
       "min_signal_bar_notional_rs": 500000,
-      "min_daily_avg_volume": 50000,
-      "min_trading_days_required": 30,
-
+      "min_daily_avg_volume": 0,
+      "min_trading_days_required": 0,
       "t1_r_multiple": 1.5,
       "t2_r_multiple": 2.0,
       "sl_buffer_below_bar_low_pct": 0.2,
       "min_stop_pct": 1.0,
       "t1_partial_qty_pct": 0.5,
       "time_stop_at": "14:30",
-
       "min_bars_required": 12,
       "entry_zone_pct": 0.3,
       "entry_zone_mode": "symmetric",
       "min_stop_distance_pct": 0.5,
-
       "priority": 70,
       "capital_budget_pct": 15,
       "max_concurrent_positions": 15,
@@ -432,8 +432,8 @@
       "cell_volume_z_min": 2.0,
       "cell_prior_day_return_pct_min": 3.0,
       "baseline_rolling_days": 20,
-      "min_daily_avg_volume": 50000,
-      "min_trading_days_required": 30,
+      "min_daily_avg_volume": 0,
+      "min_trading_days_required": 0,
       "universe_max_symbols": 1500,
       "capital_allocation": {
         "active_margin_inr": 400000,
@@ -452,7 +452,7 @@
       },
       "decay_tripwire": {
         "window_trades": 30,
-        "pf_floor": 1.20,
+        "pf_floor": 1.2,
         "sustained_weeks": 6,
         "state_file": "state/decay_tripwire_close_dn_overnight_long.json"
       }
