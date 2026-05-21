@@ -122,3 +122,21 @@ def test_passes_vwap_check_when_below_2pct():
     r = det.detect(ctx)
     # Will still reject (vol_ratio not computed yet), but reason should NOT be vwap.
     assert (r.rejection_reason or "").lower().find("vwap") == -1
+
+
+def test_rejects_when_before_afternoon_cell_window():
+    """Bar at 11:00 passes active_window (10:00-14:55) but is OUTSIDE cell
+    hhmm range (13:00-14:55) → rejected by cell hhmm guard."""
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 22  # 09:15 + 21*5min ends at 10:55; last bar stamped at 11:00
+    closes = [100.0] * (n - 1) + [97.0]  # 3% drop, passes VWAP filter
+    vols = [10000] * n
+    df = _make_df(n_bars=n, hhmm_str="11:00", close_seq=closes, volume_seq=vols)
+    ctx = MarketContext(
+        symbol="TEST", current_price=97.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+    )
+    r = det.detect(ctx)
+    assert not r.structure_detected
+    assert "cell_hhmm" in (r.rejection_reason or "").lower() or \
+           "hhmm" in (r.rejection_reason or "").lower()

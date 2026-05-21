@@ -106,7 +106,14 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
                 f"vwap_dev_pct={vwap_dev_pct:.3f} > max={self.vwap_dev_pct_max}"
             )
 
-        return _empty("not_implemented_beyond_deviation_check")
+        # Cell-lock hhmm: 13:00 <= bar_hhmm <= 14:55
+        if not (self.cell_hhmm_min <= cur_t <= self.cell_hhmm_max):
+            return _empty(
+                f"cell_hhmm window: {cur_t} not in "
+                f"[{self.cell_hhmm_min}, {self.cell_hhmm_max}]"
+            )
+
+        return _empty("not_implemented_beyond_cell_hhmm")
 
     def plan_long_strategy(self, context, event=None):
         return None
