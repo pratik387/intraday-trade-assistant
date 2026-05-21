@@ -143,7 +143,15 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
                 f"vol_ratio={vol_ratio:.2f} < cell_lock={self.cell_vol_ratio_min}"
             )
 
-        return _empty("not_implemented_beyond_vol_ratio")
+        # Liquidity guard: signal-bar notional >= configured floor.
+        # Mitigates thin order-book risk in cap_segment=unknown cohort.
+        notional = bar_close * bar_volume
+        if notional < self.min_signal_bar_notional_rs:
+            return _empty(
+                f"notional={notional:,.0f} < min={self.min_signal_bar_notional_rs:,.0f}"
+            )
+
+        return _empty("not_implemented_beyond_liquidity_guard")
 
     def plan_long_strategy(self, context, event=None):
         return None

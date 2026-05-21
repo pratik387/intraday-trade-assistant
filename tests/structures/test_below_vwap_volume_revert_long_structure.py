@@ -204,3 +204,28 @@ def test_rejects_when_baseline_missing(monkeypatch):
     r = det.detect(ctx)
     assert not r.structure_detected
     assert "baseline" in (r.rejection_reason or "").lower()
+
+
+def test_rejects_when_signal_bar_notional_too_thin(monkeypatch):
+    """signal_bar.close * signal_bar.volume < Rs 5L should reject (thin
+    order-book guard for unknown-segment names)."""
+    from services import cross_day_rvol_enrichment
+    monkeypatch.setattr(cross_day_rvol_enrichment, "get_baseline_vol",
+                        lambda s, d, h: 1000.0)  # baseline 1000 → vol_ratio = 20
+
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 60
+    # close=10, volume=20000 → notional = 200,000 (< 500,000 threshold)
+    closes = [10.0] * (n - 1) + [9.7]
+    vols = [1000] * (n - 1) + [20000]
+    df = _make_df(n_bars=n, hhmm_str="14:10",
+                  close_seq=closes, volume_seq=vols,
+                  open_val=10.0, high_val=10.05, low_val=9.95)
+    ctx = MarketContext(
+        symbol="TEST", current_price=9.7, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+        cap_segment="unknown",
+    )
+    r = det.detect(ctx)
+    assert not r.structure_detected
+    assert "notional" in (r.rejection_reason or "").lower()
