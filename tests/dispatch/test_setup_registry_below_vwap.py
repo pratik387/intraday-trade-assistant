@@ -40,7 +40,13 @@ def test_registry_validate_imports_succeeds_if_paper_enabled():
 def test_setup_categories_has_below_vwap():
     """config.setup_categories must register the new setup as REVERSION (per
     Task 1 code-reviewer flag — without this, services.gates.trade_decision_gate
-    would silently treat the setup as uncategorized)."""
+    would silently treat the setup as uncategorized).
+
+    Convention: register the BASE name (without _long/_short suffix). get_category()
+    calls get_base_setup_name() which strips the direction, so a base-name entry
+    serves both directional variants. Other entries in SETUP_CATEGORIES follow the
+    same pattern (e.g., 'gap_fade' covers gap_fade_long and gap_fade_short).
+    """
     from config.setup_categories import SETUP_CATEGORIES, SetupCategory, get_category
-    assert SETUP_CATEGORIES["below_vwap_volume_revert_long"] == SetupCategory.REVERSION
+    assert SETUP_CATEGORIES["below_vwap_volume_revert"] == SetupCategory.REVERSION
     assert get_category("below_vwap_volume_revert_long") == SetupCategory.REVERSION
