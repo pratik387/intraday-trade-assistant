@@ -82,7 +82,31 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
         if not (self.active_start <= cur_t <= self.active_end):
             return _empty(f"Outside active window: {cur_t}")
 
-        return _empty("not_implemented_beyond_active_window")
+        session_date = (
+            context.session_date if context.session_date is not None
+            else pd.Timestamp(last_ts).date()
+        )
+        _sd = session_date.date() if hasattr(session_date, "date") else session_date
+        today_bars = df[df.index.date == _sd]
+        if today_bars.empty:
+            return _empty("No bars for session date")
+
+        # Session VWAP up through current (last) bar — cumulative since 09:15.
+        pv = (today_bars["close"].astype("float64") * today_bars["volume"].astype("float64")).cumsum()
+        vol_cum = today_bars["volume"].astype("float64").cumsum()
+        if float(vol_cum.iloc[-1]) <= 0:
+            return _empty("Zero session volume")
+        session_vwap = float(pv.iloc[-1] / vol_cum.iloc[-1])
+        last_bar = today_bars.iloc[-1]
+        bar_close = float(last_bar["close"])
+        vwap_dev_pct = (bar_close - session_vwap) / session_vwap * 100.0
+
+        if vwap_dev_pct > self.vwap_dev_pct_max:
+            return _empty(
+                f"vwap_dev_pct={vwap_dev_pct:.3f} > max={self.vwap_dev_pct_max}"
+            )
+
+        return _empty("not_implemented_beyond_deviation_check")
 
     def plan_long_strategy(self, context, event=None):
         return None

@@ -86,3 +86,39 @@ def test_rejects_outside_active_window():
     r = det.detect(ctx)
     assert not r.structure_detected
     assert "active" in (r.rejection_reason or "").lower() or "window" in (r.rejection_reason or "").lower()
+
+
+def test_rejects_when_above_vwap_threshold():
+    """Bar with vwap_dev > -2% is rejected (not deep enough below VWAP)."""
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    # Build session where VWAP ≈ 100, current bar closes at 99.5 (dev = -0.5%)
+    # All bars same close = 100, last bar = 99.5 → cumulative VWAP slightly < 100
+    n = 12
+    closes = [100.0] * (n - 1) + [99.5]
+    vols = [10000] * n
+    df = _make_df(n_bars=n, hhmm_str="13:30", close_seq=closes, volume_seq=vols)
+    ctx = MarketContext(
+        symbol="TEST", current_price=99.5, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+    )
+    r = det.detect(ctx)
+    assert not r.structure_detected
+    assert "vwap" in (r.rejection_reason or "").lower()
+
+
+def test_passes_vwap_check_when_below_2pct():
+    """Bar 3% below cumulative VWAP advances past the VWAP filter (other
+    filters may still reject — we check rejection reason does NOT mention vwap)."""
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 12
+    # All earlier bars close=100; last bar close = 97 (drop)
+    closes = [100.0] * (n - 1) + [97.0]
+    vols = [10000] * n
+    df = _make_df(n_bars=n, hhmm_str="13:30", close_seq=closes, volume_seq=vols)
+    ctx = MarketContext(
+        symbol="TEST", current_price=97.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+    )
+    r = det.detect(ctx)
+    # Will still reject (vol_ratio not computed yet), but reason should NOT be vwap.
+    assert (r.rejection_reason or "").lower().find("vwap") == -1
