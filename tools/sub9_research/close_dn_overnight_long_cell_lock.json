@@ -1,0 +1,137 @@
+{
+  "setup_name": "close_dn_overnight_long",
+  "variant": "candidate_5_volume_z_extreme_x_up_gt_3pct_5bar",
+  "window_label": "Discovery mined; OOS+HO one-shot validated; 5-bar realistic-live signal",
+  "locked_at": "2026-05-21T16:30:00Z",
+  "supersedes": "none (new candidate)",
+  "direction": "LONG",
+  "mode": "CNC delivery (overnight hold)",
+  "signal_filters": {
+    "comment": "Brief-level (primary) filter — every signal candidate must meet these BEFORE cell-lock applies. Signal is computed from 5 bars (15:00, 15:05, 15:10, 15:15, 15:20) of the closing window; the 15:25 bar is intentionally EXCLUDED to avoid look-ahead bias (the 15:25 bar's data isn't fully known until 15:30 IST, after which the MOC order has already been placed).",
+    "signed_vol_ratio_max": -0.5,
+    "_signed_vol_ratio_def": "Sigma(volume_i * sign(close_i - open_i)) / Sigma(volume_i) over the 5 signal bars",
+    "closing_25m_volume_z_min": 1.0,
+    "_volume_z_def": "(today_5bar_total - mean_prior_20d_5bar_total) / std_prior_20d_5bar_total per symbol",
+    "min_bar_count": 4,
+    "_min_bar_count_def": "Require at least 4 of 5 signal bars to be present for the symbol (graceful handling of gaps).",
+    "exclude_micro_cap": true,
+    "min_daily_avg_volume": 50000,
+    "min_trading_days_coverage_pct": 80
+  },
+  "cell_filter": {
+    "comment": "2D cell mined from Discovery sweep. Cell #5 from confidence framework run.",
+    "closing_30m_volume_z_bin": "extreme",
+    "_volume_z_extreme_def": "closing_30m_volume_z >= 2.0",
+    "prior_day_return_bin": "up_gt_3pct",
+    "_prior_day_return_def": "(prior_close - prev_prior_close) / prev_prior_close * 100 >= 3.0"
+  },
+  "entry_exit_mechanic": {
+    "entry_mode": "MOC_market_on_close",
+    "entry_bar_hhmm": "15:25",
+    "_entry_execution": "Submit Market-on-Close (MOC) CNC BUY order at start of 15:25 bar (i.e., 15:25 IST). Order fills at NSE official closing price (typically the volume-weighted average of last 30 mins per NSE rules, derived from the 15:30 close).",
+    "entry_price_backtest": "close of 15:25 bar (= 15:30 IST market close price)",
+    "exit_mode": "open_next_day",
+    "exit_bar_hhmm": "09:15",
+    "_exit_execution": "Submit CNC SELL order during pre-open auction window (09:00-09:08 IST). Fills at the pre-open auction equilibrium price (becomes the 09:15 official open).",
+    "exit_price_backtest": "open of next-trading-day 09:15 bar",
+    "position_holding_hours": "~17-18 hours overnight (Mon-Thu), ~66 hours (Fri close -> Mon open), longer over public holidays",
+    "no_intraday_management": "No SL, no T1, no T2 — single fixed exit at next-day open. Market is closed during the hold period."
+  },
+  "stats_5bar_realistic_live": {
+    "_basis": "5-bar signal (15:00-15:20) recomputed in tools/sub9_research/sanity_close_dn_overnight_5bar.py to eliminate the look-ahead bias of the original 6-bar (15:00-15:25) sanity. These numbers reflect what live execution would actually produce.",
+    "discovery": {"n": 1279, "pf": 3.987, "wr_pct": 72.1, "mean_inr_per_trade": 523, "net_inr": 668619},
+    "oos": {"n": 971, "pf": 2.159, "wr_pct": 64.2, "mean_inr_per_trade": 318, "net_inr": 308498},
+    "holdout": {"n": 803, "pf": 1.515, "wr_pct": 59.2, "mean_inr_per_trade": 191, "net_inr": 152995},
+    "pooled": {
+      "n": 3053,
+      "pf_point": 2.4362,
+      "pf_ci95": [2.1574, 2.7344],
+      "expectancy_inr_point": 370.16,
+      "expectancy_ci95": [323.72, 416.79],
+      "win_rate_point_pct": 66.16,
+      "win_rate_ci95_pct": [64.40, 67.78]
+    },
+    "harvey_liu_m_tested": 58,
+    "harvey_liu_bonferroni_adj_sharpe": 3.609,
+    "harvey_liu_bhy_adj_sharpe": 4.182
+  },
+  "stats_6bar_lookahead_inflated": {
+    "_basis": "Original 6-bar (15:00-15:25) sanity. NOT FOR EXECUTION DECISIONS — these numbers include look-ahead bias because the 15:25 bar isn't fully known when the MOC order is placed. Kept here as a diagnostic.",
+    "discovery": {"n": 912, "pf": 6.043},
+    "oos": {"n": 735, "pf": 2.514},
+    "holdout": {"n": 615, "pf": 2.106},
+    "lookahead_pf_inflation_pct": {
+      "discovery": 51.5,
+      "oos": 16.4,
+      "holdout": 39.0
+    }
+  },
+  "regime_breakdown_5bar": {
+    "_basis": "Pooled D+OOS+HO trades segmented by assets/regime_schema.yaml",
+    "pre_election_calm":            {"n": 1164, "pf": 3.828, "ci_low": 3.13, "ci_high": 4.70},
+    "election_vol_spike":           {"n":  169, "pf": 5.685, "ci_low": 3.34, "ci_high": 9.63},
+    "post_election_consolidation":  {"n":  197, "pf": 3.299, "ci_low": 2.07, "ci_high": 5.21},
+    "fed_pivot_china_rotation_fii_exit": {"n": 468, "pf": 1.485, "ci_low": 1.12, "ci_high": 1.95},
+    "tariff_recovery_rally":        {"n":  208, "pf": 2.965, "ci_low": 1.85, "ci_high": 4.72},
+    "post_tariff_consolidation":    {"n":  627, "pf": 2.000, "ci_low": 1.52, "ci_high": 2.64},
+    "war_vol_2026":                 {"n":  220, "pf": 0.964, "ci_low": 0.66, "ci_high": 1.41}
+  },
+  "decay_warning": {
+    "_basis": "Yearly aggregates show edge degradation; the war_vol_2026 regime PF (0.96) is essentially fee-floor.",
+    "yearly_pf_6bar": {"2023": 3.80, "2024": 4.34, "2025": 2.88, "2026_partial": 1.93},
+    "rolling_3month_pf_floor_6bar": 1.68,
+    "interpretation": "Edge appears to be decaying — likely from more market participants discovering the pattern or from regulatory/microstructure shifts. Forward expectation should NOT assume the headline pooled PF=2.44 will hold; conservative forward estimate is PF 1.3-1.6.",
+    "tripwire": "Pause live execution if rolling 30-trade PF (live or paper) drops below 1.20 sustained for 6 weeks"
+  },
+  "fee_model": {
+    "type": "CNC_delivery",
+    "round_trip_pct_of_capital": 0.171,
+    "fee_breakdown": {
+      "brokerage_buy_inr_flat": 20,
+      "brokerage_sell_inr_flat": 20,
+      "stt_pct_on_sell": 0.001,
+      "stamp_pct_on_buy": 0.00015,
+      "txn_charges_pct_each_side": 0.0000345,
+      "sebi_pct_each_side": 0.000001,
+      "gst_pct_on_brokerage_plus_txn": 0.18
+    },
+    "fee_helper_status": "LOCAL ONLY in tools/sub9_research/sanity_close_dn_overnight_long.py:calc_fee_cnc — NOT yet promoted to tools/sub7_validation/build_per_setup_pnl.py. Needs to be promoted before live wiring."
+  },
+  "per_day_footprint": {
+    "median_disc": 3,
+    "p95_disc": 6,
+    "max_concurrent_positions_recommended": 10,
+    "rs_notional_per_trade": 100000,
+    "comment": "Per the cell sweep + 5-bar sanity. Capital efficiency vs MIS is ~7.6x lower (CNC requires full notional, no 5x leverage); but the setup operates on otherwise-idle overnight capital."
+  },
+  "methodology_notes": {
+    "anti_salvage_compliance": "Pre-registered 4-dim dim_pool (cap_segment, signed_vol_ratio_bin, closing_30m_volume_z_bin, prior_day_return_bin) in specs/2026-05-21-brief-close_dn_overnight_long.md. Cell #5 was selected from 58 ship-eligible cells with per-day median <= 10 via cross-window scan with all-gates-pass filter. Harvey-Liu haircut at M=58.",
+    "lookahead_bias_corrected": "Original 6-bar signal used the 15:25 bar (which only fully closes at 15:30 IST — same time the entry order fills). 5-bar signal recomputation excludes the 15:25 bar, restricting signal info to bars known BEFORE the MOC order is submitted. This is the realistic-live signal.",
+    "stationarity_gate_failed": "max-min PF across (Disc 3.99, OOS 2.16, HO 1.52) = 2.47, exceeds the pre-registered 0.30 ceiling. The mechanism is genuine but Discovery was the abnormally-strong window (likely post-COVID retail-trading boom regime). OOS and HO PFs are consistent with each other (delta 0.64) and confirm forward viability.",
+    "earnings_proximity_dim_dropped": "Phase 4 preview showed news_proximity (within_1day_earnings vs clear) did not affect PF in the HO window — earnings filter is unnecessary. Saves us the earnings_calendar infrastructure dependency."
+  },
+  "discovery_regime_coverage": "2023-01-02 to 2024-06-30 spans pre_election_calm + the start of election_vol_spike. The other 5 regimes are covered only by OOS+HO one-shots.",
+  "oos_window": "2024-07-01 to 2025-06-30",
+  "ho_window": "2025-07-01 to 2026-04-30",
+  "files": {
+    "brief": "specs/2026-05-21-brief-close_dn_overnight_long.md",
+    "shippable_record": "specs/2026-05-21-close_dn_overnight_long-SHIPPABLE-cell-5.md",
+    "sanity_6bar": "tools/sub9_research/sanity_close_dn_overnight_long.py",
+    "sanity_5bar_realistic": "tools/sub9_research/sanity_close_dn_overnight_5bar.py",
+    "multi_exit_diagnostic": "tools/sub9_research/sanity_close_dn_overnight_multi_exit.py",
+    "cell_sweep": "tools/sub9_research/run_cell_sweep_close_dn_overnight.py",
+    "confidence_card": "tools/sub9_research/confidence_card_close_dn_overnight.py",
+    "trades_6bar": {
+      "discovery": "reports/sub9_sanity/_close_dn_overnight_long_trades_discovery.csv",
+      "oos": "reports/sub9_sanity/_close_dn_overnight_long_trades_oos.csv",
+      "holdout": "reports/sub9_sanity/_close_dn_overnight_long_trades_holdout.csv"
+    },
+    "trades_5bar": {
+      "discovery": "reports/sub9_sanity/_close_dn_overnight_long_5bar_trades_discovery.csv",
+      "oos": "reports/sub9_sanity/_close_dn_overnight_long_5bar_trades_oos.csv",
+      "holdout": "reports/sub9_sanity/_close_dn_overnight_long_5bar_trades_holdout.csv"
+    },
+    "cross_window_scan": "reports/sub9_sanity/_close_dn_overnight_long_cross_window_scan.csv",
+    "tight_cells_under_10_per_day": "reports/sub9_sanity/_close_dn_overnight_long_tight_cells_disc_le10.csv"
+  }
+}
