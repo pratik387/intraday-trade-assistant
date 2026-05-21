@@ -54,6 +54,14 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     # 2026-05-15: LONG mean-revert on deep small/mid panic gap-downs. Ships
     # disabled pending universe-wide regime-guard orchestrator wiring.
     "long_panic_gap_down": SetupCategory.REVERSION,
+
+    # 2026-05-21: LONG mean-revert on stocks >=2% below session VWAP with 10x+
+    # same-time-of-day volume in afternoon. Paper-trade validation phase; ships
+    # live-disabled with paper_enabled=true. See specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md.
+    # Both full-name and base-name keys registered so SETUP_CATEGORIES[full]
+    # lookup AND get_category() (which strips _long/_short) both resolve.
+    "below_vwap_volume_revert_long": SetupCategory.REVERSION,
+    "below_vwap_volume_revert": SetupCategory.REVERSION,
 }
 
 

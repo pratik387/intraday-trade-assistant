@@ -211,6 +211,51 @@
       "_comment_regime_guard": "Implemented 2026-05-15 via services/regime_density_tracker.py + services/setup_universe.long_panic_gap_down_universe. In live (ScreenerLive) the universe builder runs at the 09:15 bar, computes ALL symbols passing the BROADER filter (gap_pct<=gap_pct_max AND dist_pdh<=dist_from_pdh_pct_max AND dist_pdl<=broader_dist_from_pdl_pct_max) and pre-seeds the density tracker BEFORE any detector fires. Detector then queries get_density() and suppresses Cell B fires when count > this threshold. Threshold 80 from broader-universe sweep: PF plateau 75-100 gives Disc 1.45 / OOS 1.40 / Holdout 1.72; cliff at 125 (Holdout drops to 1.01). In non-screener paths (test/backtest) the detector falls back to per-symbol note() — sequentially correct but with the v1.0 ordering caveat (first ~80 symbols still fire before guard activates).",
       "wide_open": false
     },
+    "below_vwap_volume_revert_long": {
+      "enabled": false,
+      "paper_enabled": true,
+      "_status": "Paper-trade validation phase started 2026-05-21. See specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md. Do NOT enable in live until paper passes acceptance criteria.",
+      "mechanism_tags": ["volume_imbalance_revert", "afternoon_cohort"],
+      "mechanism_notes": "LONG mean-revert on stocks trading >=2% below cumulative session VWAP with 10x+ same-time-of-day volume in the afternoon (13:00-14:55). 3D cell-locked to cap_segment=unknown (small/SME-tier names per nse_all.json). Disc PF 1.587 / OOS 1.782 / HO 1.606 across 2023-2026.",
+      "detector_class": "structures.below_vwap_volume_revert_long_structure.BelowVwapVolumeRevertLongStructure",
+      "universe_builder": "services.setup_universe.below_vwap_volume_revert_long_universe",
+      "universe_trigger": "session_start",
+      "regulatory_sensitivity": "rule_orthogonal",
+      "depends_on": ["MIS_leverage", "STT_drag"],
+
+      "active_window_start": "10:00",
+      "active_window_end": "14:55",
+      "vwap_dev_pct_max": -2.0,
+      "vol_ratio_min": 3.0,
+
+      "cell_lock_cap_segment": "unknown",
+      "cell_lock_vol_ratio_min": 10.0,
+      "cell_lock_hhmm_min": "13:00",
+      "cell_lock_hhmm_max": "14:55",
+
+      "min_signal_bar_notional_rs": 500000,
+      "min_daily_avg_volume": 50000,
+      "min_trading_days_required": 30,
+
+      "t1_r_multiple": 1.5,
+      "t2_r_multiple": 2.0,
+      "sl_buffer_below_bar_low_pct": 0.2,
+      "min_stop_pct": 1.0,
+      "t1_partial_qty_pct": 0.5,
+      "time_stop_at": "14:30",
+
+      "min_bars_required": 12,
+      "entry_zone_pct": 0.3,
+      "entry_zone_mode": "symmetric",
+      "min_stop_distance_pct": 0.5,
+
+      "priority": 70,
+      "capital_budget_pct": 15,
+      "max_concurrent_positions": 15,
+      "per_symbol_cooloff_min": 30,
+      "max_fires_per_5min": 8,
+      "wide_open": false
+    },
     "or_window_failure_fade_short": {
       "enabled": true,
       "mechanism_tags": [
