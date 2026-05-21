@@ -199,6 +199,6 @@ The change only modifies code that runs when `_precomputed_5m` is the data sourc
 
 ## Out of scope (deferred)
 
-- **Open-position bar inclusion in backtest:** in live, exit_executor uses tick subscription. In backtest, the simulator walks 5m bars for SL/T1/T2 exits, but those bars come from `_precomputed_5m` outside this loop's narrowing — they're looked up on-demand inside exit_executor. **Spot-check needed:** if exit_executor relies on the same df5_by_symbol built here, the narrowing could break exit tracking. Spec implementation must verify this in step 3 before committing.
+- **Open-position bar inclusion in backtest:** in live, exit_executor uses tick subscription. In backtest, the simulator walks 5m bars for SL/T1/T2 exits via `self.broker.get_ltp_with_level(sym, check_level=...)` at `services/execution/exit_executor.py:485` — the broker abstraction owns its own intrabar data source, independent of the screener's `df5_by_symbol`. **Verified during design** (2026-05-21): narrowing the build_df5_map loop does NOT affect exit tracking. No implementation-time check needed.
 - **Live-mode narrowing review:** out of scope — already correct.
 - **Stage-0 energy scan skip when only static-cap setups are active:** different optimization, different code path. Separate spec if pursued.
