@@ -1442,10 +1442,18 @@ class ScreenerLive:
                     )
 
         try:
-            # Build df5_by_symbol from enriched data (API for paper, precomputed for backtest)
-            with perf("scan", "build_df5_map", n_core=len(self.core_symbols)):
+            # Build df5_by_symbol from enriched data (API for paper, precomputed for backtest).
+            # Narrow to active universes when tag_map is populated (mirrors live behavior at
+            # services/screener_live.py:1357). Falls back to full core_symbols when tag_map
+            # is empty (pre-09:15) to preserve correctness for 5-arg universe builders that
+            # iterate df5_by_symbol at the bar:09:15 trigger.
+            # Spec: docs/superpowers/specs/2026-05-21-backtest-bar-fetch-narrowing-design.md
+            narrow_set = _compute_build_df5_narrow_set(
+                self._tag_map.active_symbols(), self.core_symbols
+            )
+            with perf("scan", "build_df5_map", n_core=len(narrow_set)):
                 df5_by_symbol: Dict[str, pd.DataFrame] = {}
-                for s in self.core_symbols:
+                for s in narrow_set:
                     # Data source:
                     #  Paper/live: api_df5_cache (V3 Intraday API + enrichment)
                     #  Backtest:   _precomputed_5m (enriched feather cache)
