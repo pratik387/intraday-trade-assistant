@@ -8,6 +8,7 @@ trading pattern is encapsulated in its own comprehensive class.
 
 from .base_structure import BaseStructure
 from .data_models import StructureEvent, TradePlan, RiskParams, ExitLevels, MarketContext
+from .close_dn_overnight_long_structure import CloseDnOvernightLongStructure
 
 __all__ = [
     'BaseStructure',
@@ -15,5 +16,6 @@ __all__ = [
     'TradePlan',
     'RiskParams',
     'ExitLevels',
-    'MarketContext'
+    'MarketContext',
+    'CloseDnOvernightLongStructure',
 ]

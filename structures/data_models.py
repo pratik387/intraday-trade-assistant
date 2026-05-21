@@ -129,6 +129,14 @@ class ExitLevels:
     time_exit: Optional[str] = None  # Time-based exit
     structure_exit: Optional[Dict[str, Any]] = None  # Structure-based exit conditions
 
+    # Overnight setups use scheduled exits (broker AMO at next-day open) instead
+    # of price-triggered SL/T1/T2. When exit_mode is "scheduled_amo", the
+    # executor IGNORES hard_sl/targets and instead places an AMO SELL at
+    # scheduled_exit_at. Backward-compatible: default None preserves
+    # existing intraday MIS behavior.
+    exit_mode: Optional[str] = None      # 'scheduled_amo' for overnight setups; None = price-triggered
+    scheduled_exit_at: Optional[pd.Timestamp] = None  # IST-naive; for scheduled_amo only
+
 
 @dataclass
 class TradePlan:
