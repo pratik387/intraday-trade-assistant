@@ -497,6 +497,24 @@ def _run_stage0_in_process(df5_tails, levels_by_symbol, now_ts, in_opening_bell,
     return (feats_df, shortlist_dict, timing)
 
 
+def _compute_build_df5_narrow_set(active_symbols: set, core_symbols) -> set:
+    """Compute the subset of core_symbols to iterate in _run_5m_scan's
+    build_df5_map loop.
+
+    Returns active_symbols intersected with core_symbols if active_symbols is
+    non-empty; otherwise returns the full core_symbols set as a fallback for
+    pre-09:15 bars (before any universe builders have populated tag_map).
+    The fallback preserves correctness for 5-arg universe builders that
+    iterate df5_by_symbol — they need the full universe at their bar:HH:MM
+    trigger.
+
+    See: docs/superpowers/specs/2026-05-21-backtest-bar-fetch-narrowing-design.md
+    """
+    if not active_symbols:
+        return set(core_symbols)
+    return active_symbols & set(core_symbols)
+
+
 @dataclass
 class ScreenerConfig:
     """Strict config contract for ScreenerLive."""
