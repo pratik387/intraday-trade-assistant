@@ -10,6 +10,32 @@
 
 **SHIPPABLE (research-grade, with caveats)** — Cell #5 (`closing_30m_volume_z_bin=extreme × prior_day_return_bin=up_gt_3pct`) survives Lesson #15 confidence framework on 5-bar realistic-live signal with pooled PF 2.44, CI [2.16, 2.74], Bonferroni-adjusted Sharpe +3.61. Decay trend + war_vol_2026 regime weakness flagged. Next step: paper-trading with conservative sizing.
 
+## Update 2026-05-21 (later same session): MTF-first mode
+
+Original verdict (above) specified CNC delivery. Upgraded to **MTF-primary, CNC-fallback** after scraping the actual Zerodha approved-MTF list:
+
+- 88.8% of historical Cell #5 HO trades are MTF-eligible (713 of 803)
+- Mean per-trade leverage: **2.79×** (NOT 5× as initially assumed; varies per stock from 2.0× to 4.42×)
+- 11.2% non-MTF symbols (mostly small_cap and unknown) fall back to CNC (no leverage)
+- MTF approved-list source: `data/mtf_universe/approved_mtf_securities_2026-05-21.json` (1,489 entries, refresh via `tools/scrape_zerodha_mtf.py`)
+- **ETFs excluded** at universe-builder level (different mechanism; 112 ETFs in MTF list don't fit our thesis)
+
+User-locked capital allocation (Rs 5L total):
+- **Rs 4L active deployed** across 4 rolling slots (Rs 1L margin each)
+- **Rs 1L permanent cushion** for margin variability
+- **2 new positions/day max** (matches the 4-slot × 2-day cycle)
+- Expected capture: ~75% of fires (~500 trades/year)
+
+Revised forward annualized projections:
+- Headline (HO PF 1.52 holds): ~45% (Rs 223K/year)
+- Realistic with decay haircut: **~31% (Rs 156K/year)**
+- War-vol conservative floor: ~22% (Rs 112K/year)
+
+Tail risk:
+- Single -10% catastrophic gap on one slot: -5.6% of Rs 5L
+- Correlated -10% across all 4 active slots: -22.4% of Rs 5L
+
+
 ## Locked configuration
 
 ### Primary (brief-level) signal filters
@@ -31,13 +57,38 @@ prior_day_return_bin         = "up_gt_3pct"  (prior_close vs prev_prior_close >=
 ### Entry / exit mechanic
 ```
 Signal computation at:     15:25 IST (5 bars: 15:00, 15:05, 15:10, 15:15, 15:20)
-Entry:                     Market-on-Close (MOC) CNC BUY at 15:25 IST
+Entry:                     Market-on-Close BUY at 15:25 IST, product = MTF if approved else CNC
                            Order fills at NSE official closing price (~15:30 IST)
-Exit:                      CNC SELL at pre-open auction (09:00-09:08 IST next trading day)
+Exit:                      SELL at pre-open auction (09:00-09:08 IST next trading day)
                            Fills at next-day 09:15 official open
+                           Order placed as AMO post BUY-fill (overnight queue) or pre-open live order
 Position holding:          ~17-18 hours overnight
-Position size:             Rs 1L notional per trade (fixed; no R-based sizing — no SL)
-No intraday management:    Market closed during hold; single fixed exit
+Position sizing:           Rs 1L margin per slot. MTF notional = Rs 1L * per-stock leverage (avg 2.79x).
+                           CNC fallback notional = Rs 1L (no leverage).
+                           No SL, no T1/T2, no intraday management.
+```
+
+### Universe & cell filter (live runtime checks)
+```
+1. Brief-level primary signal:
+     signed_vol_ratio (5-bar 15:00-15:20) <= -0.5
+   AND closing_25m_volume_z >= 1.0
+   AND min 4 of 5 signal bars present
+   AND symbol cap_segment IN {large_cap, mid_cap, small_cap, unknown}  (NOT micro)
+   AND symbol daily avg volume >= 50,000 shares
+   AND symbol trading-days coverage >= 80%
+
+2. Cell filter:
+     closing_30m_volume_z >= 2.0  (extreme volume bucket)
+   AND prior_day_return_pct >= 3.0  (post-up-3pct bucket)
+
+3. Order routing (post-signal):
+     IF symbol in MTF approved list AND mtf_category != "etf":
+        place product=MTF order with leverage looked up from approved-list snapshot
+     ELSE:
+        place product=CNC order (full notional, no leverage)
+     ELSE IF symbol is an ETF (per MTF list category OR symbol-name heuristic):
+        skip (mechanism mismatch — don't trade ETFs in this setup)
 ```
 
 ## Phase 5 acceptance — 5-bar realistic-live numbers
@@ -170,15 +221,21 @@ Fail-stop conditions:
 
 ## Open infrastructure questions
 
-1. **CNC fee helper:** `tools/sub9_research/sanity_close_dn_overnight_long.py:calc_fee_cnc` is local-only. Need to promote to `tools/sub7_validation/build_per_setup_pnl.py` for production. Add `mode` param to existing `calc_fee` distinguishing `intraday_MIS` vs `delivery_CNC`.
+All resolved with concrete plans in `specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.md`. Summary:
 
-2. **MOC order support in dispatcher:** verify Zerodha CO (Cover Order) / regular CNC market-order timing for 15:25 IST submission. NSE accepts MOC orders during regular trading; brokers vary in implementation.
+1. **Fee helpers (MTF + CNC):** local-only `calc_fee_cnc` in sanity script + no MTF helper yet. Both promoted to `tools/sub7_validation/build_per_setup_pnl.py` via implementation spec Task 1.
 
-3. **Pre-open exit order placement:** dispatcher needs to queue CNC SELL orders for next-day pre-open (09:00-09:08 window). Verify the existing exit_executor handles overnight positions or whether a new "pre-open exit handler" is needed.
+2. **MTF order placement:** `product=MTF` confirmed available in Kite Connect API. AMO supported for MTF (FAQ confirms pre-market and post-market MTF orders allowed). Implementation spec Task 5 handles routing.
 
-4. **Universe builder for this setup:** static cap-segment filter (cap_segment IN {large, mid, small, unknown}). Reuses the same daily_dict + nse_all.json pattern as below_vwap_volume_revert_long_universe. Should be a near-copy with the broader cap filter.
+3. **Pre-open exit:** AMO submitted post-BUY-fill; broker queues overnight, executes at 09:15 pre-open auction. Implementation spec Task 6 wires the morning verification fallback.
 
-5. **Symbol overlap with `long_panic_gap_down`:** this setup exits at 09:15; long_panic_gap_down fires 09:15-09:20. Same symbol could compound. Per-symbol cooloff in dispatcher should handle.
+4. **Universe builder:** Implementation spec Task 2 builds `close_dn_overnight_long_universe()` with cap_segment filter + MTF-list intersection + ETF exclusion.
+
+5. **Symbol overlap with `long_panic_gap_down`:** this setup EXITS at 09:15; long_panic fires 09:15-09:20 → could compound on same symbol. Per-symbol cooloff already exists in dispatcher; verified in Task 4.
+
+6. **Per-position interest tracking:** MTF interest accrues from T+1 at 0.04%/day on borrowed amount. Implementation spec Task 3 (capital manager extension) tracks this per-position.
+
+7. **Decay tripwire monitor:** Rolling 30-trade PF check, auto-pause if PF<1.20 sustained for 6 weeks. Implementation spec Task 7 wires this.
 
 ## Methodology compliance
 
