@@ -67,10 +67,22 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
         return time(int(h), int(m))
 
     def detect(self, context: MarketContext) -> StructureAnalysis:
-        return StructureAnalysis(
-            structure_detected=False, events=[], quality_score=0.0,
-            rejection_reason="not_implemented",
-        )
+        def _empty(reason: str = "") -> StructureAnalysis:
+            return StructureAnalysis(
+                structure_detected=False, events=[], quality_score=0.0,
+                rejection_reason=reason or None,
+            )
+
+        df = context.df_5m
+        if df is None or len(df) < self.min_bars_required:
+            return _empty("Insufficient bars")
+
+        last_ts = df.index[-1]
+        cur_t = last_ts.time() if hasattr(last_ts, "time") else last_ts
+        if not (self.active_start <= cur_t <= self.active_end):
+            return _empty(f"Outside active window: {cur_t}")
+
+        return _empty("not_implemented_beyond_active_window")
 
     def plan_long_strategy(self, context, event=None):
         return None

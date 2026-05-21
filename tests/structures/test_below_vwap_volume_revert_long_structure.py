@@ -44,3 +44,45 @@ def test_detector_instantiates_from_config():
     """Detector accepts the config block without raising."""
     det = BelowVwapVolumeRevertLongStructure(_cfg())
     assert det.structure_type == "below_vwap_volume_revert_long"
+
+
+def _make_df(*, n_bars=20, hhmm_str="13:30", session_date=None,
+             close_seq=None, volume_seq=None,
+             open_val=100.0, high_val=100.5, low_val=99.5):
+    """Build a session-shape df_5m with n_bars 5-minute bars ending at hhmm_str.
+
+    Bars start at 09:15. close_seq / volume_seq override last-bar values if given.
+    """
+    if session_date is None:
+        session_date = pd.Timestamp("2026-05-20").date()
+    base_ts = pd.Timestamp(f"{session_date} 09:15:00")
+    timestamps = [base_ts + pd.Timedelta(minutes=5 * i) for i in range(n_bars)]
+    # Use closes that produce VWAP near 100 (default) so we have headroom
+    closes = [100.0] * n_bars if close_seq is None else list(close_seq)
+    vols = [10000] * n_bars if volume_seq is None else list(volume_seq)
+    df = pd.DataFrame({
+        "open": [open_val] * n_bars,
+        "high": [high_val] * n_bars,
+        "low": [low_val] * n_bars,
+        "close": closes,
+        "volume": vols,
+    }, index=timestamps)
+    # Stamp the requested final hhmm on the last bar
+    final_h, final_m = hhmm_str.split(":")
+    df.index = df.index[:-1].append(
+        pd.DatetimeIndex([pd.Timestamp(f"{session_date} {hhmm_str}:00")])
+    )
+    return df
+
+
+def test_rejects_outside_active_window():
+    """09:30 bar (before active_window_start=10:00) is rejected."""
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    df = _make_df(n_bars=12, hhmm_str="09:30")  # 12 bars, last stamped 09:30
+    ctx = MarketContext(
+        symbol="TEST", current_price=100.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+    )
+    r = det.detect(ctx)
+    assert not r.structure_detected
+    assert "active" in (r.rejection_reason or "").lower() or "window" in (r.rejection_reason or "").lower()
