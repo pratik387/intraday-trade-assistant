@@ -113,7 +113,14 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
                 f"[{self.cell_hhmm_min}, {self.cell_hhmm_max}]"
             )
 
-        return _empty("not_implemented_beyond_cell_hhmm")
+        # Cell-lock cap_segment
+        ctx_cap = (context.cap_segment or "").strip()
+        if ctx_cap != self.cell_cap_segment:
+            return _empty(
+                f"cap_segment={ctx_cap!r} != cell_lock={self.cell_cap_segment!r}"
+            )
+
+        return _empty("not_implemented_beyond_cap_segment")
 
     def plan_long_strategy(self, context, event=None):
         return None

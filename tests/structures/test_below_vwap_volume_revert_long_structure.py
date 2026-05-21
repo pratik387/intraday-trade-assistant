@@ -140,3 +140,21 @@ def test_rejects_when_before_afternoon_cell_window():
     assert not r.structure_detected
     assert "cell_hhmm" in (r.rejection_reason or "").lower() or \
            "hhmm" in (r.rejection_reason or "").lower()
+
+
+def test_rejects_when_cap_segment_not_unknown():
+    """Cell lock requires cap_segment='unknown'. Reject when context says
+    'large_cap' (passed via MarketContext.cap_segment)."""
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 60  # enough bars to reach 14:10 (60 * 5 min = 300 min after 09:15 = 14:15)
+    closes = [100.0] * (n - 1) + [97.0]
+    vols = [10000] * n
+    df = _make_df(n_bars=n, hhmm_str="14:10", close_seq=closes, volume_seq=vols)
+    ctx = MarketContext(
+        symbol="TEST", current_price=97.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+        cap_segment="large_cap",
+    )
+    r = det.detect(ctx)
+    assert not r.structure_detected
+    assert "cap_segment" in (r.rejection_reason or "").lower()
