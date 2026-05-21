@@ -80,9 +80,9 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
 
     def calculate_risk_params(self, entry_price, market_context):
         return RiskParams(
-            hard_sl=entry_price * 0.99,
-            risk_per_share=entry_price * 0.01,
-            atr=entry_price * 0.01,
+            hard_sl=entry_price * (1.0 - self.min_stop_pct / 100.0),
+            risk_per_share=entry_price * (self.min_stop_pct / 100.0),
+            atr=entry_price * (self.min_stop_pct / 100.0),
         )
 
     def get_exit_levels(self, trade_plan):
