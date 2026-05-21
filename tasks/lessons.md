@@ -11,6 +11,78 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-21 (#17) — Legacy universe filters (min_trading_days, min_daily_avg_volume) are inappropriate for cell-locked setups — remove them
+
+**What went wrong:** OCI vs sanity parity diagnostic for `below_vwap_volume_revert_long` showed:
+- Sanity HO PF 1.17 (577 cell-locked trades)
+- OCI HO PF 0.96 (141 completed trades, NET LOSER)
+- (sym, date) overlap: only 6.9%
+
+My initial diagnosis pointed at `consolidated_daily.feather` coverage gaps. Built a universe-parity simulator (`tools/sub9_research/universe_parity_simulator.py`) that "confirmed" production was a strict subset of sanity. Recommended backfilling consolidated_daily as P0.
+
+User correction: "no these filters shouldn't be there... they are generalised filters which are from legacy code." The min_trading_days_required=30 + min_daily_avg_volume=50000 in `services/setup_universe.py:below_vwap_volume_revert_long_universe` are intraday-MIS-era defaults. For cell-locked setups, the cell itself does the selection (e.g., `vol_ratio_bin=gte_10` already requires 10× signal-bar volume; cap=unknown locks the universe). Legacy filters are redundant AND harmful — they clip out the very tail names where edge lives.
+
+**Surprise inversion after removing legacy filters + correctly handling `get_cap_segment` defaulting:**
+- Sanity ORIGINAL (577 trades): PF 1.17
+- Production-aligned (426 trades after rejecting `mis_disabled` symbols): **PF 1.32**
+- The 151 wrongly-included symbols (mis_disabled, sanity treats as cap=unknown by default): **PF 0.83** (NET LOSERS dragging down original sanity)
+
+So the legacy filters were the wrong target. The real fix: sanity overstates universe because `services.symbol_metadata.get_cap_segment` returns `"unknown"` as default for nse_all-missing symbols, accidentally classifying 151 untradeable symbols into the cell. The corrected universe-aligned sanity claims PF 1.32 — HIGHER than originally reported.
+
+OCI still shows PF 0.96 (0.36 below corrected sanity 1.32). The remaining gap is per-bar signal divergence (root cause #2), not investigated yet — likely VWAP cumulative compute, cross_day_rvol baseline source, or detector latch state differences between research and production code paths.
+
+**Rules:**
+
+1. **For cell-locked setups, the universe builder should NOT apply intraday-MIS-era legacy filters** (`min_trading_days_required`, `min_daily_avg_volume`). The cell already filters for the right cohort. Setting both to 0 in config disables them; the `len(ddf) < 0` and `avg_vol < 0` checks always evaluate False, while `ddf is None or ddf.empty` still rejects truly missing data. (Done 2026-05-21 commit `35b0c96` for `below_vwap_volume_revert_long` + `close_dn_overnight_long`.)
+
+2. **`get_cap_segment` defaults to `"unknown"` for missing symbols.** This means setups with `required_cap="unknown"` accidentally pass nse_all-missing symbols. For sanity scripts, this overstates the universe vs production (production also requires `mis_enabled=True` which defaults to False for missing symbols, so production naturally rejects them — but the sanity output shows them with cap_segment="unknown" and they enter cell-locks). When designing a cell-lock check, either:
+   - Make sanity require explicit nse_all presence (`bare in nse_all` AND `nse_all[bare].cap_segment == required_cap`)
+   - OR accept that sanity will overstate and post-filter with `mis_enabled` to match production
+
+3. **OCI-vs-sanity parity has TWO root causes, not one.** Don't conflate them:
+   - **Cause A**: universe-builder filter mismatch (sanity is permissive about new listings + nse_all-missing symbols). Fixed by aligning filters and validating with `tools/sub9_research/sanity_to_production_universe_align.py`.
+   - **Cause B**: per-bar signal divergence on same-universe symbols (different VWAP, baseline source, latch state). Requires per-bar input comparison to diagnose.
+
+4. **Cell-locked setup migration checklist** (for any future shipped setup):
+   - Set legacy universe filters to 0 in config (cell does the selection)
+   - Verify sanity = production universe via the alignment tool
+   - Investigate per-bar signal divergence if a 0.2+ PF gap remains
+
+5. **Triaged research vs production gap quickly** (the right path took ~30 min once the user corrected the diagnosis): (a) run alignment tool with both legacy filters at original values → see gap; (b) zero out legacy filters → see gap closes ~partially; (c) inspect remaining rejected trades' nse_all presence → identify `mis_disabled` as the residual; (d) recompute realistic PF on aligned set.
+
+---
+
+### 2026-05-21 (#16) — Sanity script's universe ≠ production universe — verify monthly-feather coverage by cap segment BEFORE shipping
+
+**What went wrong:** Shipped `below_vwap_volume_revert_long` to OCI based on Phase 5 research (PF=1.587 / OOS 1.782 / Hold 1.606 on 3712 trades, 2023-2026). First OCI backtest (20260521-155634_full, Jan-Apr 2023): **zero fires across 79 days**. Spent time chasing entrypoint / cross_day_rvol upload / configuration / `wide_open` mode. Real cause: data-coverage asymmetry between caches.
+
+**The asymmetry:**
+- `consolidated_daily.feather`: 725 cap=unknown symbols with 2023 daily data (universe builder reads this)
+- `backtest-cache-download/monthly/2023_04_5m_enriched.feather`: 97 cap=unknown symbols (screener reads this for df_5m)
+- Intersection that passes universe filter (>=30 days, >=50K vol): **0**
+- Result: universe picks 203 symbols → screener has 0 of them in `_precomputed_5m` → `active_syms=612 with_data=408` → detector never called → silent zero
+
+**Why Phase 5 missed it:** Sanity script reads the same monthly feathers and labels `cap_segment` from current `nse_all.json`. It found 3712 trades among the **~102 cap=unknown symbols that happened to have historical 5m data** (older symbols reclassified down to "unknown"). Cell-lock JSON says `"unique_symbols": 102` — the entire research was on ~100 symbols. Production diverges because its universe builder picks the 203 *currently*-cap=unknown symbols with daily history, which are mostly newly-listed SME names (median 1m-feather start: 2025-12) with no historical 5m data.
+
+**Coverage by month (cap=unknown in monthly 5m feather):**
+- 2023_01: 94 / 2023_04: 97 / 2024_01: 101 / 2025_01: 116 / **2026_03: 719 / 2026_04: 987**
+
+Cap=unknown 5m bulk-download only happened March-April 2026. Validates on 2026-only data (20260521-163406_full: 205 trades / 42 days fired across Jan-Apr 2026).
+
+**Rules:**
+
+1. **Before shipping any setup whose cell-lock includes a cap-segment filter, verify the production universe overlaps the research universe.** Concretely: take the universe builder's filter, run it against `consolidated_daily.feather` for a sample backtest date, then intersect with the corresponding monthly `_5m_enriched.feather`. If the intersection is < ~50% of the universe builder's output, the setup will silently misfire in production.
+
+2. **`unique_symbols` in the cell-lock JSON is a red flag, not a footnote.** When research is concentrated in ≤200 unique symbols, the cell may be picking up which symbols happened to be in the 5m archive — not a structural edge. Add to confidence-card review: cross-check that the universe builder's filter (run against historical daily data) produces an overlap with research symbols of ≥80%.
+
+3. **Add a loud failure mode to the detector dispatch.** When `len(active_syms) - len(active_syms_with_data)` exceeds e.g. 50% of a single setup's universe (computable from `_tag_map` per-setup membership), log `DISPATCH_DATA_GAP | <setup> | universe=N with_data=M (M/N=X%)` as WARN, not silent INFO. Would have caught this on day 1.
+
+4. **Asymmetric data coverage exists across caches.** `consolidated_daily.feather` (built from daily downloads, has wide coverage incl. SME names back to 2023) and `monthly/YYYY_MM_5m_enriched.feather` (built from per-symbol 5m archives, only newer SME names have history) are NOT in sync. The cross_day_rvol baseline parquet inherits the 5m gap because it's aggregated from monthly feathers. Don't assume "symbol has daily data" implies "symbol has 5m data."
+
+5. **Quick triage flowchart for "setup didn't fire":** (a) Universe builder log line shows non-zero count? → universe OK; (b) `DISPATCH_OPEN_WINDOW` for the setup? → window OK; (c) `active_syms - with_data` for the setup's bars shows the universe entirely missing? → **data coverage gap** (not config, not detector logic). Tools to confirm: simulate the universe builder against `consolidated_daily.feather` and intersect with `monthly/YYYY_MM_5m_enriched.feather`.
+
+---
+
 ### 2026-05-20 (#15) — Per-trade walk-forward methodology was wrong; rebuilt as research-backed confidence framework
 
 **What went wrong:** Spent multiple rounds building a walk-forward validator that tier-classifies each 3-month window (Green / Yellow / Red) based on PF/DSR/PBO thresholds. User pushed back hard:
