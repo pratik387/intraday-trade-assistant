@@ -294,6 +294,59 @@ def gap_fade_universe(
 
 
 # ---------------------------------------------------------------------------
+# below_vwap_volume_revert_long — 3D cell-lock static universe
+# ---------------------------------------------------------------------------
+
+def below_vwap_volume_revert_long_universe(
+    daily_dict: Dict[str, pd.DataFrame],
+    session_date: date,
+    config: Dict[str, Any],
+) -> Set[str]:
+    """Symbols matching the 3D cell lock: cap_segment=unknown, MIS-eligible,
+    minimum daily average volume, minimum trading-days coverage.
+
+    Static universe — no intraday signal required at session start. The
+    detector's per-bar filters (vwap_dev, vol_ratio, hhmm) determine when
+    the signal actually fires.
+
+    Spec: specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md
+    """
+    from services.symbol_metadata import get_cap_segment, get_mis_info
+
+    required_cap = str(config["cell_lock_cap_segment"])
+    min_daily_avg_vol = float(config["min_daily_avg_volume"])
+    min_days = int(config["min_trading_days_required"])
+
+    qual: Set[str] = set()
+    for sym, ddf in daily_dict.items():
+        bare = sym.replace("NSE:", "")
+        nse_sym = f"NSE:{bare}"
+        try:
+            if get_cap_segment(nse_sym) != required_cap:
+                continue
+            if not get_mis_info(nse_sym).get("mis_enabled", False):
+                continue
+        except Exception:
+            continue
+        if ddf is None or ddf.empty or len(ddf) < min_days:
+            continue
+        try:
+            avg_vol = float(ddf["volume"].mean())
+        except Exception:
+            continue
+        if avg_vol < min_daily_avg_vol:
+            continue
+        qual.add(sym)
+        if len(qual) >= MAX_EXTRA_PER_SETUP:
+            break
+    logger.info(
+        "setup_universe.below_vwap_volume_revert_long: %d qualifying on %s",
+        len(qual), session_date,
+    )
+    return qual
+
+
+# ---------------------------------------------------------------------------
 # Aggregate
 # ---------------------------------------------------------------------------
 
