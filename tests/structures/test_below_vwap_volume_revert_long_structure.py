@@ -21,6 +21,7 @@ def _cfg():
         "active_window_start": "10:00",
         "active_window_end": "14:55",
         "vwap_dev_pct_max": -2.0,
+        "confidence_depth_band_floor_pct": -6.0,
         "vol_ratio_min": 3.0,
         "cell_lock_cap_segment": "unknown",
         "cell_lock_vol_ratio_min": 10.0,

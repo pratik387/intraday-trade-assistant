@@ -52,6 +52,7 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
         self.active_start = self._parse_time(config["active_window_start"])
         self.active_end = self._parse_time(config["active_window_end"])
         self.vwap_dev_pct_max = float(config["vwap_dev_pct_max"])
+        self.confidence_depth_band_floor_pct = float(config["confidence_depth_band_floor_pct"])
         self.vol_ratio_min = float(config["vol_ratio_min"])
         self.cell_cap_segment = str(config["cell_lock_cap_segment"])
         self.cell_vol_ratio_min = float(config["cell_lock_vol_ratio_min"])
@@ -151,7 +152,7 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
 
         # Confidence proxy: deeper-below-VWAP within the band gives higher confidence.
         # Clamp to [0, 1]: -2% -> 0.0; -6% -> 1.0.
-        depth_band_floor = -6.0
+        depth_band_floor = self.confidence_depth_band_floor_pct
         depth_band_ceil = self.vwap_dev_pct_max  # -2.0
         depth = (depth_band_ceil - vwap_dev_pct) / max(depth_band_ceil - depth_band_floor, 1e-9)
         confidence = max(0.0, min(1.0, depth))
