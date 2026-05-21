@@ -15,15 +15,25 @@ Output schema:
     symbol      str
     date        date  (the T+0 trading date this baseline applies to)
     hhmm        int16 (e.g., 930 for 09:30)
-    vol_mean20  float64 (mean of prior 20 same-tod bars in same symbol)
+    vol_mean20  float32 (mean of prior 20 same-tod bars in same symbol)
 
-Storage estimate: 2,000 symbols × 500 days × 16 bars (09:30-11:00 window)
-= 16M rows × ~16 bytes ≈ 256MB. Active-window narrow build (09:30-11:00).
+Storage estimate: 2,000 symbols × 500 days × 75 bars (09:15-15:25 window)
+= ~75M rows × ~16 bytes ≈ 1.2GB. Full-session build (extended 2026-05-21
+for below_vwap_volume_revert_long afternoon cell).
+
+# Memory strategy
+
+85M rows of (symbol, session_date, hhmm, volume) does not fit a single
+sort + rolling-transform operation. Process in SYMBOL CHUNKS — load all
+years for ~200 symbols at a time, compute rolling baseline, accumulate.
 """
 from __future__ import annotations
 
-import sys, time
+import gc
+import sys
+import time
 from pathlib import Path
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -33,69 +43,88 @@ MONTHLY_DIR = REPO / "backtest-cache-download" / "monthly"
 OUT_DIR = REPO / "data" / "cross_day_rvol"
 OUT_FP = OUT_DIR / "rvol_baseline.parquet"
 
-# Active window: 09:30-11:00 (covers detector window 09:30-10:00 + buffer)
-HHMM_MIN = 930
-HHMM_MAX = 1100
+# Active window: 09:15-15:25 (full session). Original morning-only build was
+# 09:30-11:00 — extended 2026-05-21 to cover below_vwap_volume_revert_long
+# (afternoon-cell setup at 13:00-14:55). See specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md.
+HHMM_MIN = 915
+HHMM_MAX = 1525
 ROLLING_DAYS = 20
 
+# Symbols per chunk. With 75 hhmms/day × 500 days × 200 symbols ≈ 7.5M rows
+# per chunk — well within memory limits, even with the sort/transform copy.
+SYMBOL_CHUNK = 200
 
-def main(start: str, end: str) -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Determine months to load (need ROLLING_DAYS history before `start`)
-    s = pd.Timestamp(start) - pd.Timedelta(days=40)
-    e = pd.Timestamp(end)
-    months = pd.date_range(s.replace(day=1), e, freq="MS")
-    files = []
-    for m in months:
-        fp = MONTHLY_DIR / f"{m.year}_{m.month:02d}_5m_enriched.feather"
-        if fp.exists():
-            files.append(fp)
-    print(f"Loading {len(files)} monthly feathers ({s.date()} to {e.date()})...")
-
+def _load_active_window(start_load: pd.Timestamp, end_load: pd.Timestamp) -> pd.DataFrame:
+    """Load all monthly feathers in [start_load, end_load], filtered to active hhmm window."""
+    months = pd.date_range(start_load.replace(day=1), end_load, freq="MS")
+    files = [MONTHLY_DIR / f"{m.year}_{m.month:02d}_5m_enriched.feather" for m in months]
+    files = [fp for fp in files if fp.exists()]
+    print(f"Loading {len(files)} monthly feathers ({start_load.date()} to {end_load.date()})...",
+          flush=True)
     parts = []
     for fp in files:
         df = pd.read_feather(fp, columns=["date", "symbol", "volume"])
         df["ts"] = pd.to_datetime(df["date"])
         df["session_date"] = df["ts"].dt.date
-        df["hhmm"] = df["ts"].dt.hour * 100 + df["ts"].dt.minute
+        df["hhmm"] = (df["ts"].dt.hour * 100 + df["ts"].dt.minute).astype("int16")
         df = df[(df["hhmm"] >= HHMM_MIN) & (df["hhmm"] <= HHMM_MAX)]
         parts.append(df[["symbol", "session_date", "hhmm", "volume"]])
     big = pd.concat(parts, ignore_index=True)
-    print(f"Loaded {len(big):,} rows in active window")
+    return big
 
-    # Sort by (symbol, hhmm, session_date) so groupby+rolling works correctly
-    big = big.sort_values(["symbol", "hhmm", "session_date"]).reset_index(drop=True)
 
-    # Per (symbol, hhmm): rolling 20-prior-session mean of volume
-    print(f"Computing rolling-{ROLLING_DAYS} mean volume per (symbol, hhmm)...")
-    t0 = time.time()
-    big["vol_mean20"] = big.groupby(["symbol", "hhmm"])["volume"].transform(
+def _process_symbol_chunk(sub: pd.DataFrame, start_keep, end_keep) -> pd.DataFrame:
+    """Sort + rolling-baseline + filter for one symbol chunk."""
+    sub = sub.sort_values(["symbol", "hhmm", "session_date"]).reset_index(drop=True)
+    sub["vol_mean20"] = sub.groupby(["symbol", "hhmm"], observed=True)["volume"].transform(
         lambda s: s.shift(1).rolling(ROLLING_DAYS, min_periods=5).mean()
     )
-    print(f"  done in {time.time()-t0:.1f}s")
-
-    # Drop rows where baseline is NaN (insufficient history)
-    big = big.dropna(subset=["vol_mean20"])
-    print(f"Rows with valid baseline: {len(big):,}")
-
-    # Trim to requested date range
-    big = big[
-        (big["session_date"] >= pd.Timestamp(start).date())
-        & (big["session_date"] <= pd.Timestamp(end).date())
+    sub = sub.dropna(subset=["vol_mean20"])
+    sub = sub[
+        (sub["session_date"] >= start_keep) & (sub["session_date"] <= end_keep)
     ]
-    print(f"Rows after date trim: {len(big):,}")
-
-    # Optimize dtypes
-    big["hhmm"] = big["hhmm"].astype("int16")
-    big["vol_mean20"] = big["vol_mean20"].astype("float32")
-    big = big[["symbol", "session_date", "hhmm", "vol_mean20"]].rename(
+    sub["vol_mean20"] = sub["vol_mean20"].astype("float32")
+    return sub[["symbol", "session_date", "hhmm", "vol_mean20"]].rename(
         columns={"session_date": "date"}
     )
 
-    big.to_parquet(OUT_FP, compression="zstd", index=False)
+
+def main(start: str, end: str) -> None:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    start_keep = pd.Timestamp(start).date()
+    end_keep = pd.Timestamp(end).date()
+    start_load = pd.Timestamp(start) - pd.Timedelta(days=40)
+    end_load = pd.Timestamp(end)
+
+    big = _load_active_window(start_load, end_load)
+    print(f"Loaded {len(big):,} total rows in active window", flush=True)
+
+    symbols: List[str] = sorted(big["symbol"].unique().tolist())
+    print(f"Universe: {len(symbols):,} symbols. Processing in chunks of {SYMBOL_CHUNK}.",
+          flush=True)
+
+    out_parts: List[pd.DataFrame] = []
+    t0 = time.time()
+    for ci in range(0, len(symbols), SYMBOL_CHUNK):
+        chunk_syms = set(symbols[ci:ci + SYMBOL_CHUNK])
+        sub = big[big["symbol"].isin(chunk_syms)].copy()
+        if sub.empty:
+            continue
+        processed = _process_symbol_chunk(sub, start_keep, end_keep)
+        out_parts.append(processed)
+        del sub, processed
+        gc.collect()
+        done = min(ci + SYMBOL_CHUNK, len(symbols))
+        print(f"  [{done}/{len(symbols)}] elapsed {time.time()-t0:.0f}s, "
+              f"accumulated rows {sum(len(p) for p in out_parts):,}", flush=True)
+
+    final = pd.concat(out_parts, ignore_index=True)
+    print(f"Rows with valid baseline (after date trim): {len(final):,}", flush=True)
+
+    final.to_parquet(OUT_FP, compression="zstd", index=False)
     size_mb = OUT_FP.stat().st_size / (1024 * 1024)
-    print(f"Wrote {OUT_FP} ({size_mb:.1f} MB, {len(big):,} rows)")
+    print(f"Wrote {OUT_FP} ({size_mb:.1f} MB, {len(final):,} rows)", flush=True)
 
 
 if __name__ == "__main__":
