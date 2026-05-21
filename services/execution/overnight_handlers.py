@@ -105,6 +105,37 @@ def run_entry(
         max_new_per_day=int(slot_cfg["max_new_positions_per_day"]),
     )
 
+    # Decay tripwire check — skip dispatch for setups whose forward edge has
+    # decayed (Task 7). The tripwire pauses dispatch when rolling N-trade PF
+    # drops below floor for sustained_weeks. Manual unpause: delete state file
+    # or call DecayTripwire.reset().
+    from services.risk.decay_tripwire import DecayTripwire
+    paused_names: List[str] = []
+    for spec in paper_enabled_setups:
+        tw_cfg = spec.raw_config.get("decay_tripwire")
+        if tw_cfg is None:
+            continue
+        tw = DecayTripwire(
+            setup_name=spec.name,
+            state_path=Path(tw_cfg["state_file"]),
+            window_trades=int(tw_cfg["window_trades"]),
+            pf_floor=float(tw_cfg["pf_floor"]),
+            sustained_weeks=int(tw_cfg["sustained_weeks"]),
+        )
+        if tw.is_paused():
+            logger.warning(
+                "run_entry: setup %s is PAUSED by decay tripwire (since %s); skipping dispatch",
+                spec.name, tw._paused_since,  # noqa: SLF001
+            )
+            paused_names.append(spec.name)
+    if paused_names:
+        summary["paused_setups"] = paused_names
+    paper_enabled_setups = [s for s in paper_enabled_setups if s.name not in set(paused_names)]
+    if not paper_enabled_setups:
+        pool.persist()
+        logger.info("run_entry: all overnight setups paused by decay tripwire; exit")
+        return summary
+
     # Iterate setups (currently only close_dn_overnight_long; loop is generic)
     for spec in paper_enabled_setups:
         detector_cls = _import_path(spec.detector_class_path)
@@ -390,6 +421,22 @@ def run_verify_exit(
             "sell_price": float(sell_price),
             "realized_pnl": settled.realized_pnl_inr,
         })
+
+        # Record settled trade in decay tripwire (Task 7). Re-instantiates per
+        # settle; cheap because settles are O(slots) per day and small N. The
+        # tripwire's rolling-PF check is what gates next-day dispatch.
+        tw_cfg = paper_enabled_setups[0].raw_config.get("decay_tripwire")
+        if tw_cfg is not None:
+            from services.risk.decay_tripwire import DecayTripwire
+            tw = DecayTripwire(
+                setup_name=paper_enabled_setups[0].name,
+                state_path=Path(tw_cfg["state_file"]),
+                window_trades=int(tw_cfg["window_trades"]),
+                pf_floor=float(tw_cfg["pf_floor"]),
+                sustained_weeks=int(tw_cfg["sustained_weeks"]),
+            )
+            net_pnl = settled.realized_pnl_inr if settled.realized_pnl_inr is not None else 0.0
+            tw.record_trade(net_pnl_inr=float(net_pnl), ts_iso=now.isoformat())
 
     # Phase 2: release T1 slots whose T+2 cash settle date has arrived
     for slot in list(pool.active()):

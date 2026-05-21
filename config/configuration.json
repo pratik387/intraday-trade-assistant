@@ -449,6 +449,12 @@
         "exclude_etf": true,
         "fallback_to_cnc_if_not_mtf": true,
         "stale_snapshot_warn_days": 7
+      },
+      "decay_tripwire": {
+        "window_trades": 30,
+        "pf_floor": 1.20,
+        "sustained_weeks": 6,
+        "state_file": "state/decay_tripwire_close_dn_overnight_long.json"
       }
     }
   },
