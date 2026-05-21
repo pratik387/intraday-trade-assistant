@@ -56,6 +56,7 @@ class SetupSpec:
     universe_trigger: Trigger
     active_window: tuple            # (start: time, end: time), inclusive
     raw_config: dict
+    mode: str = "intraday"          # "intraday" (default, daemon) or "overnight" (cron-triggered)
 
     def __post_init__(self):
         start, end = self.active_window
@@ -110,6 +111,11 @@ class SetupRegistry:
             for k in REQUIRED_KEYS:
                 if k not in raw:
                     raise ValueError(f"setup {name!r}: missing required key {k!r}")
+            mode = raw.get("mode", "intraday")
+            if mode not in ("intraday", "overnight"):
+                raise ValueError(
+                    f"setup {name!r}: mode must be 'intraday' or 'overnight', got {mode!r}"
+                )
             specs[name] = SetupSpec(
                 name=name,
                 enabled=bool(raw.get("enabled", False)),
@@ -118,11 +124,18 @@ class SetupRegistry:
                 universe_trigger=parse_trigger(raw["universe_trigger"]),
                 active_window=(_parse_hhmm(raw["active_window_start"]), _parse_hhmm(raw["active_window_end"])),
                 raw_config=raw,
+                mode=mode,
             )
         return cls(specs)
 
     def enabled(self) -> list:
         return [s for s in self._specs.values() if s.enabled]
+
+    def get_active_setups(self, mode: str) -> list:
+        """Return enabled setups matching the given mode ('intraday' or 'overnight')."""
+        if mode not in ("intraday", "overnight"):
+            raise ValueError(f"mode must be 'intraday' or 'overnight', got {mode!r}")
+        return [s for s in self._specs.values() if s.enabled and s.mode == mode]
 
     def get(self, name: str) -> SetupSpec:
         return self._specs[name]

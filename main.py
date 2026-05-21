@@ -650,9 +650,39 @@ def _parse_args():
                     help="Deprecated (MDS removed). Ignored.")
     ap.add_argument("--data-source", choices=["zerodha", "upstox"], default="zerodha",
                     help="Market data source: zerodha (default) or upstox (hybrid mode: Upstox data + Zerodha orders)")
+    ap.add_argument("--mode", choices=["intraday", "overnight"], default="intraday",
+                    help="Which setup family to run. 'intraday' = long-lived daemon (default). "
+                         "'overnight' = short-lived cron-triggered run for close_dn_overnight_long.")
+    ap.add_argument("--action", choices=["run", "entry", "verify-exit"], default="run",
+                    help="What action to perform. 'run' (default) = main daemon loop (intraday only). "
+                         "'entry' = compute signal + place orders for overnight setup (called at 15:25 IST). "
+                         "'verify-exit' = verify AMO fills + release slots for overnight setup (called at 09:30 IST).")
     return ap.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
+
+    # Validate --mode + --action combinations
+    if args.mode == "intraday" and args.action != "run":
+        parser_error = (f"--mode=intraday requires --action=run (got --action={args.action!r}). "
+                        "Overnight actions ('entry', 'verify-exit') are only valid with --mode=overnight.")
+        print(f"error: {parser_error}", file=sys.stderr)
+        sys.exit(2)
+    if args.mode == "overnight" and args.action == "run":
+        parser_error = ("--mode=overnight does not support --action=run (no daemon for overnight). "
+                        "Use --action=entry (at 15:25 IST) or --action=verify-exit (at 09:30 IST).")
+        print(f"error: {parser_error}", file=sys.stderr)
+        sys.exit(2)
+
+    # Overnight handlers are stubs for now (Task 6 wires them up). Exit cleanly
+    # BEFORE the daemon initializes so cron doesn't pay the startup cost.
+    if args.mode == "overnight":
+        if args.action == "entry":
+            print("STUB: overnight entry handler not yet implemented (Task 6)", file=sys.stderr)
+            sys.exit(0)
+        elif args.action == "verify-exit":
+            print("STUB: overnight verify-exit handler not yet implemented (Task 6)", file=sys.stderr)
+            sys.exit(0)
+
     sys.exit(main())
