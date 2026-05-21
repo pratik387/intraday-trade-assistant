@@ -29,6 +29,12 @@ from .data_models import (
     TradePlan,
 )
 from services import cross_day_rvol_enrichment
+from services.plan_helpers import (
+    PlanRejected,
+    assert_sl_outside_entry_zone,
+    compute_entry_zone,
+    enforce_min_stop_distance,
+)
 
 
 logger = get_agent_logger()
@@ -177,18 +183,117 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
             quality_score=confidence * 100.0,
         )
 
-    def plan_long_strategy(self, context, event=None):
-        return None
+    def plan_long_strategy(
+        self,
+        context: MarketContext,
+        event: Optional[StructureEvent] = None,
+    ) -> Optional[TradePlan]:
+        """Generate a LONG TradePlan (Mode B entry placeholder).
+
+        Entry: signal-bar close (Mode B = next-bar open in live; the executor
+        applies the actual fill at next bar OPEN). Targets: T1=1.5R, T2=2.0R.
+        Hard SL: min(signal_bar_low * (1 - sl_buffer/100), entry * (1 - min_stop_pct/100)).
+        """
+        if event is None or event.side != "long":
+            return None
+        evt = event
+
+        bar_low = float(evt.levels["signal_bar_low"])
+        entry = float(evt.levels["signal_bar_close"])
+
+        sl_from_low = bar_low * (1.0 - self.sl_buffer_below_bar_low_pct / 100.0)
+        sl_from_min = entry * (1.0 - self.min_stop_pct / 100.0)
+        hard_sl = min(sl_from_low, sl_from_min)
+        if hard_sl >= entry:
+            return None
+        risk_per_share = entry - hard_sl
+
+        t1_level = entry + self.t1_r_multiple * risk_per_share
+        t2_level = entry + self.t2_r_multiple * risk_per_share
+        targets = [
+            {
+                "name": "T1",
+                "level": t1_level,
+                "rr": self.t1_r_multiple,
+                "qty_pct": self.t1_partial_qty_pct,
+                "action": "partial_exit",
+            },
+            {
+                "name": "T2",
+                "level": t2_level,
+                "rr": self.t2_r_multiple,
+                "qty_pct": round(1.0 - self.t1_partial_qty_pct, 4),
+                "action": "exit_full",
+            },
+        ]
+
+        risk_params = self.calculate_risk_params(entry, context)
+        time_exit_str = str(self.config.get("time_stop_at") or "").strip() or None
+        exit_levels = ExitLevels(hard_sl=hard_sl, targets=targets, time_exit=time_exit_str)
+
+        try:
+            zone = compute_entry_zone(
+                entry=entry, bias="long",
+                zone_pct=float(self.config["entry_zone_pct"]),
+                zone_mode=str(self.config["entry_zone_mode"]),
+            )
+            assert_sl_outside_entry_zone(zone, risk_params.hard_sl, "long")
+            enforce_min_stop_distance(
+                entry, risk_params.hard_sl, self.config.get("min_stop_distance_pct"),
+            )
+        except PlanRejected as e:
+            logger.warning(
+                f"[{context.symbol}] below_vwap_volume_revert_long plan rejected: "
+                f"{e.reason} {e.details}"
+            )
+            return None
+
+        return TradePlan(
+            symbol=context.symbol,
+            side="long",
+            structure_type=evt.structure_type,
+            entry_price=entry,
+            risk_params=risk_params,
+            exit_levels=exit_levels,
+            qty=0,
+            notional=0.0,
+            confidence=evt.confidence,
+            notes=evt.context,
+            trade_id=evt.trade_id,
+            target_anchor_type="r_multiple",
+        )
 
     def plan_short_strategy(self, context, event=None):
         return None
 
-    def calculate_risk_params(self, entry_price, market_context):
-        return RiskParams(
-            hard_sl=entry_price * (1.0 - self.min_stop_pct / 100.0),
-            risk_per_share=entry_price * (self.min_stop_pct / 100.0),
-            atr=entry_price * (self.min_stop_pct / 100.0),
-        )
+    def calculate_risk_params(
+        self, entry_price: float, market_context: MarketContext
+    ) -> RiskParams:
+        df = market_context.df_5m
+        if df is None or df.empty:
+            return RiskParams(
+                hard_sl=entry_price * (1.0 - self.min_stop_pct / 100.0),
+                risk_per_share=entry_price * (self.min_stop_pct / 100.0),
+                atr=entry_price * 0.01,
+            )
+        session_date = market_context.session_date
+        if session_date is None:
+            session_date = pd.Timestamp(df.index[-1]).date()
+        _sd = session_date.date() if hasattr(session_date, "date") else session_date
+        today_bars = df[df.index.date == _sd]
+        if today_bars.empty:
+            return RiskParams(
+                hard_sl=entry_price * (1.0 - self.min_stop_pct / 100.0),
+                risk_per_share=entry_price * (self.min_stop_pct / 100.0),
+                atr=entry_price * 0.01,
+            )
+        bar_low = float(today_bars.iloc[-1]["low"])
+        sl_from_low = bar_low * (1.0 - self.sl_buffer_below_bar_low_pct / 100.0)
+        sl_from_min = entry_price * (1.0 - self.min_stop_pct / 100.0)
+        hard_sl = min(sl_from_low, sl_from_min)
+        risk_per_share = max(entry_price - hard_sl, entry_price * 0.001)
+        atr_proxy = float((today_bars["high"] - today_bars["low"]).mean())
+        return RiskParams(hard_sl=hard_sl, risk_per_share=risk_per_share, atr=atr_proxy)
 
     def get_exit_levels(self, trade_plan):
         return ExitLevels(hard_sl=trade_plan.risk_params.hard_sl, targets=[])

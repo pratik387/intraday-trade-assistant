@@ -277,3 +277,37 @@ def test_does_not_fire_twice_same_symbol_same_day(monkeypatch):
     r2 = det.detect(ctx)
     assert not r2.structure_detected
     assert "already fired" in (r2.rejection_reason or "").lower()
+
+
+def test_plan_long_geometry_is_t1_15R_t2_20R(monkeypatch):
+    """Trade plan has hard_sl=min(low*0.998, entry*0.99), t1=entry+1.5R, t2=entry+2.0R."""
+    from services import cross_day_rvol_enrichment
+    monkeypatch.setattr(cross_day_rvol_enrichment, "get_baseline_vol",
+                        lambda s, d, h: 10000.0)
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 60
+    closes = [100.0] * (n - 1) + [97.0]
+    vols = [10000] * (n - 1) + [150000]
+    df = _make_df(n_bars=n, hhmm_str="14:10",
+                  close_seq=closes, volume_seq=vols,
+                  open_val=100.0, high_val=100.5, low_val=96.5)  # bar_low=96.5
+    ctx = MarketContext(
+        symbol="TEST", current_price=97.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+        cap_segment="unknown",
+    )
+    r = det.detect(ctx)
+    assert r.structure_detected
+    plan = det.plan_long_strategy(ctx, event=r.events[0])
+    assert plan is not None
+    entry = plan.entry_price
+    assert abs(entry - 97.0) < 1e-9  # Mode B placeholder: signal bar close (entry resolved at next bar in live)
+    # hard_sl = min(96.5 * 0.998, 97 * 0.99) = min(96.307, 96.03) = 96.03
+    assert abs(plan.risk_params.hard_sl - 96.03) < 0.01
+    R = entry - plan.risk_params.hard_sl
+    # t1, t2 in exit_levels.targets
+    targets = plan.exit_levels.targets
+    assert len(targets) == 2
+    assert abs(targets[0]["level"] - (entry + 1.5 * R)) < 1e-6
+    assert abs(targets[1]["level"] - (entry + 2.0 * R)) < 1e-6
+    assert plan.exit_levels.time_exit == "14:30"
