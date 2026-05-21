@@ -11,6 +11,46 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-22 (#19) — Empirical confirmation: sanity's per-bar logic is identical to production. Sanity is tainted by 3 OTHER mechanics (NOT detector logic).
+
+**What went wrong (continued from #18):** After Lesson #18 identified universe-data-source asymmetry as the dominant root cause, I empirically tested whether the per-bar detector logic itself diverges. Result: **for all 260 OCI HO fires, sanity's per-bar compute logic ALSO says "WOULD_FIRE"** — 260/260 match. So the detector is identical; the divergence is in how the per-bar fires are aggregated into trades.
+
+Building on that empirical baseline, the apples-to-apples comparison (overlap of (sym, date) keys in both sanity and OCI HO) surfaced TWO MORE execution-semantics gaps:
+
+1. **Sanity doesn't respect the per-(sym, date) latch.** Production's detector has `_fired_today: set` so each (sym, date) fires at most once. Sanity fires on EVERY qualifying bar within the cell window — for below_vwap (13:00-14:55), the same symbol can have 3-4 fires per day. Sanity-on-overlap had 61 trades on 17 unique (sym, date) keys (3.6× over-count). **Sanity over-counts fires per day.**
+
+2. **Sanity's synthetic R-walk exit gives different PnL than OCI's real tick execution on the same fire.** On the 17 overlap (first-fire-per-day) keys, sanity reports PF 0.43 vs OCI's 0.87 on the same (sym, date) pairs. Both use the same entry bar; the realized PnL diverges because sanity's same-bar SL-wins-tie pessimism + Mode B next-bar-open entry differs from OCI's real tick execution.
+
+**Combined projection (sanity-first-fire-per-day + OCI-only fires sanity missed):** 296 trades, PF 1.13, mean +Rs 37/trade. The gap to OCI's actual PF 0.965 is dominated by execution-semantics, not signal divergence. Either way the candidate is marginal.
+
+**The three mechanics inflating sanity's PF claim vs production:**
+
+| Mechanic | Direction | Magnitude (below_vwap HO) |
+|---|---|---|
+| #18-A: Universe-data-source asymmetry (5m vs daily archive coverage) | Sanity → narrow | 235/260 OCI fires on symbols sanity rejects |
+| #18-B: nse_all-missing symbols default to `cap=unknown` | Sanity → wide | 151 spurious sanity inclusions, PF 0.83 (losers drag) |
+| #19-A: No per-day latch | Sanity → high count | 3.6× more fires per (sym, date) than OCI |
+| #19-B: Synthetic R-walk exit (pessimistic) | Sanity → low per-trade PnL | Same-day overlap PF 0.43 (sanity) vs 0.87 (OCI) |
+
+Net: #18 inflates sanity's PF (by including only the "easier" old cohort); #19 distorts it in mixed directions. They partly cancel but the combined sanity PF doesn't represent realistic production.
+
+**Rules:**
+
+1. **Per-bar detector logic is sound.** Don't chase ghosts there. Any sanity-vs-OCI divergence on detector outputs has a different source (universe gate, latch, exit walk).
+
+2. **Sanity scripts MUST implement the same per-(sym, date) latch as the production detector.** Use `df.drop_duplicates(subset=['bare','signal_date'], keep='first')` or equivalent. Without it, sanity reports inflated trade counts.
+
+3. **For cell-locked setups: realistic forward expectation = OCI actual PF, not sanity PF.** Sanity's PF should only be used to identify candidates worth running OCI on, not to size live positions. Treat sanity as a candidate-filter, not a backtest.
+
+4. **Tooling: `tools/sub9_research/production_universe.py:ProductionUniverseGate`** — reusable per-date universe filter mirroring production's setup_universe.py builders. Use this INSTEAD of window-level coverage filters in future sanity scripts.
+
+5. **Methodology change: all future per-setup sanities must:**
+   - (a) Use `ProductionUniverseGate` for the symbol filter (consolidated_daily.feather based, per-date check)
+   - (b) Implement per-(sym, date) latch (one fire per day per symbol)
+   - (c) Document the exit-walk semantics explicitly (synthetic R-walk vs real tick); when comparing to OCI, expect a few % PF gap from this alone
+
+---
+
 ### 2026-05-22 (#18) — Sanity vs OCI parity has THREE root causes, layered, with universe-data-source asymmetry as DOMINANT
 
 **What went wrong:** Continued the OCI vs sanity parity investigation for `below_vwap_volume_revert_long` after Lesson #17 fixed legacy filters. Found that even after universe-filter alignment, OCI PF (0.965, net loser) still diverged from corrected sanity PF (1.32). I suspected "per-bar signal divergence" (different VWAP, vol_ratio, latch). Spent time looking at specific bars (RPPINFRA 2026-03-30 14:55) and confirmed the DETECTOR criteria fire identically. The real divergence was elsewhere.
