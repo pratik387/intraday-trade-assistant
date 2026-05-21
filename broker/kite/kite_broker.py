@@ -216,10 +216,10 @@ class KiteBroker:
             raise ValueError(f"side must be BUY/SELL, got {side}")
         if order_type.upper() not in ("MARKET", "LIMIT"):
             raise ValueError(f"order_type must be MARKET/LIMIT, got {order_type}")
-        if product.upper() not in ("MIS", "CNC"):
-            raise ValueError("Only MIS/CNC products supported")
-        if variety.lower() != "regular":
-            raise ValueError("Only 'regular' variety supported")
+        if product.upper() not in ("MIS", "CNC", "MTF"):
+            raise ValueError(f"product must be MIS/CNC/MTF, got {product!r}")
+        if variety.lower() not in ("regular", "amo"):
+            raise ValueError(f"variety must be 'regular' or 'amo', got {variety!r}")
         if validity != "DAY":
             raise ValueError("Only DAY validity supported")
 
@@ -236,7 +236,8 @@ class KiteBroker:
         if self.dry_run:
             return self._simulate_order(
                 symbol=symbol, side=side_u, qty=qty,
-                order_type=order_type, price=price, product=actual_product
+                order_type=order_type, price=price, product=actual_product,
+                variety=variety.lower(),
             )
 
         exch, tsym = _split_symbol(symbol)
@@ -248,6 +249,10 @@ class KiteBroker:
             kc_product = self.kc.PRODUCT_MIS
         elif actual_product == "CNC":
             kc_product = self.kc.PRODUCT_CNC
+        elif actual_product == "MTF":
+            # Defensive fallback: older kiteconnect (<4.2) may lack PRODUCT_MTF.
+            # Zerodha MTF launched 2024; modern lib should define it as "MTF".
+            kc_product = getattr(self.kc, "PRODUCT_MTF", "MTF")
         else:
             raise ValueError(f"Unsupported product: {actual_product}")
 
@@ -266,11 +271,23 @@ class KiteBroker:
                 raise ValueError("price is required for LIMIT orders")
             params["price"] = float(price)
 
+        # Map variety lowercase string to KC constant
+        variety_l = variety.lower()
+        if variety_l == "regular":
+            kc_variety = self.kc.VARIETY_REGULAR
+        elif variety_l == "amo":
+            kc_variety = self.kc.VARIETY_AMO
+        else:
+            # Defense-in-depth — should have been caught at validation
+            raise ValueError(f"Unsupported variety: {variety!r}")
+
         try:
             # kite.place_order() returns order_id string directly (not a dict)
             # See: https://kite.trade/docs/pykiteconnect/v4/
-            order_id = self.kc.place_order(variety=self.kc.VARIETY_REGULAR, **params)
-            logger.info(f"Order placed: {symbol} | {side} {qty} @ {product} | Order ID: {order_id}")
+            order_id = self.kc.place_order(variety=kc_variety, **params)
+            logger.info(
+                f"Order placed: {symbol} | {side} {qty} @ {product} variety={variety_l} | Order ID: {order_id}"
+            )
             return str(order_id)
         except Exception as e:
             # If MIS order failed due to stock being blocked, reject entirely
@@ -437,7 +454,8 @@ class KiteBroker:
         qty: int,
         order_type: str,
         price: Optional[float],
-        product: str
+        product: str,
+        variety: str = "regular",
     ) -> str:
         """
         Simulate order execution in paper trading mode.
@@ -472,13 +490,15 @@ class KiteBroker:
             'fill_price': fill_price,
             'average_price': fill_price,  # Match Zerodha format for get_order_fill_price()
             'product': product,
+            'variety': variety,
             'status': 'COMPLETE'  # Match Zerodha status (not 'FILLED')
         }
         self._paper_orders.append(paper_order)
 
         logger.info(
             f"[PAPER] Order simulated: {symbol} | {side} {qty} @ Rs.{fill_price:.2f} "
-            f"({product}) | Order ID: {order_id}"
+            f"({product}) | order_id={order_id} | variety={variety}"
+            + (" (AMO — would execute at next-day pre-open in live)" if variety == "amo" else "")
         )
 
         return order_id
