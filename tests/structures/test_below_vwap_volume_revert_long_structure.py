@@ -229,3 +229,51 @@ def test_rejects_when_signal_bar_notional_too_thin(monkeypatch):
     r = det.detect(ctx)
     assert not r.structure_detected
     assert "notional" in (r.rejection_reason or "").lower()
+
+
+def test_fires_signal_on_clean_cell_bar(monkeypatch):
+    """All filters pass → emit a long signal with computed levels."""
+    from services import cross_day_rvol_enrichment
+    monkeypatch.setattr(cross_day_rvol_enrichment, "get_baseline_vol",
+                        lambda s, d, h: 10000.0)
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 60
+    closes = [100.0] * (n - 1) + [97.0]   # -3% from cumulative VWAP ~100
+    vols = [10000] * (n - 1) + [150000]    # vol_ratio = 15 (>= 10)
+    df = _make_df(n_bars=n, hhmm_str="14:10",
+                  close_seq=closes, volume_seq=vols)
+    ctx = MarketContext(
+        symbol="TEST", current_price=97.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+        cap_segment="unknown",
+    )
+    r = det.detect(ctx)
+    assert r.structure_detected
+    assert len(r.events) == 1
+    evt = r.events[0]
+    assert evt.side == "long"
+    assert evt.structure_type == "below_vwap_volume_revert_long"
+    assert evt.context["vwap_dev_pct"] <= -2.0
+    assert evt.context["vol_ratio"] >= 10.0
+
+
+def test_does_not_fire_twice_same_symbol_same_day(monkeypatch):
+    """First fire latches the (symbol, session_date) — second call returns empty."""
+    from services import cross_day_rvol_enrichment
+    monkeypatch.setattr(cross_day_rvol_enrichment, "get_baseline_vol",
+                        lambda s, d, h: 10000.0)
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 60
+    df = _make_df(n_bars=n, hhmm_str="14:10",
+                  close_seq=[100.0]*(n-1)+[97.0],
+                  volume_seq=[10000]*(n-1)+[150000])
+    ctx = MarketContext(
+        symbol="TEST", current_price=97.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+        cap_segment="unknown",
+    )
+    r1 = det.detect(ctx)
+    assert r1.structure_detected
+    r2 = det.detect(ctx)
+    assert not r2.structure_detected
+    assert "already fired" in (r2.rejection_reason or "").lower()

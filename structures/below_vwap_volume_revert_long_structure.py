@@ -88,70 +88,94 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
             else pd.Timestamp(last_ts).date()
         )
         _sd = session_date.date() if hasattr(session_date, "date") else session_date
+        latch_key = (context.symbol, _sd)
+        if latch_key in self._fired_today:
+            return _empty("already fired this session")
+
         today_bars = df[df.index.date == _sd]
         if today_bars.empty:
             return _empty("No bars for session date")
 
-        # Session VWAP up through current (last) bar — cumulative since 09:15.
+        # Session VWAP (cumulative since 09:15)
         pv = (today_bars["close"].astype("float64") * today_bars["volume"].astype("float64")).cumsum()
         vol_cum = today_bars["volume"].astype("float64").cumsum()
         if float(vol_cum.iloc[-1]) <= 0:
             return _empty("Zero session volume")
         session_vwap = float(pv.iloc[-1] / vol_cum.iloc[-1])
         last_bar = today_bars.iloc[-1]
+        bar_open = float(last_bar["open"])
+        bar_high = float(last_bar["high"])
+        bar_low = float(last_bar["low"])
         bar_close = float(last_bar["close"])
+        bar_volume = float(last_bar["volume"])
         vwap_dev_pct = (bar_close - session_vwap) / session_vwap * 100.0
 
         if vwap_dev_pct > self.vwap_dev_pct_max:
-            return _empty(
-                f"vwap_dev_pct={vwap_dev_pct:.3f} > max={self.vwap_dev_pct_max}"
-            )
+            return _empty(f"vwap_dev_pct={vwap_dev_pct:.3f} > max={self.vwap_dev_pct_max}")
 
-        # Cell-lock hhmm: 13:00 <= bar_hhmm <= 14:55
         if not (self.cell_hhmm_min <= cur_t <= self.cell_hhmm_max):
             return _empty(
                 f"cell_hhmm window: {cur_t} not in "
                 f"[{self.cell_hhmm_min}, {self.cell_hhmm_max}]"
             )
 
-        # Cell-lock cap_segment
         ctx_cap = (context.cap_segment or "").strip()
         if ctx_cap != self.cell_cap_segment:
             return _empty(
                 f"cap_segment={ctx_cap!r} != cell_lock={self.cell_cap_segment!r}"
             )
 
-        # Volume ratio via cross-day same-hhmm baseline (prior 20 sessions).
-        bar_volume = float(last_bar["volume"])
         bar_hhmm_int = int(cur_t.strftime("%H%M"))
         baseline_vol = cross_day_rvol_enrichment.get_baseline_vol(
             context.symbol, session_date, bar_hhmm_int,
         )
         if baseline_vol is None or baseline_vol <= 0:
             return _empty("baseline volume unavailable")
-
         vol_ratio = bar_volume / baseline_vol
-
-        # Brief-level lower bound first (catches misconfig where cell < brief)
         if vol_ratio < self.vol_ratio_min:
-            return _empty(
-                f"vol_ratio={vol_ratio:.2f} < brief_min={self.vol_ratio_min}"
-            )
-        # Cell-lock threshold
+            return _empty(f"vol_ratio={vol_ratio:.2f} < brief_min={self.vol_ratio_min}")
         if vol_ratio < self.cell_vol_ratio_min:
-            return _empty(
-                f"vol_ratio={vol_ratio:.2f} < cell_lock={self.cell_vol_ratio_min}"
-            )
+            return _empty(f"vol_ratio={vol_ratio:.2f} < cell_lock={self.cell_vol_ratio_min}")
 
-        # Liquidity guard: signal-bar notional >= configured floor.
-        # Mitigates thin order-book risk in cap_segment=unknown cohort.
         notional = bar_close * bar_volume
         if notional < self.min_signal_bar_notional_rs:
             return _empty(
                 f"notional={notional:,.0f} < min={self.min_signal_bar_notional_rs:,.0f}"
             )
 
-        return _empty("not_implemented_beyond_liquidity_guard")
+        # Confidence proxy: deeper-below-VWAP within the band gives higher confidence.
+        # Clamp to [0, 1]: -2% -> 0.0; -6% -> 1.0.
+        depth_band_floor = -6.0
+        depth_band_ceil = self.vwap_dev_pct_max  # -2.0
+        depth = (depth_band_ceil - vwap_dev_pct) / max(depth_band_ceil - depth_band_floor, 1e-9)
+        confidence = max(0.0, min(1.0, depth))
+
+        evt = StructureEvent(
+            symbol=context.symbol,
+            timestamp=last_ts,
+            structure_type=self.structure_type,
+            side="long",
+            confidence=confidence,
+            levels={
+                "session_vwap": session_vwap,
+                "signal_bar_open": bar_open,
+                "signal_bar_high": bar_high,
+                "signal_bar_low": bar_low,
+                "signal_bar_close": bar_close,
+            },
+            context={
+                "vwap_dev_pct": vwap_dev_pct,
+                "vol_ratio": vol_ratio,
+                "notional": notional,
+                "cap_segment": ctx_cap,
+            },
+            price=bar_close,
+        )
+        self._fired_today.add(latch_key)
+        return StructureAnalysis(
+            structure_detected=True, events=[evt],
+            quality_score=confidence * 100.0,
+        )
 
     def plan_long_strategy(self, context, event=None):
         return None
