@@ -28,6 +28,20 @@ IPFT_RATE = 0.000001
 STAMP_RATE = 0.00003
 GST_RATE = 0.18
 
+# CNC / delivery fee rates (Zerodha, verified 2026-05-21)
+CNC_BROKERAGE_FLAT = 20.0        # Rs per side, flat
+CNC_STT_RATE_SELL = 0.001        # 0.1% on sell value (delivery)
+CNC_STAMP_RATE_BUY = 0.00015     # 0.015% on buy value (delivery)
+CNC_TXN_RATE_PER_SIDE = 0.0000345
+CNC_SEBI_RATE_PER_SIDE = 0.000001
+CNC_GST_RATE = 0.18              # 18% on (brokerage + txn)
+
+# MTF additional costs on top of base equity fee model (Zerodha rate card, 2026-05-21)
+MTF_INTEREST_RATE_PER_DAY = 0.0004   # 0.04% per day on borrowed amount; from T+1
+MTF_PLEDGE_FEE_INR_PER_ISIN = 15.0
+MTF_UNPLEDGE_FEE_INR = 15.0
+MTF_PLEDGE_GST_RATE = 0.18
+
 
 def calc_fee(entry_price: float, exit_price: float, qty: int, side: str,
              mis_leverage: float = 1.0) -> float:
@@ -79,6 +93,97 @@ def calc_fee(entry_price: float, exit_price: float, qty: int, side: str,
     gst = (brok + exch + sebi + ipft) * GST_RATE
 
     return brok + stt + exch + sebi + ipft + stamp + gst
+
+
+def calc_fee_cnc(buy_value_inr: float, sell_value_inr: float) -> float:
+    """CNC (delivery) fee model for a single round-trip.
+
+    Per-side breakdown (Zerodha rate card, verified 2026-05-21):
+      - Brokerage: Rs 20 flat per side
+      - STT: 0.10% on SELL value (delivery rate, distinct from intraday 0.025%)
+      - Stamp: 0.015% on BUY value (delivery rate, distinct from intraday 0.003%)
+      - Txn charges: 0.00345% per side (NSE)
+      - SEBI: 0.0001% per side
+      - GST: 18% on (brokerage + txn) per side
+
+    Mirrors `tools/sub9_research/sanity_close_dn_overnight_long.py:calc_fee_cnc`
+    so research / production reconcile. Pure function; returns Rs as float.
+    """
+    if buy_value_inr is None or sell_value_inr is None:
+        return 0.0
+    if pd.isna(buy_value_inr) or pd.isna(sell_value_inr):
+        return 0.0
+    if buy_value_inr <= 0 or sell_value_inr <= 0:
+        return 0.0
+
+    brokerage_buy = CNC_BROKERAGE_FLAT
+    brokerage_sell = CNC_BROKERAGE_FLAT
+    stt_sell = sell_value_inr * CNC_STT_RATE_SELL
+    stamp_buy = buy_value_inr * CNC_STAMP_RATE_BUY
+    txn_buy = buy_value_inr * CNC_TXN_RATE_PER_SIDE
+    txn_sell = sell_value_inr * CNC_TXN_RATE_PER_SIDE
+    sebi_buy = buy_value_inr * CNC_SEBI_RATE_PER_SIDE
+    sebi_sell = sell_value_inr * CNC_SEBI_RATE_PER_SIDE
+    gst_buy = (brokerage_buy + txn_buy) * CNC_GST_RATE
+    gst_sell = (brokerage_sell + txn_sell) * CNC_GST_RATE
+    return (
+        brokerage_buy + brokerage_sell + stt_sell + stamp_buy +
+        txn_buy + txn_sell + sebi_buy + sebi_sell + gst_buy + gst_sell
+    )
+
+
+def calc_fee_mtf(buy_value_inr: float, sell_value_inr: float,
+                 margin_inr: float, hold_days: int) -> float:
+    """Round-trip MTF fees including overnight interest.
+
+    MTF fee structure on a Rs `buy_value_inr` notional position:
+      - All same per-side CNC fees (brokerage, STT, stamp, txn, SEBI, GST)
+        because fees scale on NOTIONAL, not on margin.
+      - Overnight interest = (buy_value - margin) * 0.0004 * hold_days
+        (0.04%/day on borrowed amount; from T+1).
+      - Pledge fee: Rs 15 + GST per ISIN per pledge (1 pledge per BUY).
+      - Unpledge fee: Rs 15 + GST per request (1 unpledge per SELL).
+
+    For close_dn_overnight_long with 1-night hold (Mon-Thu BUYs): hold_days = 1.
+    Friday BUYs exiting Monday: hold_days = 3 (3 calendar days of interest).
+
+    Defensive: any non-positive value/margin returns 0.0 (mirrors calc_fee).
+    """
+    if buy_value_inr is None or sell_value_inr is None or margin_inr is None:
+        return 0.0
+    if pd.isna(buy_value_inr) or pd.isna(sell_value_inr) or pd.isna(margin_inr):
+        return 0.0
+    if buy_value_inr <= 0 or sell_value_inr <= 0 or margin_inr <= 0:
+        return 0.0
+
+    # Base equity fees (same as CNC)
+    base = calc_fee_cnc(buy_value_inr, sell_value_inr)
+    # MTF-specific
+    borrowed = max(0.0, buy_value_inr - margin_inr)
+    interest = borrowed * MTF_INTEREST_RATE_PER_DAY * max(0, int(hold_days))
+    pledge = MTF_PLEDGE_FEE_INR_PER_ISIN * (1 + MTF_PLEDGE_GST_RATE)
+    unpledge = MTF_UNPLEDGE_FEE_INR * (1 + MTF_PLEDGE_GST_RATE)
+    return base + interest + pledge + unpledge
+
+
+def calc_fee_by_mode(buy_value_inr: float, sell_value_inr: float, *,
+                     mode: str,
+                     margin_inr: float | None = None,
+                     hold_days: int = 0) -> float:
+    """Dispatch to the correct fee model.
+
+    mode in {'delivery_cnc', 'mtf'}.
+    For 'intraday_mis', use the legacy qty-based calc_fee() directly.
+    """
+    if mode == "delivery_cnc":
+        return calc_fee_cnc(buy_value_inr, sell_value_inr)
+    elif mode == "mtf":
+        if margin_inr is None:
+            raise ValueError("calc_fee_by_mode(mode='mtf') requires margin_inr")
+        return calc_fee_mtf(buy_value_inr, sell_value_inr, margin_inr, hold_days)
+    else:
+        raise ValueError(f"calc_fee_by_mode: unsupported mode {mode!r} "
+                         f"(use 'delivery_cnc' or 'mtf'; intraday_mis uses calc_fee())")
 
 
 # Sanity bounds for intraday equity trades on NSE small/mid/large caps.
