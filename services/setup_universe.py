@@ -309,6 +309,12 @@ def below_vwap_volume_revert_long_universe(
     detector's per-bar filters (vwap_dev, vol_ratio, hhmm) determine when
     the signal actually fires.
 
+    The cap=unknown cohort in nse_all.json has ~1,000 MIS-eligible symbols.
+    The default MAX_EXTRA_PER_SETUP=200 cap silently dropped 81% of the
+    eligible universe (smoke test 2026-05-21). Cap is now setup-overridable
+    via config.universe_max_symbols (default high enough to include the full
+    cohort).
+
     Spec: specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md
     """
     from services.symbol_metadata import get_cap_segment, get_mis_info
@@ -316,6 +322,7 @@ def below_vwap_volume_revert_long_universe(
     required_cap = str(config["cell_lock_cap_segment"])
     min_daily_avg_vol = float(config["min_daily_avg_volume"])
     min_days = int(config["min_trading_days_required"])
+    max_symbols = int(config.get("universe_max_symbols", 1500))
 
     qual: Set[str] = set()
     for sym, ddf in daily_dict.items():
@@ -337,7 +344,12 @@ def below_vwap_volume_revert_long_universe(
         if avg_vol < min_daily_avg_vol:
             continue
         qual.add(sym)
-        if len(qual) >= MAX_EXTRA_PER_SETUP:
+        if len(qual) >= max_symbols:
+            logger.warning(
+                "setup_universe.below_vwap_volume_revert_long: hit max_symbols=%d cap "
+                "(eligible cohort may be larger; raise config.universe_max_symbols)",
+                max_symbols,
+            )
             break
     logger.info(
         "setup_universe.below_vwap_volume_revert_long: %d qualifying on %s",

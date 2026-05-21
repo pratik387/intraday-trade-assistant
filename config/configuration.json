@@ -212,8 +212,9 @@
       "wide_open": false
     },
     "below_vwap_volume_revert_long": {
-      "enabled": false,
+      "enabled": true,
       "paper_enabled": true,
+      "universe_max_symbols": 1500,
       "_status": "Paper-trade validation phase started 2026-05-21. See specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md. Do NOT enable in live until paper passes acceptance criteria.",
       "mechanism_tags": ["volume_imbalance_revert", "afternoon_cohort"],
       "mechanism_notes": "LONG mean-revert on stocks trading >=2% below cumulative session VWAP with 10x+ same-time-of-day volume in the afternoon (13:00-14:55). 3D cell-locked to cap_segment=unknown (small/SME-tier names per nse_all.json). Disc PF 1.587 / OOS 1.782 / HO 1.606 across 2023-2026.",
