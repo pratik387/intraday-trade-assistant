@@ -28,6 +28,7 @@ from .data_models import (
     StructureEvent,
     TradePlan,
 )
+from services import cross_day_rvol_enrichment
 
 
 logger = get_agent_logger()
@@ -120,7 +121,29 @@ class BelowVwapVolumeRevertLongStructure(BaseStructure):
                 f"cap_segment={ctx_cap!r} != cell_lock={self.cell_cap_segment!r}"
             )
 
-        return _empty("not_implemented_beyond_cap_segment")
+        # Volume ratio via cross-day same-hhmm baseline (prior 20 sessions).
+        bar_volume = float(last_bar["volume"])
+        bar_hhmm_int = int(cur_t.strftime("%H%M"))
+        baseline_vol = cross_day_rvol_enrichment.get_baseline_vol(
+            context.symbol, session_date, bar_hhmm_int,
+        )
+        if baseline_vol is None or baseline_vol <= 0:
+            return _empty("baseline volume unavailable")
+
+        vol_ratio = bar_volume / baseline_vol
+
+        # Brief-level lower bound first (catches misconfig where cell < brief)
+        if vol_ratio < self.vol_ratio_min:
+            return _empty(
+                f"vol_ratio={vol_ratio:.2f} < brief_min={self.vol_ratio_min}"
+            )
+        # Cell-lock threshold
+        if vol_ratio < self.cell_vol_ratio_min:
+            return _empty(
+                f"vol_ratio={vol_ratio:.2f} < cell_lock={self.cell_vol_ratio_min}"
+            )
+
+        return _empty("not_implemented_beyond_vol_ratio")
 
     def plan_long_strategy(self, context, event=None):
         return None

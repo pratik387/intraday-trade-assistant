@@ -158,3 +158,49 @@ def test_rejects_when_cap_segment_not_unknown():
     r = det.detect(ctx)
     assert not r.structure_detected
     assert "cap_segment" in (r.rejection_reason or "").lower()
+
+
+def test_rejects_when_vol_ratio_below_cell_threshold(monkeypatch):
+    """vol_ratio < 10.0 (cell threshold) should reject even if brief filter
+    (>=3.0) passes."""
+    from services import cross_day_rvol_enrichment
+
+    # Monkey-patch get_baseline_vol → return baseline so vol_ratio = 7 (< 10).
+    def fake_baseline(symbol, session_date, hhmm):
+        # signal bar will have volume=70000; baseline=10000 → vol_ratio=7
+        return 10000.0
+    monkeypatch.setattr(cross_day_rvol_enrichment, "get_baseline_vol", fake_baseline)
+
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 60
+    closes = [100.0] * (n - 1) + [97.0]
+    vols = [10000] * (n - 1) + [70000]  # spike on signal bar
+    df = _make_df(n_bars=n, hhmm_str="14:10", close_seq=closes, volume_seq=vols)
+    ctx = MarketContext(
+        symbol="TEST", current_price=97.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+        cap_segment="unknown",
+    )
+    r = det.detect(ctx)
+    assert not r.structure_detected
+    assert "vol_ratio" in (r.rejection_reason or "").lower()
+
+
+def test_rejects_when_baseline_missing(monkeypatch):
+    """No baseline → conservative reject (do not fire on missing data)."""
+    from services import cross_day_rvol_enrichment
+    monkeypatch.setattr(cross_day_rvol_enrichment, "get_baseline_vol",
+                        lambda s, d, h: None)
+    det = BelowVwapVolumeRevertLongStructure(_cfg())
+    n = 60
+    df = _make_df(n_bars=n, hhmm_str="14:10",
+                  close_seq=[100.0]*(n-1) + [97.0],
+                  volume_seq=[10000]*(n-1) + [200000])
+    ctx = MarketContext(
+        symbol="TEST", current_price=97.0, timestamp=df.index[-1],
+        df_5m=df, session_date=df.index[-1].date(),
+        cap_segment="unknown",
+    )
+    r = det.detect(ctx)
+    assert not r.structure_detected
+    assert "baseline" in (r.rejection_reason or "").lower()
