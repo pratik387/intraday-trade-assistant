@@ -1,7 +1,31 @@
 # `lunch_lull_breakout_fail_short` — Stage 0 brief
 
+> **STATUS: Phase 1 PASS (2026-05-22)** — advance to Phase 2.
+>
+> **Gate A — 3 Indian sources operationalize the mechanism:**
+> 1. **Monash NSE liquidity paper** (cited in `tasks/lessons.md` #4) — J/U-shape volume profile confirms 11:00-13:00 = ~1.0× baseline LOW
+> 2. **TradeSmart Online (Indian broker blog)** — explicit on NSE midday: "Volumes drop sharply... false signals; trend trades often fail" + names 13:00-14:30 as "afternoon trend session, second best window for intraday trading"
+> 3. **Zerodha Varsity (Technical Analysis — Volume chapter)** — operationalizes the bull-trap signature: "price increases but volume decreases → Caution – weak hands buying... small retail participation... possible bull trap"
+>
+> **Mechanism components covered:**
+> - (a) Lunch-lull = low-volume window: YES (Monash + TradeSmart + Lesson #4)
+> - (b) Intraday-high on below-baseline vol = thin retail FOMO / bull trap: YES (Zerodha Varsity explicit)
+> - (c) Post-lunch high-vol window reverses unconfirmed lunch breakouts: **PARTIAL** — Indian sources say "avoid midday, re-engage post-13:30 for trend continuation"; the SHORT-fade direction is one Bayesian inference beyond cited material (failed lunch breakouts MEAN-REVERT because the trend was never real). Phase 2 must validate the fade direction empirically.
+>
+> **Gate B — Data feasibility: PASS** (5m feathers, consolidated_daily, get_cap_segment, ProductionUniverseGate all confirmed)
+>
+> **Capacity outlook: POSITIVE.** Mainstream Indian retail advice is "avoid midday trades" → the contrarian fade side is likely under-arbed precisely because retail sits out. Low arbitrage risk.
+>
+> **Universe sizing:** 892 small+mid caps in consolidated_daily.feather → 150-300/day effective universe after ProductionUniverseGate → comfortable for `n_signal ≥ 200` over 2023-2026.
+>
+> **Phase 2 evidentiary bar (raised due to partial-(c)):**
+> - Falsifier #1 (vol_ratio median < 1.0) MUST be computed and reported BEFORE any drift-delta peeking
+> - Drift-delta threshold ≤ -0.15% holds as written
+>
+> ---
+
 **Date:** 2026-05-22
-**Stage:** 0 — Idea (awaiting Phase 1)
+**Stage:** 0 → 1 (Phase 1 complete, Phase 2 dispatched)
 **Branch:** `research/2026-05-22-new-setups-batch`
 **Predecessor:** Brainstorming continuation of 2026-05-22 session, post 3-KILL batch
 **Direction:** SHORT
@@ -68,12 +92,13 @@ Acceptance: Monash + 1 of [intradaylab / Varsity / SEBI] explicitly operationali
 
 ## 6. Status checklist
 
-- [ ] Gate A — sources cited (Monash + 1+ Indian retail/pro operationalization)
-- [ ] Gate B — data feasibility confirmed
-- [ ] Universe excludes large_cap (carry-over from C-H 2026-05-22 finding)
-- [ ] Phase 2 source-window-cohort splits planned
-- [ ] M penalty noted vs `or_window_failure_fade_short` (1.5-2.0)
+- [x] Gate A — sources cited (Monash + TradeSmart + Zerodha Varsity)
+- [x] Gate B — data feasibility confirmed
+- [x] Universe excludes large_cap (carry-over from C-H 2026-05-22 finding)
+- [x] Phase 2 source-window-cohort splits planned
+- [x] M penalty noted vs `or_window_failure_fade_short` (1.5-2.0)
+- [ ] **Phase 2 pre-registration: vol_ratio median MUST be computed and reported BEFORE drift-delta peeking** (raised bar due to partial-(c) — see Phase 1 PASS banner)
 
 ## 7. Next action
 
-Phase 1 research (Gate A + Gate B) — dispatched as parallel research agent per the proven Phase 1 template from today's session.
+Phase 2 — empirical signature. Dispatched 2026-05-22 per the proven template.
