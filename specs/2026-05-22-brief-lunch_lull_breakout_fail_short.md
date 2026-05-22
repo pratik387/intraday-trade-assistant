@@ -1,5 +1,42 @@
 # `lunch_lull_breakout_fail_short` — Stage 0 brief
 
+> **STATUS: KILLED at Phase 2 (2026-05-22)** — preserved as negative knowledge.
+>
+> **Phase 2 verdict — KILL.** Falsifier #1 PASS (vol_ratio median 0.71, thin-volume signature real). Drift delta **+0.0624% — WRONG SIGN** (SHORT required ≤ -0.15%).
+>
+> **Phase 2 evidence (script: `tools/sub9_research/phase2_lunch_lull_breakout_fail_signature.py`, output: `reports/sub9_sanity/_phase2_lunch_lull_breakout_fail_signature.csv`, 103,484 rows):**
+>
+> | Metric | Value | Pass? |
+> |---|---|---|
+> | n_signal | 23,233 | ✅ (200 floor) |
+> | n_baseline | 80,251 | — |
+> | vol_ratio median | 0.71 | ✅ Falsifier #1 (< 1.0) |
+> | Fraction vol_ratio >= 1.0 | 20.04% | ✅ (< 40%) |
+> | Signal mean ret_to_1430 | -0.002% | — |
+> | Baseline mean ret_to_1430 | -0.064% | — |
+> | **DRIFT DELTA** | **+0.0624%** (WRONG SIGN) | ❌ |
+>
+> **All cohort splits POSITIVE delta** (no SHORT footprint anywhere):
+>
+> | Cohort | n | delta |
+> |---|---|---|
+> | pre_2024 | 4,600 | +0.045% |
+> | post_2024 | 18,633 | +0.060% |
+> | pre_sebi_oct2025 | 17,485 | +0.040% |
+> | post_sebi_oct2025 | 5,748 | +0.100% |
+> | cap=small_cap | 11,880 | +0.055% |
+> | cap=mid_cap | 11,353 | +0.064% |
+>
+> vol_ratio buckets NON-MONOTONIC — the thin-volume signature is real but doesn't drive directional drift.
+>
+> **Indian retail consensus was literally right:** "lunch trades fail" — they fail by going sideways or slightly UP, not DOWN. The Bayesian inferential step from cited sources to "post-lunch fade direction" (flagged in Phase 1 as raised-bar) was empirically wrong. Lesson reinforces: don't extrapolate direction beyond what sources explicitly state.
+>
+> **Inverse-edge check (Lesson #1):** aggregate +0.0624% is too small for LONG either (need +0.15%). Edge is too thin to survive Indian fee stack in either direction.
+>
+> **Conditions for revival:** would need a fundamentally different signal definition that produces directional drift >= |0.15%| at 5m resolution. The current "fresh intraday-high in 11:30-13:00 on thin volume" trigger does NOT predict either direction. Mid-day SHORT setups using a different trigger (e.g., explicit news/event-driven gap-up at midday rather than thin-volume drift) are not pre-empted by this kill.
+>
+> ---
+
 > **STATUS: Phase 1 PASS (2026-05-22)** — advance to Phase 2.
 >
 > **Gate A — 3 Indian sources operationalize the mechanism:**
@@ -97,8 +134,9 @@ Acceptance: Monash + 1 of [intradaylab / Varsity / SEBI] explicitly operationali
 - [x] Universe excludes large_cap (carry-over from C-H 2026-05-22 finding)
 - [x] Phase 2 source-window-cohort splits planned
 - [x] M penalty noted vs `or_window_failure_fade_short` (1.5-2.0)
-- [ ] **Phase 2 pre-registration: vol_ratio median MUST be computed and reported BEFORE drift-delta peeking** (raised bar due to partial-(c) — see Phase 1 PASS banner)
+- [x] **Phase 2 pre-registration: vol_ratio median computed and reported BEFORE drift-delta peek** — Falsifier #1 PASS (median 0.71); discipline held
+- [x] **Phase 2 verdict: KILL** — drift delta +0.0624% (wrong sign for SHORT)
 
 ## 7. Next action
 
-Phase 2 — empirical signature. Dispatched 2026-05-22 per the proven template.
+KILLED. Brief preserved as negative knowledge per maintenance protocol. No detector code written, no production wiring.
