@@ -1,5 +1,37 @@
 # `nifty_heavy_vwap_reclaim_long` — Stage 0 brief
 
+> **STATUS: KILLED at Phase 2 (2026-05-22)** — preserved as negative knowledge.
+>
+> **Reason:** mechanism has no measurable 5m-bar footprint over 2023-2026 Discovery window. Phase 1 Gate A + Gate B both PASSED cleanly, but empirical signature on top-10 NIFTY 50 heavyweights produced drift delta of just **+0.0064%** (signal n=424 vs baseline n=2383), 16× below the +0.10% Stage-2 floor.
+>
+> **Phase 2 evidence (script: `tools/sub9_research/phase2_nifty_heavy_vwap_reclaim_signature.py`, output: `reports/sub9_sanity/_phase2_nifty_heavy_vwap_reclaim_signature.csv`, 2807 rows):**
+>
+> | Metric | Value |
+> |---|---|
+> | Signal events (n) | 424 (well above 200 floor) |
+> | Baseline events (n) | 2,383 |
+> | Signal mean ret_to_1515 | -0.0069% |
+> | Baseline mean ret_to_1515 | -0.0134% |
+> | **DRIFT DELTA** | **+0.0064%** (vs ≥+0.10% floor) |
+>
+> **Pre/Post 2024 split is the key insight (Lesson #18 asymmetry — INVERSE of brief's thesis):**
+>
+> | Cohort | n_signal | delta |
+> |---|---|---|
+> | pre_2024 | 133 | +0.0266% (still below floor, but POSITIVE) |
+> | post_2024 | 291 | **-0.0037%** (SIGN FLIPPED) |
+>
+> The brief's thesis was that FY25 +278% YoY inflow growth → post-2024 should be stronger. **Actual data shows the opposite** — post-AUM-acceleration period has WEAKER (slightly negative) signal. The Lesson #18 asymmetry warning fires: documented passive-AUM growth does NOT manifest in 5m-bar price footprint.
+>
+> **Per-symbol distribution balanced** (32-49 fires per name across 10 symbols, per-symbol means -0.086% to +0.066% centered near zero). Refreshing to top-20 (deferred Phase 4 prerequisite) is unlikely to convert +0.006% into +0.10%.
+>
+> **Conditions for revival:**
+> 1. **Test at slower timescale.** ETF rebalance flow is documented at daily resolution; 5m bars may be too granular to capture the mechanical buy pressure. Try 15:00-15:25 hold window (peak ETF window per Indian sources) or 30-min target instead of 15:15 exit.
+> 2. **Direct ETF-flow detection** (sub-5m): observe NIFTY 50 ETF (NIFTYBEES) tick flow directly and fade against the heavyweight basket. Requires sub-5m intraday ETF data which is not cached.
+> 3. **Wait for post-2026-05-27 cohort to accumulate** (NSE rebalance methodology changed effective 2026-05-27 close — 5 days post-brief; no post-data exists yet). Even if accumulated, the regime-conditioned warning above suggests the methodology change is unlikely to restore a +0.1% footprint that wasn't there before.
+>
+> ---
+
 **Date:** 2026-05-22
 **Stage:** 0 — Idea (awaiting Phase 1 Indian-market research)
 **Predecessor:** Brainstorming session 2026-05-22 (3-candidate batch)

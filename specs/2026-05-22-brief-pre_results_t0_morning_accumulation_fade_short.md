@@ -1,5 +1,53 @@
 # `pre_results_t0_morning_accumulation_fade_short` — Stage 0 brief
 
+> **STATUS: KILLED at Phase 2 (2026-05-22)** — preserved as negative knowledge.
+>
+> **Reason:** mechanism produces WRONG sign in dominant cohort + sample size below floor. Phase 1 Gate A (4 Indian sources) + Gate B both PASSED cleanly, but empirical signature on top-200-ADV F&O proxy universe over 2023-2026 produced drift delta of **+0.0551%** (positive — opposite of SHORT thesis) with only n=48 signal events.
+>
+> **Phase 2 evidence (script: `tools/sub9_research/phase2_pre_results_t0_signature.py`, output: `reports/sub9_sanity/_phase2_pre_results_t0_signature.csv`, 1447 rows):**
+>
+> | Metric | Value | Pass? |
+> |---|---|---|
+> | Signal events (n) | 48 | ❌ (200 floor) |
+> | Baseline events (n) | 1,399 | — |
+> | Signal mean ret_to_1300 | +0.0443% | — |
+> | Baseline mean ret_to_1300 | -0.0108% | — |
+> | **DRIFT DELTA** | **+0.0551%** (WRONG SIGN; SHORT needs ≤ -0.15%) | ❌ |
+>
+> **Fatal cohort detail — dominant `cap=large_cap` cohort drifts UP, not down:**
+>
+> | Cap split | n_signal | delta |
+> |---|---|---|
+> | large_cap | 39 (81% of signals) | **+0.194%** (WRONG DIRECTION) |
+> | mid_cap | 9 | -0.487% (correct direction, but n=9 = noise) |
+> | unknown | 0 | n/a |
+>
+> The institutional-knowledge-advantage thesis predicted large-cap fade should be STRONGEST (highest analyst coverage → biggest information asymmetry). Data shows large-caps drift UP on accumulation signals — the dominant cohort is INVERTED from thesis.
+>
+> **Per-source breakdown also incoherent:**
+>
+> | Source | n_signal | delta |
+> |---|---|---|
+> | announcements_fr | 31 | -0.189% (correct direction, weak) |
+> | announcements_bmo | 4 | -0.961% (correct direction, but n=4 = noise) |
+> | board_meetings | 9 | +1.409% (WRONG direction) |
+>
+> Signed-mean sign flips across reasonable cohorts — no coherent footprint at 5m resolution.
+>
+> **Trigger rarity caveat:** observed 1.3 fires/month vs brief's estimate of 30-50 fires/month. Top-200-ADV proxy may be too narrow (or the 10:00-11:00 + price>=morning_high*1.005 + vol_ratio>=1.3 conjunction is too restrictive). Even if mechanism existed, capacity at this trigger rate would be a separate Phase 3 concern.
+>
+> **What DID work as documented:**
+> - v2 `{AMC, scheduled}` filter recovered 2025+ AMC events correctly (Lesson #11 carry-over fix held)
+> - Dual source rotation (announcements_fr extinct + announcements_bmo 161× surge) handled by v2 filter
+> - Source-priority audit feasible (Lesson #19) — `reports/sub9_sanity/_phase2_pre_results_t0_source_audit.csv`
+>
+> **Conditions for revival:**
+> 1. **Test at slower timescale.** PEAD literature operates on T+1 to T+5 day horizons, not 11:00→13:00 intraday. Within intraday MIS, try 10:00→14:55 (T+0 close fade) — captures full results-day institutional flow rather than just lunch window.
+> 2. **Different signal window.** 10:00-11:00 morning accumulation may be too early — institutional fade may concentrate later. Try 12:30-14:00 fade-entry on AMC results day (after the morning retail FOMO has fully developed).
+> 3. **Mid-cap-only universe.** Mid-cap cohort showed correct direction (-0.49% delta) but with n=9 only. A mid-cap-focused universe (vs top-200-ADV which is large-cap dominated) might surface a real edge if the institutional-knowledge-asymmetry is bigger in mid-caps with less analyst coverage. Counter to the brief's thesis but worth testing.
+>
+> ---
+
 **Date:** 2026-05-22
 **Stage:** 0 — Idea (awaiting Phase 1 Indian-market research)
 **Predecessor:** Brainstorming session 2026-05-22 (3-candidate batch)
