@@ -363,7 +363,8 @@
       "wide_open": false
     },
     "delivery_pct_anomaly_short": {
-      "enabled": true,
+      "enabled": false,
+      "_status_2026_05_22_disabled": "DISABLED. Stage 13 OCI confidence card (3.3y, n=542) shows aggregate PF 0.954 CI [0.777, 1.151] — CI crosses 1.0 and lower bound < 0.95. Harvey-Liu adj Sharpe -0.274 (NEGATIVE) on M=6 corpus. Per-regime decay is STRUCTURAL not war-only: pre_election_calm 0.94, post_election_consolidation 0.84, tariff_recovery_rally 0.58, post_tariff_consolidation 0.81 — multiple pre-war regimes ≤1.0. Lesson #4 'war-only kept active for revival' does NOT apply. Lesson #7 fee-drag dynamic: gross PF 1.16 (real signal) wiped by Rs 32K fees on 542 trades — only 'chop' regime would be net-positive after fees. Setup soft-disabled pending researcher decision on Stage 14 full retirement (Lesson #8 7-step protocol) vs chop-regime gate redesign (Stage 5 Discovery cell-lock required, NOT post-hoc).",
       "mechanism_tags": [
         "rule_orthogonal"
       ],
