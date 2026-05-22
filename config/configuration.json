@@ -457,6 +457,18 @@
         "sustained_weeks": 6,
         "state_file": "state/decay_tripwire_close_dn_overnight_long.json"
       }
+    },
+    "5day_RSI_VWAP_absorb_continuation_long": {
+      "enabled": false,
+      "paper_enabled": false,
+      "_status": "Stage 3 — Phase 2 PROCEED 2026-05-22. Mechanism pre-registration commit (this entry). Detector NOT yet written. Phase 4 sanity + Phase 5 cell-lock pending. See specs/2026-05-22-brief-5day_RSI_VWAP_absorb_continuation_long.md.",
+      "_phase2_evidence": "Post-2024 cohort: aggregate drift +0.162% (n=733), absorption Falsifier #1 PASS at 91% (next-bar vol < cross-bar vol). Pre-SEBI Oct 2025 +0.156%; Post-SEBI Oct 2025 +0.244%. Caveats: small_cap concentration (+0.266%), mid_cap weak (+0.043%), 2024 H2 cohort negative (-0.033%, n=219). Borderline aggregate (+1.5bp above 0.15% floor).",
+      "mechanism_tags": [
+        "retail_flow_regime_2024",
+        "rsi_saturation_continuation",
+        "absorption_mechanism"
+      ],
+      "mechanism_notes": "LONG continuation entry on small/mid-cap NSE MIS-eligible stocks where daily RSI(14) sustained >= 75 for 3+ consecutive days (retail LONG-positioning saturated) and intraday VWAP cross-DOWN happens on elevated volume (>=1.2x cumulative-prior-mean) — the heavy-volume cross is institutional ABSORPTION of retail panic-selling, NOT initiation of supply. Next-bar volume drops 91% of the time confirming absorption mechanism. REGIME-CONDITIONAL: works only post-2024 (retail trader count expansion + passive AUM concentration); pre-2024 cohort fails by design. Inverse-edge restatement of 5day_RSI_overbought_intraday_VWAP_lose_short (KILLED 2026-05-22) — same signal pattern, opposite direction, different mechanism story validated empirically by Phase 2 +0.16% post-2024 drift + 91% absorption rate."
     }
   },
   "filters": {

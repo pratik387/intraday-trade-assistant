@@ -77,3 +77,17 @@ tags:
     description: "Setup has NO known external mechanism dependency. Edge is independent of F&O rules, FII flows, regulatory regime, sectoral correlations. Use sparingly — most Indian equity setups have at least one regime dependency on close inspection."
     source: "Explicit researcher declaration"
     live_computable: true
+
+  # Retail-flow regimes — discrete one-way transitions in NSE retail participation
+  retail_flow_regime_2024:
+    description: "Post-2024 Indian retail intraday regime: 70M+ demat accounts (3-4× FY19), passive AUM Rs 14L cr+ (+27% YoY), retail momentum-screening tools ubiquitous (Streak/Tradetron/Chartink). Mechanisms requiring saturated retail positioning + institutional absorption capacity rely on this regime. Per SEBI 2024 retail study + AMFI FY25 report. Boundary: 2024-01-01 (approximate; AUM growth started accelerating mid-2023)."
+    source: "SEBI quarterly demat stats + AMFI ETF AUM reports"
+    live_computable: true
+  rsi_saturation_continuation:
+    description: "Signal-mechanism tag for setups exploiting sustained daily RSI extreme (3+ days RSI ≥75 or ≤25) where positioning saturation predicts CONTINUATION (not reversion) at intraday timescale. Distinct from single-bar RSI filters."
+    source: "Empirical signature class — first instance: 5day_RSI_VWAP_absorb_continuation_long (2026-05-22)"
+    live_computable: true
+  absorption_mechanism:
+    description: "Heavy-volume bar (typically VWAP cross or level break) followed by next-bar volume drop = institutional ABSORPTION of retail panic flow (supply exhaustion). Distinct from distribution (heavy volume continues). Falsifier: fraction of fires with next_bar_vol_ratio < cross_bar_vol_ratio must be ≥60%."
+    source: "Empirical mechanism class — first instance: 5day_RSI_VWAP_absorb_continuation_long (2026-05-22)"
+    live_computable: true
