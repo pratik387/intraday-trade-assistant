@@ -73,12 +73,24 @@ WINDOWS = {
 # Pre-registered parameters (brief section 5-6, LOCKED)
 SIGNED_VOL_RATIO_MAX = -0.5            # signal fires when ratio <= this
 CLOSING_30M_VOLUME_Z_MIN = 1.0          # confirms flush vs prior-20d mean
-CLOSING_30M_HHMM_LIST = ["15:00", "15:05", "15:10", "15:15", "15:20", "15:25"]
+# LOOK-AHEAD FIX 2026-05-23 (Lesson #25): the 15:25 bar covers 15:25-15:30
+# wall-clock, but MOC fire happens AT 15:25 — that bar's data is unavailable
+# at decision time. Sanity previously included it (6 bars), producing fires
+# the production detector correctly excludes. Now using 5 bars (15:00-15:20),
+# matching `structures.close_dn_overnight_long_structure._SIGNAL_BAR_HHMMS`.
+#
+# CONST NAME RETAINED ("30M") for backward-compat with downstream cell-sweep,
+# confidence-card, and multi-exit scripts that import this list. The signal
+# window is now 25 minutes (5 bars × 5m) — name is historical.
+CLOSING_30M_HHMM_LIST = ["15:00", "15:05", "15:10", "15:15", "15:20"]
+# Alias with semantically-accurate name for new code; legacy imports continue
+# to work via CLOSING_30M_HHMM_LIST.
+CLOSING_25M_HHMM_LIST = CLOSING_30M_HHMM_LIST
 SIGNAL_BAR_HHMM = "15:25"
 ENTRY_BAR_HHMM = "15:25"               # CNC entry at signal bar's close
 EXIT_BAR_HHMM = "09:15"                # CNC exit at next-day open
 
-ROLLING_DAYS = 20                       # for closing_30m_volume_z baseline
+ROLLING_DAYS = 20                       # for closing_25m_volume_z baseline (was: 30m)
 POSITION_NOTIONAL_INR = 100_000         # Rs 1L fixed per trade (CNC)
 MIN_TRADING_DAYS_COVERAGE = 0.80
 MIN_DAILY_AVG_VOLUME = 50_000
@@ -225,9 +237,15 @@ def _months_between(d0: date, d1: date) -> List[Tuple[int, int]]:
 
 
 def _load_window(d0: date, d1: date) -> pd.DataFrame:
-    """Load monthly feathers, restrict to closing-30min + 09:15 bars
-    (the only bars we need)."""
-    keep_hhmm = set(CLOSING_30M_HHMM_LIST + [EXIT_BAR_HHMM])
+    """Load monthly feathers, restrict to bars we need.
+
+    Bars kept:
+      - CLOSING_30M_HHMM_LIST (15:00-15:20, signal window — 5 bars post-fix)
+      - ENTRY_BAR_HHMM (15:25, used ONLY for entry-price simulation + coverage
+        check, NEVER for signal computation — that would be look-ahead)
+      - EXIT_BAR_HHMM (09:15 next day, used for exit-price simulation)
+    """
+    keep_hhmm = set(CLOSING_30M_HHMM_LIST + [ENTRY_BAR_HHMM, EXIT_BAR_HHMM])
     chunks = []
     # Need 1 extra calendar week before d0 to capture 09:15 of d0 (already
     # in d0's month) AND ~30 days before d0 to compute prior-20d baseline
@@ -265,19 +283,22 @@ def _compute_signals(df_window: pd.DataFrame, window_d0: date, window_d1: date) 
     PnL and bin into cells. Only signals where signal_date in [d0, d1]
     are kept (universe filtering happens upstream of this function).
     """
-    # Split into closing-30m bars vs 09:15 open bars
+    # Split: closing-window signal bars (5 bars, 15:00-15:20) vs other bars
     closing = df_window[df_window["hhmm"].isin(CLOSING_30M_HHMM_LIST)].copy()
     opening = df_window[df_window["hhmm"] == EXIT_BAR_HHMM][["symbol", "d", "open"]].copy()
     opening = opening.rename(columns={"open": "next_open"})
 
-    # Aggregate closing-30m per (symbol, date)
-    print("  Aggregating closing 30m per (symbol, date)...", flush=True)
+    # Aggregate closing signal-window (5 bars, look-ahead-safe per Lesson #25)
+    print("  Aggregating closing signal window (5 bars, 15:00-15:20)...", flush=True)
     closing["bar_dir"] = np.sign(closing["close"] - closing["open"]).astype("int8")
     closing["signed_vol"] = closing["volume"].astype("float64") * closing["bar_dir"]
     closing_agg = closing.groupby(["symbol", "d"], observed=True).agg(
         signed_vol_sum=("signed_vol", "sum"),
         total_vol=("volume", "sum"),
         bar_count=("hhmm", "count"),
+        # last_close here = 15:20 bar close — the LATEST close available at
+        # the 15:25 MOC fire time. Production detector uses the same proxy
+        # for "today's close" in its prior_day_return computation.
         last_close=("close", "last"),
     ).reset_index()
     closing_agg["signed_vol_ratio"] = (
@@ -285,8 +306,10 @@ def _compute_signals(df_window: pd.DataFrame, window_d0: date, window_d1: date) 
         closing_agg["total_vol"].replace(0, np.nan)
     )
 
-    # closing_30m_volume_z: per-symbol z-score vs prior-20-session mean/std
-    print("  Computing closing_30m_volume_z (prior-20d baseline)...", flush=True)
+    # closing_25m_volume_z: per-symbol z-score vs prior-20-session mean/std
+    # (Column name retained as `closing_30m_volume_z` for downstream-CSV compat
+    #  even though the underlying window is now 25m — see Lesson #25.)
+    print("  Computing closing_25m_volume_z (prior-20d baseline)...", flush=True)
     closing_agg = closing_agg.sort_values(["symbol", "d"])
     grp = closing_agg.groupby("symbol", observed=True)["total_vol"]
     closing_agg["close30_mean20"] = grp.transform(
@@ -300,12 +323,25 @@ def _compute_signals(df_window: pd.DataFrame, window_d0: date, window_d1: date) 
         closing_agg["close30_std20"].replace(0, np.nan)
     )
 
-    # prior_day_return_pct: today_close - prev_close / prev_close
-    closing_agg["prev_close"] = closing_agg.groupby("symbol", observed=True)["last_close"].shift(1)
+    # prior_day_return_pct — matches production's _prior_day_return_pct semantic:
+    #   - today_close = 15:20 bar close (look-ahead-safe approximation of EOD)
+    #   - yesterday_close = 15:25 bar close (yesterday's TRUE daily close,
+    #     fully available at today's 15:25 fire time)
+    # Cell #5 was discovered when sanity used 15:25 for BOTH today + yesterday.
+    # That was look-ahead-contaminated for today (today's 15:25 bar wasn't
+    # closed at fire time). Production correctly uses the asymmetric mix.
+    # We mirror production here for apples-to-apples comparison.
+    daily_close = df_window[df_window["hhmm"] == ENTRY_BAR_HHMM][["symbol", "d", "close"]].copy()
+    daily_close = daily_close.rename(columns={"close": "daily_close_1525"})
+    closing_agg = closing_agg.merge(daily_close, on=["symbol", "d"], how="left")
+    closing_agg["prev_daily_close"] = closing_agg.groupby("symbol", observed=True)["daily_close_1525"].shift(1)
     closing_agg["prior_day_return_pct"] = (
-        (closing_agg["last_close"] - closing_agg["prev_close"]) /
-        closing_agg["prev_close"].replace(0, np.nan) * 100.0
+        (closing_agg["last_close"] - closing_agg["prev_daily_close"]) /
+        closing_agg["prev_daily_close"].replace(0, np.nan) * 100.0
     )
+    # Keep prev_close alias (= prev_daily_close) for any downstream consumer
+    # that reads the old column name.
+    closing_agg["prev_close"] = closing_agg["prev_daily_close"]
 
     # Match next-trading-day 09:15 open
     print("  Matching next-trading-day 09:15 open per (symbol, signal_date)...", flush=True)
@@ -351,7 +387,7 @@ def _compute_signals(df_window: pd.DataFrame, window_d0: date, window_d1: date) 
     # the mask if any comparison is unparenthesized.
     print("  Applying signal filters...", flush=True)
     sig_mask = (
-        (closing_agg["bar_count"] >= 5)   # at least 5 of 6 closing-30m bars present
+        (closing_agg["bar_count"] >= 4)   # at least 4 of 5 closing-25m signal bars present (matches production min_signal_bar_count=4)
         & (closing_agg["signed_vol_ratio"] <= SIGNED_VOL_RATIO_MAX)
         & (closing_agg["closing_30m_volume_z"] >= CLOSING_30M_VOLUME_Z_MIN)
         & (closing_agg["next_open"].notna())

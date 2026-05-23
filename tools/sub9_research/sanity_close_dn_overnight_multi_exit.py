@@ -90,29 +90,42 @@ def _load_window(d0: date, d1: date) -> pd.DataFrame:
 
 
 def _compute_signals_and_exits(df_window: pd.DataFrame, d0: date, d1: date) -> pd.DataFrame:
-    """Compute signals + multi-exit prices."""
+    """Compute signals + multi-exit prices.
+
+    LOOK-AHEAD FIX 2026-05-23 (Lesson #25): closing-window now 5 bars
+    (15:00-15:20) per the updated CLOSING_30M_HHMM_LIST in the parent sanity
+    script. Signal computation no longer includes the 15:25 bar (which closes
+    at 15:30 wall-clock, AFTER MOC fire decision).
+
+    prior_day_return_pct semantics now match production:
+      - today_close (numerator) = 15:20 bar close (look-ahead-safe)
+      - yesterday_close (denominator) = 15:25 bar close (yesterday's true daily
+        close, fully available at today's 15:25 fire time)
+    """
     closing = df_window[df_window["hhmm"].isin(CLOSING_30M_HHMM_LIST)].copy()
     # Per-exit bars: pivot to wide format (symbol, d, exit_hhmm -> open/close)
     exits_long = df_window[df_window["hhmm"].isin(EXIT_HHMM_LIST)][
         ["symbol", "d", "hhmm", "open", "close"]
     ].copy()
 
-    # Aggregate closing 30m
-    print("  Aggregating closing 30m per (symbol, date)...", flush=True)
+    # Aggregate closing signal window (5 bars, 15:00-15:20 — look-ahead-safe)
+    print("  Aggregating closing 25m signal window per (symbol, date)...", flush=True)
     closing["bar_dir"] = np.sign(closing["close"] - closing["open"]).astype("int8")
     closing["signed_vol"] = closing["volume"].astype("float64") * closing["bar_dir"]
     closing_agg = closing.groupby(["symbol", "d"], observed=True).agg(
         signed_vol_sum=("signed_vol", "sum"),
         total_vol=("volume", "sum"),
         bar_count=("hhmm", "count"),
+        # last_close = 15:20 bar close (today's look-ahead-safe close proxy)
         last_close=("close", "last"),
     ).reset_index()
     closing_agg["signed_vol_ratio"] = (
         closing_agg["signed_vol_sum"] / closing_agg["total_vol"].replace(0, np.nan)
     )
 
-    # closing_30m_volume_z via prior-20d baseline
-    print("  Computing closing_30m_volume_z...", flush=True)
+    # closing_30m_volume_z (column name retained for downstream-CSV compat;
+    # underlying window is now 25m post-fix — see Lesson #25)
+    print("  Computing closing_25m_volume_z...", flush=True)
     closing_agg = closing_agg.sort_values(["symbol", "d"])
     grp = closing_agg.groupby("symbol", observed=True)["total_vol"]
     closing_agg["close30_mean20"] = grp.transform(
@@ -126,12 +139,20 @@ def _compute_signals_and_exits(df_window: pd.DataFrame, d0: date, d1: date) -> p
         closing_agg["close30_std20"].replace(0, np.nan)
     )
 
-    # prior_day_return_pct
-    closing_agg["prev_close"] = closing_agg.groupby("symbol", observed=True)["last_close"].shift(1)
+    # prior_day_return_pct (matches production semantic, see _compute_signals
+    # in sanity_close_dn_overnight_long.py for full rationale).
+    # exits_long already contains the 15:25 bar's close — pull yesterday's
+    # 15:25 close out for the prior-day denominator.
+    daily_close = exits_long[exits_long["hhmm"] == "15:25"][["symbol", "d", "close"]].copy()
+    daily_close = daily_close.rename(columns={"close": "daily_close_1525"})
+    closing_agg = closing_agg.merge(daily_close, on=["symbol", "d"], how="left")
+    closing_agg["prev_daily_close"] = closing_agg.groupby("symbol", observed=True)["daily_close_1525"].shift(1)
     closing_agg["prior_day_return_pct"] = (
-        (closing_agg["last_close"] - closing_agg["prev_close"]) /
-        closing_agg["prev_close"].replace(0, np.nan) * 100.0
+        (closing_agg["last_close"] - closing_agg["prev_daily_close"]) /
+        closing_agg["prev_daily_close"].replace(0, np.nan) * 100.0
     )
+    # Legacy alias for any downstream consumer
+    closing_agg["prev_close"] = closing_agg["prev_daily_close"]
 
     # Restrict to signal_date in window
     closing_agg = closing_agg[
@@ -141,7 +162,7 @@ def _compute_signals_and_exits(df_window: pd.DataFrame, d0: date, d1: date) -> p
     # Apply primary filters
     print("  Applying primary filters...", flush=True)
     mask = (
-        (closing_agg["bar_count"] >= 5)
+        (closing_agg["bar_count"] >= 4)   # at least 4 of 5 signal bars (matches production min_signal_bar_count=4)
         & (closing_agg["signed_vol_ratio"] <= SIGNED_VOL_RATIO_MAX)
         & (closing_agg["closing_30m_volume_z"] >= CLOSING_30M_VOLUME_Z_MIN)
         & (closing_agg["prior_day_return_pct"].notna())
