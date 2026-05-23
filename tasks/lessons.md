@@ -11,6 +11,42 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-22 (#20) — Set up the work environment BEFORE producing artifacts: research branch first, then draft briefs visible to user, then commit
+
+**What went wrong:** During the new-setup brainstorm session (3 candidates: `first_hour_low_retest_fail_long`, `nifty_heavy_vwap_reclaim_long`, `pre_results_t0_morning_accumulation_fade_short`), I committed 3 batches of work (briefs + Phase 1/2 scripts) directly to `main` without ever creating a research branch. I also wrote 8-13KB brief files and committed them to `main` after only showing the user a summary table of mechanism statements — not the actual brief drafts. User pushback: "u should hv created a new branch first... discussed actual briefs".
+
+**Why this is two missed habits, not one:**
+
+1. **No research branch.** The project convention is to do research/exploratory work on `research/<topic>` branches (e.g., `research/europe-open-13ist` from the recent `close_dn_overnight_long` brief). I committed directly to main even though origin/main hadn't moved — my 3 commits forced a `git checkout -b research/2026-05-22-new-setups-batch && git reset --hard origin/main` to retrofit the branch.
+
+2. **No actual-content review gate.** The `superpowers:brainstorming` skill has an explicit "User reviews spec? — Wait for user's response" gate before transitioning to implementation. I conflated "user approved the design summary" (mechanism statements + falsifiers as a compact table) with "user approved the full brief content" (8-13KB files with 7+ sections each). The user wanted to see the actual mechanism wording, the actual falsifier formulations, the actual adjacent-setup correlation tables — BEFORE those went into commits.
+
+**Rules:**
+
+1. **Every research session starts with `git checkout -b research/YYYY-MM-DD-<topic>`** BEFORE the first commit. Even if origin/main hasn't moved, even if I think the work is small, even if I'm planning to merge anyway. Branch first, work second, commit third. The cost of branching is zero; the cost of retrofitting is non-zero git surgery.
+
+2. **The brainstorming skill's "User reviews spec" gate means the user reads the SPEC FILE CONTENTS, not just a summary.** Workflow:
+   - Compact summary at design approval (mechanism statement + falsifier + adjacent setups in 3-5 lines per candidate) ✅ — what I did
+   - Write the brief files to disk ✅ — what I did
+   - **PAUSE. Tell user "briefs written, please read X/Y/Z and approve before commit"** ❌ — what I skipped
+   - Commit only after user has confirmed they've read the actual file content
+
+3. **Don't conflate "approve design" with "approve text."** "Yes write all 3 briefs" is permission to draft, not permission to commit. The commit gate is a separate user action.
+
+4. **Default branch for ANY code/spec/research work that touches the repo: NOT main.** Main is for merged, reviewed, integrated work. Research and exploration goes on a branch. Even if the work doesn't ship, the branch keeps main clean and gives the user a clear merge/discard decision.
+
+5. **If I miss the branch at the start, fix it BEFORE the second commit** — not after 3 commits. The retrofit cost grows linearly with commit count.
+
+**Mechanical retrofit recipe (preserved here for next time):**
+```bash
+git checkout -b research/<topic>       # save work on a branch
+git checkout main                      # back to main
+git reset --hard origin/main           # ONLY if origin/main hasn't been pushed past
+# Work continues on research/<topic>
+```
+
+---
+
 ### 2026-05-22 (#19) — Empirical confirmation: sanity's per-bar logic is identical to production. Sanity is tainted by 3 OTHER mechanics (NOT detector logic).
 
 **What went wrong (continued from #18):** After Lesson #18 identified universe-data-source asymmetry as the dominant root cause, I empirically tested whether the per-bar detector logic itself diverges. Result: **for all 260 OCI HO fires, sanity's per-bar compute logic ALSO says "WOULD_FIRE"** — 260/260 match. So the detector is identical; the divergence is in how the per-bar fires are aggregated into trades.
