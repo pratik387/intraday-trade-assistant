@@ -11,6 +11,92 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-23 (#24) — `aggregate_oci_to_canonical.py` line-178 multi-run UNION lacks lifecycle_id dedup
+
+**What went wrong:** During Stage 14 retirement reconciliation for `circuit_t1_fade_short`, I audited `tools/methodology/aggregate_oci_to_canonical.py` and found that `main()` unions per-setup row lists across multiple `--run-dirs` without deduplication. The per-run aggregation (`aggregate_run`) correctly dedups on `lifecycle_id`, but the cross-run union step (line 178 in the unfixed version) just `.extend()`s rows into `all_by_setup`.
+
+**Impact (latent):** If you ever run `aggregate_oci_to_canonical.py --run-dirs A B` where A and B have overlapping dates, every trade in the overlap gets counted twice — doubling fees, doubling PnL, doubling n. PF would be roughly preserved (W/L doubles W and doubles L) but the absolute INR + n claims would all be wrong, and sub-window analyses (regime, calendar, etc.) would be statistically corrupt.
+
+**Why it didn't fire yet:** The v2 source runs `20260522-071329_full` (2023-2024) + `20260522-105604_full` (2025-2026) are date-disjoint. I verified zero dups by composite key (signal_date|symbol|entry|qty) on all 4 active setups' v2 canonicals. v1 had multiple overlapping runs but appears to have been generated from one source-of-truth run.
+
+**Fix (committed):** Added a `seen_keys: Dict[str, set]` dedup guard at the union step using the natural composite key `(signal_date, symbol, side, round(entry_price,4), int(qty))`. Logs `Dedup: dropped {N} duplicate trades` if any are found at union. lifecycle_id is not preserved in the canonical row (only aggregated fields), so composite-key dedup is the cleanest path. The composite key catches same-trade-emitted-twice while still allowing legitimate same-day same-symbol multi-entries (which would differ on at least one of entry_price/qty/side).
+
+**Rule:** Any cross-source aggregation that does `.extend()`/`.append()` from N upstream sources MUST have a dedup guard at the union step, even if the per-source step already dedups. Per-source dedup catches intra-source duplication; cross-source dedup catches the inadvertent overlap case. The two are different invariants.
+
+---
+
+### 2026-05-23 (#23) — Calendar-variant analyses must apply Bonferroni at TRUE M (all buckets explored), not just shortlisted-variant count
+
+**What went wrong:** Agent 1's calendar-variant analysis on 3 active setups (gap_fade_short, long_panic_gap_down, or_window_failure_fade_short) explored ~15-30 calendar dimensions × buckets (dow × 5 + expiry-week × 2 + month-end × 2 + quarter-end × 2 + fy-end × 2 + tdom-rank × ~5 = roughly 20-25 combinations) before shortlisting 3 variants for ship-gate evaluation. When I applied Harvey-Liu Bonferroni haircut, I used M=3 (the shortlisted count) — that's the WRONG denominator. The true denominator is the number of buckets EXPLORED, not the post-shortlist count, because shortlisting is itself a selection step.
+
+**Why this matters concretely:** At M=3, Bonferroni critical t ≈ 2.32. At M=20, critical t ≈ 3.50. Variant Bp for `long_panic_gap_down` had t=+2.68 — passes M=3 but FAILS M=20. Variant C for `or_window_failure_fade_short` had t=+1.99 — fails both. Variant A for `gap_fade_short` had t=+4.13 — passes both but its uplift was only +0.16 PF (trivial). The "correct" verdict depends entirely on which M you apply.
+
+**Rule:** When running calendar-variant analyses (or any post-hoc filter shortlisting):
+
+1. **Pre-register the exploration scope.** Before running, write down: "I will test dow (5 buckets) × expiry_week (2) × month_end (2) × quarter_end (2) × fy_end (2) × tdom_rank (5) = 20 explorations. M=20." Commit it to the spec or analysis brief.
+
+2. **Apply Bonferroni at the pre-registered M, not the shortlisted M.** Even if you only ship 1 of the 20 explorations, the t-stat haircut uses M=20.
+
+3. **If only-the-survivor-passes at the corrected M:** the variant is not statistically reliable. SHIP IT AS A CLASSIFICATION TAG ONLY (not a hard gate), and treat paper-validation on FRESH data as the discriminator. This is what we did for `long_panic_gap_down` Variant Bp — paper-trade tagging on 60-90 days of forward data, then decide hard-gate vs leave-as-tag vs disable.
+
+4. **Don't claim "passes Bonferroni" without specifying M.** Always cite the M used. "Variant Bp passes Bonferroni M=3" is not the same as "Variant Bp passes Bonferroni at true exploration scope" — the former is partial, the latter is the honest claim.
+
+**Reference:** Harvey-Liu (2016) "Lucky factors" — financial-factor research papers typically have effective M ≈ 100 from exploration burden, with corresponding haircuts around 40-50%. Calendar-variant research within a single trading system is more constrained (M=15-30) but still substantially larger than the shortlisted set.
+
+---
+
+### 2026-05-23 (#22) — `_status_*_oci` config field discipline: cite OCI canonical CSV path + computed PF at time of write
+
+**What went wrong:** `setups.circuit_t1_fade_short._status_2026_05_08_oci` claimed "Holdout PF 1.89" but that number came from the SANITY ledger, not the OCI canonical CSV. The field name said "oci" — implying it referenced OCI evidence — but the actual PF was sanity-sourced. This Lesson #13 violation went undetected for 2 weeks until calendar-variant analysis on OCI v2 surfaced HO PF 0.51 and triggered an investigation. Stage 14 retirement was correct but should have happened 2 weeks earlier.
+
+**Why this happens:** Lesson #13 says sanity Mode B over-estimates OCI PF systematically. But sanity ledgers are ALWAYS available (cheap to compute) while OCI canonical CSVs require a full backtest run (expensive). Researchers default to sanity when a number is needed quickly and the field-name says "oci" because it's mentally "the oci-period PF" rather than "the oci-source PF". The name-source mismatch is silent.
+
+**Rule:** Any config field whose name contains "oci" MUST include:
+
+1. **The OCI canonical CSV path** at the time of write (e.g., `reports/oci_canonical_v2/circuit_t1_fade_short_oci_canonical.csv`).
+2. **The exact computed PF** that matches the CSV at that path on the cited window. If the CSV later changes, the field becomes a historical claim — that's fine, but the path + PF at write-time must be on record.
+3. **An n citation** (number of trades the PF was computed over).
+
+Examples:
+- ❌ "Holdout PF 1.89 (Oct'25-Apr'26) confirmed robust through war + regulatory regime." (no source, no n)
+- ✅ "Holdout PF 1.89 on n=61 from reports/sub9_sanity/circuit_t1_fade_short_trades_holdout.csv (SANITY, NOT OCI — Lesson #13 caveat applies)." (transparent about source)
+- ✅ "Holdout PF 0.501 on n=81 from reports/oci_canonical_v2/circuit_t1_fade_short_oci_canonical.csv as of 2026-05-23." (clear OCI source + path + n)
+
+**Hard rule for naming convention:**
+
+- `_status_*_oci` → OCI canonical CSV must be the source. If a field referencing OCI also pulls sanity data for any reason, name it differently (e.g., `_status_*_sanity_estimate` or `_status_*_oci_with_sanity_caveat`).
+- `_status_*_sanity` → sanity ledger source explicitly named.
+- Never use a generic `_status_*` for a number that might be misread by a future agent or self.
+
+**Detection script idea (could automate):** Walk `config/configuration.json`, find all `_status_*_oci*` fields, extract any "PF X.XX" claims, verify against the current OCI canonical CSV. Diff = silent contamination. Could run as a pre-commit hook or a periodic audit script.
+
+---
+
+### 2026-05-23 (#21) — Holdout window can contain regime contamination; decompose before retire/hard-gate decisions
+
+**What went wrong:** When analyzing 4 active setups for calendar-variant improvements and retirement candidates, my initial verdicts used full Holdout PF (2025-10-01 to 2026-04-30) as the ship-gate signal. The user pointed out: "see ho is not the best phase to judge and change since it has war period." HO contains the US-Iran war regime starting 2026-02-28 — a one-time geopolitical shock that affects ~2 months of the 7-month HO window. PF degradation in that 2-month tail can dominate the full-HO PF and look like "setup decay" when it's actually "regime-specific bleed."
+
+**Concrete impact this session:**
+
+- `gap_fade_short` HO_full PF 1.25 → looked degraded. Pre-war HO PF 1.54 → setup is HEALTHY. War regime is the explanation for the "decay."
+- `long_panic_gap_down` HO_full PF 0.98 → looked failing. Pre-war HO PF 1.06 → marginal pass. War regime made it fail-gate; pre-war it's barely above.
+- 3 calendar-variant uplifts initially looked actionable. After pre-war decomposition, ONE was a genuine pre-war edge (Variant Bp on long_panic_gap_down: pre-war +0.54 PF). The other two were partially war-regime-avoidance overfit.
+- `circuit_t1_fade_short` HO_full PF 0.50 → looked broken. Pre-war HO PF 0.74 → STILL failing ship-gate even with war excluded. This is a genuine decommission case (war made it worse, didn't cause it).
+
+**Rule:** Before any retire/hard-gate decision based on Holdout PF degradation:
+
+1. **Decompose HO into regime sub-windows.** At minimum: pre-war (2025-10-01 to 2026-02-27) vs war (2026-02-28+). Future regimes (election cycles, RBI policy windows, SEBI rule changes) need similar carve-outs as they emerge.
+2. **Apply ship-gate criteria to the pre-war sub-window** (or whichever sub-window is the "clean" regime for the setup in question). If pre-war passes, the setup is regime-paused, not broken — disable temporarily but preserve config.
+3. **If pre-war ALSO fails:** setup is broken, not regime-paused. Proceed with Stage 14 retirement.
+4. **For calendar-variant uplifts:** verify the variant uplift is GENUINE pre-war, not war-regime avoidance. If the variant's apparent improvement comes from excluding days that were primarily war-dragged, the uplift is artifact, not edge.
+5. **Sample-size floors apply to sub-windows too.** Pre-war HO with n<30 is too thin for a robust ship-gate decision; in that case, defer to OOS+Discovery weighted evidence or paper-validate.
+
+**War regime cutoff:** 2026-02-28 (US-Iran war start). Apply this cutoff to ALL Holdout-period analyses going forward until a new regime arrives. Update this lesson when a new regime cutoff is identified.
+
+**Reference:** Cutoff sweep validated at Feb 15 / Feb 22 / Feb 28 / Mar 5 (`_tmp_war_validation.py` step 2). Discrimination is sharpest around Feb 28 across the 4 active setups (PF drops +0.21 to +0.75 across setups at this cutoff). long_panic_gap_down inverts slightly with Mar 5 cutoff, confirming war onset is between Feb 28 and Mar 5.
+
+---
+
 ### 2026-05-22 (#20) — Set up the work environment BEFORE producing artifacts: research branch first, then draft briefs visible to user, then commit
 
 **What went wrong:** During the new-setup brainstorm session (3 candidates: `first_hour_low_retest_fail_long`, `nifty_heavy_vwap_reclaim_long`, `pre_results_t0_morning_accumulation_fade_short`), I committed 3 batches of work (briefs + Phase 1/2 scripts) directly to `main` without ever creating a research branch. I also wrote 8-13KB brief files and committed them to `main` after only showing the user a summary table of mechanism statements — not the actual brief drafts. User pushback: "u should hv created a new branch first... discussed actual briefs".
