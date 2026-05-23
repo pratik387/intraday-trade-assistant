@@ -176,13 +176,38 @@ def main(argv=None):
 
     print(f"Aggregating {len(args.run_dirs)} OCI run dir(s)...")
     all_by_setup: Dict[str, List[dict]] = defaultdict(list)
+    # Track dedup keys per setup across all runs.
+    # lifecycle_id is NOT preserved in the canonical row (we only retain
+    # aggregated fields), so we dedup on the natural composite key:
+    #   (signal_date, symbol, side, entry_price, qty)
+    # Same trade emitted from two overlapping run-dirs has identical values
+    # for all five fields; this catches the double-count case without rejecting
+    # legitimate same-day same-symbol multi-entries (which would differ on at
+    # least one of entry_price/qty/side).
+    seen_keys: Dict[str, set] = defaultdict(set)
+    n_dedup_drops = 0
     for run_dir in args.run_dirs:
         if not run_dir.exists():
             print(f"WARN: run dir not found: {run_dir}", file=sys.stderr)
             continue
         by_setup = aggregate_run(run_dir, setups_filter=args.setups)
         for setup, rows in by_setup.items():
-            all_by_setup[setup].extend(rows)
+            for row in rows:
+                key = (
+                    row.get("signal_date", ""),
+                    row.get("symbol", ""),
+                    row.get("side", ""),
+                    round(float(row.get("entry_price", 0.0) or 0.0), 4),
+                    int(row.get("qty", 0) or 0),
+                )
+                if key in seen_keys[setup]:
+                    n_dedup_drops += 1
+                    continue
+                seen_keys[setup].add(key)
+                all_by_setup[setup].append(row)
+    if n_dedup_drops > 0:
+        print(f"  Dedup: dropped {n_dedup_drops} duplicate trades across run-dir union "
+              f"(see line-178 dedup guard, Lesson #24).")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
