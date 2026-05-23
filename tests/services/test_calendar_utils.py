@@ -219,3 +219,58 @@ def test_load_nse_holidays_smoke():
     assert len(holidays) >= 20, f"expected >=20 NSE holidays across 2023-2026, got {len(holidays)}"
     # Verify Republic Day 2023 (well-known Indian holiday) is in the set
     assert date(2023, 1, 26) in holidays
+
+
+# ---------------------------------------------------------------------------
+# passes_long_panic_variant_bp — Variant Bp gate for long_panic_gap_down
+# ---------------------------------------------------------------------------
+
+def test_variant_bp_tuesday_passes():
+    from services.calendar_utils import passes_long_panic_variant_bp
+    # 2024-01-02 was Tuesday
+    assert passes_long_panic_variant_bp(date(2024, 1, 2))
+
+
+def test_variant_bp_wednesday_passes():
+    from services.calendar_utils import passes_long_panic_variant_bp
+    # 2024-01-03 was Wednesday
+    assert passes_long_panic_variant_bp(date(2024, 1, 3))
+
+
+def test_variant_bp_friday_passes():
+    from services.calendar_utils import passes_long_panic_variant_bp
+    # 2024-01-05 was Friday
+    assert passes_long_panic_variant_bp(date(2024, 1, 5))
+
+
+def test_variant_bp_monday_excluded():
+    from services.calendar_utils import passes_long_panic_variant_bp
+    # 2024-01-01 was Monday
+    assert not passes_long_panic_variant_bp(date(2024, 1, 1))
+
+
+def test_variant_bp_thursday_excluded():
+    from services.calendar_utils import passes_long_panic_variant_bp
+    # 2024-01-04 was Thursday
+    assert not passes_long_panic_variant_bp(date(2024, 1, 4))
+
+
+def test_variant_bp_weekend_returns_false():
+    from services.calendar_utils import passes_long_panic_variant_bp
+    # 2024-01-06 Saturday, 2024-01-07 Sunday
+    assert not passes_long_panic_variant_bp(date(2024, 1, 6))
+    assert not passes_long_panic_variant_bp(date(2024, 1, 7))
+
+
+def test_variant_bp_independent_of_expiry_or_holidays():
+    """Variant Bp depends ONLY on dow — not on expiry or holiday calendars.
+
+    Rationale: war-regime-decomposed analysis (2026-05-23) showed the Mon/Thu
+    drag is a pure dow effect across all months/expiry cycles, not an expiry
+    week interaction.
+    """
+    from services.calendar_utils import passes_long_panic_variant_bp
+    # 2024-01-25 was Thursday AND monthly F&O expiry — excluded by dow rule alone
+    assert not passes_long_panic_variant_bp(date(2024, 1, 25))
+    # 2024-01-23 was Tuesday during expiry week — passes by dow rule
+    assert passes_long_panic_variant_bp(date(2024, 1, 23))

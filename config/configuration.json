@@ -209,6 +209,18 @@
       "max_fires_per_5min": 10,
       "regime_guard_n_triggers_today_max": 80,
       "_comment_regime_guard": "Implemented 2026-05-15 via services/regime_density_tracker.py + services/setup_universe.long_panic_gap_down_universe. In live (ScreenerLive) the universe builder runs at the 09:15 bar, computes ALL symbols passing the BROADER filter (gap_pct<=gap_pct_max AND dist_pdh<=dist_from_pdh_pct_max AND dist_pdl<=broader_dist_from_pdl_pct_max) and pre-seeds the density tracker BEFORE any detector fires. Detector then queries get_density() and suppresses Cell B fires when count > this threshold. Threshold 80 from broader-universe sweep: PF plateau 75-100 gives Disc 1.45 / OOS 1.40 / Holdout 1.72; cliff at 125 (Holdout drops to 1.01). In non-screener paths (test/backtest) the detector falls back to per-symbol note() — sequentially correct but with the v1.0 ordering caveat (first ~80 symbols still fire before guard activates).",
+      "paper_calendar_variant_bp": {
+        "enabled": true,
+        "rule": "dow IN {Tuesday, Wednesday, Friday}  (equivalent: dow NOT IN {Monday, Thursday})",
+        "_status_2026_05_23": "ADDED — war-regime-decomposed Holdout analysis on OCI v2 canonical (`reports/oci_canonical_v2/long_panic_gap_down_oci_canonical.csv`) shows Variant Bp lifts pre-war HO PF from 1.06 (n=123, marginal pass) to 1.602 (n=71, +51% uplift). t-stat +2.68 PASSES Bonferroni M=3 multi-hypothesis correction (critical 2.32). CLASSIFICATION TAG mode (not hard gate): detector emits paper_variant_classification={baseline:True, variant_bp:bool} on every fire; paper-trade tagging splits PnL by cohort during 60-90 day validation. Production live entries do NOT apply Variant Bp hard gate until paper validation confirms HO PF lift sustains live. Caveat: true M (calendar buckets explored) likely 15-30, not 3 — at M=20, Bonferroni critical ~3.5 and Variant Bp would NOT survive. Forward paper-validation is the discriminator. Spec: specs/2026-05-23-long_panic_gap_down-variant-bp-paper-trade-spec.md.",
+        "expected_uplift_pre_war_HO_pf": 1.602,
+        "baseline_pre_war_HO_pf": 1.06,
+        "t_stat": 2.68,
+        "bonferroni_critical_M3": 2.32,
+        "decision_window_paper_days": 60,
+        "evidence_ledger": "reports/oci_canonical_v2/long_panic_gap_down_oci_canonical.csv",
+        "war_cutoff_date": "2026-02-28"
+      },
       "wide_open": false
     },
     "below_vwap_volume_revert_long": {
@@ -310,7 +322,10 @@
       "wide_open": false
     },
     "circuit_t1_fade_short": {
-      "enabled": true,
+      "enabled": false,
+      "_status_2026_05_23_RETIRED_stage_14": "RETIRED via Stage 14 confidence-card trigger. OCI v2 confidence card (632 trades, 2023-02 to 2026-04): Aggregate PF 1.174 CI [0.937, 1.459] — CI lower bound 0.937 < 0.95 ship floor (Stage 14 trigger #1 FIRES). Adjusted Sharpe +1.087 stays positive at M=1 but is uncorrected for true-M (likely M=15-30 across the portfolio's variant exploration this session). Per-regime decomposition (Lopez de Prado tactical 2019): pre_election_calm 1.34, election_vol_spike 0.83, post_election_consolidation 1.67, fed_pivot_china_rotation_FII_exit 1.42, tariff_recovery_rally 1.66, post_tariff_consolidation 0.70, war_vol_2026 0.22. Five of seven regimes positive but the two recent regimes (post_tariff_consolidation + war_vol_2026) drag CI lower bound below ship-floor. Holdout sub-window decomposition (2025-10-01 to 2026-04-30): pre-war (2025-10-01 to 2026-02-27) n=51 net PF 0.74 (FAILING ship-gate even excluding war); war (2026-02-28 to 2026-04-30) n=30 net PF 0.22. PRE-WAR HOLDOUT FAILS regardless of war contamination — setup is broken, not regime-paused. See docs/retired_setups.md for full evidence chain.",
+      "_concern_2026_05_22_oci_v2_ho_discrepancy": "RESOLVED 2026-05-23. OCI v2 confirmed as current source of truth (tools/methodology/confidence/confidence_card.py defaults to reports/oci_canonical_v2; v2 source runs 20260522-071329_full + 20260522-105604_full are date-disjoint, post-date dispatch-bug-fix commit 47e985d). v1 was stale (pre-cell-lock-fix). 'Holdout PF 1.89' in prior _status_2026_05_08_oci was sourced from SANITY ledger (Lesson #13 violation — sanity Mode B over-optimism vs OCI reality). Pre-war HO PF 0.74 confirms setup is structurally broken, not war-contaminated. Retirement workflow executed 2026-05-23 (Stage 14).",
+      "_status_2026_05_08_oci_DEPRECATED": "DEPRECATED 2026-05-23 — claim 'Holdout PF 1.89' was sanity-sourced. Actual OCI v2 HO PF 0.50. See _status_2026_05_23_RETIRED_stage_14 and _concern_2026_05_22_oci_v2_ho_discrepancy.",
       "mechanism_tags": [
         "SEBI_FO_rule_version_2"
       ],
@@ -325,9 +340,7 @@
         "dpr_circuit"
       ],
       "_comment_depends_on": "Mechanism = post-circuit retail FOMO + operator pump exhaustion. NSE DPR/circuit rules are the load-bearing dependency. Edge is independent of F&O microstructure, so Oct-1-2025 didn't break it (validated by mid_cap subset PF 1.37→1.40 OOS→Holdout).",
-      "_status_2026_05_12_SWEEP_FIX": "T1/T2/SL sweep (tools/sub9_research/_circuit_t1_sl_target_sweep.py) ran 240 combos x 585 Discovery trades + 61 Holdout trades. Production was running partial_50_be_trail (PF 0.49 Discovery / 0.91 Holdout — actively losing money). Sanity baseline (all_in, ride to T2=t0_close) reproduces PF 1.34 Discovery / 1.89 Holdout. Sweep optimum (sb=0.25, ms=0.5, all_in, ts=15:10) gives PF 1.74 Discovery / 1.88 Holdout. LOCKED: t1_qty_pct=0.0 (disable partial — ride to T2), stop_t1_high_buffer_pct=0.25, min_stop_distance_pct=0.5.",
-      "_concern_2026_05_22_oci_v2_ho_discrepancy": "Calendar-variant analysis (2026-05-22, agent ac6005638bad2c305) reads reports/oci_canonical_v2/circuit_t1_fade_short_oci_canonical.csv: Holdout n=113, NET PF 0.506 (NET LOSER -Rs 21,734). This CONFLICTS with _status_2026_05_08_oci which reads Holdout PF 1.89. Expiry-week-only Variant C (Falsifier-test) made HO WORSE: PF 0.17 on n=17 (below 30-trade floor). ACTION REQUIRED: (a) reconcile OCI canonical v1 vs v2 ledgers; (b) if v2 is current, this setup is post-Holdout LOSING and warrants Stage 13 confidence card re-evaluation per docs/setup_lifecycle.md (Stage 14 retirement triggers: PF CI lower bound <0.95 OR adjusted Sharpe negative). Do NOT decommission until reconciliation done — both calendar Agent A (sanity) and Agent B (OCI v2) ran 2026-05-22 with different inputs.",
-      "_status_2026_05_08_oci": "ENABLED for OCI wide_open run. Holdout PF 1.89 (Oct'25-Apr'26) confirmed robust through war + regulatory regime.",
+      "_status_2026_05_12_SWEEP_FIX": "T1/T2/SL sweep (tools/sub9_research/_circuit_t1_sl_target_sweep.py) ran 240 combos x 585 Discovery trades + 61 Holdout trades. Production was running partial_50_be_trail (PF 0.49 Discovery / 0.91 Holdout — actively losing money). Sanity baseline (all_in, ride to T2=t0_close) reproduces PF 1.34 Discovery / 1.89 Holdout. Sweep optimum (sb=0.25, ms=0.5, all_in, ts=15:10) gives PF 1.74 Discovery / 1.88 Holdout. LOCKED: t1_qty_pct=0.0 (disable partial — ride to T2), stop_t1_high_buffer_pct=0.25, min_stop_distance_pct=0.5. NOTE 2026-05-23: this sweep used sanity ledger output (Lesson #13 violation discovered post-hoc); on OCI v2 the sweep would produce different params. Setup is retired regardless.",
       "_status_2026_05_01": "NEW — sub-9 §3.3 sanity-check PASSED (PF=1.47 NET, n=654 over 12mo 2024). Phase-1 validation pending. enabled=false until production smoke + Phase-1 backtest confirm.",
       "t0_min_pct_change": 4.5,
       "t0_high_to_close_min": 0.995,

@@ -1183,6 +1183,66 @@ Two calendar filters surfaced in parallel analysis that DO ship as portfolio enh
 
 ---
 
+## `circuit_t1_fade_short` — RETIRED 2026-05-23 (Stage 14, post-reconciliation)
+
+**Thesis (original):** SHORT fade T+1 after upper-circuit pin in small/mid-cap. Retail-FOMO + operator-pump-exhaustion mechanism on T+0 close, faded T+1 mid-session. Indian-microstructure-specific (NSE DPR/circuit rules), no F&O dependency. First APPROVED setup of sub-project #9 (Phase 1-5 chain). Five peer-reviewed sources (Guo JIFM 2023, Chen/Petukhov/Wang MIT WP, Tandfonline 2024, Sehgal PBFJ 2024, Chari 2017).
+
+**Trigger chain that led to retirement (2026-05-22 to 2026-05-23):**
+
+1. **2026-05-22 — Calendar-variant analysis surfaced ledger discrepancy.** Two analysis agents ran in parallel: Agent A read sanity ledger (Holdout PF 1.89), Agent B read `reports/oci_canonical_v2/circuit_t1_fade_short_oci_canonical.csv` (Holdout PF 0.51). Config concern field added (`_concern_2026_05_22_oci_v2_ho_discrepancy`).
+2. **2026-05-23 — OCI v1 vs v2 reconciliation.** Confirmed v2 is current source-of-truth (`tools/methodology/confidence/confidence_card.py:149` defaults to `reports/oci_canonical_v2`; v2 source runs `20260522-071329_full` + `20260522-105604_full` are date-disjoint and post-date the dispatch-bug-fix commit `47e985d`). v1 (`reports/oci_canonical/`) is stale (pre-cell-lock-fix). The "PF 1.89" claim in `_status_2026_05_08_oci` was sourced from SANITY ledger — Lesson #13 violation (sanity Mode B over-optimism ≠ OCI reality).
+3. **2026-05-23 — War-regime decomposition test.** User flagged HO contamination by war_vol regime (US-Iran war started 2026-02-28). Decomposed HO into pre-war (2025-10-01 to 2026-02-27) and war (2026-02-28 to 2026-04-30) sub-windows. **Pre-war HO: n=51, net PF 0.74** — STILL FAILS ship-gate (>= 1.10) even with war excluded. Setup is structurally broken, not regime-paused.
+4. **2026-05-23 — Stage 14 confidence card.** OCI v2 aggregate PF 1.174 CI [0.937, 1.459]. **CI lower bound 0.937 < 0.95 ship-floor** = Stage 14 retirement trigger #1 fires.
+
+**Actual production results (OCI v2 canonical, 632 trades, 2023-02 to 2026-04-28):**
+
+| Window | n | Net PF | Net Rs |
+|---|---|---|---|
+| Discovery (2023-2024) | 451 | 1.329 | +Rs 39,368 |
+| OOS (2025-01..09) | 100 | 1.303 | +Rs 11,188 |
+| HO_full (2025-10..2026-04) | 81 | **0.501** ❌ | **-Rs 17,257** |
+| HO_pre_war (2025-10-01 to 2026-02-27) | 51 | **0.74** ❌ | -Rs 4,998 |
+| HO_war (2026-02-28 to 2026-04-30) | 30 | 0.22 ❌ | -Rs 12,260 |
+
+**Per-regime breakdown (confidence card, Lopez de Prado tactical 2019):**
+
+| Regime | n | Net PF | Net Rs |
+|---|---|---|---|
+| pre_election_calm | 282 | 1.338 | +Rs 25,629 |
+| election_vol_spike | 45 | 0.833 | -Rs 2,593 |
+| post_election_consolidation | 72 | 1.666 | +Rs 10,623 |
+| fed_pivot_china_rotation_FII_exit | 82 | 1.422 | +Rs 10,105 |
+| tariff_recovery_rally | 37 | 1.659 | +Rs 10,416 |
+| **post_tariff_consolidation** | 84 | **0.695** ❌ | -Rs 8,621 |
+| **war_vol_2026** | 30 | **0.219** ❌ | -Rs 12,260 |
+
+**Failure-mode summary:** Five of seven regimes positive; two recent regimes (post_tariff_consolidation Oct-Dec 2025 + war_vol_2026 Feb-Apr 2026) drag CI lower bound below ship-floor. The pre-war HO failure (PF 0.74) confirms this is NOT war-only regime decay — the setup broke during post_tariff_consolidation BEFORE the war. Mechanism hypothesis: post-Nov-2024 SEBI F&O reforms compounded with broader 2025 retail-leverage tightening progressively attenuated the retail-circuit-FOMO supply that this setup was fading. Same regulatory-decay pattern as `circuit_release_fade_short` (RETIRED 2026-05-19) — both rely on retail circuit-band behavior, both decayed post-SEBI cutover.
+
+**Cell-salvage NOT attempted** because pre-war HO failure is aggregate (across all cap-segments, all entry-hours, all regimes — see per-regime table above showing 2 of the 3 most recent regimes failing). Lesson #2 anti-cell-mine discipline: post-hoc cell selection on the same data that triggered retirement = data-snooping. Any revival must start from a NEW Phase 1 brief with a fresh mechanism hypothesis.
+
+**Methodology lessons surfaced (added to `tasks/lessons.md`):**
+- **#21:** HO regime decomposition is mandatory before retire/hard-gate. War regime 2026-02-28+ specifically must be carved out.
+- **#22:** `_status_*_oci` config field discipline — must cite OCI canonical CSV path + computed PF at time of write. Sanity-sourced PFs in OCI-named fields = recurring Lesson #13 violation (this setup's "PF 1.89" claim went undetected for 2 weeks).
+- **#23:** Calendar-variant analyses must report Bonferroni-adjusted significance at TRUE M (number of buckets explored), not just shortlisted variant count.
+- **#24:** `aggregate_oci_to_canonical.py` line-178 multi-run UNION lacks lifecycle_id dedup — latent bug, currently masked because v2 source runs are date-disjoint.
+
+**Code files retained (negative-knowledge artifacts):**
+- `structures/circuit_t1_fade_short_structure.py` — detector preserved with `enabled=false` config gate
+- `services/setup_universe.py:circuit_t1_universe` — universe builder preserved
+- `tools/sub9_research/sanity_circuit_t1_fade_short.py` — Phase 4 sanity script
+- `tools/sub9_research/_circuit_t1_sl_target_sweep.py` — Phase 5 sweep tool (note: ran on sanity ledger; Lesson #13 contamination)
+- `reports/oci_canonical_v2/circuit_t1_fade_short_oci_canonical.csv` — production evidence ledger
+- `reports/confidence_cards/circuit_t1_fade_short_confidence_card.md` — Stage 14 confidence card output
+- `specs/2026-05-01-sub-project-9-brief-circuit_t1_fade_short.md` — original brief
+
+**Conditions for revival:**
+This setup should NOT be re-implemented unless:
+1. **New post-2025 mechanism evidence emerges** explaining the regime decay — most likely candidate: a NEW SEBI reform that REVERSES the leverage-tightening trend (currently going only one direction).
+2. **Pre-war HO recomputes above PF 1.20** in a fresh 6-month rolling window on OCI v2 canonical, with a tightened cell that was independently validated on Discovery+OOS BEFORE locking (Lesson #2 anti-cell-mine discipline).
+3. **Stage 13 confidence card aggregate PF CI lower bound rises above 0.95** with adjusted Sharpe positive at corpus M=number-of-active-setups (currently M would be ~6, requiring SR > ~0.4 after haircut).
+
+---
+
 ## Maintenance protocol
 **Predecessor:** First-pass thesis (no prior version). Phase 1-5 disciplined revival chain documented in `tasks/lessons.md` 2026-05-19 #3.
 **Sanity scripts (preserved):** `tools/sub9_research/phase2_pre_results_t1_signature.py`, `tools/sub9_research/sanity_pre_results_t1_fade.py`, `tools/sub9_research/phase5_pre_results_t1_validation.py`

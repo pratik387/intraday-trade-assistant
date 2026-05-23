@@ -35,6 +35,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from config.logging_config import get_agent_logger
+from services.calendar_utils import passes_long_panic_variant_bp
 from services.config_loader import load_base_config
 from services.plan_helpers import (
     PlanRejected,
@@ -93,6 +94,13 @@ class LongPanicGapDownStructure(BaseStructure):
         # (looser than narrow Cell B band, matches sanity n_triggers_today).
         self.broader_dist_from_pdl_pct_max = float(config["broader_dist_from_pdl_pct_max"])
         self.regime_guard_max_density = int(config["regime_guard_n_triggers_today_max"])
+
+        # Variant Bp paper-validation flag (per specs/2026-05-23-long_panic_gap_down-variant-bp-paper-trade-spec.md).
+        # Variant Bp is a CLASSIFICATION TAG on every fire (NOT a hard entry gate);
+        # paper-trade execution + analytics use this to A/B-test baseline vs dow-locked cohort.
+        # Rule: dow IN {Tuesday, Wednesday, Friday}.
+        variant_bp_cfg = config.get("paper_calendar_variant_bp", {})
+        self._paper_variant_bp_enabled = bool(variant_bp_cfg.get("enabled", False))
 
         # First-trigger latch — one fire per (symbol, session_date).
         self._fired_today: set = set()
@@ -195,6 +203,24 @@ class LongPanicGapDownStructure(BaseStructure):
         )
         confidence = max(0.0, min(1.0, depth_in_band))
 
+        # Variant Bp classification tag (paper-validation A/B).
+        # Tagged on every fire; downstream analytics/reporting splits PnL by cohort.
+        if self._paper_variant_bp_enabled:
+            try:
+                variant_bp_flag = bool(passes_long_panic_variant_bp(_sd))
+            except Exception as exc:  # never block fire on calendar-data hiccup
+                logger.warning(
+                    "long_panic_gap_down: variant_bp classifier raised %s on %s; defaulting to False",
+                    type(exc).__name__, _sd,
+                )
+                variant_bp_flag = False
+        else:
+            variant_bp_flag = False
+        paper_variant_classification = {
+            "baseline": True,           # every fire belongs to baseline cohort
+            "variant_bp": variant_bp_flag,
+        }
+
         evt = StructureEvent(
             symbol=context.symbol,
             timestamp=last_ts,
@@ -212,6 +238,7 @@ class LongPanicGapDownStructure(BaseStructure):
                 "gap_pct": gap_pct,
                 "dist_from_pdh_pct": dist_from_pdh_pct,
                 "dist_from_pdl_pct": dist_from_pdl_pct,
+                "paper_variant_classification": paper_variant_classification,
             },
             price=bar_close,
         )

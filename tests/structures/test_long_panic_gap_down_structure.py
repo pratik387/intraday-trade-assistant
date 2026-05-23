@@ -290,3 +290,124 @@ def test_density_is_idempotent_per_symbol():
     # but tracker must also not double-count via the broader-filter note)
     det.detect(ctx)
     assert regime_density_tracker.get_density("long_panic_gap_down", session_date) == 1
+
+
+# ---------------------------------------------------------------------------
+# Variant Bp classification tag — paper-validation A/B
+# Per specs/2026-05-23-long_panic_gap_down-variant-bp-paper-trade-spec.md
+# ---------------------------------------------------------------------------
+
+def _cfg_variant_bp_enabled():
+    cfg = _cfg()
+    cfg["paper_calendar_variant_bp"] = {"enabled": True}
+    return cfg
+
+
+def test_variant_bp_disabled_by_default_classification_is_baseline_only():
+    """Without `paper_calendar_variant_bp.enabled=true`, classification still
+    appears in event.context but variant_bp is False for all fires."""
+    det = LongPanicGapDownStructure(_cfg())
+    # 2026-05-20 was Wednesday — would qualify under Variant Bp if enabled
+    ts = pd.Timestamp("2026-05-20 09:15:00")
+    df = pd.DataFrame({
+        "open": [94.0], "high": [94.5],
+        "low": [89.5], "close": [91.0], "volume": [50000],
+    }, index=[ts])
+    ctx = MarketContext(
+        symbol="TEST", current_price=91.0, timestamp=ts,
+        df_5m=df, session_date=ts.date(),
+        pdh=105.0, pdl=95.0, pdc=100.0, cap_segment="small_cap",
+    )
+    r = det.detect(ctx)
+    assert r.structure_detected
+    cls = r.events[0].context.get("paper_variant_classification")
+    assert cls is not None, "classification must always be emitted"
+    assert cls["baseline"] is True
+    assert cls["variant_bp"] is False  # disabled → always False
+
+
+def test_variant_bp_enabled_wednesday_classifies_true():
+    """With Variant Bp enabled, Wednesday fire gets variant_bp=True."""
+    det = LongPanicGapDownStructure(_cfg_variant_bp_enabled())
+    # 2026-05-20 was Wednesday — dow=2 in {Tue,Wed,Fri}
+    ts = pd.Timestamp("2026-05-20 09:15:00")
+    df = pd.DataFrame({
+        "open": [94.0], "high": [94.5],
+        "low": [89.5], "close": [91.0], "volume": [50000],
+    }, index=[ts])
+    ctx = MarketContext(
+        symbol="TEST", current_price=91.0, timestamp=ts,
+        df_5m=df, session_date=ts.date(),
+        pdh=105.0, pdl=95.0, pdc=100.0, cap_segment="small_cap",
+    )
+    r = det.detect(ctx)
+    assert r.structure_detected
+    cls = r.events[0].context["paper_variant_classification"]
+    assert cls["baseline"] is True
+    assert cls["variant_bp"] is True
+
+
+def test_variant_bp_enabled_monday_classifies_false():
+    """With Variant Bp enabled, Monday fire gets variant_bp=False (Mon excluded)."""
+    det = LongPanicGapDownStructure(_cfg_variant_bp_enabled())
+    # 2026-05-18 was Monday — dow=0, excluded by Variant Bp
+    ts = pd.Timestamp("2026-05-18 09:15:00")
+    df = pd.DataFrame({
+        "open": [94.0], "high": [94.5],
+        "low": [89.5], "close": [91.0], "volume": [50000],
+    }, index=[ts])
+    ctx = MarketContext(
+        symbol="TEST", current_price=91.0, timestamp=ts,
+        df_5m=df, session_date=ts.date(),
+        pdh=105.0, pdl=95.0, pdc=100.0, cap_segment="small_cap",
+    )
+    r = det.detect(ctx)
+    assert r.structure_detected
+    cls = r.events[0].context["paper_variant_classification"]
+    assert cls["baseline"] is True
+    assert cls["variant_bp"] is False
+
+
+def test_variant_bp_enabled_thursday_classifies_false():
+    """With Variant Bp enabled, Thursday fire gets variant_bp=False (Thu excluded)."""
+    det = LongPanicGapDownStructure(_cfg_variant_bp_enabled())
+    # 2026-05-21 was Thursday — dow=3, excluded by Variant Bp
+    ts = pd.Timestamp("2026-05-21 09:15:00")
+    df = pd.DataFrame({
+        "open": [94.0], "high": [94.5],
+        "low": [89.5], "close": [91.0], "volume": [50000],
+    }, index=[ts])
+    ctx = MarketContext(
+        symbol="TEST", current_price=91.0, timestamp=ts,
+        df_5m=df, session_date=ts.date(),
+        pdh=105.0, pdl=95.0, pdc=100.0, cap_segment="small_cap",
+    )
+    r = det.detect(ctx)
+    assert r.structure_detected
+    cls = r.events[0].context["paper_variant_classification"]
+    assert cls["baseline"] is True
+    assert cls["variant_bp"] is False
+
+
+def test_variant_bp_flows_to_trade_plan_notes():
+    """The classification dict must flow into TradePlan.notes (via evt.context)."""
+    det = LongPanicGapDownStructure(_cfg_variant_bp_enabled())
+    # Friday — qualifies under Variant Bp
+    ts = pd.Timestamp("2026-05-22 09:15:00")  # Friday
+    df = pd.DataFrame({
+        "open": [94.0], "high": [94.5],
+        "low": [89.5], "close": [91.0], "volume": [50000],
+    }, index=[ts])
+    ctx = MarketContext(
+        symbol="TEST", current_price=91.0, timestamp=ts,
+        df_5m=df, session_date=ts.date(),
+        pdh=105.0, pdl=95.0, pdc=100.0, cap_segment="small_cap",
+    )
+    r = det.detect(ctx)
+    assert r.structure_detected
+    plan = det.plan_long_strategy(ctx, event=r.events[0])
+    assert plan is not None
+    # notes is the entire evt.context dict — must contain the classification
+    assert "paper_variant_classification" in plan.notes
+    assert plan.notes["paper_variant_classification"]["variant_bp"] is True
+    assert plan.notes["paper_variant_classification"]["baseline"] is True

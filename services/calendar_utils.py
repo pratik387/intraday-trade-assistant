@@ -176,3 +176,37 @@ def passes_close_dn_variant_b(
     if trading_day_of_month(d, holidays) >= 21:
         return True
     return False
+
+
+def passes_long_panic_variant_bp(d: date) -> bool:
+    """Variant Bp paper-validation gate for long_panic_gap_down.
+
+    Rule (per specs/2026-05-23-long_panic_gap_down-variant-bp-paper-trade-spec.md):
+
+        dow IN {Tuesday, Wednesday, Friday}   (equivalent: dow NOT IN {Monday, Thursday})
+
+    War-regime-decomposed Holdout analysis (2026-05-23, on OCI v2 canonical):
+
+        - Baseline pre-war HO (2025-10-01 to 2026-02-27): n=123, net PF 1.06 (marginal pass).
+        - Variant Bp pre-war HO: n=71, net PF 1.602 (+0.541 uplift, +51%).
+        - t-stat on variant pre-war pnl_pct: +2.68 ≥ Bonferroni M=3 critical 2.32 → PASSES
+          multi-hypothesis correction at M=3.
+
+    Caveats acknowledged in spec:
+        - True M (calendar buckets explored across all setups) is likely 15-30, not just 3.
+          At M=20, Bonferroni critical ~3.5 — Variant Bp would NOT survive. This is why
+          the variant ships as a CLASSIFICATION TAG (paper-trade A/B), not a hard entry gate.
+        - Pre-war HO n=71 is small. Forward validation in paper-trade required.
+
+    The Mon+Thu exclusion mechanism hypothesis: Monday gap-down panic tends to extend
+    through the week (overnight risk-off from weekend events); Thursday gap-down panic
+    tends to extend through the F&O expiry into Friday settlement. Tue/Wed/Fri panic-down
+    days are more often single-day overreactions that mean-revert intraday.
+
+    Args:
+        d: signal date (IST-naive)
+
+    Returns:
+        True iff d.weekday() in {Tue, Wed, Fri}.
+    """
+    return d.weekday() in (1, 2, 4)
