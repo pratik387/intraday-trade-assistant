@@ -304,41 +304,61 @@ class CloseDnOvernightLongStructure(BaseStructure):
         return (mean, std)
 
     def _prior_day_return_pct(self, context: MarketContext, session_date: date) -> Optional[float]:
-        """Return (prior_close - prev_prior_close) / prev_prior_close * 100.
+        """Return TODAY's daily return: (today_close - yesterday_close) / yesterday_close * 100.
 
-        Reads from context.df_daily if available, else derives from df_5m
-        prior-session close.
+        IMPORTANT: despite the field name "prior_day_return_pct" (kept for config-
+        contract compatibility), this returns the SIGNAL DAY's daily return, NOT
+        the literal prior day's return. Per the spec mechanism ("post-rally EOD-
+        flush on an up-3% day") and Cell #5 lock (`prior_day_return_pct >= 3%`),
+        the discriminator is "did TODAY rally 3%+ before the closing flush?".
+
+        Bug 2026-05-23: previously this method returned (T-1 close - T-2 close) /
+        T-2 close — interpreting "prior day" literally as the day before signal.
+        That filter excluded ~7 of every 13 sanity-expected fires; the production
+        fire rate was a small fraction of sanity's claim. Cell #5 was discovered
+        using sanity's interpretation (today's return) so production must match.
+
+        Method: today's close is approximated by the LAST 5m bar's close at fire
+        time (the 15:20 bar's close, since signal_bars = 15:00-15:20 per look-
+        ahead-safety; the 15:25 bar is unavailable at fire time). Yesterday's
+        close is the LAST 5m bar of the prior trading day in df_5m.
+
+        Returns None if either of the required bars is unavailable.
         """
-        # Try daily first
-        if context.df_daily is not None and not context.df_daily.empty:
-            ddf = context.df_daily
-            # Filter to dates strictly before session_date
-            if hasattr(ddf.index, "date"):
-                before = ddf[ddf.index.date < session_date]
-            else:
-                before = ddf
-            if len(before) >= 2:
-                prev_close = float(before["close"].iloc[-1])
-                prev_prev_close = float(before["close"].iloc[-2])
-                if prev_prev_close > 0:
-                    return (prev_close - prev_prev_close) / prev_prev_close * 100.0
-
-        # Fallback: derive from df_5m prior session closes (use 15:25 close per day)
         df = context.df_5m
         if df is None or df.empty:
             return None
+
+        # Today's bars STRICTLY BEFORE the 15:25 active-window bar (which itself
+        # closes at 15:30 wall-clock — using it would be look-ahead). Take the
+        # last bar with hhmm <= 15:20 as the "today close" proxy. This matches
+        # the signal-bar window's last bar (15:20).
+        today_all = df[df.index.date == session_date]
+        if today_all.empty:
+            return None
+        today_pre_active = today_all[today_all.index.strftime("%H:%M") <= "15:20"]
+        if today_pre_active.empty:
+            # If we have today bars but none before 15:25 (shouldn't happen since
+            # the detector only fires AT 15:25 with prior 5 bars present), fall
+            # back to the last available today bar.
+            today_close = float(today_all["close"].iloc[-1])
+        else:
+            today_close = float(today_pre_active["close"].iloc[-1])
+        if today_close <= 0:
+            return None
+
+        # Yesterday's last 5m bar close (matches sanity's `last_close` per-day groupby).
         hist = df[df.index.date < session_date]
         if hist.empty:
             return None
-        # Take the LAST bar of each prior session as "close"
         per_session_close = hist.groupby(hist.index.date)["close"].last().astype("float64")
-        if len(per_session_close) < 2:
+        if per_session_close.empty:
             return None
-        prev_close = float(per_session_close.iloc[-1])
-        prev_prev_close = float(per_session_close.iloc[-2])
-        if prev_prev_close <= 0:
+        yesterday_close = float(per_session_close.iloc[-1])
+        if yesterday_close <= 0:
             return None
-        return (prev_close - prev_prev_close) / prev_prev_close * 100.0
+
+        return (today_close - yesterday_close) / yesterday_close * 100.0
 
     def plan_long_strategy(
         self,
