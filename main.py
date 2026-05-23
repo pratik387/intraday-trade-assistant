@@ -692,8 +692,17 @@ if __name__ == "__main__":
             # IMPORTANT: pass full HH:MM timestamps (not bare dates) so the
             # enriched 5m feather filter does not collapse to midnight-only
             # and return 0 symbols (bug fixed 2026-05-23).
+            #
+            # CRITICAL for overnight: the detector's baseline rolling window
+            # (baseline_rolling_days=20 in close_dn_overnight_long config)
+            # requires ~30 calendar days of prior 5m history before session_date
+            # to compute the per-symbol volume-z baseline. Without this warmup,
+            # detector rejects every candidate with "insufficient prior history".
             slip_bps = float(cfg.get("fees_slippage_bps", 0.0))
-            _session_from = _hhmm_on(args.session_date, "09:15")
+            from datetime import datetime as _dt, timedelta as _td
+            _sd = _dt.strptime(args.session_date, "%Y-%m-%d").date()
+            _warmup_start = _sd - _td(days=45)  # 45 cal days ~= 30 trading days
+            _session_from = pd.Timestamp.combine(_warmup_start, _dt.strptime("09:15", "%H:%M").time())
             _session_to   = _hhmm_on(args.session_date, "15:30")
             broker = MockBroker(
                 path_json="nse_all.json",

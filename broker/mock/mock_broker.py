@@ -147,30 +147,47 @@ class MockBroker:
         from_dt = pd.to_datetime(self._from_date)
         to_dt = pd.to_datetime(self._to_date)
 
-        # Try monthly pre-aggregated file first (fast path)
+        # Try monthly pre-aggregated file first (fast path). For multi-month
+        # ranges (overnight setups need ~30 days of warmup for baseline
+        # rolling window), iterate over every (year, month) in the range and
+        # union the monthly files. Filters happen after the merge.
         preagg_dir = Path("backtest-cache-download/monthly")
-        if from_dt.year == to_dt.year and from_dt.month == to_dt.month:
-            monthly_file = preagg_dir / f"{from_dt.year}_{from_dt.month:02d}_5m_enriched.feather"
-            if monthly_file.exists():
-                try:
-                    df_all = pd.read_feather(monthly_file)
-                    df_all["date"] = pd.to_datetime(df_all["date"])
-                    if df_all["date"].dt.tz is not None:
-                        df_all["date"] = df_all["date"].dt.tz_localize(None)
-                    df_all = df_all[(df_all["date"] >= from_dt) & (df_all["date"] <= to_dt)]
+        monthly_files: list[Path] = []
+        cur_year, cur_month = from_dt.year, from_dt.month
+        while (cur_year, cur_month) <= (to_dt.year, to_dt.month):
+            mf = preagg_dir / f"{cur_year}_{cur_month:02d}_5m_enriched.feather"
+            if mf.exists():
+                monthly_files.append(mf)
+            cur_month += 1
+            if cur_month > 12:
+                cur_month = 1
+                cur_year += 1
+        if monthly_files:
+            try:
+                parts = []
+                for mf in monthly_files:
+                    parts.append(pd.read_feather(mf))
+                df_all = pd.concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
+                df_all["date"] = pd.to_datetime(df_all["date"])
+                if df_all["date"].dt.tz is not None:
+                    df_all["date"] = df_all["date"].dt.tz_localize(None)
+                df_all = df_all[(df_all["date"] >= from_dt) & (df_all["date"] <= to_dt)]
 
-                    for sym_raw, group in df_all.groupby("symbol"):
-                        sym = f"NSE:{sym_raw}"
-                        df_sym = group.drop(columns=["symbol"]).set_index("date").sort_index()
-                        result[sym] = df_sym
+                for sym_raw, group in df_all.groupby("symbol"):
+                    sym = f"NSE:{sym_raw}"
+                    df_sym = group.drop(columns=["symbol"]).set_index("date").sort_index()
+                    result[sym] = df_sym
 
-                    elapsed = _t.perf_counter() - t0
-                    logger.info("ENRICHED_5M | Loaded %d symbols from %s (%.1fs)",
-                               len(result), monthly_file.name, elapsed)
-                    self._enriched_5m_cache[cache_key] = result
-                    return result
-                except Exception as e:
-                    logger.warning("ENRICHED_5M | Monthly file load failed: %s", e)
+                elapsed = _t.perf_counter() - t0
+                logger.info(
+                    "ENRICHED_5M | Loaded %d symbols from %d monthly file(s) %s (%.1fs)",
+                    len(result), len(monthly_files),
+                    [mf.name for mf in monthly_files], elapsed,
+                )
+                self._enriched_5m_cache[cache_key] = result
+                return result
+            except Exception as e:
+                logger.warning("ENRICHED_5M | Monthly file(s) load failed: %s", e)
 
         # Fallback: individual symbol files
         cache_dir = Path("cache/ohlcv_archive")
