@@ -184,12 +184,9 @@ def _aggregate_trades(state_paths: List[Path], out_dir: Path) -> dict:
     else:
         with open(slot_state, encoding="utf-8") as f:
             blob = json.load(f)
-        slots = blob.get("slots", [])
-        for s in slots:
-            # Only emit slots that completed the full lifecycle (have a sell fill)
-            if s.get("sell_fill_price") is None:
-                continue
-            trades.append({
+
+        def _row_from(s: dict, status_hint: Optional[str] = None) -> dict:
+            return {
                 "slot_id": s.get("slot_id"),
                 "symbol": s.get("symbol"),
                 "product": s.get("product"),
@@ -207,8 +204,25 @@ def _aggregate_trades(state_paths: List[Path], out_dir: Path) -> dict:
                 "interest_inr": s.get("interest_inr"),
                 "realized_pnl_inr": s.get("realized_pnl_inr"),
                 "paper_variant_b": s.get("paper_variant_b"),
-                "status": s.get("status"),
-            })
+                "status": status_hint if status_hint is not None else s.get("status"),
+                "cash_back_date": s.get("cash_back_date"),
+            }
+
+        # 1. Fully-released trades from the archive (full historical lifecycle).
+        # The slot pool now archives released-slot data before wiping fields
+        # (capital_manager.py:release v2026-05-23) so backtest harness can
+        # see the entire history, not just the last N un-released slots.
+        for t in blob.get("released_trades", []):
+            trades.append(_row_from(t, status_hint="released"))
+
+        # 2. Still-held positions (t1_settling — settled but not yet released).
+        # These have sell_fill_price set but haven't reached T+2 yet. Include
+        # them so the harness's "n_trades" reflects ALL settled trades, not
+        # just the released subset (the released archive can be empty if the
+        # backtest range is shorter than T+2 of the last entry).
+        for s in blob.get("slots", []):
+            if s.get("status") == "t1_settling" and s.get("sell_fill_price") is not None:
+                trades.append(_row_from(s, status_hint="t1_settling"))
 
     # Write CSV
     out_dir.mkdir(parents=True, exist_ok=True)

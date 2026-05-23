@@ -133,12 +133,18 @@ def test_state_files_from_config_ignores_intraday_setups():
 # ---------------------------------------------------------------------------
 
 def test_aggregate_trades_emits_settled_only(tmp_path):
-    """Slots without sell_fill_price are skipped (still open / orphaned)."""
-    # Build a synthetic slot pool state file matching OvernightSlotPool's schema
+    """Aggregator reads from `released_trades` archive (full lifecycle) PLUS
+    in-flight `t1_settling` slots (settled but not yet released).
+
+    Released-trade archive was added in capital_manager.py 2026-05-23 because
+    pool.release() wiped slot fields, making historical trades invisible. The
+    aggregator must read BOTH archive + still-held t1_settling positions to
+    give a complete view for backtest harness output.
+    """
     state_path = tmp_path / "overnight_slots.json"
     blob = {
-        "slots": [
-            # Settled (full lifecycle): both buy + sell prices
+        "released_trades": [
+            # Fully-released winner (Variant B cohort)
             {
                 "slot_id": 1, "symbol": "NSE:TEST1", "product": "MTF",
                 "buy_fill_price": 100.0, "sell_fill_price": 102.0,
@@ -146,8 +152,19 @@ def test_aggregate_trades_emits_settled_only(tmp_path):
                 "notional_inr": 100000.0, "margin_inr": 25000.0, "leverage": 4.0,
                 "fees_inr": 50.0, "interest_inr": 40.0, "realized_pnl_inr": 1910.0,
                 "reserved_today": "2026-04-20", "expected_exit_date": "2026-04-21",
-                "paper_variant_b": True, "status": "settled",
+                "paper_variant_b": True, "cash_back_date": "2026-04-22",
             },
+            # Fully-released loser (baseline cohort)
+            {
+                "slot_id": 3, "symbol": "NSE:TEST2", "product": "CNC",
+                "buy_fill_price": 200.0, "sell_fill_price": 195.0,
+                "notional_inr": 200000.0, "margin_inr": 200000.0, "leverage": 1.0,
+                "fees_inr": 80.0, "interest_inr": 0.0, "realized_pnl_inr": -1080.0,
+                "reserved_today": "2026-04-21", "expected_exit_date": "2026-04-22",
+                "paper_variant_b": False, "cash_back_date": "2026-04-23",
+            },
+        ],
+        "slots": [
             # Still open (no sell fill yet) — must be excluded
             {
                 "slot_id": 2, "symbol": "NSE:OPEN1",
@@ -155,14 +172,14 @@ def test_aggregate_trades_emits_settled_only(tmp_path):
                 "notional_inr": 50000.0, "margin_inr": 12500.0, "leverage": 4.0,
                 "status": "t0_open",
             },
-            # Another settled with loss
+            # In-flight t1_settling — INCLUDED in aggregation (already has sell fill)
             {
-                "slot_id": 3, "symbol": "NSE:TEST2", "product": "CNC",
-                "buy_fill_price": 200.0, "sell_fill_price": 195.0,
-                "notional_inr": 200000.0, "margin_inr": 200000.0, "leverage": 1.0,
-                "fees_inr": 80.0, "interest_inr": 0.0, "realized_pnl_inr": -1080.0,
-                "reserved_today": "2026-04-21", "expected_exit_date": "2026-04-22",
-                "paper_variant_b": False, "status": "settled",
+                "slot_id": 4, "symbol": "NSE:INFLIGHT", "product": "MTF",
+                "buy_fill_price": 300.0, "sell_fill_price": 305.0,
+                "notional_inr": 300000.0, "margin_inr": 75000.0, "leverage": 4.0,
+                "fees_inr": 100.0, "interest_inr": 50.0, "realized_pnl_inr": 1350.0,
+                "reserved_today": "2026-04-29", "expected_exit_date": "2026-04-30",
+                "paper_variant_b": False, "status": "t1_settling",
             },
         ]
     }
@@ -172,25 +189,24 @@ def test_aggregate_trades_emits_settled_only(tmp_path):
     out_dir = tmp_path / "out"
     summary = _aggregate_trades([state_path], out_dir)
 
-    # Only the 2 settled slots emit rows
-    assert summary["n_trades"] == 2
-    assert summary["wins"] == 1
-    assert summary["losses"] == 1
-    assert summary["sum_realized_pnl_inr"] == pytest.approx(830.0)  # 1910 - 1080
-    assert summary["gross_PF"] == pytest.approx(1910.0 / 1080.0, rel=1e-3)
-    # Cohort split
+    # 2 released + 1 t1_settling = 3 trades. NSE:OPEN1 (t0_open) excluded.
+    assert summary["n_trades"] == 3
+    assert summary["wins"] == 2   # TEST1 +1910 + INFLIGHT +1350
+    assert summary["losses"] == 1  # TEST2 -1080
+    assert summary["sum_realized_pnl_inr"] == pytest.approx(1910.0 + 1350.0 - 1080.0)
+    # Cohort split: TEST1 is variant_b=True, the rest are baseline
     cs = summary["cohort_split"]
     assert cs["variant_b_true_n"] == 1
     assert cs["variant_b_true_sum"] == pytest.approx(1910.0)
-    assert cs["baseline_only_n"] == 1
-    assert cs["baseline_only_sum"] == pytest.approx(-1080.0)
+    assert cs["baseline_only_n"] == 2
+    assert cs["baseline_only_sum"] == pytest.approx(1350.0 - 1080.0)
 
-    # trades.csv exists with correct row count
     csv_path = out_dir / "trades.csv"
     assert csv_path.exists()
     csv_content = csv_path.read_text(encoding="utf-8")
     assert "NSE:TEST1" in csv_content
     assert "NSE:TEST2" in csv_content
+    assert "NSE:INFLIGHT" in csv_content
     assert "NSE:OPEN1" not in csv_content
 
 

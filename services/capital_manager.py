@@ -729,6 +729,12 @@ class OvernightSlotPool:
         self._margin_per_slot = float(margin_per_slot)
         self._max_new_per_day = int(max_new_per_day)
         self._slots: list[OvernightSlot] = self._load_or_init()
+        # Released-trade archive: when a slot is released back to "free",
+        # its full settled-trade data is appended here so historical PnL
+        # can be aggregated. Without this, released trades were wiped from
+        # state by .release() and any backtest harness saw 0 historical
+        # trades. (Bug fixed 2026-05-23.)
+        self._released_trades: list[dict] = self._load_released_trades_from_state()
 
     # ---------- Persistence ----------
 
@@ -764,12 +770,24 @@ class OvernightSlotPool:
             "margin_per_slot_inr": self._margin_per_slot,
             "max_new_per_day": self._max_new_per_day,
             "slots": [s.to_dict() for s in self._slots],
+            "released_trades": self._released_trades,
         }
         # Write to temp + rename for atomicity (avoids partial writes on crash)
         tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         tmp.replace(self._state_path)
+
+    def _load_released_trades_from_state(self) -> list[dict]:
+        """Restore released_trades archive from state file (preserves prior runs' history)."""
+        if not self._state_path.exists():
+            return []
+        try:
+            with open(self._state_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return list(data.get("released_trades", []))
+        except Exception:
+            return []
 
     # ---------- Public lifecycle ----------
 
@@ -849,13 +867,43 @@ class OvernightSlotPool:
         slot.status = "t1_settling"
 
     def release(self, slot_id: int, cash_back_date: date) -> None:
-        """T+2 morning: cash settled, slot transitions to free."""
+        """T+2 morning: cash settled, slot transitions to free.
+
+        Before resetting the slot, snapshot its full lifecycle data into
+        `_released_trades`. Without this archive, every released slot is
+        invisible to downstream PnL aggregators (backtest harness, paper-
+        trade analytics, decay tripwire historical lookback).
+        """
         slot = self._get_slot(slot_id)
         if slot.status != "t1_settling":
             raise ValueError(
                 f"release: slot {slot_id} status is {slot.status!r}, "
                 f"expected 't1_settling'"
             )
+
+        # Snapshot trade for the archive BEFORE wiping slot fields
+        self._released_trades.append({
+            "slot_id": slot.slot_id,
+            "symbol": slot.symbol,
+            "product": slot.product,
+            "leverage": slot.leverage,
+            "margin_inr": slot.margin_inr,
+            "notional_inr": slot.notional_inr,
+            "buy_fill_price": slot.buy_fill_price,
+            "buy_fill_ts": slot.buy_fill_ts,
+            "buy_order_id": slot.buy_order_id,
+            "amo_sell_order_id": slot.amo_sell_order_id,
+            "expected_exit_date": slot.expected_exit_date,
+            "sell_fill_price": slot.sell_fill_price,
+            "sell_fill_ts": slot.sell_fill_ts,
+            "realized_pnl_inr": slot.realized_pnl_inr,
+            "fees_inr": slot.fees_inr,
+            "interest_inr": slot.interest_inr,
+            "reserved_today": slot.reserved_today,
+            "paper_variant_b": slot.paper_variant_b,
+            "cash_back_date": cash_back_date.isoformat(),
+        })
+
         # Reset slot fields
         slot.status = "free"
         slot.symbol = None
