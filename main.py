@@ -679,14 +679,26 @@ if __name__ == "__main__":
     # intraday daemon entirely so cron doesn't pay the startup cost.
     if args.mode == "overnight":
         from services.execution.overnight_handlers import run_entry, run_verify_exit
-        cfg = load_base_config()
+        # IMPORTANT: overnight handlers need the FULL configuration.json (which
+        # contains `setups.*` blocks), NOT base_config.json. Using load_base_config()
+        # here previously caused run_entry/run_verify_exit to see an empty setup
+        # list and exit with 0 fires silently (bug fixed 2026-05-23).
+        import json as _json
+        _cfg_path = os.path.join(os.path.dirname(__file__), "config", "configuration.json")
+        with open(_cfg_path, encoding="utf-8") as _f:
+            cfg = _json.load(_f)
         if args.dry_run or args.paper_trading:
-            # Paper / dry-run: use MockBroker for both data and (no-op) orders
+            # Paper / dry-run: use MockBroker for both data and (no-op) orders.
+            # IMPORTANT: pass full HH:MM timestamps (not bare dates) so the
+            # enriched 5m feather filter does not collapse to midnight-only
+            # and return 0 symbols (bug fixed 2026-05-23).
             slip_bps = float(cfg.get("fees_slippage_bps", 0.0))
+            _session_from = _hhmm_on(args.session_date, "09:15")
+            _session_to   = _hhmm_on(args.session_date, "15:30")
             broker = MockBroker(
                 path_json="nse_all.json",
-                from_date=args.session_date,
-                to_date=args.session_date,
+                from_date=_session_from,
+                to_date=_session_to,
                 slippage_bps=slip_bps,
             )
             if args.session_date:
