@@ -119,6 +119,15 @@ class _DryRunBroker:
         """Delegate to underlying MockBroker's OHLC cache for T1/T2 detection."""
         return self._real._last_bar_ohlc
 
+    # --- overnight backtest pass-throughs ---
+    # The overnight code path (run_entry/run_verify_exit) reads enriched 5m
+    # data + nse_all metadata directly off the broker. Forward those.
+    def _load_enriched_5m(self):
+        return self._real._load_enriched_5m()
+
+    def list_symbols(self, exchange: str = "NSE", instrument_type: str = "EQ"):
+        return self._real.list_symbols(exchange=exchange, instrument_type=instrument_type)
+
 
 # startup_recovery extracted to services/state/recovery.py
 
@@ -704,14 +713,18 @@ if __name__ == "__main__":
             _warmup_start = _sd - _td(days=45)  # 45 cal days ~= 30 trading days
             _session_from = pd.Timestamp.combine(_warmup_start, _dt.strptime("09:15", "%H:%M").time())
             _session_to   = _hhmm_on(args.session_date, "15:30")
-            broker = MockBroker(
+            _real_broker = MockBroker(
                 path_json="nse_all.json",
                 from_date=_session_from,
                 to_date=_session_to,
                 slippage_bps=slip_bps,
             )
             if args.session_date:
-                broker.set_session_date(args.session_date)
+                _real_broker.set_session_date(args.session_date)
+            # Wrap in DryRunSDK so place_order is a no-op log line (mirrors
+            # the intraday path; overnight handlers call broker.place_order
+            # for MOC BUY + AMO SELL placement).
+            broker = _DryRunBroker(_real_broker)
             paper_mode = True
         else:
             # Live mode: use KiteBroker (lazy import to avoid kiteconnect cost in dry-run/Lambda)
@@ -722,8 +735,29 @@ if __name__ == "__main__":
             )
             paper_mode = False
 
+        # In dry-run/paper, the session date passed via --session-date is the
+        # historical date we want to simulate. Without passing it as now_ist,
+        # run_entry/run_verify_exit default to wall-clock IST (e.g., today),
+        # the detector filters 5m bars to today's date, finds nothing, and
+        # silently rejects all candidates. Pass session_date as a 15:25 (entry)
+        # or 09:30 (verify-exit) timestamp so internal `today = now.date()` resolves
+        # to the simulated session date. (Bug fixed 2026-05-23.)
+        if args.dry_run or args.paper_trading:
+            from datetime import time as _time_mod
+            _entry_ts = pd.Timestamp.combine(
+                _dt.strptime(args.session_date, "%Y-%m-%d").date(),
+                _time_mod(15, 25),
+            )
+            _verify_ts = pd.Timestamp.combine(
+                _dt.strptime(args.session_date, "%Y-%m-%d").date(),
+                _time_mod(9, 30),
+            )
+        else:
+            _entry_ts = None
+            _verify_ts = None
+
         if args.action == "entry":
-            summary = run_entry(cfg, broker, paper_mode=paper_mode)
+            summary = run_entry(cfg, broker, paper_mode=paper_mode, now_ist=_entry_ts)
             print(
                 f"[overnight entry] fired={summary['fired_count']} "
                 f"skipped={summary['skipped_count']} rejected={summary['rejected_count']}",
@@ -731,7 +765,7 @@ if __name__ == "__main__":
             )
             sys.exit(0)
         elif args.action == "verify-exit":
-            summary = run_verify_exit(cfg, broker, paper_mode=paper_mode)
+            summary = run_verify_exit(cfg, broker, paper_mode=paper_mode, now_ist=_verify_ts)
             print(
                 f"[overnight verify-exit] settled={summary['settled_count']} "
                 f"released={summary['released_count']} orphan_t0={summary['orphan_t0_count']}",
