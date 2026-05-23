@@ -108,6 +108,22 @@ class SetupRegistry:
         for name, raw in setups.items():
             if not isinstance(raw, dict):
                 continue  # skip non-dict entries (e.g., comments at this level)
+            # Pre-registration entries (mechanism documentation without a detector
+            # implementation yet) are valid config: they record the mechanism +
+            # falsifiers at Phase 2 PROCEED, before the detector class exists.
+            # Identified by: detector_class absent AND both enabled flags false
+            # (i.e., no operational intent). Skip schema validation and don't
+            # register a SetupSpec.
+            #
+            # Misconfiguration check still applies: if `enabled` OR `paper_enabled`
+            # is true but the schema is incomplete, that's an error.
+            is_pre_registration = (
+                "detector_class" not in raw
+                and not raw.get("enabled", False)
+                and not raw.get("paper_enabled", False)
+            )
+            if is_pre_registration:
+                continue
             for k in REQUIRED_KEYS:
                 if k not in raw:
                     raise ValueError(f"setup {name!r}: missing required key {k!r}")

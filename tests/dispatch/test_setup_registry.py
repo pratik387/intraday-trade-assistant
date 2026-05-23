@@ -96,6 +96,72 @@ def test_registry_missing_required_key_raises():
         SetupRegistry.load_from_config(bad_cfg)
 
 
+def test_registry_skips_pre_registration_entries():
+    """Pre-registration entries (mechanism doc without detector) are valid config.
+
+    Identified by: detector_class absent AND both enabled flags false.
+    Such entries appear at Phase 2 PROCEED before a detector implementation exists.
+    They should NOT raise schema-validation errors — they should be silently
+    skipped from the registry.
+    """
+    cfg = {
+        "setups": {
+            # Operational setup — full schema
+            "gap_fade_short": {
+                "enabled": True,
+                "detector_class": "structures.gap_fade_short_structure.GapFadeShortStructure",
+                "universe_builder": "services.setup_universe.gap_fade_universe",
+                "universe_trigger": "bar:09:15",
+                "active_window_start": "09:15",
+                "active_window_end": "09:30",
+            },
+            # Pre-registration entry — no detector_class, both flags false
+            "future_setup_pre_reg": {
+                "enabled": False,
+                "paper_enabled": False,
+                "_status": "Stage 3 — Phase 2 PROCEED. Mechanism pre-registration.",
+                "mechanism_notes": "Some mechanism description here.",
+            },
+        },
+    }
+    reg = SetupRegistry.load_from_config(cfg)
+    # gap_fade_short registered
+    assert reg.get("gap_fade_short").name == "gap_fade_short"
+    # Pre-registration entries are not retrievable (raise KeyError)
+    with pytest.raises(KeyError):
+        reg.get("future_setup_pre_reg")
+    assert len(reg.enabled()) == 1
+
+
+def test_registry_paper_enabled_without_detector_class_raises():
+    """A misconfigured entry (paper_enabled=True but no detector_class) should
+    fail loudly — it's not a pre-registration, it's broken config."""
+    bad_cfg = {
+        "setups": {
+            "broken": {
+                "enabled": False,
+                "paper_enabled": True,  # operational intent, but no detector
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="missing required key"):
+        SetupRegistry.load_from_config(bad_cfg)
+
+
+def test_registry_enabled_without_detector_class_raises():
+    """enabled=True with no schema must still raise (catches typos / incomplete ports)."""
+    bad_cfg = {
+        "setups": {
+            "broken": {
+                "enabled": True,
+                # detector_class missing — but enabled=True implies operational
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="missing required key"):
+        SetupRegistry.load_from_config(bad_cfg)
+
+
 def test_registry_validates_class_importable(sample_config):
     """validate() imports detector_class + universe_builder; fails fast if missing."""
     reg = SetupRegistry.load_from_config(sample_config)
