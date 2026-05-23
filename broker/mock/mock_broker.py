@@ -124,9 +124,22 @@ class MockBroker:
 
     # -------------------- ticker (with last-price proxy) --------------------
     def _load_enriched_5m(self) -> Dict[str, pd.DataFrame]:
-        """Load precomputed enriched 5m bars from monthly cache or individual files."""
+        """Load precomputed enriched 5m bars from monthly cache or individual files.
+
+        Memoized per-instance keyed by (from_date, to_date). Without this cache,
+        callers that loop over a universe (e.g., overnight_handlers per-symbol
+        fill-price lookups) re-read the ~130MB monthly feather hundreds of times
+        per session, taking 50+ minutes that should take <2 seconds.
+        """
         from pathlib import Path
         import time as _t
+
+        # Memoization cache (preserved across calls within the same date range)
+        cache_key = (self._from_date, self._to_date)
+        if not hasattr(self, "_enriched_5m_cache"):
+            self._enriched_5m_cache: Dict[tuple, Dict[str, pd.DataFrame]] = {}
+        if cache_key in self._enriched_5m_cache:
+            return self._enriched_5m_cache[cache_key]
 
         t0 = _t.perf_counter()
         result = {}
@@ -154,6 +167,7 @@ class MockBroker:
                     elapsed = _t.perf_counter() - t0
                     logger.info("ENRICHED_5M | Loaded %d symbols from %s (%.1fs)",
                                len(result), monthly_file.name, elapsed)
+                    self._enriched_5m_cache[cache_key] = result
                     return result
                 except Exception as e:
                     logger.warning("ENRICHED_5M | Monthly file load failed: %s", e)
@@ -179,6 +193,7 @@ class MockBroker:
 
         elapsed = _t.perf_counter() - t0
         logger.info("ENRICHED_5M | Loaded %d symbols from individual files (%.1fs)", len(result), elapsed)
+        self._enriched_5m_cache[cache_key] = result
         return result
 
     def make_ticker(self):
