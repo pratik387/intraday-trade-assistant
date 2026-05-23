@@ -691,6 +691,11 @@ class OvernightSlot:
     fees_inr: Optional[float] = None
     interest_inr: Optional[float] = None
     reserved_today: Optional[str] = None     # ISO date when reserve() was called
+    # Paper-variant cohort tag (Task 8 — close_dn_overnight_long Variant B).
+    # Set at reserve-time from detector's paper_variant_classification.
+    # Persists through slot lifecycle so settlement records carry the cohort label.
+    # None for setups that don't use variant tagging.
+    paper_variant_b: Optional[bool] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -769,12 +774,18 @@ class OvernightSlotPool:
     # ---------- Public lifecycle ----------
 
     def reserve(self, symbol: str, product: str, leverage: float,
-                today: date) -> Optional[OvernightSlot]:
+                today: date,
+                paper_variant_b: Optional[bool] = None) -> Optional[OvernightSlot]:
         """Reserve a free slot for a new BUY.
 
         Returns the slot if (a) a free slot exists and (b) max_new_per_day cap not hit.
         Returns None if no capacity. Caller must check return value.
         Mutated state is NOT persisted automatically — caller must call .persist().
+
+        Args:
+            paper_variant_b: cohort tag from detector's paper_variant_classification
+                (Task 8 — close_dn_overnight_long Variant B). None for setups that
+                don't use variant tagging. Persists through slot lifecycle.
         """
         if self.new_today_count(today) >= self._max_new_per_day:
             return None
@@ -787,6 +798,7 @@ class OvernightSlotPool:
                 slot.margin_inr = self._margin_per_slot
                 slot.notional_inr = self._margin_per_slot * float(leverage)
                 slot.reserved_today = today.isoformat()
+                slot.paper_variant_b = paper_variant_b
                 return slot
         return None
 
@@ -862,6 +874,7 @@ class OvernightSlotPool:
         slot.fees_inr = None
         slot.interest_inr = None
         slot.reserved_today = None
+        slot.paper_variant_b = None
 
     # ---------- Queries ----------
 

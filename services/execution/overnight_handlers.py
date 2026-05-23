@@ -178,12 +178,18 @@ def run_entry(
                 summary["rejected_count"] += 1
                 continue
 
-            # Reserve slot (fails if capacity or per-day cap hit)
+            # Reserve slot (fails if capacity or per-day cap hit).
+            # Tag with paper-variant cohort (Task 8 — close_dn_overnight_long Variant B)
+            # so settlement records can group PnL by cohort during paper-validation.
+            paper_variant_b = (
+                evt.context.get("paper_variant_classification", {}).get("variant_b")
+            )
             slot = pool.reserve(
                 symbol=symbol,
                 product=evt.context["product"],
                 leverage=float(evt.context["leverage"]),
                 today=today,
+                paper_variant_b=paper_variant_b,
             )
             if slot is None:
                 logger.info(
@@ -213,6 +219,7 @@ def run_entry(
                 slot.margin_inr = 0.0
                 slot.notional_inr = 0.0
                 slot.reserved_today = None
+                slot.paper_variant_b = None
                 summary["skipped_count"] += 1
                 continue
 
@@ -273,6 +280,7 @@ def run_entry(
                 "buy_fill_price": float(fill_price),
                 "amo_sell_order_id": str(amo_order_id),
                 "expected_exit_date": next_day.isoformat(),
+                "paper_variant_b": paper_variant_b,
             })
 
     # Persist

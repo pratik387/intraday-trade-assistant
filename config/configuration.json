@@ -456,6 +456,14 @@
         "pf_floor": 1.2,
         "sustained_weeks": 6,
         "state_file": "state/decay_tripwire_close_dn_overnight_long.json"
+      },
+      "paper_calendar_variant_b": {
+        "enabled": true,
+        "rule": "(dow == Monday OR is_expiry_week OR tdom >= 21) AND dow != Thursday",
+        "expiry_calendar_source": "data/futures_basis/2023_2026_basis.parquet (expiry_date column)",
+        "holidays_source": "assets/nse_holidays.json",
+        "decision_window_paper_days": 60,
+        "_status_2026_05_22": "ADDED — calendar-conditioning analysis (agents a3ce482ef03a78430 + ac6005638bad2c305) shows Variant B gate lifts HO PF 1.59 -> 3.04 (+91%), n=1663 holds 50x above 30-trade floor. CLASSIFICATION TAG mode (not hard gate): detector emits paper_variant_classification={baseline:True, variant_b:bool} on every fire; paper-trade tagging splits PnL by cohort during 60-90 day validation. Production live entries do NOT apply Variant B hard gate until paper validation confirms HO PF lift sustains live. See specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.md §Task 8."
       }
     },
     "5day_RSI_VWAP_absorb_continuation_long": {

@@ -206,6 +206,93 @@ def test_rejects_prior_day_not_up_3pct():
     assert "prior_day_return" in msg or "baseline" in msg or "volume_z" in msg
 
 
+def test_variant_b_disabled_by_default_classification_is_baseline_only():
+    """When `paper_calendar_variant_b.enabled` is absent or False, variant_b=False.
+
+    Baseline classification is ALWAYS True (tag indicates fire belongs to baseline cohort).
+    """
+    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.8, volume_z_target=3.5,
+                        prior_day_return_pct=4.0)
+    # No paper_calendar_variant_b key → default disabled
+    det = CloseDnOvernightLongStructure(_config())
+    res = det.detect(_ctx(df, sd))
+    if not res.structure_detected:
+        pytest.skip(f"synthetic didn't fire; rejection={res.rejection_reason}")
+    cls = res.events[0].context["paper_variant_classification"]
+    assert cls == {"baseline": True, "variant_b": False}, (
+        f"with variant_b disabled, classification should be baseline-only; got {cls}"
+    )
+
+
+def test_variant_b_enabled_monday_classifies_variant_b_true():
+    """With paper_calendar_variant_b.enabled=True on a Monday signal_date → variant_b=True.
+
+    2026-05-25 is a Monday — passes Variant B via dow==Monday branch.
+    """
+    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.8, volume_z_target=3.5,
+                        prior_day_return_pct=4.0)
+    # Synthesize fixture date as Monday by overriding session_date (fixture builds 2026-05-21
+    # which is Thursday — would explicit-exclude Variant B; we re-key bars to 2026-05-25 Mon)
+    monday = date(2026, 5, 25)
+    df.index = df.index.map(lambda ts: ts.replace(year=monday.year, month=monday.month, day=monday.day)
+                             if ts.date() == sd else ts)
+    # df now has the today bars at Monday May 25; prior bars stay at their original dates
+    # but with date shifted forward — keep test simple by skipping baseline-history validation
+    cfg = _config(paper_calendar_variant_b={"enabled": True})
+    det = CloseDnOvernightLongStructure(cfg)
+    res = det.detect(_ctx(df, monday))
+    if not res.structure_detected:
+        pytest.skip(f"synthetic+date-shift didn't fire; rejection={res.rejection_reason}")
+    cls = res.events[0].context["paper_variant_classification"]
+    assert cls["baseline"] is True
+    assert cls["variant_b"] is True, (
+        f"Monday 2026-05-25 should satisfy Variant B via dow=Monday; got {cls}"
+    )
+
+
+def test_variant_b_enabled_thursday_classifies_variant_b_false():
+    """With paper_calendar_variant_b.enabled=True on Thursday → variant_b=False (explicit exclude).
+
+    2026-05-21 (default fixture date) is a Thursday — even within expiry week, Thursday is
+    explicitly excluded by the Variant B gate.
+    """
+    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.8, volume_z_target=3.5,
+                        prior_day_return_pct=4.0)
+    assert sd.weekday() == 3, "fixture date must be Thursday for this test"
+    cfg = _config(paper_calendar_variant_b={"enabled": True})
+    det = CloseDnOvernightLongStructure(cfg)
+    res = det.detect(_ctx(df, sd))
+    if not res.structure_detected:
+        pytest.skip(f"synthetic didn't fire; rejection={res.rejection_reason}")
+    cls = res.events[0].context["paper_variant_classification"]
+    assert cls["baseline"] is True
+    assert cls["variant_b"] is False, (
+        f"Thursday signal_date must classify variant_b=False (explicit exclude); got {cls}"
+    )
+
+
+def test_variant_b_flows_to_trade_plan_notes():
+    """Variant classification must propagate from event.context → TradePlan.notes.
+
+    Downstream order placement + reports key off `notes["paper_variant_classification"]`.
+    """
+    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.8, volume_z_target=3.5,
+                        prior_day_return_pct=4.0)
+    cfg = _config(paper_calendar_variant_b={"enabled": True})
+    det = CloseDnOvernightLongStructure(cfg)
+    res = det.detect(_ctx(df, sd))
+    if not res.structure_detected:
+        pytest.skip(f"synthetic didn't fire; rejection={res.rejection_reason}")
+    evt = res.events[0]
+    plan = det.plan_long_strategy(_ctx(df, sd), evt)
+    assert plan is not None
+    notes_cls = plan.notes.get("paper_variant_classification")
+    assert notes_cls is not None, "TradePlan notes must carry paper_variant_classification"
+    assert notes_cls["baseline"] is True
+    # variant_b value matches what event recorded
+    assert notes_cls["variant_b"] == evt.context["paper_variant_classification"]["variant_b"]
+
+
 def test_per_symbol_latch_prevents_re_fire():
     """Once fired, calling detect again on the same (symbol, date) returns 'already fired'."""
     df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.8, volume_z_target=3.5,

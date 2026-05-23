@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from config.logging_config import get_agent_logger
+from services.calendar_utils import passes_close_dn_variant_b
 from .base_structure import BaseStructure
 from .data_models import (
     ExitLevels,
@@ -65,6 +66,12 @@ class CloseDnOvernightLongStructure(BaseStructure):
         mtf_cfg = config.get("mtf", {})
         self._mtf_snapshot_path = Path(str(mtf_cfg["approved_list_snapshot_path"]))
         self._mtf_exclude_etf = bool(mtf_cfg.get("exclude_etf", True))
+        # Paper-variant gate (Task 8 — calendar-locked cohort for paper-trade A/B)
+        # Per specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.md §Task 8.
+        # Variant B is a CLASSIFICATION TAG on every fire (NOT a hard entry gate);
+        # paper-trade execution + analytics use this to A/B-test baseline vs calendar cohort.
+        variant_b_cfg = config.get("paper_calendar_variant_b", {})
+        self._paper_variant_b_enabled = bool(variant_b_cfg.get("enabled", False))
         # Per-day latch (key = (symbol, date))
         self._fired_today: set = set()
         self._mtf_universe = None  # lazy-loaded on first detect
@@ -192,7 +199,27 @@ class CloseDnOvernightLongStructure(BaseStructure):
             return _empty("entry bar (15:25) not present in df_5m")
         entry_price = float(entry_bar["open"].iloc[-1])
 
-        # 9. Build StructureEvent (the planner uses this to construct TradePlan)
+        # 9. Paper-variant classification (Task 8 — CLASSIFICATION TAG, not a hard gate).
+        # Variant B = (dow == Monday OR is_expiry_week OR tdom >= 21) AND dow != Thursday.
+        # Tagged on every fire; downstream analytics/reporting splits PnL by cohort.
+        # Calendar lookups (expiry parquet + nse_holidays) are cached via lru_cache.
+        if self._paper_variant_b_enabled:
+            try:
+                variant_b_flag = bool(passes_close_dn_variant_b(_sd))
+            except Exception as exc:  # never block fire on calendar-data hiccup
+                logger.warning(
+                    "close_dn_overnight_long: variant_b classifier raised %s on %s; defaulting to False",
+                    type(exc).__name__, _sd,
+                )
+                variant_b_flag = False
+        else:
+            variant_b_flag = False
+        paper_variant_classification = {
+            "baseline": True,           # every fire belongs to baseline cohort
+            "variant_b": variant_b_flag,
+        }
+
+        # 10. Build StructureEvent (the planner uses this to construct TradePlan)
         evt = StructureEvent(
             symbol=context.symbol,
             timestamp=last_ts,
@@ -210,13 +237,16 @@ class CloseDnOvernightLongStructure(BaseStructure):
                 "product": product,
                 "leverage": leverage,
                 "cap_segment": context.cap_segment or "unknown",
+                "paper_variant_classification": paper_variant_classification,
             },
             price=entry_price,
         )
         self._fired_today.add(latch_key)
         logger.info(
-            "close_dn_overnight_long fired | symbol=%s svr=%.3f vol_z=%.2f prior_ret=%.2f%% product=%s lev=%.2f",
-            context.symbol, signed_vol_ratio, volume_z, prior_day_return_pct, product, leverage,
+            "close_dn_overnight_long fired | symbol=%s svr=%.3f vol_z=%.2f prior_ret=%.2f%% "
+            "product=%s lev=%.2f variant_b=%s",
+            context.symbol, signed_vol_ratio, volume_z, prior_day_return_pct,
+            product, leverage, variant_b_flag,
         )
         return StructureAnalysis(
             structure_detected=True, events=[evt],
@@ -347,6 +377,11 @@ class CloseDnOvernightLongStructure(BaseStructure):
                 "signed_vol_ratio": evt.context["signed_vol_ratio"],
                 "closing_volume_z": evt.context["closing_volume_z"],
                 "prior_day_return_pct": evt.context["prior_day_return_pct"],
+                # Paper-variant classification (Task 8): downstream order + report code
+                # uses this to tag positions and group PnL by cohort during paper-validation.
+                "paper_variant_classification": evt.context.get(
+                    "paper_variant_classification", {"baseline": True, "variant_b": False}
+                ),
             },
         )
 

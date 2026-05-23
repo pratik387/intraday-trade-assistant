@@ -603,6 +603,87 @@ Detector (or registry) checks `is_paused()` before emitting events. If paused, l
 
 ---
 
+## Task 8: Calendar-locked Variant B for parallel paper-validation
+
+**Added 2026-05-22** based on calendar-conditioning analysis (`_tmp_calendar_variants.py`, agent ac6005638bad2c305) showing material PF lift across all 3 windows on a pre-registered calendar filter.
+
+### Findings
+
+Variant B = `(dow == Monday OR is_expiry_week OR tdom >= 21) AND dow != Thursday`
+
+PF lift vs baseline (close_dn_overnight_long sanity ledger 2026-05-21):
+
+| Window | Baseline | Variant B | Lift |
+|---|---|---|---|
+| Discovery (7932) | PF **3.23** | n=2606, PF **4.16** | +29% |
+| OOS (6614) | PF **1.93** | n=2228, PF **2.74** | +42% |
+| **Holdout (6229)** | PF **1.59** | n=1663, PF **3.04** | **+91%** |
+
+n drops 67-73% per window but remains 50× above the 30-trade floor in HO.
+
+Mechanism rationale: Mon = weekend-risk premium reversal; expiry-week = monthly settlement-day unwinds amplifying T-1 close-direction flush; tdom>=21 = month-end institutional rebalance; Thu exclusion = pre-Friday expiry day institutional supply offsets the reversal mechanic.
+
+Variant A (Monday-only) was also evaluated: HO PF 3.89 (higher) but ~19% of trade flow vs Variant B's ~30%. Variant B is operationally preferable for capital deployment.
+
+### Implementation rule (universe builder + signal-emission code)
+
+At signal time (15:25 IST), evaluate:
+
+```python
+from datetime import date
+def is_expiry_week(d: date, expiry_dates: set[date]) -> bool:
+    # True if d is within Mon-Thu of the calendar week containing any monthly F&O expiry
+    # expiry_dates derived from data/futures_basis/2023_2026_basis.parquet[expiry_date]
+    iso_yr, iso_wk, _ = d.isocalendar()
+    return any((e.isocalendar()[0], e.isocalendar()[1]) == (iso_yr, iso_wk) for e in expiry_dates)
+
+def tdom(d: date, holidays: set[date]) -> int:
+    # 1-indexed trading-day-of-month rank for d, skipping weekends + NSE holidays
+    ...
+
+def passes_variant_b(signal_date: date, expiry_dates: set[date], holidays: set[date]) -> bool:
+    dow = signal_date.weekday()  # Mon=0..Sun=6
+    if dow == 3:  # Thursday — explicit exclude
+        return False
+    return (dow == 0) or is_expiry_week(signal_date, expiry_dates) or (tdom(signal_date, holidays) >= 21)
+```
+
+### Paper validation plan
+
+Run BOTH baseline and Variant B side-by-side during paper-trade phase:
+- Emit BOTH signals; tag each with `variant: "baseline" | "variant_b"`
+- Track per-cohort PnL, PF, n, exit-reason mix
+- Decision after 60-90 paper days:
+  - If Variant B sustains 50%+ HO PF lift in paper: shift live entries to Variant B cohort only
+  - If Variant B converges with baseline: ship baseline (simpler ops, broader capacity)
+  - If Variant B underperforms baseline in paper: investigate calendar-data quality + universe drift; default to baseline
+
+### Configuration additions
+
+Add to `setups.close_dn_overnight_long` config block:
+
+```json
+"paper_calendar_variant_b": {
+  "enabled": true,
+  "rule": "(dow == Monday OR is_expiry_week OR tdom >= 21) AND dow != Thursday",
+  "expiry_calendar_source": "data/futures_basis/2023_2026_basis.parquet (expiry_date column)",
+  "holidays_source": "assets/nse_holidays.json",
+  "decision_window_paper_days": 60,
+  "_comment": "Paper-trade phase only. Production live entries do NOT apply Variant B gate until paper-validation confirms HO PF lift sustains live. See specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.md Task 8."
+}
+```
+
+### Acceptance gate
+
+- Detector emits BOTH baseline and Variant B signal classifications per fire
+- Mock broker fills both cohorts independently in paper
+- Decay tripwire monitors BOTH cohorts; either can trip
+- Reports separate Variant B PnL aggregations alongside baseline
+
+**Estimated effort:** 1-2 commits, ~80 lines (utility functions for is_expiry_week + tdom, signal tagging, config wiring, paper-phase report enrichment).
+
+---
+
 ## Cross-cutting acceptance for paper-trade activation
 
 After all 8 tasks merge:
