@@ -11,6 +11,57 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-23 (#26) — Production bug: `close_dn_overnight_long._prior_day_return_pct` was computing the wrong return
+
+**What went wrong:** The setup's cell #5 lock (`closing_volume_z=extreme × prior_day_return=up_gt_3pct`) was discovered by `tools/sub9_research/sanity_close_dn_overnight_multi_exit.py` using the formula `prior_day_return_pct = (today_last_close - yesterday_last_close) / yesterday_last_close * 100` — i.e., **TODAY's daily return**. The mechanism intent ("post-rally EOD-flush overnight reversion") matches: today is the rally day, today shows the EOD flush, we BUY MOC for overnight reversion.
+
+But the production detector's `_prior_day_return_pct` computed `(T-1_close - T-2_close) / T-2_close` — interpreting "prior day" literally as the day before signal day. This is NOT the cell discriminator. Result: on 2026-04-08, of 13 sanity-expected cell-5 fires, **only 2 fired in production** (the 2 whose accidentally-correlated T-1 return also exceeded 3%). 7 silent rejections like NSE:BLS (today_ret 9.75%, T-1 ret 0.84%) failed the cell filter.
+
+**How undetected:** The bug was masked by every layer:
+1. Unit tests synthesized prior_day_return_pct by manipulating T-1 and T-2 closes — accidentally testing the buggy formula's output instead of the mechanism intent.
+2. Sanity ledgers (used for all PF claims including Variant B's +91% HO uplift) were computed with the correct formula → looked great.
+3. The intraday daemon DOESN'T dispatch overnight setups (mode=overnight skipped) → no daemon-level smoke test exercised the path.
+4. Live/paper cron path had separate bugs (config-source + MockBroker date-range) that exited with `fired=0` silently → couldn't surface the cell-filter bug.
+
+It took building tools/engine_overnight.py end-to-end harness to surface the divergence. The harness's first diagnostic showed 0 fires on a day where sanity expected 13. Per-symbol divergence trace exposed all 4 bugs (3 silent main.py/MockBroker, 1 production semantic).
+
+**Rule:** When a config field name is a literal-meaning approximation of the mechanism intent (`prior_day_return_pct` literally means "yesterday's daily return" but the cell discriminator uses "today's daily return"), the implementation MUST match the semantic intent, not the literal name. Document the semantic at the implementation site with a multi-line comment, and add a regression test that synthesizes data where the literal-vs-intent formulas would give visibly different answers.
+
+**Rule:** For every paper-validated setup, build an end-to-end backtest harness that exercises the SAME code path as live/paper (not just sanity scripts). Without this, production bugs of this class are undetectable until live deployment loses money. tools/engine_overnight.py is the template for overnight setups; tools/engine.py for intraday.
+
+---
+
+### 2026-05-23 (#25) — Sanity script for `close_dn_overnight_long` has 15:25-bar look-ahead bias
+
+**What went wrong:** `tools/sub9_research/sanity_close_dn_overnight_long.py` defines `CLOSING_30M_HHMM_LIST = ["15:00", "15:05", "15:10", "15:15", "15:20", "15:25"]` — six bars. Per the project's bar-labeling convention (CLAUDE.md: "5m bar labeled HH:MM covers HH:MM to HH:MM+5"), the 15:25 bar covers 15:25-15:30 wall-clock. But the setup's MOC decision happens AT 15:25 IST. **The 15:25 bar's data is not available at fire time — using it is look-ahead.**
+
+Production detector's `structures/close_dn_overnight_long_structure.py` correctly uses only 5 bars (`_SIGNAL_BAR_HHMMS = ("15:00", "15:05", "15:10", "15:15", "15:20")`) per the file's own docstring: "CRITICAL look-ahead correction: the 5-bar signal uses bars 15:00-15:20 ONLY. The 15:25 bar (which closes at 15:30 IST) is excluded because in live execution, MOC orders fire at 15:25-15:30 — we cannot use the 15:25 bar's volume/direction to make a 15:25 trading decision."
+
+**Concrete impact (2026-04-08 per-symbol diagnostic):**
+
+| Symbol | Sanity signed_vol (6-bar) | Production signed_vol (5-bar) | Sanity verdict | Production verdict |
+|---|---|---|---|---|
+| LXCHEM | -0.596 | **+0.298** | FIRES | rejected ✓ |
+| UNIVCABLES | -0.569 | **-0.242** | FIRES | rejected ✓ |
+| MASFIN | vol_z 2.04 | vol_z **0.54** | FIRES | rejected ✓ |
+| TARC | vol_z 2.06 | vol_z **1.20** | FIRES | rejected ✓ |
+
+In all 4 cases, the 15:25 bar's heavy bearish closing volume contributed disproportionately to sanity's signal — without it (production), the 5-bar window shows insufficient sell pressure. **Production correctly rejects; sanity's inclusion is a bug.**
+
+**Impact on Variant B paper-validation claim:** Variant B for `close_dn_overnight_long` was committed 2026-05-22 (commit c7b3c03) with the claim HO PF 1.59 → 3.04 (+91%) from `agents a3ce482ef03a78430 + ac6005638bad2c305`. Both agents read the sanity ledger which was contaminated by the 15:25 look-ahead. **The +91% uplift is computed on inflated fire counts and is not reliable.** Real production fire rate is substantially lower (~60% of sanity's cell-5 count on the 2026-04-08 spot-check). Forward paper-validation on the production-truth fire stream is the only honest discriminator now.
+
+**Why this is a different class of bug than Lesson #19:**
+- Lesson #19 found that for `below_vwap_volume_revert_long`, sanity's per-bar detector logic was IDENTICAL to production. The divergence was in universe filters + latch + exit walk.
+- Lesson #25 (this one) finds that for `close_dn_overnight_long`, the per-bar SIGNAL definition itself differs. Sanity uses 6 bars, production uses 5 bars. This is upstream of all other divergences.
+
+**Rule:** Every sanity script's signal-bar window MUST exactly match the production detector's `_SIGNAL_BAR_HHMMS` (or equivalent). Cross-check by reading both files side-by-side BEFORE running any cell-mining. If the windows differ, the discovered cells + PF claims are unsalvageable — must rerun on the corrected signal window.
+
+**Detection script idea:** For every active setup, write a one-time audit that compares the sanity-script's signal-bar list to the production detector's signal-bar list. Flag any divergence as an immediate Lesson-#25 violation.
+
+**Variant B paper-validation status (2026-05-23):** The +91% HO PF uplift claim cannot be trusted. Variant B continues to ship as a CLASSIFICATION TAG (not hard gate) per the spec; paper-validation must measure baseline-vs-variant uplift on production-truth fires. The 60-90 day window starts fresh — sanity's +91% number is discarded.
+
+---
+
 ### 2026-05-23 (#24) — `aggregate_oci_to_canonical.py` line-178 multi-run UNION lacks lifecycle_id dedup
 
 **What went wrong:** During Stage 14 retirement reconciliation for `circuit_t1_fade_short`, I audited `tools/methodology/aggregate_oci_to_canonical.py` and found that `main()` unions per-setup row lists across multiple `--run-dirs` without deduplication. The per-run aggregation (`aggregate_run`) correctly dedups on `lifecycle_id`, but the cross-run union step (line 178 in the unfixed version) just `.extend()`s rows into `all_by_setup`.
