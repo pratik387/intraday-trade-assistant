@@ -1098,6 +1098,91 @@ This setup should NOT be re-implemented unless:
 3. **Stationarity gate must clear** — corrected filter showed max-min PF_net of 0.375 across 3 periods. Any revival must demonstrate ≤ 0.30 across Disc/OOS/HO with the FII-gate applied.
 4. **OOS+HO combined NET must be positive** — non-negotiable. The v2 result shows -Rs 290K combined, which would be production-fatal.
 
+---
+
+## 2026-05-22 brainstorm session — 18 candidates KILLED (Stage 0 / Phase 1 / Phase 2 / Phase 4)
+
+**Session summary:** single-day deep-research pass spanning 5 hypothesis families across small-cap, large-cap (NIFTY 100), NIFTY Next 50 (#51-100), and F&O liquid-200 universes. **0 of 18 candidates shipped.** All kills caught at cheap stages (no detector code wasted on any). Net findings worth preserving: 14 KILL evidence sets + 2 actionable portfolio improvements (calendar variants — see `tasks/lessons.md` and below) + 1 borderline candidate (5day_RSI absorption) that reached Phase 5 then died on tightening fee math.
+
+### Failure-mode taxonomy (all 18)
+
+| # | Candidate | Stage killed | Failure mode |
+|---|---|---|---|
+| 1 | `first_hour_low_retest_fail_long` | Phase 1 Gate A | Universal-pattern cargo-cult — only generic Indian sources, no operationalization of THIS specific mechanism on retail-MIS infra. §3.2 binding rule violation. |
+| 2 | `nifty_heavy_vwap_reclaim_long` | Phase 2 | Mechanism (passive ETF closing flow) is real at daily scale but produces ZERO 5m-bar footprint (+0.006% drift). Pre/post-2024 split SIGN-INVERTED from AUM-growth thesis. |
+| 3 | `pre_results_t0_morning_accumulation_fade_short` | Phase 2 | Drift +0.055% WRONG sign for SHORT. Dominant `cap=large_cap` cohort drifts UP, inverting institutional-knowledge-asymmetry thesis. n=48 << 200 floor. |
+| 4 | `lunch_lull_breakout_fail_short` | Phase 2 | Falsifier #1 PASS (thin-vol signature real) but drift +0.062% WRONG sign across ALL 6 cohorts. Indian retail consensus literally right ("lunch trades fail") — they fail by drifting UP/sideways, not DOWN. |
+| 5 | `5day_high_break_first_hour_fail_short` | Phase 2 | Falsifier #1 PASS but drift -0.004% — 38× below -0.15% threshold. 77% OR-high overlap means signal mostly duplicates active `or_window_failure_fade_short`. |
+| 6 | `5day_oversold_first_hour_bid_long` | Phase 2 Falsifier #1 | Raw drift +0.93% PASSED LONG threshold, but pre-registered Falsifier #1 failed (wick vol_ratio median 0.56 << 1.0). The "institutional bid" mechanism story is empirically wrong. Lesson #2 anti-salvage discipline caught this. |
+| 7 | `5day_capitulation_thin_wick_squeeze_long` | Phase 2 Falsifier #1 | Mechanism-rephrase of #6 as "thin-tape short-cover squeeze." F1 (delivery% asymmetry) FAIL by 0.37pp (-1.6pp vs -2.0pp threshold). F2 (next-day gap-up) PASSED massively (+16.76pp). Pattern is real but TWO mechanism stories now empirically falsified on same data. |
+| 8 | `5day_decile_leader_morning_reject_short` | Phase 2 | Falsifier #1 PASS (rank stability 0.64). Drift +0.080% WRONG sign in ALL 9 splits. Magnitude bucket ≥15%: signal mean +0.0100% — explicit reversion AGAINST SHORT thesis. 52% OR-fail overlap. |
+| 9 | `5day_volume_buildup_morning_distribution_short` | Phase 2 | Falsifier #1 PASS weakly (delivery% delta -0.32% median). Drift +0.084% WRONG sign. All 9 cohort splits positive (anti-SHORT). vol_z monotonicity NON-MONOTONIC. |
+| 10 | `5day_RSI_overbought_intraday_VWAP_lose_short` | Phase 2 | Drift +0.077% WRONG sign. Sustained RSI sign-DISCRIMINATES from single-day RSI (+0.087% delta) BUT in CONTINUATION direction not reversion. Post-SEBI-Oct-2025 cohort: +0.244% confirms inherited regime risk from retired `mis_unwind_vwap_revert_short`. |
+| 11 | `5day_RSI_VWAP_absorb_continuation_long` (inverse of #10) | **Phase 5 cell-sweep KILL** | Phase 2 PROCEED (+0.162% post-2024, Falsifier #1 absorption 91%); Phase 4 sanity NET -Rs 3,767 with R-multiple exits; Phase 5 R-sweep best cell PF 1.160 (below 1.20 ship threshold). Small_cap concentration (+0.266%) carries the edge; mid_cap weak (+0.043%). HO n=8 fatal (Lesson #5 #5). Borderline — most promising of today's 18 but doesn't clear Stage 5. |
+| 12 | `nifty_100_sector_divergence_intraday_revert` | Phase 2 | Falsifier #1 PASS (vol_ratio median 2.09). Falsifier #2 FAIL — signed_mean post_120m -0.4bp (vs -20bp required), 50× below tradeable. Mean-revert direction confirmed; magnitude eaten by fees. |
+| 13 | `nifty_100_gap_up_low_volume_followthrough_fade_short` | Phase 2 | Drift +0.017% WRONG sign aggregate. Falsifier #1 FAIL: post-11:00 volume STAYS low (19.5% ≥1.0× vs expected ≥50% on fade days). Institutions don't show up to fade large-cap low-vol gap-ups. |
+| 14 | `nifty_100_block_sell_afternoon_continuation_short` (reframed from `above_VWAP_sustained_volume_climax`) | Phase 2 | **Both falsifiers fail.** Drift +0.146% WRONG sign Discovery. F2 late-session vol 0.91 vs baseline 0.85 (no residual). F1 proxy fatal: **251/252 block-SELLs are paired with same-day block-BUYs** = portfolio rebalances (intra-AMC scheme transfers), NOT directional distribution. Same root cause as retired `block_deal_accumulation` (C-01). |
+| 15 | `nifty_next_50_sector_divergence_intraday_revert` | Phase 2 | Same mechanism as #12 on Next 50 universe. Signed_mean -1.0bp (2.5× better than NIFTY 100 but still 20× below tradeable). Direction-stability marginally better in Next 50. |
+| 16 | `nifty_next_50_gap_up_low_volume_followthrough_fade_short` | Phase 2 | Same as #13 on Next 50. Signal -0.021% (correct dir, below -0.20% threshold). Holdout -0.030% correct direction. Direction MORE stable than NIFTY 100 but absolute magnitude below tradeable. |
+| 17 | `nifty_next_50_block_sell_afternoon_continuation_short` | Phase 2 | Same as #14 on Next 50. 86/86 SELLs paired with BUYs (zero clean SELLs). Block-deal directional thesis is structurally dead in ALL large-cap segments tested (NIFTY 100 + Next 50). |
+| 18 | `fno_monthly_rollover_intraday_post_expiry_revert` | **Phase 4 R-multiple sanity** | **Strongest evidence pattern of any 2026-05-22 candidate** — peer-reviewed Indian academic backing (Narang & Vij 2013 + Agarwalla & Pandey 2013 IIM-A) + regime-stable +9bp delta vs baseline across pre/post SEBI-2025-09-01 Tuesday-shift + Falsifier #3 PASS. BUT Phase 2 sig_mean only +0.041% (sub-tradeable), Falsifier #1 FAILED (T+1 gaps not wider than non-T+1 baseline — mechanism story wrong, pattern is "mean-revert per unit gap stronger" not "wider gaps"). Phase 4 sanity with T1=1.0R/T2=2.0R/SL=structural/time-stop 10:30: Disc PF 0.683 / OOS 0.938 / HO 0.739. All 3 windows NET losing. Time-stop dominates exit mix (50%+) with near-zero drift; T1/SL roughly balanced; T2 essentially never hits. R-multiple geometry can't extract a sub-tradeable drift. |
+
+### Meta-patterns surfaced
+
+1. **Retail-screenable technical patterns are arbed.** 5/5 multi-day technical signal candidates (#5, #6, #8, #9, #10) failed at Phase 2 with mechanism-confirmed-but-direction-wrong results. Streak/Chartink/Tradetron all surface 5-day-high / RSI / momentum-decile / vol-z presets — any edge there is competed away.
+2. **Block-deal directionality is structurally dead in NIFTY 100 + Next 50.** Three tests (this session #14, #17 + retired `block_deal_accumulation` C-01) all hit the same finding: 99%+ of large-cap block deals are paired with same-day opposite-side blocks = portfolio rebalances. No directional information.
+3. **Slow institutional mechanisms (passive ETF flow, pre-disclosure asymmetry, sector dispersion, basis convergence) don't manifest at 5m intraday MIS scale for retail-fee infrastructure.** Five tests across NIFTY 100 (#2, #12, #14) + Next 50 (#15) + F&O liquid-200 (#18) confirm. Mechanism may be real at daily / institutional-arbitrage scale but absolute 5m drift sub-tradeable. To pursue, would need quote-level execution or much slower hold timeframes.
+4. **Pre-registration discipline (Lesson #2) demonstrably saves money.** Candidates #6 and #7 had drift that would have passed LONG/SHORT thresholds (+0.93% raw) but pre-registered Falsifier #1 caught the mechanism-story falsification. Without it, both would have shipped on data-mined ride-along.
+5. **Peer-reviewed Indian academic backing is necessary but NOT sufficient.** Candidate #18 had the strongest Indian-source evidence (NSE-funded IIM-A working papers + 2 peer-reviewed Wiley/JoFM papers) and still KILLED at Phase 4. The +9bp delta-vs-baseline was real and regime-stable but absolute drift below fee floor.
+
+### Brief artifacts preserved
+
+All 18 Stage-0 briefs preserved under `specs/2026-05-22-brief-*.md`:
+- `2026-05-22-brief-first_hour_low_retest_fail_long.md` (#1, KILL Phase 1 Gate A)
+- `2026-05-22-brief-nifty_heavy_vwap_reclaim_long.md` (#2, KILL Phase 2)
+- `2026-05-22-brief-pre_results_t0_morning_accumulation_fade_short.md` (#3, KILL Phase 2)
+- `2026-05-22-brief-lunch_lull_breakout_fail_short.md` (#4, KILL Phase 2)
+- `2026-05-22-brief-5day_high_break_first_hour_fail_short.md` (#5, KILL Phase 2)
+- `2026-05-22-brief-5day_oversold_first_hour_bid_long.md` (#6, KILL Falsifier #1)
+- `2026-05-22-brief-5day_capitulation_thin_wick_squeeze_long.md` (#7, KILL Falsifier #1)
+- `2026-05-22-brief-5day_decile_leader_morning_reject_short.md` (#8, KILL Phase 2)
+- `2026-05-22-brief-5day_volume_buildup_morning_distribution_short.md` (#9, KILL Phase 2)
+- `2026-05-22-brief-5day_RSI_overbought_intraday_VWAP_lose_short.md` (#10, KILL Phase 2)
+- `2026-05-22-brief-5day_RSI_VWAP_absorb_continuation_long.md` (#11, KILL Phase 5)
+- `2026-05-22-brief-nifty_100_sector_divergence_intraday_revert.md` (#12, KILL Phase 2)
+- `2026-05-22-brief-nifty_100_gap_up_low_volume_followthrough_fade_short.md` (#13, KILL Phase 2)
+- `2026-05-22-brief-nifty_100_above_VWAP_sustained_volume_climax_fade_short.md` (#14, reframed to `nifty_100_block_sell_afternoon_continuation_short`, KILL Phase 2)
+- `2026-05-22-brief-fno_monthly_rollover_intraday_post_expiry_revert.md` (#18, KILL Phase 4)
+
+### Phase 2/4/5 scripts preserved (negative-knowledge artifacts)
+
+Selected scripts in `tools/sub9_research/`:
+- `phase2_5day_*_signature.py` family (5 scripts for #5-#10)
+- `phase2_nifty_100_*.py` family (3 scripts for #12-#14)
+- `phase2_nifty_next_50_*.py` family (3 scripts for #15-#17)
+- `phase2_fno_monthly_rollover_post_expiry_revert_signature.py` + `sanity_fno_monthly_rollover_post_expiry_revert.py` (#18 Phase 2 + Phase 4)
+- `sanity_5day_RSI_VWAP_absorb_continuation_long.py` + `phase5_5day_RSI_VWAP_absorb_R_sweep.py` (#11 Phase 4 + Phase 5)
+
+CSV outputs (in `reports/sub9_sanity/_phase2_*.csv` and `reports/sub9_sanity/_5day_RSI_VWAP_absorb_continuation_long_trades_*.csv`) are gitignored runtime artifacts but reproducible via the preserved scripts.
+
+### Conditions for revival (any of 18)
+
+Per `docs/setup_lifecycle.md` Stage 14 retirement triggers. For pre-implementation kills (most of today), revival requires:
+1. **Fresh Indian-source evidence not exhausted by 2026-05-22 brief.** No re-running the same mechanism with the same sources. New empirical paper / NSE working paper / SEBI consultation paper required.
+2. **Mechanism reframe with falsifier orthogonal to today's pass/fail axis.** Specifically: for the SHORT candidates with wrong-direction drift, an inverse LONG hypothesis is allowed only with a fresh pre-registered falsifier (not retest the same data).
+3. **Different infra dimension.** Sub-5m execution, F&O OI intraday data, pre-open auction archive, etc. — opens the search space; current 5m-bar + retail-MIS-fee zone is largely exhausted across tested mechanisms.
+
+For #18 (F&O rollover) specifically: revival path is **(a) tighter cell-lock to SHORT-side post-SEBI-2025-09-01 cohort** (n=253, sig_mean +0.252% — tradeable but high-overfit-risk on 7-month data) OR **(b) slower-timescale hold** (10:30 was the chosen window; ret_to_1330 was recorded but not yet R-sweep-tested).
+
+### Calendar-conditioning findings (NOT retired — actionable portfolio improvements)
+
+Two calendar filters surfaced in parallel analysis that DO ship as portfolio enhancements (not new setups):
+
+1. **`close_dn_overnight_long` Variant B** = `(dow == Monday OR is_expiry_week OR tdom >= 21) AND dow != Thursday`. Sanity ledger shows Holdout PF lift 1.59 → 3.04 (+91%) with n=1,663. Implemented as CLASSIFICATION TAG in detector (paper-trade A/B during 60-90 day validation). See `services/calendar_utils.py` + `structures/close_dn_overnight_long_structure.py` + `specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.md` §Task 8.
+2. **`circuit_t1_fade_short` expiry-week-only Variant C: NOT SHIPPABLE.** Production OCI canonical v2 reads Holdout PF 0.51 (vs Agent A sanity ledger PF 1.89 — conflict). Expiry-week filter makes HO WORSE on OCI v2 (PF 0.17 on n=17). Discrepancy flagged at `setups.circuit_t1_fade_short._concern_2026_05_22_oci_v2_ho_discrepancy` for OCI ledger reconciliation BEFORE any decommission decision.
+
+---
+
 ## Maintenance protocol
 **Predecessor:** First-pass thesis (no prior version). Phase 1-5 disciplined revival chain documented in `tasks/lessons.md` 2026-05-19 #3.
 **Sanity scripts (preserved):** `tools/sub9_research/phase2_pre_results_t1_signature.py`, `tools/sub9_research/sanity_pre_results_t1_fade.py`, `tools/sub9_research/phase5_pre_results_t1_validation.py`

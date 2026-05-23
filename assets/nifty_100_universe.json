@@ -1,0 +1,668 @@
+{
+  "__meta__": {
+    "description": "NIFTY 100 universe (top-100 by market_cap_cr from nse_all.json with mis_enabled=True). Sector mapping per priority rule below.",
+    "generated_on": "2026-05-22",
+    "generator": "HF1 / nifty_100_sector_divergence_intraday_revert Phase 2 prep",
+    "priority_rule_doc": "PSU_BANK > BANK > IT > AUTO > PHARMA > FMCG > METAL > REALTY > OIL_GAS > ENERGY > FIN_SERVICE > _50. Symbols present in multiple ind_nifty*.csv lists receive the highest-priority sector. Residuals (not in any CSV) resolved via NSE Indices methodology manual lookup.",
+    "sector_csv_files_used": {
+      "NSE_NIFTY_BANK": "ind_niftybanklist.csv",
+      "NSE_NIFTY_IT": "ind_niftyitlist.csv",
+      "NSE_NIFTY_AUTO": "ind_niftyautolist.csv",
+      "NSE_NIFTY_PHARMA": "ind_niftypharmalist.csv",
+      "NSE_NIFTY_FMCG": "ind_niftyfmcglist.csv",
+      "NSE_NIFTY_METAL": "ind_niftymetallist.csv",
+      "NSE_NIFTY_ENERGY": "ind_niftyenergylist.csv",
+      "NSE_NIFTY_REALTY": "ind_niftyrealtylist.csv",
+      "NSE_NIFTY_PSU_BANK": "ind_niftypsubanklist.csv",
+      "NSE_NIFTY_OIL_GAS": "ind_niftyoilgaslist.csv",
+      "NSE_NIFTY_FIN_SERVICE": "ind_niftyfinancelist.csv",
+      "NSE_NIFTY_50": "ind_nifty50list.csv"
+    },
+    "priority_order": [
+      "NSE_NIFTY_PSU_BANK",
+      "NSE_NIFTY_BANK",
+      "NSE_NIFTY_IT",
+      "NSE_NIFTY_AUTO",
+      "NSE_NIFTY_PHARMA",
+      "NSE_NIFTY_FMCG",
+      "NSE_NIFTY_METAL",
+      "NSE_NIFTY_REALTY",
+      "NSE_NIFTY_OIL_GAS",
+      "NSE_NIFTY_ENERGY",
+      "NSE_NIFTY_FIN_SERVICE",
+      "NSE_NIFTY_50"
+    ],
+    "manual_residual_justification": {
+      "LICI": "Life Insurance Corp - insurance, FS sector",
+      "HAL": "Hindustan Aeronautics - aerospace/defense PSU",
+      "DMART": "Avenue Supermarts - organized retail (Consumer Services)",
+      "HYUNDAI": "Hyundai Motor India - auto OEM (post-IPO Oct 2024)",
+      "PIDILITIND": "Pidilite - specialty chemicals",
+      "AMBUJACEM": "Ambuja Cements - construction materials",
+      "SHREECEM": "Shree Cement - construction materials",
+      "IRFC": "Indian Railway Finance Corp - PSU NBFC",
+      "BAJAJHLDNG": "Bajaj Holdings & Investment - investment co",
+      "SOLARINDS": "Solar Industries - explosives/defense",
+      "HDFCAMC": "HDFC Asset Management - AMC",
+      "POLYCAB": "Polycab India - cables (capital goods)",
+      "MAZDOCK": "Mazagon Dock - shipbuilding/defense PSU",
+      "CUMMINSIND": "Cummins India - capital goods (industrials)",
+      "DIXON": "Dixon Technologies - electronics manufacturing",
+      "INDHOTEL": "Indian Hotels (Taj) - Consumer Services, NIFTY 50 member",
+      "IDBI": "IDBI Bank - private bank post-LIC",
+      "SWIGGY": "Swiggy - Consumer Services / Internet (post-IPO Nov 2024)"
+    },
+    "new_sector_ids_introduced": [
+      "NSE_DEFENSE",
+      "NSE_CEMENT",
+      "NSE_CHEMICALS",
+      "NSE_CAPITAL_GOODS",
+      "NSE_RETAIL"
+    ],
+    "recommended_drops_phase1": "_50 residual cohort (high heterogeneity); fold PSU_BANK into BANK if Phase 2 finds n=7 too thin.",
+    "unmapped_count_after_resolution": 0,
+    "symbol_naming": "Bare (no NSE: prefix) \u2014 aligns with monthly_5m_enriched.feather symbol column."
+  },
+  "universe": [
+    {
+      "symbol": "RELIANCE",
+      "sector_id": "NSE_NIFTY_OIL_GAS",
+      "market_cap_cr": 1856249.21,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HDFCBANK",
+      "sector_id": "NSE_NIFTY_BANK",
+      "market_cap_cr": 1499493.14,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "BHARTIARTL",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 1171365.82,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "TCS",
+      "sector_id": "NSE_NIFTY_IT",
+      "market_cap_cr": 1089985.11,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ICICIBANK",
+      "sector_id": "NSE_NIFTY_BANK",
+      "market_cap_cr": 985908.69,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "SBIN",
+      "sector_id": "NSE_NIFTY_PSU_BANK",
+      "market_cap_cr": 816725.05,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "BAJFINANCE",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 638913.09,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "INFY",
+      "sector_id": "NSE_NIFTY_IT",
+      "market_cap_cr": 615992.05,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HINDUNILVR",
+      "sector_id": "NSE_NIFTY_FMCG",
+      "market_cap_cr": 585916.95,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "LICI",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 570198.54,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "LT",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 518042.94,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "MARUTI",
+      "sector_id": "NSE_NIFTY_AUTO",
+      "market_cap_cr": 512759.12,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ITC",
+      "sector_id": "NSE_NIFTY_FMCG",
+      "market_cap_cr": 499832.53,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "KOTAKBANK",
+      "sector_id": "NSE_NIFTY_BANK",
+      "market_cap_cr": 427369.54,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HCLTECH",
+      "sector_id": "NSE_NIFTY_IT",
+      "market_cap_cr": 403686.53,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "SUNPHARMA",
+      "sector_id": "NSE_NIFTY_PHARMA",
+      "market_cap_cr": 399249.32,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "AXISBANK",
+      "sector_id": "NSE_NIFTY_BANK",
+      "market_cap_cr": 367761.06,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ULTRACEMCO",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 358454.45,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "NTPC",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 328620.02,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "BAJAJFINSV",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 321484.1,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HAL",
+      "sector_id": "NSE_DEFENSE",
+      "market_cap_cr": 316530.23,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "ETERNAL",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 314846.09,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "TITAN",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 313135.86,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ADANIPORTS",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 311016.82,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ONGC",
+      "sector_id": "NSE_NIFTY_OIL_GAS",
+      "market_cap_cr": 305424.03,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "BEL",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 299262.36,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ADANIPOWER",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 294091.59,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ADANIENT",
+      "sector_id": "NSE_NIFTY_METAL",
+      "market_cap_cr": 291188.24,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "JSWSTEEL",
+      "sector_id": "NSE_NIFTY_METAL",
+      "market_cap_cr": 283227.4,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "DMART",
+      "sector_id": "NSE_RETAIL",
+      "market_cap_cr": 274257.96,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "POWERGRID",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 266601.81,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "WIPRO",
+      "sector_id": "NSE_NIFTY_IT",
+      "market_cap_cr": 256561.43,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "COALINDIA",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 235108.09,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "NESTLEIND",
+      "sector_id": "NSE_NIFTY_FMCG",
+      "market_cap_cr": 228505.26,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ASIANPAINT",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 224725.64,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "INDIGO",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 224182.9,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "TATASTEEL",
+      "sector_id": "NSE_NIFTY_METAL",
+      "market_cap_cr": 215226.69,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HINDZINC",
+      "sector_id": "NSE_NIFTY_METAL",
+      "market_cap_cr": 212660.3,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "IOC",
+      "sector_id": "NSE_NIFTY_OIL_GAS",
+      "market_cap_cr": 210154.03,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "JIOFIN",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 194945.71,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HYUNDAI",
+      "sector_id": "NSE_NIFTY_AUTO",
+      "market_cap_cr": 194026.68,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "EICHERMOT",
+      "sector_id": "NSE_NIFTY_AUTO",
+      "market_cap_cr": 190486.06,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "GRASIM",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 189553.81,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "VEDL",
+      "sector_id": "NSE_NIFTY_METAL",
+      "market_cap_cr": 186673.56,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "DLF",
+      "sector_id": "NSE_NIFTY_REALTY",
+      "market_cap_cr": 183135.92,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "SBILIFE",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 182041.39,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "DIVISLAB",
+      "sector_id": "NSE_NIFTY_PHARMA",
+      "market_cap_cr": 174505.77,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ADANIGREEN",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 172624.07,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HINDALCO",
+      "sector_id": "NSE_NIFTY_METAL",
+      "market_cap_cr": 170619.62,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "TVSMOTOR",
+      "sector_id": "NSE_NIFTY_AUTO",
+      "market_cap_cr": 166326.75,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "TRENT",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 165333.66,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "IRFC",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 163408.6,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "HDFCLIFE",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 160986.9,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "PIDILITIND",
+      "sector_id": "NSE_CHEMICALS",
+      "market_cap_cr": 154346.51,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "VBL",
+      "sector_id": "NSE_NIFTY_FMCG",
+      "market_cap_cr": 148756.78,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "BPCL",
+      "sector_id": "NSE_NIFTY_OIL_GAS",
+      "market_cap_cr": 146034.1,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "BRITANNIA",
+      "sector_id": "NSE_NIFTY_FMCG",
+      "market_cap_cr": 141233.12,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "AMBUJACEM",
+      "sector_id": "NSE_CEMENT",
+      "market_cap_cr": 140016.43,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "BANKBARODA",
+      "sector_id": "NSE_NIFTY_PSU_BANK",
+      "market_cap_cr": 138308.09,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "CHOLAFIN",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 137049.55,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "BAJAJHLDNG",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 134798.7,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "PNB",
+      "sector_id": "NSE_NIFTY_PSU_BANK",
+      "market_cap_cr": 134260.27,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "PFC",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 132713.3,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "MUTHOOTFIN",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 128611.01,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "TECHM",
+      "sector_id": "NSE_NIFTY_IT",
+      "market_cap_cr": 128217.41,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "SOLARINDS",
+      "sector_id": "NSE_DEFENSE",
+      "market_cap_cr": 126677.02,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "CIPLA",
+      "sector_id": "NSE_NIFTY_PHARMA",
+      "market_cap_cr": 126229.54,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "SHRIRAMFIN",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 126071.88,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "TATAPOWER",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 123787.45,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HDFCAMC",
+      "sector_id": "NSE_NIFTY_FIN_SERVICE",
+      "market_cap_cr": 121019.12,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "TORNTPHARM",
+      "sector_id": "NSE_NIFTY_PHARMA",
+      "market_cap_cr": 119603.23,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "GAIL",
+      "sector_id": "NSE_NIFTY_OIL_GAS",
+      "market_cap_cr": 117845.14,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "CGPOWER",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 116693.82,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "POLYCAB",
+      "sector_id": "NSE_CAPITAL_GOODS",
+      "market_cap_cr": 115137.21,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "CANBK",
+      "sector_id": "NSE_NIFTY_PSU_BANK",
+      "market_cap_cr": 115133.55,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "LODHA",
+      "sector_id": "NSE_NIFTY_REALTY",
+      "market_cap_cr": 114934.73,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ENRIN",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 114009.64,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "BOSCHLTD",
+      "sector_id": "NSE_NIFTY_AUTO",
+      "market_cap_cr": 113919.18,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "GODREJCP",
+      "sector_id": "NSE_NIFTY_FMCG",
+      "market_cap_cr": 113896.82,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "MAZDOCK",
+      "sector_id": "NSE_DEFENSE",
+      "market_cap_cr": 113753.16,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "ADANIENSOL",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 111959.58,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "MAXHEALTH",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 111121.71,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "HEROMOTOCO",
+      "sector_id": "NSE_NIFTY_AUTO",
+      "market_cap_cr": 111057.67,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "TATACONSUM",
+      "sector_id": "NSE_NIFTY_FMCG",
+      "market_cap_cr": 110749.51,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "APOLLOHOSP",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 110174.99,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "MOTHERSON",
+      "sector_id": "NSE_NIFTY_AUTO",
+      "market_cap_cr": 109027.4,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "CUMMINSIND",
+      "sector_id": "NSE_CAPITAL_GOODS",
+      "market_cap_cr": 108928.51,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "SIEMENS",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 108764.28,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "ABB",
+      "sector_id": "NSE_NIFTY_ENERGY",
+      "market_cap_cr": 108719.59,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "SHREECEM",
+      "sector_id": "NSE_CEMENT",
+      "market_cap_cr": 106023.28,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "UNIONBANK",
+      "sector_id": "NSE_NIFTY_PSU_BANK",
+      "market_cap_cr": 106000.25,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "INDIANB",
+      "sector_id": "NSE_NIFTY_PSU_BANK",
+      "market_cap_cr": 105063.37,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "DRREDDY",
+      "sector_id": "NSE_NIFTY_PHARMA",
+      "market_cap_cr": 104428.97,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "DIXON",
+      "sector_id": "NSE_CAPITAL_GOODS",
+      "market_cap_cr": 103828.08,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "INDHOTEL",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 103469.29,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "JINDALSTEL",
+      "sector_id": "NSE_NIFTY_METAL",
+      "market_cap_cr": 102359.31,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "MANKIND",
+      "sector_id": "NSE_NIFTY_PHARMA",
+      "market_cap_cr": 100704.82,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "IDBI",
+      "sector_id": "NSE_NIFTY_BANK",
+      "market_cap_cr": 100137.12,
+      "source": "manual_lookup"
+    },
+    {
+      "symbol": "ZYDUSLIFE",
+      "sector_id": "NSE_NIFTY_PHARMA",
+      "market_cap_cr": 99949.22,
+      "source": "csv_constituent_priority"
+    },
+    {
+      "symbol": "SWIGGY",
+      "sector_id": "NSE_NIFTY_50",
+      "market_cap_cr": 99772.57,
+      "source": "manual_lookup"
+    }
+  ]
+}
