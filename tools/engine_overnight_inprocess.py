@@ -100,8 +100,10 @@ def run() -> int:
         print("ERROR: --to must be >= --from", file=sys.stderr)
         return 2
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = ROOT / "reports" / "engine_overnight" / f"inproc_{ts}"
+    # Include PID + microseconds to avoid collisions when multiple parallel
+    # workers spawn simultaneously (parent engine_overnight_parallel.py).
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    out_dir = ROOT / "reports" / "engine_overnight" / f"inproc_{ts}_pid{os.getpid()}"
     state_dir = out_dir / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     print(f"[+] Run output dir: {out_dir}")
