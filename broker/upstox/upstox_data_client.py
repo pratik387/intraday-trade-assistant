@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -140,11 +141,16 @@ class UpstoxDataClient:
         """Save fetched instruments to local cache for fallback."""
         try:
             INSTRUMENTS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            # Only cache NSE_EQ to keep file small (~300KB vs 50MB)
-            nse_eq = [i for i in instruments if i.get("segment") == "NSE_EQ"]
+            # Keep NSE_EQ (tradeable) + NSE_INDEX (regime/directional-bias lookups).
+            # Without indices in the cache, restart-via-fallback loses NIFTY 50
+            # and the regime gate silently defaults to "chop" for the session.
+            keep = [
+                i for i in instruments
+                if i.get("segment") in ("NSE_EQ", "NSE_INDEX")
+            ]
             with open(INSTRUMENTS_CACHE_PATH, "w", encoding="utf-8") as f:
-                json.dump(nse_eq, f)
-            logger.debug(f"UpstoxDataClient: cached {len(nse_eq)} NSE_EQ instruments to disk")
+                json.dump(keep, f)
+            logger.debug(f"UpstoxDataClient: cached {len(keep)} NSE_EQ+NSE_INDEX instruments to disk")
         except Exception as e:
             logger.warning(f"UpstoxDataClient: cache save failed: {e}")
 
@@ -159,12 +165,39 @@ class UpstoxDataClient:
         count = 0
         collisions = 0
 
+        index_count = 0
         for item in instruments:
             # Filter: NSE_EQ only, EQ instrument type
             segment = item.get("segment", "")
             itype = item.get("instrument_type", "")
             tsym = item.get("trading_symbol", "")
             ikey = item.get("instrument_key", "")
+
+            # Indices (NIFTY 50, NIFTY BANK, etc.) — needed for regime gate
+            # and directional bias. Registered under "NSE:{NAME_UPPER}" because
+            # callers query with the human name (e.g. "NSE:NIFTY 50"), not the
+            # short trading_symbol ("NIFTY"). Not added to _equity_instruments —
+            # indices are not tradeable equities.
+            if segment == "NSE_INDEX" and itype == "INDEX":
+                idx_name = (item.get("name") or "").strip()
+                if not idx_name or not ikey:
+                    continue
+                int_token = zlib.crc32(ikey.encode()) & 0xFFFFFFFF
+                if int_token in self._tok2sym:
+                    collisions += 1
+                    int_token = (int_token + collisions) & 0xFFFFFFFF
+                idx_key = f"NSE:{idx_name.upper()}"
+                inst = _UpstoxInst(
+                    int_token=int_token,
+                    instrument_key=ikey,
+                    trading_symbol=idx_name,
+                )
+                self._sym2inst[idx_key] = inst
+                self._tok2sym[int_token] = idx_key
+                self._key2int[ikey] = int_token
+                self._int2key[int_token] = ikey
+                index_count += 1
+                continue
 
             if segment != "NSE_EQ" or itype != "EQ":
                 continue
@@ -208,7 +241,7 @@ class UpstoxDataClient:
         if collisions:
             logger.warning(f"UpstoxDataClient: {collisions} CRC32 token collisions resolved")
 
-        logger.info(f"UpstoxDataClient: {count} NSE EQ instruments ready")
+        logger.info(f"UpstoxDataClient: {count} NSE EQ + {index_count} NSE INDEX instruments ready")
 
     # ─── WebSocket ticker ──────────────────────────────────────────────────
 
@@ -318,7 +351,7 @@ class UpstoxDataClient:
 
         url = (
             f"{UPSTOX_HIST_BASE}/"
-            f"{instrument_key}/days/1/{end_date.isoformat()}/{start_date.isoformat()}"
+            f"{quote(instrument_key, safe='|')}/days/1/{end_date.isoformat()}/{start_date.isoformat()}"
         )
 
         empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
@@ -480,13 +513,14 @@ class UpstoxDataClient:
         to_str = to_dt.strftime("%Y-%m-%d")
         today_str = datetime.now().strftime("%Y-%m-%d")
 
+        ikey_enc = quote(ikey, safe='|')
         if from_str == today_str:
-            url = f"{UPSTOX_HIST_BASE}/intraday/{ikey}/minutes/1"
+            url = f"{UPSTOX_HIST_BASE}/intraday/{ikey_enc}/minutes/1"
             logger.debug(f"UPSTOX_1M | Using intraday endpoint for same-day fetch: {symbol}")
         else:
             url = (
                 f"{UPSTOX_HIST_BASE}/"
-                f"{ikey}/minutes/1/{to_str}/{from_str}"
+                f"{ikey_enc}/minutes/1/{to_str}/{from_str}"
             )
 
         for attempt in range(3):
@@ -549,7 +583,7 @@ class UpstoxDataClient:
             ikey = self._instrument_key_for(symbol)
         except KeyError:
             return None
-        url = f"{UPSTOX_HIST_BASE}/intraday/{ikey}/minutes/5"
+        url = f"{UPSTOX_HIST_BASE}/intraday/{quote(ikey, safe='|')}/minutes/5"
 
         for attempt in range(3):
             try:
@@ -617,7 +651,7 @@ class UpstoxDataClient:
         for sym in symbols:
             try:
                 ikey = self._instrument_key_for(sym)
-                sym_to_url[sym] = f"{UPSTOX_HIST_BASE}/intraday/{ikey}/minutes/5"
+                sym_to_url[sym] = f"{UPSTOX_HIST_BASE}/intraday/{quote(ikey, safe='|')}/minutes/5"
             except KeyError:
                 skipped += 1
 
@@ -715,7 +749,7 @@ class UpstoxDataClient:
         for sym in symbols:
             try:
                 ikey = self._instrument_key_for(sym)
-                sym_to_url[sym] = f"{UPSTOX_HIST_BASE}/{ikey}/minutes/5/{to_date}/{from_date}"
+                sym_to_url[sym] = f"{UPSTOX_HIST_BASE}/{quote(ikey, safe='|')}/minutes/5/{to_date}/{from_date}"
             except KeyError:
                 pass
 
