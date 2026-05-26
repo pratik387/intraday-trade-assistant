@@ -6,11 +6,22 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Default to the local venv; override via PYTHON_BIN env var if needed.
-PYTHON_BIN="${PYTHON_BIN:-.venv/Scripts/python}"
+# Auto-detect venv layout (Linux=.venv/bin, Windows=.venv/Scripts).
+# Override via PYTHON_BIN env var if your venv lives elsewhere.
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+    if [[ -x ".venv/bin/python" ]]; then
+        PYTHON_BIN=".venv/bin/python"
+    else
+        PYTHON_BIN=".venv/Scripts/python"
+    fi
+fi
+
+# Default flags = paper trading via Upstox data. Override with MODE_FLAGS=""
+# (live + Kite) or any other combination from the crontab line.
+MODE_FLAGS="${MODE_FLAGS:---paper-trading --data-source upstox}"
 
 LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/overnight_entry_$(date +%Y-%m-%d).log"
 
-"$PYTHON_BIN" main.py --mode overnight --action entry >> "$LOG_FILE" 2>&1
+"$PYTHON_BIN" main.py --mode overnight --action entry $MODE_FLAGS >> "$LOG_FILE" 2>&1
