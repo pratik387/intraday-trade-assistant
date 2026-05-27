@@ -18,7 +18,15 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+# Use the agent logger so warnings/errors from the cron-triggered handlers
+# actually surface in the cron log file. The default `logging.getLogger(...)`
+# named logger has no handler in this entrypoint and was swallowing all
+# diagnostics (including the "0 daily DataFrames" ERROR we added).
+try:
+    from config.logging_config import get_agent_logger
+    logger = get_agent_logger()
+except Exception:
+    logger = logging.getLogger(__name__)
 
 
 def _next_trading_day(d: date) -> date:
