@@ -64,7 +64,19 @@ class MockBroker:
         self._last_price: Dict[str, float] = {}          # updated by ticker proxy
         self._last_bar_ohlc: Dict[str, dict] = {}        # OHLC data for intrabar checks
 
-        self._load_instruments(path_json)
+        # Paper mode: when a live data SDK is wired, skip the nse_all.json
+        # load entirely. The instrument/token maps are dead weight there —
+        # every consumer (screener_live, main.py) reads sdk.get_symbol_map()
+        # which goes to the SDK (UpstoxDataClient) directly, never to the
+        # broker. Backtest mode still loads the JSON because MockBroker IS
+        # the SDK there.
+        if self._data_sdk is not None:
+            logger.info(
+                "MockBroker: data_sdk wired — skipping nse_all.json instrument "
+                "load (instrument lookups delegate to the SDK in paper mode)"
+            )
+        else:
+            self._load_instruments(path_json)
 
     # -------------------- instruments --------------------
     def _load_instruments(self, path: str) -> None:
@@ -96,9 +108,15 @@ class MockBroker:
         return self._equity_instruments
 
     def get_symbol_map(self) -> Dict[str, int]:
+        # Paper mode: tokens come from the live SDK (Upstox/Kite). Backtest
+        # mode: tokens come from nse_all.json (loaded at init).
+        if self._data_sdk is not None and hasattr(self._data_sdk, "get_symbol_map"):
+            return self._data_sdk.get_symbol_map()
         return {s: i.token for s, i in self._sym2inst.items()}
 
     def get_token_map(self) -> Dict[int, str]:
+        if self._data_sdk is not None and hasattr(self._data_sdk, "get_token_map"):
+            return self._data_sdk.get_token_map()
         return dict(self._tok2sym)
 
     def list_symbols(self, exchange: str = "NSE", instrument_type: str = "EQ") -> List[str]:
@@ -124,6 +142,10 @@ class MockBroker:
         ]
 
     def resolve_tokens(self, symbols: Iterable[str]) -> List[int]:
+        # Paper mode: delegate to the live SDK so tokens reflect the current
+        # broker-side instrument set, not a 7-week-stale snapshot.
+        if self._data_sdk is not None and hasattr(self._data_sdk, "resolve_tokens"):
+            return self._data_sdk.resolve_tokens(symbols)
         out: List[int] = []
         miss = 0
         for s in symbols:
