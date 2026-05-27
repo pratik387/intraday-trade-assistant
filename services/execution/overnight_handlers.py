@@ -476,14 +476,45 @@ def _gather_daily_dict(broker, setup_cfg: dict) -> Dict[str, pd.DataFrame]:
     symbols = broker.list_symbols(exchange="NSE", instrument_type="EQ")
     days = int(setup_cfg.get("min_trading_days_required", 30)) + 5
     daily_dict: Dict[str, pd.DataFrame] = {}
+    n_empty = 0
+    err_counts: Dict[str, int] = {}
+    first_err_per_type: Dict[str, str] = {}
     for sym in symbols:
         nse_sym = sym if str(sym).startswith("NSE:") else f"NSE:{sym}"
         try:
             ddf = broker.get_daily(nse_sym, days=days)
             if ddf is not None and not ddf.empty:
                 daily_dict[nse_sym] = ddf
-        except Exception:
-            continue
+            else:
+                n_empty += 1
+        except Exception as e:
+            # Tally by exception type so a systemic failure (e.g. all symbols
+            # raise the same AttributeError because session_date is None)
+            # surfaces in the log instead of being silently swallowed.
+            etype = type(e).__name__
+            err_counts[etype] = err_counts.get(etype, 0) + 1
+            first_err_per_type.setdefault(etype, f"{nse_sym}: {e}")
+
+    total = len(symbols)
+    n_ok = len(daily_dict)
+    if err_counts:
+        logger.warning(
+            "_gather_daily_dict: %d/%d symbols raised | error counts: %s | first samples: %s",
+            sum(err_counts.values()), total, err_counts, first_err_per_type,
+        )
+    if n_ok == 0:
+        logger.error(
+            "_gather_daily_dict: got 0 daily DataFrames out of %d symbols "
+            "(empty=%d, errors=%d). Universe builder will return empty and "
+            "the entry handler will report fired=0 even though no signal was "
+            "actually evaluated. Check broker.set_session_date() / data archive.",
+            total, n_empty, sum(err_counts.values()),
+        )
+    else:
+        logger.info(
+            "_gather_daily_dict: %d/%d symbols loaded (empty=%d, errors=%d)",
+            n_ok, total, n_empty, sum(err_counts.values()),
+        )
     return daily_dict
 
 

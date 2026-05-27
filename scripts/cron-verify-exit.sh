@@ -18,7 +18,8 @@ fi
 
 # Default flags = paper trading via Upstox data. Override with MODE_FLAGS=""
 # (live + Kite) or any other combination from the crontab line.
-MODE_FLAGS="${MODE_FLAGS:---paper-trading --data-source upstox}"
+# --session-date is REQUIRED for MockBroker (paper mode); see cron-entry.sh.
+MODE_FLAGS="${MODE_FLAGS:---paper-trading --data-source upstox --session-date $(date +%F)}"
 
 LOG_DIR="logs"
 mkdir -p "$LOG_DIR"

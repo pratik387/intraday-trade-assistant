@@ -375,8 +375,15 @@ class MockBroker:
         return symbol_data
 
     def _reset_daily_cache_if_new_day(self) -> None:
-        # Cache namespace tied to the session date (or today if unset)
-        key = (self._dry_session_date).isoformat()
+        # Cache namespace tied to the session date (or today if unset).
+        # Without the None-guard, callers that forget to set_session_date()
+        # (e.g. the overnight cron handler) crash with AttributeError, which
+        # then gets silently swallowed by upstream `except Exception` blocks
+        # and leaves the universe empty without explanation. Default to
+        # today so the cache namespace stays valid.
+        from datetime import date as _date
+        sd = self._dry_session_date if self._dry_session_date is not None else _date.today()
+        key = sd.isoformat()
         with self._daily_lock:
             if self._daily_cache_day != key:
                 self._daily_cache.clear()
