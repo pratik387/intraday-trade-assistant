@@ -194,6 +194,38 @@ def _build_cap_segment_cache(session_date) -> Dict[str, str]:
     return cache
 
 
+def get_all_cap_segments(session_date=None) -> Dict[str, str]:
+    """Return the full cap-segment classification map for the given session_date.
+
+    Keys are 'NSE:SYMBOL'. Values are 'large_cap' / 'mid_cap' / 'small_cap' /
+    'micro_cap' (anything outside the NSE indices comes back as 'unknown'
+    via per-symbol lookup, not present in this map).
+
+    Use when a caller wants to iterate every classified symbol (e.g. the
+    screener builds a cap_map keyed by 'NSE:SYM' once per process). For a
+    single-symbol lookup, prefer get_cap_segment() so the 'unknown' default
+    is applied.
+    """
+    # Reuse the bare-symbol-keyed cache and re-prefix to NSE:XYZ
+    key = None
+    if session_date is not None:
+        try:
+            if isinstance(session_date, pd.Timestamp):
+                key = session_date.date().isoformat()
+            elif isinstance(session_date, _date):
+                key = session_date.isoformat()
+            else:
+                key = pd.to_datetime(session_date).date().isoformat()
+        except (ValueError, TypeError):
+            key = None
+
+    cache = _cap_segment_caches.get(key)
+    if cache is None:
+        cache = _build_cap_segment_cache(session_date)
+        _cap_segment_caches[key] = cache
+    return {f"NSE:{bare}": seg for bare, seg in cache.items()}
+
+
 def get_cap_segment(symbol: str, session_date=None) -> str:
     """Return market-cap bucket for `symbol`: large_cap / mid_cap / small_cap /
     micro_cap / unknown. Used for cap-aware sizing (Van Tharp evidence):

@@ -298,26 +298,39 @@ def _init_stage0_worker(config_dict):
             wide_open=bool(config_dict.get("wide_open_mode", False)),
         )
 
-        # Pre-load cap mapping (same logic as ScreenerLive._load_cap_mapping)
+        # Pre-load cap mapping (same logic as ScreenerLive._load_cap_mapping).
+        # Cap segment now comes from data/cap_segments/cap_segments_latest.json
+        # (refreshed weekly from niftyindices.com). MIS info still rides on
+        # nse_all.json here because the live MIS_FETCHER lives in the parent
+        # process and isn't accessible from this worker.
+        from services.symbol_metadata import get_all_cap_segments
+        cap_segments = get_all_cap_segments()
         import json
         from pathlib import Path
         nse_file = Path(__file__).parent.parent / "nse_all.json"
+        mis_info: dict = {}
         if nse_file.exists():
             with nse_file.open() as f:
                 data = json.load(f)
-            cap_map = {}
             for item in data:
                 raw_sym = item["symbol"]
                 sym = f"NSE:{raw_sym[:-3]}" if raw_sym.endswith(".NS") else raw_sym
-                cap_map[sym] = {
-                    "market_cap_cr": item.get("market_cap_cr", 0),
-                    "cap_segment": item.get("cap_segment", "unknown"),
+                mis_info[sym] = {
                     "mis_enabled": item.get("mis_enabled", False),
                     "mis_leverage": item.get("mis_leverage"),
                 }
-            _stage0_cap_map = cap_map
-        else:
-            _stage0_cap_map = {}
+        # Union of symbols across both sources (so we don't drop classifications
+        # that exist in one but not the other).
+        all_syms = set(cap_segments.keys()) | set(mis_info.keys())
+        cap_map = {}
+        for sym in all_syms:
+            mis = mis_info.get(sym, {})
+            cap_map[sym] = {
+                "cap_segment": cap_segments.get(sym, "unknown"),
+                "mis_enabled": mis.get("mis_enabled", False),
+                "mis_leverage": mis.get("mis_leverage"),
+            }
+        _stage0_cap_map = cap_map
 
     except Exception as e:
         # Re-enable console logging for error reporting if init fails
@@ -3130,48 +3143,80 @@ class ScreenerLive:
 
     def _load_cap_mapping(self) -> dict:
         """
-        Load market cap data from nse_all.json. Cached for performance.
+        Build the symbol-to-cap_data map used by Stage-0 and plan augmentation.
 
         Returns:
-            Dict mapping symbol → {"market_cap_cr": float, "cap_segment": str}
+            Dict mapping 'NSE:SYM' -> {
+                "cap_segment": large_cap / mid_cap / small_cap / micro_cap / unknown,
+                "mis_enabled": bool,
+                "mis_leverage": float | None,
+            }
+
+        Sources:
+          - cap_segment: data/cap_segments/cap_segments_latest.json
+            (refreshed weekly via scripts/refresh-cap-segments.sh from
+            niftyindices.com — NIFTY 100 / Midcap 150 / Smallcap 250 /
+            Microcap 250 constituents)
+          - mis_enabled / mis_leverage: nse_all.json (kept as the source for
+            MIS data within the cap_map for now; the parent screener also
+            uses the live MIS_FETCHER for is_mis_allowed checks on the
+            universe, which is the actual gate)
+
+        market_cap_cr was previously included but never consumed — removed.
 
         Market Cap Segments (NSE India standards):
-        - large_cap: >= Rs.20,000 cr
-        - mid_cap: Rs.5,000 - 20,000 cr
-        - small_cap: Rs.500 - 5,000 cr
-        - micro_cap: < Rs.500 cr (excluded from intraday)
+        - large_cap: top 100 (NIFTY 100)
+        - mid_cap: 101-250 (NIFTY Midcap 150)
+        - small_cap: 251-500 (NIFTY Smallcap 250)
+        - micro_cap: 501-750 (NIFTY Microcap 250)
+        - unknown: outside top-750 (very illiquid / new listings)
         """
         if hasattr(self, "_cap_map_cache"):
             return self._cap_map_cache
 
         try:
+            from services.symbol_metadata import get_all_cap_segments
+            cap_segments = get_all_cap_segments()
+
+            # MIS info still rides on nse_all.json; the live MIS_FETCHER is
+            # the actual gate at universe-build time (see is_mis_allowed
+            # check around line 1991).
             import json
             from pathlib import Path
             nse_file = Path(__file__).parent.parent / "nse_all.json"
+            mis_info: dict = {}
+            if nse_file.exists():
+                with nse_file.open() as f:
+                    data = json.load(f)
+                for item in data:
+                    raw_sym = item["symbol"]
+                    sym = f"NSE:{raw_sym[:-3]}" if raw_sym.endswith(".NS") else raw_sym
+                    mis_info[sym] = {
+                        "mis_enabled": item.get("mis_enabled", False),
+                        "mis_leverage": item.get("mis_leverage"),
+                    }
 
-            with nse_file.open() as f:
-                data = json.load(f)
-
-            # Build symbol → cap_data mapping
+            all_syms = set(cap_segments.keys()) | set(mis_info.keys())
             cap_map = {}
-            for item in data:
-                raw_sym = item["symbol"]
-                # Convert "AARTIIND.NS" → "NSE:AARTIIND" to match screener df.index format
-                sym = f"NSE:{raw_sym[:-3]}" if raw_sym.endswith(".NS") else raw_sym
+            for sym in all_syms:
+                mis = mis_info.get(sym, {})
                 cap_map[sym] = {
-                    "market_cap_cr": item.get("market_cap_cr", 0),
-                    "cap_segment": item.get("cap_segment", "unknown"),
-                    "mis_enabled": item.get("mis_enabled", False),
-                    "mis_leverage": item.get("mis_leverage"),
+                    "cap_segment": cap_segments.get(sym, "unknown"),
+                    "mis_enabled": mis.get("mis_enabled", False),
+                    "mis_leverage": mis.get("mis_leverage"),
                 }
 
             self._cap_map_cache = cap_map
             mis_count = sum(1 for v in cap_map.values() if v.get("mis_enabled"))
-            logger.info(f"CAP_MAPPING | Loaded market cap data for {len(cap_map)} symbols ({mis_count} MIS-enabled)")
+            classified = sum(1 for v in cap_map.values() if v.get("cap_segment") != "unknown")
+            logger.info(
+                f"CAP_MAPPING | Loaded {len(cap_map)} symbols "
+                f"({classified} classified by cap_segment, {mis_count} MIS-enabled)"
+            )
             return cap_map
 
         except Exception as e:
-            logger.warning(f"CAP_MAPPING | Failed to load market cap data: {e}")
+            logger.warning(f"CAP_MAPPING | Failed to load cap mapping: {e}")
             return {}
 
     def _filter_stage0(self, feats: pd.DataFrame, now_ts, skip_vol_persist: bool = False) -> pd.DataFrame:

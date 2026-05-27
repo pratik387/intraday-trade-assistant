@@ -102,6 +102,14 @@ class MockBroker:
         return dict(self._tok2sym)
 
     def list_symbols(self, exchange: str = "NSE", instrument_type: str = "EQ") -> List[str]:
+        # Paper-mode: prefer the live data SDK's symbol list. It's current
+        # (refreshed on every startup from the Upstox instrument API) vs
+        # nse_all.json which can be weeks/months stale. Falls back to the
+        # nse_all-derived list for backtest mode (no data_sdk).
+        if self._data_sdk is not None and exchange == "NSE" and instrument_type == "EQ":
+            live_syms = getattr(self._data_sdk, "_equity_instruments", None)
+            if live_syms:
+                return list(live_syms)
         return [
             f"{i.exch}:{i.tsym}"
             for i in self._sym2inst.values()
