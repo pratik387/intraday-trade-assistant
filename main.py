@@ -679,7 +679,13 @@ if __name__ == "__main__":
     # intraday daemon entirely so cron doesn't pay the startup cost.
     if args.mode == "overnight":
         from services.execution.overnight_handlers import run_entry, run_verify_exit
-        cfg = load_base_config()
+        # Use the FULL configuration.json (via load_filters) because the
+        # SetupRegistry reads setups.* from it. load_base_config() only
+        # returns config/pipelines/base_config.json, which has no setups
+        # block — that's why overnight_handlers was reporting
+        # "no overnight setups active" and silently exiting.
+        from config.filters_setup import load_filters
+        cfg = load_filters()
         if args.dry_run or args.paper_trading:
             # Paper / dry-run: orders simulated on MockBroker. For paper mode
             # we wire a live data SDK (UpstoxDataClient) so daily/5m queries
