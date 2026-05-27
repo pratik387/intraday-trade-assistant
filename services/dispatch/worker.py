@@ -240,9 +240,21 @@ def _events_to_gate_decision(sym: str, all_analyses: list, regime: str, regime_d
             analysis_by_detector[det_name] = analysis
 
     if not all_events:
+        # Preserve per-detector rejection_reason so screening.jsonl explains
+        # WHICH internal check rejected each silent detector. Without this,
+        # every empty dispatch logs only the generic "no_structure_event" and
+        # silent setups (or_window_failure, below_vwap, long_panic_gap_down)
+        # are indistinguishable from "detector wasn't called".
+        det_reasons = []
+        for det_name, analysis in all_analyses:
+            if analysis is not None and not analysis.structure_detected:
+                r = getattr(analysis, "rejection_reason", None)
+                if r:
+                    det_reasons.append(f"{det_name}:{r}")
+        reasons = ["no_structure_event"] + det_reasons
         return GateDecision(
             accept=False,
-            reasons=["no_structure_event"],
+            reasons=reasons,
             regime=regime,
             regime_diagnostics=regime_diagnostics,
         )

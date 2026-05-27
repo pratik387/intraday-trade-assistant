@@ -1374,6 +1374,13 @@ class ScreenerLive:
                 # (~1500). Falls back to full universe if tag_map is empty (pre-09:15).
                 _univ = self._tag_map.active_symbols()
                 fetch_symbols = sorted(_univ & set(self.core_symbols)) if _univ else list(self.core_symbols)
+                # Piggyback the regime index on the same batch — one extra HTTP
+                # call per dispatch, no separate fallback path. WebSocket never
+                # subscribes the index token, so this is the only way the
+                # regime gate sees real NIFTY bars in paper/live.
+                _idx_sym_for_fetch = (self.raw_cfg.get("directional_bias", {}) or {}).get("index_symbol")
+                if _idx_sym_for_fetch and _idx_sym_for_fetch not in fetch_symbols:
+                    fetch_symbols = list(fetch_symbols) + [_idx_sym_for_fetch]
                 bar_ts = now.isoformat()
 
                 # Check shared Redis cache first
@@ -1440,6 +1447,13 @@ class ScreenerLive:
                         api_ok, api_fail, len(fetch_symbols), _t_api_elapsed,
                         rps, warmup_used, api_ok, throttle_info,
                     )
+
+                # Capture the regime index df out of the batch result. Pop so the
+                # dispatcher doesn't waste cycles running detectors on the index.
+                if _idx_sym_for_fetch and _idx_sym_for_fetch in api_df5_cache:
+                    idx_df = api_df5_cache.pop(_idx_sym_for_fetch)
+                    if isinstance(idx_df, pd.DataFrame) and not idx_df.empty:
+                        self._latest_index_df5 = idx_df
 
         try:
             # Build df5_by_symbol from enriched data (API for paper, precomputed for backtest).
@@ -1990,6 +2004,14 @@ class ScreenerLive:
         return [idx_sym] if idx_sym else []
 
     def _index_df5(self) -> pd.DataFrame:
+        # Paper/live path: the per-bar 5m batch fetch (see API_5M_FETCH) stashes
+        # the configured index symbol's df here. LiveTickHandler's aggregator
+        # stays empty because SubscriptionManager doesn't subscribe the index
+        # token to WS — so without this attribute, regime silently defaults to
+        # "chop". Prefer the freshest captured batch result.
+        cached_idx = getattr(self, "_latest_index_df5", None)
+        if isinstance(cached_idx, pd.DataFrame) and not cached_idx.empty:
+            return cached_idx
         idx = self.agg.index_df_5m()
         if isinstance(idx, dict):
             for _, df in idx.items():
