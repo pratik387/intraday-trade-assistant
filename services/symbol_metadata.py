@@ -60,13 +60,16 @@ def _normalize_symbol(symbol: str) -> str:
 # nse_all.json-backed caches  (cap segment, MIS info)
 # ---------------------------------------------------------------------------
 
-_cap_segment_cache: Dict[str, str] = {}
-_cap_segment_loaded: bool = False
+# Per-session-date cap_segment caches. Backtests can simulate multiple dates
+# in one process — caching by date keyword prevents re-reading the same
+# snapshot file repeatedly. Key None == "live/paper, use latest".
+_cap_segment_caches: Dict[Optional[str], Dict[str, str]] = {}
 
 _mis_info_cache: Dict[str, dict] = {}
 _mis_info_loaded: bool = False
 
 _NSE_ALL_PATH = _REPO_ROOT / "nse_all.json"
+_CAP_SEGMENTS_DIR = _REPO_ROOT / "data" / "cap_segments"
 
 
 def _load_nse_all() -> Optional[list]:
@@ -82,22 +85,150 @@ def _load_nse_all() -> Optional[list]:
         return None
 
 
-def get_cap_segment(symbol: str) -> str:
-    """Return market-cap bucket for `symbol`: large_cap / mid_cap / small_cap /
-    unknown. Used for cap-aware sizing (Van Tharp evidence): large=1.2×,
-    mid=1.0×, small=0.6× + wider stops. Unknown → caller treats as mid-cap.
+def _load_cap_segments_json(path: Path) -> Optional[Dict[str, str]]:
+    """Read one cap_segments_*.json snapshot. Returns the {symbol: segment}
+    classification map or None on miss/parse-fail.
+
+    Snapshot schema (produced by scripts/refresh_cap_segments.py):
+        {
+          "generated_at": "YYYY-MM-DD",
+          "source": "...",
+          "n_symbols": <int>,
+          "classification": {"NSE:RELIANCE": "large_cap", ...}
+        }
     """
-    global _cap_segment_cache, _cap_segment_loaded
-    if not _cap_segment_loaded:
-        data = _load_nse_all()
-        if data is not None:
-            _cap_segment_cache = {
-                _normalize_symbol(item["symbol"]): item.get("cap_segment", "unknown")
-                for item in data
-            }
-            logger.debug(f"CAP_SEGMENT: Loaded {len(_cap_segment_cache)} symbols")
-        _cap_segment_loaded = True  # don't retry on miss
-    return _cap_segment_cache.get(_normalize_symbol(symbol), "unknown")
+    if not path.exists():
+        return None
+    try:
+        with path.open() as f:
+            payload = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("symbol_metadata: failed to read %s: %s", path, e)
+        return None
+    if not isinstance(payload, dict) or "classification" not in payload:
+        logger.warning("symbol_metadata: %s missing 'classification' key", path)
+        return None
+    return payload["classification"]
+
+
+def _pick_snapshot_path(session_date) -> Optional[Path]:
+    """Return the dated snapshot path effective for `session_date`, or the
+    latest snapshot when session_date is None (live/paper).
+
+    For backtests we pick the most recent snapshot dated <= session_date
+    so we use the cap-segment classification that was in effect on that
+    day, not today's. Symbols whose listing post-dated the snapshot get
+    classified as 'unknown' downstream — correct for point-in-time fidelity.
+    """
+    if not _CAP_SEGMENTS_DIR.exists():
+        return None
+
+    if session_date is None:
+        latest = _CAP_SEGMENTS_DIR / "cap_segments_latest.json"
+        return latest if latest.exists() else None
+
+    # Coerce session_date to a date
+    if isinstance(session_date, pd.Timestamp):
+        sd = session_date.date()
+    elif isinstance(session_date, _date) and not isinstance(session_date, type(None)):
+        sd = session_date
+    else:
+        try:
+            sd = pd.to_datetime(session_date).date()
+        except (ValueError, TypeError):
+            return None
+
+    candidates = []
+    for p in _CAP_SEGMENTS_DIR.glob("cap_segments_*.json"):
+        name = p.stem  # cap_segments_YYYY-MM-DD or cap_segments_latest
+        if name == "cap_segments_latest":
+            continue
+        try:
+            snap_date = pd.to_datetime(name.rsplit("_", 1)[-1]).date()
+        except (ValueError, TypeError):
+            continue
+        if snap_date <= sd:
+            candidates.append((snap_date, p))
+
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def _build_cap_segment_cache(session_date) -> Dict[str, str]:
+    """Build the {NSE:symbol -> segment} cache for the given session_date.
+
+    Precedence:
+      1. Dated cap_segments snapshot from data/cap_segments/ (preferred)
+      2. cap_segments_latest.json (live/paper)
+      3. Legacy nse_all.json (kept so backtests with no snapshot still work)
+
+    Returns the bare-symbol-keyed map for backwards compat with the original
+    cache shape (`_normalize_symbol(item["symbol"])` keys). Snapshots use
+    'NSE:XXX' keys so we strip the prefix here.
+    """
+    snap_path = _pick_snapshot_path(session_date)
+    if snap_path is not None:
+        snap = _load_cap_segments_json(snap_path)
+        if snap:
+            cache = {_normalize_symbol(k): v for k, v in snap.items()}
+            logger.debug(
+                "CAP_SEGMENT: Loaded %d symbols from %s (session_date=%s)",
+                len(cache), snap_path.name, session_date,
+            )
+            return cache
+        logger.warning(
+            "CAP_SEGMENT: snapshot %s empty/invalid — falling back to nse_all.json",
+            snap_path.name,
+        )
+
+    data = _load_nse_all()
+    if data is None:
+        return {}
+    cache = {
+        _normalize_symbol(item["symbol"]): item.get("cap_segment", "unknown")
+        for item in data
+    }
+    logger.debug("CAP_SEGMENT: Loaded %d symbols from nse_all.json (legacy fallback)", len(cache))
+    return cache
+
+
+def get_cap_segment(symbol: str, session_date=None) -> str:
+    """Return market-cap bucket for `symbol`: large_cap / mid_cap / small_cap /
+    micro_cap / unknown. Used for cap-aware sizing (Van Tharp evidence):
+    large=1.2x, mid=1.0x, small=0.6x + wider stops. Unknown -> caller treats
+    as mid-cap.
+
+    Args:
+        symbol: 'NSE:XXX' or bare 'XXX' (normalized internally)
+        session_date: when provided (backtest), looks up the cap_segments
+            snapshot in effect on that date for point-in-time fidelity.
+            When None (live/paper), uses cap_segments_latest.json.
+
+    Resolution order (per session_date cohort):
+        1. data/cap_segments/cap_segments_<YYYY-MM-DD>.json (dated snapshot)
+        2. data/cap_segments/cap_segments_latest.json
+        3. nse_all.json (legacy fallback)
+    """
+    key = None
+    if session_date is not None:
+        # Normalize to ISO-day string so multi-date backtests reuse the cache
+        try:
+            if isinstance(session_date, pd.Timestamp):
+                key = session_date.date().isoformat()
+            elif isinstance(session_date, _date):
+                key = session_date.isoformat()
+            else:
+                key = pd.to_datetime(session_date).date().isoformat()
+        except (ValueError, TypeError):
+            key = None
+
+    cache = _cap_segment_caches.get(key)
+    if cache is None:
+        cache = _build_cap_segment_cache(session_date)
+        _cap_segment_caches[key] = cache
+    return cache.get(_normalize_symbol(symbol), "unknown")
 
 
 def get_mis_info(symbol: str) -> dict:
