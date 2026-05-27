@@ -45,7 +45,9 @@ SOURCES: List[Dict[str, str]] = [
     {"segment": "large_cap", "url": "https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv"},
     {"segment": "mid_cap",   "url": "https://www.niftyindices.com/IndexConstituent/ind_niftymidcap150list.csv"},
     {"segment": "small_cap", "url": "https://www.niftyindices.com/IndexConstituent/ind_niftysmallcap250list.csv"},
-    {"segment": "micro_cap", "url": "https://www.niftyindices.com/IndexConstituent/ind_niftymicrocap250list.csv"},
+    # NSE inconsistency: microcap CSV has an underscore before _list; the
+    # other three do not. Verified by scraping the indices landing page.
+    {"segment": "micro_cap", "url": "https://www.niftyindices.com/IndexConstituent/ind_niftymicrocap250_list.csv"},
 ]
 
 
