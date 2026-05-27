@@ -681,13 +681,21 @@ if __name__ == "__main__":
         from services.execution.overnight_handlers import run_entry, run_verify_exit
         cfg = load_base_config()
         if args.dry_run or args.paper_trading:
-            # Paper / dry-run: use MockBroker for both data and (no-op) orders
+            # Paper / dry-run: orders simulated on MockBroker. For paper mode
+            # we wire a live data SDK (UpstoxDataClient) so daily/5m queries
+            # hit the live API instead of the backtest archive. Dry-run
+            # (--dry-run) keeps the archive-only path for true backtests.
             slip_bps = float(cfg.get("fees_slippage_bps", 0.0))
+            data_sdk = None
+            if args.paper_trading:
+                from broker.upstox.upstox_data_client import UpstoxDataClient
+                data_sdk = UpstoxDataClient()
             broker = MockBroker(
                 path_json="nse_all.json",
                 from_date=args.session_date,
                 to_date=args.session_date,
                 slippage_bps=slip_bps,
+                data_sdk=data_sdk,
             )
             if args.session_date:
                 broker.set_session_date(args.session_date)

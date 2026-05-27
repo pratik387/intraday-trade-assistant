@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os
 import json
-from typing import List, Dict, Iterable, Optional, Union, Callable
+from typing import Any, List, Dict, Iterable, Optional, Union, Callable
 from pathlib import Path
 from datetime import datetime, date
 import threading
@@ -37,7 +37,7 @@ class MockBroker:
     """
 
     def __init__(self, path_json: str = "nse_all.json", from_date: str = None, to_date: str = None,
-                 slippage_bps: float = None):
+                 slippage_bps: float = None, data_sdk: Optional[Any] = None):
         if slippage_bps is None:
             raise ValueError("MockBroker requires slippage_bps from config (fees_slippage_bps)")
         self._slippage_frac = slippage_bps / 10_000  # Convert bps to fraction
@@ -46,6 +46,12 @@ class MockBroker:
         self._equity_instruments: List[str] = []
         self._from_date = from_date
         self._to_date = to_date
+
+        # Paper-trading data source: when set, get_daily / get_intraday_5m
+        # delegate to this client (e.g. UpstoxDataClient) for LIVE data
+        # instead of returning stale archive bars. Orders stay simulated
+        # on MockBroker. Leave as None for backtest mode (archive lookup).
+        self._data_sdk = data_sdk
 
         # Daily cache (tz-naive), namespaced by session date
         self._daily_cache_day: Optional[str] = None      # e.g. "YYYY-MM-DD" (session key)
@@ -123,6 +129,20 @@ class MockBroker:
         return out
 
     # -------------------- ticker (with last-price proxy) --------------------
+    def get_intraday_5m(self, symbol: str) -> Optional[pd.DataFrame]:
+        """Fetch today's 5m bars via the wired data SDK (paper-mode only).
+
+        Returns None when no SDK is configured — callers should treat that
+        as "fall through to archive/backtest path".
+        """
+        if self._data_sdk is None or not hasattr(self._data_sdk, "get_intraday_5m"):
+            return None
+        try:
+            return self._data_sdk.get_intraday_5m(symbol)
+        except Exception as e:
+            logger.warning("MockBroker.get_intraday_5m via data_sdk failed for %s: %s", symbol, e)
+            return None
+
     def _load_enriched_5m(self) -> Dict[str, pd.DataFrame]:
         """Load precomputed enriched 5m bars from monthly cache or individual files."""
         from pathlib import Path
@@ -412,10 +432,28 @@ class MockBroker:
         Return last `days` completed daily bars (tz-naive) for `symbol`.
 
         Strategy:
-        1. Check cache first
+        0. If a live data SDK is wired (paper mode), use it FIRST — the
+           local archive is for backtests, not for paper-trading current
+           sessions.
+        1. Check cache
         2. Try consolidated daily cache (OCI mode)
         3. Fall back to individual files (local mode)
         """
+        # Paper-mode live data path
+        if self._data_sdk is not None:
+            try:
+                df = self._data_sdk.get_daily(symbol, days=days)
+                if df is not None and not df.empty:
+                    with self._daily_lock:
+                        self._daily_cache[symbol] = df
+                    return df.tail(int(days)).copy()
+            except Exception as e:
+                logger.warning(
+                    "MockBroker.get_daily via data_sdk failed for %s: %s; "
+                    "falling back to archive (likely empty for current session)",
+                    symbol, e,
+                )
+
         self._reset_daily_cache_if_new_day()
         with self._daily_lock:
             cached = self._daily_cache.get(symbol)

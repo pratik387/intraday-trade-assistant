@@ -523,9 +523,19 @@ def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
     """Build a MarketContext for a single symbol at the current bar timestamp."""
     from structures.data_models import MarketContext
 
-    # 5m bars
+    # 5m bars — priority order:
+    # 1. broker.get_intraday_5m(symbol) — live API (paper mode via data_sdk,
+    #    or live Upstox/Kite). This is what we want for today's session.
+    # 2. broker._load_enriched_5m() — backtest archive (DRY_RUN only).
+    # 3. broker.fetch_candles(...) — Kite live fallback.
     df_5m: Optional[pd.DataFrame] = None
-    if hasattr(broker, "_load_enriched_5m"):
+    if hasattr(broker, "get_intraday_5m"):
+        try:
+            df_5m = broker.get_intraday_5m(symbol)
+        except Exception as e:
+            logger.warning("_build_market_context: get_intraday_5m failed for %s: %s", symbol, e)
+            df_5m = None
+    if (df_5m is None or df_5m.empty) and hasattr(broker, "_load_enriched_5m"):
         try:
             all_enriched = broker._load_enriched_5m()
             bare = symbol.replace("NSE:", "")
@@ -535,7 +545,7 @@ def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
         except Exception as e:
             logger.warning("_build_market_context: 5m load failed for %s: %s", symbol, e)
             df_5m = None
-    else:
+    if df_5m is None or df_5m.empty:
         df_5m = _get_5m_for_symbol_live(broker, symbol, today, setup_cfg)
 
     if df_5m is None or df_5m.empty:
