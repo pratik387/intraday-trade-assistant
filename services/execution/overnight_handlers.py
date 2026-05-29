@@ -150,23 +150,62 @@ def run_entry(
         # Detector reads its params from the raw_config block; pass setup name via private key.
         detector = detector_cls({**spec.raw_config, "_setup_name": spec.name})
 
-        # Universe (currently hardcoded for close_dn_overnight_long; this is the only
-        # registered overnight setup. Future overnight setups will need a dispatch on
-        # spec.universe_builder_path here.)
-        daily_dict = _gather_daily_dict(broker, spec.raw_config)
-        try:
-            universe = close_dn_overnight_long_universe(daily_dict, today, spec.raw_config)
-        except Exception as e:
-            logger.exception("run_entry: universe builder failed for %s: %s", spec.name, e)
-            continue
+        # Read pre-filtered candidate list from data/close_dn_baseline/
+        # (built at 09:30 IST by run_verify_exit). Each candidate carries
+        # its pre-computed prior_close + prev_prior_close so we can
+        # construct a 2-row df_daily without re-fetching daily history —
+        # skips the _gather_daily_dict 50s cost entirely.
+        candidates_path = (
+            Path(__file__).resolve().parents[2]
+            / "data" / "close_dn_baseline" / "candidates_latest.json"
+        )
+        prior_returns_by_symbol: Dict[str, Dict[str, float]] = {}
+        if candidates_path.exists():
+            try:
+                import json as _json
+                payload = _json.loads(candidates_path.read_text())
+                expected_date = today.isoformat()
+                actual_date = payload.get("session_date")
+                if actual_date != expected_date:
+                    logger.warning(
+                        "run_entry: candidates_latest.json session_date=%s != today=%s; "
+                        "stale snapshot — falling back to full universe",
+                        actual_date, expected_date,
+                    )
+                else:
+                    for entry in payload.get("candidates") or []:
+                        sym = entry.get("symbol")
+                        if sym:
+                            prior_returns_by_symbol[sym] = entry
+                    logger.info(
+                        "run_entry: loaded %d pre-filtered candidates from %s",
+                        len(prior_returns_by_symbol), candidates_path.name,
+                    )
+            except Exception as e:
+                logger.warning("run_entry: failed to load candidates_latest.json: %s", e)
+
+        if prior_returns_by_symbol:
+            universe = set(prior_returns_by_symbol.keys())
+            daily_dict: Dict[str, pd.DataFrame] = {}  # skip the expensive gather
+        else:
+            # Fallback path — fresh VM with no baseline yet, or stale snapshot.
+            # Build the universe from scratch and gather daily history per symbol.
+            logger.warning(
+                "run_entry: no candidate file — falling back to full universe build "
+                "(slow path: gathers daily_dict for ~2344 symbols)"
+            )
+            daily_dict = _gather_daily_dict(broker, spec.raw_config)
+            try:
+                universe = close_dn_overnight_long_universe(daily_dict, today, spec.raw_config)
+            except Exception as e:
+                logger.exception("run_entry: universe builder failed for %s: %s", spec.name, e)
+                continue
         logger.info("run_entry: universe size for %s = %d", spec.name, len(universe))
 
-        # Batch-fetch today's 5m bars for the whole universe in ONE async
-        # gather. Use rps=20 / concurrency=30 — the memo's "40 RPS safe"
-        # data point assumed a single consumer; during 15:25 the long-running
-        # paper-trade process is also hitting Upstox from the same IP, and
-        # a previous run at rps=40 produced 2292 throttle retries (354/1118
-        # symbols got bars; 8 min wall-clock). Half-rate coexists cleanly.
+        # Batch-fetch today's 5m bars for the (now small) candidate universe.
+        # rps=20 / concurrency=30 — the memo's "40 RPS safe" data point
+        # assumed a single consumer; during 15:25 the long-running paper-trade
+        # is also hitting Upstox from the same IP, so half-rate coexists cleanly.
         intraday_5m_by_symbol: Dict[str, pd.DataFrame] = {}
         try:
             data_sdk = getattr(broker, "_data_sdk", None)
@@ -202,10 +241,20 @@ def run_entry(
 
         # Iterate symbols
         for symbol in universe:
+            # Per-symbol df_daily: prefer pre-computed candidate entry's
+            # 2 closes (cheapest path); fall back to daily_dict from the
+            # gather (only populated on the slow fallback above).
+            cand = prior_returns_by_symbol.get(symbol)
+            df_daily = None
+            if cand is not None:
+                df_daily = _mini_df_daily_from_candidate(cand, today)
+            elif daily_dict:
+                df_daily = daily_dict.get(symbol)
+
             ctx = _build_market_context(
                 broker, symbol, now, today, spec.raw_config,
                 intraday_5m=intraday_5m_by_symbol.get(symbol),
-                df_daily=daily_dict.get(symbol),
+                df_daily=df_daily,
             )
             if ctx is None:
                 summary["skipped_count"] += 1
@@ -524,12 +573,81 @@ def run_verify_exit(
         "run_verify_exit: complete | settled=%d released=%d orphan_t0=%d",
         summary["settled_count"], summary["released_count"], summary["orphan_t0_count"],
     )
+
+    # Daily baseline + candidate pre-filter for TODAY's 15:25 entry cron.
+    # Runs after the critical path (settle + failsafe SELLs are done), so
+    # any failure here doesn't block AMO settlement. The 09:30 timing
+    # gives ~5h45m of headroom before 15:25; ~4 min wall-clock here is
+    # cheap pre-market work.
+    #
+    # The 15:25 entry cron reads the resulting candidates_latest.json
+    # (~50 symbols on a typical day) instead of building the 1118-symbol
+    # universe from scratch — drops cron wall-clock from minutes to seconds.
+    if paper_mode:
+        try:
+            data_sdk = getattr(broker, "_data_sdk", None)
+            if data_sdk is not None:
+                from services.execution.close_dn_baseline_build import (
+                    build_baseline_and_candidates,
+                )
+                close_dn_cfg = (
+                    next(
+                        (s.raw_config for s in paper_enabled_setups
+                         if s.name == "close_dn_overnight_long"),
+                        None,
+                    )
+                    or {}
+                )
+                cell_min = float(close_dn_cfg.get("cell_prior_day_return_pct_min", 3.0))
+                rolling_days = int(close_dn_cfg.get("baseline_rolling_days", 20))
+                stats = build_baseline_and_candidates(
+                    data_sdk, today,
+                    rolling_days=rolling_days,
+                    cell_min_prior_ret_pct=cell_min,
+                )
+                summary["baseline_build"] = stats
+                logger.info(
+                    "run_verify_exit: baseline+candidates built | %s",
+                    stats,
+                )
+            else:
+                logger.warning(
+                    "run_verify_exit: broker has no _data_sdk — skipping baseline build"
+                )
+        except Exception as e:
+            logger.exception("run_verify_exit: baseline build failed: %s", e)
+
     return summary
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _mini_df_daily_from_candidate(cand: Dict[str, Any], today: date) -> pd.DataFrame:
+    """Build a 2-row daily DataFrame from a pre-computed candidate entry.
+
+    The candidate file carries prior_close + prev_prior_close per symbol so
+    run_entry doesn't need to re-fetch daily history at 15:25. The detector's
+    _prior_day_return_pct reads ctx.df_daily; we hand it a minimal frame
+    with the two values it actually consults.
+
+    Index is the two prior session dates (using calendar-1 / calendar-2 as a
+    proxy — the detector's `before = ddf[ddf.index.date < session_date]`
+    just needs them strictly before today, exact dates don't matter to the
+    return calculation).
+    """
+    prev_close = float(cand["prior_close"])
+    prev_prev_close = float(cand["prev_prior_close"])
+    idx = pd.DatetimeIndex([
+        pd.Timestamp(today) - pd.Timedelta(days=2),
+        pd.Timestamp(today) - pd.Timedelta(days=1),
+    ])
+    return pd.DataFrame(
+        {"close": [prev_prev_close, prev_close]},
+        index=idx,
+    )
+
 
 def _gather_daily_dict(broker, setup_cfg: dict) -> Dict[str, pd.DataFrame]:
     """Build a daily_dict for the universe builder.
