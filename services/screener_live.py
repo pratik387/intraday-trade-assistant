@@ -1309,33 +1309,58 @@ class ScreenerLive:
                     logger.warning("setup_universe computation failed: %s", _e)
                     self._setup_universes = {}
 
-                # Cross-day RVOL baseline for delivery_pct (live/paper only).
+                # Cross-day RVOL baseline (live/paper only).
                 # Backtest skips this and falls through to the parquet path in
                 # services/cross_day_rvol_enrichment.py (preserves existing
                 # behavior for `--dry-run`).
+                #
+                # Consumers (must all be present in the baseline OR they silently
+                # no-fire on "baseline volume unavailable"):
+                #   - delivery_pct_anomaly_short  hhmm 0930-1000
+                #   - below_vwap_volume_revert_long  hhmm 1300-1455
+                #
+                # Previous bug: only delivery_pct's universe was populated, and only
+                # for the 0930-1000 hhmm window. below_vwap detector at 1305 looked
+                # up (sym, 1305) → empty → "baseline volume unavailable" 459 times
+                # in one session. Now: union of universes from all rvol-dependent
+                # enabled setups, with broad hhmm window covering both consumers.
                 if not env.DRY_RUN:
-                    delivery_universe = self._setup_universes.get(
-                        "delivery_pct_anomaly_short", set(),
+                    rvol_dependent_setups = (
+                        "delivery_pct_anomaly_short",
+                        "below_vwap_volume_revert_long",
                     )
-                    if delivery_universe:
+                    rvol_universe: set = set()
+                    rvol_setups_used: list = []
+                    for _name in rvol_dependent_setups:
+                        _u = self._setup_universes.get(_name, set())
+                        if _u and (setups_cfg.get(_name) or {}).get("enabled", False):
+                            rvol_universe |= _u
+                            rvol_setups_used.append(f"{_name}={len(_u)}")
+                    if rvol_universe:
                         try:
                             import asyncio
                             from services.runtime_rvol_baseline import RuntimeRvolBaseline
                             from services import cross_day_rvol_enrichment as _rvol
                             rt = RuntimeRvolBaseline()
                             stats = asyncio.run(rt.populate(
-                                self.sdk, sorted(delivery_universe), session_date_obj,
-                                hhmm_window=(930, 1000), rolling_days=20,
+                                self.sdk, sorted(rvol_universe), session_date_obj,
+                                hhmm_window=(930, 1455), rolling_days=20,
                             ))
                             _rvol.set_runtime_baseline(rt)
                             logger.info(
-                                "RUNTIME_RVOL_INSTALLED | %s", stats,
+                                "RUNTIME_RVOL_INSTALLED | union=%d (%s) | %s",
+                                len(rvol_universe), ", ".join(rvol_setups_used), stats,
                             )
                         except Exception as _e:
                             logger.warning(
                                 "RUNTIME_RVOL | populate failed: %s — "
-                                "delivery_pct detector will silently no-fire", _e,
+                                "rvol-dependent detectors will silently no-fire", _e,
                             )
+                    else:
+                        logger.info(
+                            "RUNTIME_RVOL | no enabled rvol-dependent setup produced a "
+                            "non-empty universe — skipping populate"
+                        )
                 _t_seed_fetch = time.perf_counter()
                 try:
                     with perf("scan", "daily_seed_broadcast", n_workers=self._structure_workers,
