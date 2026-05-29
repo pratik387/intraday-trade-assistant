@@ -572,10 +572,17 @@ class ScreenerLive:
         )
         self._shared_ltp_cache = SharedLTPCache(mode="standalone")
 
-        # Shared 5m bar cache (Redis) — prevents duplicate API fetches across instances
-        from market_data.shared_5m_cache import Shared5mCache
-        redis_url = raw.get("market_data_bus", {}).get("redis_url", "redis://localhost:6379/0")
-        self._shared_5m_cache = Shared5mCache(redis_url=redis_url) if not env.DRY_RUN else None
+        # Shared 5m bar cache (Redis) — prevents duplicate API fetches across instances.
+        # Only useful in multi-instance ("subscriber") mode. In single-process
+        # ("standalone") mode there is no other writer/reader, so every scan tick
+        # is a guaranteed miss → fetch → store cycle that just adds a Redis
+        # roundtrip per tick. Disable.
+        self._shared_5m_cache = None
+        mdb_cfg = raw.get("market_data_bus", {})
+        if not env.DRY_RUN and mdb_cfg.get("mode") != "standalone":
+            from market_data.shared_5m_cache import Shared5mCache
+            redis_url = mdb_cfg.get("redis_url", "redis://localhost:6379/0")
+            self._shared_5m_cache = Shared5mCache(redis_url=redis_url)
 
         # WebSocket and tick routing
         self.ws = WSClient(sdk=sdk, on_tick=self.agg.on_tick)
@@ -2981,13 +2988,24 @@ class ScreenerLive:
         _t0 = time_module.perf_counter()
         warmup_bars = 30  # Number of bars to retain per symbol
 
-        # Find previous trading day (skip weekends, limited backward)
+        # Find previous trading day (skip weekends AND NSE holidays)
         today_dt = _now_naive_ist().date()
         from datetime import timedelta as _td
+        from utils.util import is_trading_day
         prev_day = today_dt - _td(days=1)
-        # Skip weekends
-        while prev_day.weekday() >= 5:  # Saturday=5, Sunday=6
+        # Walk backwards through weekends + holidays. Cap at 10 attempts to
+        # avoid an infinite loop if the holiday calendar is corrupted.
+        for _ in range(10):
+            if is_trading_day(prev_day):
+                break
             prev_day -= _td(days=1)
+        else:
+            logger.warning(
+                "API_WARMUP_CACHE | Could not find a trading day in the last 10 days "
+                "from %s — skipping warmup", today_dt
+            )
+            self._api_warmup_loaded = True
+            return
 
         from_date = prev_day.isoformat()
         to_date = prev_day.isoformat()
