@@ -537,18 +537,33 @@ def _run_until_eod(
 
         # Subscribe WebSocket for any recovered open positions (crash recovery)
         # In API-first mode, WS starts with zero subscriptions — recovered positions
-        # need ticks immediately for exit monitoring (SL, targets, trailing stops)
+        # need ticks immediately for exit monitoring (SL, targets, trailing stops).
+        # 2026-05-29 fix: positions.list_open() is keyed by trade_id ("NSE:BLS_5c1...")
+        # not by symbol, so the previous `for sym in open_positions` iterated trade_ids
+        # and symbol_map.get(trade_id) always returned None — recovered positions never
+        # got resubscribed, LTP cache stayed at the stale recovery price, UI tracker
+        # showed Rs 269 while live was Rs 265.
         open_positions = positions.list_open()
         if open_positions and hasattr(screener, 'subs') and screener.subs:
             recovery_tokens = []
-            for sym in open_positions:
+            recovery_syms: list[str] = []
+            for _tid, pos in open_positions.items():
+                sym = getattr(pos, "symbol", None)
+                if not sym:
+                    continue
                 tok = screener.symbol_map.get(sym)
                 if tok is not None:
                     recovery_tokens.append(int(tok))
+                    recovery_syms.append(sym)
+                else:
+                    logger.warning(
+                        "WS_RECOVERY | No token for recovered symbol %s — exit monitoring will run on stale LTP",
+                        sym,
+                    )
             if recovery_tokens:
                 screener.subs.add_hot(recovery_tokens)
                 logger.info("WS_RECOVERY | Subscribed %d symbols for open positions: %s",
-                           len(recovery_tokens), list(open_positions.keys()))
+                           len(recovery_tokens), recovery_syms)
 
         logger.info("MAIN_LOOP | Entering poll loop | _request_exit=%s stop=%s",
                    getattr(screener, "_request_exit", "?"), stop.is_set())
