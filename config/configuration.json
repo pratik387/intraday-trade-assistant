@@ -437,11 +437,18 @@
       "min_trading_days_required": 0,
       "universe_max_symbols": 1500,
       "capital_allocation": {
-        "active_margin_inr": 400000,
-        "cushion_inr": 100000,
-        "max_concurrent_slots": 4,
+        "_status_PAPER_ONLY_CAPS_LIFTED_2026_05_29": "Paper-validation mode: count caps temporarily lifted so EVERY signal-eligible candidate fires and we observe the full PF distribution rather than a slot-capped subsample. The 2026-05-29 cron showed 24+ valid signals competing for 2 daily slots — 22 of those edges went unobserved. CRITICAL for LIVE: restore live_* values below before flipping to live trading; paper-* values are intentionally permissive and would oversize the real account.",
+        "active_margin_inr": 10000000,
+        "cushion_inr": 1000000,
+        "max_concurrent_slots": 100,
         "margin_per_slot_inr": 100000,
-        "max_new_positions_per_day": 2,
+        "max_new_positions_per_day": 100,
+        "_live_active_margin_inr": 400000,
+        "_live_cushion_inr": 100000,
+        "_live_max_concurrent_slots": 4,
+        "_live_margin_per_slot_inr": 100000,
+        "_live_max_new_positions_per_day": 2,
+        "_live_rationale": "4 concurrent overnight slots × Rs 1L margin = Rs 4L exposure cap. 2 new/day matches the Phase 5 cell-mining capacity assumption. Live PF=2.44 was computed under these caps; live should not exceed them without re-running the confidence card.",
         "state_file": "state/overnight_slots.json"
       },
       "mtf": {

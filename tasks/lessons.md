@@ -11,6 +11,36 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-05-29 (#21) — close_dn_overnight_long slot caps lifted for paper validation: MUST be restored before live cutover
+
+**What went wrong (preventive — captured before it could):**
+Paper-validation phase needs the full PF distribution observable, but the
+production slot caps (max_concurrent_slots=4, max_new_positions_per_day=2)
+were sized for live capital and would cap us to 2 fires out of 24+ valid
+signals per day. Set in `configuration.json:capital_allocation` block.
+
+**Rule (LIVE CUTOVER CHECKLIST):**
+Before flipping `close_dn_overnight_long` to `enabled: true` in live mode,
+restore `configuration.json` `setups.close_dn_overnight_long.capital_allocation`
+to the live values stored as sibling `_live_*` keys:
+  - active_margin_inr: 400000   (NOT 10000000)
+  - cushion_inr: 100000          (NOT 1000000)
+  - max_concurrent_slots: 4      (NOT 100)
+  - max_new_positions_per_day: 2 (NOT 100)
+
+The `_status_PAPER_ONLY_CAPS_LIFTED_2026_05_29` field in the config block
+loudly flags the situation; the `_live_rationale` field documents WHY
+those numbers are what they are (Phase 5 cell-mining confidence card was
+computed under those caps; lifting them in live invalidates the PF=2.44
+expectation and oversizes the real account).
+
+This is a TEMPORARY paper-only relaxation. The PF / Sharpe numbers that
+graduated this setup from research assumed 2-per-day; observing more than
+that in paper is fine for evidence-gathering, but live risk caps must
+match what was validated.
+
+---
+
 ### 2026-05-22 (#20) — Set up the work environment BEFORE producing artifacts: research branch first, then draft briefs visible to user, then commit
 
 **What went wrong:** During the new-setup brainstorm session (3 candidates: `first_hour_low_retest_fail_long`, `nifty_heavy_vwap_reclaim_long`, `pre_results_t0_morning_accumulation_fade_short`), I committed 3 batches of work (briefs + Phase 1/2 scripts) directly to `main` without ever creating a research branch. I also wrote 8-13KB brief files and committed them to `main` after only showing the user a summary table of mechanism statements — not the actual brief drafts. User pushback: "u should hv created a new branch first... discussed actual briefs".
