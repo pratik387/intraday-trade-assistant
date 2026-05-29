@@ -728,10 +728,15 @@ class UpstoxDataClient:
         """
         Fetch historical 5m bars for a date range from V3 Historical API.
 
-        Auto-chunks the date range to stay within Upstox's V3 5m-candle
-        per-request limit (empirically ~30 calendar days; 32+ days returns
-        HTTP 400 "UDAPI1148 Invalid date range"). Each symbol's chunked
-        responses are concatenated and de-duped before returning.
+        Auto-chunks the date range to stay within Upstox's documented
+        per-request retrieval window. Per V3 historical-candle docs
+        (https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/):
+        "1 month — applicable for intervals ranging from 1 to 15 minutes."
+        Empirically, requests with from→to spanning 32+ calendar days
+        return HTTP 400 "UDAPI1148 Invalid date range"; 30 days works.
+        We chunk at 28 days for a small safety margin against the
+        "1 month" semantics (could be calendar-month vs 30-day in
+        edge cases).
 
         Used for paper/live warmup cache + runtime RVOL baseline populate.
 
