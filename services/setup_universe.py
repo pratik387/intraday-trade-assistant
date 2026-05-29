@@ -551,6 +551,16 @@ def compute_static_universes(
     if cfg.get("enabled"):
         out["or_window_failure_fade_short"] = or_window_failure_fade_short_universe(daily_dict, session_date, cfg)
 
+    # below_vwap_volume_revert_long (3D cell-lock static universe)
+    # Was previously orphaned — the universe function existed but no dispatch
+    # entry called it, so `_setup_universes` was missing the key entirely.
+    # That blocked the cross-day RVOL baseline populate (which unions
+    # rvol-dependent universes) from including below_vwap symbols, leaving
+    # the detector to silently no-fire with "baseline volume unavailable".
+    cfg = (setups_cfg.get("below_vwap_volume_revert_long") or {})
+    if cfg.get("enabled"):
+        out["below_vwap_volume_revert_long"] = below_vwap_volume_revert_long_universe(daily_dict, session_date, cfg)
+
     # mis_unwind_vwap_revert_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
     # circuit_release_fade_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
 
