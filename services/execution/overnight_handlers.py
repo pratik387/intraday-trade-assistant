@@ -162,10 +162,11 @@ def run_entry(
         logger.info("run_entry: universe size for %s = %d", spec.name, len(universe))
 
         # Batch-fetch today's 5m bars for the whole universe in ONE async
-        # gather (~28s for 1118 symbols at 40 RPS) instead of 1118
-        # sequential broker.get_intraday_5m calls (~110s+). The 15:25 cron
-        # has only 5 minutes before MOC close — sequential per-symbol was
-        # the hot path that made cron runs feel "too long".
+        # gather. Use rps=20 / concurrency=30 — the memo's "40 RPS safe"
+        # data point assumed a single consumer; during 15:25 the long-running
+        # paper-trade process is also hitting Upstox from the same IP, and
+        # a previous run at rps=40 produced 2292 throttle retries (354/1118
+        # symbols got bars; 8 min wall-clock). Half-rate coexists cleanly.
         intraday_5m_by_symbol: Dict[str, pd.DataFrame] = {}
         try:
             data_sdk = getattr(broker, "_data_sdk", None)
@@ -175,7 +176,7 @@ def run_entry(
                 _t0 = _time_perf.perf_counter()
                 intraday_5m_by_symbol = _asyncio.run(
                     data_sdk.async_fetch_intraday_5m_batch(
-                        list(universe), concurrency=60, rps=40.0,
+                        list(universe), concurrency=30, rps=20.0,
                     )
                 )
                 logger.info(
@@ -204,6 +205,7 @@ def run_entry(
             ctx = _build_market_context(
                 broker, symbol, now, today, spec.raw_config,
                 intraday_5m=intraday_5m_by_symbol.get(symbol),
+                df_daily=daily_dict.get(symbol),
             )
             if ctx is None:
                 summary["skipped_count"] += 1
@@ -587,13 +589,20 @@ def _gather_daily_dict(broker, setup_cfg: dict) -> Dict[str, pd.DataFrame]:
 
 def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
                           setup_cfg: dict,
-                          intraday_5m: Optional[pd.DataFrame] = None):
+                          intraday_5m: Optional[pd.DataFrame] = None,
+                          df_daily: Optional[pd.DataFrame] = None):
     """Build a MarketContext for a single symbol at the current bar timestamp.
 
     `intraday_5m` (when provided by the caller) is today's 5m bars
     pre-fetched in a single async batch — replaces the per-symbol
     broker.get_intraday_5m API call (which dominated cron wall-clock at
     ~100ms × 1118 symbols ≈ 110s sequential).
+
+    `df_daily` (when provided) is the symbol's daily OHLCV frame —
+    detectors that compute prior-day return (close_dn_overnight_long's
+    `_prior_day_return_pct`) read ctx.df_daily first; without it they
+    fall through to a df_5m-prior-session derivation that returns None
+    in live/paper mode because df_5m is today-only.
     """
     from structures.data_models import MarketContext
 
@@ -646,6 +655,7 @@ def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
         current_price=float(df_5m["close"].iloc[-1]),
         timestamp=df_5m.index[-1],
         df_5m=df_5m,
+        df_daily=df_daily,
         session_date=pd.Timestamp(today),
         cap_segment=cap_seg,
     )
