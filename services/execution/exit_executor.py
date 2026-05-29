@@ -31,6 +31,39 @@ def _pos_tid(pos: Position) -> str:
     return str(tid) if tid else f"sym:{pos.symbol}"
 
 
+_STALE_TS_THRESHOLD_MIN = 5  # ticks older than this are not authoritative for time-stop
+
+
+def _is_stale_ts_for_live(ts) -> bool:
+    """Return True if `ts` is stale relative to wall-clock IST in live/paper.
+
+    Upstox WebSocket can deliver "last_known_price" / snapshot ticks shortly
+    after subscribe whose payload timestamp is from the previous trading
+    session. If such a ts is used for time-stop decisions, _minute_of_day(ts)
+    can land far past 13:00/15:15 and falsely flatten today's positions
+    seconds after entry.
+
+    In DRY_RUN we *want* to use the tick ts (it IS the simulated wall clock),
+    so this returns False there. The check is wall-clock-aware only when the
+    process isn't a backtest replay.
+    """
+    try:
+        from config.env_setup import env  # local import to avoid cycle
+        if getattr(env, "DRY_RUN", False):
+            return False
+        if ts is None:
+            return True
+        tsp = pd.Timestamp(ts)
+        if tsp.tzinfo is not None:
+            tsp = _to_naive_ist(tsp)
+        now = _now_naive_ist()
+        delta_min = (now - tsp).total_seconds() / 60.0
+        # Accept slight future drift (≤1 min) without flagging stale.
+        return delta_min > _STALE_TS_THRESHOLD_MIN or delta_min < -1.0
+    except Exception:
+        return False
+
+
 def classify_sl_exit_reason(st: dict, *, default_no_t1: str = "hard_sl") -> str:
     """Classify SL exit reason based on T1/T2 booking state.
 
@@ -341,8 +374,13 @@ class ExitExecutor:
                 # 0) Time-stop / EOD square-off by tick timestamp.
                 # Plan-as-source-of-truth (2026-05-12): respect per-setup
                 # time_stop_hhmm if set, capped at the global EOD safety floor.
+                # 2026-05-29 fix: in live/paper, reject stale tick timestamps
+                # (e.g. Upstox WS snapshot/last-known-price ticks replayed at
+                # subscribe time can carry yesterday's ts; those would compute
+                # _minute_of_day = 946 and falsely trigger time_stop at 09:27).
                 effective_md = self._effective_eod_md(pos)
-                if effective_md is not None and _minute_of_day(ts) >= effective_md:
+                if effective_md is not None and not _is_stale_ts_for_live(ts) \
+                        and _minute_of_day(ts) >= effective_md:
                     plan_ts = (pos.plan.get("exits") or {}).get("time_stop_hhmm")
                     reason = (f"time_stop_{plan_ts}"
                               if (plan_ts and effective_md != self.eod_md)
@@ -1734,7 +1772,10 @@ class ExitExecutor:
         if ts is not None:
             try:
                 eff_md = self._effective_eod_md(pos)
-                if eff_md is not None and _minute_of_day(ts) >= int(eff_md):
+                # 2026-05-29 fix: same stale-ts guard as run_once time-stop
+                # — prevent post-T1 stale-tick time-stop misfire.
+                if eff_md is not None and not _is_stale_ts_for_live(ts) \
+                        and _minute_of_day(ts) >= int(eff_md):
                     cur = self.positions.get_by_trade_id(_pos_tid(pos))
                     if cur and int(cur.qty) > 0:
                         plan_ts = (pos.plan.get("exits") or {}).get("time_stop_hhmm")
