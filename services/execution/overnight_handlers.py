@@ -161,49 +161,6 @@ def run_entry(
             continue
         logger.info("run_entry: universe size for %s = %d", spec.name, len(universe))
 
-        # Pre-fetch prior-N-day 5m bars for the universe so detectors that
-        # need historical 5m context (close_dn_overnight_long's
-        # _closing_baseline reads df_5m for prior 15:00-15:20 bars) work in
-        # paper/live mode. broker.get_intraday_5m only returns today's bars
-        # — without this batch fetch, the baseline would be empty and the
-        # detector would reject every signal-eligible symbol with
-        # "closing-25m baseline unavailable" (as observed today on the
-        # 2026-05-29 cron: 466 rejects).
-        prior_5m_by_symbol: Dict[str, pd.DataFrame] = {}
-        try:
-            data_sdk = getattr(broker, "_data_sdk", None)
-            if data_sdk is not None and hasattr(data_sdk, "async_fetch_historical_5m_batch"):
-                import asyncio as _asyncio
-                from datetime import timedelta as _td
-                rolling_days = int(spec.raw_config.get("baseline_rolling_days", 20))
-                # 30 calendar days ~= 21 trading days; sufficient for rolling_days=20
-                # rolling. async_fetch_historical_5m_batch chunks internally to stay
-                # under Upstox's 1-month per-request limit.
-                from_d = (today - _td(days=30)).isoformat()
-                to_d = (today - _td(days=1)).isoformat()
-                logger.info(
-                    "run_entry: pre-fetching prior 5m bars for %d symbols (%s -> %s)",
-                    len(universe), from_d, to_d,
-                )
-                prior_5m_by_symbol = _asyncio.run(
-                    data_sdk.async_fetch_historical_5m_batch(
-                        list(universe), from_d, to_d,
-                        concurrency=30, rps=20.0,
-                    )
-                )
-                logger.info(
-                    "run_entry: prior 5m fetched for %d/%d universe symbols",
-                    len(prior_5m_by_symbol), len(universe),
-                )
-            else:
-                logger.warning(
-                    "run_entry: data_sdk has no async_fetch_historical_5m_batch — "
-                    "detectors needing prior 5m history will reject all symbols"
-                )
-        except Exception as e:
-            logger.exception("run_entry: prior 5m batch fetch failed: %s", e)
-            prior_5m_by_symbol = {}
-
         # Aggregate per-symbol rejection_reason buckets so the cron log shows
         # WHY all N symbols rejected instead of just N. Same diagnostic that
         # the screener (services/dispatch/worker.py:248-254) carries through
@@ -213,10 +170,7 @@ def run_entry(
 
         # Iterate symbols
         for symbol in universe:
-            ctx = _build_market_context(
-                broker, symbol, now, today, spec.raw_config,
-                prior_5m=prior_5m_by_symbol.get(symbol),
-            )
+            ctx = _build_market_context(broker, symbol, now, today, spec.raw_config)
             if ctx is None:
                 summary["skipped_count"] += 1
                 continue
@@ -598,17 +552,8 @@ def _gather_daily_dict(broker, setup_cfg: dict) -> Dict[str, pd.DataFrame]:
 
 
 def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
-                          setup_cfg: dict,
-                          prior_5m: Optional[pd.DataFrame] = None):
-    """Build a MarketContext for a single symbol at the current bar timestamp.
-
-    `prior_5m` (when provided) is pre-fetched historical 5m bars covering
-    sessions strictly before `today` — used by detectors like
-    close_dn_overnight_long whose baseline reads multi-day history out of
-    ctx.df_5m. In live/paper mode the broker's intraday endpoint only
-    returns today's bars; without prior_5m the baseline is empty and
-    detectors silently no-fire.
-    """
+                          setup_cfg: dict):
+    """Build a MarketContext for a single symbol at the current bar timestamp."""
     from structures.data_models import MarketContext
 
     # 5m bars — priority order:
@@ -641,23 +586,6 @@ def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
 
     if df_5m is None or df_5m.empty:
         return None
-
-    # Prepend prior-day 5m history (paper/live path). Backtest archive
-    # already carries multi-day df_5m natively; skip the concat in dry-run
-    # to avoid duplicate rows.
-    if not is_dry_run and prior_5m is not None and not prior_5m.empty:
-        try:
-            today_ts = pd.Timestamp(today)
-            prior_only = prior_5m[prior_5m.index < today_ts]
-            if not prior_only.empty:
-                df_5m = pd.concat([prior_only, df_5m]).sort_index()
-                df_5m = df_5m[~df_5m.index.duplicated(keep="last")]
-        except Exception as e:
-            logger.warning(
-                "_build_market_context: prior_5m concat failed for %s: %s",
-                symbol, e,
-            )
-
     # Filter to bars on or before `now`
     df_5m = df_5m[df_5m.index <= now]
     if df_5m.empty:
