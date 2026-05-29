@@ -43,6 +43,44 @@ _SIGNAL_BAR_HHMMS = ("15:00", "15:05", "15:10", "15:15", "15:20")
 # Active window single bar — only fire at 15:25
 _ACTIVE_HHMM = "15:25"
 
+# ---------- Pre-computed baseline snapshot ----------
+# Live/paper cron path: tools/build_close_dn_baseline.py writes
+# data/close_dn_baseline/baseline_latest.json once per day (08:00 IST cron).
+# The detector loads it once per process and serves O(1) lookups so the 15:25
+# entry cron doesn't burn 60+ seconds on a batch fetch.
+_BASELINE_DIR = Path(__file__).resolve().parents[1] / "data" / "close_dn_baseline"
+_BASELINE_LATEST = _BASELINE_DIR / "baseline_latest.json"
+_baseline_cache: Optional[Dict[str, Dict[str, float]]] = None
+_baseline_cache_mtime: Optional[float] = None
+
+
+def _load_baseline_snapshot() -> Optional[Dict[str, Dict[str, float]]]:
+    """Return the pre-computed (symbol -> {vol_mean, vol_std}) snapshot.
+
+    Reloads when the on-disk mtime changes (long-running paper process picks
+    up the next daily refresh without a restart). Returns None when the file
+    is absent — caller falls back to df_5m-based compute.
+    """
+    global _baseline_cache, _baseline_cache_mtime
+    try:
+        if not _BASELINE_LATEST.exists():
+            return None
+        mtime = _BASELINE_LATEST.stat().st_mtime
+        if _baseline_cache is not None and mtime == _baseline_cache_mtime:
+            return _baseline_cache
+        import json as _json
+        payload = _json.loads(_BASELINE_LATEST.read_text())
+        _baseline_cache = payload.get("symbols") or {}
+        _baseline_cache_mtime = mtime
+        logger.info(
+            "close_dn baseline snapshot loaded | session_date=%s n_symbols=%d",
+            payload.get("session_date"), len(_baseline_cache),
+        )
+        return _baseline_cache
+    except Exception as e:
+        logger.warning("close_dn baseline snapshot load failed: %s", e)
+        return None
+
 
 class CloseDnOvernightLongStructure(BaseStructure):
     """LONG overnight setup. Fires at 15:25 IST after EOD sell-flush on post-up-rally day."""
@@ -224,23 +262,40 @@ class CloseDnOvernightLongStructure(BaseStructure):
         )
 
     def _closing_baseline(self, context: MarketContext, session_date: date) -> tuple:
-        """Compute (mean, std) of prior-N-day closing-25m total volume for this symbol.
+        """Return (mean, std) of prior-N-day closing-25m total volume for this symbol.
 
-        Returns (None, None) if insufficient history.
+        Source priority:
+          1. Pre-computed snapshot in data/close_dn_baseline/baseline_latest.json
+             (live/paper path — built daily at 08:00 IST by
+             tools/build_close_dn_baseline.py). O(1) lookup.
+          2. Inline compute from context.df_5m (backtest path — the archive
+             feeds multi-day 5m history directly into df_5m so the same
+             groupby works without any API call).
+
+        Returns (None, None) if neither source has usable history.
         """
+        snap = _load_baseline_snapshot()
+        if snap is not None:
+            entry = snap.get(context.symbol)
+            if entry is not None:
+                mean = float(entry.get("vol_mean", 0.0) or 0.0)
+                std = float(entry.get("vol_std", 0.0) or 0.0)
+                if mean > 0 and std > 0:
+                    return (mean, std)
+
+        # Fallback: compute from df_5m (works in backtest where df_5m carries
+        # multi-day history; in live/paper this branch yields (None, None)
+        # because broker.get_intraday_5m only returns today's bars).
         df = context.df_5m
         if df is None or df.empty:
             return (None, None)
-        # All bars before session_date, filtered to 15:00-15:20 hhmms
         hist = df[df.index.date < session_date]
         if hist.empty:
             return (None, None)
         signal_hist = hist[hist.index.map(lambda ts: ts.strftime("%H:%M") in _SIGNAL_BAR_HHMMS)]
         if signal_hist.empty:
             return (None, None)
-        # Per-prior-session totals
         per_session = signal_hist.groupby(signal_hist.index.date)["volume"].sum().astype("float64")
-        # Take the most recent N sessions
         if len(per_session) < max(10, self.baseline_rolling_days // 2):
             return (None, None)
         recent = per_session.iloc[-self.baseline_rolling_days:]
