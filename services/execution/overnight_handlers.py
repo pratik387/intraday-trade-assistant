@@ -161,6 +161,13 @@ def run_entry(
             continue
         logger.info("run_entry: universe size for %s = %d", spec.name, len(universe))
 
+        # Aggregate per-symbol rejection_reason buckets so the cron log shows
+        # WHY all N symbols rejected instead of just N. Same diagnostic that
+        # the screener (services/dispatch/worker.py:248-254) carries through
+        # screening.jsonl; the overnight cron had no equivalent surface.
+        from collections import Counter as _Counter
+        reject_reasons: _Counter = _Counter()
+
         # Iterate symbols
         for symbol in universe:
             ctx = _build_market_context(broker, symbol, now, today, spec.raw_config)
@@ -172,9 +179,12 @@ def run_entry(
             except Exception as e:
                 logger.warning("run_entry: detector.detect failed for %s: %s", symbol, e)
                 summary["rejected_count"] += 1
+                reject_reasons["detector.detect EXCEPTION: " + type(e).__name__] += 1
                 continue
             if not analysis.structure_detected or not analysis.events:
                 summary["rejected_count"] += 1
+                _r = getattr(analysis, "rejection_reason", None) or "no_event (no rejection_reason set)"
+                reject_reasons[str(_r)[:120]] += 1
                 continue
             evt = analysis.events[0]
             try:
@@ -184,6 +194,7 @@ def run_entry(
                 plan = None
             if plan is None:
                 summary["rejected_count"] += 1
+                reject_reasons["plan_long_strategy returned None"] += 1
                 continue
 
             # Reserve slot (fails if capacity or per-day cap hit)
@@ -285,6 +296,20 @@ def run_entry(
 
     # Persist
     pool.persist()
+    # Surface the top-K rejection reasons so an all-reject day is diagnosable
+    # without re-running on a research workstation. The Counter is scoped per
+    # setup but logged once at the end (currently only close_dn_overnight_long
+    # is wired; if a second overnight setup ships, scope this per-setup).
+    try:
+        if reject_reasons:
+            top = reject_reasons.most_common(8)
+            summary["reject_reason_top"] = top
+            logger.info("run_entry: top reject reasons:")
+            for reason, n in top:
+                logger.info("  %5d  %s", n, reason)
+    except NameError:
+        # reject_reasons only exists if at least one setup ran (paused setups skip the loop).
+        pass
     logger.info(
         "run_entry: complete | fired=%d skipped=%d rejected=%d",
         summary["fired_count"], summary["skipped_count"], summary["rejected_count"],
