@@ -534,8 +534,11 @@ def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
     # 5m bars — priority order:
     # 1. broker.get_intraday_5m(symbol) — live API (paper mode via data_sdk,
     #    or live Upstox/Kite). This is what we want for today's session.
-    # 2. broker._load_enriched_5m() — backtest archive (DRY_RUN only).
+    # 2. broker._load_enriched_5m() — backtest archive. ONLY in DRY_RUN.
+    #    In paper/live mode there is no archive on disk, so falling through
+    #    here just produces "Loaded 0 symbols from individual files" noise.
     # 3. broker.fetch_candles(...) — Kite live fallback.
+    is_dry_run = getattr(broker, "_dry_session_date", None) is not None
     df_5m: Optional[pd.DataFrame] = None
     if hasattr(broker, "get_intraday_5m"):
         try:
@@ -543,7 +546,7 @@ def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
         except Exception as e:
             logger.warning("_build_market_context: get_intraday_5m failed for %s: %s", symbol, e)
             df_5m = None
-    if (df_5m is None or df_5m.empty) and hasattr(broker, "_load_enriched_5m"):
+    if is_dry_run and (df_5m is None or df_5m.empty) and hasattr(broker, "_load_enriched_5m"):
         try:
             all_enriched = broker._load_enriched_5m()
             bare = symbol.replace("NSE:", "")
@@ -630,22 +633,41 @@ def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str) -> str:
     return str(order_id)
 
 
+def _today_5m(broker, symbol: str) -> Optional[pd.DataFrame]:
+    """Return today's 5m bars from the broker's live API (paper-live mode).
+
+    Falls back to the archive only when running under DRY_RUN. Returns None
+    on any error / missing data — callers handle the None case.
+    """
+    is_dry_run = getattr(broker, "_dry_session_date", None) is not None
+    if hasattr(broker, "get_intraday_5m") and not is_dry_run:
+        try:
+            df = broker.get_intraday_5m(symbol)
+            if df is not None and not df.empty:
+                return df
+        except Exception as e:
+            logger.warning("_today_5m: get_intraday_5m failed for %s: %s", symbol, e)
+    if is_dry_run and hasattr(broker, "_load_enriched_5m"):
+        try:
+            bare = symbol.replace("NSE:", "")
+            all_enriched = broker._load_enriched_5m()
+            df = all_enriched.get(bare) or all_enriched.get(symbol)
+            if df is not None and not df.empty:
+                return df
+        except Exception as e:
+            logger.warning("_today_5m: archive load failed for %s: %s", symbol, e)
+    return None
+
+
 def _paper_fill_price_entry(broker, symbol: str, today: date) -> Optional[float]:
     """In paper mode, the 15:25 bar's CLOSE is the MOC fill price (= 15:30 IST close)."""
-    if not hasattr(broker, "_load_enriched_5m"):
+    df = _today_5m(broker, symbol)
+    if df is None or df.empty:
         return None
     try:
-        bare = symbol.replace("NSE:", "")
-        all_enriched = broker._load_enriched_5m()
-        df = all_enriched.get(bare)
-        if df is None:
-            df = all_enriched.get(symbol)
-        if df is None or df.empty:
-            return None
         target_ts = pd.Timestamp.combine(today, time(15, 25))
         if target_ts in df.index:
             return float(df.loc[target_ts, "close"])
-        # Closest match strictly at-or-before
         before = df[df.index <= target_ts]
         if before.empty:
             return None
@@ -657,20 +679,13 @@ def _paper_fill_price_entry(broker, symbol: str, today: date) -> Optional[float]
 
 def _paper_fill_price_exit(broker, symbol: str, exit_date: date) -> Optional[float]:
     """In paper mode, AMO SELL fills at next-day 09:15 bar's OPEN."""
-    if not hasattr(broker, "_load_enriched_5m"):
+    df = _today_5m(broker, symbol)
+    if df is None or df.empty:
         return None
     try:
-        bare = symbol.replace("NSE:", "")
-        all_enriched = broker._load_enriched_5m()
-        df = all_enriched.get(bare)
-        if df is None:
-            df = all_enriched.get(symbol)
-        if df is None or df.empty:
-            return None
         target_ts = pd.Timestamp.combine(exit_date, time(9, 15))
         if target_ts in df.index:
             return float(df.loc[target_ts, "open"])
-        # First bar at-or-after target
         after = df[df.index >= target_ts]
         if after.empty:
             return None
