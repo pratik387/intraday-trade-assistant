@@ -161,6 +161,37 @@ def run_entry(
             continue
         logger.info("run_entry: universe size for %s = %d", spec.name, len(universe))
 
+        # Batch-fetch today's 5m bars for the whole universe in ONE async
+        # gather (~28s for 1118 symbols at 40 RPS) instead of 1118
+        # sequential broker.get_intraday_5m calls (~110s+). The 15:25 cron
+        # has only 5 minutes before MOC close — sequential per-symbol was
+        # the hot path that made cron runs feel "too long".
+        intraday_5m_by_symbol: Dict[str, pd.DataFrame] = {}
+        try:
+            data_sdk = getattr(broker, "_data_sdk", None)
+            if data_sdk is not None and hasattr(data_sdk, "async_fetch_intraday_5m_batch"):
+                import asyncio as _asyncio
+                import time as _time_perf
+                _t0 = _time_perf.perf_counter()
+                intraday_5m_by_symbol = _asyncio.run(
+                    data_sdk.async_fetch_intraday_5m_batch(
+                        list(universe), concurrency=60, rps=40.0,
+                    )
+                )
+                logger.info(
+                    "run_entry: intraday 5m batch fetched %d/%d symbols in %.1fs",
+                    len(intraday_5m_by_symbol), len(universe),
+                    _time_perf.perf_counter() - _t0,
+                )
+            else:
+                logger.warning(
+                    "run_entry: data_sdk has no async_fetch_intraday_5m_batch — "
+                    "falling back to per-symbol broker.get_intraday_5m (slow)"
+                )
+        except Exception as e:
+            logger.exception("run_entry: intraday batch fetch failed: %s", e)
+            intraday_5m_by_symbol = {}
+
         # Aggregate per-symbol rejection_reason buckets so the cron log shows
         # WHY all N symbols rejected instead of just N. Same diagnostic that
         # the screener (services/dispatch/worker.py:248-254) carries through
@@ -170,7 +201,10 @@ def run_entry(
 
         # Iterate symbols
         for symbol in universe:
-            ctx = _build_market_context(broker, symbol, now, today, spec.raw_config)
+            ctx = _build_market_context(
+                broker, symbol, now, today, spec.raw_config,
+                intraday_5m=intraday_5m_by_symbol.get(symbol),
+            )
             if ctx is None:
                 summary["skipped_count"] += 1
                 continue
@@ -552,20 +586,28 @@ def _gather_daily_dict(broker, setup_cfg: dict) -> Dict[str, pd.DataFrame]:
 
 
 def _build_market_context(broker, symbol: str, now: pd.Timestamp, today: date,
-                          setup_cfg: dict):
-    """Build a MarketContext for a single symbol at the current bar timestamp."""
+                          setup_cfg: dict,
+                          intraday_5m: Optional[pd.DataFrame] = None):
+    """Build a MarketContext for a single symbol at the current bar timestamp.
+
+    `intraday_5m` (when provided by the caller) is today's 5m bars
+    pre-fetched in a single async batch — replaces the per-symbol
+    broker.get_intraday_5m API call (which dominated cron wall-clock at
+    ~100ms × 1118 symbols ≈ 110s sequential).
+    """
     from structures.data_models import MarketContext
 
     # 5m bars — priority order:
-    # 1. broker.get_intraday_5m(symbol) — live API (paper mode via data_sdk,
-    #    or live Upstox/Kite). This is what we want for today's session.
+    # 0. intraday_5m kwarg — caller pre-fetched in async batch (paper/live).
+    # 1. broker.get_intraday_5m(symbol) — live API per-symbol (paper mode via
+    #    data_sdk, or live Upstox/Kite). Used when batch fetch wasn't done.
     # 2. broker._load_enriched_5m() — backtest archive. ONLY in DRY_RUN.
-    #    In paper/live mode there is no archive on disk, so falling through
-    #    here just produces "Loaded 0 symbols from individual files" noise.
     # 3. broker.fetch_candles(...) — Kite live fallback.
     is_dry_run = getattr(broker, "_dry_session_date", None) is not None
     df_5m: Optional[pd.DataFrame] = None
-    if hasattr(broker, "get_intraday_5m"):
+    if intraday_5m is not None and not intraday_5m.empty:
+        df_5m = intraday_5m
+    elif hasattr(broker, "get_intraday_5m"):
         try:
             df_5m = broker.get_intraday_5m(symbol)
         except Exception as e:
