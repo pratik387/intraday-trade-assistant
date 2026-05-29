@@ -53,6 +53,14 @@ class MockBroker:
         # on MockBroker. Leave as None for backtest mode (archive lookup).
         self._data_sdk = data_sdk
 
+        # Paper-order sequence — feeds place_order's returned order_id.
+        # Long-running paper-trade uses KiteBroker(dry_run=True); the
+        # overnight cron uses MockBroker (it's a short-lived process with
+        # data_sdk wired for live data), so MockBroker carries its own
+        # tiny paper-order simulator for the close_dn_overnight_long flow.
+        self._paper_order_seq: int = 0
+        self._paper_order_lock = threading.RLock()
+
         # Daily cache (tz-naive), namespaced by session date
         self._daily_cache_day: Optional[str] = None      # e.g. "YYYY-MM-DD" (session key)
         self._daily_cache: Dict[str, pd.DataFrame] = {}
@@ -157,6 +165,57 @@ class MockBroker:
         if miss:
             logger.warning(f"MockBroker.resolve_tokens: {miss} symbols not found")
         return out
+
+    # -------------------- paper-mode orders --------------------
+    def place_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        qty: int,
+        order_type: str = "MARKET",
+        price: Optional[float] = None,
+        product: str = "MIS",
+        variety: str = "regular",
+        validity: str = "DAY",
+        tag: Optional[str] = None,
+        trade_id: Optional[str] = None,
+        check_margins: bool = False,
+    ) -> str:
+        """Simulated paper-mode order placement.
+
+        Returns a sequential paper order_id; does no margin check, no
+        broker call, no persistence. The overnight cron uses this to mint
+        order_ids for close_dn_overnight_long MOC BUY + AMO SELL. Actual
+        fill price is determined later by _paper_fill_price_entry /
+        _paper_fill_price_exit reading the data_sdk's intraday/historical
+        bars.
+        """
+        side_u = (side or "").upper()
+        if side_u not in ("BUY", "SELL"):
+            raise ValueError(f"side must be BUY/SELL, got {side!r}")
+        if int(qty) <= 0:
+            raise ValueError(f"qty must be > 0, got {qty}")
+        with self._paper_order_lock:
+            self._paper_order_seq += 1
+            seq = self._paper_order_seq
+        order_id = f"PAPER_OVNT_{seq:08d}"
+        logger.info(
+            "[PAPER] MockBroker order: %s %s %d %s (product=%s variety=%s) -> %s",
+            side_u, symbol, int(qty), order_type, product, variety, order_id,
+        )
+        return order_id
+
+    def get_order_status(self, order_id: str) -> Dict[str, Any]:
+        """Paper-mode order status: always COMPLETE.
+
+        The overnight handler's _live_poll_fill polls this for the fill
+        price; in paper mode we don't track fills here (the handler uses
+        _paper_fill_price_entry to derive the price from data instead).
+        Returning COMPLETE with average_price=0.0 short-circuits the
+        polling loop without claiming a specific fill price.
+        """
+        return {"order_id": str(order_id), "status": "COMPLETE", "average_price": 0.0}
 
     # -------------------- ticker (with last-price proxy) --------------------
     def get_intraday_5m(self, symbol: str) -> Optional[pd.DataFrame]:
