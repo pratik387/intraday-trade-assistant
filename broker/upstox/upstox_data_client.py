@@ -728,8 +728,12 @@ class UpstoxDataClient:
         """
         Fetch historical 5m bars for a date range from V3 Historical API.
 
-        Used for paper/live warmup cache — fetches yesterday's (or earlier) 5m bars
-        at startup so the first scan has proper indicator stabilization (ADX/RSI/BB_width).
+        Auto-chunks the date range to stay within Upstox's V3 5m-candle
+        per-request limit (empirically ~30 calendar days; 32+ days returns
+        HTTP 400 "UDAPI1148 Invalid date range"). Each symbol's chunked
+        responses are concatenated and de-duped before returning.
+
+        Used for paper/live warmup cache + runtime RVOL baseline populate.
 
         Args:
             symbols: List of "NSE:SYMBOL" strings
@@ -740,29 +744,63 @@ class UpstoxDataClient:
 
         Returns:
             Dict mapping symbol -> DataFrame [open, high, low, close, volume] sorted by date.
-            Symbols that fail or have no data are silently omitted.
+            Symbols whose instrument_key cannot be resolved are silently omitted.
+            HTTP 400 responses are surfaced via a counter logged at batch end.
         """
         import aiohttp
         from aiolimiter import AsyncLimiter
+        from datetime import date as _date, timedelta as _td
 
-        sym_to_url = {}
+        # ---- Chunk the date range ----
+        # Empirical limit: 30 days OK, 32+ days = HTTP 400. Use 28-day chunks
+        # to leave safety margin (in case Upstox tightens or the limit is
+        # holiday-sensitive). Walk backwards from to_date so the most recent
+        # data is in the first chunk (matches V3 endpoint convention).
+        CHUNK_DAYS = 28
+        _from_d = _date.fromisoformat(from_date)
+        _to_d = _date.fromisoformat(to_date)
+        if _from_d > _to_d:
+            return {}
+        chunks: list[tuple[str, str]] = []
+        cur_to = _to_d
+        while cur_to >= _from_d:
+            cur_from = max(_from_d, cur_to - _td(days=CHUNK_DAYS - 1))
+            chunks.append((cur_from.isoformat(), cur_to.isoformat()))
+            cur_to = cur_from - _td(days=1)
+
+        # ---- Build (symbol, chunk) URL set ----
+        sym_chunk_urls: list[tuple[str, str]] = []  # (sym, url) pairs
+        n_unresolved = 0
         for sym in symbols:
             try:
                 ikey = self._instrument_key_for(sym)
-                sym_to_url[sym] = f"{UPSTOX_HIST_BASE}/{quote(ikey, safe='|')}/minutes/5/{to_date}/{from_date}"
             except KeyError:
-                pass
+                n_unresolved += 1
+                continue
+            for chunk_from, chunk_to in chunks:
+                url = (
+                    f"{UPSTOX_HIST_BASE}/{quote(ikey, safe='|')}/minutes/5/"
+                    f"{chunk_to}/{chunk_from}"
+                )
+                sym_chunk_urls.append((sym, url))
 
-        if not sym_to_url:
+        if not sym_chunk_urls:
+            if n_unresolved:
+                logger.warning(
+                    "ASYNC_HIST_5M | all %d symbols unresolved in instrument map; nothing to fetch",
+                    n_unresolved,
+                )
             return {}
 
         limiter = AsyncLimiter(rps, 1.0)
         sem = asyncio.Semaphore(concurrency)
-        results: Dict[str, pd.DataFrame] = {}
+        # Per-symbol partial frames — joined after gather().
+        partials: Dict[str, list] = {}
         retries_429 = 0
+        n_400 = 0
 
         async def _fetch_one(session: aiohttp.ClientSession, sym: str, url: str):
-            nonlocal retries_429
+            nonlocal retries_429, n_400
             for attempt in range(3):
                 try:
                     async with sem:
@@ -775,6 +813,7 @@ class UpstoxDataClient:
                                     await asyncio.sleep(2 ** (attempt + 1))
                                     continue
                                 if resp.status == 400:
+                                    n_400 += 1
                                     return
                                 resp.raise_for_status()
                                 body = await resp.json()
@@ -796,22 +835,34 @@ class UpstoxDataClient:
                 df["date"] = pd.to_datetime(df["date"], errors="coerce")
                 if getattr(df["date"].dt, "tz", None) is not None:
                     df["date"] = df["date"].dt.tz_localize(None)
-                df = df.sort_values("date").set_index("date")
+                df = df.set_index("date")
                 df = df[["open", "high", "low", "close", "volume"]].astype(float)
-                results[sym] = df
+                partials.setdefault(sym, []).append(df)
                 return
 
         connector = aiohttp.TCPConnector(limit=concurrency, ttl_dns_cache=300)
         async with aiohttp.ClientSession(
             connector=connector, headers=UPSTOX_HEADERS
         ) as session:
-            tasks = [_fetch_one(session, sym, url) for sym, url in sym_to_url.items()]
+            tasks = [_fetch_one(session, sym, url) for sym, url in sym_chunk_urls]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        if retries_429 > 0:
-            logger.warning(
-                "ASYNC_HIST_5M | %d 429-throttle retries during batch of %d symbols",
-                retries_429, len(sym_to_url),
+        # Concat partial chunks per symbol and de-dup.
+        results: Dict[str, pd.DataFrame] = {}
+        for sym, frames in partials.items():
+            df = pd.concat(frames).sort_index()
+            df = df[~df.index.duplicated(keep="last")]
+            results[sym] = df
+
+        # `_last_batch_429s` is consumed by runtime_rvol_baseline for diagnostics.
+        self._last_batch_429s = retries_429
+
+        if n_unresolved or n_400 or retries_429:
+            logger.info(
+                "ASYNC_HIST_5M | batch done: symbols=%d chunks=%d resolved=%d "
+                "unresolved=%d HTTP_400=%d 429_retries=%d returned_syms=%d",
+                len(symbols), len(chunks), len(symbols) - n_unresolved,
+                n_unresolved, n_400, retries_429, len(results),
             )
 
         return results
