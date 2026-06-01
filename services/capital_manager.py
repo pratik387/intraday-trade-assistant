@@ -744,12 +744,26 @@ class OvernightSlotPool:
                 f"shape (expected dict with 'slots' key). Fix or delete manually."
             )
         slots = [OvernightSlot.from_dict(s) for s in data["slots"]]
-        # Validate slot count matches config (fail fast on drift)
-        if len(slots) != self._max_slots:
+        # Validate slot count vs config. EXPANDING (state < config) is safe —
+        # preserve existing slots and append free slots up to max_slots.
+        # SHRINKING (state > config) is NOT safe — would orphan slots that
+        # may hold capital/open positions; require manual migration.
+        if len(slots) > self._max_slots:
             raise ValueError(
                 f"OvernightSlotPool: state file has {len(slots)} slots but config "
-                f"specifies max_slots={self._max_slots}. Migrate state manually."
+                f"specifies max_slots={self._max_slots} (smaller). Shrinking is unsafe "
+                f"— may orphan reserved capital. Migrate state manually."
             )
+        if len(slots) < self._max_slots:
+            # Auto-extend: keep existing slots (with their state), append empty.
+            existing_ids = {s.slot_id for s in slots}
+            next_id = max(existing_ids) + 1 if existing_ids else 1
+            while len(slots) < self._max_slots:
+                while next_id in existing_ids:
+                    next_id += 1
+                slots.append(OvernightSlot(slot_id=next_id))
+                existing_ids.add(next_id)
+                next_id += 1
         return slots
 
     def _persist(self) -> None:
