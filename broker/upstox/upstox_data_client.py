@@ -662,9 +662,23 @@ class UpstoxDataClient:
         sem = asyncio.Semaphore(concurrency)
         results: Dict[str, pd.DataFrame] = {}
         retries_429 = 0
+        # Failure-mode counters — surfaced via _last_batch_diag so callers
+        # can see *why* a batch failed instead of getting a silent zero.
+        n_400 = 0
+        n_5xx = 0
+        n_other_http = 0
+        n_empty_candles = 0
+        n_timeout = 0
+        n_conn_err = 0
+        n_other_exc = 0
+        sample_400_url: Optional[str] = None
+        sample_5xx: Optional[str] = None  # "{status}: {body[:120]}"
+        sample_exc: Optional[str] = None  # "{ExcType}: {str(e)[:120]}"
 
         async def _fetch_one(session: aiohttp.ClientSession, sym: str, url: str):
-            nonlocal retries_429
+            nonlocal retries_429, n_400, n_5xx, n_other_http, n_empty_candles
+            nonlocal n_timeout, n_conn_err, n_other_exc
+            nonlocal sample_400_url, sample_5xx, sample_exc
             for attempt in range(3):
                 try:
                     async with sem:
@@ -677,10 +691,50 @@ class UpstoxDataClient:
                                     await asyncio.sleep(2 ** (attempt + 1))
                                     continue
                                 if resp.status == 400:
+                                    if attempt == 0:
+                                        n_400 += 1
+                                        if sample_400_url is None:
+                                            sample_400_url = url
                                     return
-                                resp.raise_for_status()
+                                if 500 <= resp.status < 600:
+                                    if attempt == 0:
+                                        n_5xx += 1
+                                        if sample_5xx is None:
+                                            try:
+                                                body_txt = (await resp.text())[:120]
+                                            except Exception:
+                                                body_txt = ""
+                                            sample_5xx = f"{resp.status}: {body_txt}"
+                                    if attempt == 2:
+                                        return
+                                    await asyncio.sleep(0.5 + 0.4 * attempt)
+                                    continue
+                                if resp.status >= 400:
+                                    if attempt == 0:
+                                        n_other_http += 1
+                                    return
                                 body = await resp.json()
-                except Exception:
+                except asyncio.TimeoutError:
+                    if attempt == 0:
+                        n_timeout += 1
+                    if attempt == 2:
+                        return
+                    await asyncio.sleep(0.5 + 0.4 * attempt)
+                    continue
+                except aiohttp.ClientConnectorError as e:
+                    if attempt == 0:
+                        n_conn_err += 1
+                        if sample_exc is None:
+                            sample_exc = f"ClientConnectorError: {str(e)[:120]}"
+                    if attempt == 2:
+                        return
+                    await asyncio.sleep(0.5 + 0.4 * attempt)
+                    continue
+                except Exception as e:
+                    if attempt == 0:
+                        n_other_exc += 1
+                        if sample_exc is None:
+                            sample_exc = f"{type(e).__name__}: {str(e)[:120]}"
                     if attempt == 2:
                         return
                     await asyncio.sleep(0.5 + 0.4 * attempt)
@@ -688,6 +742,7 @@ class UpstoxDataClient:
 
                 candles = body.get("data", {}).get("candles", [])
                 if not candles:
+                    n_empty_candles += 1
                     return
 
                 df = pd.DataFrame(
@@ -710,13 +765,28 @@ class UpstoxDataClient:
             tasks = [_fetch_one(session, sym, url) for sym, url in sym_to_url.items()]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Store 429 count for caller visibility (screener logs it)
+        # Store counts for caller visibility (screener logs them)
         self._last_batch_429s = retries_429
+        self._last_batch_diag = {
+            "n_400": n_400,
+            "n_5xx": n_5xx,
+            "n_other_http": n_other_http,
+            "n_empty_candles": n_empty_candles,
+            "n_timeout": n_timeout,
+            "n_conn_err": n_conn_err,
+            "n_other_exc": n_other_exc,
+            "sample_400_url": sample_400_url,
+            "sample_5xx": sample_5xx,
+            "sample_exc": sample_exc,
+        }
 
-        if retries_429 > 0:
+        if retries_429 > 0 or n_400 or n_5xx or n_other_http or n_timeout or n_conn_err or n_other_exc:
             logger.warning(
-                "ASYNC_5M | %d 429-throttle retries during batch of %d symbols",
-                retries_429, len(sym_to_url),
+                "ASYNC_5M | batch n=%d ok=%d | 429_retries=%d 400=%d 5xx=%d other_http=%d "
+                "empty=%d timeout=%d conn_err=%d other_exc=%d | sample_400=%s sample_5xx=%s sample_exc=%s",
+                len(sym_to_url), len(results), retries_429, n_400, n_5xx, n_other_http,
+                n_empty_candles, n_timeout, n_conn_err, n_other_exc,
+                sample_400_url, sample_5xx, sample_exc,
             )
 
         return results

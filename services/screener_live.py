@@ -1484,13 +1484,31 @@ class ScreenerLive:
                         self._shared_5m_cache.store_bars(bar_ts, api_df5_cache)
 
                     _t_api_elapsed = time.perf_counter() - _t_api_start
-                    # Surface 429 count from the batch fetcher for monitoring
+                    # Surface 429 count + failure-mode breakdown from the batch
+                    # fetcher for monitoring (silent-fail diagnosis).
                     throttle_count = getattr(self.sdk, '_last_batch_429s', 0)
                     throttle_info = f" | 429s: {throttle_count}" if throttle_count > 0 else ""
+                    diag = getattr(self.sdk, '_last_batch_diag', None)
+                    diag_info = ""
+                    if diag and api_fail > 0:
+                        diag_info = (
+                            f" | 400={diag.get('n_400', 0)} 5xx={diag.get('n_5xx', 0)} "
+                            f"other_http={diag.get('n_other_http', 0)} "
+                            f"empty={diag.get('n_empty_candles', 0)} "
+                            f"timeout={diag.get('n_timeout', 0)} "
+                            f"conn_err={diag.get('n_conn_err', 0)} "
+                            f"other_exc={diag.get('n_other_exc', 0)}"
+                        )
+                        if diag.get("sample_400_url"):
+                            diag_info += f" | sample_400={diag['sample_400_url']}"
+                        if diag.get("sample_5xx"):
+                            diag_info += f" | sample_5xx={diag['sample_5xx']}"
+                        if diag.get("sample_exc"):
+                            diag_info += f" | sample_exc={diag['sample_exc']}"
                     logger.info(
-                        "API_5M_FETCH | %d ok, %d failed of %d symbols | %.1fs (async, %s RPS) | warmup: %d/%d%s",
+                        "API_5M_FETCH | %d ok, %d failed of %d symbols | %.1fs (async, %s RPS) | warmup: %d/%d%s%s",
                         api_ok, api_fail, len(fetch_symbols), _t_api_elapsed,
-                        rps, warmup_used, api_ok, throttle_info,
+                        rps, warmup_used, api_ok, throttle_info, diag_info,
                     )
 
                 # Capture the regime index df out of the batch result. Pop so the
