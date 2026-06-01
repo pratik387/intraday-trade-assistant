@@ -464,14 +464,19 @@
         },
         "decay_monitor_runner": {
             "_doc": "Runner that converts shipped-setup trade logs into monthly PF time-series and emits per-setup DecayStatus via decay_monitor.compute_status. See Task 21.",
-            "entry_time_column_aliases": ["entry_time", "trade_time", "datetime", "timestamp", "decision_ts", "session_date"],
+            "_decay_inputs_doc_2026_06_01": "Decay inputs at reports/decay_inputs/ are built by tools/edge_discovery/prepare_decay_inputs.py from per-day backtest events.jsonl across the full-history backtest runs (production-truth EXIT events). Earlier version sourced from _walkfwd_combined_*_canonical.csv which contained BROADER-DETECTOR fires (pre-cell-lock) and overstated trade count + understated/overstated PF. Re-run prepare_decay_inputs.py after each fresh full-history backtest.",
+            "entry_time_column_aliases": ["entry_time", "trade_time", "datetime", "timestamp", "decision_ts", "session_date", "signal_date"],
             "pnl_column_aliases": ["net_return", "net_pnl_inr", "net_pnl", "pnl"],
             "inf_display_cap": 5.0,
             "setup_trade_parquets": {
-                "gap_fade_short": "reports/sub8_oos_holdout_clean/gap_fade_short.parquet",
-                "circuit_t1_fade_short": "reports/sub8_oos_holdout_clean/circuit_t1_fade_short.parquet",
-                "delivery_pct_anomaly_short": "reports/sub8_oos_holdout_clean/delivery_pct_anomaly_short.parquet"
-            }
+                "gap_fade_short": "reports/decay_inputs/gap_fade_short.parquet",
+                "long_panic_gap_down": "reports/decay_inputs/long_panic_gap_down.parquet",
+                "or_window_failure_fade_short": "reports/decay_inputs/or_window_failure_fade_short.parquet",
+                "below_vwap_volume_revert_long": "reports/decay_inputs/below_vwap_volume_revert_long.parquet"
+            },
+            "_removed_2026_05_31_circuit_t1_fade_short": "Retired Stage 14 in commit 0ae102b. Removed from active decay monitor.",
+            "_removed_2026_06_01_delivery_pct_anomaly_short": "Not enabled in the fresh full-history backtest, so no production-truth EXIT events available. Setup is disabled in configuration.json (enabled=false). Re-add if/when re-enabled and a fresh backtest run produces events.",
+            "_removed_2026_06_01_close_dn_overnight_long": "Overnight setup — paper validation began 2026-05-29. No backtest history in the OCI engine yet (separate harness reports/engine_overnight/). Decay monitor will pick this up once paper accumulates ~4-8 weeks of trades."
         }
     }
 }

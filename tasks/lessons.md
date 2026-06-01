@@ -11,6 +11,27 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-06-01 (#22) — Audit input data BEFORE concluding from rejection patterns
+
+**What went wrong:** User reported "only gap_fade_short trading on paper, no other setups firing." After SSH-ing into the VM and reading `screening.jsonl`, I saw `or_window_failure_fade_short:vol_ratio=X outside cell band (8.0, 15.0]` repeated dozens of times with X in the 0.26-2.01 range, and concluded: "the cell-lock requires 8-15× baseline volume; today's max was 2.01×, the cell-lock is the bottleneck — matches the decay PAUSED status, retire the setup."
+
+User push-back: "u should check the data first before coming to conclusion... like for ORH/ORL — are they proper?"
+
+Right. I concluded from the *output* of a gate without auditing the *inputs* feeding that gate. The cell-lock check is `vol_ratio = bar_volume / baseline_vol`. If `baseline_vol` is wrong (stale parquet, wrong session_date lookup, wrong hhmm bucket), the ratio is wrong, and the whole "cell-lock too tight" theory is built on garbage. Same for the `sweep_high < poke_threshold` rejections — if ORH itself was computed from the wrong 09:15-09:30 window (e.g. tz-bug, missing bars, prior-day data), then `poke_threshold = ORH * (1 + buffer)` is wrong, and "sweep_high < poke_threshold" rejections are noise, not signal. I jumped to "cell-lock too tight → retire" without verifying any of the upstream computations.
+
+**Why:** Rejection-reason strings look like diagnostic evidence but they're really *derived* outputs. A wrong input upstream silently produces "valid-looking" rejections downstream. The honest verification chain for any "setup X is silently filtering everything" hypothesis is: (1) inputs to the gate are computed correctly, (2) the gate threshold is reasonable for current market, (3) the gate rejects for the right reason. I skipped (1) and went straight to (3).
+
+This is structurally adjacent to but distinct from Lesson 2026-05-05 (data feasibility — does the data exist at all). That lesson asks "do we have data?" This one asks "is the data we have correct?"
+
+**Rule:**
+1. **Before concluding from rejection_reason patterns** in a paper/live log, audit the *inputs* feeding each gate. For or_window: `ORH`, `ORL`, `poke_threshold`, `baseline_vol`. For below_vwap: `session_vwap`, `vwap_dev_pct`, `cap_segment`, `baseline_vol(symbol, session_date, hhmm)`. For long_panic: `gap_pct`, `dist_from_pdh`, `dist_from_pdl`, `regime_density_count`. Each must be cross-checked against an independent source (e.g. raw 5m parquet → manual VWAP calc; baseline parquet → grep for the symbol+date+hhmm tuple).
+2. **Concretely**: grep `events.jsonl` or `screening.jsonl` for a SPECIFIC symbol-bar where the rejection occurred, dump the input values, and recompute them by hand from the raw 5m bar data. If they don't match → upstream bug, not gate-too-tight.
+3. **When the conclusion would trigger a retire/disable action**, the input-audit step is mandatory, not optional. "Retire setup X because gate Y rejected everything" is a destructive decision built on the assumption that the gate's *inputs* were correct.
+4. **In rejection-pattern responses to the user**, include the input-audit step in the analysis BEFORE the conclusion. Frame as: "Gate Y rejected with reason Z. Inputs to that gate look like [observed values]. Cross-check against [independent source] confirms / refutes the inputs. Therefore the gate is / isn't actually the bottleneck."
+5. **Add to any future paper-trade diagnostic script** (e.g. `tools/diagnose_silent_setups.sh`) a section that dumps the gate's input values per rejected symbol, not just the rejection_reason string.
+
+---
+
 ### 2026-05-29 (#21) — close_dn_overnight_long slot caps lifted for paper validation: MUST be restored before live cutover
 
 **What went wrong (preventive — captured before it could):**
