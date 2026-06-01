@@ -11,6 +11,21 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-06-01 (#23) — Cron-driven setups near 5m bar boundaries need a buffer for API bar-availability
+
+**What went wrong:** `close_dn_overnight_long`'s entry cron was scheduled at `25 15 * * 1-5` IST. The detector's active window is the 15:25 5m bar (covers 15:25-15:30 IST). When the cron fired at 15:25:00, the fetched bars from Upstox V3 intraday API only went up to 15:20 — the 15:25-timestamped bar wasn't yet exposed by the API. Every run rejected all candidates with `outside active window: 15:20 != 15:25`. The setup had never produced a real production fire in the ~3 days it had been deployed; the 5 fires the user remembered from 2026-05-29 were from a manual test run we'd kicked off several minutes after 15:25, not the scheduled cron.
+
+**Why:** Upstox V3 intraday API's "5m bars" endpoint reports the latest bar after its period has started accumulating, not at the boundary tick itself. Empirically verified 2026-06-01: at 15:25:00 the latest returned bar was 15:20:00; at 15:27:57 it was 15:25:00. So a cron that fires at exactly the same minute as the target bar will race the API exposure and see the prior bar instead. The detector code was written assuming "we have bars up through 15:25" but cron timing meant we actually had bars up through 15:20.
+
+**Rule:**
+1. **For any cron-driven detector whose active window is a single 5m bar, schedule the cron at least 2 minutes after the bar period starts.** For a 15:25 bar, schedule at 15:27 or later. For a 14:55 bar, 14:57 or later.
+2. **Document the delay in the cron script's header comment AND the crontab entry.** Future-you reading either should immediately understand "this is deliberate, not a quirk".
+3. **Before deploying a new cron-driven overnight/EOD setup, verify on production once with a non-trivial wallclock delay.** Don't trust the scheduled cron to "just work" until at least one real cron run has produced fires.
+4. **A manual test run at a "round" time (e.g. 15:32) is NOT validation of the scheduled cron at the boundary.** They exercise different timing paths. If memory says "the cron worked", check whether it was the SCHEDULED cron or a manual invocation.
+5. **The delay budget**: order placement must still finish before market close (15:30). For close_dn we use 15:27 → 3-minute buffer for fetch + signal + order. Tighter setups (e.g. 15:29) would risk MOC miss. If a setup needs the EXACT last-bar timing, the cron-based pattern is wrong — use a long-running process with a WebSocket feed instead.
+
+---
+
 ### 2026-06-01 (#22) — Audit input data BEFORE concluding from rejection patterns
 
 **What went wrong:** User reported "only gap_fade_short trading on paper, no other setups firing." After SSH-ing into the VM and reading `screening.jsonl`, I saw `or_window_failure_fade_short:vol_ratio=X outside cell band (8.0, 15.0]` repeated dozens of times with X in the 0.26-2.01 range, and concluded: "the cell-lock requires 8-15× baseline volume; today's max was 2.01×, the cell-lock is the bottleneck — matches the decay PAUSED status, retire the setup."

@@ -1,6 +1,14 @@
 #!/bin/bash
-# Triggered at 15:25 IST every weekday by cron.
+# Triggered at 15:27 IST every weekday by cron.
 # Runs the overnight setup entry handler: computes signal, places BUY, places AMO SELL.
+#
+# Why 15:27 and not 15:25? The setup's signal bar is 15:25 (covering
+# 15:25-15:30). Upstox's V3 intraday 5m endpoint doesn't expose the
+# 15:25-timestamped bar until ~2 min after the bar period starts —
+# at 15:25:00 the latest available bar is still 15:20. Running at
+# 15:27 gives Upstox time to surface the 15:25 bar (verified empirically
+# 2026-06-01). Still leaves 3 min before market close at 15:30 for the
+# paper BUY (live MOC SELL at close). See Lesson #23.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
