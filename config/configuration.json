@@ -310,7 +310,8 @@
       "wide_open": false
     },
     "circuit_t1_fade_short": {
-      "enabled": true,
+      "enabled": false,
+      "_status_2026_06_01_RETIRED": "Stage 14 retire in commit 0ae102b — was still flagged enabled=true so the detector kept loading a 6-symbol universe and consuming slots. Setting enabled=false to drop it from the live pipeline.",
       "mechanism_tags": [
         "SEBI_FO_rule_version_2"
       ],
