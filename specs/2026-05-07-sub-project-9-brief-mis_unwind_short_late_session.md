@@ -1,5 +1,17 @@
 # §3.3 Brief: `mis_unwind_short_late_session`
 
+> ## Phase 1 verdict (2026-06-01) — PROCEED to Phase 2 (with concerns)
+>
+> | Gate | Status | Notes |
+> |---|---|---|
+> | A (Indian-pro precedent) | **CONDITIONAL PASS** | Strong regulatory anchor (SEBI 15:20 mandate, Zerodha/Upstox/Angel auto-square SOPs, BSE margin specs). SEBI 2023/2024 retail F&O loss studies (89-91% loss rate, dominantly LONG) corroborate the asymmetry direction. **NO retail-algo platform operationalizes the SPECIFIC new mechanic in this brief** — predecessor `mis_unwind_short` (the 14:55-15:15 entry version) IS retail-published and arb'd out (Streak, TradingView India). This brief's "front-run the unwind, exit before squeeze" angle has no published retail-algo precedent. Per Lesson 2026-05-05 strict reading, no retail-algo precedent = Gate A fail; per the brief's "research the failure mode" angle, the lack of precedent is a feature. **CONDITIONAL PASS — proceed but downgrade confidence.**
+> | B (Data feasibility) | **PASS** | All required inputs on disk: 5m enriched feathers (yes), F&O 200 universe (yes), cap_segment lookup (yes), intraday VWAP + ret_3 computable (yes). Zero backfill cost. |
+> | Regulatory sensitivity | **LOW RISK** | SEBI 15:20 MIS auto-square mandate codified, stable since 2020. No 2024-26 cutover affects the underlying mechanism. BUT predecessor `mis_unwind_vwap_revert_short` was retired Oct 2025 due to SEBI F&O reforms — that retirement was driven by F&O lot-size + position-limit changes, not the auto-square mandate itself. The auto-square mandate is the load-bearing piece here, so SEBI F&O Oct 2025 impact is indirect. |
+> | n/yr screen | **CONCERN** | Brief estimates ~5 trades/month → ~60/yr in Discovery. **Same order of magnitude as just-killed `post_split_bonus_short` (~55-60/yr).** Today's Lesson #22 added n/yr to first-class gates. If Phase 2 confirms n ~60/yr, this candidate has the same operational-meaningfulness concern as the just-killed one. Acceptable IF per-trade edge is strong (>R 1.5 EV) AND the trades are calendar-driven (not slot-blocking). Verify in Phase 2. |
+> | Predecessor risk | **MEDIUM** | Prior `mis_unwind_short` (Sub7/8) failed at NET PF 0.355, n=304, WR 9.2%. Prior `mis_unwind_vwap_revert_short` (Sub-9) retired Oct 2025 (PF 0.751 in Holdout, regulatory regime decay). **Same setup-family has failed twice already** — this is the third attempt with a structurally different mechanic. Even if Phase 2 passes, Phase 4 sanity must explicitly verify symbol-set overlap with prior detectors is <60% (per brief §9 falsifier #4). |
+>
+> **Decision: PROCEED to Phase 2.** Cheap (~10 min compute, no data backfill). The combination of cheap Phase 2 + strongest-possible regulatory anchor + explicit failure-mode redesign justifies a Phase 2 spend even with the family-failure history. Expected outcome: 30-40% chance Phase 2 produces a tradable drift on the off-the-high cell; 60-70% chance it dies at Phase 2 with right-direction-wrong-magnitude or wrong-direction (similar to 5day_RSI cohort).
+
 **Sub-project:** #9 (microstructure-first redesign), Round-5
 **Status:** **DRAFT — awaiting user APPROVE/REJECT/RETIRE before sanity-check.**
 **Date:** 2026-05-07

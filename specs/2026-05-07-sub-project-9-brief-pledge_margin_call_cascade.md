@@ -1,5 +1,21 @@
 # §3.3 Brief: `pledge_margin_call_cascade_short`
 
+> ## Phase 1 verdict (2026-06-01) — **KILLED at Phase 1 (triple-flag: Gate B cost + n/yr + borrow risk)**
+>
+> | Gate | Status | Notes |
+> |---|---|---|
+> | A (Indian-pro precedent) | **CONDITIONAL** | Strong academic Indian-equity evidence (NIBM Pune working paper Singh & Singhvi 2019, IIM Bangalore Pandey & Prabhala 2017). Strong regulatory backing (SEBI LODR Reg 31, NSE high-pledge surveillance circulars — minimum 35% margin on stocks with >25% promoter pledge + >₹1,000cr market cap). Strong case-study evidence (Vakrangee -67% in 4d, Manpasand -50% in 2d, Coffee Day -65% on founder death, Reliance Capital, Future Retail). **BUT zero retail-algo platform operationalization** — the brief itself explicitly excludes retail-algo coverage. Per Lesson 2026-05-05 strict reading, no retail-MIS-scale precedent = Gate A fail. The "institutional mechanic" justification accepts academic + case-study evidence in lieu (circuit_t1_fade_short precedent). |
+> | B (Data feasibility) | **FAIL** | Pledge disclosure data NOT on disk. Backfill estimated **~2 engineering days**: NSE corporate filings + BSE pledge filings + Reg 30 material-event scraping + parser + classification + validation. Substantial investment BEFORE any sanity work. |
+> | Regulatory sensitivity | **LOW** | SEBI LODR Reg 31 codified, RBI margin caps stable. NSE surveillance circulars stable. Mechanism is regulator-anchored. |
+> | n/yr screen | **FAIL** | Brief estimates ~10-30 cascade events/year per Indian-market event-study coverage. 2yr Discovery → 20-60 events. Post-gating likely **<30 trades over 2yr** = ~10-15/yr. **Much worse than just-killed `post_split_bonus_short` (~60/yr).** Today's Lesson #22 raises the bar; this candidate has the same operational concern as post_split_bonus AND lower expected n. |
+> | Borrow availability | **FAIL** | Brief explicitly flags this: high-pledge cascading names often hit F&O ban-period or have no SLB borrow during a cascade — SHORT becomes UNTRADEABLE precisely when the signal fires. Brief's own kill criterion: "If >40% of historical events would have been unborrowable, the live setup is non-tradeable; retire." Realistic estimate: >40% borrow-failure on cascading names (NSE F&O ban-period activations are systematic on pledge cascades — Vakrangee, Manpasand, Future Retail all hit F&O ban during their cascades). |
+>
+> **Decision: KILL at Phase 1.** Three independent failures: (a) Gate B requires 2-day data backfill investment that would be wasted if n/yr or borrow issues kill at Phase 2, (b) n/yr expected at ~10-15/yr is below the post_split_bonus_short kill threshold from today, (c) borrow availability likely fails on >40% of historical events. The mechanism is real (Vakrangee/Manpasand/Coffee Day cascades are documented), but the COMBINATION of data cost + low n + non-tradeability makes the engineering investment unjustified.
+>
+> **Revival conditions:** (1) SEBI surveillance database becomes publicly queryable (eliminates 2-day backfill); OR (2) cash-equity SHORT borrow availability improves materially (e.g., NSE expands SLB tier to high-pledge names); OR (3) a related candidate validates the same family of post-event-fade shorts on a higher-frequency variant (e.g., generic margin-call-cascade detector that doesn't require pledge-specific filings).
+>
+> Brief retained as negative knowledge — mechanism documented, kill rationale captured for future revival decisions.
+
 **Sub-project:** #9 (microstructure-first redesign) — Round-5 candidate
 **Status:** DRAFT — pending §3.3 sanity-check feasibility (data + n-floor)
 **Date:** 2026-05-07
