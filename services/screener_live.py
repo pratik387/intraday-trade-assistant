@@ -1466,6 +1466,27 @@ class ScreenerLive:
                     today_ts = pd.Timestamp(now).normalize() if now else None
                     api_ok, api_fail, warmup_used = 0, 0, 0
 
+                    # Ground-truth diagnostic: what did the SDK actually return?
+                    # Speculation about silent-failure paths in async_fetch_intraday_5m_batch
+                    # keeps missing — log the shape distribution directly.
+                    _shape_counts: Dict[str, int] = {}
+                    _sample_short: List[str] = []
+                    for _sym, _v in raw_api.items():
+                        if _v is None:
+                            _shape_counts["None"] = _shape_counts.get("None", 0) + 1
+                        elif hasattr(_v, "__len__"):
+                            _n = len(_v)
+                            _key = f"df_len={_n}"
+                            _shape_counts[_key] = _shape_counts.get(_key, 0) + 1
+                            if _n < 3 and len(_sample_short) < 3:
+                                _sample_short.append(f"{_sym}:n={_n}")
+                        else:
+                            _shape_counts[type(_v).__name__] = _shape_counts.get(type(_v).__name__, 0) + 1
+                    logger.info(
+                        "API_5M_RAW | raw_api_len=%d req=%d | shape_dist=%s | short_samples=%s",
+                        len(raw_api), len(fetch_symbols), _shape_counts, _sample_short,
+                    )
+
                     for sym, df_api in raw_api.items():
                         if df_api is not None and len(df_api) >= min_bars_for_processing:
                             warmup = self._api_warmup_cache.get(sym)

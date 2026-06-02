@@ -771,7 +771,19 @@ class UpstoxDataClient:
                     await asyncio.sleep(0.5 + 0.4 * attempt)
                     continue
 
-                candles = body.get("data", {}).get("candles", [])
+                # Defensive candle extraction. Upstox can return:
+                #   - {"data": {"candles": [...]}}  -> normal case
+                #   - {"data": {"candles": []}}     -> stock has no bars yet (early in day)
+                #   - {"data": null}                -> stock has never traded today (common for
+                #                                     illiquid stocks at 09:22 when fetched for
+                #                                     09:15 bar). `body.get("data", {})` returns
+                #                                     `None` (the value, not the default), and
+                #                                     `None.get("candles", [])` raises
+                #                                     AttributeError -- previously silent.
+                # The `or {}` collapses None to {} so both null-data and missing-data
+                # cases fall through cleanly to `n_empty_candles`.
+                _data = body.get("data") if isinstance(body, dict) else None
+                candles = (_data or {}).get("candles", []) if isinstance(_data, dict) else []
                 if not candles:
                     n_empty_candles += 1
                     return
