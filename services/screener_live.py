@@ -1497,7 +1497,9 @@ class ScreenerLive:
                             f"empty={diag.get('n_empty_candles', 0)} "
                             f"timeout={diag.get('n_timeout', 0)} "
                             f"conn_err={diag.get('n_conn_err', 0)} "
-                            f"other_exc={diag.get('n_other_exc', 0)}"
+                            f"other_exc={diag.get('n_other_exc', 0)} "
+                            f"429_exhausted={diag.get('n_429_exhausted', 0)} "
+                            f"UNACCOUNTED={diag.get('n_unaccounted', 0)}"
                         )
                         if diag.get("sample_400_url"):
                             diag_info += f" | sample_400={diag['sample_400_url']}"
@@ -1505,6 +1507,8 @@ class ScreenerLive:
                             diag_info += f" | sample_5xx={diag['sample_5xx']}"
                         if diag.get("sample_exc"):
                             diag_info += f" | sample_exc={diag['sample_exc']}"
+                        if diag.get("sample_429_url"):
+                            diag_info += f" | sample_429={diag['sample_429_url']}"
                     logger.info(
                         "API_5M_FETCH | %d ok, %d failed of %d symbols | %.1fs (async, %s RPS) | warmup: %d/%d%s%s",
                         api_ok, api_fail, len(fetch_symbols), _t_api_elapsed,

@@ -664,21 +664,35 @@ class UpstoxDataClient:
         retries_429 = 0
         # Failure-mode counters — surfaced via _last_batch_diag so callers
         # can see *why* a batch failed instead of getting a silent zero.
+        # Every code path that returns without storing a result MUST
+        # increment exactly one counter. The n_unaccounted line at the
+        # bottom of the function asserts this invariant — any non-zero
+        # value is a diagnostic-counter bug, not a network error.
         n_400 = 0
-        n_5xx = 0
+        n_5xx_exhausted = 0       # final-attempt 5xx (also counted on first hit)
+        n_5xx_first = 0           # first-attempt 5xx (may resolve on retry)
         n_other_http = 0
         n_empty_candles = 0
-        n_timeout = 0
-        n_conn_err = 0
-        n_other_exc = 0
+        n_timeout_exhausted = 0   # final-attempt timeout
+        n_timeout_first = 0       # first-attempt timeout
+        n_conn_err_exhausted = 0
+        n_conn_err_first = 0
+        n_other_exc_exhausted = 0
+        n_other_exc_first = 0
+        n_429_exhausted = 0       # all 3 attempts hit 429 — PREVIOUSLY silent
         sample_400_url: Optional[str] = None
-        sample_5xx: Optional[str] = None  # "{status}: {body[:120]}"
-        sample_exc: Optional[str] = None  # "{ExcType}: {str(e)[:120]}"
+        sample_5xx: Optional[str] = None
+        sample_exc: Optional[str] = None
+        sample_429_url: Optional[str] = None
 
         async def _fetch_one(session: aiohttp.ClientSession, sym: str, url: str):
-            nonlocal retries_429, n_400, n_5xx, n_other_http, n_empty_candles
-            nonlocal n_timeout, n_conn_err, n_other_exc
-            nonlocal sample_400_url, sample_5xx, sample_exc
+            nonlocal retries_429, n_400, n_other_http, n_empty_candles
+            nonlocal n_5xx_first, n_5xx_exhausted
+            nonlocal n_timeout_first, n_timeout_exhausted
+            nonlocal n_conn_err_first, n_conn_err_exhausted
+            nonlocal n_other_exc_first, n_other_exc_exhausted
+            nonlocal n_429_exhausted
+            nonlocal sample_400_url, sample_5xx, sample_exc, sample_429_url
             for attempt in range(3):
                 try:
                     async with sem:
@@ -688,6 +702,15 @@ class UpstoxDataClient:
                             ) as resp:
                                 if resp.status == 429:
                                     retries_429 += 1
+                                    if attempt == 2:
+                                        # Previously silent — all 3 attempts
+                                        # rate-limited, returned None with no
+                                        # counter increment. This is the
+                                        # "unaccounted failures" leak.
+                                        n_429_exhausted += 1
+                                        if sample_429_url is None:
+                                            sample_429_url = url
+                                        return
                                     await asyncio.sleep(2 ** (attempt + 1))
                                     continue
                                 if resp.status == 400:
@@ -698,7 +721,7 @@ class UpstoxDataClient:
                                     return
                                 if 500 <= resp.status < 600:
                                     if attempt == 0:
-                                        n_5xx += 1
+                                        n_5xx_first += 1
                                         if sample_5xx is None:
                                             try:
                                                 body_txt = (await resp.text())[:120]
@@ -706,36 +729,44 @@ class UpstoxDataClient:
                                                 body_txt = ""
                                             sample_5xx = f"{resp.status}: {body_txt}"
                                     if attempt == 2:
+                                        n_5xx_exhausted += 1
                                         return
                                     await asyncio.sleep(0.5 + 0.4 * attempt)
                                     continue
                                 if resp.status >= 400:
+                                    # Any non-2xx, non-4xx-specific, non-5xx
+                                    # status — currently only attempt 0 counted.
+                                    # In practice this branch covers 3xx
+                                    # redirects which are rare on this API.
                                     if attempt == 0:
                                         n_other_http += 1
                                     return
                                 body = await resp.json()
                 except asyncio.TimeoutError:
                     if attempt == 0:
-                        n_timeout += 1
+                        n_timeout_first += 1
                     if attempt == 2:
+                        n_timeout_exhausted += 1
                         return
                     await asyncio.sleep(0.5 + 0.4 * attempt)
                     continue
                 except aiohttp.ClientConnectorError as e:
                     if attempt == 0:
-                        n_conn_err += 1
+                        n_conn_err_first += 1
                         if sample_exc is None:
                             sample_exc = f"ClientConnectorError: {str(e)[:120]}"
                     if attempt == 2:
+                        n_conn_err_exhausted += 1
                         return
                     await asyncio.sleep(0.5 + 0.4 * attempt)
                     continue
                 except Exception as e:
                     if attempt == 0:
-                        n_other_exc += 1
+                        n_other_exc_first += 1
                         if sample_exc is None:
                             sample_exc = f"{type(e).__name__}: {str(e)[:120]}"
                     if attempt == 2:
+                        n_other_exc_exhausted += 1
                         return
                     await asyncio.sleep(0.5 + 0.4 * attempt)
                     continue
@@ -765,28 +796,52 @@ class UpstoxDataClient:
             tasks = [_fetch_one(session, sym, url) for sym, url in sym_to_url.items()]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Store counts for caller visibility (screener logs them)
+        # Store counts for caller visibility (screener logs them).
+        # Total accounted-for failures = sum of every terminal-return path.
+        # n_unaccounted should be zero — any non-zero is a counter bug
+        # (silent failure path) NOT a network anomaly.
+        n_failed_total = len(sym_to_url) - len(results)
+        n_accounted = (
+            n_400 + n_5xx_exhausted + n_other_http + n_empty_candles
+            + n_timeout_exhausted + n_conn_err_exhausted + n_other_exc_exhausted
+            + n_429_exhausted
+        )
+        n_unaccounted = n_failed_total - n_accounted
         self._last_batch_429s = retries_429
         self._last_batch_diag = {
             "n_400": n_400,
-            "n_5xx": n_5xx,
+            "n_5xx": n_5xx_exhausted,
+            "n_5xx_first": n_5xx_first,
             "n_other_http": n_other_http,
             "n_empty_candles": n_empty_candles,
-            "n_timeout": n_timeout,
-            "n_conn_err": n_conn_err,
-            "n_other_exc": n_other_exc,
+            "n_timeout": n_timeout_exhausted,
+            "n_timeout_first": n_timeout_first,
+            "n_conn_err": n_conn_err_exhausted,
+            "n_conn_err_first": n_conn_err_first,
+            "n_other_exc": n_other_exc_exhausted,
+            "n_other_exc_first": n_other_exc_first,
+            "n_429_exhausted": n_429_exhausted,
+            "n_unaccounted": n_unaccounted,
             "sample_400_url": sample_400_url,
             "sample_5xx": sample_5xx,
             "sample_exc": sample_exc,
+            "sample_429_url": sample_429_url,
         }
 
-        if retries_429 > 0 or n_400 or n_5xx or n_other_http or n_timeout or n_conn_err or n_other_exc:
+        if n_failed_total > 0 or retries_429 > 0:
             logger.warning(
-                "ASYNC_5M | batch n=%d ok=%d | 429_retries=%d 400=%d 5xx=%d other_http=%d "
-                "empty=%d timeout=%d conn_err=%d other_exc=%d | sample_400=%s sample_5xx=%s sample_exc=%s",
-                len(sym_to_url), len(results), retries_429, n_400, n_5xx, n_other_http,
-                n_empty_candles, n_timeout, n_conn_err, n_other_exc,
-                sample_400_url, sample_5xx, sample_exc,
+                "ASYNC_5M | batch n=%d ok=%d failed=%d | 429_retries=%d 429_exhausted=%d "
+                "400=%d 5xx=%d (first=%d) other_http=%d empty=%d "
+                "timeout=%d (first=%d) conn_err=%d (first=%d) other_exc=%d (first=%d) "
+                "UNACCOUNTED=%d | sample_400=%s sample_5xx=%s sample_exc=%s sample_429=%s",
+                len(sym_to_url), len(results), n_failed_total,
+                retries_429, n_429_exhausted,
+                n_400, n_5xx_exhausted, n_5xx_first, n_other_http, n_empty_candles,
+                n_timeout_exhausted, n_timeout_first,
+                n_conn_err_exhausted, n_conn_err_first,
+                n_other_exc_exhausted, n_other_exc_first,
+                n_unaccounted,
+                sample_400_url, sample_5xx, sample_exc, sample_429_url,
             )
 
         return results
