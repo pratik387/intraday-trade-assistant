@@ -465,6 +465,20 @@ def run_verify_exit(
                 slot.slot_id, expected_exit, today,
             )
             continue
+        if today > expected_exit:
+            # Stale slot: expected_exit was a PRIOR session that this cron
+            # missed (e.g. paper-mode bug, holiday gap, cron-skip). Settling
+            # here would use TODAY's 09:15 fill price instead of the actual
+            # exit day's 09:15 — silently mis-prices the trade. Flag as orphan
+            # and skip so it's surfaced for manual resolution / historical-
+            # fetch rebuild (see Task #73).
+            logger.warning(
+                "run_verify_exit: slot %d STALE (expected_exit=%s < today=%s) -- "
+                "orphan, requires manual settlement at correct historical price",
+                slot.slot_id, expected_exit, today,
+            )
+            summary["orphan_t0_count"] += 1
+            continue
         if slot.buy_fill_price is None or slot.notional_inr <= 0:
             logger.warning(
                 "run_verify_exit: slot %d missing buy_fill_price/notional -- orphan",
