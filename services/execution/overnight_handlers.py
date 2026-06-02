@@ -831,10 +831,26 @@ def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str) -> str:
 def _today_5m(broker, symbol: str) -> Optional[pd.DataFrame]:
     """Return today's 5m bars from the broker's live API (paper-live mode).
 
-    Falls back to the archive only when running under DRY_RUN. Returns None
-    on any error / missing data — callers handle the None case.
+    Falls back to the archive only when running under DRY_RUN (true backtest).
+    Returns None on any error / missing data — callers handle the None case.
+
+    NOTE on the is_dry_run check: paper-trading cron passes
+    `--session-date $(date +%F)` to anchor "today" without wall-clock
+    dependency, which sets MockBroker._dry_session_date. So we MUST NOT
+    use that attribute as the dry-run proxy — env.DRY_RUN is the
+    canonical signal for true backtest mode. The earlier implementation
+    used the attribute and silently broke paper-mode settlement (LAL +
+    PCJEWELLER stuck on 2026-06-02 verify-exit — paper fill unavailable
+    despite the data being available via Upstox).
     """
-    is_dry_run = getattr(broker, "_dry_session_date", None) is not None
+    try:
+        from config.env_setup import env
+        is_dry_run = bool(getattr(env, "DRY_RUN", False))
+    except Exception:
+        # If env import fails, fall back to the (less accurate) attribute
+        # check rather than blocking the live path.
+        is_dry_run = getattr(broker, "_dry_session_date", None) is not None
+
     if hasattr(broker, "get_intraday_5m") and not is_dry_run:
         try:
             df = broker.get_intraday_5m(symbol)
