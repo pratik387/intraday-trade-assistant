@@ -200,15 +200,12 @@ class OCIBacktestSubmitter:
             # works in OCI even when wide_open_mode=false.
             'models/conviction/*.json',
             'analysis/edge_discovery_runs/**/stage6_validation_survivors.json',
-            # MIS-short eligibility map (broker intraday leverage>1) for
-            # up_spike_fade_short's universe gate. WITHOUT bundling these, the
-            # OCI container has no map -> _load_mis_short_eligibility returns {}
-            # -> require_short_eligibility_map=true fail-closes -> up_spike
-            # universe=0 -> ZERO up_spike fires (root cause of the empty up_spike
-            # in the 20260603-* OCI full runs). Primary (live daily refresh) +
-            # backtest fallback (research snapshot). Tiny (~16-30KB).
-            'data/mis_short_eligibility/*.json',
-            'reports/sub9_research/t1_short_mis_eligibility.json',
+            # NOTE: the MIS-short eligibility map (data/mis_short_eligibility/
+            # latest.json) for up_spike_fade_short is a CACHE/data file, not code.
+            # It is provisioned to OCI like delivery_pct / cross_day_rvol — via
+            # oci/tools/upload_mis_short_eligibility.py -> OCI_BUCKET_CACHE and
+            # oci/docker/entrypoint.py::download_mis_short_eligibility(), NOT
+            # bundled here (would be a second provisioning path).
         ]
 
         tarball_path = temp_dir / 'code.tar.gz'

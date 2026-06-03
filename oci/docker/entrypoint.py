@@ -216,6 +216,52 @@ def download_delivery_pct():
             log(f"ERROR downloading {object_name}: {e}")
 
 
+def download_mis_short_eligibility():
+    """Download the MIS-short eligibility map (broker intraday leverage>1) for
+    up_spike_fade_short's universe gate.
+
+    Small JSON (~30 KB) at `mis_short_eligibility/latest.json`. Built locally by
+    jobs/refresh_mis_short_eligibility.py (daily Kite order_margins sweep) and
+    uploaded via oci/tools/upload_mis_short_eligibility.py. Consumed by
+    services/setup_universe.py::up_spike_fade_short_universe (admits only
+    symbols with broker intraday SELL/MIS leverage > 1).
+
+    If absent, up_spike_fade_short_universe fail-closes to an EMPTY universe
+    (require_short_eligibility_map=true) -> zero up_spike fires. Logged at
+    warning; panic_crash_revert_long is unaffected (no eligibility dependency).
+    """
+    log("Downloading MIS-short eligibility map for up_spike_fade_short...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    object_name = "mis_short_eligibility/latest.json"
+    local_dir = Path('/app/data/mis_short_eligibility')
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_file = local_dir / "latest.json"
+
+    try:
+        get_obj = os_client.get_object(
+            namespace_name=namespace,
+            bucket_name=bucket,
+            object_name=object_name,
+        )
+        with open(local_file, 'wb') as f:
+            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                f.write(chunk)
+        size_kb = local_file.stat().st_size / 1024
+        log(f"Downloaded {object_name}: {size_kb:.1f} KB")
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            log(f"WARNING: {object_name} not found in OCI cache; "
+                "up_spike_fade_short universe fail-closes to empty (zero fires). "
+                "Run oci/tools/upload_mis_short_eligibility.py to upload.")
+        else:
+            log(f"ERROR downloading {object_name}: {e}")
+
+
 def download_cross_day_rvol():
     """Look up the precomputed cross-day RVOL baseline parquet from OCI cache.
 
@@ -680,6 +726,11 @@ def main():
     # bars for the in-detector RVOL calculation. Detector rejects with
     # "cross-day RVOL unavailable" if absent — every signal blocked.
     download_cross_day_rvol()
+
+    # Download MIS-short eligibility map (broker leverage>1) for
+    # up_spike_fade_short's universe gate (~30 KB). Universe fail-closes to
+    # empty (zero up_spike fires) if absent.
+    download_mis_short_eligibility()
 
     # Run backtest
     result = run_backtest(date_str)
