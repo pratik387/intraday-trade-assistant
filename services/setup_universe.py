@@ -28,6 +28,15 @@ from typing import Any, Dict, Optional, Set
 
 import pandas as pd
 
+# Repo root, so config-relative data paths (e.g. the MIS-short eligibility map)
+# resolve regardless of the run harness's cwd. The full-backtest harness
+# (tools/_gen_full.py) runs main.py from a different cwd than a repo-root
+# dry-run; a bare relative path silently missed there -> fail-closed ->
+# up_spike_fade_short universe=0 in the OCI full run while a repo-root
+# single-day run loaded it fine (Lesson #26: relative paths in config are
+# cwd-fragile; resolve against repo root).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
 logger = logging.getLogger(__name__)
 
 # Tunable safety cap on the union. Stage-0 cap is 1000 (500 long + 500 short).
@@ -508,8 +517,11 @@ def _load_mis_short_eligibility(config: Dict[str, Any]) -> Dict[str, float]:
     Returns {} if neither file is present (caller treats empty map as "gate
     open" only in backtest — see up_spike_fade_short_universe).
     """
-    primary = Path(str(config["mis_short_eligibility_path"]))
-    fallback = Path(str(config["mis_short_eligibility_fallback_path"]))
+    def _resolve(pth: str) -> Path:
+        p = Path(str(pth))
+        return p if p.is_absolute() else (_REPO_ROOT / p)
+    primary = _resolve(config["mis_short_eligibility_path"])
+    fallback = _resolve(config["mis_short_eligibility_fallback_path"])
     for p in (primary, fallback):
         if not p.exists():
             continue
