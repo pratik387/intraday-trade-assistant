@@ -214,6 +214,9 @@ _STRUCTURE_TO_SETUP_TYPE: dict[str, str] = {
     "delivery_pct_anomaly_short": "delivery_pct_anomaly_short",
     "long_panic_gap_down": "long_panic_gap_down",
     "or_window_failure_fade_short": "or_window_failure_fade_short",
+    # Sub-9 illiquid over-extension -> reversion family
+    "panic_crash_revert_long": "panic_crash_revert_long",
+    "up_spike_fade_short": "up_spike_fade_short",
 }
 
 

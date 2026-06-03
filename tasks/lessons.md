@@ -11,6 +11,49 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-06-03 (#26) — A cap/segment filter that reads `caps.get(bare_symbol)` on a nested/prefixed JSON is a SILENT no-op — always print the post-filter distribution
+
+**What went wrong:** Across all the spike/crash research (T1/T5 cell-mine, OOS/HO validation, parity checks) I loaded `caps = json.load(cap_segments_latest.json)` then filtered with `caps.get(sym, "unknown")`. But that file nests the map under a `"classification"` key whose keys are `"NSE:SYMBOL"` — so `caps.get("RADHIKAJWE")` returned `None` for EVERY symbol, defaulting everything to `"unknown"`. My `ILLIQ={"small_cap","micro_cap","unknown"}` filter was therefore a **complete no-op**: the research universe was "all caps with ≥₹1.5cr turnover," not `{small,micro,unknown}`. The user caught it by questioning why the universe was "1,600+ small/micro/unknown" — it wasn't; genuine small+micro is ~490, the rest is the `unknown` default. (Earlier I'd half-seen this — dropping `unknown` gave n=0 — and wrongly attributed it to "the snapshot doesn't classify 2023-24 names" instead of "my lookup is broken.")
+
+**Why it was nearly invisible:** the no-op *included* the intended cohort (just also included mid/large), and production's `get_cap_segment` (which normalizes properly) filters correctly — so production was always right; only my research scripts were wrong. Re-validating on the proper `{small,micro,unknown}` universe showed the edge held (mid/large were 2-8% of signals), so the bug was benign *this time*. It might not be next time.
+
+**Rule:**
+1. **Never trust a filter you didn't measure.** After any cap/segment/universe filter, immediately `print(Counter(post_filter_values))` (or `df.shape` before/after). If a 5-way cap filter yields one bucket at 100%, the lookup is broken.
+2. **Use the production accessor, not ad-hoc JSON reads.** For cap, call `services.symbol_metadata.get_cap_segment("NSE:"+bare)` (handles nesting + `NSE:` prefix + `.NS` suffix). Don't re-implement the lookup in research scripts — that's how research/production drift starts (Lesson #16/#18).
+3. **Verify research universe == production universe with the REAL production source.** Production builds `daily_dict` from the live daily cache (`cache/daily_cache/*.pkl`, ~1,255 illiquid names on the VM), NOT `consolidated_daily.feather` (~1,679). Intersect validated signal symbols with the *live* universe and require ≥80% (Lesson #16). Spike 98% / panic 83% — both passed, but only checked because the user pushed on universe size.
+4. **`nse_all.mis_enabled` is uniformly True (2333/2333) — it is NOT a tradability discriminator.** Real MIS-short eligibility = Kite `order_margins` `leverage > 1` (the leverage map), not `mis_enabled`.
+
+---
+
+### 2026-06-03 (#25) — Phase-2 intraday signatures must use CAUSAL trailing volume, not the whole-day mean
+
+**What went wrong:** Drafting the Batch-A spike signatures (T1 up-spike fade, T5 down-spike bounce), I qualified a "volume burst" bar with `v[i] >= 2*av` where `av` was the **whole-day mean volume** (`groupby(['symbol','day'])['volume'].transform('mean')`). That mean includes bars *after* `i` — pure look-ahead. It inflated T1's Discovery drift ~40% (+0.436% → +0.262% once fixed) and flipped T1 from "net-positive at 0.10%" to "net-negative at 0.30%". I caught it myself before reporting, but only after first writing it down as a provisional PASS.
+
+**Why:** `transform('mean')`/`transform('last')` over a (symbol,day) group is convenient and reads as innocent, but any per-bar *gate* that compares the current bar to a group-wide aggregate is using the future. Exit anchors (`eod = transform('last')`) are fine — you're allowed to know the close for a hold-to-EOD horizon. Entry **gates** are not.
+
+**Rule:**
+1. In any intraday signature, an entry-gate statistic (volume baseline, ATR, range, VWAP) MUST be built from **prior bars only** — causal. Vectorized form: `tav = (g['volume'].cumsum() - g['volume']) / g.cumcount()` (mean of strictly-prior bars), or a `rolling(window).mean().shift(1)`. Never `transform('mean')` for a gate.
+2. Exit/label anchors (hold-to-EOD close, hold-to-T+N) may use forward data — that's the horizon, not look-ahead. Keep gates and labels mentally separate.
+3. After any first-pass signature "PASS", re-read every `transform(...)` and every full-group aggregate and ask "does an entry decision touch this?" before calling it a candidate.
+4. Performance corollary: the per-`(symbol,day)` Python loop that tempted the shortcut is also what hung Batch A twice. Vectorize with `groupby` + `cumsum`/`cumcount`/`drop_duplicates`; never loop 500k groups in Python.
+
+---
+
+### 2026-06-02 (#24) — "Independent research" means UNCONSTRAINED — don't pre-load it with the system's limitations
+
+**What went wrong:** User asked for "complete independent research on what all algo traders trade on... be the research God." I ran the deep-research harness but stuffed the prompt full of the system's constraints (cash-equity only, intraday, illiquid universe, "here's what's already dead," the recurring killers) AND tagged every finding with a feasibility verdict for THIS system. Then I kept collapsing every result back to "feasible for your setup / is this intraday." User: "what part of complete independent research did u not understand" — correctly furious. I boxed the entire inquiry inside the exact limitations the user was trying to escape, and the 6-angle / 25-claim run wasn't "comprehensive" either.
+
+**Why:** I conflated "research that serves this system" with "research framed by this system's constraints." Independence means surveying the whole landscape on its own terms first; the researcher (user) decides relevance. Pre-filtering by feasibility is a SECOND, SEPARATE step — and doing it inside the research prompt anchors and shrinks the entire result. It also made me over-assert ("the evidence says intraday is exhausted") on the back of a constrained, shallow run — which my own triage contradicted (the 22 died mostly from data/frequency/regulatory walls, not "arbed").
+
+**Rule:**
+1. **"Independent" / "comprehensive" research = NO constraint injection.** Don't mention the user's market, instrument, capital, data-on-disk, or prior dead-ends in the research prompt. Survey the full universe on its own terms.
+2. **Feasibility mapping is a separate, later, opt-in pass** — only after the independent landscape is delivered and the user has seen it. Never fold it into the research itself.
+3. **Scale to the word used.** "Be the research God / as comprehensive as it can get" = many domains, deep fan-out — not a 5-angle / 25-claim single pass. Use a fixed comprehensive taxonomy so coverage is guaranteed, not left to a thin decomposition.
+4. **Match model to task to control cost** (user also flagged this same session): fan-out search/fetch/verify subagents on Haiku, synthesis on Sonnet, judgment/interpretation on the main (Opus) loop. A 100+-agent run must not bill at Opus rates.
+5. **Don't inflate a constrained/shallow result into a sweeping claim.** "The evidence says X is exhausted" requires evidence that actually swept X — not three measurements + a feasibility-boxed survey.
+
+---
+
 ### 2026-06-01 (#23) — Cron-driven setups near 5m bar boundaries need a buffer for API bar-availability
 
 **What went wrong:** `close_dn_overnight_long`'s entry cron was scheduled at `25 15 * * 1-5` IST. The detector's active window is the 15:25 5m bar (covers 15:25-15:30 IST). When the cron fired at 15:25:00, the fetched bars from Upstox V3 intraday API only went up to 15:20 — the 15:25-timestamped bar wasn't yet exposed by the API. Every run rejected all candidates with `outside active window: 15:20 != 15:25`. The setup had never produced a real production fire in the ~3 days it had been deployed; the 5 fires the user remembered from 2026-05-29 were from a manual test run we'd kicked off several minutes after 15:25, not the scheduled cron.

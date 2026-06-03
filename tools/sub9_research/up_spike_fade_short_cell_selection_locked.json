@@ -1,0 +1,32 @@
+{
+  "setup_name": "up_spike_fade_short",
+  "locked_on": "Discovery 2023-2024 only (selection pretended OOS/HO did not exist)",
+  "lock_date": "2026-06-03",
+  "side": "SHORT",
+  "instrument": "MIS intraday, hold-to-EOD",
+  "pre_registered_dimensions": ["spike_magnitude(r3)", "time_of_day", "volume_burst"],
+  "cell": {
+    "trailing_3bar_return_min": 0.055,
+    "volume_burst_min": 5.0,
+    "volume_burst_def": "current bar volume / causal trailing-mean bar volume (mean of strictly-prior bars that day)",
+    "time_window_ist": ["09:45", "14:00"],
+    "min_bars_before_signal": 6,
+    "cap_segment_in": ["small_cap", "micro_cap", "unknown"],
+    "per_day_turnover_floor_inr": 15000000,
+    "mis_short_eligibility": "broker intraday leverage > 1 (order_margins leverage field; NOT order_margins status which is non-discriminating)",
+    "entry": "next 5m bar open (Mode B)",
+    "exit": "EOD square-off",
+    "latch": "one entry per (symbol, day), first qualifying spike"
+  },
+  "discovery_metrics_net_0.30pct": {"n": 1407, "net_pct": 0.402, "PF": 1.29, "hit": 0.58, "pos_months": "17/24"},
+  "oos_2025_metrics": {"n": 492, "net_pct": 0.593, "PF": 1.44, "hit": 0.62, "pos_months": "6/9"},
+  "holdout_metrics": {"n": 403, "net_pct": 1.165, "PF": 1.98, "hit": 0.64, "pos_months": "6/7"},
+  "disc_oos_combined_ship_gate": {"n": 1899, "PF": 1.33, "gate": "n>=200 & PF>=1.20 PASS"},
+  "oos_ho_pooled": {"n": 895, "net_pct": 0.851, "PF": 1.66, "ci95": [0.569, 1.130], "p_net_gt_0": 1.0},
+  "caveats": [
+    "HO spans war-vol-2026; PF 1.98 likely regresses toward OOS/Disc ~1.3-1.44 forward (but 6/7 +months => not war-only).",
+    "Shortability uses current leverage applied to historical signals (delisting survivorship in leverage=0 bucket).",
+    "Research signature (EOD hold, no SL/T2). Full Stage-4/5 sanity (R-multiple sweep + sanity_csv_schema + cell_sweep.py) still owed before structure code.",
+    "Shared OCI-pipeline cap=unknown coverage gate #0 (verify backtest pipeline fires historically)."
+  ]
+}

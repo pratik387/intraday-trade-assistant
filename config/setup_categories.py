@@ -59,6 +59,13 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     # same-time-of-day volume in afternoon. Paper-trade validation phase; ships
     # live-disabled with paper_enabled=true. See specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md.
     "below_vwap_volume_revert": SetupCategory.REVERSION,
+
+    # 2026-06-03: deep illiquid intraday over-extension fades (both directions).
+    # LONG bounce off a >=7% crash; SHORT fade of a >=5.5% spike on a >5x volume
+    # blowoff. Both ship disabled pending OCI-coverage + paper. Base names (suffix
+    # stripped by get_base_setup_name). Specs: specs/2026-06-03-brief-*.md.
+    "panic_crash_revert": SetupCategory.REVERSION,
+    "up_spike_fade": SetupCategory.REVERSION,
 }
 
 

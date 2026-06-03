@@ -261,7 +261,15 @@ def gap_fade_universe(
     min_gap_pct = float(config.get("min_gap_pct_above_pdc", 1.5)) / 100.0
     max_gap_pct = float(config.get("max_gap_pct_above_pdc", 8.0)) / 100.0
 
-    qual: Set[str] = set()
+    # Illiquidity filter (pre-reg specs/2026-06-03-gap_fade_short-illiquidity-filter-prereg.md):
+    # gap_fade's fade edge concentrates in illiquid small-caps (illiquid-tertile PF ~2.0-3.7
+    # vs liquid ~1.0, validated Disc/OOS/HO on OCI). Drift-robust: keep the bottom ADV-quantile
+    # among THIS session's gappers. DEFAULT OFF (quantile 1.0 = keep all) until paper A/B
+    # promotes it (set illiquid_filter_enabled=true + illiquid_adv_quantile=0.33).
+    illiquid_enabled = bool(config.get("illiquid_filter_enabled", False))
+    illiquid_q = float(config.get("illiquid_adv_quantile", 1.0))
+
+    cands: list = []  # (sym, adv20_turnover) for qualifying gappers
     for sym, df5 in df5_today_by_symbol.items():
         if df5 is None or df5.empty:
             continue
@@ -284,12 +292,39 @@ def gap_fade_universe(
         if pdc <= 0:
             continue
         gap = (today_open - pdc) / pdc
-        if min_gap_pct <= gap <= max_gap_pct:
-            qual.add(sym)
-            if len(qual) >= MAX_EXTRA_PER_SETUP:
-                break
-    logger.info("setup_universe.gap_fade: %d qualifying gappers on %s",
-                len(qual), session_date)
+        if not (min_gap_pct <= gap <= max_gap_pct):
+            continue
+        # Trailing-20d ADV (turnover) from daily_dict (rows already < session_date — no look-ahead).
+        # Guard short history (<21 rows) and missing/zero volume — those would yield a
+        # spuriously tiny ADV and look "most illiquid", so set NaN to exclude from the filter.
+        try:
+            if len(ddf) >= 21 and "volume" in ddf.columns:
+                tail = ddf.tail(20)
+                adv20 = float((tail["close"] * tail["volume"]).mean())
+                if not (adv20 > 0.0):
+                    adv20 = float("nan")
+            else:
+                adv20 = float("nan")
+        except Exception:
+            adv20 = float("nan")
+        cands.append((sym, adv20))
+
+    if illiquid_enabled and 0.0 < illiquid_q < 1.0:
+        advs = [a for _, a in cands if a == a]  # finite only
+        if advs:
+            thr = float(pd.Series(advs).quantile(illiquid_q))  # pd already imported; no hot-path numpy import
+            cands = [(s, a) for (s, a) in cands if (a == a and a <= thr)]
+            # Deterministic cap: sort most-illiquid first so the MAX_EXTRA_PER_SETUP
+            # truncation is reproducible live vs backtest regardless of symbol arrival order.
+            cands.sort(key=lambda sa: sa[1])
+
+    qual: Set[str] = set()
+    for sym, _adv in cands:
+        qual.add(sym)
+        if len(qual) >= MAX_EXTRA_PER_SETUP:
+            break
+    logger.info("setup_universe.gap_fade: %d qualifying gappers on %s (illiquid_filter=%s, q=%s)",
+                len(qual), session_date, illiquid_enabled, illiquid_q)
     return qual
 
 
@@ -356,6 +391,211 @@ def below_vwap_volume_revert_long_universe(
         len(qual), session_date,
     )
     return qual
+
+
+# ---------------------------------------------------------------------------
+# panic_crash_revert_long — illiquid intraday capitulation snapback (LONG)
+# ---------------------------------------------------------------------------
+
+def _illiquid_cap_mis_universe(
+    daily_dict: Dict[str, pd.DataFrame],
+    session_date: date,
+    config: Dict[str, Any],
+    setup_label: str,
+) -> Set[str]:
+    """Shared static universe for the illiquid over-extension family.
+
+    Cell lock: cap_segment in allowed_cap_segments (small/micro/unknown),
+    MIS-eligible, minimum daily average volume, minimum trading-days coverage.
+    Forks the below_vwap_volume_revert_long_universe cap=unknown/MIS pattern,
+    generalized to a multi-cap allow-set.
+
+    Static universe — no intraday signal required at session start. The
+    detector's per-bar filters (r3, vol_burst, turnover, window) decide when
+    the signal actually fires.
+    """
+    from services.symbol_metadata import get_cap_segment, get_mis_info
+
+    allowed_caps = set(config["allowed_cap_segments"])
+    min_daily_avg_vol = float(config["min_daily_avg_volume"])
+    min_days = int(config["min_trading_days_required"])
+    # Coarse daily-avg TURNOVER floor (Rs). The 'unknown' cap bucket is a
+    # catch-all default (any symbol absent from the cap snapshot ~= the whole
+    # non-index long tail), so cap alone admits ~1,700 names. The detector's
+    # per-day Rs 1.5cr turnover floor is the real liquidity selector — this
+    # coarse daily-AVG floor pre-trims names that can never reach it, shrinking
+    # the live 5m-fetch universe ~3x WITHOUT clipping edge (validated signal
+    # symbols have daily-avg turnover >= ~Rs 44L for spike / ~Rs 5L min for
+    # panic; floor set well below). Set 0 to disable.
+    min_daily_avg_turnover = float(config["min_daily_avg_turnover_inr"])
+    max_symbols = int(config.get("universe_max_symbols", 1500))
+
+    qual: Set[str] = set()
+    for sym, ddf in daily_dict.items():
+        bare = sym.replace("NSE:", "")
+        nse_sym = f"NSE:{bare}"
+        try:
+            if get_cap_segment(nse_sym) not in allowed_caps:
+                continue
+            if not get_mis_info(nse_sym).get("mis_enabled", False):
+                continue
+        except Exception:
+            continue
+        if ddf is None or ddf.empty or len(ddf) < min_days:
+            continue
+        try:
+            avg_vol = float(ddf["volume"].mean())
+        except Exception:
+            continue
+        if avg_vol < min_daily_avg_vol:
+            continue
+        if min_daily_avg_turnover > 0.0:
+            try:
+                avg_turnover = float((ddf["close"] * ddf["volume"]).mean())
+            except Exception:
+                continue
+            if not (avg_turnover >= min_daily_avg_turnover):
+                continue
+        qual.add(sym)
+        if len(qual) >= max_symbols:
+            logger.warning(
+                "setup_universe.%s: hit max_symbols=%d cap "
+                "(eligible cohort may be larger; raise config.universe_max_symbols)",
+                setup_label, max_symbols,
+            )
+            break
+    logger.info(
+        "setup_universe.%s: %d qualifying on %s", setup_label, len(qual), session_date,
+    )
+    return qual
+
+
+def panic_crash_revert_long_universe(
+    daily_dict: Dict[str, pd.DataFrame],
+    session_date: date,
+    config: Dict[str, Any],
+) -> Set[str]:
+    """Static universe for panic_crash_revert_long.
+
+    cap_segment in {small_cap, micro_cap, unknown} + MIS-eligible (LONG MIS,
+    no shortability gate needed — see brief Section 5).
+
+    Spec: specs/2026-06-03-brief-panic_crash_revert_long.md
+    """
+    return _illiquid_cap_mis_universe(
+        daily_dict, session_date, config, "panic_crash_revert_long",
+    )
+
+
+# ---------------------------------------------------------------------------
+# up_spike_fade_short — illiquid intraday up-spike fade (SHORT) + leverage gate
+# ---------------------------------------------------------------------------
+
+def _load_mis_short_eligibility(config: Dict[str, Any]) -> Dict[str, float]:
+    """Load the {symbol: broker-intraday-leverage} map for the SHORT leverage
+    gate. Primary: the daily live refresh (jobs/refresh_mis_short_eligibility.py
+    -> mis_short_eligibility_path). Backtest fallback: the research eligibility
+    snapshot (mis_short_eligibility_fallback_path,
+    reports/sub9_research/t1_short_mis_eligibility.json).
+
+    SURVIVORSHIP CAVEAT: the fallback applies CURRENT leverage to historical
+    signals (delisted/changed-leverage names mis-classified). The 0x bucket is
+    mostly currently-delisted symbols (in-period capturability under-counted).
+    Documented in brief Section 11. The live path (daily refresh) has no such
+    caveat.
+
+    Keys are bare symbols (no NSE: prefix), values are the leverage float.
+    Returns {} if neither file is present (caller treats empty map as "gate
+    open" only in backtest — see up_spike_fade_short_universe).
+    """
+    primary = Path(str(config["mis_short_eligibility_path"]))
+    fallback = Path(str(config["mis_short_eligibility_fallback_path"]))
+    for p in (primary, fallback):
+        if not p.exists():
+            continue
+        try:
+            import json as _json
+            with open(p, "r", encoding="utf-8") as f:
+                raw = _json.load(f)
+            out: Dict[str, float] = {}
+            for k, v in raw.items():
+                bare = str(k).replace("NSE:", "")
+                try:
+                    out[bare] = float(v) if v is not None else 0.0
+                except (TypeError, ValueError):
+                    out[bare] = 0.0
+            logger.info(
+                "setup_universe.up_spike_fade_short: loaded %d leverage entries from %s",
+                len(out), p,
+            )
+            return out
+        except Exception as e:
+            # FAIL CLOSED on a corrupt PRIMARY (live) map: do NOT silently
+            # degrade to the backtest research snapshot — that would short
+            # names off a stale map. Return {} so require_short_eligibility_map
+            # forces an empty universe. Only a corrupt fallback falls through.
+            logger.error(
+                "setup_universe.up_spike_fade_short: failed reading %s: %s", p, e,
+            )
+            if p == primary:
+                return {}
+    logger.warning(
+        "setup_universe.up_spike_fade_short: no MIS-short eligibility map found "
+        "(primary=%s, fallback=%s)", primary, fallback,
+    )
+    return {}
+
+
+def up_spike_fade_short_universe(
+    daily_dict: Dict[str, pd.DataFrame],
+    session_date: date,
+    config: Dict[str, Any],
+) -> Set[str]:
+    """Static universe for up_spike_fade_short.
+
+    cap_segment in {small_cap, micro_cap, unknown} + MIS-eligible, THEN gated
+    on broker intraday SELL/MIS leverage > 1 (genuine MIS short; leverage==1 is
+    100%-margin surveillance ASM/GSM, leverage==0 is invalid/delisted — both
+    excluded). The leverage map comes from jobs/refresh_mis_short_eligibility.py
+    (live, daily cron) or the research snapshot (backtest fallback).
+
+    Spec: specs/2026-06-03-brief-up_spike_fade_short.md
+    """
+    base = _illiquid_cap_mis_universe(
+        daily_dict, session_date, config, "up_spike_fade_short",
+    )
+
+    lev_map = _load_mis_short_eligibility(config)
+    min_lev = float(config["mis_short_min_leverage"])
+    if not lev_map:
+        # No eligibility map at all. Fail CLOSED in live, OPEN in backtest:
+        # require_short_eligibility_map=true (live default) -> empty universe so
+        # we never short a non-shortable name. =false (backtest) -> pass base
+        # through so historical research can run without the broker map.
+        if bool(config["require_short_eligibility_map"]):
+            logger.warning(
+                "setup_universe.up_spike_fade_short: eligibility map required "
+                "but missing -> empty universe (fail-closed)."
+            )
+            return set()
+        logger.warning(
+            "setup_universe.up_spike_fade_short: no eligibility map; "
+            "require_short_eligibility_map=false -> passing base universe through "
+            "(backtest only)."
+        )
+        return base
+
+    gated: Set[str] = set()
+    for sym in base:
+        bare = sym.replace("NSE:", "")
+        lev = lev_map.get(bare)
+        if lev is not None and lev > min_lev:
+            gated.add(sym)
+    logger.info(
+        "setup_universe.up_spike_fade_short: %d/%d survived leverage>%.0f gate on %s",
+        len(gated), len(base), min_lev, session_date,
+    )
+    return gated
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +800,16 @@ def compute_static_universes(
     cfg = (setups_cfg.get("below_vwap_volume_revert_long") or {})
     if cfg.get("enabled"):
         out["below_vwap_volume_revert_long"] = below_vwap_volume_revert_long_universe(daily_dict, session_date, cfg)
+
+    # panic_crash_revert_long (illiquid capitulation snapback, static cap+MIS)
+    cfg = (setups_cfg.get("panic_crash_revert_long") or {})
+    if cfg.get("enabled"):
+        out["panic_crash_revert_long"] = panic_crash_revert_long_universe(daily_dict, session_date, cfg)
+
+    # up_spike_fade_short (illiquid up-spike fade, static cap+MIS + leverage>1 gate)
+    cfg = (setups_cfg.get("up_spike_fade_short") or {})
+    if cfg.get("enabled"):
+        out["up_spike_fade_short"] = up_spike_fade_short_universe(daily_dict, session_date, cfg)
 
     # mis_unwind_vwap_revert_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
     # circuit_release_fade_short: RETIRED 2026-05-19 (see docs/retired_setups.md)

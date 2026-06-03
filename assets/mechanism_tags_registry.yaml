@@ -69,6 +69,32 @@ tags:
     source: "Manual flag (assets/macro_regime_calendar.yaml)"
     live_computable: true
 
+  # Illiquid intraday over-extension → reversion family (sub-project #9).
+  # Behavioral/structural mechanisms, not regulatory regimes. Pre-registered
+  # 2026-06-03 for panic_crash_revert_long + up_spike_fade_short (briefs in
+  # specs/2026-06-03-brief-*.md). live_computable=false: these describe the
+  # edge thesis, not a runtime-gated regime flag.
+  capitulation_overshoot:
+    description: "Forced/panic selling (stop cascades, MIS square-off, margin calls) over-shoots fair value in a thin order book; price snaps back intraday. Depth-gated: only deep (<=-7% / 15min) capitulations revert; shallow dips continue."
+    source: "Behavioral/microstructure thesis (sub9 T5 down-spike bounce)"
+    live_computable: false
+  retail_panic:
+    description: "Fear-driven retail selling in under-covered small/micro-caps with no analyst coverage; sells into a liquidity vacuum."
+    source: "Behavioral thesis"
+    live_computable: false
+  retail_fomo_exhaustion:
+    description: "Momentum-chasing retail drives an intraday up-spike in a thin name; buying exhausts and the spike fades into the close."
+    source: "Behavioral thesis (sub9 T1 up-spike fade)"
+    live_computable: false
+  intraday_overshoot:
+    description: "Price over-extends beyond fair value intraday because illiquidity prevents institutional supply/demand from arresting the move; mean-reverts once the flow exhausts."
+    source: "Microstructure thesis"
+    live_computable: false
+  illiquidity_premium:
+    description: "Structural thinness of small/micro/unknown-cap order books is the permanent moat that both allows the over-shoot and keeps institutions out (not arbitrage-scalable)."
+    source: "Microstructure thesis"
+    live_computable: false
+
   # Explicit no-dependency declaration — for setups whose mechanism is
   # genuinely rule-orthogonal (no F&O, no FII flow, no SEBI regulatory
   # dependency). Documenting this explicitly is preferable to leaving
