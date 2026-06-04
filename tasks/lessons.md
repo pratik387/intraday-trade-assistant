@@ -11,6 +11,21 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-06-04 (#27) — OCI/dry-run backtest skips the live MIS filter → inflates MIS-sensitive (illiquid-tail) setups; there is NO point-in-time historical MIS list
+
+**What went wrong:** Reported panic_crash_revert_long OCI Stage-9 as PF 2.78 (gold-standard). User: "the OCI backtest has trades which would not have been allowed." Correct — the dry-run path logs `MIS_UNIVERSE | DRY_RUN: skipping live Zerodha MIS filter (use nse_all.json downstream)` and `nse_all.json` has `mis_enabled` uniformly True, so the backtest applies **no real MIS filter**. Intersecting the OCI canonical trades with the live 1,640-symbol Zerodha MIS list: up_spike 875/880 (99%) allowed → PF 1.37 unchanged; **panic 74/88 (84%) allowed → PF 2.78→1.83, and the 14 disallowed trades were 57% of net at PF 13** (DONEAR/KOPRAN/RMDRIP/UFO — non-MIS-tradeable lottery names). panic's headline edge was largely an untradeable artifact.
+
+Then the deeper catch (user): you **can't just apply today's MIS list to a 2023-25 backtest** — eligibility is point-in-time. Today's list includes names not-yet-listed/not-yet-MIS back then (mostly harmless — no bars → no trades) and EXCLUDES names that were MIS-tradeable then but delisted/ASM'd since (COFFEEDAY) → forcing the current list injects **survivorship bias**. There is no historical MIS-eligibility list on disk (the `tools/asm_gsm_history/fetch_asm_gsm.py` fetcher exists but its dated output isn't materialized).
+
+**Rule:**
+1. **Backtest cannot faithfully resolve MIS eligibility** (no point-in-time list; current list is anachronistic + survivorship-biased for history). Do NOT bake the current MIS list into the backtest universe.
+2. **Trust the backtest edge only for setups whose trades are ≥~95% MIS-allowed** (liquid-enough universes — up_spike 99%). For setups reaching into the deep-illiquid tail, the backtest PF can be massively inflated by untradeable names (panic +57% fake net).
+3. **At confidence-card time, intersect OCI canonical trades with the live MIS list as a sanity check** and report the MIS-allowed-only PF. If a large share of net comes from non-MIS-allowed names, the headline is an artifact.
+4. **For MIS-sensitive (illiquid-tail) setups, PAPER is the production-faithful gate** — the live `is_mis_allowed` filter applies point-in-time correctly. Don't ship on the backtest number.
+5. **`nse_all.json` `mis_enabled` is NOT a discriminator** (uniformly True). The real MIS-allowed set is the Zerodha sheet via `services/state/zerodha_mis_fetcher.py` (1,640 names), applied live by the screener filter + `capital_manager.is_mis_allowed`.
+
+---
+
 ### 2026-06-03 (#26) — A cap/segment filter that reads `caps.get(bare_symbol)` on a nested/prefixed JSON is a SILENT no-op — always print the post-filter distribution
 
 **What went wrong:** Across all the spike/crash research (T1/T5 cell-mine, OOS/HO validation, parity checks) I loaded `caps = json.load(cap_segments_latest.json)` then filtered with `caps.get(sym, "unknown")`. But that file nests the map under a `"classification"` key whose keys are `"NSE:SYMBOL"` — so `caps.get("RADHIKAJWE")` returned `None` for EVERY symbol, defaulting everything to `"unknown"`. My `ILLIQ={"small_cap","micro_cap","unknown"}` filter was therefore a **complete no-op**: the research universe was "all caps with ≥₹1.5cr turnover," not `{small,micro,unknown}`. The user caught it by questioning why the universe was "1,600+ small/micro/unknown" — it wasn't; genuine small+micro is ~490, the rest is the `unknown` default. (Earlier I'd half-seen this — dropping `unknown` gave n=0 — and wrongly attributed it to "the snapshot doesn't classify 2023-24 names" instead of "my lookup is broken.")
