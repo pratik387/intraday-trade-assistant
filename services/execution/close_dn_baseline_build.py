@@ -42,13 +42,43 @@ BASELINE_DIR = ROOT / "data" / "close_dn_baseline"
 SIGNAL_HHMM = ["15:00", "15:05", "15:10", "15:15", "15:20"]
 
 
+def _is_etf_or_fund(sdk, sym: str) -> bool:
+    """True if `sym`'s ISIN marks it as an ETF / mutual fund (INF prefix).
+
+    NSE ISIN scheme: INE = equity, INF = mutual fund / ETF. The close_dn
+    overnight mechanic is calibrated on equity microstructure (retail-
+    flush + overnight gap-up). ETFs trade against their NAV and can be
+    illiquid in single-stock terms — ITBETA on 2026-06-04 fired the setup,
+    placed a paper BUY at 15:25, then literally did not trade today,
+    leaving the AMO SELL unfillable.
+
+    Falls back to False on any lookup error so a transient instrument-
+    map miss doesn't drop the entire universe.
+    """
+    try:
+        ikey = sdk._instrument_key_for(sym)  # "NSE_EQ|INE123A01234" or INF...
+    except Exception:
+        return False
+    if not ikey or "|" not in ikey:
+        return False
+    isin = ikey.split("|", 1)[1]
+    return isin.upper().startswith("INF")
+
+
 def _eligible_universe(sdk) -> List[str]:
-    """MIS-eligible NSE EQ symbols from the SDK instrument map."""
+    """MIS-eligible NSE equity symbols from the SDK instrument map.
+
+    Excludes ETFs and mutual funds (ISIN starts with INF) — they don't
+    match the close_dn equity-microstructure mechanic and can leave AMO
+    SELLs unfillable when their single-stock liquidity dries up (see
+    ITBETA incident 2026-06-04).
+    """
     from services.symbol_metadata import get_mis_info
     sm = sdk.get_symbol_map()
     return sorted(
         s for s in sm
         if get_mis_info(s).get("mis_enabled", False)
+        and not _is_etf_or_fund(sdk, s)
     )
 
 
