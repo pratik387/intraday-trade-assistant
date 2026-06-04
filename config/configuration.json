@@ -264,7 +264,7 @@
     "panic_crash_revert_long": {
       "enabled": true,
       "paper_enabled": true,
-      "_status": "PAPER-TRADE VALIDATION started 2026-06-04. OCI Stage-9: PF 2.78 CI[1.54,5.09] on 88 trades, net +Rs24,296 (2023-2026). PROMISING BUT UNCONFIRMED — n thin, 5/7 regimes underpowered (n<10), post_tariff_consolidation NEGATIVE (PF 0.24); headline PF leans on a few big winners. OBSERVATION-ONLY: do NOT size on 2.78. enabled+paper_enabled=true for paper; do NOT enable in LIVE until paper A/B + circuit-aware validation pass. Brief: specs/2026-06-03-brief-panic_crash_revert_long.md.",
+      "_status": "PAPER-TRADE VALIDATION started 2026-06-04. OCI Stage-9 headline PF 2.78 was INFLATED — the backtest skipped the live MIS filter, so 14 of 88 trades were on non-MIS-tradeable names (DONEAR/KOPRAN/RMDRIP/UFO...) contributing +Rs13,912 = 57% of net at fantasy PF 13. PRODUCTION-FAITHFUL (MIS-allowed only): PF 1.83 on 74 trades, net +Rs10,384 — still positive but half the edge, thin n, weak per-regime (post_tariff_consolidation PF 0.24). MARGINAL. OBSERVATION-ONLY: do NOT size. enabled+paper_enabled=true (paper applies the MIS filter -> trades the honest 74-name universe); do NOT enable in LIVE. Brief: specs/2026-06-03-brief-panic_crash_revert_long.md.",
       "mechanism_tags": [
         "capitulation_overshoot",
         "illiquidity_premium",
@@ -320,7 +320,7 @@
     "up_spike_fade_short": {
       "enabled": true,
       "paper_enabled": true,
-      "_status": "PAPER-TRADE VALIDATION started 2026-06-04. OCI Stage-9 PASSED (gold-standard): PF 1.37 CI[1.14,1.63] on 880 trades, net +Rs44,216 (2023-2026), positive in 6/7 regimes incl the two largest, adj Sharpe +2.13. Production PF compressed from sanity HO 1.98 (expected, Lesson #13) but held with CI lower bound >1.0. enabled+paper_enabled=true for paper validation; do NOT enable in LIVE until >=30-session paper A/B + upper-circuit guard pass. Cell lock: tools/sub9_research/up_spike_fade_short_cell_selection_locked.json. Brief: specs/2026-06-03-brief-up_spike_fade_short.md.",
+      "_status": "PAPER-TRADE VALIDATION started 2026-06-04. OCI Stage-9 PASSED (gold-standard): PF 1.37 CI[1.14,1.63] on 880 trades, net +Rs44,216 (2023-2026), positive in 6/7 regimes incl the two largest, adj Sharpe +2.13. Production PF compressed from sanity HO 1.98 (expected, Lesson #13) but held with CI lower bound >1.0. PRODUCTION-FAITHFUL: 875/880 (99%) trades are MIS-allowed (PF 1.37 unchanged after applying the live MIS filter) — unlike panic, up_spike's universe aligns with the MIS list. enabled+paper_enabled=true for paper validation; do NOT enable in LIVE until >=30-session paper A/B + upper-circuit guard pass. Cell lock: tools/sub9_research/up_spike_fade_short_cell_selection_locked.json. Brief: specs/2026-06-03-brief-up_spike_fade_short.md.",
       "mechanism_tags": [
         "retail_fomo_exhaustion",
         "illiquidity_premium",
