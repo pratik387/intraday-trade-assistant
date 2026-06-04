@@ -263,8 +263,8 @@
     },
     "panic_crash_revert_long": {
       "enabled": true,
-      "paper_enabled": false,
-      "_status": "Pre-registered 2026-06-03 (LPGD-PASSED on realistic next-bar-open execution; Disc +4.13% / OOS +2.45% / HO +0.89%). enabled=false + paper_enabled=false until the OCI-pipeline cap=unknown coverage gate (does it fire on 2023-24?), circuit-aware validation, and >=30-session paper A/B pass. See specs/2026-06-03-brief-panic_crash_revert_long.md Section 12. Pure EOD-hold (no T1/T2); WIDE catastrophe stop is a blowup guard only.",
+      "paper_enabled": true,
+      "_status": "PAPER-TRADE VALIDATION started 2026-06-04. OCI Stage-9: PF 2.78 CI[1.54,5.09] on 88 trades, net +Rs24,296 (2023-2026). PROMISING BUT UNCONFIRMED — n thin, 5/7 regimes underpowered (n<10), post_tariff_consolidation NEGATIVE (PF 0.24); headline PF leans on a few big winners. OBSERVATION-ONLY: do NOT size on 2.78. enabled+paper_enabled=true for paper; do NOT enable in LIVE until paper A/B + circuit-aware validation pass. Brief: specs/2026-06-03-brief-panic_crash_revert_long.md.",
       "mechanism_tags": [
         "capitulation_overshoot",
         "illiquidity_premium",
@@ -319,8 +319,8 @@
     },
     "up_spike_fade_short": {
       "enabled": true,
-      "paper_enabled": false,
-      "_status": "Pre-registered 2026-06-03 (LPGD-PASSED + shortability-verified via Kite leverage gate; cell-locked OOS +0.59% PF 1.44 / HO +1.17% PF 1.98). enabled=false + paper_enabled=false until the OCI-pipeline cap=unknown coverage gate, upper-circuit guard, and >=30-session paper A/B pass. Cell lock: tools/sub9_research/up_spike_fade_short_cell_selection_locked.json. See specs/2026-06-03-brief-up_spike_fade_short.md Section 12. Pure EOD-hold (no T1/T2); WIDE catastrophe stop is a blowup guard only.",
+      "paper_enabled": true,
+      "_status": "PAPER-TRADE VALIDATION started 2026-06-04. OCI Stage-9 PASSED (gold-standard): PF 1.37 CI[1.14,1.63] on 880 trades, net +Rs44,216 (2023-2026), positive in 6/7 regimes incl the two largest, adj Sharpe +2.13. Production PF compressed from sanity HO 1.98 (expected, Lesson #13) but held with CI lower bound >1.0. enabled+paper_enabled=true for paper validation; do NOT enable in LIVE until >=30-session paper A/B + upper-circuit guard pass. Cell lock: tools/sub9_research/up_spike_fade_short_cell_selection_locked.json. Brief: specs/2026-06-03-brief-up_spike_fade_short.md.",
       "mechanism_tags": [
         "retail_fomo_exhaustion",
         "illiquidity_premium",
