@@ -497,66 +497,8 @@ def panic_crash_revert_long_universe(
 
 
 # ---------------------------------------------------------------------------
-# up_spike_fade_short — illiquid intraday up-spike fade (SHORT) + leverage gate
+# up_spike_fade_short — illiquid intraday up-spike fade (SHORT)
 # ---------------------------------------------------------------------------
-
-def _load_mis_short_eligibility(config: Dict[str, Any]) -> Dict[str, float]:
-    """Load the {symbol: broker-intraday-leverage} map for the SHORT leverage
-    gate. Primary: the daily live refresh (jobs/refresh_mis_short_eligibility.py
-    -> mis_short_eligibility_path). Backtest fallback: the research eligibility
-    snapshot (mis_short_eligibility_fallback_path,
-    reports/sub9_research/t1_short_mis_eligibility.json).
-
-    SURVIVORSHIP CAVEAT: the fallback applies CURRENT leverage to historical
-    signals (delisted/changed-leverage names mis-classified). The 0x bucket is
-    mostly currently-delisted symbols (in-period capturability under-counted).
-    Documented in brief Section 11. The live path (daily refresh) has no such
-    caveat.
-
-    Keys are bare symbols (no NSE: prefix), values are the leverage float.
-    Returns {} if neither file is present (caller treats empty map as "gate
-    open" only in backtest — see up_spike_fade_short_universe).
-    """
-    def _resolve(pth: str) -> Path:
-        p = Path(str(pth))
-        return p if p.is_absolute() else (_REPO_ROOT / p)
-    primary = _resolve(config["mis_short_eligibility_path"])
-    fallback = _resolve(config["mis_short_eligibility_fallback_path"])
-    for p in (primary, fallback):
-        if not p.exists():
-            continue
-        try:
-            import json as _json
-            with open(p, "r", encoding="utf-8") as f:
-                raw = _json.load(f)
-            out: Dict[str, float] = {}
-            for k, v in raw.items():
-                bare = str(k).replace("NSE:", "")
-                try:
-                    out[bare] = float(v) if v is not None else 0.0
-                except (TypeError, ValueError):
-                    out[bare] = 0.0
-            logger.info(
-                "setup_universe.up_spike_fade_short: loaded %d leverage entries from %s",
-                len(out), p,
-            )
-            return out
-        except Exception as e:
-            # FAIL CLOSED on a corrupt PRIMARY (live) map: do NOT silently
-            # degrade to the backtest research snapshot — that would short
-            # names off a stale map. Return {} so require_short_eligibility_map
-            # forces an empty universe. Only a corrupt fallback falls through.
-            logger.error(
-                "setup_universe.up_spike_fade_short: failed reading %s: %s", p, e,
-            )
-            if p == primary:
-                return {}
-    logger.warning(
-        "setup_universe.up_spike_fade_short: no MIS-short eligibility map found "
-        "(primary=%s, fallback=%s)", primary, fallback,
-    )
-    return {}
-
 
 def up_spike_fade_short_universe(
     daily_dict: Dict[str, pd.DataFrame],
@@ -565,49 +507,20 @@ def up_spike_fade_short_universe(
 ) -> Set[str]:
     """Static universe for up_spike_fade_short.
 
-    cap_segment in {small_cap, micro_cap, unknown} + MIS-eligible, THEN gated
-    on broker intraday SELL/MIS leverage > 1 (genuine MIS short; leverage==1 is
-    100%-margin surveillance ASM/GSM, leverage==0 is invalid/delisted — both
-    excluded). The leverage map comes from jobs/refresh_mis_short_eligibility.py
-    (live, daily cron) or the research snapshot (backtest fallback).
+    cap_segment in {small_cap, micro_cap, unknown} + MIS-eligible — identical to
+    panic_crash_revert_long. SHORTABILITY is enforced by the EXISTING MIS layers,
+    NOT a setup-specific gate: the screener filters core_symbols by the live
+    Zerodha MIS-allowed list (early_mis_universe_filter ->
+    services/state/zerodha_mis_fetcher.py) AND capital_manager.can_enter_position
+    blocks non-MIS stocks for BUY *and* SELL (paper); in live the Zerodha broker
+    rejects non-MIS shorts directly. Same path gap_fade_short and every other
+    live short relies on — no third MIS mechanism.
 
     Spec: specs/2026-06-03-brief-up_spike_fade_short.md
     """
-    base = _illiquid_cap_mis_universe(
+    return _illiquid_cap_mis_universe(
         daily_dict, session_date, config, "up_spike_fade_short",
     )
-
-    lev_map = _load_mis_short_eligibility(config)
-    min_lev = float(config["mis_short_min_leverage"])
-    if not lev_map:
-        # No eligibility map at all. Fail CLOSED in live, OPEN in backtest:
-        # require_short_eligibility_map=true (live default) -> empty universe so
-        # we never short a non-shortable name. =false (backtest) -> pass base
-        # through so historical research can run without the broker map.
-        if bool(config["require_short_eligibility_map"]):
-            logger.warning(
-                "setup_universe.up_spike_fade_short: eligibility map required "
-                "but missing -> empty universe (fail-closed)."
-            )
-            return set()
-        logger.warning(
-            "setup_universe.up_spike_fade_short: no eligibility map; "
-            "require_short_eligibility_map=false -> passing base universe through "
-            "(backtest only)."
-        )
-        return base
-
-    gated: Set[str] = set()
-    for sym in base:
-        bare = sym.replace("NSE:", "")
-        lev = lev_map.get(bare)
-        if lev is not None and lev > min_lev:
-            gated.add(sym)
-    logger.info(
-        "setup_universe.up_spike_fade_short: %d/%d survived leverage>%.0f gate on %s",
-        len(gated), len(base), min_lev, session_date,
-    )
-    return gated
 
 
 # ---------------------------------------------------------------------------
