@@ -104,6 +104,28 @@ class TriggerAwareExecutor:
                 price = trade.trigger_price or plan.get("price", 0)
                 cap_segment = plan.get("cap_segment", "unknown")
 
+                # NOTIONAL-BASED SIZING (EOD-hold setups): their wide catastrophe
+                # stop makes risk-based qty tiny (qty = risk_rupees / 9%-stop ~=
+                # Rs11k notional) -> shadowed below min_notional. Size qty by
+                # target_notional_pct * total_capital so it scales with capital
+                # (paper 5L vs live 50k) and clears the min-notional floor; the
+                # catastrophe stop stays a blowup guard. The capital_manager's
+                # per-trade allocation cap (max_allocation_per_trade) still applies
+                # in can_enter_position below, so this can only size UP to a sane
+                # %-of-capital, never past the per-trade risk ceiling.
+                if plan.get("sizing_mode") == "notional" and price > 0:
+                    _tnp = float(plan.get("target_notional_pct") or 0.0)
+                    _tcap = float(getattr(self.capital_manager, "total_capital", 0.0) or 0.0)
+                    if _tnp > 0.0 and _tcap > 0.0:
+                        _sized = int((_tnp * _tcap) / price)
+                        if _sized >= 1 and _sized != qty:
+                            logger.info(
+                                f"NOTIONAL_SIZE | {trade.symbol} | {plan.get('strategy')} | "
+                                f"{_tnp*100:.1f}% x Rs{_tcap:.0f} = Rs{_tnp*_tcap:.0f} -> qty {qty}->{_sized}"
+                            )
+                            qty = _sized
+                            trade.plan["qty"] = qty
+
                 # SHADOW TRADE LOGIC: If at capacity, mark as shadow instead of rejecting
                 # Shadow trades go through entire pipeline but don't consume capital
                 is_shadow = plan.get("shadow", False)  # May already be marked

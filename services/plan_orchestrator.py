@@ -529,6 +529,14 @@ class PlanOrchestrator:
             "regime": regime,
             "category": "sub7",  # legacy tag — many tools filter by this
 
+            # Notional-based sizing (EOD-hold setups whose wide catastrophe stop
+            # makes risk-based qty tiny -> shadowed below min_notional). When
+            # sizing_mode=="notional", the executor sizes qty = target_notional_pct
+            # * total_capital / price (scales with capital), with the catastrophe
+            # stop kept as a guard only. None for risk-based setups (no-op).
+            "sizing_mode": setup_cfg.get("sizing_mode"),
+            "target_notional_pct": setup_cfg.get("target_notional_pct"),
+
             # trade_id propagates StructureEvent → TradePlan → plan dict →
             # DECISION/TRIGGER/ENTRY/EXIT events.
             "trade_id": trade_plan.trade_id,
