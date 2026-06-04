@@ -1389,10 +1389,22 @@ class ScreenerLive:
         shortlist: List[str] = []
         levels_by_symbol = None  # Initialize so it's available to structure detection phase
 
-        # OPENING BELL FIX: Determine minimum bars needed - 1 during opening bell (09:20-09:30), 3 normally
+        # OPENING BELL FIX: Determine minimum bars needed - 1 during opening
+        # bell (09:15-09:30), 3 normally.
+        #
+        # Window starts at 09:15 (not 09:20) because the FIRST scan of the
+        # day is for bar 09:15 (now=09:15), and at that point only 1-2 5m
+        # bars exist in today's data (the just-closed 09:15 bar + maybe the
+        # in-progress 09:20 bar). With min_bars=3, the entire universe gets
+        # silently filtered out — empirical 2026-06-04 09:21 scan: SDK
+        # returned 1525 dfs (1522 with len=2, 3 with len=1), screener
+        # treated all 1525 as "failed" because none met len>=3, leaving
+        # gap_fade_short and long_panic_gap_down (both 09:15-window setups)
+        # running on a tag_map-only subset of ~9-50 instead of the full
+        # universe. Extending the relaxation back to 09:15 closes the gap.
         current_time = now.time() if hasattr(now, 'time') else now
         from datetime import time as dtime
-        in_opening_bell = dtime(9, 20) <= current_time < dtime(9, 30)
+        in_opening_bell = dtime(9, 15) <= current_time < dtime(9, 30)
         min_bars_for_processing = 1 if in_opening_bell else 3
 
         # ---------- 5m bars: Paper fetches from V3 Intraday API ----------
