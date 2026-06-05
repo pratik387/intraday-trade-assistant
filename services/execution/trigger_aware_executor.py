@@ -63,6 +63,41 @@ class PendingTrade:
 class TriggerAwareExecutor:
     """Enhanced trade executor with 1-minute trigger validation"""
     
+    def _past_setup_time_stop(self, plan: dict, now) -> bool:
+        """Per-plan entry-time guard (2026-06-05).
+
+        Return True when a NEW entry at tick `now` is already at/after the
+        plan's effective per-setup time-stop minute-of-day — meaning the
+        position would be squared off on the very next tick
+        (exit_executor time_stop_<hhmm>), a guaranteed instant loss of
+        spread + fees.
+
+        The global entry_cutoff_md in _final_execution_check does NOT cover
+        this: a setup's time_stop_at can be EARLIER than the global cutoff
+        (below_vwap_volume_revert_long: time_stop_at=14:30 vs global 14:45).
+        Mirrors exit_executor._effective_eod_md semantics, including the
+        wide_open research-capture bypass (capture mode rides to natural
+        SL/T2/EOD, so it must NOT be blocked at entry).
+        """
+        try:
+            from services.config_loader import is_wide_open_for_setup
+            if is_wide_open_for_setup(plan.get("strategy")):
+                return False
+            plan_ts = (plan.get("exits") or {}).get("time_stop_hhmm")
+            ts_md = _parse_hhmm_to_md(plan_ts)
+            if ts_md is None:
+                return False
+            # Mirror exit_executor: in live/paper, ignore stale Upstox WS
+            # snapshot ticks (yesterday's ts replayed at subscribe) so a
+            # garbage timestamp can't falsely block a valid entry. In
+            # DRY_RUN the tick ts IS the clock, so this is a no-op there.
+            from services.execution.exit_executor import _is_stale_ts_for_live
+            if _is_stale_ts_for_live(now):
+                return False
+            return _minute_of_day(now) >= int(ts_md)
+        except Exception:
+            return False
+
     def _final_execution_check(self, trade: PendingTrade) -> bool:
         """Final validation before order placement"""
         try:
@@ -90,6 +125,23 @@ class TriggerAwareExecutor:
             minute_of_day = _minute_of_day(now)
             if self.entry_cutoff_md and minute_of_day >= self.entry_cutoff_md:
                 logger.debug(f"Past entry cutoff: {trade.symbol}")
+                return False
+
+            # Per-plan time-stop entry guard (2026-06-05). The GLOBAL
+            # entry_cutoff_md above does not protect setups whose per-setup
+            # time_stop is EARLIER than the global cutoff. Without this,
+            # below_vwap_volume_revert_long (time_stop_at=14:30, but
+            # active_window_end=14:55 and global cutoff 14:45) entered at
+            # 14:36 and was squared off on the very next tick with
+            # time_stop_14:30 — a guaranteed instant loss of spread + fees.
+            if self._past_setup_time_stop(trade.plan, now):
+                logger.info(
+                    "ENTRY_BLOCKED_TIME_STOP | %s | %s | entry md=%d past per-setup time_stop %s",
+                    trade.symbol,
+                    trade.plan.get("strategy"),
+                    minute_of_day,
+                    (trade.plan.get("exits") or {}).get("time_stop_hhmm"),
+                )
                 return False
 
             # Check risk limits

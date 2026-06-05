@@ -233,7 +233,8 @@
         "STT_drag"
       ],
       "active_window_start": "10:00",
-      "active_window_end": "14:55",
+      "active_window_end": "14:30",
+      "_comment_active_window_end": "Must be <= time_stop_at (14:30). Brief: 'No new entries after 14:30'. Was 14:55 — that dispatched signals 14:30-14:55 that entered then squared off on the next tick with time_stop_14:30 (instant loss). The executor _past_setup_time_stop guard also enforces this at entry time.",
       "vwap_dev_pct_max": -2.0,
       "confidence_depth_band_floor_pct": -6.0,
       "vol_ratio_min": 3.0,
