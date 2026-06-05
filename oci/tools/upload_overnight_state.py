@@ -25,6 +25,12 @@ AT THE TIME THIS SCRIPT RUNS, which is meant to be after the entry cron
 has finished (so end-of-day state). For each session_date, the object
 represents EOD state on that day.
 
+Uses the OCI Python SDK directly (no `oci` CLI dependency, which isn't
+installed in the engine's venv). Pattern mirrors the SDK usage in
+oci/tools/upload_trading_session.py — import oci_sdk BEFORE adding the
+project root to sys.path so the local `oci/` package doesn't shadow the
+SDK.
+
 Usage:
     python oci/tools/upload_overnight_state.py                # today
     python oci/tools/upload_overnight_state.py --date 2026-06-05
@@ -32,27 +38,31 @@ Usage:
 
 Default bucket: `paper-trading-logs` (shared with intraday paper sessions).
 Override with --bucket.
-
-Pattern mirrors oci/tools/upload_cross_day_rvol.py.
 """
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from datetime import date as _date
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
+# Import OCI SDK BEFORE adding project root to path
+# (to avoid local oci/ folder shadowing the package).
+try:
+    import oci as oci_sdk
+    HAS_OCI = True
+except ImportError:
+    oci_sdk = None
+    HAS_OCI = False
 
-_OCI_CLI = str(Path(sys.executable).parent / "oci")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+
 _DEFAULT_BUCKET = "paper-trading-logs"
 _SETUP_NAME = "close_dn_overnight_long"
-
-# Run OCI CLI from a scratch cwd so the project's local `oci/` package
-# doesn't shadow the OCI SDK during CLI bootstrap.
-_SCRATCH_CWD = str(Path.home())
 
 
 def _collect_files(session_date: str) -> List[Tuple[Path, str]]:
@@ -92,25 +102,25 @@ def _collect_files(session_date: str) -> List[Tuple[Path, str]]:
     return [(src, name) for src, name in sources if src.exists()]
 
 
-def _upload_one(local: Path, object_name: str, bucket: str) -> bool:
+def _upload_one(client, namespace: str, bucket: str, local: Path,
+                object_name: str) -> bool:
     size_kb = local.stat().st_size / 1024
     print(f"  {object_name:<22} ({size_kb:>7.1f} KB) ", end="", flush=True)
     try:
-        subprocess.run(
-            [
-                _OCI_CLI, "os", "object", "put",
-                "--bucket-name", bucket,
-                "--name", object_name,
-                "--file", str(local),
-                "--force",
-            ],
-            capture_output=True, check=True, cwd=_SCRATCH_CWD,
-        )
+        with open(local, "rb") as f:
+            client.put_object(
+                namespace_name=namespace,
+                bucket_name=bucket,
+                object_name=object_name,
+                put_object_body=f,
+            )
         print("OK")
         return True
-    except subprocess.CalledProcessError as e:
-        stderr = e.stderr.decode() if e.stderr else str(e)
-        print(f"FAIL: {stderr[:200]}")
+    except Exception as e:
+        msg = str(e)
+        if len(msg) > 200:
+            msg = msg[:200] + "..."
+        print(f"FAIL: {msg}")
         return False
 
 
@@ -160,11 +170,23 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             print(f"  WOULD UPLOAD: {prefix}/{name}  ({size_kb:.1f} KB from {local.relative_to(_REPO_ROOT)})")
         return 0
 
+    if not HAS_OCI:
+        print("ERROR: OCI SDK not installed. Run: pip install oci", file=sys.stderr)
+        return 1
+
+    try:
+        config = oci_sdk.config.from_file()
+        client = oci_sdk.object_storage.ObjectStorageClient(config)
+        namespace = client.get_namespace().data
+    except Exception as e:
+        print(f"ERROR: failed to initialize OCI client: {e}", file=sys.stderr)
+        return 1
+
     ok = 0
     fail = 0
     for local, name in items:
         full_name = f"{prefix}/{name}"
-        if _upload_one(local, full_name, args.bucket):
+        if _upload_one(client, namespace, args.bucket, local, full_name):
             ok += 1
         else:
             fail += 1
