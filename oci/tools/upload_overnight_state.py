@@ -72,12 +72,27 @@ def _collect_files(session_date: str) -> List[Tuple[Path, str]]:
     (e.g. logs might not be flushed yet, baseline rebuild might have
     failed). The dashboard's historical view will surface what's
     actually there.
+
+    Backfill semantics: state files (overnight_slots.json,
+    decay_tripwire.json) are MUTABLE on disk — they reflect TODAY's
+    state, not past EOD state. When uploading a past date:
+      - overnight_slots.json is SKIPPED. Today's pool snapshot is not
+        a faithful representation of EOD on a past date.
+      - decay_tripwire.json IS uploaded. Each ledger entry has ts_iso,
+        so the dashboard's historical reader filters by date and
+        reconstructs the correct as-of-EOD cumulative view from any
+        snapshot containing all relevant trades.
     """
-    sources: List[Tuple[Path, str]] = [
-        (
+    is_today = session_date == _date.today().isoformat()
+
+    sources: List[Tuple[Path, str]] = []
+    if is_today:
+        # Today's slot pool is the actual EOD-now snapshot.
+        sources.append((
             _REPO_ROOT / "state" / "overnight_slots.json",
             "overnight_slots.json",
-        ),
+        ))
+    sources.extend([
         (
             _REPO_ROOT / "state" / f"decay_tripwire_{_SETUP_NAME}.json",
             "decay_tripwire.json",
@@ -98,7 +113,7 @@ def _collect_files(session_date: str) -> List[Tuple[Path, str]]:
             _REPO_ROOT / "logs" / f"overnight_entry_{session_date}.log",
             "entry.log",
         ),
-    ]
+    ])
     return [(src, name) for src, name in sources if src.exists()]
 
 
