@@ -113,8 +113,17 @@ class TriggerAwareExecutor:
                 # per-trade allocation cap (max_allocation_per_trade) still applies
                 # in can_enter_position below, so this can only size UP to a sane
                 # %-of-capital, never past the per-trade risk ceiling.
-                if plan.get("sizing_mode") == "notional" and price > 0:
-                    _tnp = float(plan.get("target_notional_pct") or 0.0)
+                # Read sizing_mode from the SETUP CONFIG (by strategy), NOT trade.plan:
+                # screener_live.py rebuilds item["plan"] as a subset that drops
+                # sizing_mode, so the plan dict can't be trusted to carry it.
+                # Use _load_root_config (config/configuration.json, the setups
+                # source-of-truth + cached) — NOT config_loader.load_base_config,
+                # which reads config/pipelines/base_config.json and does not carry
+                # the per-setup sizing keys.
+                from services.plan_orchestrator import _load_root_config as _load_cfg
+                _scfg = (_load_cfg().get("setups") or {}).get(plan.get("strategy")) or {}
+                if _scfg.get("sizing_mode") == "notional" and price > 0:
+                    _tnp = float(_scfg.get("target_notional_pct") or 0.0)
                     _tcap = float(getattr(self.capital_manager, "total_capital", 0.0) or 0.0)
                     if _tnp > 0.0 and _tcap > 0.0:
                         _sized = int((_tnp * _tcap) / price)
