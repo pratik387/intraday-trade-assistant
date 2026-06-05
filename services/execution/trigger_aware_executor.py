@@ -623,12 +623,13 @@ class TriggerAwareExecutor:
         
         # Config
         self.cfg = load_filters()
-        self.entry_cutoff_md = _parse_hhmm_to_md(self.cfg.get("entry_cutoff_hhmm", "14:45"))
-        self.eod_md = _parse_hhmm_to_md(self.cfg.get("eod_squareoff_hhmm", "15:10"))
-        
+        # No hardcoded defaults (project Rule #1): missing key = startup error.
+        self.entry_cutoff_md = _parse_hhmm_to_md(self.cfg["entry_cutoff_hhmm"])
+        self.eod_md = _parse_hhmm_to_md(self.cfg["eod_squareoff_hhmm"])
+
         # Staleness check configuration
-        trigger_cfg = self.cfg.get("trigger_system", {})
-        self.staleness_seconds = float(trigger_cfg.get("staleness_seconds", 1800))
+        trigger_cfg = self.cfg["trigger_system"]
+        self.staleness_seconds = float(trigger_cfg["staleness_seconds"])
         
         # Hook into BarBuilder's 1m callback
         self.original_1m_handler = bar_builder._on_1m_close
