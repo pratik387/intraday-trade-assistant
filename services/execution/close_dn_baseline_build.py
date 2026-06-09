@@ -12,16 +12,20 @@ Outputs two files in data/close_dn_baseline/:
     the trailing N trading sessions. close_dn_overnight_long_structure
     reads baseline_latest.json at detection time.
   - candidates_<YYYY-MM-DD>.json + candidates_latest.json
-    Pre-filtered list of symbols whose prior-day return >= the cell-lock
-    threshold (3.0% by default). Pre-computed prior_close + prev_prior_close
-    let run_entry skip _gather_daily_dict entirely — it constructs a tiny
-    2-row df_daily from these values for each candidate.
+    All symbols with valid baseline (no cell-based pre-filter). Per entry:
+    prior_close + prev_prior_close (lets run_entry skip _gather_daily_dict
+    by constructing a tiny 2-row df_daily) + prior_day_return_pct (kept
+    for diagnostics only — the detector at 15:27 uses TODAY's 15:20
+    return, not this yesterday-derived value).
 
-Why pre-filter at 09:30 instead of 15:25:
-  The cell requires prior_day_return >= 3%; on a typical day ~50 of the
-  1118 MIS-eligible NSE symbols qualify. Pre-filtering lets the 15:25
-  entry cron fetch intraday bars for only ~50 symbols (~3s) instead of
-  the full 1118 (~150s). Same edge, vastly cheaper.
+Why no cell pre-filter at 09:30:
+  Pre-2026-06-09 the build used `prior_day_return_pct >= 3.0` to narrow
+  the universe to ~50 symbols. That filter was day-shifted (yesterday's
+  return, not today's), and removing it brings production back in line
+  with the cell #5 backtest, which iterated over the full
+  cap+volume-eligible universe and applied the criterion to TODAY's return.
+  Cost: 15:27 fetch grows from ~3s (50 symbols) to ~96s (~1900 symbols);
+  still finishes well before 15:30 close.
 """
 from __future__ import annotations
 
@@ -66,19 +70,25 @@ def _is_etf_or_fund(sdk, sym: str) -> bool:
 
 
 def _eligible_universe(sdk) -> List[str]:
-    """MIS-eligible NSE equity symbols from the SDK instrument map.
+    """All NSE equity symbols (excluding ETFs/mutual funds) from the SDK
+    instrument map.
+
+    The MIS-eligibility filter was REMOVED 2026-06-09 — close_dn is an
+    overnight setup that uses MTF or CNC, not MIS; the backtest sanity
+    (tools/sub9_research/sanity_close_dn_overnight_multi_exit.py) iterated
+    over all cap-eligible NSE equities with no MIS gate, so requiring MIS
+    in production silently shrinks the universe vs the universe PF 2.44
+    was measured on.
 
     Excludes ETFs and mutual funds (ISIN starts with INF) — they don't
     match the close_dn equity-microstructure mechanic and can leave AMO
     SELLs unfillable when their single-stock liquidity dries up (see
     ITBETA incident 2026-06-04).
     """
-    from services.symbol_metadata import get_mis_info
     sm = sdk.get_symbol_map()
     return sorted(
         s for s in sm
-        if get_mis_info(s).get("mis_enabled", False)
-        and not _is_etf_or_fund(sdk, s)
+        if not _is_etf_or_fund(sdk, s)
     )
 
 
@@ -137,9 +147,16 @@ def build_baseline_and_candidates(
     """Build baseline + candidate snapshots for `session_date`.
 
     Single batch fetch of prior 30 calendar days of 5m bars across the
-    MIS-eligible universe, then per-symbol:
+    eligibility-universe, then per-symbol:
       * (vol_mean, vol_std) of 15:00-15:20 5-bar totals → baseline file
-      * If prior_day_return >= cell_min_prior_ret_pct → candidates file
+      * Every symbol with valid baseline → candidates file (no cell-based
+        pre-filter; the cell #5 check uses TODAY's return computed at
+        15:27 by the detector, which we don't have at 09:30).
+
+    `cell_min_prior_ret_pct` is kept in the function signature for backward
+    compatibility but is NOT applied as a filter. The value is recorded in
+    the candidates payload as `cell_min_prior_ret_pct` so downstream readers
+    know what threshold the detector will apply at fire time.
 
     Returns stats dict with counts + paths.
     """
@@ -175,13 +192,31 @@ def build_baseline_and_candidates(
     for sym in universe:
         df = bars_map.get(sym)
         b = _baseline_for_symbol(df, rolling_days)
-        if b is not None:
-            baseline_symbols[sym] = b
-        r = _prior_return_for_symbol(df)
-        if r is not None and r["prior_day_return_pct"] >= cell_min_prior_ret_pct:
-            candidate_entries.append({"symbol": sym, **r})
+        if b is None:
+            # No baseline → detector's vol_z check would reject anyway.
+            continue
+        baseline_symbols[sym] = b
+        # Emit every baseline-available symbol as a candidate. The
+        # prior_day_return_pct field is kept for diagnostics + as input
+        # to the detector's df_daily injection, but is NOT used as a
+        # pre-filter here. The cell #5 prior-day check uses TODAY's
+        # 15:20 return (computed at 15:27 by the detector), not the
+        # day-shifted yesterday-return that's available at 09:30.
+        # Pre-filtering at 09:30 by yesterday-return narrows the universe
+        # to a different population than backtest measured PF 2.44 on.
+        r = _prior_return_for_symbol(df) or {
+            "prior_close": None, "prev_prior_close": None,
+            "prior_day_return_pct": None,
+        }
+        candidate_entries.append({"symbol": sym, **r})
 
-    candidate_entries.sort(key=lambda e: e["prior_day_return_pct"], reverse=True)
+    # Sort by prior_day_return_pct desc for diagnostic readability; the
+    # detector applies its own ordering at fire time, so this is purely
+    # cosmetic. None values sort last.
+    candidate_entries.sort(
+        key=lambda e: e["prior_day_return_pct"] if e.get("prior_day_return_pct") is not None else float("-inf"),
+        reverse=True,
+    )
 
     computed_at = _dt.now().isoformat()
 

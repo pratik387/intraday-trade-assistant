@@ -557,8 +557,9 @@
       "cell_volume_z_min": 2.0,
       "cell_prior_day_return_pct_min": 3.0,
       "baseline_rolling_days": 20,
-      "min_daily_avg_volume": 0,
-      "min_trading_days_required": 0,
+      "min_daily_avg_volume": 50000,
+      "min_trading_days_required": 16,
+      "_comment_liquidity_floor_2026_06_09": "Matches backtest sanity (tools/sub9_research/sanity_close_dn_overnight_long.py): MIN_DAILY_AVG_VOLUME=50_000, MIN_TRADING_DAYS_COVERAGE=0.80 over 20-day rolling = 16 sessions. Pre-2026-06-09 these were 0 which made production permissive vs the universe PF 2.44 was measured on.",
       "universe_max_symbols": 1500,
       "capital_allocation": {
         "_status_PAPER_ONLY_CAPS_LIFTED_2026_05_29": "Paper-validation mode: count caps temporarily lifted so EVERY signal-eligible candidate fires and we observe the full PF distribution rather than a slot-capped subsample. The 2026-05-29 cron showed 24+ valid signals competing for 2 daily slots — 22 of those edges went unobserved. CRITICAL for LIVE: restore live_* values below before flipping to live trading; paper-* values are intentionally permissive and would oversize the real account.",

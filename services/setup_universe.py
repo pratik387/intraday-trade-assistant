@@ -535,13 +535,23 @@ def close_dn_overnight_long_universe(
     """Universe builder for close_dn_overnight_long.
 
     Cap segment: large/mid/small/unknown (NOT micro).
-    Eligibility: MTF-approved (non-ETF) OR cap in {large,mid,small} (CNC fallback).
-    Unknown-cap symbols not in MTF list are EXCLUDED (no leverage, likely illiquid).
+    Eligibility: MTF-approved → MTF at fire time, else CNC fallback.
+    ETFs excluded (different mechanism; the equity closing-flush thesis
+    doesn't apply to ETF NAV-tracking microstructure).
+
+    Aligned with backtest sanity
+    (tools/sub9_research/sanity_close_dn_overnight_multi_exit.py) which
+    iterated over all cap-eligible NSE equities with NO MIS gate and NO
+    MTF-only restriction. MIS filter + unknown-cap-non-MTF exclusion were
+    dropped 2026-06-09 because they silently shrank production's universe
+    vs the population PF 2.44 was measured on. Liquidity floor
+    (min_daily_avg_volume=50k, min_trading_days_required=16) matches
+    sanity's MIN_DAILY_AVG_VOLUME=50_000 + 80%-coverage-of-20-day-rolling.
 
     Spec: specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.md
     Cell-lock: tools/sub9_research/close_dn_overnight_long_cell_lock.json
     """
-    from services.symbol_metadata import get_cap_segment, get_mis_info
+    from services.symbol_metadata import get_cap_segment
     from services.mtf_universe import MtfUniverse
 
     min_daily_avg_vol = float(config["min_daily_avg_volume"])
@@ -552,7 +562,6 @@ def close_dn_overnight_long_universe(
     snapshot_path = Path(str(mtf_cfg["approved_list_snapshot_path"]))
     stale_warn_days = int(mtf_cfg.get("stale_snapshot_warn_days", 7))
     exclude_etf = bool(mtf_cfg.get("exclude_etf", True))
-    fallback_to_cnc = bool(mtf_cfg.get("fallback_to_cnc_if_not_mtf", True))
 
     mtf = MtfUniverse(snapshot_path)
     age = mtf.snapshot_age_days()
@@ -573,8 +582,6 @@ def close_dn_overnight_long_universe(
             cap = get_cap_segment(nse_sym)
             if cap not in accepted_caps:
                 continue
-            if not get_mis_info(nse_sym).get("mis_enabled", False):
-                continue
         except Exception:
             continue
         if ddf is None or ddf.empty or len(ddf) < min_days:
@@ -585,19 +592,14 @@ def close_dn_overnight_long_universe(
             continue
         if avg_vol < min_daily_avg_vol:
             continue
-        # MTF eligibility OR CNC fallback (but block unknown-cap non-MTF, and
-        # always block ETFs even if they're large/mid/small-cap, since their
-        # EOD microstructure doesn't match the equity-mechanism story).
+        # ETF block — ETFs don't fit the equity closing-flush thesis even
+        # when MTF-approved.
         mtf_info = mtf.lookup(bare)
         if exclude_etf and mtf_info is not None and mtf_info.category == "etf":
             continue
-        mtf_ok = mtf.is_eligible(bare, exclude_etf=exclude_etf)
-        if mtf_ok:
-            pass  # accept
-        elif fallback_to_cnc and cap in {"large_cap", "mid_cap", "small_cap"}:
-            pass  # accept (will trade as CNC)
-        else:
-            continue  # unknown-cap that's not MTF: skip
+        # Accept everything else. MTF-approved gets MTF order at fire
+        # time; non-MTF falls back to CNC (no leverage). Backtest sanity
+        # included CNC-fallback names across all cap segments — same here.
         qual.add(sym)
         if len(qual) >= max_symbols:
             logger.warning(
