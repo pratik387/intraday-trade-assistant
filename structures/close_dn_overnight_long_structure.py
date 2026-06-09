@@ -329,50 +329,72 @@ class CloseDnOvernightLongStructure(BaseStructure):
         flush on an up-3% day") and Cell #5 lock (`prior_day_return_pct >= 3%`),
         the discriminator is "did TODAY rally 3%+ before the closing flush?".
 
-        Bug 2026-05-23: previously this method returned (T-1 close - T-2 close) /
-        T-2 close — interpreting "prior day" literally as the day before signal.
-        That filter excluded ~7 of every 13 sanity-expected fires; the production
-        fire rate was a small fraction of sanity's claim. Cell #5 was discovered
-        using sanity's interpretation (today's return) so production must match.
+        History of fixes:
+          - 2026-05-23 (ce5f770): bug — method returned (T-1 close - T-2 close)/
+            T-2 close, interpreting "prior day" literally. Excluded ~7 of every
+            13 sanity-expected fires. Switched to today's return (today_close -
+            yesterday_close)/yesterday_close, computed from df_5m which works in
+            backtest (multi-day feather).
+          - 2026-06-09: bug — the ce5f770 fix ONLY read df_5m for both today's
+            and yesterday's close. In production, df_5m is today-only (Upstox
+            intraday endpoint returns just the current trading session), so
+            `hist = df[df.index.date < session_date]` was always empty and the
+            method returned None for EVERY production candidate. Cell #5 hadn't
+            been able to fire in production at all post-ce5f770. Fix: read
+            yesterday's close from ctx.df_daily first (the run_entry path injects
+            a 2-row df_daily via _mini_df_daily_from_candidate carrying the
+            candidates file's prior_close — which IS yesterday's last 5m close,
+            same value the backtest's per-day groupby would produce). Fall back
+            to df_5m's prior-session derivation for the backtest path.
 
-        Method: today's close is approximated by the LAST 5m bar's close at fire
-        time (the 15:20 bar's close, since signal_bars = 15:00-15:20 per look-
-        ahead-safety; the 15:25 bar is unavailable at fire time). Yesterday's
-        close is the LAST 5m bar of the prior trading day in df_5m.
+        Method:
+          - today_close: last 5m bar's close at hhmm <= 15:20 (today, in df_5m).
+            The 15:25 bar is excluded because it covers 15:25-15:30 wall-clock
+            and would be look-ahead.
+          - yesterday_close: prefer the most-recent-prior-date close from
+            df_daily (production candidate-injected); else df_5m's last 5m bar
+            of the most-recent prior session (backtest).
 
-        Returns None if either of the required bars is unavailable.
+        Returns None if either is unavailable.
         """
         df = context.df_5m
         if df is None or df.empty:
             return None
 
-        # Today's bars STRICTLY BEFORE the 15:25 active-window bar (which itself
-        # closes at 15:30 wall-clock — using it would be look-ahead). Take the
-        # last bar with hhmm <= 15:20 as the "today close" proxy. This matches
-        # the signal-bar window's last bar (15:20).
+        # TODAY's close — from df_5m, the last bar with hhmm <= 15:20.
         today_all = df[df.index.date == session_date]
         if today_all.empty:
             return None
         today_pre_active = today_all[today_all.index.strftime("%H:%M") <= "15:20"]
         if today_pre_active.empty:
-            # If we have today bars but none before 15:25 (shouldn't happen since
-            # the detector only fires AT 15:25 with prior 5 bars present), fall
-            # back to the last available today bar.
             today_close = float(today_all["close"].iloc[-1])
         else:
             today_close = float(today_pre_active["close"].iloc[-1])
         if today_close <= 0:
             return None
 
-        # Yesterday's last 5m bar close (matches sanity's `last_close` per-day groupby).
-        hist = df[df.index.date < session_date]
-        if hist.empty:
-            return None
-        per_session_close = hist.groupby(hist.index.date)["close"].last().astype("float64")
-        if per_session_close.empty:
-            return None
-        yesterday_close = float(per_session_close.iloc[-1])
-        if yesterday_close <= 0:
+        # YESTERDAY's close — try df_daily first (production injection), then
+        # df_5m's prior session (backtest path where df_5m is multi-day).
+        yesterday_close: Optional[float] = None
+        ddf = context.df_daily
+        if ddf is not None and not ddf.empty:
+            if hasattr(ddf.index, "date"):
+                before = ddf[ddf.index.date < session_date]
+            else:
+                before = ddf
+            if len(before) >= 1:
+                yc = float(before["close"].iloc[-1])
+                if yc > 0:
+                    yesterday_close = yc
+        if yesterday_close is None:
+            hist = df[df.index.date < session_date]
+            if not hist.empty:
+                per_session_close = hist.groupby(hist.index.date)["close"].last().astype("float64")
+                if not per_session_close.empty:
+                    yc = float(per_session_close.iloc[-1])
+                    if yc > 0:
+                        yesterday_close = yc
+        if yesterday_close is None:
             return None
 
         return (today_close - yesterday_close) / yesterday_close * 100.0

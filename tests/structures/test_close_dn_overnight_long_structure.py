@@ -316,6 +316,61 @@ def test_prior_day_return_pct_uses_today_vs_yesterday_NOT_yesterday_vs_day_befor
     )
 
 
+def test_prior_day_return_pct_uses_df_daily_when_df_5m_is_today_only():
+    """Regression test for 2026-06-09 production-path bug.
+
+    The Upstox V3 intraday endpoint returns ONLY today's 5m bars
+    (verified empirically — 75 bars from 09:15 to 15:25, single date).
+    Pre-fix `_prior_day_return_pct` read yesterday's close from df_5m
+    via `df[df.index.date < session_date]`, which was always empty in
+    production → method returned None → every cell-#5-eligible candidate
+    rejected with "prior_day_return_pct unavailable" → 0 fires possible.
+
+    run_entry already injects a 2-row df_daily via
+    _mini_df_daily_from_candidate carrying the candidates file's
+    prior_close (= yesterday's last 5m close). The detector must read
+    that as the yesterday-close fallback.
+
+    Scenario: df_5m has TODAY ONLY (5 bars 15:00-15:20), df_daily has 2
+    prior-session rows with closes (50, 100). Today's 15:20 close = 110.
+    Expected return = (110 - 100) / 100 = +10% (>= cell threshold 3%).
+    """
+    session_date = date(2026, 5, 21)
+    today_per_bar_vol = 5000.0
+    bars = []
+    # Today bars only — no historical bars in df_5m (matches production).
+    for hhmm in ("15:00", "15:05", "15:10", "15:15", "15:20"):
+        ts = pd.Timestamp(f"{session_date} {hhmm}:00")
+        is_signal_last = hhmm == "15:20"
+        c = 110.0 if is_signal_last else 105.0
+        o = 111.0 if is_signal_last else 106.0
+        bars.append({"timestamp": ts, "open": o, "close": c,
+                     "high": max(o, c), "low": min(o, c),
+                     "volume": today_per_bar_vol})
+    df_5m = pd.DataFrame(bars).set_index("timestamp").sort_index()
+
+    # df_daily — production-style injection: 2 rows with prior_close values.
+    yesterday = pd.Timestamp(session_date) - pd.Timedelta(days=1)
+    day_before = pd.Timestamp(session_date) - pd.Timedelta(days=2)
+    df_daily = pd.DataFrame(
+        {"close": [50.0, 100.0]},
+        index=pd.DatetimeIndex([day_before, yesterday]),
+    )
+
+    det = CloseDnOvernightLongStructure(_config())
+    ctx = MarketContext(
+        symbol="NSE:TEST", current_price=110.0, timestamp=df_5m.index[-1],
+        df_5m=df_5m, session_date=pd.Timestamp(session_date),
+        cap_segment="large_cap", df_daily=df_daily,
+    )
+    pr = det._prior_day_return_pct(ctx, session_date)
+    assert pr is not None, (
+        "method returned None — production-path bug not fixed; the detector "
+        "must read yesterday's close from ctx.df_daily when df_5m is today-only"
+    )
+    # (110 - 100) / 100 = +10%
+    assert 9.0 < pr < 11.0, f"expected ~+10%, got {pr}"
+
 
 def test_per_symbol_latch_prevents_re_fire():
     """Once fired, calling detect again on the same (symbol, date) returns 'already fired'."""
