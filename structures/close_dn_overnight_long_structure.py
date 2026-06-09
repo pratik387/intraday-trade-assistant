@@ -44,17 +44,20 @@ from .data_models import (
 logger = get_agent_logger()
 
 
-# 5-bar signal window (look-ahead-safe; 15:25 bar excluded)
+# 5-bar signal window (look-ahead-safe; 15:25 bar excluded from signal computation)
 _SIGNAL_BAR_HHMMS = ("15:00", "15:05", "15:10", "15:15", "15:20")
-# Active window single bar — fire at 15:20 (the bar covers 15:20-15:25 wall-clock,
-# closes at 15:25:00). Previously was 15:25 but the detector NEVER reads the 15:25
-# bar's data (only 15:00-15:20 for the signal), so the 15:25 bar was only ever a
-# trigger sentinel. Using 15:20 lets the cron run at 15:26 IST instead of 15:27:
-# the 15:20 bar is reliably surfaced by Upstox V3 within seconds of its 15:25:00
-# close, whereas the 15:25 bar isn't reliably exposed until ~15:27-15:28 (per
-# commit 77a256b empirical). This buys an extra ~1m30s buffer before the 15:30
-# market close — meaningful when fetch wall-clock grows on wider universes.
-_ACTIVE_HHMM = "15:20"
+# Active-window trigger: accept EITHER the 15:20 bar OR the 15:25 bar as the
+# latest bar in df_5m. Both are reliable indicators we're past 15:25:00 wall-clock:
+#   - 15:20 bar covers 15:20-15:25, finalized at 15:25:00
+#   - 15:25 bar covers 15:25-15:30, surfaced by Upstox V3 by 15:26 IST (empirical
+#     2026-06-09: cron at 15:26 IST saw 2064 of 2096 symbols already on 15:25)
+# The detector NEVER reads the 15:25 bar's data — signal computation only uses
+# bars 15:00-15:20. The 15:25 bar is purely a sentinel. Accepting either avoids
+# coupling the cron timing to Upstox's bar-surfacing latency: if the cron fires
+# at 15:26 and Upstox hasn't refreshed yet (last bar = 15:20) → fire; if Upstox
+# has refreshed (last bar = 15:25) → also fire. Single-bar coupling broke
+# 2026-06-09's run when _ACTIVE_HHMM = "15:20" rejected the 15:25-latest symbols.
+_ACTIVE_HHMMS = ("15:20", "15:25")
 
 # ---------- Pre-computed baseline snapshot ----------
 # Live/paper cron path: tools/build_close_dn_baseline.py writes
@@ -150,8 +153,8 @@ class CloseDnOvernightLongStructure(BaseStructure):
         cur_hhmm = cur_t.strftime("%H:%M") if hasattr(cur_t, "strftime") else str(cur_t)
 
         # 1. Active window: single-bar 15:25
-        if cur_hhmm != _ACTIVE_HHMM:
-            return _empty(f"outside active window: {cur_hhmm} != {_ACTIVE_HHMM}")
+        if cur_hhmm not in _ACTIVE_HHMMS:
+            return _empty(f"outside active window: {cur_hhmm} not in {_ACTIVE_HHMMS}")
 
         session_date = (
             context.session_date if context.session_date is not None
@@ -232,15 +235,16 @@ class CloseDnOvernightLongStructure(BaseStructure):
             product = "CNC"
             leverage = 1.0
 
-        # 8. Compute entry-bar reference price (15:25 bar OPEN, since we only have bars
-        #    up through 15:25 — the 15:25 bar represents 15:25-15:30; its OPEN is the
-        #    first price observed at 15:25 IST). The actual MOC fill will be at the
-        #    15:25 bar's CLOSE (= 15:30 IST close), but at signal time we don't know
-        #    that yet. Use the entry-bar OPEN as the reference; the executor logs the
-        #    actual MOC fill price separately.
-        entry_bar = today_bars[today_bars.index.map(lambda ts: ts.strftime("%H:%M") == _ACTIVE_HHMM)]
+        # 8. Compute entry-bar reference price. The trigger bar is whatever the
+        #    last today bar is (15:20 if Upstox hasn't surfaced 15:25 yet, else
+        #    15:25). Use that bar's OPEN as the reference. The actual MOC fill
+        #    happens at the 15:25 bar CLOSE (= 15:30 IST), but at signal time we
+        #    don't know that yet — the executor logs the actual fill separately.
+        #    Either bar's open is a reasonable proxy for live diagnostics +
+        #    sizing; absolute value isn't load-bearing.
+        entry_bar = today_bars[today_bars.index.map(lambda ts: ts.strftime("%H:%M") in _ACTIVE_HHMMS)]
         if entry_bar.empty:
-            return _empty("entry bar (15:25) not present in df_5m")
+            return _empty(f"no trigger bar ({'/'.join(_ACTIVE_HHMMS)}) present in df_5m")
         entry_price = float(entry_bar["open"].iloc[-1])
 
         # 9. Build StructureEvent (the planner uses this to construct TradePlan)
@@ -459,7 +463,7 @@ class CloseDnOvernightLongStructure(BaseStructure):
         return 0.0
 
     def validate_timing(self, current_time) -> bool:
-        """Single-bar 15:25 window."""
+        """Active window: 15:20 or 15:25 (either bar proves wall-clock >= 15:25:00)."""
         t = current_time.time() if hasattr(current_time, "time") else current_time
         hhmm = t.strftime("%H:%M") if hasattr(t, "strftime") else str(t)
-        return hhmm == _ACTIVE_HHMM
+        return hhmm in _ACTIVE_HHMMS

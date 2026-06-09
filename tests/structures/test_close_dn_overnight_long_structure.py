@@ -147,8 +147,32 @@ def test_does_not_fire_at_15_15():
 
 def test_fires_at_15_20_with_valid_signal():
     """At 15:20 (the active trigger after the 15:20 bar closes at 15:25:00),
-    with strong sell-flush, extreme volume_z, and post-up-3% day → fire."""
+    with strong sell-flush, extreme volume_z, and post-up-3% day → fire.
+
+    Covers the case where Upstox hasn't yet surfaced the 15:25 bar — fetched
+    df_5m's latest bar is 15:20 and the detector still fires because the 5
+    signal bars (15:00-15:20) are all finalized."""
     df, sd = _build_df(current_hhmm="15:20", signed_vol_ratio=-0.6, volume_z_target=3.0,
+                        prior_day_return_pct=4.0)
+    det = CloseDnOvernightLongStructure(_config())
+    res = det.detect(_ctx(df, sd))
+    if not res.structure_detected:
+        pytest.skip(f"Synthetic data didn't trigger; rejection={res.rejection_reason}")
+    assert len(res.events) == 1
+    evt = res.events[0]
+    assert evt.side == "long"
+    assert evt.context["product"] in ("MTF", "CNC")
+
+
+def test_fires_at_15_25_with_valid_signal():
+    """At 15:25 (Upstox has surfaced the 15:25 bar by cron-fire time), with the
+    same valid signal → fire.
+
+    Covers the common production case: cron runs at 15:26 IST, Upstox returns
+    bars through 15:25 for most symbols (2026-06-09 empirical: 2064 of 2096
+    symbols on 15:25). The 5 signal bars (15:00-15:20) are still finalized;
+    the 15:25 bar's data is not read."""
+    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.6, volume_z_target=3.0,
                         prior_day_return_pct=4.0)
     det = CloseDnOvernightLongStructure(_config())
     res = det.detect(_ctx(df, sd))
