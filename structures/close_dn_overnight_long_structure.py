@@ -1,9 +1,15 @@
 """close_dn_overnight_long detector — Phase 5 SHIPPABLE Cell #5.
 
-Mechanism: post-rally EOD-flush overnight reversion. Fires at 15:25 IST
-when the closing 5 bars (15:00-15:20) show heavy sell-volume on a
-post-up-3% day, then BUYs MOC (MTF or CNC) and queues AMO SELL for
-next-day pre-open auction.
+Mechanism: post-rally EOD-flush overnight reversion. Fires when the 15:20
+bar has closed (i.e. wall-clock >= 15:25:00 IST) and the closing 5 bars
+(15:00-15:20) show heavy sell-volume on a post-up-3% day, then BUYs MOC
+(MTF or CNC) and queues AMO SELL for next-day pre-open auction.
+
+Timing: the cron fires at 15:26 IST. The trigger bar is 15:20 (which
+covers 15:20-15:25 wall-clock and is finalized at 15:25:00). The 15:25
+bar (covering 15:25-15:30) is intentionally not used as a trigger —
+Upstox V3 doesn't reliably surface it until ~15:27-15:28 and its
+incomplete data would be look-ahead.
 
 Spec:      specs/2026-05-21-close_dn_overnight_long-SHIPPABLE-cell-5.md
 Cell-lock: tools/sub9_research/close_dn_overnight_long_cell_lock.json
@@ -40,8 +46,15 @@ logger = get_agent_logger()
 
 # 5-bar signal window (look-ahead-safe; 15:25 bar excluded)
 _SIGNAL_BAR_HHMMS = ("15:00", "15:05", "15:10", "15:15", "15:20")
-# Active window single bar — only fire at 15:25
-_ACTIVE_HHMM = "15:25"
+# Active window single bar — fire at 15:20 (the bar covers 15:20-15:25 wall-clock,
+# closes at 15:25:00). Previously was 15:25 but the detector NEVER reads the 15:25
+# bar's data (only 15:00-15:20 for the signal), so the 15:25 bar was only ever a
+# trigger sentinel. Using 15:20 lets the cron run at 15:26 IST instead of 15:27:
+# the 15:20 bar is reliably surfaced by Upstox V3 within seconds of its 15:25:00
+# close, whereas the 15:25 bar isn't reliably exposed until ~15:27-15:28 (per
+# commit 77a256b empirical). This buys an extra ~1m30s buffer before the 15:30
+# market close — meaningful when fetch wall-clock grows on wider universes.
+_ACTIVE_HHMM = "15:20"
 
 # ---------- Pre-computed baseline snapshot ----------
 # Live/paper cron path: tools/build_close_dn_baseline.py writes

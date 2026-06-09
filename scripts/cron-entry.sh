@@ -1,14 +1,26 @@
 #!/bin/bash
-# Triggered at 15:27 IST every weekday by cron.
+# Triggered at 15:26 IST every weekday by cron.
 # Runs the overnight setup entry handler: computes signal, places BUY, places AMO SELL.
 #
-# Why 15:27 and not 15:25? The setup's signal bar is 15:25 (covering
-# 15:25-15:30). Upstox's V3 intraday 5m endpoint doesn't expose the
-# 15:25-timestamped bar until ~2 min after the bar period starts —
-# at 15:25:00 the latest available bar is still 15:20. Running at
-# 15:27 gives Upstox time to surface the 15:25 bar (verified empirically
-# 2026-06-01). Still leaves 3 min before market close at 15:30 for the
-# paper BUY (live MOC SELL at close). See Lesson #23.
+# Why 15:26? The detector's trigger bar is 15:20 (covers 15:20-15:25
+# wall-clock, finalized at 15:25:00). The 15:25 bar (which covers
+# 15:25-15:30) is NOT used at all by the detector — signal computation
+# reads bars 15:00-15:20 only, and the active-window sentinel was moved
+# from 15:25 to 15:20 on 2026-06-09 (see _ACTIVE_HHMM comment in
+# structures/close_dn_overnight_long_structure.py). Pre-2026-06-09 the
+# cron ran at 15:27 to wait for Upstox to surface the 15:25 bar (verified
+# 2026-06-01, commit 77a256b); now that the 15:25 bar is no longer
+# required as a trigger, 15:26 is safe and buys ~1m30s extra buffer
+# before the 15:30 market close — meaningful when fetch wall-clock grows
+# on wider universes.
+#
+# Wall-clock budget (worst case at 15:26 start):
+#   15:26:00  cron starts → 5m batch fetch begins (rps=20, conc=30, ~2000 syms)
+#   15:27:45  fetch done (~105s)
+#   15:27:55  detector loop done (~10s)
+#   15:28:05  orders placed (~10s for ~5-10 fires)
+#   15:30:00  market close (1m55s buffer)
+# See Lesson #23 (cron-driven setups need API-availability buffer).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

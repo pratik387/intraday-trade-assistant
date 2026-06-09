@@ -127,25 +127,28 @@ def _ctx(df: pd.DataFrame, session_date: date, symbol: str = "NSE:RELIANCE",
 
 
 def test_does_not_fire_outside_active_window():
-    """At 14:00, no fire (only fires at 15:25)."""
+    """At 14:00 — no today bars yet, so the detector rejects before the
+    active-window check (either way: no fire)."""
     df, sd = _build_df(current_hhmm="14:00")
     det = CloseDnOvernightLongStructure(_config())
     res = det.detect(_ctx(df, sd))
     assert not res.structure_detected
-    assert "outside active window" in (res.rejection_reason or "")
+    reason = (res.rejection_reason or "").lower()
+    assert "outside active window" in reason or "no bars" in reason
 
 
-def test_does_not_fire_at_15_20():
-    """At 15:20, no fire (one bar early)."""
-    df, sd = _build_df(current_hhmm="15:20")
+def test_does_not_fire_at_15_15():
+    """At 15:15, no fire (one bar early — the 15:20 trigger bar isn't closed yet)."""
+    df, sd = _build_df(current_hhmm="15:15")
     det = CloseDnOvernightLongStructure(_config())
     res = det.detect(_ctx(df, sd))
     assert not res.structure_detected
 
 
-def test_fires_at_15_25_with_valid_signal():
-    """At 15:25, with strong sell-flush, extreme volume_z, and post-up-3% day → fire."""
-    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.6, volume_z_target=3.0,
+def test_fires_at_15_20_with_valid_signal():
+    """At 15:20 (the active trigger after the 15:20 bar closes at 15:25:00),
+    with strong sell-flush, extreme volume_z, and post-up-3% day → fire."""
+    df, sd = _build_df(current_hhmm="15:20", signed_vol_ratio=-0.6, volume_z_target=3.0,
                         prior_day_return_pct=4.0)
     det = CloseDnOvernightLongStructure(_config())
     res = det.detect(_ctx(df, sd))
@@ -159,7 +162,7 @@ def test_fires_at_15_25_with_valid_signal():
 
 def test_rejects_below_signed_vol_threshold():
     """Positive signed_vol_ratio (-0.3) → rejected (we need <=-0.5)."""
-    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.3, volume_z_target=3.0,
+    df, sd = _build_df(current_hhmm="15:20", signed_vol_ratio=-0.3, volume_z_target=3.0,
                         prior_day_return_pct=4.0)
     # Override fixture: build today bars with bullish direction so signed_vol_ratio is positive
     # (the fixture already uses close < open for negative signed_vol; positive needs flipping)
@@ -173,7 +176,7 @@ def test_rejects_below_signed_vol_threshold():
 
 def test_rejects_low_volume_z():
     """volume_z below 1.0 → rejected by primary filter."""
-    df, sd = _build_df(current_hhmm="15:25", volume_z_target=0.5,
+    df, sd = _build_df(current_hhmm="15:20", volume_z_target=0.5,
                         prior_day_return_pct=4.0)
     det = CloseDnOvernightLongStructure(_config())
     res = det.detect(_ctx(df, sd))
@@ -190,7 +193,7 @@ def test_rejects_non_extreme_volume_z():
     this test bumps cell_volume_z_min beyond the achievable z to force
     cell-filter rejection.
     """
-    df, sd = _build_df(current_hhmm="15:25", volume_z_target=1.5,
+    df, sd = _build_df(current_hhmm="15:20", volume_z_target=1.5,
                         prior_day_return_pct=4.0)
     # Force unreachable cell threshold to verify the cell filter actually rejects.
     cfg = _config(cell_volume_z_min=10000.0)
@@ -203,7 +206,7 @@ def test_rejects_non_extreme_volume_z():
 
 def test_rejects_prior_day_not_up_3pct():
     """Prior day return < 3% → cell filter rejects (need up_gt_3pct)."""
-    df, sd = _build_df(current_hhmm="15:25", volume_z_target=3.0,
+    df, sd = _build_df(current_hhmm="15:20", volume_z_target=3.0,
                         prior_day_return_pct=1.0)  # < 3%
     det = CloseDnOvernightLongStructure(_config())
     res = det.detect(_ctx(df, sd))
@@ -255,9 +258,10 @@ def test_prior_day_return_pct_uses_today_vs_yesterday_NOT_yesterday_vs_day_befor
                          "high": 100.0, "low": 100.0,
                          "volume": 1000.0 + float(jitter[idx])})
 
-    # Today's bars 15:00-15:25: bearish closes (signed_vol < 0), last-bar close = 110
+    # Today's bars 15:00-15:20: bearish closes (signed_vol < 0), last-bar (15:20) close = 110.
+    # The 15:25 bar is intentionally omitted — the active-window trigger is 15:20.
     today_per_bar_vol = 5000.0
-    for idx, hhmm in enumerate(("15:00", "15:05", "15:10", "15:15", "15:20", "15:25")):
+    for idx, hhmm in enumerate(("15:00", "15:05", "15:10", "15:15", "15:20")):
         ts = pd.Timestamp(f"{session_date} {hhmm}:00")
         # bearish bar (open > close)
         is_signal_last = hhmm == "15:20"
@@ -291,7 +295,7 @@ def test_prior_day_return_pct_uses_today_vs_yesterday_NOT_yesterday_vs_day_befor
 
 def test_per_symbol_latch_prevents_re_fire():
     """Once fired, calling detect again on the same (symbol, date) returns 'already fired'."""
-    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.8, volume_z_target=3.5,
+    df, sd = _build_df(current_hhmm="15:20", signed_vol_ratio=-0.8, volume_z_target=3.5,
                         prior_day_return_pct=4.0)
     det = CloseDnOvernightLongStructure(_config())
     res1 = det.detect(_ctx(df, sd))
@@ -304,7 +308,7 @@ def test_per_symbol_latch_prevents_re_fire():
 
 def test_etf_excluded_even_if_mtf_eligible():
     """BANKBEES is in MTF list but category=etf → rejected entirely."""
-    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.8, volume_z_target=3.5,
+    df, sd = _build_df(current_hhmm="15:20", signed_vol_ratio=-0.8, volume_z_target=3.5,
                         prior_day_return_pct=4.0)
     det = CloseDnOvernightLongStructure(_config())
     res = det.detect(_ctx(df, sd, symbol="NSE:BANKBEES"))
@@ -317,7 +321,7 @@ def test_etf_excluded_even_if_mtf_eligible():
 
 def test_plan_long_strategy_returns_overnight_trade_plan():
     """plan_long_strategy returns TradePlan with exit_mode='scheduled_amo'."""
-    df, sd = _build_df(current_hhmm="15:25", signed_vol_ratio=-0.8, volume_z_target=3.5,
+    df, sd = _build_df(current_hhmm="15:20", signed_vol_ratio=-0.8, volume_z_target=3.5,
                         prior_day_return_pct=4.0)
     det = CloseDnOvernightLongStructure(_config())
     res = det.detect(_ctx(df, sd))
