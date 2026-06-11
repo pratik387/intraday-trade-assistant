@@ -22,17 +22,21 @@ import pandas as pd
 BROK_RATE = 0.0003
 BROK_CAP = 20.0
 STT_RATE = 0.00025
-EXCH_RATE = 0.0000297
+EXCH_RATE = 0.0000307            # NSE 0.00307% (verified Jun 2026; was 0.0000297 pre-Jun 2026 audit)
 SEBI_RATE = 0.000001
 IPFT_RATE = 0.000001
 STAMP_RATE = 0.00003
 GST_RATE = 0.18
 
-# CNC / delivery fee rates (Zerodha, verified 2026-05-21)
-CNC_BROKERAGE_FLAT = 20.0        # Rs per side, flat
-CNC_STT_RATE_SELL = 0.001        # 0.1% on sell value (delivery)
+# CNC / delivery fee rates (Zerodha, verified Jun 2026)
+# Pre-Jun-2026 audit corrected three errors:
+#   1. Brokerage was Rs 20 flat; Zerodha delivery is FREE (Rs 0).
+#   2. STT was applied sell-side only; Zerodha STT on delivery is 0.1% on BOTH buy and sell.
+#   3. Txn rate was 0.00345% (pre-Oct-2024 NSE); current is 0.00307%.
+CNC_BROKERAGE_FLAT = 0.0         # Zerodha delivery brokerage = Rs 0 (free)
+CNC_STT_RATE = 0.001             # 0.1% on BOTH buy and sell value (delivery)
 CNC_STAMP_RATE_BUY = 0.00015     # 0.015% on buy value (delivery)
-CNC_TXN_RATE_PER_SIDE = 0.0000345
+CNC_TXN_RATE_PER_SIDE = 0.0000307
 CNC_SEBI_RATE_PER_SIDE = 0.000001
 CNC_GST_RATE = 0.18              # 18% on (brokerage + txn)
 
@@ -98,13 +102,21 @@ def calc_fee(entry_price: float, exit_price: float, qty: int, side: str,
 def calc_fee_cnc(buy_value_inr: float, sell_value_inr: float) -> float:
     """CNC (delivery) fee model for a single round-trip.
 
-    Per-side breakdown (Zerodha rate card, verified 2026-05-21):
-      - Brokerage: Rs 20 flat per side
-      - STT: 0.10% on SELL value (delivery rate, distinct from intraday 0.025%)
+    Per-side breakdown (Zerodha rate card, verified Jun 2026):
+      - Brokerage: Rs 0 (delivery is free at Zerodha)
+      - STT: 0.10% on BOTH buy and sell value (delivery rate; intraday is 0.025% sell-only)
       - Stamp: 0.015% on BUY value (delivery rate, distinct from intraday 0.003%)
-      - Txn charges: 0.00345% per side (NSE)
+      - Txn charges: 0.00307% per side (NSE)
       - SEBI: 0.0001% per side
       - GST: 18% on (brokerage + txn) per side
+
+    Pre-Jun-2026 audit corrected three errors:
+      1. Brokerage was Rs 20 flat per side; reality is Rs 0 (Zerodha delivery free).
+      2. STT was sell-side only; reality is BOTH sides for delivery.
+      3. Txn rate was 0.00345% (pre-Oct-2024); current is 0.00307%.
+    The cell_lock fee_model for close_dn_overnight_long still records the
+    pre-audit numbers — research needs to re-run sanity_close_dn_overnight_5bar
+    with this corrected helper to refresh the locked PF.
 
     Mirrors `tools/sub9_research/sanity_close_dn_overnight_long.py:calc_fee_cnc`
     so research / production reconcile. Pure function; returns Rs as float.
@@ -118,7 +130,8 @@ def calc_fee_cnc(buy_value_inr: float, sell_value_inr: float) -> float:
 
     brokerage_buy = CNC_BROKERAGE_FLAT
     brokerage_sell = CNC_BROKERAGE_FLAT
-    stt_sell = sell_value_inr * CNC_STT_RATE_SELL
+    stt_buy = buy_value_inr * CNC_STT_RATE
+    stt_sell = sell_value_inr * CNC_STT_RATE
     stamp_buy = buy_value_inr * CNC_STAMP_RATE_BUY
     txn_buy = buy_value_inr * CNC_TXN_RATE_PER_SIDE
     txn_sell = sell_value_inr * CNC_TXN_RATE_PER_SIDE
@@ -127,7 +140,7 @@ def calc_fee_cnc(buy_value_inr: float, sell_value_inr: float) -> float:
     gst_buy = (brokerage_buy + txn_buy) * CNC_GST_RATE
     gst_sell = (brokerage_sell + txn_sell) * CNC_GST_RATE
     return (
-        brokerage_buy + brokerage_sell + stt_sell + stamp_buy +
+        brokerage_buy + brokerage_sell + stt_buy + stt_sell + stamp_buy +
         txn_buy + txn_sell + sebi_buy + sebi_sell + gst_buy + gst_sell
     )
 

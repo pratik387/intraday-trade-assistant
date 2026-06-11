@@ -39,7 +39,7 @@ class TradingLogger:
     BROKERAGE_RATE = 0.0003         # 0.03% of order value
     BROKERAGE_CAP = 20.0            # Rs 20 per order cap (whichever is lower)
     STT_RATE = 0.00025              # 0.025% on SELL side only
-    EXCHANGE_RATE = 0.0000297       # NSE charges 0.00297% (total turnover)
+    EXCHANGE_RATE = 0.0000307       # NSE charges 0.00307% (total turnover); verified Jun 2026
     SEBI_RATE = 0.000001            # Rs 10 per crore (total turnover)
     IPFT_RATE = 0.000001            # Rs 10 per crore NSE Investor Protection Fund (total turnover)
     STAMP_DUTY_RATE = 0.00003       # 0.003% on BUY side

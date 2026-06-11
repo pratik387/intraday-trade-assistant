@@ -92,18 +92,25 @@ ALLOWED_CAP_SEGMENTS = ("large_cap", "mid_cap", "small_cap")
 def calc_fee_cnc(buy_value: float, sell_value: float) -> float:
     """CNC (delivery) fee model for a single round-trip.
 
-    Returns total Rs fee. See sanity-script docstring for the breakdown.
+    Returns total Rs fee. Zerodha rate card verified Jun 2026; mirrors
+    tools/sub7_validation/build_per_setup_pnl.py:calc_fee_cnc.
+
+    Pre-Jun-2026 audit corrected:
+      - Brokerage was Rs 20 flat per side; reality is Rs 0 (free delivery).
+      - STT was sell-side only; reality is BOTH sides for delivery.
+      - Txn rate was 0.00345% (pre-Oct-2024 NSE); current is 0.00307%.
     """
-    # Brokerage: Rs 20 flat per side
-    brokerage_buy = 20.0
-    brokerage_sell = 20.0
-    # STT: 0.1% on sell-side (delivery)
+    # Brokerage: Rs 0 (Zerodha delivery is free)
+    brokerage_buy = 0.0
+    brokerage_sell = 0.0
+    # STT: 0.1% on BOTH buy and sell value (delivery)
+    stt_buy = buy_value * 0.001
     stt_sell = sell_value * 0.001
     # Stamp: 0.015% on buy-side (delivery)
     stamp_buy = buy_value * 0.00015
-    # Txn charges: 0.00345% per side (NSE)
-    txn_buy = buy_value * 0.0000345
-    txn_sell = sell_value * 0.0000345
+    # Txn charges: 0.00307% per side (NSE, post-Jun-2026 audit)
+    txn_buy = buy_value * 0.0000307
+    txn_sell = sell_value * 0.0000307
     # SEBI: 0.0001% per side
     sebi_buy = buy_value * 0.000001
     sebi_sell = sell_value * 0.000001
@@ -111,7 +118,7 @@ def calc_fee_cnc(buy_value: float, sell_value: float) -> float:
     gst_buy = (brokerage_buy + txn_buy) * 0.18
     gst_sell = (brokerage_sell + txn_sell) * 0.18
     return (
-        brokerage_buy + brokerage_sell + stt_sell + stamp_buy +
+        brokerage_buy + brokerage_sell + stt_buy + stt_sell + stamp_buy +
         txn_buy + txn_sell + sebi_buy + sebi_sell + gst_buy + gst_sell
     )
 

@@ -6,10 +6,17 @@ from tools.sub7_validation.build_per_setup_pnl import (
 
 
 def test_calc_fee_cnc_baseline_matches_sanity():
-    """Rs 1L buy / Rs 1L*1.005 sell -> ~Rs 171.06 (matches sanity script reference)."""
+    """Rs 1L buy / Rs 1L*1.005 sell -> ~Rs 222.96.
+
+    Post-Jun-2026 fee audit:
+      - Brokerage: Rs 0 (was Rs 20 flat each side; Zerodha delivery free)
+      - STT: 0.1% on BOTH sides (was sell-only)
+      - Txn: 0.00307%/side (was 0.00345%)
+    Net per-side breakdown: stt(200.50) + stamp(15.00) + txn(6.155) + sebi(0.20) + gst(1.108)
+    """
     fee = calc_fee_cnc(100000.0, 100500.0)
     # Allow Rs 1 tolerance for rounding
-    assert 170 <= fee <= 172, f"expected ~171.06, got {fee:.4f}"
+    assert 222 <= fee <= 224, f"expected ~222.96, got {fee:.4f}"
 
 
 def test_calc_fee_cnc_zero_for_zero_values():
@@ -81,6 +88,7 @@ def test_existing_intraday_calc_fee_unaffected():
     buy_value = 500 * 10  # = 5000
     sell_value = 501.5 * 10  # = 5015
     fee_cnc = calc_fee_cnc(buy_value, sell_value)
-    # CNC should be HIGHER than intraday for a small notional because Rs 20 flat
-    # brokerage dominates and STT 0.1% (delivery) >> 0.025% (intraday)
+    # CNC should be HIGHER than intraday because delivery STT (0.1% on BOTH sides
+    # = 0.2% round-trip notional) dominates vs intraday STT (0.025% sell-only).
+    # Delivery brokerage is Rs 0 since Zerodha made it free.
     assert fee_cnc > fee_old

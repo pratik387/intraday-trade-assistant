@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 BROKERAGE_RATE = 0.0003         # 0.03% of order value
 BROKERAGE_CAP = 20.0            # Rs 20 per order cap (whichever is lower)
 STT_RATE = 0.00025              # 0.025% on sell side only
-EXCHANGE_RATE_NSE = 0.0000297   # 0.00297% NSE transaction charges (total turnover)
+EXCHANGE_RATE_NSE = 0.0000307   # 0.00307% NSE transaction charges (total turnover); verified Jun 2026
 SEBI_RATE = 0.000001            # Rs 10 per crore (total turnover)
 IPFT_RATE = 0.000001            # Rs 10 per crore NSE Investor Protection Fund (total turnover)
 STAMP_DUTY_RATE = 0.00003       # 0.003% on buy side (Maharashtra max rate)
