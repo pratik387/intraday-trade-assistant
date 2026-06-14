@@ -1,0 +1,71 @@
+{
+  "setup_name": "mtf_capitulation_revert_long",
+  "variant": "most_stable_tier1_shock2x_bottom5pct",
+  "window_label": "Discovery 2023-24 locked (540-cell mine, min-dPF); OOS 2025 + 2026 one-shot validated",
+  "locked_at": "2026-06-14T16:00:00Z",
+  "horizon": "multi_day_CNC_MTF",
+  "data_source": "cache/preaggregate/clean_daily_from5m.feather (CA-adjusted, bad-print-clean; NOT consolidated_daily)",
+  "universe": {
+    "comment": "MTF-eligible (leverageable) illiquid cohort; the edge dies monotonically illiquid->liquid",
+    "mtf_approved_only": true,
+    "exclude_etf": true,
+    "adv_tier": 1,
+    "adv_tier_count": 5,
+    "adv_tier_basis": "trailing_20d_turnover_quintile_cross_sectional",
+    "min_daily_avg_turnover_inr": 2000000,
+    "min_price": 5.0
+  },
+  "signal": {
+    "comment": "Cross-sectional daily capitulation: deep loser on a volume shock reverts over 2 days",
+    "lookback_days": 5,
+    "loser_pct": 0.05,
+    "rank_basis": "trailing_5d_return_bottom_pct_cross_sectional",
+    "turnover_shock_min": 2.0,
+    "shock_lookback_days": 20,
+    "shock_basis": "day_t_turnover / mean(turnover[t-20..t-1])  (causal, excludes day t)"
+  },
+  "entry_exit_mechanic": {
+    "entry_mode": "T+1_open (AMO BUY placed at day-t EOD; fills next open)",
+    "exit_mode": "T+1+K close (MOC SELL on exit_on_date = entry_date + hold_days trading days)",
+    "hold_days": 2,
+    "side": "LONG",
+    "product": "MTF",
+    "fallback_to_cnc_if_not_mtf": true,
+    "catastrophe_stop_pct": 15.0,
+    "_catastrophe_comment": "WIDE blowup guard only (gap/circuit tail), NOT a strategy exit; validated edge had no intra-hold stop",
+    "exclude_ca_in_hold_window": true,
+    "_ca_comment": "exclude names with a split/bonus ex-date inside the K-day hold window (avoids qty/PnL corruption)"
+  },
+  "cost_model": {
+    "comment": "MTF round-trip; STT delivery 0.20% dominates",
+    "delivery_stt_round_trip": 0.0020,
+    "brokerage_round_trip": 0.0006,
+    "exchange_sebi_ipft_stamp_gst_round_trip": 0.00047,
+    "mtf_interest_per_funded_day": 0.0004,
+    "assumed_slippage_round_trip": 0.0020
+  },
+  "validation": {
+    "cell_mine": "540 cells swept (n_disc>=200); 80 ship-eligible (Disc netPF>=1.20); 52 net-positive all 3 periods",
+    "selection": "most-stable by min dPF (stability over top-PF, per lessons)",
+    "dPF": 0.030,
+    "pf_net20bp": {"disc_23_24": 1.34, "oos_2025": 1.37, "y2026": 1.36},
+    "confidence_card": {
+      "bca_pf": {"point": 1.356, "ci": [1.167, 1.600], "n_pooled": 1115},
+      "bca_expectancy_inr": {"point": 340.7, "ci": [172.5, 534.8]},
+      "win_rate": 0.478,
+      "regimes_positive": "6/7 (only loser post_tariff_consolidation PF 0.92; positive in war_vol_2026 1.57)",
+      "harvey_liu_adj_sharpe": {"raw": 1.60, "M_80": 0.91, "M_540_true": 0.80}
+    },
+    "trade_count": {"total": 1115, "disc": 610, "oos": 370, "y2026": 135, "per_year": 346}
+  },
+  "open_gates": [
+    "survivorship: 2026-05 MTF list applied to 2023-25 (no historical MTF list, Lesson #27) -> PAPER is the production gate",
+    "tier-1 slippage realism (edge alive <=20bp, thins >=30bp) -> confirm in paper",
+    "post_tariff_consolidation low-vol regime weakness (PF 0.92) -> size for drawdown / regime-gate"
+  ],
+  "research_scripts": [
+    "_tmp_build_clean_daily.py", "_tmp_cnc_cellmine.py",
+    "_tmp_cnc_a2_verify.py", "_tmp_cnc_a2_confidence_card.py"
+  ],
+  "brief": "specs/2026-06-14-brief-mtf_capitulation_revert_long.md"
+}

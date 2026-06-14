@@ -589,6 +589,64 @@
         "sustained_weeks": 6,
         "state_file": "state/decay_tripwire_close_dn_overnight_long.json"
       }
+    },
+    "mtf_capitulation_revert_long": {
+      "enabled": false,
+      "paper_enabled": false,
+      "_status": "BUILD IN PROGRESS 2026-06-14 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF capitulation-reversion. Confidence-card PASSED (PF 1.356 [1.17,1.60], 6/7 regimes, Harvey-Liu adj-Sharpe 0.80 at true M=540). Cell-lock: tools/sub9_research/mtf_capitulation_revert_long_cell_lock.json. Brief: specs/2026-06-14-brief-mtf_capitulation_revert_long.md. Not wired to dispatch/cron yet; ranker module first. Paper-only when enabled.",
+      "horizon": "multi_day",
+      "ranker_class": "services.cross_sectional_ranker.CrossSectionalRanker",
+      "data_source": "cache/preaggregate/clean_daily_from5m.feather",
+      "lookback_days": 5,
+      "hold_days": 2,
+      "loser_pct": 0.05,
+      "adv_tier": 1,
+      "adv_tier_count": 5,
+      "turnover_shock_min": 2.0,
+      "shock_lookback_days": 20,
+      "adv_floor_inr": 2000000,
+      "min_price": 5.0,
+      "min_universe_symbols_per_day": 20,
+      "entry_mode": "t1_open_amo",
+      "exit_mode": "kday_close_moc",
+      "side": "long",
+      "catastrophe_stop_pct": 15.0,
+      "exclude_ca_in_hold_window": true,
+      "ca_events_path": "data/corporate_actions/split_bonus_events.parquet",
+      "mtf": {
+        "approved_list_snapshot_path": "data/mtf_universe/approved_mtf_securities_2026-05-21.json",
+        "interest_pct_per_day": 0.0004,
+        "exclude_etf": true,
+        "fallback_to_cnc_if_not_mtf": true,
+        "stale_snapshot_warn_days": 7
+      },
+      "cost_model": {
+        "delivery_stt_round_trip": 0.0020,
+        "brokerage_round_trip": 0.0006,
+        "charges_round_trip": 0.00047,
+        "assumed_slippage_round_trip": 0.0020
+      },
+      "capital_allocation": {
+        "_status_PAPER_ONLY": "Paper-validation: caps lifted to observe full PF distribution. Restore _live_* before live.",
+        "active_margin_inr": 10000000,
+        "cushion_inr": 1000000,
+        "max_concurrent_slots": 100,
+        "margin_per_slot_inr": 100000,
+        "max_new_positions_per_day": 100,
+        "_live_active_margin_inr": 400000,
+        "_live_cushion_inr": 100000,
+        "_live_max_concurrent_slots": 8,
+        "_live_margin_per_slot_inr": 100000,
+        "_live_max_new_positions_per_day": 4,
+        "_live_rationale": "~4 entries/active-day, 2-day hold => ~8 concurrent slots. Live PF/CI computed under these; do not exceed without re-running the confidence card.",
+        "state_file": "state/mtf_capitulation_slots.json"
+      },
+      "decay_tripwire": {
+        "window_trades": 30,
+        "pf_floor": 1.2,
+        "sustained_weeks": 6,
+        "state_file": "state/decay_tripwire_mtf_capitulation_revert_long.json"
+      }
     }
   },
   "filters": {
