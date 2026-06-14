@@ -29,6 +29,42 @@ except Exception:
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
+try:
+    from utils.time_util import _now_naive_ist
+except Exception:
+    _now_naive_ist = None
+
+
+def _now_ist():
+    """Current IST-naive datetime (logging + snapshot timestamp).
+
+    The snapshot timestamp is load-critical — `_load_from_file` compares its
+    date against `_today_ist()` to decide freshness — so it MUST be written on
+    the same (IST) clock the comparison reads, otherwise a UTC-hosted server
+    crossing IST midnight could misjudge staleness.
+    """
+    if _now_naive_ist is not None:
+        return _now_naive_ist()
+    return datetime.now()
+
+
+def _today_ist():
+    """Current IST-naive date for snapshot-staleness decisions (restart recovery)."""
+    return _now_ist().date()
+
+
+def _parse_date(s):
+    """Parse a YYYY-MM-DD (or ISO) string to a date; None on failure."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s).date()
+    except (ValueError, TypeError):
+        try:
+            return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return None
+
 
 @dataclass
 class PersistedPosition:
@@ -43,6 +79,11 @@ class PersistedPosition:
     entry_time: Optional[str] = None
     plan: Dict[str, Any] = field(default_factory=dict)
     state: Dict[str, Any] = field(default_factory=dict)  # t1_done, t2_done, trailing_sl, etc.
+    # Multi-day hold (CNC/MTF) fields. None for legacy intraday / 1-night
+    # overnight positions (close_dn) — those keep the original behavior exactly.
+    entry_date: Optional[str] = None      # YYYY-MM-DD (IST)
+    exit_on_date: Optional[str] = None    # YYYY-MM-DD (IST); exit when today >= this
+    product: Optional[str] = None         # "MIS" | "CNC" | "MTF"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to serializable dict."""
@@ -62,6 +103,9 @@ class PersistedPosition:
             entry_time=data.get("entry_time"),
             plan=data.get("plan", {}),
             state=data.get("state", {}),
+            entry_date=data.get("entry_date"),
+            exit_on_date=data.get("exit_on_date"),
+            product=data.get("product"),
         )
 
 
@@ -104,10 +148,20 @@ class PositionPersistence:
     def _load_from_file(self) -> None:
         """Load positions from snapshot file if it exists.
 
-        Date validation: Only loads positions from today's snapshot.
-        Stale snapshots (from previous days) are rejected because:
-        - Positions would have been squared off at EOD
-        - Loading yesterday's positions would be incorrect
+        Two recovery regimes, decided by snapshot freshness:
+
+        - Today's snapshot: load every position verbatim (intraday + multi-day
+          alike). This is the normal same-day restart path and is unchanged.
+
+        - Stale snapshot (a previous day): intraday and 1-night overnight
+          positions would have been EOD/next-open squared off, so they are
+          dropped exactly as before — a legacy position has no `exit_on_date`,
+          so it is never salvaged (close_dn behavior is byte-identical). A
+          multi-day CNC/MTF hold, however, is still open if its `exit_on_date`
+          is today or later; those are SALVAGED so a restart mid-hold does not
+          orphan a real, leveraged delivery position. Multi-day holds whose
+          `exit_on_date` has already passed are dropped (they should have been
+          exited and will be reconciled against the broker).
         """
         if not self.state_file.exists():
             return
@@ -115,24 +169,46 @@ class PositionPersistence:
             with open(self.state_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            # Date validation: Check if snapshot is from today
-            snapshot_ts = data.get("timestamp")
-            if snapshot_ts:
-                try:
-                    snapshot_date = datetime.fromisoformat(snapshot_ts).date()
-                    today = datetime.now().date()
-                    if snapshot_date != today:
-                        logger.warning(
-                            f"[PERSIST] Stale snapshot rejected: {snapshot_date} != today ({today}). "
-                            f"Positions would have been EOD squared off."
-                        )
-                        return  # Don't load stale positions
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"[PERSIST] Could not parse snapshot timestamp: {snapshot_ts}, skipping date check")
+            positions_raw = data.get("positions", {})
 
-            for sym, pos_data in data.get("positions", {}).items():
-                self._positions[sym] = PersistedPosition.from_dict(pos_data)
-            logger.info(f"[PERSIST] Loaded {len(self._positions)} positions from snapshot (today's date validated)")
+            # Determine snapshot freshness. An absent or unparseable timestamp
+            # is treated as STALE (not fresh): that forces the per-position
+            # salvage/expiry path, which drops legacy intraday positions (the
+            # safe default) instead of blindly loading a snapshot of unknown age.
+            snapshot_ts = data.get("timestamp")
+            snapshot_date = _parse_date(snapshot_ts)
+            if snapshot_date is None and snapshot_ts:
+                logger.warning(
+                    f"[PERSIST] Could not parse snapshot timestamp: {snapshot_ts}, "
+                    f"treating as stale (per-position recovery)"
+                )
+            is_stale = snapshot_date != _today_ist()
+
+            if not is_stale:
+                for sym, pos_data in positions_raw.items():
+                    self._positions[sym] = PersistedPosition.from_dict(pos_data)
+                logger.info(
+                    f"[PERSIST] Loaded {len(self._positions)} positions from snapshot "
+                    f"(today's date validated)"
+                )
+                return
+
+            # Stale snapshot: salvage only still-open multi-day holds.
+            today = _today_ist()
+            salvaged, dropped = 0, 0
+            for sym, pos_data in positions_raw.items():
+                pos = PersistedPosition.from_dict(pos_data)
+                exit_on = _parse_date(pos.exit_on_date)
+                if exit_on is not None and exit_on >= today:
+                    self._positions[sym] = pos
+                    salvaged += 1
+                else:
+                    dropped += 1
+            logger.warning(
+                f"[PERSIST] Stale snapshot ({snapshot_ts}): salvaged {salvaged} "
+                f"still-open multi-day hold(s); dropped {dropped} intraday/1-night/"
+                f"expired position(s) (EOD squared off)."
+            )
         except Exception as e:
             logger.error(f"Failed to load position snapshot: {e}")
 
@@ -140,7 +216,7 @@ class PositionPersistence:
         """Atomic save of all positions to file."""
         try:
             data = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": _now_ist().isoformat(),
                 "positions": {
                     sym: pos.to_dict()
                     for sym, pos in self._positions.items()
@@ -167,6 +243,9 @@ class PositionPersistence:
         order_tag: Optional[str] = None,
         plan: Optional[Dict[str, Any]] = None,
         state: Optional[Dict[str, Any]] = None,
+        entry_date: Optional[str] = None,
+        exit_on_date: Optional[str] = None,
+        product: Optional[str] = None,
     ) -> None:
         """
         Save a new position (on entry).
@@ -181,6 +260,11 @@ class PositionPersistence:
             order_tag: Order tag (ITDA_xxx)
             plan: Trade plan dict (targets, stops, etc.)
             state: Initial state dict
+            entry_date: YYYY-MM-DD (IST) entry date for multi-day holds. None
+                for legacy intraday / 1-night overnight (close_dn) positions.
+            exit_on_date: YYYY-MM-DD (IST); the position is held until today >=
+                this date. None => legacy behavior (no multi-day salvage).
+            product: "MIS" | "CNC" | "MTF". None for legacy positions.
         """
         with self._lock:
             self._positions[symbol] = PersistedPosition(
@@ -191,12 +275,18 @@ class PositionPersistence:
                 trade_id=trade_id,
                 order_id=order_id,
                 order_tag=order_tag,
-                entry_time=datetime.now().isoformat(),
+                entry_time=_now_ist().isoformat(),
                 plan=plan or {},
                 state=state or {},
+                entry_date=entry_date,
+                exit_on_date=exit_on_date,
+                product=product,
             )
             self._save_to_file()
-            logger.debug(f"Position saved: {symbol} {side} {qty}@{avg_price}")
+            logger.debug(
+                f"Position saved: {symbol} {side} {qty}@{avg_price}"
+                + (f" exit_on={exit_on_date}" if exit_on_date else "")
+            )
 
     def update_position(
         self,
@@ -337,6 +427,13 @@ class PositionPersistence:
                     entry_time=event.get("ts"),
                     plan={},  # Plan not available in TRIGGER event
                     state={},
+                    # Forward multi-day fields if the TRIGGER event carries them,
+                    # so events.jsonl recovery does not downgrade a still-open
+                    # CNC/MTF hold to legacy status (which would orphan it on the
+                    # next stale-snapshot load).
+                    entry_date=trigger.get("entry_date"),
+                    exit_on_date=trigger.get("exit_on_date"),
+                    product=trigger.get("product"),
                 )
 
         elif event_type == "EXIT" or event.get("stage") == "EXIT":
