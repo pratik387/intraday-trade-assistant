@@ -293,6 +293,7 @@ class PositionPersistence:
         symbol: str,
         new_qty: Optional[int] = None,
         state_updates: Optional[Dict[str, Any]] = None,
+        avg_price: Optional[float] = None,
     ) -> None:
         """
         Update position (on partial exit or state change).
@@ -301,6 +302,10 @@ class PositionPersistence:
             symbol: Trading symbol
             new_qty: Updated quantity (after partial exit)
             state_updates: State updates (t1_done, trailing_sl, etc.)
+            avg_price: Updated average price. Used by multi-day setups to record
+                the realized entry fill once an AMO BUY confirms (the position is
+                persisted at avg_price=0.0 while the fill is pending). Mutated
+                under the lock so it persists atomically with the state update.
         """
         with self._lock:
             pos = self._positions.get(symbol)
@@ -310,6 +315,9 @@ class PositionPersistence:
 
             if new_qty is not None:
                 pos.qty = new_qty
+
+            if avg_price is not None:
+                pos.avg_price = float(avg_price)
 
             if state_updates:
                 pos.state.update(state_updates)

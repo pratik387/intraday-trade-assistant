@@ -94,6 +94,14 @@ class MtfUniverse:
             return False
         return True
 
+    def all_symbols(self) -> set[str]:
+        """All bare tradingsymbols in the snapshot (ETFs included).
+
+        Callers wanting the tradeable set should intersect with is_eligible()
+        (which applies the ETF exclusion).
+        """
+        return set(self._by_symbol.keys())
+
     def snapshot_age_days(self) -> int:
         """Days since snapshot file was last modified (for staleness warnings)."""
         mtime = self._snapshot_path.stat().st_mtime

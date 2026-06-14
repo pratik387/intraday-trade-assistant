@@ -61,10 +61,22 @@ Daily EOD signal computation; T+1-open entry; 2-day hold. Not intraday-time-of-d
 5. **Frequency:** ~1819 trades / 3.3yr ≈ 550/yr (≥30/cell floor cleared).
 
 ## 9. Next steps (pre-registration + build)
-0. **Lock the cell JSON** (`tools/sub9_research/mtf_capitulation_revert_long_cell_lock.json`).
+0. **Lock the cell JSON** (`tools/sub9_research/mtf_capitulation_revert_long_cell_lock.json`). ✅ DONE (commit b207e6d)
 1. **Structure: the new CNC/MTF machine** (does NOT exist; cf `illiquid_momentum_long` impl §): EOD ranking module, multi-day CNC/MTF position store, MTF basket executor (diff held vs target, MTF order routing), corporate-action handling. code-reviewer agent.
+   - ✅ Component 1 — `services/cross_sectional_ranker.py` (EOD ranker), 7 tests (b207e6d)
+   - ✅ Component 2 — `services/daily_panel_provider.py` (clean daily panel, feather+live), 8 tests (849f75c)
+   - ✅ Component 3 — `services/state/position_persistence.py` multi-day extension (entry_date/exit_on_date/product + stale-snapshot salvage), 10 tests (67b3276)
+   - ✅ Component 4 — `services/execution/mtf_capitulation_handlers.py` (basket executor: `run_eod` exits+entries, `run_verify_entries` fills), 7 tests. code-reviewer PASS w/ fixes applied.
 2. **Impact-aware cost re-confirm** (tier-1 slippage).
 3. **Paper-trade ≥ 4-8 weeks** (the load-bearing gate, per risk #2).
+
+### Open follow-ups (deferred from Component 4 code review — do BEFORE live, not blocking paper)
+- **catastrophe_stop_pct (15.0) is configured but NOT implemented.** Needs a mid-hold price check (e.g. in `run_verify_entries` each morning: if open-vs-entry drawdown ≥ stop, force-exit). Dead config until then — flagged, not silently ignored.
+- **No `events.jsonl` / TradingLogger wiring.** Entries/exits don't appear in events.jsonl or analytics.jsonl, so `recover_from_events` has nothing to replay and trades are absent from the session report. Mirror `overnight_handlers.py`'s diag_event_log pattern.
+- **Live exit/failsafe fill uses `get_ltp`, not the order's `average_price`.** `_place_moc_sell_and_fill` / `_failsafe_market_buy` should poll `get_order_status` for the real fill (matters for illiquid spreads). Paper path is unaffected (uses bar prices).
+- **`_live_poll_fill` timeout (60s) is hardcoded** — promote to a config key before live.
+- **Register `mtf_capitulation_revert_long` in `config/setup_categories.py`** (→ REVERSION) so category-grouped reporting sees it.
+- **Wire the two crons** (EOD ~15:25, morning ~09:30) + a daily live `fetch_daily_window` on the broker for `LiveDailyPanelProvider` (make_provider fails fast without it — honest gate).
 
 ---
 
