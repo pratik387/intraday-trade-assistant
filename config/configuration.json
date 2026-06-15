@@ -592,7 +592,7 @@
     },
     "mtf_capitulation_revert_long": {
       "enabled": false,
-      "paper_enabled": false,
+      "paper_enabled": true,
       "_status": "BUILD IN PROGRESS 2026-06-14 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF capitulation-reversion. Confidence-card PASSED (PF 1.356 [1.17,1.60], 6/7 regimes, Harvey-Liu adj-Sharpe 0.80 at true M=540). Cell-lock: tools/sub9_research/mtf_capitulation_revert_long_cell_lock.json. Brief: specs/2026-06-14-brief-mtf_capitulation_revert_long.md. Not wired to dispatch/cron yet; ranker module first. Paper-only when enabled.",
       "horizon": "multi_day",
       "ranker_class": "services.cross_sectional_ranker.CrossSectionalRanker",
@@ -651,7 +651,7 @@
     },
     "low52_capitulation_revert_long": {
       "enabled": false,
-      "paper_enabled": false,
+      "paper_enabled": true,
       "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF capitulation-reversion, level-triggered (near 252d low). Stage-6 confidence card PASSED (borderline): Disc PF 1.86 [BCa 1.41,2.44], OOS 1.08, HO 2026 1.39, Harvey-Liu adj-Sharpe 0.93 at M=58. Regime-conditioned (weak in FII-exit). Brief: specs/2026-06-15-brief-2to3day-reversion-batch.md. Distinct trigger from mtf_capitulation_revert_long (level vs trailing-%-drop). Paper-batch with A2.",
       "mechanism_tags": ["capitulation_overshoot", "retail_panic", "illiquidity_premium"],
       "mechanism_notes": "A thin MTF-eligible name trading at/near its trailing-252d low on a turnover shock is in terminal capitulation into a liquidity vacuum; with no institutional bid the over-shoot snaps back over 2-3 sessions. Distinct from mtf_capitulation_revert_long (which triggers on recent 5d %-drop, a rate; this triggers on price LEVEL vs the 1y low). Breaks if: near-low names keep making new lows (terminal decline not capitulation); low-vol regime (needs volatility — Disc shows it dies in FII-exit); MTF tier-1 leverage withdrawn.",
@@ -712,7 +712,7 @@
     },
     "zscore_oversold_revert_long": {
       "enabled": false,
-      "paper_enabled": false,
+      "paper_enabled": true,
       "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF reversion, volatility-normalized (close <= -1.5 sd below 20d mean). Stage-6 confidence card PASSED (borderline): Disc PF 1.43 [BCa 1.28,1.58], OOS 1.06, HO 2026 1.17, Harvey-Liu adj-Sharpe 0.73 at M=66. Most-stable candidate (dPF 0.37), high-freq, 3/4 Disc regimes positive (FII-exit 0.91). Brief: specs/2026-06-15-brief-zscore_oversold_revert_long.md. Distinct trigger (z-score, vol-normalized) from A2/C1. Paper-batch with A2+C1.",
       "mechanism_tags": ["capitulation_overshoot", "retail_panic", "illiquidity_premium"],
       "mechanism_notes": "An MTF tier-1 illiquid name whose close sits >=1.5 sd below its 20d mean on a turnover shock is statistically over-extended below its own band; in a thin book the deviation mean-reverts toward the band over 2-3 sessions. Distinct from mtf_capitulation_revert_long (raw 5d %-return) and low52_capitulation_revert_long (level vs 252d low): z-score normalizes by realized volatility, selecting a different cohort (a calm name with a statistically-extreme modest drop). Breaks if: the deviation is an informational regime shift (continues, no revert); low-vol regime (band too tight); shock filter removed (quiet drift-downs continue).",
@@ -773,7 +773,7 @@
     },
     "crash2d_revert_long": {
       "enabled": false,
-      "paper_enabled": false,
+      "paper_enabled": true,
       "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF reversion, 2-day cumulative-return loser decile (formation horizon BETWEEN A2's 5d and the killed 1d). Stage-6 card PASSED (borderline, cleanest of batch): Disc PF 1.355 [BCa 1.12,1.61], OOS 1.17, HO 2026 1.37, Harvey-Liu adj-Sharpe 0.93 at M=72. 3/4 Disc regimes positive (FII-exit 0.85 weak). Brief: specs/2026-06-15-brief-range_exhaustion_revert_long.md (covers C5 KILL + C6). NB: same selection_mode as mtf_capitulation_revert_long (trailing_loser_decile) at lookback=2 vs 5 -> A2-adjacent (return-decile family), less mechanistically distinct than low52/zscore; cleanest numbers. Paper-batch with A2+C1+C4.",
       "mechanism_tags": ["capitulation_overshoot", "retail_panic", "illiquidity_premium"],
       "mechanism_notes": "MTF tier-1 illiquid name in the bottom decile of trailing 2-day cumulative return on a turnover shock -> 2-3d snapback. Formation window (2d) sits between A2 (5d slow bleed) and the killed C3 (1d acute/news-driven) — captures a faster capitulation than A2 without the 1d news-continuation contamination. Same over-extension->reversion family; distinct by formation horizon. Breaks if: 2d drop is informational (continues); low-vol regime; shock filter removed.",

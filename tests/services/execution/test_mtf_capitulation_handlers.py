@@ -159,6 +159,41 @@ def test_run_eod_not_eligible_exits_clean(tmp_path):
     assert s["entered_count"] == 0 and s["exited_count"] == 0
 
 
+def test_run_eod_phase_exits_only_places_no_entries(tmp_path):
+    """phase='exits' (the pre-close square-off pass) must NOT rank or place AMO
+    BUYs — that's the post-close entry pass's job. Required so live can exit at
+    the close AND compute the signal on the complete day-T bar (separate jobs)."""
+    _write_feather(tmp_path)
+    cfg = _cfg(tmp_path)
+    broker = _FakeBroker({})
+    s = run_eod(cfg, broker, now_ist=pd.Timestamp("2025-06-16 15:25"),
+                repo_root=tmp_path, phase="exits")
+    assert s["entered_count"] == 0
+    amo = [o for o in broker.orders if o.get("variety") == "amo" and o["side"] == "BUY"]
+    assert amo == []
+
+
+def test_run_eod_phase_entries_only_places_amo(tmp_path):
+    """phase='entries' (the post-close pass) ranks + places AMO BUYs."""
+    _write_feather(tmp_path)
+    cfg = _cfg(tmp_path)
+    broker = _FakeBroker({})
+    s = run_eod(cfg, broker, now_ist=pd.Timestamp("2025-06-16 15:35"),
+                repo_root=tmp_path, phase="entries")
+    assert s["entered_count"] == 1
+    amo = [o for o in broker.orders if o.get("variety") == "amo" and o["side"] == "BUY"]
+    assert len(amo) == 1 and amo[0]["symbol"] == "NSE:LOSER1"
+
+
+def test_run_eod_default_phase_both_unchanged(tmp_path):
+    """Default phase='both' preserves the combined behavior (replay/backtest)."""
+    _write_feather(tmp_path)
+    cfg = _cfg(tmp_path)
+    broker = _FakeBroker({})
+    s = run_eod(cfg, broker, now_ist=pd.Timestamp("2025-06-16 15:25"), repo_root=tmp_path)
+    assert s["entered_count"] == 1
+
+
 def test_run_eod_enters_loser_basket(tmp_path):
     _write_feather(tmp_path)
     cfg = _cfg(tmp_path)

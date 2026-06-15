@@ -66,6 +66,16 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     # stripped by get_base_setup_name). Specs: specs/2026-06-03-brief-*.md.
     "panic_crash_revert": SetupCategory.REVERSION,
     "up_spike_fade": SetupCategory.REVERSION,
+
+    # 2026-06-15: multi-day CNC/MTF cross-sectional capitulation-reversion batch
+    # (2-3 day delivery hold). Deep-loser / near-52w-low / z-score-oversold / 2d-
+    # crash variants, all on the MTF-eligible illiquid tier-1 cohort. Ship live-
+    # disabled with paper_enabled=true (paper-validation batch). Base names (suffix
+    # stripped by get_base_setup_name). Spec: specs/2026-06-14-brief-mtf_capitulation_revert_long.md.
+    "mtf_capitulation_revert": SetupCategory.REVERSION,
+    "low52_capitulation_revert": SetupCategory.REVERSION,
+    "zscore_oversold_revert": SetupCategory.REVERSION,
+    "crash2d_revert": SetupCategory.REVERSION,
 }
 
 

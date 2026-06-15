@@ -108,6 +108,14 @@ class SetupRegistry:
         for name, raw in setups.items():
             if not isinstance(raw, dict):
                 continue  # skip non-dict entries (e.g., comments at this level)
+            # Multi-day cross-sectional setups (horizon='multi_day') are
+            # ranker-based (ranker_class/selection_mode) and run via the separate
+            # `--mode multi_day` cron path, NOT this intraday/overnight DETECTOR
+            # registry. They legitimately have no detector_class/universe_builder/
+            # active_window, so skip them here — otherwise their presence in the
+            # shared config crashes the intraday daemon's registry load.
+            if str(raw.get("horizon")) == "multi_day":
+                continue
             for k in REQUIRED_KEYS:
                 if k not in raw:
                     raise ValueError(f"setup {name!r}: missing required key {k!r}")

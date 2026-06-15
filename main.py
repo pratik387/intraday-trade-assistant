@@ -665,13 +665,19 @@ def _parse_args():
                     help="Deprecated (MDS removed). Ignored.")
     ap.add_argument("--data-source", choices=["zerodha", "upstox"], default="zerodha",
                     help="Market data source: zerodha (default) or upstox (hybrid mode: Upstox data + Zerodha orders)")
-    ap.add_argument("--mode", choices=["intraday", "overnight"], default="intraday",
+    ap.add_argument("--mode", choices=["intraday", "overnight", "multi_day"], default="intraday",
                     help="Which setup family to run. 'intraday' = long-lived daemon (default). "
-                         "'overnight' = short-lived cron-triggered run for close_dn_overnight_long.")
-    ap.add_argument("--action", choices=["run", "entry", "verify-exit"], default="run",
+                         "'overnight' = short-lived cron-triggered run for close_dn_overnight_long. "
+                         "'multi_day' = short-lived cron-triggered run for the CNC/MTF capitulation "
+                         "batch (mtf_capitulation/low52/zscore/crash2d).")
+    ap.add_argument("--action", choices=["run", "entry", "exit", "verify-exit"], default="run",
                     help="What action to perform. 'run' (default) = main daemon loop (intraday only). "
-                         "'entry' = compute signal + place orders for overnight setup (called at 15:25 IST). "
-                         "'verify-exit' = verify AMO fills + release slots for overnight setup (called at 09:30 IST).")
+                         "'entry' = place orders (overnight=run_entry @15:25; multi_day=POST-close "
+                         "entry pass @~15:35: rank full day-T bar + AMO buy). "
+                         "'exit' = multi_day PRE-close square-off pass (@~15:28: sell positions due "
+                         "today at the close). "
+                         "'verify-exit' = verify fills next morning @09:30 (overnight=run_verify_exit, "
+                         "multi_day=run_verify_entries).")
     return ap.parse_args()
 
 
@@ -681,19 +687,29 @@ if __name__ == "__main__":
     # Validate --mode + --action combinations
     if args.mode == "intraday" and args.action != "run":
         parser_error = (f"--mode=intraday requires --action=run (got --action={args.action!r}). "
-                        "Overnight actions ('entry', 'verify-exit') are only valid with --mode=overnight.")
+                        "Cron actions ('entry', 'verify-exit') are only valid with --mode=overnight/multi_day.")
         print(f"error: {parser_error}", file=sys.stderr)
         sys.exit(2)
-    if args.mode == "overnight" and args.action == "run":
-        parser_error = ("--mode=overnight does not support --action=run (no daemon for overnight). "
-                        "Use --action=entry (at 15:25 IST) or --action=verify-exit (at 09:30 IST).")
+    if args.mode in ("overnight", "multi_day") and args.action == "run":
+        parser_error = (f"--mode={args.mode} does not support --action=run (no daemon for cron families). "
+                        "Use --action=entry/exit/verify-exit.")
+        print(f"error: {parser_error}", file=sys.stderr)
+        sys.exit(2)
+    if args.mode == "overnight" and args.action == "exit":
+        parser_error = ("--action=exit is multi_day-only (the pre-close square-off pass). "
+                        "Overnight uses --action=entry / verify-exit.")
+        print(f"error: {parser_error}", file=sys.stderr)
+        sys.exit(2)
+    if args.mode == "intraday" and args.action == "exit":
+        parser_error = "--action=exit requires --mode=multi_day."
         print(f"error: {parser_error}", file=sys.stderr)
         sys.exit(2)
 
-    # Overnight handlers run as short-lived cron-triggered scripts; bypass the
-    # intraday daemon entirely so cron doesn't pay the startup cost.
-    if args.mode == "overnight":
-        from services.execution.overnight_handlers import run_entry, run_verify_exit
+    # Overnight / multi-day handlers run as short-lived cron-triggered scripts;
+    # bypass the intraday daemon entirely so cron doesn't pay the startup cost.
+    # Both families share the identical broker/data-SDK wiring (one code path);
+    # only the handler entry points differ per --mode.
+    if args.mode in ("overnight", "multi_day"):
         # Use the FULL configuration.json (via load_filters) because the
         # SetupRegistry reads setups.* from it. load_base_config() only
         # returns config/pipelines/base_config.json, which has no setups
@@ -706,7 +722,7 @@ if __name__ == "__main__":
             # we wire a live data SDK (UpstoxDataClient) so daily/5m queries
             # hit the live API instead of the backtest archive. Dry-run
             # (--dry-run) keeps the archive-only path for true backtests.
-            slip_bps = float(cfg.get("fees_slippage_bps", 0.0))
+            slip_bps = float(cfg["fees_slippage_bps"])  # fail-fast, no hidden 0.0 default (CLAUDE.md rule 1)
             data_sdk = None
             if args.paper_trading:
                 from broker.upstox.upstox_data_client import UpstoxDataClient
@@ -730,21 +746,48 @@ if __name__ == "__main__":
             )
             paper_mode = False
 
-        if args.action == "entry":
-            summary = run_entry(cfg, broker, paper_mode=paper_mode)
-            print(
-                f"[overnight entry] fired={summary['fired_count']} "
-                f"skipped={summary['skipped_count']} rejected={summary['rejected_count']}",
-                file=sys.stderr,
-            )
+        if args.mode == "overnight":
+            from services.execution.overnight_handlers import run_entry, run_verify_exit
+            if args.action == "entry":
+                summary = run_entry(cfg, broker, paper_mode=paper_mode)
+                print(
+                    f"[overnight entry] fired={summary['fired_count']} "
+                    f"skipped={summary['skipped_count']} rejected={summary['rejected_count']}",
+                    file=sys.stderr,
+                )
+            else:  # verify-exit
+                summary = run_verify_exit(cfg, broker, paper_mode=paper_mode)
+                print(
+                    f"[overnight verify-exit] settled={summary['settled_count']} "
+                    f"released={summary['released_count']} orphan_t0={summary['orphan_t0_count']}",
+                    file=sys.stderr,
+                )
             sys.exit(0)
-        elif args.action == "verify-exit":
-            summary = run_verify_exit(cfg, broker, paper_mode=paper_mode)
-            print(
-                f"[overnight verify-exit] settled={summary['settled_count']} "
-                f"released={summary['released_count']} orphan_t0={summary['orphan_t0_count']}",
-                file=sys.stderr,
-            )
+        else:  # multi_day
+            from services.execution.mtf_capitulation_handlers import run_eod, run_verify_entries
+            if args.action == "exit":
+                # PRE-close (~15:28): square off positions due today at the close.
+                summary = run_eod(cfg, broker, paper_mode=paper_mode, phase="exits")
+                print(
+                    f"[multi_day exit-pass] exited={summary['exited_count']} "
+                    f"stale={summary.get('stale_exit_count', 0)}",
+                    file=sys.stderr,
+                )
+            elif args.action == "entry":
+                # POST-close (~15:35): rank on the COMPLETE day-T bar, place AMO buys.
+                summary = run_eod(cfg, broker, paper_mode=paper_mode, phase="entries")
+                print(
+                    f"[multi_day entry-pass] entered={summary['entered_count']} "
+                    f"skipped={summary['skipped_count']} rejected={summary['rejected_count']}",
+                    file=sys.stderr,
+                )
+            else:  # verify-exit
+                summary = run_verify_entries(cfg, broker, paper_mode=paper_mode)
+                print(
+                    f"[multi_day run_verify_entries] filled={summary['filled_count']} "
+                    f"unfilled={summary['unfilled_count']}",
+                    file=sys.stderr,
+                )
             sys.exit(0)
 
     sys.exit(main())

@@ -44,6 +44,7 @@ except Exception:  # pragma: no cover - logging fallback
     import logging
     logger = logging.getLogger(__name__)
 
+from diagnostics.diag_event_log import diag_event_log
 from services.cross_sectional_ranker import CrossSectionalRanker
 from services.daily_panel_provider import make_provider
 from services.execution.overnight_handlers import _next_trading_day
@@ -101,13 +102,25 @@ def run_eod(
     paper_mode: bool = True,
     ca_ex_dates: Optional[Dict[str, List[date]]] = None,
     repo_root: Optional[Path] = None,
+    phase: str = "both",
 ) -> dict:
-    """At T close (~15:25): exit positions due today, then enter T+1 basket.
+    """EOD exits + T+1 entry basket.
+
+    `phase` splits the two legs so LIVE can reproduce the backtest, which they
+    can't if combined: the EXIT must fire BEFORE the 15:30 close (sell at the
+    close), but the ENTRY signal needs day-T's COMPLETE bar (close + full volume),
+    only available AFTER the close. So live/paper run two crons:
+      phase='exits'   — pre-close (~15:28): square off positions due today.
+      phase='entries' — post-close (~15:35): rank on the full day-T bar, AMO buy.
+    phase='both' (default) keeps the combined path for the dry-run replay harness
+    (the feather already has the complete day-T bar, so timing collapses).
 
     `ca_ex_dates` ({bare_symbol: [ex_date,...]}) excludes names with a corporate
     action inside the hold window; if None it is loaded from the configured
     ca_events_path. Returns a summary dict for logging/testing.
     """
+    if phase not in ("both", "exits", "entries"):
+        raise ValueError(f"phase must be both|exits|entries, got {phase!r}")
     from utils.time_util import _now_naive_ist
 
     now = pd.Timestamp(now_ist) if now_ist is not None else _now_naive_ist()
@@ -126,17 +139,19 @@ def run_eod(
     summary["by_setup"] = {}
     for name, raw in setups:
         persistence = PositionPersistence(_position_state_dir(raw))
-        # ---- Phase A: exits due today ----
-        _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary)
-        # ---- Phase B: rank + place AMO BUYs for next session ----
-        if _decay_paused(name, raw):
-            logger.warning("mtf_capitulation.run_eod[%s]: decay tripwire PAUSED; skipping entries", name)
-            summary["by_setup"].setdefault(name, {})["decay_paused"] = True
-            continue
-        _run_entries(
-            name, raw, broker, persistence, today, now, paper_mode, summary,
-            ca_ex_dates=ca_ex_dates, repo_root=repo_root,
-        )
+        # ---- Phase A: exits due today (pre-close pass) ----
+        if phase in ("both", "exits"):
+            _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary)
+        # ---- Phase B: rank + place AMO BUYs for next session (post-close pass) ----
+        if phase in ("both", "entries"):
+            if _decay_paused(name, raw):
+                logger.warning("mtf_capitulation.run_eod[%s]: decay tripwire PAUSED; skipping entries", name)
+                summary["by_setup"].setdefault(name, {})["decay_paused"] = True
+                continue
+            _run_entries(
+                name, raw, broker, persistence, today, now, paper_mode, summary,
+                ca_ex_dates=ca_ex_dates, repo_root=repo_root,
+            )
 
     logger.info(
         "mtf_capitulation.run_eod: complete | setups=%d exited=%d entered=%d skipped=%d rejected=%d",
@@ -204,6 +219,21 @@ def run_verify_entries(
                 avg_price=float(fill),
                 state_updates={"pending_entry_fill": False, "entry_fill_price": float(fill)},
             )
+            # Record the ENTRY fill on the single-writer events.jsonl surface so the
+            # paper trade flows into analytics.jsonl + the session report (the cron
+            # families previously had no such surface). Never let logging break the run.
+            if not pos.trade_id:
+                # An empty trade_id would make the ENTRY and EXIT events mint
+                # different time-based IDs and never pair in analytics.jsonl.
+                logger.warning("mtf_capitulation[%s]: %s has empty trade_id; ENTRY/EXIT may not pair", name, symbol)
+            try:
+                diag_event_log.log_entry_fill(
+                    symbol=symbol, plan={"trade_id": pos.trade_id, "setup": name},
+                    side="BUY", qty=qty, price=float(fill), entry_ts=now,
+                    order_meta={"product": pos.product or "CNC", "variety": "amo", "setup": name},
+                )
+            except Exception as _diag_err:  # pragma: no cover - logging must not break cron
+                logger.warning("mtf_capitulation: diag_event_log.log_entry_fill failed for %s: %s", symbol, _diag_err)
             summary["filled_count"] += 1
             summary["events"].append({"setup": name, "symbol": symbol, "entry_fill": float(fill), "qty": qty})
 
@@ -292,6 +322,21 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary) 
         net = gross - fees_only - interest
 
         persistence.remove_position(symbol)
+        # Record the EXIT (with realized net PnL) on the single-writer events.jsonl
+        # surface — feeds analytics.jsonl + the session report. Never break the cron.
+        try:
+            diag_event_log.log_exit(
+                symbol=symbol, plan={"trade_id": pos.trade_id, "setup": name},
+                reason="kday_close_moc", exit_price=float(sell_price), exit_qty=qty,
+                ts=now, pnl=float(net),
+                diagnostics={
+                    "hold_days": hold_days, "entry_date": pos.entry_date,
+                    "exit_date": exit_on.isoformat(), "entry_price": entry_price,
+                    "product": pos.product or "CNC", "setup": name,
+                },
+            )
+        except Exception as _diag_err:  # pragma: no cover - logging must not break cron
+            logger.warning("mtf_capitulation: diag_event_log.log_exit failed for %s: %s", symbol, _diag_err)
         summary["exited_count"] += 1
         summary["events"].append({
             "setup": name, "symbol": symbol, "qty": qty, "entry": entry_price,
@@ -336,6 +381,32 @@ def _run_entries(name, raw, broker, persistence, today, now, paper_mode, summary
     # CA ex-dates (load from configured parquet if not injected).
     if ca_ex_dates is None and bool(raw.get("exclude_ca_in_hold_window")):
         ca_ex_dates = _load_ca_ex_dates(raw, repo_root)
+
+    # Live/paper: batch-fetch today's 5m for the eligible universe ONCE and stash
+    # it on the broker, so the panel provider's current-day bar synthesis
+    # (fetch_daily_window -> get_intraday_5m) is a cache hit instead of one live
+    # API call per symbol. Mirrors overnight_handlers' async-batch prewarm. The
+    # cross-sectional ranker requires today's row, which get_daily drops as
+    # partial. Skipped under DRY_RUN (feather has today's bar already).
+    if not _is_dry_run(broker) and hasattr(broker, "set_intraday_5m_prefetch"):
+        sdk = getattr(broker, "_data_sdk", None)
+        if sdk is not None and hasattr(sdk, "async_fetch_intraday_5m_batch"):
+            existing = getattr(broker, "_intraday_5m_prefetch", {}) or {}
+            need = [f"NSE:{s}" for s in eligible if f"NSE:{s}" not in existing and s not in existing]
+            if need:
+                import asyncio
+                try:
+                    fetched = asyncio.run(sdk.async_fetch_intraday_5m_batch(need, concurrency=30, rps=20.0))
+                    merged = dict(existing)
+                    merged.update(fetched or {})
+                    broker.set_intraday_5m_prefetch(merged)
+                    logger.info("mtf_capitulation[%s]: prewarmed 5m for %d/%d symbols",
+                                name, len(fetched or {}), len(need))
+                except Exception as e:
+                    logger.exception("mtf_capitulation[%s]: 5m batch prewarm failed: %s", name, e)
+        else:
+            logger.warning("mtf_capitulation[%s]: data_sdk has no async 5m batch — "
+                           "current-day synthesis will be per-symbol (slow)", name)
 
     # Daily panel + rank. Backtest (DRY_RUN) slices the clean feather; live/paper
     # fetches trailing adjusted daily bars via the broker's daily fetcher. If
