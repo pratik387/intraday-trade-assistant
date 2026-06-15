@@ -109,6 +109,7 @@ def _cfg(tmp_path):
         "setups": {
             "mtf_capitulation_revert_long": {
                 "enabled": False, "paper_enabled": True,
+                "horizon": "multi_day", "selection_mode": "trailing_loser_decile",
                 "data_source": "cache/preaggregate/clean_daily_from5m.feather",
                 "lookback_days": 5, "loser_pct": 0.05, "adv_tier": 1, "adv_tier_count": 5,
                 "turnover_shock_min": 2.0, "shock_lookback_days": 20,
@@ -228,3 +229,25 @@ def test_idempotent_no_duplicate_entry(tmp_path):
     # Re-run same signal day: LOSER1 already held => no second entry.
     s2 = run_eod(cfg, broker, now_ist=pd.Timestamp("2025-06-16 15:40"), repo_root=tmp_path)
     assert s2["entered_count"] == 0
+
+
+def test_batch_runs_both_setups(tmp_path):
+    """A2 (trailing_loser) + C1 low52 (near_period_low) both run via the generalized
+    executor, each into its OWN position store."""
+    _write_feather(tmp_path)
+    cfg = _cfg(tmp_path)
+    base = cfg["setups"]["mtf_capitulation_revert_long"]
+    low = {k: v for k, v in base.items() if k not in ("lookback_days", "loser_pct")}
+    low["selection_mode"] = "near_period_low"
+    low["low_lookback_days"] = 20
+    low["dist_low_max"] = 0.02
+    low["capital_allocation"] = {**base["capital_allocation"],
+                                 "state_file": str(tmp_path / "state" / "low52_slots.json")}
+    cfg["setups"]["low52_capitulation_revert_long"] = low
+
+    s = run_eod(cfg, _FakeBroker({}), now_ist=pd.Timestamp("2025-06-16 15:25"), repo_root=tmp_path)
+    # LOSER1 qualifies for both triggers -> entered by each into separate stores.
+    assert s["entered_count"] == 2
+    fired = {e["setup"] for e in s["events"]}
+    assert fired == {"mtf_capitulation_revert_long", "low52_capitulation_revert_long"}
+    assert set(s["by_setup"]) == fired

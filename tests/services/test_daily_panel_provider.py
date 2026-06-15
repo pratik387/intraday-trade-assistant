@@ -8,7 +8,8 @@ from services.daily_panel_provider import (
     FeatherDailyPanelProvider, LiveDailyPanelProvider, make_provider, _window_calendar_days,
 )
 
-CFG = {"lookback_days": 5, "shock_lookback_days": 20, "data_source": "x.feather"}
+CFG = {"selection_mode": "trailing_loser_decile", "lookback_days": 5,
+       "shock_lookback_days": 20, "data_source": "x.feather"}
 
 
 def _mk_df(symbols, days, start=date(2025, 1, 1)):

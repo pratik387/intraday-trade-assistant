@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict, List, Optional, Set
 
+import numpy as np
 import pandas as pd
 
 from config.logging_config import get_agent_logger
@@ -27,10 +28,25 @@ logger = get_agent_logger()
 class CrossSectionalRanker:
     """Forms the daily target basket for a multi-day CNC/MTF setup."""
 
+    # Selection modes the ranker supports. Each plugs a different "which names
+    # capitulated" rule into the SAME universe/shock/tier/CA machinery.
+    _MODES = ("trailing_loser_decile", "near_period_low")
+
     def __init__(self, config: Dict[str, Any]):
-        # Fail-fast: every key required, no silent defaults.
-        self.lookback_days = int(config["lookback_days"])
-        self.loser_pct = float(config["loser_pct"])
+        # Fail-fast: every key required, no silent defaults (CLAUDE.md rule 1).
+        self.selection_mode = str(config["selection_mode"])
+        if self.selection_mode not in self._MODES:
+            raise ValueError(
+                f"selection_mode {self.selection_mode!r} not in {self._MODES}"
+            )
+        # Mode-specific keys (read only the ones the chosen mode needs).
+        if self.selection_mode == "trailing_loser_decile":
+            self.lookback_days = int(config["lookback_days"])      # trailing-return window
+            self.loser_pct = float(config["loser_pct"])            # bottom cross-sectional cut
+        else:  # near_period_low
+            self.low_lookback_days = int(config["low_lookback_days"])  # e.g. 252d low
+            self.dist_low_max = float(config["dist_low_max"])          # close within X of the low
+        # Common keys.
         self.adv_tier = int(config["adv_tier"])
         self.adv_tier_count = int(config["adv_tier_count"])
         self.turnover_shock_min = float(config["turnover_shock_min"])
@@ -71,24 +87,36 @@ class CrossSectionalRanker:
         if df.empty:
             return []
 
-        # Bound compute: only the trailing window each symbol needs.
-        need = max(self.lookback_days, self.shock_lookback_days) + 2
+        # Bound compute: only the trailing window each symbol needs (mode-aware).
+        if self.selection_mode == "trailing_loser_decile":
+            need = max(self.lookback_days, self.shock_lookback_days) + 2
+        else:  # near_period_low needs the full low-lookback window
+            need = max(self.low_lookback_days, self.shock_lookback_days) + 2
         df = df.groupby("symbol", sort=False).tail(need)
 
         g = df.groupby("symbol", sort=False)
-        df["trail_ret"] = g["close"].transform(lambda s: s / s.shift(self.lookback_days) - 1.0)
         df["turnover"] = df["close"] * df["volume"]
         df["adv"] = g["turnover"].transform(lambda s: s.rolling(self.shock_lookback_days).mean())
         df["adv_prior"] = g["turnover"].transform(
             lambda s: s.shift(1).rolling(self.shock_lookback_days).mean()
         )
         df["tshock"] = df["turnover"] / df["adv_prior"]
+        # Mode-specific signal. `signal` is the value the selection thresholds on;
+        # both modes keep the same output schema (trail_ret carries the signal).
+        if self.selection_mode == "trailing_loser_decile":
+            df["signal"] = g["close"].transform(lambda s: s / s.shift(self.lookback_days) - 1.0)
+        else:  # near_period_low: how far above the trailing low (0 = at the low)
+            low = g["low"].transform(
+                lambda s: s.rolling(self.low_lookback_days, min_periods=max(20, self.shock_lookback_days)).min()
+            )
+            df["signal"] = df["close"] / low - 1.0
 
         # The session-date cross-section.
         today = df[df["date"].dt.normalize() == sd].copy()
         today = today[
             today["symbol"].isin(mtf_eligible)
-            & today["trail_ret"].notna()
+            & today["signal"].notna()
+            & np.isfinite(today["signal"])  # guard inf from a degenerate low=0
             & today["tshock"].notna()
             & (today["close"] >= self.min_price)
             & (today["adv"] >= self.adv_floor_inr)
@@ -100,7 +128,6 @@ class CrossSectionalRanker:
             )
             return []
 
-        # Cross-sectional tier + loser rank.
         try:
             today["adv_tier"] = pd.qcut(
                 today["adv"], self.adv_tier_count,
@@ -109,10 +136,15 @@ class CrossSectionalRanker:
         except ValueError:
             logger.warning("x_sectional_ranker: %s qcut failed (degenerate adv); no basket", sd.date())
             return []
-        today["rank_pct"] = today["trail_ret"].rank(pct=True)
+        today["rank_pct"] = today["signal"].rank(pct=True)
 
+        # Mode-specific selection rule (universe/tier/shock/CA gates are shared).
+        if self.selection_mode == "trailing_loser_decile":
+            sig_sel = today["rank_pct"] <= self.loser_pct      # bottom cross-sectional cut
+        else:  # near_period_low: absolute proximity to the trailing low
+            sig_sel = today["signal"] <= self.dist_low_max
         sel = today[
-            (today["rank_pct"] <= self.loser_pct)
+            sig_sel
             & (today["adv_tier"] == self.adv_tier)
             & (today["tshock"] >= self.turnover_shock_min)
         ]
@@ -126,7 +158,7 @@ class CrossSectionalRanker:
         out = [
             {
                 "symbol": r["symbol"],
-                "trail_ret": float(r["trail_ret"]),
+                "trail_ret": float(r["signal"]),  # signal value (trailing-ret or dist-from-low)
                 "tshock": float(r["tshock"]),
                 "adv_tier": int(r["adv_tier"]),
                 "rank_pct": float(r["rank_pct"]),

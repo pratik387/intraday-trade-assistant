@@ -50,8 +50,6 @@ from services.execution.overnight_handlers import _next_trading_day
 from services.mtf_universe import MtfUniverse
 from services.state.position_persistence import PositionPersistence
 
-_SETUP_NAME = "mtf_capitulation_revert_long"
-
 
 def _add_trading_days(d: date, n: int) -> date:
     """Add `n` trading days (Mon-Fri, holidays not modelled — see _next_trading_day)."""
@@ -61,16 +59,23 @@ def _add_trading_days(d: date, n: int) -> date:
     return cur
 
 
-def _setup_cfg(config: dict) -> Optional[dict]:
-    """Return the setup's raw config block, or None if absent."""
-    return (config.get("setups") or {}).get(_SETUP_NAME)
+def _eligible_multiday_setups(config: dict, *, paper_mode: bool):
+    """All eligible multi-day (horizon='multi_day') CNC/MTF setups.
 
-
-def _is_eligible(raw: dict, *, paper_mode: bool) -> bool:
-    """Paper mode: paper_enabled. Live mode: enabled. Mirrors close_dn gating."""
-    if paper_mode:
-        return bool(raw.get("paper_enabled", False))
-    return bool(raw.get("enabled", False))
+    Generic by construction: each setup plugs its own selection_mode into the
+    shared ranker + entry/exit/position machinery (e.g. mtf_capitulation_revert_long
+    = trailing-loser, low52_capitulation_revert_long = near-period-low). Paper mode
+    gates on paper_enabled; live on enabled (mirrors close_dn).
+    Returns list of (name, raw_cfg).
+    """
+    out = []
+    for name, raw in (config.get("setups") or {}).items():
+        if str(raw.get("horizon")) != "multi_day":
+            continue
+        ok = bool(raw.get("paper_enabled", False)) if paper_mode else bool(raw.get("enabled", False))
+        if ok:
+            out.append((name, raw))
+    return out
 
 
 def _position_state_dir(raw: dict) -> Path:
@@ -113,31 +118,29 @@ def run_eod(
         "rejected_count": 0, "events": [],
     }
 
-    raw = _setup_cfg(config)
-    if raw is None or not _is_eligible(raw, paper_mode=paper_mode):
-        logger.info("mtf_capitulation.run_eod: setup not eligible (paper=%s); exit", paper_mode)
+    setups = _eligible_multiday_setups(config, paper_mode=paper_mode)
+    if not setups:
+        logger.info("mtf_capitulation.run_eod: no eligible multi-day setups (paper=%s); exit", paper_mode)
         return summary
 
-    persistence = PositionPersistence(_position_state_dir(raw))
-
-    # ---- Phase A: exits due today --------------------------------------
-    _run_exits(raw, broker, persistence, today, now, paper_mode, summary)
-
-    # ---- Phase B: rank + place AMO BUYs for next session ----------------
-    if _decay_paused(raw):
-        logger.warning("mtf_capitulation.run_eod: decay tripwire PAUSED; skipping entries")
-        summary["decay_paused"] = True
-        persistence.load_snapshot()  # no-op; state already persisted by exits
-        return summary
-
-    _run_entries(
-        raw, broker, persistence, today, now, paper_mode, summary,
-        ca_ex_dates=ca_ex_dates, repo_root=repo_root,
-    )
+    summary["by_setup"] = {}
+    for name, raw in setups:
+        persistence = PositionPersistence(_position_state_dir(raw))
+        # ---- Phase A: exits due today ----
+        _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary)
+        # ---- Phase B: rank + place AMO BUYs for next session ----
+        if _decay_paused(name, raw):
+            logger.warning("mtf_capitulation.run_eod[%s]: decay tripwire PAUSED; skipping entries", name)
+            summary["by_setup"].setdefault(name, {})["decay_paused"] = True
+            continue
+        _run_entries(
+            name, raw, broker, persistence, today, now, paper_mode, summary,
+            ca_ex_dates=ca_ex_dates, repo_root=repo_root,
+        )
 
     logger.info(
-        "mtf_capitulation.run_eod: complete | exited=%d entered=%d skipped=%d rejected=%d",
-        summary["exited_count"], summary["entered_count"],
+        "mtf_capitulation.run_eod: complete | setups=%d exited=%d entered=%d skipped=%d rejected=%d",
+        len(setups), summary["exited_count"], summary["entered_count"],
         summary["skipped_count"], summary["rejected_count"],
     )
     return summary
@@ -163,46 +166,46 @@ def run_verify_entries(
         "filled_count": 0, "unfilled_count": 0, "events": [],
     }
 
-    raw = _setup_cfg(config)
-    if raw is None or not _is_eligible(raw, paper_mode=paper_mode):
-        logger.info("mtf_capitulation.run_verify_entries: setup not eligible; exit")
+    setups = _eligible_multiday_setups(config, paper_mode=paper_mode)
+    if not setups:
+        logger.info("mtf_capitulation.run_verify_entries: no eligible multi-day setups; exit")
         return summary
 
-    persistence = PositionPersistence(_position_state_dir(raw))
+    for name, raw in setups:
+        persistence = PositionPersistence(_position_state_dir(raw))
+        for symbol, pos in list(persistence.load_snapshot().items()):
+            if not pos.state.get("pending_entry_fill"):
+                continue
+            entry_date = _parse_iso_date(pos.entry_date)
+            if entry_date is None or entry_date > today:
+                continue  # not its entry day yet
 
-    for symbol, pos in list(persistence.load_snapshot().items()):
-        if not pos.state.get("pending_entry_fill"):
-            continue
-        entry_date = _parse_iso_date(pos.entry_date)
-        if entry_date is None or entry_date > today:
-            continue  # not its entry day yet
+            qty = int(pos.state.get("qty", 0))
+            if paper_mode:
+                fill = _paper_open_price(broker, symbol, entry_date)
+            else:
+                fill = _live_poll_fill(broker, pos.order_id, timeout_sec=60)
+                if fill is None:
+                    fill = _failsafe_market_buy(broker, symbol, qty, pos.product or "CNC")
 
-        qty = int(pos.state.get("qty", 0))
-        if paper_mode:
-            fill = _paper_open_price(broker, symbol, entry_date)
-        else:
-            fill = _live_poll_fill(broker, pos.order_id, timeout_sec=60)
             if fill is None:
-                fill = _failsafe_market_buy(broker, symbol, qty, pos.product or "CNC")
+                logger.warning(
+                    "mtf_capitulation.run_verify_entries[%s]: no fill for %s on %s; dropping",
+                    name, symbol, entry_date,
+                )
+                persistence.remove_position(symbol)
+                summary["unfilled_count"] += 1
+                continue
 
-        if fill is None:
-            logger.warning(
-                "mtf_capitulation.run_verify_entries: no fill for %s on %s; dropping",
-                symbol, entry_date,
+            # avg_price carries the realized entry price for exit PnL — persisted
+            # atomically (under the store's lock) alongside the state update.
+            persistence.update_position(
+                symbol,
+                avg_price=float(fill),
+                state_updates={"pending_entry_fill": False, "entry_fill_price": float(fill)},
             )
-            persistence.remove_position(symbol)
-            summary["unfilled_count"] += 1
-            continue
-
-        # avg_price carries the realized entry price for exit PnL — persisted
-        # atomically (under the store's lock) alongside the state update.
-        persistence.update_position(
-            symbol,
-            avg_price=float(fill),
-            state_updates={"pending_entry_fill": False, "entry_fill_price": float(fill)},
-        )
-        summary["filled_count"] += 1
-        summary["events"].append({"symbol": symbol, "entry_fill": float(fill), "qty": qty})
+            summary["filled_count"] += 1
+            summary["events"].append({"setup": name, "symbol": symbol, "entry_fill": float(fill), "qty": qty})
 
     logger.info(
         "mtf_capitulation.run_verify_entries: complete | filled=%d unfilled=%d",
@@ -215,7 +218,7 @@ def run_verify_entries(
 # Phase implementations
 # ---------------------------------------------------------------------------
 
-def _run_exits(raw, broker, persistence, today, now, paper_mode, summary) -> None:
+def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary) -> None:
     from tools.sub7_validation.build_per_setup_pnl import (
         calc_fee_cnc, calc_fee_mtf, MTF_INTEREST_RATE_PER_DAY,
     )
@@ -293,7 +296,7 @@ def _run_exits(raw, broker, persistence, today, now, paper_mode, summary) -> Non
         persistence.remove_position(symbol)
         summary["exited_count"] += 1
         summary["events"].append({
-            "symbol": symbol, "qty": qty, "entry": entry_price,
+            "setup": name, "symbol": symbol, "qty": qty, "entry": entry_price,
             "exit": float(sell_price), "net_pnl": net, "hold_days": hold_days,
         })
 
@@ -301,7 +304,7 @@ def _run_exits(raw, broker, persistence, today, now, paper_mode, summary) -> Non
         if tw_cfg is not None:
             from services.risk.decay_tripwire import DecayTripwire
             DecayTripwire(
-                setup_name=_SETUP_NAME,
+                setup_name=name,
                 state_path=Path(tw_cfg["state_file"]),
                 window_trades=int(tw_cfg["window_trades"]),
                 pf_floor=float(tw_cfg["pf_floor"]),
@@ -309,7 +312,7 @@ def _run_exits(raw, broker, persistence, today, now, paper_mode, summary) -> Non
             ).record_trade(net_pnl_inr=float(net), ts_iso=now.isoformat())
 
 
-def _run_entries(raw, broker, persistence, today, now, paper_mode, summary,
+def _run_entries(name, raw, broker, persistence, today, now, paper_mode, summary,
                  *, ca_ex_dates, repo_root) -> None:
     cap = raw["capital_allocation"]
     max_concurrent = int(cap["max_concurrent_slots"])
@@ -383,18 +386,18 @@ def _run_entries(raw, broker, persistence, today, now, paper_mode, summary,
             summary["rejected_count"] += 1
             continue
 
-        trade_id = f"MTFCAP_{today.isoformat()}_{bare}"
+        trade_id = f"{name}_{today.isoformat()}_{bare}"
         try:
             order_id = _place_amo_buy(broker, symbol, qty, product, trade_id)
         except Exception as e:
-            logger.error("mtf_capitulation: AMO BUY failed for %s: %s", symbol, e)
+            logger.error("mtf_capitulation[%s]: AMO BUY failed for %s: %s", name, symbol, e)
             summary["skipped_count"] += 1
             continue
 
         persistence.save_position(
             symbol=symbol, side="BUY", qty=qty, avg_price=0.0, trade_id=trade_id,
             order_id=str(order_id), order_tag=trade_id,
-            plan={"setup": _SETUP_NAME, "trail_ret": cand["trail_ret"], "tshock": cand["tshock"]},
+            plan={"setup": name, "trail_ret": cand["trail_ret"], "tshock": cand["tshock"]},
             state={
                 "pending_entry_fill": True, "qty": qty, "leverage": leverage,
                 "signal_close": signal_close, "signal_date": today.isoformat(),
@@ -405,8 +408,10 @@ def _run_entries(raw, broker, persistence, today, now, paper_mode, summary,
         )
         new_today += 1
         summary["entered_count"] += 1
+        summary["by_setup"].setdefault(name, {"entered": 0})
+        summary["by_setup"][name]["entered"] = summary["by_setup"][name].get("entered", 0) + 1
         summary["events"].append({
-            "symbol": symbol, "qty": qty, "product": product, "leverage": leverage,
+            "setup": name, "symbol": symbol, "qty": qty, "product": product, "leverage": leverage,
             "entry_date": entry_date.isoformat(), "exit_on_date": exit_on_date.isoformat(),
             "amo_buy_order_id": str(order_id),
         })
@@ -416,13 +421,13 @@ def _run_entries(raw, broker, persistence, today, now, paper_mode, summary,
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _decay_paused(raw: dict) -> bool:
+def _decay_paused(name: str, raw: dict) -> bool:
     tw_cfg = raw.get("decay_tripwire")
     if tw_cfg is None:
         return False
     from services.risk.decay_tripwire import DecayTripwire
     return DecayTripwire(
-        setup_name=_SETUP_NAME,
+        setup_name=name,
         state_path=Path(tw_cfg["state_file"]),
         window_trades=int(tw_cfg["window_trades"]),
         pf_floor=float(tw_cfg["pf_floor"]),

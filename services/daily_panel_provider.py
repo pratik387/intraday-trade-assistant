@@ -41,7 +41,16 @@ def _window_calendar_days(config: Dict[str, Any]) -> int:
     guarantee enough rows even for thinly-traded symbols. Daily data is small;
     over-fetching is cheap and avoids dropping valid names in sparse periods.
     """
-    need_trading = int(config["shock_lookback_days"]) * 2 + int(config["lookback_days"]) + 10
+    # The "signal lookback" depends on the selection mode: trailing-return setups
+    # need `lookback_days`; near-period-low setups need the (much longer)
+    # `low_lookback_days` (e.g. 252). Fail-fast on selection_mode (CLAUDE.md rule
+    # 1) — a silent default here would silently under-fetch the window for a
+    # mis-keyed near-low setup (5-day vs 252-day) -> empty basket, no error.
+    if str(config["selection_mode"]) == "near_period_low":
+        sig_lookback = int(config["low_lookback_days"])
+    else:
+        sig_lookback = int(config["lookback_days"])
+    need_trading = int(config["shock_lookback_days"]) * 2 + sig_lookback + 10
     # ~5 trading days per 7 calendar days, plus a holiday buffer.
     return math.ceil(need_trading * 7 / 5) + 10
 
