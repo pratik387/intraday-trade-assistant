@@ -41,6 +41,9 @@ def main():
     dd["vshock"] = dd["volume"] / dd["vbase20"]
     dd["low252"] = g["low"].transform(lambda s: s.rolling(252, min_periods=60).min())
     dd["dist_low"] = dd["close"] / dd["low252"] - 1.0
+    dd["mean20"] = g["close"].transform(lambda s: s.rolling(20).mean())
+    dd["std20"] = g["close"].transform(lambda s: s.rolling(20).std())
+    dd["zscore"] = (dd["close"] - dd["mean20"]) / dd["std20"]
     dn = (dd["ret1"] < 0).astype(int)
     dd["streak"] = g.apply(lambda x: (x["ret1"] < 0).astype(int) *
         ((x["ret1"] < 0).astype(int).groupby(((x["ret1"] < 0).astype(int).diff() != 0).cumsum()).cumcount() + 1)
@@ -64,6 +67,7 @@ def main():
         "C1_low52":     (t1["dist_low"] <= 0.03) & (t1["vshock"] >= SHOCK),
         "C2_downstreak":(t1["streak"] >= 3) & (t1["vshock"] >= SHOCK),
         "C3_crash1d":   (t1["ret1_rk"] <= 0.10) & (t1["vshock"] >= SHOCK),
+        "C4_zscore":    (t1["zscore"] <= -2.0) & (t1["vshock"] >= SHOCK),  # new candidate
     }
 
     print("\n=== PHASE-2 RAW FOOTPRINT (Discovery only; signal vs tier-1 universe baseline) ===")

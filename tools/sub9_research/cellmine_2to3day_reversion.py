@@ -45,6 +45,7 @@ SHIP_MIN_PF = 1.20
 LOW52_GRID = [0.01, 0.03, 0.05, 0.10]   # close within X of 252d low
 STREAK_GRID = [3, 4, 5]
 DECILE_GRID = [0.05, 0.10, 0.20]
+ZSCORE_GRID = [-1.5, -2.0, -2.5]        # close this many sd below 20d mean
 
 def net_pf(fr):
     net = fr - COST
@@ -66,6 +67,9 @@ def prep():
     df["tshock"] = df["turnover"] / df["adv20_prior"]
     df["low252"] = g["low"].transform(lambda s: s.rolling(252, min_periods=60).min())
     df["dist_low"] = df["close"] / df["low252"] - 1.0
+    df["mean20"] = g["close"].transform(lambda s: s.rolling(20).mean())
+    df["std20"] = g["close"].transform(lambda s: s.rolling(20).std())
+    df["zscore"] = (df["close"] - df["mean20"]) / df["std20"]
     dni = (df["ret1"] < 0).astype(int)
     df["streak"] = g["ret1"].transform(
         lambda s: (s < 0).astype(int) * ((s < 0).astype(int).groupby(((s < 0).astype(int).diff() != 0).cumsum()).cumcount() + 1))
@@ -123,6 +127,8 @@ def main():
           lambda m, v, t, s: m[(m.streak >= v) & (m.tier == t) & (m.tshock >= s)])
     sweep(base, "C3_crash1d (NB: overlaps A2's N=1 mine cell)", "decile", DECILE_GRID,
           lambda m, v, t, s: m[(m.ret1_rk <= v) & (m.tier == t) & (m.tshock >= s)])
+    sweep(base, "C4_zscore", "zscore_max", ZSCORE_GRID,
+          lambda m, v, t, s: m[(m.zscore <= v) & (m.tier == t) & (m.tshock >= s)])
 
 if __name__ == "__main__":
     main()
