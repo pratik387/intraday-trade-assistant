@@ -298,6 +298,7 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary) 
         summary["events"].append({
             "setup": name, "symbol": symbol, "qty": qty, "entry": entry_price,
             "exit": float(sell_price), "net_pnl": net, "hold_days": hold_days,
+            "entry_date": pos.entry_date, "exit_date": exit_on.isoformat(),
         })
 
         tw_cfg = raw.get("decay_tripwire")
