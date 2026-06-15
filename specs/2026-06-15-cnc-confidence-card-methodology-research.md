@@ -1,0 +1,2278 @@
+# CNC Confidence-Card Methodology — Deep-Research Result
+
+Source: deep-research workflow wf_bbf2c8b8 (104 agents, 22 sources), 2026-06-14.
+
+## Question
+Research the correct statistical methodology for computing TRUSTWORTHY confidence intervals, Sharpe-ratio significance, and selection-bias haircuts for a MULTI-DAY, DAILY-REBALANCED, CROSS-SECTIONAL equity trading strategy whose per-trade observations are NOT independent. This is to redesign a backtest "confidence card" framework (currently built for intraday same-day-closed trades, which are ~independent) so it is valid for a 2-3 day-hold CNC/MTF Indian-equity reversion strategy.
+
+THE STATISTICAL PROBLEM (be precise about each, find the best-practice method + cite):
+
+1. SAME-DAY CROSS-SECTIONAL BASKET CORRELATION. Each signal day the strategy enters a BASKET of N correlated names (same factor, same direction, same multi-day market window). Naive per-trade bootstrap/CIs treat these N as independent observations and massively overstate the effective sample size and understate the CI width. How should confidence intervals on aggregate Profit-Factor / expectancy / Sharpe be computed so the effective sample size reflects the number of independent SIGNAL-DAYS (or independent market episodes), not the raw trade count? Cover: cluster-robust / block-by-date resampling, the circular block bootstrap (Künsch 1989), the stationary bootstrap (Politis & Romano 1994), and how to choose the block length for financial returns.
+
+2. OVERLAPPING MULTI-DAY HOLDS -> AUTOCORRELATED DAILY RETURNS. A position opened day t is still open t+1, t+2, so the portfolio daily-return series has overlapping observations (the Hansen-Hodrick 1980 overlapping-returns problem). How to compute a correct Sharpe ratio and its standard error under this autocorrelation: Newey-West / HAC standard errors, Hansen-Hodrick, Lo (2002) "Statistics of the Sharpe Ratio" autocorrelation adjustment. Provide the corrected Sharpe-SE formulas and lag-selection guidance.
+
+3. SELECTION-BIAS / MULTIPLE-TESTING HAIRCUT under non-iid returns. The current framework uses a Harvey-Liu (2015) sign-preserving Bonferroni haircut on the raw Sharpe. Research: the Deflated Sharpe Ratio and Probabilistic Sharpe Ratio (Bailey & Lopez de Prado 2014), how they incorporate non-normality (skew/kurtosis) AND the number of trials, and whether/how DSR or Harvey-Liu should be combined with the autocorrelation-corrected Sharpe from (2). Which is the recommended haircut for a strategy where the trial count comes from a large cell-mine sweep (e.g. M=66 cells)?
+
+4. EFFECTIVE NUMBER OF INDEPENDENT BETS. The "breadth" of a daily cross-sectional strategy (Fundamental Law of Active Management; Grinold-Kahn) vs naive trade count — how to estimate the true independent breadth given within-day basket correlation AND day-to-day overlap, and how that should set the denominator for any t-stat / CI.
+
+5. PRACTITIONER + ACADEMIC PRECEDENT for confidence/robustness on overlapping cross-sectional equity stat-arb books (daily-rebalanced, multi-day holds): what do quant equity desks and the literature actually use (block bootstrap of daily portfolio returns, purged/embargoed CV, CPCV - Combinatorial Purged Cross-Validation by Lopez de Prado, PBO - Probability of Backtest Overfitting)? Is CPCV/PBO applicable here and how?
+
+For EACH method return: what it corrects, the exact statistic/formula, inputs required, when it is the right choice vs alternatives, key citations (author, year, venue), and any Indian-market or small-sample caveats.
+
+DELIVERABLE: a ranked, cited recommendation for a concrete "CNC confidence card" recipe — i.e., the specific sequence of (a) how to build the daily portfolio return series for overlapping positions, (b) which bootstrap to use for PF/expectancy CIs and how to block it, (c) which Sharpe-SE correction, (d) which selection-bias/overfitting haircut — that would give honest, not-too-tight intervals for a 2-3 day-hold daily cross-sectional reversion strategy. Flag any method that is overkill or inappropriate for ~200-1100 trades over ~3 years.
+
+## Summary
+For a 2-3 day-hold, daily-rebalanced, cross-sectional CNC/MTF reversion strategy, naive per-trade bootstrap CIs are invalid because (a) each signal day enters a correlated basket (within-day clustering) and (b) overlapping multi-day holds induce positive autocorrelation in the daily portfolio return series. The defensible recipe is: build a single daily portfolio-return series from the overlapping positions, compute PF/expectancy CIs via a time-series BLOCK bootstrap of that daily series (stationary bootstrap of Politis-Romano 1994 preferred for robustness to block-length misspecification, or moving-block; block length set data-adaptively via Politis-White 2004's N^(1/3) rule using the correlogram), correct the Sharpe and its standard error for autocorrelation using Lo (2002)'s GMM/Newey-West HAC estimator (truncation lag ~T^(1/3), i.e. ~5-10 for a few-hundred-day series, not a fixed 3) and Lo's eta(q) time-aggregation factor instead of sqrt(q), and apply the selection-bias haircut using the Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014) fed with the AUTOCORRELATION-CORRECTED Sharpe, the cross-sectional variance of trial Sharpes V[SR], and the number of INDEPENDENT trials N (not the raw M=66 cell count). DSR is recommended over Harvey-Liu Bonferroni here because the trial count comes from a large dispersed cell-mine sweep and DSR jointly handles trial count, the dispersion of candidate Sharpes, sample length, AND non-normality (skew/kurtosis). The effective independent N must be reduced from M for both within-day basket correlation and day-to-day overlap (interpolation N=M(1-rho)+rho or, more robustly, information-theoretic redundancy/clustering).
+
+## Findings
+
+### F1 [high] PF/expectancy/Sharpe CIs must come from a TIME-SERIES block bootstrap of the daily portfolio return series, not an i.i.d. per-trade bootstrap, because overlapping/autocorrelated returns violate the independence assumption that makes the iid bootstrap valid; the iid bootstrap destroys temporal structure and produces standard errors that are systematically too small (too tight).
+**claim:** PF/expectancy/Sharpe CIs must come from a TIME-SERIES block bootstrap of the daily portfolio return series, not an i.i.d. per-trade bootstrap, because overlapping/autocorrelated returns violate the independence assumption that makes the iid bootstrap valid; the iid bootstrap destroys temporal structure and produces standard errors that are systematically too small (too tight).
+**evidence:** Multiple primary sources are unanimous. Sheppard's arch docs: 'The bootstrap chosen must be appropriate for the data. Squared returns are serially correlated, and so a time-series bootstrap is required.' tsbootstrap (arXiv 2404.15227): 'traditional bootstrapping methods often fall short due to their assumption of data independence, a condition rarely met in time-dependent data.' Block bootstraps (Kunsch 1989, Politis-Romano) were developed precisely because the iid resampling cannot replicate the data correlations. This directly confirms the research premise that naive per-trade CIs are wrong for this strategy.
+sources: https://bashtage.github.io/arch/bootstrap/bootstrap_examples.html, https://arxiv.org/pdf/2404.15227
+
+### F2 [high] Use the STATIONARY bootstrap (Politis-Romano 1994) or moving-block bootstrap on the daily portfolio return series for PF/expectancy CIs. The stationary bootstrap is preferred for robustness because its variance estimates are far less sensitive to its tuning parameter p than the moving-block bootstrap's are to block length l (relationship p^-1 approx l; SB is effectively a weighted average over MBB distributions). The moving/overlapping block bootstrap empirically achieves the lowest MSE on stock-index returns, especially at small block lengths, but that MSE edge is orthogonal to SB's robustness-to-misspecification advantage.
+**claim:** Use the STATIONARY bootstrap (Politis-Romano 1994) or moving-block bootstrap on the daily portfolio return series for PF/expectancy CIs. The stationary bootstrap is preferred for robustness because its variance estimates are far less sensitive to its tuning parameter p than the moving-block bootstrap's are to block length l (relationship p^-1 approx l; SB is effectively a weighted average over MBB distributions). The moving/overlapping block bootstrap empirically achieves the lowest MSE on stock-index returns, especially at small block lengths, but that MSE edge is orthogonal to SB's robustness-to-misspecification advantage.
+**evidence:** Politis-Romano (1994, JASA 89(428)): 'The stationary bootstrap estimate of standard error is less sensitive to the choice of p than the moving blocks bootstrap method is to the choice of b.' Radovanov-Marcikic (2014) empirically: 'the moving block bootstrap procedure shows the lowest errors in estimation and prediction... dominance of the moving block bootstrap with an application of the small block length.' Lahiri (1999, Annals of Statistics) corroborates that overlapping blocks beat non-overlapping and that random block lengths typically raise MSE. The two findings are complementary: MBB wins on MSE, SB wins on robustness to block-length choice. For a small (few-hundred-day) series where block length is uncertain, SB's robustness is the more valuable property.
+sources: https://hrcak.srce.hr/file/197357, https://bashtage.github.io/arch/bootstrap/bootstrap_examples.html
+
+### F3 [high] Choose the bootstrap block length DATA-ADAPTIVELY, not arbitrarily: the optimal block length scales as N^(1/3) for BOTH the stationary and circular/moving-block bootstraps (b_opt = (2G^2/D)^(1/3) * N^(1/3)), with the constants G and D set by the series' autocovariances/correlogram (G = sum |k| R(k)). The arch library's optimal_block_length function implements this (Politis-White 2004 / Patton-Politis-White 2009) and returns per-bootstrap estimates in 'stationary' and 'circular' columns.
+**claim:** Choose the bootstrap block length DATA-ADAPTIVELY, not arbitrarily: the optimal block length scales as N^(1/3) for BOTH the stationary and circular/moving-block bootstraps (b_opt = (2G^2/D)^(1/3) * N^(1/3)), with the constants G and D set by the series' autocovariances/correlogram (G = sum |k| R(k)). The arch library's optimal_block_length function implements this (Politis-White 2004 / Patton-Politis-White 2009) and returns per-bootstrap estimates in 'stationary' and 'circular' columns.
+**evidence:** Politis-White (2004): optimal length 'minimized if we choose b_opt_SB = (2G^2/D_SB)^(1/3) N^(1/3)' and estimators are 'adaptive on the strength of the correlation of the time series as measured by the correlogram.' Reference implementations (arch, recombinator) code it verbatim with N^(1/3) in both. arch docs: 'optimal_block_length can be used to estimate the optimal block lengths for the Stationary and Circular bootstraps' (columns labeled stationary/circular, confirmed in base.py source). Caveat: a 2009 correction (Patton-Politis-White) revised the leading constant (c=2 stationary, 4/3 circular) but did NOT change the N^(1/3) scaling rate or functional form.
+sources: https://public.econ.duke.edu/~ap172/Politis_White_2004.pdf, https://bashtage.github.io/arch/bootstrap/bootstrap_examples.html
+
+### F4 [high] The autocorrelation-corrected Sharpe standard error is obtained via Lo (2002)'s GMM estimator with a Newey-West / HAC (Andrews 1991 kernel) covariance of the moment conditions: SE[SR] = sqrt(V_GMM / T). This is the correct answer to the Hansen-Hodrick overlapping-returns / autocorrelated-Sharpe problem; Lo derives closed-form Sharpe distributions for three regimes (IID, stationary/autocorrelated, time-aggregated).
+**claim:** The autocorrelation-corrected Sharpe standard error is obtained via Lo (2002)'s GMM estimator with a Newey-West / HAC (Andrews 1991 kernel) covariance of the moment conditions: SE[SR] = sqrt(V_GMM / T). This is the correct answer to the Hansen-Hodrick overlapping-returns / autocorrelated-Sharpe problem; Lo derives closed-form Sharpe distributions for three regimes (IID, stationary/autocorrelated, time-aggregated).
+**evidence:** Lo (2002, FAJ 58(4)): 'I derive explicit expressions for the statistical distribution of the Sharpe ratio... for independently and identically distributed returns, stationary returns, and with time aggregation.' SSRN 377260 text: 'I use a GMM estimator... SE[SR]=sqrt(V_GMM/T)... standard errors are based on GMM estimators using the Newey-West procedure with truncation lag m=3... and m=6.' Two Sigma report confirms the HAC/Andrews 1991 kernel route for non-iid Psi. Lag-selection caveat: m=3/m=6 were Lo's monthly-fund example columns, NOT a universal rule; the methodological guidance is m grows with T at rate ~T^(1/3), so for a few-hundred-observation daily series m roughly 5-10 is more defensible than a fixed 3.
+sources: https://www.twosigma.com/wp-content/uploads/sharpe-tr-1.pdf, https://www.tandfonline.com/doi/abs/10.2469/faj.v58.n4.2453, https://papers.ssrn.com/sol3/papers.cfm?abstract_id=377260
+
+### F5 [high] Do NOT annualize/time-aggregate the Sharpe with sqrt(q) under autocorrelation. Use Lo's factor eta(q) = q / sqrt(q + 2*sum_{k=1}^{q-1}(q-k)*rho_k). POSITIVE serial correlation (which overlapping multi-day holds induce) pushes eta(q) below sqrt(q), so naive sqrt(q) OVERSTATES the annualized Sharpe; empirically the overstatement reached ~65% for a hedge fund with positively autocorrelated returns.
+**claim:** Do NOT annualize/time-aggregate the Sharpe with sqrt(q) under autocorrelation. Use Lo's factor eta(q) = q / sqrt(q + 2*sum_{k=1}^{q-1}(q-k)*rho_k). POSITIVE serial correlation (which overlapping multi-day holds induce) pushes eta(q) below sqrt(q), so naive sqrt(q) OVERSTATES the annualized Sharpe; empirically the overstatement reached ~65% for a hedge fund with positively autocorrelated returns.
+**evidence:** Lo (2002): 'monthly Sharpe ratios cannot be annualized by multiplying by sqrt(12) except under very special circumstances.' SSRN 377260: 'positive serial correlation reduces the scale factor below the IID value... the variance of multiperiod returns increases faster than holding-period q.' '...the annual Sharpe ratio for a hedge fund can be overstated by as much as 65 percent because of serial correlation.' Two Sigma reproduces the eta(q) formula verbatim (Lo Eq. A7). This is the precise mechanism for a positively-autocorrelated overlapping-hold strategy and quantifies the bias the corrected card removes.
+sources: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=377260, https://www.tandfonline.com/doi/abs/10.2469/faj.v58.n4.2453, https://www.twosigma.com/wp-content/uploads/sharpe-tr-1.pdf
+
+### F6 [high] Do NOT assume normality when computing the Sharpe SE/haircut. Under iid normality the asymptotic Sharpe variance is (1+SR^2/2)/n, but wrongly assuming normality can make the estimated asymptotic variance off by up to ~70% (Mertens 2002) for fat-tailed/skewed trading returns. The variance can and should be computed under independence/stationarity alone (dropping normality), and skew/kurtosis must enter the inference.
+**claim:** Do NOT assume normality when computing the Sharpe SE/haircut. Under iid normality the asymptotic Sharpe variance is (1+SR^2/2)/n, but wrongly assuming normality can make the estimated asymptotic variance off by up to ~70% (Mertens 2002) for fat-tailed/skewed trading returns. The variance can and should be computed under independence/stationarity alone (dropping normality), and skew/kurtosis must enter the inference.
+**evidence:** Two Sigma report: 'sqrt(n)(SR_basic - SR) -> N(0, 1+SR^2/2)... Mertens observes that wrongly assuming normality of the excess returns leads to estimates of the asymptotic variance that may be up to 70% off from their true values.' The source's next sentence notes normality can be dropped and variance computed under independence/stationarity alone. Citation chain: Mertens (2002), Opdyke (2007), Lo (2002). This justifies using either the HAC/non-normal Sharpe SE or, equivalently, the DSR/PSR skew-kurtosis-aware route rather than a normal-theory SE.
+sources: https://www.twosigma.com/wp-content/uploads/sharpe-tr-1.pdf
+
+### F7 [high] For the selection-bias / multiple-testing haircut on a large cell-mine sweep, use the Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014) in preference to (or alongside) Harvey-Liu Bonferroni. DSR is a single metric that jointly corrects for selection bias / number of trials, backtest overfitting, sample length T, AND non-normality (skew/kurtosis). It is computed as a Probabilistic Sharpe Ratio whose rejection threshold SR0 is the EXPECTED MAXIMUM Sharpe across N trials (False Strategy Theorem) instead of zero.
+**claim:** For the selection-bias / multiple-testing haircut on a large cell-mine sweep, use the Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014) in preference to (or alongside) Harvey-Liu Bonferroni. DSR is a single metric that jointly corrects for selection bias / number of trials, backtest overfitting, sample length T, AND non-normality (skew/kurtosis). It is computed as a Probabilistic Sharpe Ratio whose rejection threshold SR0 is the EXPECTED MAXIMUM Sharpe across N trials (False Strategy Theorem) instead of zero.
+**evidence:** Paper title: 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting and Non-Normality.' 'The DSR corrects for selection bias, backtest overfitting, sample length, and non-normality in return distributions, providing a more reliable test... especially when many trials are evaluated.' 'DSR is a PSR where the rejection threshold is adjusted to reflect the multiplicity of trials.' DSR deflates SR by five additional variables: skewness, kurtosis, T, V[{SR}], and N. This fits the research scenario (trial count from M=66 cell sweep) far better than a sign-preserving Bonferroni because Bonferroni ignores non-normality and the dispersion of candidate Sharpes.
+sources: https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf, https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551
+
+### F8 [high] The DSR deflation benchmark SR0 = sqrt(V[SR_n]) * ((1-gamma)*Phi^-1[1-1/N] + gamma*Phi^-1[1-1/(N*e)]), where gamma is the Euler-Mascheroni constant (~0.5772), is the EVT-derived expected maximum Sharpe of N unskilled strategies. Critically, SR0 grows BOTH with the number of trials N (via the inverse-normal quantile terms) AND with the cross-sectional VARIANCE of the trial Sharpes V[SR_n] (via the sqrt scaling) - so a dispersed cell-mine sweep raises the hurdle even at fixed N. SR0 exceeds zero even when true skill is zero.
+**claim:** The DSR deflation benchmark SR0 = sqrt(V[SR_n]) * ((1-gamma)*Phi^-1[1-1/N] + gamma*Phi^-1[1-1/(N*e)]), where gamma is the Euler-Mascheroni constant (~0.5772), is the EVT-derived expected maximum Sharpe of N unskilled strategies. Critically, SR0 grows BOTH with the number of trials N (via the inverse-normal quantile terms) AND with the cross-sectional VARIANCE of the trial Sharpes V[SR_n] (via the sqrt scaling) - so a dispersed cell-mine sweep raises the hurdle even at fixed N. SR0 exceeds zero even when true skill is zero.
+**evidence:** Bailey-Lopez de Prado (2014) Eq.(1): E[max SR] approx sqrt(V[SR_n])*((1-gamma)*Z^-1[1-1/N] + gamma*Z^-1[1-1/(N*e)]), gamma=0.5772156649 (verified in the paper's getExpMaxSR Python snippet). 'its expected maximum is greater than zero, even if the true SR is zero... SR0 increases as more independent trials are attempted (N), or the trials involve a greater variance.' Confirmed by Wikipedia, gmarti/marti.ai (var_sr=np.var(sr_array,ddof=1)), and quantstrat R code. This is the concrete formula the CNC card should use for the haircut threshold.
+sources: https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf, https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551
+
+### F9 [high] The N fed to DSR (and any t-stat denominator) must be the number of INDEPENDENT trials/bets, not the raw count M of correlated cells/trades. This is the 'effective breadth' problem: within-day basket correlation and day-to-day overlap both reduce effective N below the naive trade or cell count. Given M correlated trials with average correlation rho-bar, an implied independent count is N = M*(1-rho-bar) + rho-bar (N->M as rho->0, N->1 as rho->1); information-theoretic redundancy estimation (or clustering) is the more robust alternative the authors themselves recommend.
+**claim:** The N fed to DSR (and any t-stat denominator) must be the number of INDEPENDENT trials/bets, not the raw count M of correlated cells/trades. This is the 'effective breadth' problem: within-day basket correlation and day-to-day overlap both reduce effective N below the naive trade or cell count. Given M correlated trials with average correlation rho-bar, an implied independent count is N = M*(1-rho-bar) + rho-bar (N->M as rho->0, N->1 as rho->1); information-theoretic redundancy estimation (or clustering) is the more robust alternative the authors themselves recommend.
+**evidence:** Bailey-Lopez de Prado (2014) Appendix A.3: 'It is critical to understand that the N used to compute E[max{SR}] corresponds to the number of independent trials. Suppose we run M trials, where only N trials are independent, N<M... using M instead of N will overstate E[max{SR}].' Interpolation boundary conditions (rho=0->N=M, rho=1->N=1) confirmed; canonical published form N=rho+(1-rho)M is algebraically identical. 'An alternative and more direct path is to use information theory to determine N... standard information theory methods produce accurate estimates of the number N of non-redundant sources.' This directly resolves the Fundamental-Law-of-Active-Management breadth question for the t-stat/CI denominator: the effective n is the number of independent signal-days/episodes, not raw trades.
+sources: https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf
+
+## Caveats
+
+- S
+- o
+- u
+- r
+- c
+- e
+-  
+- q
+- u
+- a
+- l
+- i
+- t
+- y
+-  
+- i
+- s
+-  
+- s
+- t
+- r
+- o
+- n
+- g
+-  
+- o
+- v
+- e
+- r
+- a
+- l
+- l
+- :
+-  
+- t
+- h
+- e
+-  
+- c
+- o
+- r
+- e
+-  
+- m
+- e
+- t
+- h
+- o
+- d
+- s
+-  
+- r
+- e
+- s
+- t
+-  
+- o
+- n
+-  
+- p
+- e
+- e
+- r
+- -
+- r
+- e
+- v
+- i
+- e
+- w
+- e
+- d
+-  
+- p
+- r
+- i
+- m
+- a
+- r
+- y
+-  
+- p
+- a
+- p
+- e
+- r
+- s
+-  
+- (
+- P
+- o
+- l
+- i
+- t
+- i
+- s
+- -
+- W
+- h
+- i
+- t
+- e
+-  
+- 2
+- 0
+- 0
+- 4
+- ,
+-  
+- P
+- o
+- l
+- i
+- t
+- i
+- s
+- -
+- R
+- o
+- m
+- a
+- n
+- o
+-  
+- 1
+- 9
+- 9
+- 4
+- ,
+-  
+- L
+- o
+-  
+- 2
+- 0
+- 0
+- 2
+-  
+- F
+- A
+- J
+- ,
+-  
+- B
+- a
+- i
+- l
+- e
+- y
+- -
+- L
+- o
+- p
+- e
+- z
+-  
+- d
+- e
+-  
+- P
+- r
+- a
+- d
+- o
+-  
+- 2
+- 0
+- 1
+- 4
+-  
+- J
+- P
+- M
+- )
+-  
+- p
+- l
+- u
+- s
+-  
+- t
+- h
+- e
+-  
+- a
+- u
+- t
+- h
+- o
+- r
+- i
+- t
+- a
+- t
+- i
+- v
+- e
+-  
+- a
+- r
+- c
+- h
+-  
+- r
+- e
+- f
+- e
+- r
+- e
+- n
+- c
+- e
+-  
+- i
+- m
+- p
+- l
+- e
+- m
+- e
+- n
+- t
+- a
+- t
+- i
+- o
+- n
+- .
+-  
+- T
+- i
+- m
+- e
+- -
+- s
+- e
+- n
+- s
+- i
+- t
+- i
+- v
+- i
+- t
+- y
+-  
+- i
+- s
+-  
+- l
+- o
+- w
+-  
+- (
+- t
+- h
+- e
+- s
+- e
+-  
+- a
+- r
+- e
+-  
+- s
+- e
+- t
+- t
+- l
+- e
+- d
+-  
+- e
+- c
+- o
+- n
+- o
+- m
+- e
+- t
+- r
+- i
+- c
+-  
+- r
+- e
+- s
+- u
+- l
+- t
+- s
+- )
+- ,
+-  
+- w
+- i
+- t
+- h
+-  
+- o
+- n
+- e
+-  
+- d
+- o
+- c
+- u
+- m
+- e
+- n
+- t
+- e
+- d
+-  
+- u
+- p
+- d
+- a
+- t
+- e
+- :
+-  
+- t
+- h
+- e
+-  
+- P
+- a
+- t
+- t
+- o
+- n
+- -
+- P
+- o
+- l
+- i
+- t
+- i
+- s
+- -
+- W
+- h
+- i
+- t
+- e
+-  
+- (
+- 2
+- 0
+- 0
+- 9
+- )
+-  
+- c
+- o
+- r
+- r
+- e
+- c
+- t
+- i
+- o
+- n
+-  
+- r
+- e
+- v
+- i
+- s
+- e
+- d
+-  
+- b
+- l
+- o
+- c
+- k
+- -
+- l
+- e
+- n
+- g
+- t
+- h
+-  
+- c
+- o
+- n
+- s
+- t
+- a
+- n
+- t
+- s
+-  
+- b
+- u
+- t
+-  
+- n
+- o
+- t
+-  
+- t
+- h
+- e
+-  
+- N
+- ^
+- (
+- 1
+- /
+- 3
+- )
+-  
+- r
+- a
+- t
+- e
+- .
+-  
+- S
+- e
+- v
+- e
+- r
+- a
+- l
+-  
+- i
+- n
+- t
+- e
+- r
+- p
+- r
+- e
+- t
+- i
+- v
+- e
+-  
+- c
+- a
+- u
+- t
+- i
+- o
+- n
+- s
+-  
+- s
+- u
+- r
+- f
+- a
+- c
+- e
+- d
+-  
+- d
+- u
+- r
+- i
+- n
+- g
+-  
+- v
+- e
+- r
+- i
+- f
+- i
+- c
+- a
+- t
+- i
+- o
+- n
+- :
+-  
+- (
+- 1
+- )
+-  
+- L
+- o
+- '
+- s
+-  
+- m
+- =
+- 3
+- /
+- m
+- =
+- 6
+-  
+- H
+- A
+- C
+-  
+- l
+- a
+- g
+- s
+-  
+- w
+- e
+- r
+- e
+-  
+- m
+- o
+- n
+- t
+- h
+- l
+- y
+- -
+- f
+- u
+- n
+- d
+-  
+- E
+- X
+- A
+- M
+- P
+- L
+- E
+-  
+- c
+- o
+- l
+- u
+- m
+- n
+- s
+- ,
+-  
+- n
+- o
+- t
+-  
+- a
+-  
+- r
+- u
+- l
+- e
+-  
+- -
+-  
+- f
+- o
+- r
+-  
+- a
+-  
+- d
+- a
+- i
+- l
+- y
+-  
+- ~
+- f
+- e
+- w
+- -
+- h
+- u
+- n
+- d
+- r
+- e
+- d
+- -
+- o
+- b
+- s
+-  
+- s
+- e
+- r
+- i
+- e
+- s
+-  
+- u
+- s
+- e
+-  
+- m
+-  
+- ~
+- T
+- ^
+- (
+- 1
+- /
+- 3
+- )
+-  
+- (
+- r
+- o
+- u
+- g
+- h
+- l
+- y
+-  
+- 5
+- -
+- 1
+- 0
+- )
+- .
+-  
+- (
+- 2
+- )
+-  
+- T
+- h
+- e
+-  
+- h
+- r
+- c
+- a
+- k
+- .
+- s
+- r
+- c
+- e
+- .
+- h
+- r
+-  
+- '
+- l
+- o
+- w
+- e
+- s
+- t
+-  
+- M
+- S
+- E
+-  
+- f
+- o
+- r
+-  
+- M
+- B
+- B
+- '
+-  
+- f
+- i
+- n
+- d
+- i
+- n
+- g
+-  
+- i
+- s
+-  
+- a
+-  
+- s
+- i
+- n
+- g
+- l
+- e
+- -
+- i
+- n
+- d
+- e
+- x
+-  
+- e
+- m
+- p
+- i
+- r
+- i
+- c
+- a
+- l
+-  
+- s
+- t
+- u
+- d
+- y
+-  
+- (
+- n
+- =
+- 1
+- 2
+- 5
+- 0
+- )
+-  
+- a
+- n
+- d
+-  
+- i
+- s
+-  
+- o
+- r
+- t
+- h
+- o
+- g
+- o
+- n
+- a
+- l
+-  
+- t
+- o
+-  
+- t
+- h
+- e
+-  
+- s
+- t
+- a
+- t
+- i
+- o
+- n
+- a
+- r
+- y
+-  
+- b
+- o
+- o
+- t
+- s
+- t
+- r
+- a
+- p
+- '
+- s
+-  
+- r
+- o
+- b
+- u
+- s
+- t
+- n
+- e
+- s
+- s
+-  
+- a
+- d
+- v
+- a
+- n
+- t
+- a
+- g
+- e
+-  
+- -
+-  
+- t
+- h
+- e
+- y
+-  
+- a
+- n
+- s
+- w
+- e
+- r
+-  
+- d
+- i
+- f
+- f
+- e
+- r
+- e
+- n
+- t
+-  
+- q
+- u
+- e
+- s
+- t
+- i
+- o
+- n
+- s
+- ,
+-  
+- s
+- o
+-  
+- d
+- o
+-  
+- n
+- o
+- t
+-  
+- r
+- e
+- a
+- d
+-  
+- M
+- B
+- B
+- -
+- w
+- i
+- n
+- s
+- -
+- M
+- S
+- E
+-  
+- a
+- s
+-  
+- a
+-  
+- r
+- e
+- a
+- s
+- o
+- n
+-  
+- t
+- o
+-  
+- r
+- e
+- j
+- e
+- c
+- t
+-  
+- t
+- h
+- e
+-  
+- s
+- t
+- a
+- t
+- i
+- o
+- n
+- a
+- r
+- y
+-  
+- b
+- o
+- o
+- t
+- s
+- t
+- r
+- a
+- p
+- .
+-  
+- (
+- 3
+- )
+-  
+- O
+- n
+- e
+-  
+- s
+- p
+- e
+- c
+- i
+- f
+- i
+- c
+-  
+- D
+- S
+- R
+- /
+- P
+- S
+- R
+-  
+- n
+- o
+- n
+- -
+- n
+- o
+- r
+- m
+- a
+- l
+- i
+- t
+- y
+-  
+- S
+- E
+-  
+- d
+- e
+- n
+- o
+- m
+- i
+- n
+- a
+- t
+- o
+- r
+-  
+- f
+- o
+- r
+- m
+- u
+- l
+- a
+-  
+- w
+- a
+- s
+-  
+- R
+- E
+- F
+- U
+- T
+- E
+- D
+-  
+- (
+- v
+- o
+- t
+- e
+-  
+- 1
+- -
+- 2
+- )
+- ,
+-  
+- s
+- o
+-  
+- d
+- o
+-  
+- n
+- o
+- t
+-  
+- h
+- a
+- r
+- d
+- c
+- o
+- d
+- e
+-  
+- t
+- h
+- a
+- t
+-  
+- e
+- x
+- a
+- c
+- t
+-  
+- c
+- l
+- o
+- s
+- e
+- d
+-  
+- f
+- o
+- r
+- m
+- ;
+-  
+- r
+- e
+- l
+- y
+-  
+- o
+- n
+-  
+- t
+- h
+- e
+-  
+- v
+- e
+- r
+- i
+- f
+- i
+- e
+- d
+-  
+- D
+- S
+- R
+-  
+- s
+- t
+- r
+- u
+- c
+- t
+- u
+- r
+- e
+-  
+- (
+- P
+- S
+- R
+-  
+- w
+- i
+- t
+- h
+-  
+- S
+- R
+- 0
+-  
+- t
+- h
+- r
+- e
+- s
+- h
+- o
+- l
+- d
+- ,
+-  
+- s
+- k
+- e
+- w
+- /
+- k
+- u
+- r
+- t
+- o
+- s
+- i
+- s
+-  
+- e
+- n
+- t
+- e
+- r
+- i
+- n
+- g
+-  
+- v
+- i
+- a
+-  
+- t
+- h
+- e
+-  
+- S
+- h
+- a
+- r
+- p
+- e
+-  
+- S
+- E
+- )
+-  
+- a
+- n
+- d
+-  
+- a
+-  
+- v
+- e
+- t
+- t
+- e
+- d
+-  
+- i
+- m
+- p
+- l
+- e
+- m
+- e
+- n
+- t
+- a
+- t
+- i
+- o
+- n
+-  
+- r
+- a
+- t
+- h
+- e
+- r
+-  
+- t
+- h
+- a
+- n
+-  
+- t
+- h
+- e
+-  
+- r
+- e
+- f
+- u
+- t
+- e
+- d
+-  
+- e
+- x
+- p
+- r
+- e
+- s
+- s
+- i
+- o
+- n
+- .
+-  
+- (
+- 4
+- )
+-  
+- T
+- h
+- e
+-  
+- e
+- f
+- f
+- e
+- c
+- t
+- i
+- v
+- e
+- -
+- i
+- n
+- d
+- e
+- p
+- e
+- n
+- d
+- e
+- n
+- t
+- -
+- t
+- r
+- i
+- a
+- l
+- s
+-  
+- i
+- n
+- t
+- e
+- r
+- p
+- o
+- l
+- a
+- t
+- i
+- o
+- n
+-  
+- N
+- =
+- M
+- (
+- 1
+- -
+- r
+- h
+- o
+- )
+- +
+- r
+- h
+- o
+-  
+- p
+- a
+- s
+- s
+- e
+- d
+-  
+- o
+- n
+- l
+- y
+-  
+- 2
+- -
+- 1
+-  
+- a
+- n
+- d
+-  
+- i
+- s
+-  
+- t
+- h
+- e
+-  
+- a
+- u
+- t
+- h
+- o
+- r
+- s
+- '
+-  
+- o
+- w
+- n
+-  
+- a
+- d
+- m
+- i
+- t
+- t
+- e
+- d
+- l
+- y
+-  
+- c
+- r
+- u
+- d
+- e
+-  
+- d
+- e
+- v
+- i
+- c
+- e
+-  
+- (
+- t
+- h
+- e
+- y
+-  
+- p
+- r
+- e
+- f
+- e
+- r
+-  
+- i
+- n
+- f
+- o
+- r
+- m
+- a
+- t
+- i
+- o
+- n
+- -
+- t
+- h
+- e
+- o
+- r
+- e
+- t
+- i
+- c
+-  
+- r
+- e
+- d
+- u
+- n
+- d
+- a
+- n
+- c
+- y
+- )
+- ;
+-  
+- t
+- r
+- e
+- a
+- t
+-  
+- t
+- h
+- e
+-  
+- r
+- h
+- o
+- -
+- i
+- n
+- t
+- e
+- r
+- p
+- o
+- l
+- a
+- t
+- i
+- o
+- n
+-  
+- a
+- s
+-  
+- a
+-  
+- l
+- o
+- w
+- e
+- r
+- -
+- e
+- f
+- f
+- o
+- r
+- t
+-  
+- a
+- p
+- p
+- r
+- o
+- x
+- i
+- m
+- a
+- t
+- i
+- o
+- n
+- ,
+-  
+- c
+- l
+- u
+- s
+- t
+- e
+- r
+- i
+- n
+- g
+- /
+- e
+- n
+- t
+- r
+- o
+- p
+- y
+-  
+- a
+- s
+-  
+- t
+- h
+- e
+-  
+- b
+- e
+- t
+- t
+- e
+- r
+-  
+- p
+- a
+- t
+- h
+- .
+-  
+- (
+- 5
+- )
+-  
+- N
+- O
+-  
+- s
+- o
+- u
+- r
+- c
+- e
+-  
+- i
+- n
+-  
+- t
+- h
+- i
+- s
+-  
+- c
+- o
+- r
+- p
+- u
+- s
+-  
+- i
+- s
+-  
+- I
+- n
+- d
+- i
+- a
+- n
+- -
+- m
+- a
+- r
+- k
+- e
+- t
+- -
+- s
+- p
+- e
+- c
+- i
+- f
+- i
+- c
+-  
+- -
+-  
+- n
+- o
+- n
+- e
+-  
+- o
+- f
+-  
+- t
+- h
+- e
+-  
+- v
+- e
+- r
+- i
+- f
+- i
+- e
+- d
+-  
+- c
+- l
+- a
+- i
+- m
+- s
+-  
+- a
+- d
+- d
+- r
+- e
+- s
+- s
+-  
+- N
+- S
+- E
+-  
+- m
+- i
+- c
+- r
+- o
+- s
+- t
+- r
+- u
+- c
+- t
+- u
+- r
+- e
+- ,
+-  
+- c
+- i
+- r
+- c
+- u
+- i
+- t
+-  
+- l
+- i
+- m
+- i
+- t
+- s
+- ,
+-  
+- o
+- r
+-  
+- s
+- m
+- a
+- l
+- l
+- -
+- s
+- a
+- m
+- p
+- l
+- e
+-  
+- b
+- e
+- h
+- a
+- v
+- i
+- o
+- r
+-  
+- o
+- n
+-  
+- I
+- n
+- d
+- i
+- a
+- n
+-  
+- e
+- q
+- u
+- i
+- t
+- i
+- e
+- s
+-  
+- d
+- i
+- r
+- e
+- c
+- t
+- l
+- y
+- ,
+-  
+- s
+- o
+-  
+- t
+- h
+- e
+-  
+- m
+- e
+- t
+- h
+- o
+- d
+- o
+- l
+- o
+- g
+- y
+-  
+- i
+- s
+-  
+- b
+- o
+- r
+- r
+- o
+- w
+- e
+- d
+-  
+- f
+- r
+- o
+- m
+-  
+- g
+- e
+- n
+- e
+- r
+- a
+- l
+-  
+- f
+- i
+- n
+- a
+- n
+- c
+- i
+- a
+- l
+-  
+- e
+- c
+- o
+- n
+- o
+- m
+- e
+- t
+- r
+- i
+- c
+- s
+-  
+- a
+- n
+- d
+-  
+- t
+- h
+- e
+-  
+- s
+- m
+- a
+- l
+- l
+- -
+- s
+- a
+- m
+- p
+- l
+- e
+-  
+- c
+- a
+- v
+- e
+- a
+- t
+- s
+-  
+- a
+- r
+- e
+-  
+- g
+- e
+- n
+- e
+- r
+- i
+- c
+- .
+-  
+- F
+- o
+- r
+-  
+- ~
+- 2
+- 0
+- 0
+- -
+- 1
+- 1
+- 0
+- 0
+-  
+- t
+- r
+- a
+- d
+- e
+- s
+-  
+- o
+- v
+- e
+- r
+-  
+- ~
+- 3
+-  
+- y
+- e
+- a
+- r
+- s
+-  
+- (
+- i
+- .
+- e
+- .
+-  
+- o
+- n
+- l
+- y
+-  
+- a
+-  
+- f
+- e
+- w
+-  
+- h
+- u
+- n
+- d
+- r
+- e
+- d
+-  
+- i
+- n
+- d
+- e
+- p
+- e
+- n
+- d
+- e
+- n
+- t
+-  
+- s
+- i
+- g
+- n
+- a
+- l
+- -
+- d
+- a
+- y
+- s
+-  
+- a
+- t
+-  
+- m
+- o
+- s
+- t
+- )
+- ,
+-  
+- C
+- P
+- C
+- V
+- /
+- P
+- B
+- O
+-  
+- (
+- L
+- o
+- p
+- e
+- z
+-  
+- d
+- e
+-  
+- P
+- r
+- a
+- d
+- o
+- )
+-  
+- a
+- n
+- d
+-  
+- p
+- u
+- r
+- g
+- e
+- d
+- /
+- e
+- m
+- b
+- a
+- r
+- g
+- o
+- e
+- d
+-  
+- C
+- V
+-  
+- w
+- e
+- r
+- e
+-  
+- N
+- O
+- T
+-  
+- i
+- n
+- d
+- e
+- p
+- e
+- n
+- d
+- e
+- n
+- t
+- l
+- y
+-  
+- v
+- e
+- r
+- i
+- f
+- i
+- e
+- d
+-  
+- i
+- n
+-  
+- t
+- h
+- i
+- s
+-  
+- c
+- o
+- r
+- p
+- u
+- s
+-  
+- a
+- n
+- d
+-  
+- a
+- r
+- e
+-  
+- l
+- i
+- k
+- e
+- l
+- y
+-  
+- O
+- V
+- E
+- R
+- K
+- I
+- L
+- L
+-  
+- r
+- e
+- l
+- a
+- t
+- i
+- v
+- e
+-  
+- t
+- o
+-  
+- a
+-  
+- b
+- l
+- o
+- c
+- k
+- -
+- b
+- o
+- o
+- t
+- s
+- t
+- r
+- a
+- p
+- -
+- o
+- f
+- -
+- d
+- a
+- i
+- l
+- y
+- -
+- r
+- e
+- t
+- u
+- r
+- n
+- s
+-  
+- +
+-  
+- D
+- S
+- R
+-  
+- r
+- e
+- c
+- i
+- p
+- e
+- ;
+-  
+- t
+- h
+- e
+-  
+- b
+- i
+- n
+- d
+- i
+- n
+- g
+-  
+- c
+- o
+- n
+- s
+- t
+- r
+- a
+- i
+- n
+- t
+-  
+- i
+- s
+-  
+- t
+- h
+- e
+-  
+- t
+- i
+- n
+- y
+-  
+- e
+- f
+- f
+- e
+- c
+- t
+- i
+- v
+- e
+-  
+- N
+- ,
+-  
+- w
+- h
+- i
+- c
+- h
+-  
+- a
+- r
+- g
+- u
+- e
+- s
+-  
+- f
+- o
+- r
+-  
+- h
+- o
+- n
+- e
+- s
+- t
+-  
+- w
+- i
+- d
+- e
+-  
+- i
+- n
+- t
+- e
+- r
+- v
+- a
+- l
+- s
+-  
+- o
+- v
+- e
+- r
+-  
+- e
+- l
+- a
+- b
+- o
+- r
+- a
+- t
+- e
+-  
+- c
+- r
+- o
+- s
+- s
+- -
+- v
+- a
+- l
+- i
+- d
+- a
+- t
+- i
+- o
+- n
+-  
+- m
+- a
+- c
+- h
+- i
+- n
+- e
+- r
+- y
+- .
+
+## Open Questions
+
+- What is the actual measured within-day basket correlation (rho-bar) and the daily-return autocorrelation decay (rho_1, rho_2, ...) for THIS CNC/MTF reversion strategy? These empirical quantities set both the bootstrap block length (N^(1/3) constants) and the effective independent N - the methodology is correct but the inputs are unmeasured in this corpus.
+- Should the haircut be DSR alone, or DSR combined with the autocorrelation-corrected (Lo/HAC) Sharpe as its input? The literature confirms each component but does not give a verified worked example of feeding a HAC-corrected per-strategy Sharpe AND an effective-N into DSR simultaneously - the composition is sound in principle but needs a validated implementation.
+- Are CPCV and the Probability of Backtest Overfitting (PBO) worth running given the small effective N (few hundred independent signal-days), or do they add overfitting-detection value that the block-bootstrap + DSR recipe misses? This corpus did not verify CPCV/PBO claims, so their marginal benefit here is unresolved.
+- For the cell-mine sweep, what is the right way to count N when cells themselves overlap in the trades they select (shared names/days across cells)? The DSR independent-trials machinery assumes a clean per-trial Sharpe per cell; heavily overlapping cell definitions may need clustering on the trade-level overlap, not just Sharpe correlation.
+
+## Refuted
+
+- {"claim": "The DSR/PSR standard-error correction for non-normality uses the observed return skewness and kurtosis in the denominator, so fat-tailed/skewed strategies are penalized: DSR = Phi( (SR* - SR0) * sqrt(T-1) / sqrt(1 - skew*SR0 + (kurt-1)/4 * SR0^2) ).", "vote": "1-2", "source": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551"}
+
+## Sources
+
+- {"url": "https://public.econ.duke.edu/~ap172/Politis_White_2004.pdf", "quality": "primary", "angle": "block bootstrap for clustered dependent returns", "claimCount": 5}
+- {"url": "https://www.tandfonline.com/doi/abs/10.1080/01621459.1994.10476870", "quality": "unreliable", "angle": "block bootstrap for clustered dependent returns", "claimCount": 0}
+- {"url": "https://www.sciencedirect.com/science/article/abs/pii/S0167947399000146", "quality": "unreliable", "angle": "block bootstrap for clustered dependent returns", "claimCount": 0}
+- {"url": "https://bashtage.github.io/arch/bootstrap/bootstrap_examples.html", "quality": "primary", "angle": "block bootstrap for clustered dependent returns", "claimCount": 4}
+- {"url": "https://hrcak.srce.hr/file/197357", "quality": "primary", "angle": "block bootstrap for clustered dependent returns", "claimCount": 5}
+- {"url": "https://arxiv.org/pdf/2404.15227", "quality": "primary", "angle": "block bootstrap for clustered dependent returns", "claimCount": 3}
+- {"url": "https://www.twosigma.com/wp-content/uploads/sharpe-tr-1.pdf", "quality": "primary", "angle": "Sharpe ratio SE under autocorrelation overlap", "claimCount": 5}
+- {"url": "https://www.tandfonline.com/doi/abs/10.2469/faj.v58.n4.2453", "quality": "primary", "angle": "Sharpe ratio SE under autocorrelation overlap", "claimCount": 5}
+- {"url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=377260", "quality": "primary", "angle": "Sharpe ratio SE under autocorrelation overlap", "claimCount": 5}
+- {"url": "https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf", "quality": "primary", "angle": "selection-bias and overfitting haircuts", "claimCount": 5}
+- {"url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551", "quality": "primary", "angle": "selection-bias and overfitting haircuts", "claimCount": 5}
+- {"url": "https://en.wikipedia.org/wiki/Deflated_Sharpe_ratio", "quality": "secondary", "angle": "selection-bias and overfitting haircuts", "claimCount": 5}
+- {"url": "https://gmarti.gitlab.io/qfin/2018/05/30/deflated-sharpe-ratio.html", "quality": "blog", "angle": "selection-bias and overfitting haircuts", "claimCount": 5}
+- {"url": "https://medium.com/balaena-quant-insights/deflated-sharpe-ratio-dsr-33412c7dd464", "quality": "blog", "angle": "selection-bias and overfitting haircuts", "claimCount": 5}
+- {"url": "https://sdm.lbl.gov/oapapers/ssrn-id2507040-bailey.pdf", "quality": "primary", "angle": "selection-bias and overfitting haircuts", "claimCount": 5}
+- {"url": "https://link.springer.com/article/10.1057/s41260-020-00193-y", "quality": "primary", "angle": "breadth Fundamental Law of Active Management", "claimCount": 5}
+- {"url": "https://www.academia.edu/2499892/How_many_independent_bets_are_there_and_quest", "quality": "primary", "angle": "breadth Fundamental Law of Active Management", "claimCount": 5}
+- {"url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=934440", "quality": "secondary", "angle": "breadth Fundamental Law of Active Management", "claimCount": 4}
+- {"url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253", "quality": "primary", "angle": "CPCV PBO purged CV for overlapping books", "claimCount": 5}
+- {"url": "https://www.ams.org/notices/201405/rnoti-p458.pdf", "quality": "primary", "angle": "CPCV PBO purged CV for overlapping books", "claimCount": 5}
+- {"url": "https://blog.quantinsti.com/cross-validation-embargo-purging-combinatorial/", "quality": "blog", "angle": "CPCV PBO purged CV for overlapping books", "claimCount": 4}
+- {"url": "https://www.sciencedirect.com/science/article/abs/pii/S0950705124011110", "quality": "unreliable", "angle": "CPCV PBO purged CV for overlapping books", "claimCount": 0}
