@@ -236,19 +236,17 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary) 
             persistence.remove_position(symbol)
             continue
         if today > exit_on:
-            # Missed the exact exit-day close (cron skip/holiday). Selling at a
-            # later close mis-prices the trade; flag for manual settlement once
-            # (don't re-warn every subsequent cron fire).
-            if not pos.state.get("manual_settle_required"):
-                logger.warning(
-                    "mtf_capitulation: %s STALE exit (exit_on=%s < today=%s); "
-                    "flagged for manual settle", symbol, exit_on, today,
-                )
-                persistence.update_position(
-                    symbol, state_updates={"manual_settle_required": True},
-                )
+            # Cron-missed exit (rare now that trading-day math is holiday-aware).
+            # SELF-HEAL: settle at today's close rather than orphan the position
+            # (the prior 'flag + leave' path leaked positions in the store —
+            # backtest_findings #0). A 1-session-late delivery exit is a minor
+            # mis-price; an orphaned leveraged position is not. Count for monitoring.
+            logger.warning(
+                "mtf_capitulation: %s late exit (exit_on=%s < today=%s); settling at today's close",
+                symbol, exit_on, today,
+            )
             summary["stale_exit_count"] = summary.get("stale_exit_count", 0) + 1
-            continue
+            # fall through to settle at today's close (no continue, no leak)
 
         qty = int(pos.state.get("qty", 0))
         entry_price = float(pos.avg_price or pos.state.get("entry_fill_price") or 0.0)

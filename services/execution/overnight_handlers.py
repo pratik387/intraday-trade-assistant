@@ -29,21 +29,51 @@ except Exception:
     logger = logging.getLogger(__name__)
 
 
-def _next_trading_day(d: date) -> date:
-    """Naive next-trading-day: Mon-Thu -> +1 day, Fri -> +3 days (skip weekend).
+_NSE_HOLIDAYS = None
 
-    Public holidays NOT handled — broker AMO accepts the order regardless;
-    the actual fill happens on the next exchange session. Caller must
-    update via NSE calendar lookup if precision needed.
+
+def _nse_holidays() -> set:
+    """Set of NSE trading holidays (IST dates) from assets/nse_holidays.json.
+
+    Cached. Empty set on load failure -> graceful degradation to weekend-only
+    skipping (the prior behavior) WITH a logged warning, so a missing/corrupt
+    calendar fails loud, not silent. Calendar coverage must extend past the
+    dates being traded (refresh assets/nse_holidays.json before each new FY).
     """
-    weekday = d.weekday()  # Mon=0, Fri=4, Sat=5, Sun=6
-    if weekday == 4:       # Friday -> Monday
-        return d + timedelta(days=3)
-    if weekday == 5:       # Saturday -> Monday
-        return d + timedelta(days=2)
-    if weekday == 6:       # Sunday -> Monday
-        return d + timedelta(days=1)
-    return d + timedelta(days=1)
+    global _NSE_HOLIDAYS
+    if _NSE_HOLIDAYS is None:
+        import json
+        from datetime import datetime as _dt
+        path = Path(__file__).resolve().parents[2] / "assets" / "nse_holidays.json"
+        out = set()
+        try:
+            for r in json.load(open(path, encoding="utf-8")):
+                ds = r.get("tradingDate") if isinstance(r, dict) else None
+                if ds:
+                    try:
+                        out.add(_dt.strptime(ds, "%d-%b-%Y").date())
+                    except (ValueError, TypeError):
+                        pass
+            if not out:
+                logger.warning("_nse_holidays: %s parsed to 0 holidays — trading-day math is weekend-only", path)
+        except Exception as e:
+            logger.warning("_nse_holidays: could not load %s (%s) — trading-day math is weekend-only", path, e)
+        _NSE_HOLIDAYS = out
+    return _NSE_HOLIDAYS
+
+
+def _next_trading_day(d: date) -> date:
+    """Next NSE trading day after `d`: skips weekends AND exchange holidays.
+
+    Holiday-aware (assets/nse_holidays.json) — critical for multi-day setups:
+    an exit/entry date that lands on a holiday would otherwise be missed by the
+    EOD cron (the session never happens), orphaning the position (backtest_findings #0).
+    """
+    hols = _nse_holidays()
+    cur = d + timedelta(days=1)
+    while cur.weekday() >= 5 or cur in hols:
+        cur += timedelta(days=1)
+    return cur
 
 
 def _select_overnight_setups(config: dict, *, paper_mode: bool) -> list:
