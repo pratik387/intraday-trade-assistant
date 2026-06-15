@@ -49,3 +49,30 @@ If, after proper Stage-2→6, the demeaned (market-relative) bounce is NOT posit
 
 ## Decision (Stage 0 gate)
 - [x] Proceed all three to Stage 2 (Phase-2 signature, Discovery-only).
+
+---
+
+## RESULTS (Stages 2-6, 2026-06-15) — real lifecycle, production universe, real delivery fees
+
+**Stage 2 (Phase-2 signature, Discovery-only, market-relative footprint):** all three PASS the 0.1% gate.
+| | hold-3 delta vs tier-1 universe | win | n |
+|---|---|---|---|
+| C1 low52 | +2.21% | 63% | 255 |
+| C2 downstreak | +1.05% | 57% | 981 |
+| C3 crash1d | +0.42% | 50% | 1428 |
+
+**Stage 4-5 (Discovery cell-lock → one-shot OOS 2025 → one-shot HO 2026, net of real fees):**
+
+- **C1 `low52_capitulation_revert_long` — PASS (borderline).** 58 cells swept, 10 net-positive in ALL 3 periods. Most-stable (min ΔPF): **low52 ≤ 5% × K=2 × tier-1 × shock ≥ 2×**, PF Disc/OOS/26 = **1.86 / 1.08 / 1.39**.
+- **C2 `downstreak` — KILL.** 42 ship-eligible on Discovery but **0 net-positive in all 3 periods**; every cell's 2026 HO PF is 0.44–0.71 (Disc+OOS-strong → HO-collapse, lesson #10). Regime-dependent; died in 2026.
+- **C3 `crash1d` — KILL.** Only 7 ship-eligible; **fails OOS one-shot** (2025 PF < 1.0). Also a duplicate of A2's existing N=1 mine cell (not a distinct mechanism). Fold into A2, don't ship.
+
+**Stage 6 (C1 confidence card, Discovery-only CI + one-shot validators, true M=58):**
+- BCa PF **1.86 [1.41, 2.44]**, expectancy ₹570/trade [308, 857], win 47.7%.
+- Harvey-Liu adj-Sharpe **0.93 at M=58** (42% haircut) — positive.
+- Per-regime: strong `pre_election_calm` (2.53) / `election_vol_spike` (3.01); **weak/negative `fed_pivot_china_rotation_FII_exit` (0.32)** and `post_election_consolidation` (0.91). **Regime-conditioned — needs volatility, dies in FII-exit.**
+- One-shot: OOS 2025 **1.08** (marginal, just under the informal 1.10 gate), HO 2026 **1.39** (positive in the down market).
+
+**Verdict:** C1 is a *real, borderline* candidate — strong Discovery + positive 2026 HO, but OOS marginal and regime-conditioned. Worth paper-validating as a distinct-trigger complement to A2 (paper is the production-faithful gate per risk #2). C2/C3 killed at the proper gates — and notably my earlier toy-screen had falsely flagged downstreak as OK; the real cell-mine with delivery fees + the 2026 HO exposed the collapse.
+
+**Batch for paper:** A2 (`mtf_capitulation_revert_long`) + C1 (`low52_capitulation_revert_long`). Two distinct reversion triggers; C2/C3 dropped.
