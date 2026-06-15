@@ -21,7 +21,9 @@ Review each after the full 3-year backtest completes and pipeline_health_analyze
 3. Re-run `backtest_mtf_replay.py` and confirm `exec_PF → res_PF`, `exec_n → res_n`, stale → ~0.
 4. Regression-test `close_dn` (its 1-night exit-date arithmetic) after touching the shared `_next_trading_day`.
 
-**Status:** All 4 multi-day setups remain `enabled/paper_enabled: false`. This is the load-bearing blocker before the paper batch can start.
+**Status (2026-06-15, commit d5aa95f): HOLIDAY BUG FIXED + VERIFIED.** `_next_trading_day` now holiday-aware; stale exits self-heal. Re-run Stage-8 (Q1-2024): stale 871→4, fill-diff 0.0/0.0 bps all 4 setups. close_dn regression clean.
+
+**NEW sub-finding 0b (open) — confidence-card PFs over-count overlapping signals (lesson #19 class).** The Stage-8 replay also revealed `exec_n ≈ 60% of res_n` with `exec_PF < res_PF`, because the PRODUCTION executor dedups (one position per symbol while held) but the research cell-mine counts EVERY signal as an independent trade. Deduping the research ledger converges trade counts toward the executor (e.g. zscore 559→398 vs exec 336; PF 1.65→1.27) and confirms it; residual gap is Q1-window-boundary + min_universe floor + small-n noise. **Implication:** the validated confidence-card PFs (A2 1.36 / low52 1.86 / zscore 1.43 / crash2d 1.36) are OPTIMISTIC — production-faithful PF requires re-running the Stage-5/6 cell-mine + confidence cards WITH per-symbol-hold-window dedup (one trade per symbol per overlapping hold). Effect is setup-dependent (notably ~−0.4 PF for zscore). Do BEFORE paper. All 4 remain `paper_enabled: false`.
 
 ---
 
