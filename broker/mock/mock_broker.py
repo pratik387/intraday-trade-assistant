@@ -656,7 +656,10 @@ class MockBroker:
         frames = []
         for sym in symbols:
             bare = str(sym).replace("NSE:", "").upper()
-            df = self.get_daily(bare, days=days)
+            # get_daily / the data SDK resolve the NSE:-PREFIXED symbol
+            # (_instrument_key_for keys _sym2inst by 'NSE:SYMBOL'); a bare symbol
+            # is "unknown". Pass the prefixed form; the output panel stays bare.
+            df = self.get_daily(f"NSE:{bare}", days=days)
             have_end = False
             if df is not None and not df.empty:
                 d = df.reset_index()

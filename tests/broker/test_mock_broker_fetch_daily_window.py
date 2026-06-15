@@ -13,10 +13,12 @@ from broker.mock.mock_broker import MockBroker
 
 
 class _StubSDK:
-    """Minimal data SDK: returns date-indexed OHLCV daily bars per symbol."""
+    """Minimal data SDK mirroring UpstoxDataClient: get_daily resolves the
+    NSE:-PREFIXED symbol (its _sym2inst map is keyed 'NSE:SYMBOL'); a bare symbol
+    is 'unknown'. fetch_daily_window MUST pass the prefixed form."""
     def get_daily(self, symbol, days):
         idx = pd.date_range("2026-01-01", periods=12, freq="B", name="date")
-        base = {"AAA": 100.0, "BBB": 50.0}.get(symbol)
+        base = {"NSE:AAA": 100.0, "NSE:BBB": 50.0}.get(symbol)  # bare -> None (unknown)
         if base is None:
             return pd.DataFrame()
         return pd.DataFrame(
