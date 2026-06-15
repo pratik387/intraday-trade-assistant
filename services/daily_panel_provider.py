@@ -46,8 +46,11 @@ def _window_calendar_days(config: Dict[str, Any]) -> int:
     # `low_lookback_days` (e.g. 252). Fail-fast on selection_mode (CLAUDE.md rule
     # 1) — a silent default here would silently under-fetch the window for a
     # mis-keyed near-low setup (5-day vs 252-day) -> empty basket, no error.
-    if str(config["selection_mode"]) == "near_period_low":
+    mode = str(config["selection_mode"])
+    if mode == "near_period_low":
         sig_lookback = int(config["low_lookback_days"])
+    elif mode == "zscore_oversold":
+        sig_lookback = int(config["zscore_lookback_days"])
     else:
         sig_lookback = int(config["lookback_days"])
     need_trading = int(config["shock_lookback_days"]) * 2 + sig_lookback + 10

@@ -77,6 +77,36 @@ def _panel(session_date: date):
     return df
 
 
+def _panel_z(session_date):
+    """Like _panel but fillers oscillate slightly (|z| < 1.5) so std is well-defined
+    for the whole universe — flat fillers give std=0 -> NaN z-score (real prices
+    always move). Losers still decline sharply -> z <= -1.5."""
+    days = _biz_days(session_date, 25)
+    rows = []
+    for i in range(25):
+        vol = 30000 + i * 8000
+        for j, d in enumerate(days):
+            close = 100.0 + ((j % 5) - 2) * 0.3   # symmetric wiggle, max |z| ~1.4
+            rows.append((d, f"FILL{i:02d}", close, close * 1.01, close * 0.99, close, vol))
+
+    def loser(sym, base_vol, shock, deepest):
+        drop = 0.12 if deepest else 0.10
+        for j, d in enumerate(days):
+            if j >= len(days) - 5:
+                frac = (j - (len(days) - 6)) / 5.0
+                close = 100.0 * (1 - drop * frac)
+            else:
+                close = 100.0
+            v = base_vol * 3 if (shock and d == session_date) else base_vol
+            rows.append((d, sym, close, close * 1.01, close * 0.99, close, v))
+    loser("LOSER1", 25000, True, True)
+    loser("LOSER_NOSHOCK", 25000, False, False)
+    loser("LOSER_HIGHADV", 400000, True, False)
+    df = pd.DataFrame(rows, columns=["date", "symbol", "open", "high", "low", "close", "volume"])
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
 SD = date(2025, 6, 16)  # a Monday
 MTF = {f"FILL{i:02d}" for i in range(25)} | {"LOSER1", "LOSER_NOSHOCK", "LOSER_HIGHADV"}
 
@@ -164,5 +194,50 @@ def test_invalid_selection_mode_raises():
 def test_low_mode_fail_fast_on_missing_key():
     bad = _cfg_low()
     del bad["dist_low_max"]
+    with pytest.raises(KeyError):
+        CrossSectionalRanker(bad)
+
+
+# --- zscore_oversold selection mode (C4) ---
+
+def _cfg_z(**over):
+    base = {
+        "selection_mode": "zscore_oversold",
+        "zscore_lookback_days": 20, "zscore_max": -1.5,
+        "adv_tier": 1, "adv_tier_count": 5,
+        "turnover_shock_min": 2.0, "shock_lookback_days": 20, "adv_floor_inr": 2_000_000,
+        "min_price": 5.0, "min_universe_symbols_per_day": 20, "hold_days": 2,
+        "exclude_ca_in_hold_window": True,
+    }
+    base.update(over)
+    return base
+
+
+def test_zscore_mode_selects_oversold_with_shock_tier1():
+    r = CrossSectionalRanker(_cfg_z())
+    basket = r.rank(_panel_z(SD), SD, MTF)
+    syms = {b["symbol"] for b in basket}
+    assert "LOSER1" in syms  # >1.5 sd below 20d mean + tier1 + shock
+    for b in basket:
+        assert b["trail_ret"] <= -1.5  # signal = z-score at/below threshold
+        assert b["adv_tier"] == 1
+        assert b["tshock"] >= 2.0
+
+
+def test_zscore_mode_rejects_no_shock():
+    r = CrossSectionalRanker(_cfg_z())
+    syms = {b["symbol"] for b in r.rank(_panel_z(SD), SD, MTF)}
+    assert "LOSER_NOSHOCK" not in syms  # oversold but no turnover shock
+
+
+def test_zscore_mode_rejects_wrong_adv_tier():
+    r = CrossSectionalRanker(_cfg_z())
+    syms = {b["symbol"] for b in r.rank(_panel_z(SD), SD, MTF)}
+    assert "LOSER_HIGHADV" not in syms  # oversold + shock but tier-5
+
+
+def test_zscore_mode_fail_fast_on_missing_key():
+    bad = _cfg_z()
+    del bad["zscore_max"]
     with pytest.raises(KeyError):
         CrossSectionalRanker(bad)

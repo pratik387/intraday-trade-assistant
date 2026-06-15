@@ -30,7 +30,7 @@ class CrossSectionalRanker:
 
     # Selection modes the ranker supports. Each plugs a different "which names
     # capitulated" rule into the SAME universe/shock/tier/CA machinery.
-    _MODES = ("trailing_loser_decile", "near_period_low")
+    _MODES = ("trailing_loser_decile", "near_period_low", "zscore_oversold")
 
     def __init__(self, config: Dict[str, Any]):
         # Fail-fast: every key required, no silent defaults (CLAUDE.md rule 1).
@@ -43,9 +43,12 @@ class CrossSectionalRanker:
         if self.selection_mode == "trailing_loser_decile":
             self.lookback_days = int(config["lookback_days"])      # trailing-return window
             self.loser_pct = float(config["loser_pct"])            # bottom cross-sectional cut
-        else:  # near_period_low
+        elif self.selection_mode == "near_period_low":
             self.low_lookback_days = int(config["low_lookback_days"])  # e.g. 252d low
             self.dist_low_max = float(config["dist_low_max"])          # close within X of the low
+        else:  # zscore_oversold
+            self.zscore_lookback_days = int(config["zscore_lookback_days"])  # mean/std window (e.g. 20)
+            self.zscore_max = float(config["zscore_max"])                    # select close <= this many sd below mean (negative)
         # Common keys.
         self.adv_tier = int(config["adv_tier"])
         self.adv_tier_count = int(config["adv_tier_count"])
@@ -90,8 +93,10 @@ class CrossSectionalRanker:
         # Bound compute: only the trailing window each symbol needs (mode-aware).
         if self.selection_mode == "trailing_loser_decile":
             need = max(self.lookback_days, self.shock_lookback_days) + 2
-        else:  # near_period_low needs the full low-lookback window
+        elif self.selection_mode == "near_period_low":
             need = max(self.low_lookback_days, self.shock_lookback_days) + 2
+        else:  # zscore_oversold
+            need = max(self.zscore_lookback_days, self.shock_lookback_days) + 2
         df = df.groupby("symbol", sort=False).tail(need)
 
         g = df.groupby("symbol", sort=False)
@@ -105,11 +110,16 @@ class CrossSectionalRanker:
         # both modes keep the same output schema (trail_ret carries the signal).
         if self.selection_mode == "trailing_loser_decile":
             df["signal"] = g["close"].transform(lambda s: s / s.shift(self.lookback_days) - 1.0)
-        else:  # near_period_low: how far above the trailing low (0 = at the low)
+        elif self.selection_mode == "near_period_low":  # how far above the trailing low (0 = at the low)
             low = g["low"].transform(
                 lambda s: s.rolling(self.low_lookback_days, min_periods=max(20, self.shock_lookback_days)).min()
             )
             df["signal"] = df["close"] / low - 1.0
+        else:  # zscore_oversold: standardized deviation below the rolling mean (negative = oversold)
+            mp = max(20, self.shock_lookback_days)
+            mean = g["close"].transform(lambda s: s.rolling(self.zscore_lookback_days, min_periods=mp).mean())
+            std = g["close"].transform(lambda s: s.rolling(self.zscore_lookback_days, min_periods=mp).std())
+            df["signal"] = (df["close"] - mean) / std
 
         # The session-date cross-section.
         today = df[df["date"].dt.normalize() == sd].copy()
@@ -141,8 +151,10 @@ class CrossSectionalRanker:
         # Mode-specific selection rule (universe/tier/shock/CA gates are shared).
         if self.selection_mode == "trailing_loser_decile":
             sig_sel = today["rank_pct"] <= self.loser_pct      # bottom cross-sectional cut
-        else:  # near_period_low: absolute proximity to the trailing low
+        elif self.selection_mode == "near_period_low":         # absolute proximity to the trailing low
             sig_sel = today["signal"] <= self.dist_low_max
+        else:  # zscore_oversold: at/below the negative z threshold
+            sig_sel = today["signal"] <= self.zscore_max
         sel = today[
             sig_sel
             & (today["adv_tier"] == self.adv_tier)

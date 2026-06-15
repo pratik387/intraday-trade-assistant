@@ -709,6 +709,67 @@
         "sustained_weeks": 6,
         "state_file": "state/decay_tripwire_low52_capitulation_revert_long.json"
       }
+    },
+    "zscore_oversold_revert_long": {
+      "enabled": false,
+      "paper_enabled": false,
+      "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF reversion, volatility-normalized (close <= -1.5 sd below 20d mean). Stage-6 confidence card PASSED (borderline): Disc PF 1.43 [BCa 1.28,1.58], OOS 1.06, HO 2026 1.17, Harvey-Liu adj-Sharpe 0.73 at M=66. Most-stable candidate (dPF 0.37), high-freq, 3/4 Disc regimes positive (FII-exit 0.91). Brief: specs/2026-06-15-brief-zscore_oversold_revert_long.md. Distinct trigger (z-score, vol-normalized) from A2/C1. Paper-batch with A2+C1.",
+      "mechanism_tags": ["capitulation_overshoot", "retail_panic", "illiquidity_premium"],
+      "mechanism_notes": "An MTF tier-1 illiquid name whose close sits >=1.5 sd below its 20d mean on a turnover shock is statistically over-extended below its own band; in a thin book the deviation mean-reverts toward the band over 2-3 sessions. Distinct from mtf_capitulation_revert_long (raw 5d %-return) and low52_capitulation_revert_long (level vs 252d low): z-score normalizes by realized volatility, selecting a different cohort (a calm name with a statistically-extreme modest drop). Breaks if: the deviation is an informational regime shift (continues, no revert); low-vol regime (band too tight); shock filter removed (quiet drift-downs continue).",
+      "horizon": "multi_day",
+      "ranker_class": "services.cross_sectional_ranker.CrossSectionalRanker",
+      "selection_mode": "zscore_oversold",
+      "data_source": "cache/preaggregate/clean_daily_from5m.feather",
+      "zscore_lookback_days": 20,
+      "zscore_max": -1.5,
+      "hold_days": 2,
+      "adv_tier": 1,
+      "adv_tier_count": 5,
+      "turnover_shock_min": 1.5,
+      "shock_lookback_days": 20,
+      "adv_floor_inr": 2000000,
+      "min_price": 5.0,
+      "min_universe_symbols_per_day": 20,
+      "entry_mode": "t1_open_amo",
+      "exit_mode": "kday_close_moc",
+      "side": "long",
+      "catastrophe_stop_pct": 15.0,
+      "exclude_ca_in_hold_window": true,
+      "ca_events_path": "data/corporate_actions/split_bonus_events.parquet",
+      "mtf": {
+        "approved_list_snapshot_path": "data/mtf_universe/approved_mtf_securities_2026-05-21.json",
+        "interest_pct_per_day": 0.0004,
+        "exclude_etf": true,
+        "fallback_to_cnc_if_not_mtf": true,
+        "stale_snapshot_warn_days": 7
+      },
+      "cost_model": {
+        "delivery_stt_round_trip": 0.0020,
+        "brokerage_round_trip": 0.0006,
+        "charges_round_trip": 0.00047,
+        "assumed_slippage_round_trip": 0.0020
+      },
+      "capital_allocation": {
+        "_status_PAPER_ONLY": "Paper-validation: caps lifted to observe full PF distribution. Restore _live_* before live.",
+        "active_margin_inr": 10000000,
+        "cushion_inr": 1000000,
+        "max_concurrent_slots": 100,
+        "margin_per_slot_inr": 100000,
+        "max_new_positions_per_day": 100,
+        "_live_active_margin_inr": 400000,
+        "_live_cushion_inr": 100000,
+        "_live_max_concurrent_slots": 8,
+        "_live_margin_per_slot_inr": 100000,
+        "_live_max_new_positions_per_day": 4,
+        "_live_rationale": "Shares the MTF pool with A2 + low52; combined live concurrency must respect total margin. Higher-freq trigger -> watch combined new-per-day. Re-run confidence card before raising.",
+        "state_file": "state/zscore_oversold_slots.json"
+      },
+      "decay_tripwire": {
+        "window_trades": 30,
+        "pf_floor": 1.2,
+        "sustained_weeks": 6,
+        "state_file": "state/decay_tripwire_zscore_oversold_revert_long.json"
+      }
     }
   },
   "filters": {
