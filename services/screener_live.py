@@ -62,6 +62,7 @@ from market_data.shared_ltp import SharedLTPCache
 
 # gates
 from services.gates.regime_gate import MarketRegimeGate
+from services.gates.multi_timeframe_regime import DailyRegimeDetector
 from services.gates.trade_decision_gate import TradeDecisionGate, GateDecision as Decision
 
 # planning & ranking
@@ -2343,8 +2344,12 @@ class ScreenerLive:
         regime_conf = 0.5
         regime_diagnostics = None
         try:
+            # days MUST cover the daily regime detector's needs (EMA200 + BB-width
+            # window); 30 starved it -> it returned chop/insufficient every cycle,
+            # leaving the daily squeeze/trend layer inert for the broad-market gate.
             daily_idx = self.sdk.get_daily(
-                self.raw_cfg.get("directional_bias", {}).get("index_symbol", "NSE:NIFTY 50"), days=30
+                self.raw_cfg.get("directional_bias", {}).get("index_symbol", "NSE:NIFTY 50"),
+                days=DailyRegimeDetector.MIN_BARS_REQUIRED,
             ) if not env.DRY_RUN else None
             if hasattr(self.regime_gate, "compute_regime_multi_tf") and daily_idx is not None:
                 try:
