@@ -31,6 +31,23 @@ def _pos_tid(pos: Position) -> str:
     return str(tid) if tid else f"sym:{pos.symbol}"
 
 
+def _r_multiple(entry_price, pnl, qty, decision_sl, current_sl):
+    """PnL in units of the trade's INITIAL (decision-time) risk.
+
+    Must use the decision SL, not the live stop: after T1 the stop is trailed /
+    moved to breakeven, which collapses the risk denominator and grossly inflates
+    R on scaled winners. Fall back to the current stop only when the decision SL
+    was never snapshotted (older positions). Returns None if risk is undefined.
+    """
+    risk_sl = decision_sl if decision_sl is not None else current_sl
+    if not risk_sl:
+        return None
+    risk_per_unit = abs(float(entry_price) - float(risk_sl))
+    if risk_per_unit <= 0:
+        return None
+    return pnl / (qty * risk_per_unit)
+
+
 _STALE_TS_THRESHOLD_MIN = 5  # ticks older than this are not authoritative for time-stop
 
 
@@ -1335,11 +1352,9 @@ class ExitExecutor:
 
         # Compute exit diagnostics for events.jsonl
         plan_sl = pos.plan.get('stop', {}).get('hard') if isinstance(pos.plan.get('stop'), dict) else pos.plan.get('hard_sl')
-        r_multiple = None
-        if plan_sl:
-            risk_per_unit = abs(entry_price - plan_sl)
-            if risk_per_unit > 0:
-                r_multiple = pnl / (qty_exit * risk_per_unit)
+        # R uses the INITIAL (decision-time) risk, not the trailed/BE stop.
+        r_multiple = _r_multiple(entry_price, pnl, qty_exit,
+                                 pos.plan.get('_decision_sl'), plan_sl)
 
         state = pos.plan.get('_state', {})
         mae = state.get('mae', 0.0)
@@ -1446,13 +1461,11 @@ class ExitExecutor:
         entry_price = pos.avg_price
         side = pos.side.upper()
 
-        # Calculate R-multiple (PnL in units of initial risk)
+        # Calculate R-multiple (PnL in units of INITIAL decision-time risk, not the
+        # trailed/BE stop — see _r_multiple).
         plan_sl = pos.plan.get('stop', {}).get('hard') if isinstance(pos.plan.get('stop'), dict) else pos.plan.get('hard_sl')
-        r_multiple = None
-        if plan_sl:
-            risk_per_unit = abs(entry_price - plan_sl)
-            if risk_per_unit > 0:
-                r_multiple = pnl / (qty_now * risk_per_unit)
+        r_multiple = _r_multiple(entry_price, pnl, qty_now,
+                                 pos.plan.get('_decision_sl'), plan_sl)
 
         # Get MAE/MFE from state if tracked
         # Default to 0.0 (not None) — trade may exit via tick before run_once tracks bars
