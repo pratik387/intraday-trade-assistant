@@ -52,6 +52,28 @@ UPSTOX_HIST_BASE = "https://api.upstox.com/v3/historical-candle"
 UPSTOX_HEADERS = {"Accept": "application/json"}
 
 
+def concurrent_get_daily(get_daily_fn, symbols, days, max_workers: int = 16) -> int:
+    """Thread-pool `get_daily_fn(symbol, days)` over `symbols` to warm the daily
+    cache concurrently (get_daily's rate limiter + cache are thread-safe). Returns
+    the count of symbols that returned a non-empty frame. Exceptions per symbol are
+    swallowed (counted as failures) so one bad symbol can't sink the batch."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    syms = list(symbols)
+    if not syms:
+        return 0
+
+    def _one(sym):
+        try:
+            df = get_daily_fn(sym, days=days)
+            return df is not None and not df.empty
+        except Exception:
+            return False
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        return int(sum(ex.map(_one, syms)))
+
+
 @dataclass(frozen=True)
 class _UpstoxInst:
     int_token: int          # deterministic int from crc32(instrument_key)
@@ -75,6 +97,10 @@ class UpstoxDataClient:
         # Daily history cache (same as KiteClient)
         self._daily_cache_day: Optional[str] = None
         self._daily_cache: Dict[str, pd.DataFrame] = {}
+        # Requested `days` per cached symbol, so a later larger request refetches
+        # instead of being served a too-small cache (e.g. prevday days=2 poisoning
+        # the regime layer's days=210 request).
+        self._daily_cache_days: Dict[str, int] = {}
         self._daily_cache_lock = threading.RLock()
 
         # Rate limiter for REST API (Upstox official limit: 50 RPS, 500/min, 2000/30min)
@@ -318,6 +344,7 @@ class UpstoxDataClient:
         with self._daily_cache_lock:
             if self._daily_cache_day != today:
                 self._daily_cache.clear()
+                self._daily_cache_days.clear()
                 self._daily_cache_day = today
 
     def get_daily_cache(self) -> Dict[str, pd.DataFrame]:
@@ -330,6 +357,8 @@ class UpstoxDataClient:
         today = _now_naive_ist().date().isoformat()
         with self._daily_cache_lock:
             self._daily_cache = cache
+            # Injected entries: trust their bar count as the satisfied request size.
+            self._daily_cache_days = {k: len(v) for k, v in cache.items()}
             self._daily_cache_day = today
         logger.info(f"DAILY_CACHE | Injected {len(cache)} symbols from external source")
 
@@ -412,13 +441,18 @@ class UpstoxDataClient:
         self._reset_daily_cache_if_new_day()
         with self._daily_cache_lock:
             cached = self._daily_cache.get(symbol)
-            if cached is not None and len(cached) >= min(days, len(cached)):
+            # Serve from cache only if we previously requested at least `days` (not
+            # merely if we hold >= days bars — a symbol may have less history than
+            # requested). Prevents a prior small fetch from starving a larger one.
+            cached_days = self._daily_cache_days.get(symbol, 0)
+            if cached is not None and cached_days >= days:
                 return cached.tail(days).copy()
 
         ikey = self._instrument_key_for(symbol)
         df = self._fetch_daily_candles(ikey, days)
         with self._daily_cache_lock:
             self._daily_cache[symbol] = df
+            self._daily_cache_days[symbol] = days
         return df
 
     def get_prevday_levels(self, symbol: str) -> Dict[str, float]:
@@ -493,6 +527,17 @@ class UpstoxDataClient:
             "elapsed_seconds": elapsed,
             "source": "api"
         }
+
+    def prewarm_daily_concurrent(self, symbols: List[str], days: int,
+                                 max_workers: int = 16) -> int:
+        """CONCURRENT daily-cache prewarm (unlike serial prewarm_daily_cache).
+
+        Thread-pools get_daily across `symbols` so a ~1300-symbol universe warms
+        in seconds, not minutes. MUST be called at the DEEPEST `days` any consumer
+        needs BEFORE any shallower get_daily, because the cache 'first depth wins'
+        (it does not re-fetch to deepen). Returns the count cached non-empty.
+        """
+        return concurrent_get_daily(self.get_daily, symbols, days, max_workers=max_workers)
 
     # ─── Intraday 1m historical (for late-start warmup) ────────────────────
 

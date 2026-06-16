@@ -53,6 +53,13 @@ class MockBroker:
         # on MockBroker. Leave as None for backtest mode (archive lookup).
         self._data_sdk = data_sdk
 
+        # Optional prefetched {symbol: today's-5m DataFrame} populated once per
+        # EOD run (run_eod batch-fetches the universe via the data SDK's async
+        # 5m batch, mirroring overnight_handlers). get_intraday_5m checks this
+        # FIRST, so fetch_daily_window's per-symbol synthesis is a cache hit
+        # instead of ~1 live API call per symbol over the whole MTF universe.
+        self._intraday_5m_prefetch: Dict[str, Any] = {}
+
         # Paper-order sequence — feeds place_order's returned order_id.
         # Long-running paper-trade uses KiteBroker(dry_run=True); the
         # overnight cron uses MockBroker (it's a short-lived process with
@@ -217,13 +224,33 @@ class MockBroker:
         """
         return {"order_id": str(order_id), "status": "COMPLETE", "average_price": 0.0}
 
+    def set_intraday_5m_prefetch(self, mapping: Dict[str, Any]) -> None:
+        """Stash a batch-fetched {symbol: today's-5m DataFrame} map (keys may be
+        'NSE:SYM' or bare). get_intraday_5m serves from here before the live API."""
+        self._intraday_5m_prefetch = mapping or {}
+
+    def _prefetched_5m(self, symbol: str) -> Optional[pd.DataFrame]:
+        pf = self._intraday_5m_prefetch
+        if not pf:
+            return None
+        bare = str(symbol).replace("NSE:", "").upper()
+        for key in (symbol, bare, f"NSE:{bare}"):
+            hit = pf.get(key)
+            if hit is not None:
+                return hit
+        return None
+
     # -------------------- ticker (with last-price proxy) --------------------
     def get_intraday_5m(self, symbol: str) -> Optional[pd.DataFrame]:
-        """Fetch today's 5m bars via the wired data SDK (paper-mode only).
+        """Fetch today's 5m bars: batch-warmed prefetch map first, then the wired
+        data SDK (paper-mode only).
 
         Returns None when no SDK is configured — callers should treat that
         as "fall through to archive/backtest path".
         """
+        hit = self._prefetched_5m(symbol)
+        if hit is not None:
+            return hit
         if self._data_sdk is None or not hasattr(self._data_sdk, "get_intraday_5m"):
             return None
         try:
@@ -607,6 +634,91 @@ class MockBroker:
             self._daily_cache[symbol] = df
 
         return df.tail(int(days)).copy()
+
+    def fetch_daily_window(self, symbols, start_date, end_date) -> pd.DataFrame:
+        """Trailing adjusted daily bars for a basket, as the long panel the
+        multi-day CNC/MTF ranker consumes (LiveDailyPanelProvider's fetch_fn).
+
+        Assembles per-symbol bars via `get_daily` (live SDK in paper mode) into
+        a [date, symbol, open, high, low, close, volume] frame windowed to
+        [start_date, end_date] inclusive. Unknown / data-less symbols are
+        skipped (never raises). The calendar span is requested as the bar count
+        (an intentional over-fetch — `get_daily` tails what it returns — so the
+        window is fully covered even for thinly-traded illiquid names).
+        """
+        start, end = pd.Timestamp(start_date), pd.Timestamp(end_date)
+        end_norm = end.normalize()
+        # Request the calendar span as the BAR count (intentional over-fetch:
+        # get_daily tails what it returns). +5 is a calendar-day holiday buffer for
+        # the day->bar-count conversion, NOT a trading threshold.
+        days = max(1, (end - start).days + 5)
+        cols = ["date", "symbol", "open", "high", "low", "close", "volume"]
+        frames = []
+        for sym in symbols:
+            bare = str(sym).replace("NSE:", "").upper()
+            # get_daily / the data SDK resolve the NSE:-PREFIXED symbol
+            # (_instrument_key_for keys _sym2inst by 'NSE:SYMBOL'); a bare symbol
+            # is "unknown". Pass the prefixed form; the output panel stays bare.
+            df = self.get_daily(f"NSE:{bare}", days=days)
+            have_end = False
+            if df is not None and not df.empty:
+                d = df.reset_index()
+                date_col = "date" if "date" in d.columns else d.columns[0]
+                d = d.rename(columns={date_col: "date"})
+                d["symbol"] = bare
+                missing = [c for c in ("open", "high", "low", "close", "volume") if c not in d.columns]
+                if missing:
+                    logger.warning("fetch_daily_window: %s missing %s; skip", bare, missing)
+                    continue
+                d["date"] = pd.to_datetime(d["date"])
+                have_end = bool((d["date"].dt.normalize() == end_norm).any())
+                frames.append(d[cols])
+            # get_daily DROPS the current (partial) day's bar, but the
+            # cross-sectional ranker requires a row dated exactly == the session
+            # date (end). Synthesize end's daily bar from that day's 5m so live
+            # entries can fire. _synth_daily_from_5m self-filters to `end`, so it
+            # no-ops for any symbol whose 5m isn't on that day.
+            if not have_end:
+                synth = self._synth_daily_from_5m(bare, end_norm)
+                if synth is not None:
+                    frames.append(pd.DataFrame([synth])[cols])
+        if not frames:
+            return pd.DataFrame(columns=cols)
+        out = pd.concat(frames, ignore_index=True)
+        out["date"] = pd.to_datetime(out["date"])
+        if getattr(out["date"].dt, "tz", None) is not None:
+            out["date"] = out["date"].dt.tz_localize(None)
+        mask = (out["date"] >= start) & (out["date"] <= end)
+        return out.loc[mask].reset_index(drop=True)
+
+    def _synth_daily_from_5m(self, bare: str, day: pd.Timestamp) -> Optional[Dict[str, Any]]:
+        """Build a single daily OHLCV bar for `day` from that day's intraday 5m
+        (open=first, high=max, low=min, close=last, volume=sum). Returns None if
+        no 5m for `day` is available (so the ranker simply skips that symbol).
+        Used to supply the current session's bar, which get_daily drops as partial.
+        """
+        try:
+            df5 = self.get_intraday_5m(f"NSE:{bare}")
+            if df5 is None or df5.empty:
+                df5 = self.get_intraday_5m(bare)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("fetch_daily_window: 5m fetch failed for %s: %s", bare, e)
+            return None
+        if df5 is None or df5.empty:
+            return None
+        idx = pd.to_datetime(df5.index)
+        if getattr(idx, "tz", None) is not None:
+            # Canonical IST strip (utils/time_util): convert, don't reinterpret.
+            idx = idx.tz_convert("Asia/Kolkata").tz_localize(None)
+        sub = df5[idx.normalize() == day.normalize()]
+        if sub.empty:
+            return None
+        return {
+            "date": day.normalize(), "symbol": bare,
+            "open": float(sub["open"].iloc[0]), "high": float(sub["high"].max()),
+            "low": float(sub["low"].min()), "close": float(sub["close"].iloc[-1]),
+            "volume": float(sub["volume"].sum()),
+        }
 
     def get_prevday_levels(self, symbol: str) -> Dict[str, float]:
         """Previous trading day's high/low/close from stored daily df."""

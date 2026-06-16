@@ -64,3 +64,26 @@ def test_get_active_setups_invalid_mode_raises():
     reg = SetupRegistry.load_from_config({"setups": {}})
     with pytest.raises(ValueError, match="mode must be"):
         reg.get_active_setups("hybrid")
+
+
+def test_multi_day_setups_skipped_not_crash():
+    """Multi-day cross-sectional setups (horizon='multi_day') are ranker-based and
+    have no detector_class/universe_builder — they run via the separate multi_day
+    cron path, NOT this detector registry. load_from_config must SKIP them, not
+    crash on the missing REQUIRED_KEYS (else their presence in the shared config
+    breaks the intraday daemon's registry)."""
+    cfg = {"setups": {
+        "intra1": _minimal_setup_config(mode="intraday"),
+        # ranker-based multi-day setup: no detector_class etc.
+        "mtf_capitulation_revert_long": {
+            "enabled": False, "paper_enabled": True, "horizon": "multi_day",
+            "ranker_class": "services.cross_sectional_ranker.CrossSectionalRanker",
+            "selection_mode": "trailing_loser_decile",
+        },
+    }}
+    reg = SetupRegistry.load_from_config(cfg)  # must NOT raise
+    names = [s.name for s in reg.enabled()] + [s.name for s in reg.get_active_setups("intraday")]
+    assert "mtf_capitulation_revert_long" not in names
+    with pytest.raises(KeyError):
+        reg.get("mtf_capitulation_revert_long")  # not registered at all
+    assert reg.get("intra1").name == "intra1"  # the real intraday setup still loads
