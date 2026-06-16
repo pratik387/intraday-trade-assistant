@@ -606,6 +606,8 @@ def run_verify_exit(
                 tw.record_trade(
                     net_pnl_inr=net_pnl, ts_iso=now.isoformat(),
                     fees_inr=total_cost, gross_pnl_inr=net_pnl + total_cost,
+                    symbol=slot.symbol, entry_price=slot.buy_fill_price,
+                    exit_price=float(sell_price), exit_reason="t1_settle", qty=qty,
                 )
             else:
                 tw.record_trade(net_pnl_inr=0.0, ts_iso=now.isoformat())

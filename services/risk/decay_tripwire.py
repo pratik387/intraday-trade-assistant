@@ -30,11 +30,17 @@ logger = logging.getLogger(__name__)
 class _TradeRecord:
     net_pnl_inr: float
     ts_iso: str  # IST-naive ISO 8601
-    # Optional cost breakdown. The rolling-PF gate uses net only; these exist so
-    # downstream readers (e.g. the swing dashboard) can show real gross/fees.
-    # Legacy ledgers predate them -> None (omitted from persisted JSON).
+    # Optional cost breakdown + per-trade detail. The rolling-PF gate uses net
+    # only; these exist so downstream readers (e.g. the swing dashboard trades
+    # tab) can show real gross/fees and per-symbol entry/exit. Legacy ledgers
+    # predate them -> None (omitted from persisted JSON).
     fees_inr: Optional[float] = None
     gross_pnl_inr: Optional[float] = None
+    symbol: Optional[str] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
+    exit_reason: Optional[str] = None
+    qty: Optional[int] = None
 
 
 class DecayTripwire:
@@ -91,6 +97,11 @@ class DecayTripwire:
                 ts_iso=str(t["ts_iso"]),
                 fees_inr=(float(t["fees_inr"]) if t.get("fees_inr") is not None else None),
                 gross_pnl_inr=(float(t["gross_pnl_inr"]) if t.get("gross_pnl_inr") is not None else None),
+                symbol=(str(t["symbol"]) if t.get("symbol") is not None else None),
+                entry_price=(float(t["entry_price"]) if t.get("entry_price") is not None else None),
+                exit_price=(float(t["exit_price"]) if t.get("exit_price") is not None else None),
+                exit_reason=(str(t["exit_reason"]) if t.get("exit_reason") is not None else None),
+                qty=(int(t["qty"]) if t.get("qty") is not None else None),
             )
             for t in trades
         ]
@@ -119,18 +130,29 @@ class DecayTripwire:
 
     def record_trade(self, net_pnl_inr: float, ts_iso: str,
                      fees_inr: Optional[float] = None,
-                     gross_pnl_inr: Optional[float] = None) -> None:
+                     gross_pnl_inr: Optional[float] = None,
+                     symbol: Optional[str] = None,
+                     entry_price: Optional[float] = None,
+                     exit_price: Optional[float] = None,
+                     exit_reason: Optional[str] = None,
+                     qty: Optional[int] = None) -> None:
         """Append a settled trade and re-evaluate paused status.
 
         Call from run_verify_exit after pool.settle() completes.
         ts_iso is the IST-naive ISO 8601 settlement timestamp.
-        fees_inr / gross_pnl_inr are optional cost breakdown for downstream
-        readers; they do NOT affect the rolling-PF gate (which uses net only).
+        fees_inr / gross_pnl_inr and the symbol/entry/exit/reason/qty detail are
+        optional metadata for downstream readers (the swing dashboard); they do
+        NOT affect the rolling-PF gate (which uses net only).
         """
         self._trades.append(_TradeRecord(
             net_pnl_inr=float(net_pnl_inr), ts_iso=str(ts_iso),
             fees_inr=(float(fees_inr) if fees_inr is not None else None),
             gross_pnl_inr=(float(gross_pnl_inr) if gross_pnl_inr is not None else None),
+            symbol=(str(symbol) if symbol is not None else None),
+            entry_price=(float(entry_price) if entry_price is not None else None),
+            exit_price=(float(exit_price) if exit_price is not None else None),
+            exit_reason=(str(exit_reason) if exit_reason is not None else None),
+            qty=(int(qty) if qty is not None else None),
         ))
         # Keep buffer larger than window (we trim to last 200 to bound disk size)
         if len(self._trades) > max(self._window_trades * 5, 200):

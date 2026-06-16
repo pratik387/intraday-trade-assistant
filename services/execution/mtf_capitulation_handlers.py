@@ -367,6 +367,8 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary) 
             ).record_trade(
                 net_pnl_inr=float(net), ts_iso=now.isoformat(),
                 fees_inr=float(fees_only) + float(interest), gross_pnl_inr=float(gross),
+                symbol=symbol, entry_price=float(entry_price),
+                exit_price=float(sell_price), exit_reason="kday_close_moc", qty=int(qty),
             )
 
 

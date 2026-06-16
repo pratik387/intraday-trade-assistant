@@ -185,6 +185,37 @@ def test_legacy_records_without_fees_load(tmp_path):
     assert data["trades"][1]["fees_inr"] == 10.0
 
 
+def test_records_optional_trade_detail(tmp_path):
+    """record_trade can carry per-trade detail (symbol/entry/exit/reason/qty) for
+    the dashboard trades tab; persisted, reloaded, and ignored by the PF gate."""
+    path = _pwd(tmp_path)
+    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw.record_trade(
+        net_pnl_inr=850.0, ts_iso="2026-01-01T09:30:00",
+        fees_inr=120.0, gross_pnl_inr=970.0,
+        symbol="TATAMOTORS", entry_price=650.5, exit_price=660.0,
+        exit_reason="t1_settle", qty=100,
+    )
+    rec = json.loads(path.read_text(encoding="utf-8"))["trades"][0]
+    assert rec["symbol"] == "TATAMOTORS"
+    assert rec["entry_price"] == 650.5
+    assert rec["exit_price"] == 660.0
+    assert rec["exit_reason"] == "t1_settle"
+    assert rec["qty"] == 100
+    # PF gate still sees net only — detail is invisible to it.
+    assert tw.state_summary()["trade_count"] == 1
+
+
+def test_legacy_record_detail_defaults_none(tmp_path):
+    """A net-only record persists without any detail keys (compact)."""
+    path = _pwd(tmp_path)
+    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw.record_trade(net_pnl_inr=100.0, ts_iso="2026-01-01T09:30:00")
+    rec = json.loads(path.read_text(encoding="utf-8"))["trades"][0]
+    assert "symbol" not in rec and "entry_price" not in rec
+    assert set(rec.keys()) == {"net_pnl_inr", "ts_iso"}
+
+
 def test_invalid_window_trades_raises(tmp_path):
     with pytest.raises(ValueError, match="window_trades"):
         DecayTripwire("test", _pwd(tmp_path), window_trades=3, pf_floor=1.2, sustained_weeks=6)
