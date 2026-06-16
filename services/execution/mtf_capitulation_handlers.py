@@ -51,6 +51,12 @@ from services.execution.overnight_handlers import _next_trading_day
 from services.mtf_universe import MtfUniverse
 from services.state.position_persistence import PositionPersistence
 
+# Infra tuning for the daily-history prewarm (NOT trading thresholds). The Upstox
+# daily endpoint rate-limits at the default 50 RPS; these issue gently to avoid
+# 429 backoff. Mirrors the per-family rate literals in overnight_handlers.
+_DAILY_PREWARM_RPS = 15.0
+_DAILY_PREWARM_WORKERS = 6
+
 
 def _add_trading_days(d: date, n: int) -> date:
     """Add `n` trading days (Mon-Fri, holidays not modelled — see _next_trading_day)."""
@@ -526,10 +532,18 @@ def _prewarm_daily_universe(setups, broker) -> None:
     if not eligible or max_days <= 0:
         return
     nse_syms = [f"NSE:{s}" for s in sorted(eligible)]
+    # The Upstox DAILY endpoint rate-limits hard at the default 50 RPS (429
+    # storms + backoff, serial or concurrent). Issue gently so we stay under its
+    # limit and avoid backoff entirely; modest concurrency pipelines the gentle
+    # stream. Tunable via config if the safe rate is later pinned.
     try:
-        n = sdk.prewarm_daily_concurrent(nse_syms, days=max_days)
-        logger.info("mtf_capitulation: daily prewarm %d/%d symbols @%dd depth (concurrent)",
-                    n, len(nse_syms), max_days)
+        if hasattr(sdk, "set_hist_rate_limit"):
+            sdk.set_hist_rate_limit(_DAILY_PREWARM_RPS)
+        n = sdk.prewarm_daily_concurrent(nse_syms, days=max_days,
+                                         max_workers=_DAILY_PREWARM_WORKERS)
+        logger.info("mtf_capitulation: daily prewarm %d/%d symbols @%dd depth "
+                    "(%.0f RPS, %d workers)", n, len(nse_syms), max_days,
+                    _DAILY_PREWARM_RPS, _DAILY_PREWARM_WORKERS)
     except Exception as e:  # pragma: no cover - prewarm must not break the cron
         logger.exception("mtf_capitulation: daily prewarm failed: %s", e)
 
