@@ -670,14 +670,15 @@ def _parse_args():
                          "'overnight' = short-lived cron-triggered run for close_dn_overnight_long. "
                          "'multi_day' = short-lived cron-triggered run for the CNC/MTF capitulation "
                          "batch (mtf_capitulation/low52/zscore/crash2d).")
-    ap.add_argument("--action", choices=["run", "entry", "exit", "verify-exit"], default="run",
+    ap.add_argument("--action", choices=["run", "entry", "exit", "verify-exit", "verify-entry"], default="run",
                     help="What action to perform. 'run' (default) = main daemon loop (intraday only). "
                          "'entry' = place orders (overnight=run_entry @15:25; multi_day=POST-close "
                          "entry pass @~15:35: rank full day-T bar + AMO buy). "
                          "'exit' = multi_day PRE-close square-off pass (@~15:28: sell positions due "
                          "today at the close). "
-                         "'verify-exit' = verify fills next morning @09:30 (overnight=run_verify_exit, "
-                         "multi_day=run_verify_entries).")
+                         "'verify-exit' = OVERNIGHT morning settle (run_verify_exit @09:30). "
+                         "'verify-entry' = MULTI_DAY morning entry-fill verify (run_verify_entries "
+                         "@~09:33; 'verify-exit' is still accepted as a legacy alias for multi_day).")
     return ap.parse_args()
 
 
@@ -702,6 +703,11 @@ if __name__ == "__main__":
         sys.exit(2)
     if args.mode == "intraday" and args.action == "exit":
         parser_error = "--action=exit requires --mode=multi_day."
+        print(f"error: {parser_error}", file=sys.stderr)
+        sys.exit(2)
+    if args.mode == "overnight" and args.action == "verify-entry":
+        parser_error = ("--action=verify-entry is multi_day-only. "
+                        "Overnight uses --action=verify-exit.")
         print(f"error: {parser_error}", file=sys.stderr)
         sys.exit(2)
 
@@ -781,7 +787,7 @@ if __name__ == "__main__":
                     f"skipped={summary['skipped_count']} rejected={summary['rejected_count']}",
                     file=sys.stderr,
                 )
-            else:  # verify-exit
+            else:  # verify-entry (or legacy verify-exit alias) — confirm AMO fills
                 summary = run_verify_entries(cfg, broker, paper_mode=paper_mode)
                 print(
                     f"[multi_day run_verify_entries] filled={summary['filled_count']} "

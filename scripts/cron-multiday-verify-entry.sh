@@ -1,11 +1,15 @@
 #!/bin/bash
-# Triggered at ~09:30 IST every weekday by cron.
+# Triggered at ~09:33 IST every weekday by cron.
 # Confirms the multi-day CNC/MTF AMO BUYs placed by cron-multiday-entry.sh filled
 # at today's open and records the entry price (run_verify_entries). Unfilled AMOs
 # are dropped (paper) / failsafe-bought (live).
 #
-# Mirrors scripts/cron-verify-exit.sh (close_dn_overnight) — same paper wiring,
-# only --mode differs (multi_day vs overnight).
+# NOTE: runs at ~09:33 (not the open) on purpose — the universe is illiquid
+# small-caps, so thin names need a few minutes to print an opening trade before
+# the fill price is available. Pulling this earlier risks dropping un-traded fills.
+#
+# Distinct from overnight's cron-verify-exit.sh: this is ENTRY-fill verification
+# (--action verify-entry), not an exit settle.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,4 +34,4 @@ LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/multiday_verify_$(date +%Y-%m-%d).log"
 
-"$PYTHON_BIN" main.py --mode multi_day --action verify-exit $MODE_FLAGS >> "$LOG_FILE" 2>&1
+"$PYTHON_BIN" main.py --mode multi_day --action verify-entry $MODE_FLAGS >> "$LOG_FILE" 2>&1
