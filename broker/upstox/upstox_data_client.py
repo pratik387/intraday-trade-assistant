@@ -52,6 +52,28 @@ UPSTOX_HIST_BASE = "https://api.upstox.com/v3/historical-candle"
 UPSTOX_HEADERS = {"Accept": "application/json"}
 
 
+def concurrent_get_daily(get_daily_fn, symbols, days, max_workers: int = 16) -> int:
+    """Thread-pool `get_daily_fn(symbol, days)` over `symbols` to warm the daily
+    cache concurrently (get_daily's rate limiter + cache are thread-safe). Returns
+    the count of symbols that returned a non-empty frame. Exceptions per symbol are
+    swallowed (counted as failures) so one bad symbol can't sink the batch."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    syms = list(symbols)
+    if not syms:
+        return 0
+
+    def _one(sym):
+        try:
+            df = get_daily_fn(sym, days=days)
+            return df is not None and not df.empty
+        except Exception:
+            return False
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        return int(sum(ex.map(_one, syms)))
+
+
 @dataclass(frozen=True)
 class _UpstoxInst:
     int_token: int          # deterministic int from crc32(instrument_key)
@@ -493,6 +515,17 @@ class UpstoxDataClient:
             "elapsed_seconds": elapsed,
             "source": "api"
         }
+
+    def prewarm_daily_concurrent(self, symbols: List[str], days: int,
+                                 max_workers: int = 16) -> int:
+        """CONCURRENT daily-cache prewarm (unlike serial prewarm_daily_cache).
+
+        Thread-pools get_daily across `symbols` so a ~1300-symbol universe warms
+        in seconds, not minutes. MUST be called at the DEEPEST `days` any consumer
+        needs BEFORE any shallower get_daily, because the cache 'first depth wins'
+        (it does not re-fetch to deepen). Returns the count cached non-empty.
+        """
+        return concurrent_get_daily(self.get_daily, symbols, days, max_workers=max_workers)
 
     # ─── Intraday 1m historical (for late-start warmup) ────────────────────
 

@@ -136,6 +136,11 @@ def run_eod(
         logger.info("mtf_capitulation.run_eod: no eligible multi-day setups (paper=%s); exit", paper_mode)
         return summary
 
+    # Concurrent daily-cache prewarm at MAX depth, once, before any ranking
+    # (perf + deep-lookback correctness — see _prewarm_daily_universe).
+    if phase in ("both", "entries"):
+        _prewarm_daily_universe(setups, broker)
+
     summary["by_setup"] = {}
     for name, raw in setups:
         persistence = PositionPersistence(_position_state_dir(raw))
@@ -490,6 +495,44 @@ def _run_entries(name, raw, broker, persistence, today, now, paper_mode, summary
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _prewarm_daily_universe(setups, broker) -> None:
+    """Concurrently warm the daily cache for the UNION MTF universe at the DEEPEST
+    window any setup needs, BEFORE per-setup ranking. Two reasons:
+      - perf: turns ~1300 serial get_daily calls (minutes) into one concurrent
+        batch (seconds);
+      - correctness: the daily cache is first-depth-wins (it does not re-fetch to
+        deepen), so if a shallow-window setup (A2 ~90d) cached a symbol first, a
+        deep-window setup (low52's 252-day low) would silently rank on ~90 bars.
+        Prewarming at the max depth first guarantees every setup sees full history.
+    Paper/live only (DRY_RUN uses the feather provider). Never raises.
+    """
+    if _is_dry_run(broker):
+        return
+    sdk = getattr(broker, "_data_sdk", None)
+    if sdk is None or not hasattr(sdk, "prewarm_daily_concurrent"):
+        logger.warning("mtf_capitulation: no concurrent daily prewarm available; "
+                       "panel fetch will be per-symbol (slow)")
+        return
+    from services.daily_panel_provider import _window_calendar_days
+    eligible: set = set()
+    max_days = 0
+    for _name, raw in setups:
+        mtf_cfg = raw["mtf"]
+        mtf = MtfUniverse(Path(str(mtf_cfg["approved_list_snapshot_path"])))
+        eligible |= {s for s in mtf.all_symbols()
+                     if mtf.is_eligible(s, exclude_etf=bool(mtf_cfg["exclude_etf"]))}
+        max_days = max(max_days, _window_calendar_days(raw) + 5)
+    if not eligible or max_days <= 0:
+        return
+    nse_syms = [f"NSE:{s}" for s in sorted(eligible)]
+    try:
+        n = sdk.prewarm_daily_concurrent(nse_syms, days=max_days)
+        logger.info("mtf_capitulation: daily prewarm %d/%d symbols @%dd depth (concurrent)",
+                    n, len(nse_syms), max_days)
+    except Exception as e:  # pragma: no cover - prewarm must not break the cron
+        logger.exception("mtf_capitulation: daily prewarm failed: %s", e)
+
 
 def _decay_paused(name: str, raw: dict) -> bool:
     tw_cfg = raw.get("decay_tripwire")
