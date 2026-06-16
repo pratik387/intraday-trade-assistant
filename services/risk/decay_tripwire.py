@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 class _TradeRecord:
     net_pnl_inr: float
     ts_iso: str  # IST-naive ISO 8601
+    # Optional cost breakdown. The rolling-PF gate uses net only; these exist so
+    # downstream readers (e.g. the swing dashboard) can show real gross/fees.
+    # Legacy ledgers predate them -> None (omitted from persisted JSON).
+    fees_inr: Optional[float] = None
+    gross_pnl_inr: Optional[float] = None
 
 
 class DecayTripwire:
@@ -81,7 +86,12 @@ class DecayTripwire:
             )
         trades = data.get("trades", [])
         self._trades = [
-            _TradeRecord(net_pnl_inr=float(t["net_pnl_inr"]), ts_iso=str(t["ts_iso"]))
+            _TradeRecord(
+                net_pnl_inr=float(t["net_pnl_inr"]),
+                ts_iso=str(t["ts_iso"]),
+                fees_inr=(float(t["fees_inr"]) if t.get("fees_inr") is not None else None),
+                gross_pnl_inr=(float(t["gross_pnl_inr"]) if t.get("gross_pnl_inr") is not None else None),
+            )
             for t in trades
         ]
         self._first_below_floor_ts = data.get("first_below_floor_ts")
@@ -96,20 +106,32 @@ class DecayTripwire:
             "sustained_weeks": self._sustained_weeks,
             "first_below_floor_ts": self._first_below_floor_ts,
             "paused_since": self._paused_since,
-            "trades": [asdict(t) for t in self._trades],
+            "trades": [
+                # Drop None cost fields so legacy/net-only records stay compact.
+                {k: v for k, v in asdict(t).items() if v is not None}
+                for t in self._trades
+            ],
         }
         tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         tmp.replace(self._state_path)
 
-    def record_trade(self, net_pnl_inr: float, ts_iso: str) -> None:
+    def record_trade(self, net_pnl_inr: float, ts_iso: str,
+                     fees_inr: Optional[float] = None,
+                     gross_pnl_inr: Optional[float] = None) -> None:
         """Append a settled trade and re-evaluate paused status.
 
         Call from run_verify_exit after pool.settle() completes.
         ts_iso is the IST-naive ISO 8601 settlement timestamp.
+        fees_inr / gross_pnl_inr are optional cost breakdown for downstream
+        readers; they do NOT affect the rolling-PF gate (which uses net only).
         """
-        self._trades.append(_TradeRecord(net_pnl_inr=float(net_pnl_inr), ts_iso=str(ts_iso)))
+        self._trades.append(_TradeRecord(
+            net_pnl_inr=float(net_pnl_inr), ts_iso=str(ts_iso),
+            fees_inr=(float(fees_inr) if fees_inr is not None else None),
+            gross_pnl_inr=(float(gross_pnl_inr) if gross_pnl_inr is not None else None),
+        ))
         # Keep buffer larger than window (we trim to last 200 to bound disk size)
         if len(self._trades) > max(self._window_trades * 5, 200):
             self._trades = self._trades[-(self._window_trades * 5):]

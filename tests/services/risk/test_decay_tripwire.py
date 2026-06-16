@@ -153,6 +153,38 @@ def test_reset_clears_pause_state(tmp_path):
     assert s["trade_count"] == 15
 
 
+def test_records_optional_fees_and_gross(tmp_path):
+    """record_trade can carry fees_inr + gross_pnl_inr; persisted and reloaded."""
+    path = _pwd(tmp_path)
+    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw.record_trade(net_pnl_inr=850.0, ts_iso="2026-01-01T09:30:00",
+                    fees_inr=120.0, gross_pnl_inr=970.0)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rec = data["trades"][0]
+    assert rec["net_pnl_inr"] == 850.0
+    assert rec["fees_inr"] == 120.0
+    assert rec["gross_pnl_inr"] == 970.0
+    # Reload preserves the fields
+    tw2 = DecayTripwire("test", path, 30, 1.20, 6)
+    assert tw2.state_summary()["trade_count"] == 1
+
+
+def test_legacy_records_without_fees_load(tmp_path):
+    """Old ledgers (net_pnl_inr only) must still load — fees default to None."""
+    path = _pwd(tmp_path)
+    path.write_text(json.dumps({
+        "setup_name": "test",
+        "trades": [{"net_pnl_inr": 100.0, "ts_iso": "2026-01-01T09:30:00"}],
+    }), encoding="utf-8")
+    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    assert tw.state_summary()["trade_count"] == 1
+    # Appending a fee-bearing trade alongside the legacy one round-trips cleanly
+    tw.record_trade(net_pnl_inr=50.0, ts_iso="2026-01-02T09:30:00", fees_inr=10.0)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["trades"][0].get("fees_inr") is None
+    assert data["trades"][1]["fees_inr"] == 10.0
+
+
 def test_invalid_window_trades_raises(tmp_path):
     with pytest.raises(ValueError, match="window_trades"):
         DecayTripwire("test", _pwd(tmp_path), window_trades=3, pf_floor=1.2, sustained_weeks=6)

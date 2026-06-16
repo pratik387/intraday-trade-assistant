@@ -364,7 +364,10 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary) 
                 window_trades=int(tw_cfg["window_trades"]),
                 pf_floor=float(tw_cfg["pf_floor"]),
                 sustained_weeks=int(tw_cfg["sustained_weeks"]),
-            ).record_trade(net_pnl_inr=float(net), ts_iso=now.isoformat())
+            ).record_trade(
+                net_pnl_inr=float(net), ts_iso=now.isoformat(),
+                fees_inr=float(fees_only) + float(interest), gross_pnl_inr=float(gross),
+            )
 
 
 def _run_entries(name, raw, broker, persistence, today, now, paper_mode, summary,

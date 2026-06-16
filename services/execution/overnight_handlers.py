@@ -597,8 +597,18 @@ def run_verify_exit(
                 pf_floor=float(tw_cfg["pf_floor"]),
                 sustained_weeks=int(tw_cfg["sustained_weeks"]),
             )
-            net_pnl = settled.realized_pnl_inr if settled.realized_pnl_inr is not None else 0.0
-            tw.record_trade(net_pnl_inr=float(net_pnl), ts_iso=now.isoformat())
+            # Only attach the cost breakdown when we have a real settled net PnL;
+            # otherwise leave fees/gross unset (legacy net-only record) rather than
+            # fabricate a gross == fees row.
+            if settled.realized_pnl_inr is not None:
+                net_pnl = float(settled.realized_pnl_inr)
+                total_cost = float(fees_only) + float(interest)
+                tw.record_trade(
+                    net_pnl_inr=net_pnl, ts_iso=now.isoformat(),
+                    fees_inr=total_cost, gross_pnl_inr=net_pnl + total_cost,
+                )
+            else:
+                tw.record_trade(net_pnl_inr=0.0, ts_iso=now.isoformat())
 
     # Phase 2: release T1 slots whose T+2 cash settle date has arrived
     for slot in list(pool.active()):
