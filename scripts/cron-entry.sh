@@ -1,6 +1,8 @@
 #!/bin/bash
 # Triggered at 15:26 IST every weekday by cron.
-# Runs the overnight setup entry handler: computes signal, places BUY, places AMO SELL.
+# Runs the overnight setup entry handler: computes signal and places the BUY order only.
+# The exit AMO SELL + GTT catastrophe stop are placed separately by cron-place-exit.sh
+# at 16:05 IST (after the Zerodha AMO window opens at 16:00).
 #
 # Why 15:26? The detector's trigger bar is 15:20 (covers 15:20-15:25
 # wall-clock, finalized at 15:25:00). The 15:25 bar (which covers
