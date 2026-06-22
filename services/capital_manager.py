@@ -878,6 +878,7 @@ class OvernightSlotPool:
         slot.fees_inr = None
         slot.interest_inr = None
         slot.reserved_today = None
+        slot.gtt_id = None
 
     # ---------- Queries ----------
 

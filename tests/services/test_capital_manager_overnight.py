@@ -74,6 +74,7 @@ def test_full_lifecycle_reserve_buy_amo_settle_release(tmp_path):
 
     slot = pool.reserve("NSE:RELIANCE", "MTF", 3.85, today)
     pool.attach_buy_fill(slot.slot_id, 2500.0, "2026-05-21T15:30:00", "BUY-001")
+    slot.gtt_id = "GTT_X"
     pool.attach_amo_sell(slot.slot_id, "AMO-001", tomorrow)
     pool.settle(slot.slot_id, 2515.0, "2026-05-22T09:15:00", fees_inr=500.0, interest_inr=160.0)
 
@@ -87,6 +88,7 @@ def test_full_lifecycle_reserve_buy_amo_settle_release(tmp_path):
     pool.release(slot.slot_id, day_after)
     assert pool.free_count() == 4
     assert pool.active() == []
+    assert pool._get_slot(slot.slot_id).gtt_id is None
 
 
 def test_settle_requires_t0_open_status(tmp_path):
@@ -130,7 +132,7 @@ def test_slot_roundtrips_gtt_id(tmp_path):
     from services.capital_manager import OvernightSlotPool
     state = tmp_path / "slots.json"
     pool = OvernightSlotPool(state, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
-    slot = pool.reserve(symbol="NSE:RELIANCE", product="MTF", leverage=2.5, today=__import__("datetime").date(2026, 6, 22))
+    slot = pool.reserve(symbol="NSE:RELIANCE", product="MTF", leverage=2.5, today=date(2026, 6, 22))
     slot.gtt_id = "GTT_123"
     pool.persist()
     pool2 = OvernightSlotPool(state, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
