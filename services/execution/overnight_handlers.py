@@ -1,7 +1,9 @@
 """Cron-triggered handlers for overnight setups (close_dn_overnight_long).
 
-Two short-lived entry points called by cron once per trading day:
-  - run_entry(): 15:25 IST. Compute signal, place MOC BUY + AMO SELL.
+Short-lived entry points called by cron once per trading day:
+  - run_entry(): 15:25 IST. Compute signal, place MOC BUY only.
+  - run_place_exit(): ~16:05 IST. Place exit AMO SELL + GTT catastrophe stop
+    (AMO window opens at 16:00, so the exit can't be placed in run_entry).
   - run_verify_exit(): 09:30 IST next day. Verify fills, settle, release.
 
 Both are idempotent — safe to re-run on missed cron fires.
@@ -379,34 +381,11 @@ def run_entry(
                 order_id=str(buy_order_id),
             )
 
-            # Place AMO SELL for next trading day
-            next_day = _next_trading_day(today)
-            try:
-                amo_order_id = _place_amo_sell(
-                    broker, symbol=symbol, qty=plan.qty,
-                    product=evt.context["product"],
-                    paper_mode=paper_mode,
-                    trade_id=f"OVERNIGHT_AMO_{today.isoformat()}_{slot.slot_id}",
-                )
-            except Exception as e:
-                logger.error(
-                    "run_entry: AMO SELL failed for %s: %s; slot left at t0_open without amo_order_id",
-                    symbol, e,
-                )
-                # Persist what we have so far so the orphan is recoverable on
-                # next cron fire (verify-exit reads the state).
-                pool.persist()
-                summary["skipped_count"] += 1
-                continue
-            pool.attach_amo_sell(slot.slot_id, str(amo_order_id), next_day)
-
             summary["fired_count"] += 1
             summary["events"].append({
                 "symbol": symbol, "qty": plan.qty,
                 "product": evt.context["product"],
                 "buy_fill_price": float(fill_price),
-                "amo_sell_order_id": str(amo_order_id),
-                "expected_exit_date": next_day.isoformat(),
             })
 
     # Persist
@@ -429,6 +408,89 @@ def run_entry(
         "run_entry: complete | fired=%d skipped=%d rejected=%d",
         summary["fired_count"], summary["skipped_count"], summary["rejected_count"],
     )
+    return summary
+
+
+def run_place_exit(
+    config: dict,
+    broker,
+    *,
+    now_ist: Optional[pd.Timestamp] = None,
+    paper_mode: bool = True,
+) -> dict:
+    """At ~16:05 IST (T0): for each t0_open slot place the exit AMO SELL + a
+    GTT catastrophe stop. Idempotent — slots already carrying an
+    amo_sell_order_id are skipped, so a re-run (or the morning fallback)
+    is safe. Refuses to run before the 16:00 AMO window opens.
+    """
+    from utils.time_util import _now_naive_ist
+    from services.capital_manager import OvernightSlotPool
+
+    now = pd.Timestamp(now_ist) if now_ist is not None else _now_naive_ist()
+    summary: dict = {"now_ist": str(now), "paper_mode": paper_mode,
+                     "placed_count": 0, "gtt_failed_count": 0, "events": []}
+
+    if (now.hour, now.minute) < (16, 0):
+        logger.warning("run_place_exit: before 16:00 AMO window (now=%s); refusing", now)
+        summary["refused_amo_window"] = True
+        return summary
+
+    setups = _select_overnight_setups(config, paper_mode=paper_mode)
+    if not setups:
+        logger.info("run_place_exit: no overnight setups active; exit")
+        return summary
+    sc = setups[0].raw_config
+    slot_cfg = sc["capital_allocation"]
+    state_path = Path(slot_cfg["state_file"])
+    if not state_path.exists():
+        logger.info("run_place_exit: no state file; nothing to place")
+        return summary
+    pool = OvernightSlotPool(
+        state_path,
+        max_slots=int(slot_cfg["max_concurrent_slots"]),
+        margin_per_slot=float(slot_cfg["margin_per_slot_inr"]),
+        max_new_per_day=int(slot_cfg["max_new_positions_per_day"]),
+    )
+    catastrophe_pct = float(sc["catastrophe_stop_pct"])
+    gtt_buffer_pct = float(sc["gtt_limit_buffer_pct"])
+
+    for slot in list(pool.active()):
+        if slot.status != "t0_open":
+            continue
+        if slot.amo_sell_order_id is not None:
+            continue
+        if slot.buy_fill_price is None or slot.notional_inr <= 0:
+            logger.warning("run_place_exit: slot %d has no buy fill; skipping", slot.slot_id)
+            continue
+        qty = int(round(slot.notional_inr / slot.buy_fill_price))
+        next_day = _next_trading_day(date.fromisoformat(slot.reserved_today))
+        amo_id = _place_amo_sell(
+            broker, symbol=slot.symbol, qty=qty,
+            product=slot.product or "CNC", paper_mode=paper_mode,
+            trade_id=f"OVERNIGHT_AMO_{slot.reserved_today}_{slot.slot_id}",
+        )
+        pool.attach_amo_sell(slot.slot_id, str(amo_id), next_day)
+        trigger = slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0)
+        limit = trigger * (1.0 - gtt_buffer_pct / 100.0)
+        try:
+            gid = broker.place_gtt_stop(
+                symbol=slot.symbol, qty=qty,
+                trigger_price=round(trigger, 2), limit_price=round(limit, 2),
+                product=slot.product or "CNC",
+            )
+            slot.gtt_id = str(gid)
+        except Exception as e:
+            logger.error("run_place_exit: GTT place failed for %s: %s "
+                         "(AMO still queued; morning failsafe covers it)", slot.symbol, e)
+            summary["gtt_failed_count"] += 1
+        summary["placed_count"] += 1
+        summary["events"].append({"slot_id": slot.slot_id, "symbol": slot.symbol,
+                                  "amo_sell_order_id": str(amo_id), "gtt_id": slot.gtt_id,
+                                  "expected_exit_date": next_day.isoformat()})
+
+    pool.persist()
+    logger.info("run_place_exit: complete | placed=%d gtt_failed=%d",
+                summary["placed_count"], summary["gtt_failed_count"])
     return summary
 
 
