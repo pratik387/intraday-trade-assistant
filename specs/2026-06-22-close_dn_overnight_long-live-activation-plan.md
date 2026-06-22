@@ -953,10 +953,10 @@ def test_close_dn_has_gtt_and_live_pilot_keys():
     # Live-pilot caps documented for the 1-slot first run.
     assert int(ca["_live_pilot_max_concurrent_slots"]) == 1
     assert int(ca["_live_pilot_margin_per_slot_inr"]) == 10000
-    # Full live caps reflect Rs10k/slot, Rs2L total.
+    # Full live caps reflect Rs10k/slot, Rs2.5L total (covers observed 2-day fire-stack peak of 25).
     assert int(ca["_live_margin_per_slot_inr"]) == 10000
-    assert int(ca["_live_active_margin_inr"]) == 200000
-    assert int(ca["_live_max_concurrent_slots"]) == 20
+    assert int(ca["_live_active_margin_inr"]) == 250000
+    assert int(ca["_live_max_concurrent_slots"]) == 25
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -973,15 +973,15 @@ In `config/configuration.json`, under `setups.close_dn_overnight_long`, add alon
 ```
 and update the `capital_allocation` `_live_*` shadow keys + add pilot keys:
 ```json
-        "_live_active_margin_inr": 200000,
+        "_live_active_margin_inr": 250000,
         "_live_cushion_inr": 50000,
-        "_live_max_concurrent_slots": 20,
+        "_live_max_concurrent_slots": 25,
         "_live_margin_per_slot_inr": 10000,
-        "_live_max_new_positions_per_day": 20,
+        "_live_max_new_positions_per_day": 25,
         "_live_pilot_max_concurrent_slots": 1,
         "_live_pilot_max_new_positions_per_day": 1,
         "_live_pilot_margin_per_slot_inr": 10000,
-        "_live_rationale": "Rs10k base margin/trade (MTF-leveraged to ~Rs26k notional). Rs2L total => 20 slots; 2-day T0->T+2 settlement lock means effective concurrency ~ fires/day x 2. Pilot starts at 1 slot to validate live fills + GTT before scaling. PF 2.44 / HO 1.52 measured under <=4 slots; re-run the confidence card before exceeding 20.",
+        "_live_rationale": "Rs10k base margin/trade (MTF-leveraged to ~Rs26k notional; CNC fallback uses full Rs10k). Rs2.5L => 25 slots. Exit is a BTST/T1-holdings sell so capital is locked ~2 trading days (CNC proceeds T+2; MTF margin frees at square-off T+1 but pool keeps conservative T+2 release for all). Sizing covers the forward-paper 2-consecutive-active-day peak (Jun12=8 + Jun15=17 = 25). Pilot starts at 1 slot to validate live fills + GTT before scaling. PF 2.44 / HO 1.52 measured under <=4 slots; re-run the confidence card before exceeding 25.",
 ```
 Leave `enabled: false` and the inflated *active* keys unchanged — the cap swap + enable flip is an operational go-live step (Task 10 runbook), not a code change.
 
@@ -1076,7 +1076,7 @@ git update-index --chmod=+x scripts/cron-place-exit.sh 2>/dev/null || chmod +x s
 ## Pilot (1 slot) then scale
 - Set capital_allocation active keys to the _live_pilot_* values; set enabled=true. Run >= several sessions.
 - Watch: real BUY fill, 16:05 AMO + GTT placement, 09:30 AMO fill + GTT cancel. No dangling GTTs.
-- Then swap active keys to the full _live_* values (20 slots / Rs2L).
+- Then swap active keys to the full _live_* values (25 slots / Rs2.5L).
 
 ## Rollback
 - Set enabled=false. In-flight positions still settle via verify-exit (idempotent); GTTs auto-cancel on settle.

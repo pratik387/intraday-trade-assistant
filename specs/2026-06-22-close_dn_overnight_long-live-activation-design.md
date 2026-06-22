@@ -43,9 +43,13 @@ These drove the design; verify again if Zerodha policy changes.
    sets stop-loss + target together. App support lagged historically; the **API path works**.
    Sources: https://zerodha.com/z-connect/featured/mtf-updates ,
    https://support.zerodha.com/category/trading-and-markets/charts-and-orders/gtt/articles/what-is-the-good-till-triggered-gtt-feature
-4. **MTF settlement is T+1.** *"Sale proceeds … only available on the next day."* → confirms the
-   pool's T+2-from-entry release (= T+1-from-sale) is correct, not over-conservative.
-   Source: https://support.zerodha.com/category/trading-and-markets/margins/margin-trading-facility/articles/margin-trading-facility-mtf-faqs
+4. **Exit is a BTST / "T1 holdings" sell — capital genuinely locked ~2 trading days.** Buy T0, sell
+   T+1 open before demat settlement. Zerodha example: Mon buy -> Tue sell -> funds released Wed. So
+   CNC proceeds (~36% of fires) are locked until T+2; MTF margin (~64%) frees at square-off (T+1) but
+   the pool keeps the conservative T+2 release for all (correct for CNC, safe for MTF). This is why
+   live capital must cover the 2-day fire stack (see section C), and why the pool's T+2 release is correct.
+   Sources: https://support.zerodha.com/category/trading-and-markets/general-kite/kite-holdings/articles/t1-holdings-proceeds ,
+   https://support.zerodha.com/category/trading-and-markets/margins/margin-trading-facility/articles/margin-trading-facility-mtf-faqs
 5. **MTF interest: 0.04%/day from T+1 until sold** (matches config `interest_pct_per_day: 0.0004`);
    intraday square-off = no interest; T0-buy/T+1-sell = 1 day interest (matches `hold_days = max(1, …)`).
    Auto-square-off RMS (~20% of funded amount → proportionate) is a backstop *behind* our 5% GTT.
@@ -86,13 +90,20 @@ Unchanged math from paper (`plan_long_strategy`): `notional = margin_per_slot_in
 
 | Config key | Paper | Live |
 |---|---|---|
-| `margin_per_slot_inr` | 100000 | **10000** (₹10k base/trade → ~₹26k notional @ 2.64×) |
-| `active_margin_inr` | 10000000 | **200000** (₹2L total) |
-| `max_concurrent_slots` | 100 | **20** (`active_margin / margin_per_slot`) |
-| `max_new_positions_per_day` | 100 | **20** (kept high — never drop a signal) |
+| `margin_per_slot_inr` | 100000 | **10000** (₹10k base/trade → ~₹26k notional @ 2.64× for MTF; full ₹10k for CNC) |
+| `active_margin_inr` | 10000000 | **250000** (₹2.5L total) |
+| `max_concurrent_slots` | 100 | **25** (`active_margin / margin_per_slot`) |
+| `max_new_positions_per_day` | 100 | **25** (kept high — never drop a signal) |
 
-The 2-day settlement lock (T0→T+2) means effective concurrent demand ≈ fires/day × ~2; ₹2L / 20 slots
-gives headroom for ~10 fires/day. (₹1L/10 slots is the smaller alternative.)
+**Why ₹2.5L / 25 (settlement is genuinely ~2 trading days, confirmed against Zerodha docs):**
+The exit is a **BTST / "T1 holdings" sell** (buy T0, sell T+1 open before demat settlement). Zerodha's
+own example: *Mon buy → Tue sell → funds released Wed* — so **CNC** proceeds (~36% of fires) are locked
+until **T+2**. **MTF** margin (~64%) frees at square-off (T+1), but we keep the pool's conservative
+**T+2 release for all** (correct for CNC, safe for MTF — do NOT special-case T+1). The binding number is
+therefore the 2-consecutive-active-day fire stack. Forward-paper observed peak = **Jun 12 (8) + Jun 15
+(17) = 25** concurrent → ₹2.5L / 25 slots covers it; ₹2L/20 would have blocked ~5 that week.
+Sources: [T1 holdings proceeds](https://support.zerodha.com/category/trading-and-markets/general-kite/kite-holdings/articles/t1-holdings-proceeds),
+[MTF FAQs](https://support.zerodha.com/category/trading-and-markets/margins/margin-trading-facility/articles/margin-trading-facility-mtf-faqs).
 
 ### D. Risk — GTT catastrophe stop
 
