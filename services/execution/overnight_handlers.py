@@ -636,6 +636,16 @@ def run_verify_exit(
             fees_inr=float(fees_only),
             interest_inr=float(interest),
         )
+
+        # Cancel the dangling catastrophe GTT now that the AMO has filled and
+        # the slot is flat — a later GTT trigger would open a NAKED SHORT.
+        if slot.gtt_id and hasattr(broker, "cancel_gtt"):
+            ok = broker.cancel_gtt(slot.gtt_id)
+            if not ok:
+                logger.warning("run_verify_exit: GTT %s cancel returned False for slot %d "
+                               "(verify manually — risk of naked short)", slot.gtt_id, slot.slot_id)
+            slot.gtt_id = None
+
         summary["settled_count"] += 1
         settled = pool._get_slot(slot.slot_id)  # noqa: SLF001
         summary["events"].append({
