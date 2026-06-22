@@ -119,13 +119,27 @@ def test_state_file_wrong_shape_raises(tmp_path):
         OvernightSlotPool(path, max_slots=4, margin_per_slot=100000, max_new_per_day=2)
 
 
-def test_state_slot_count_mismatch_raises(tmp_path):
+def test_state_slot_count_shrink_raises(tmp_path):
+    # SHRINKING (state has MORE slots than config) is unsafe — could orphan a
+    # slot holding an open position — so it must raise for manual migration.
+    path = tmp_path / "overnight_slots.json"
+    data = {"slots": [{"slot_id": i, "status": "free", "leverage": 1.0,
+                       "margin_inr": 0.0, "notional_inr": 0.0} for i in range(1, 6)]}  # 5 slots
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="has 5 slots but config"):
+        OvernightSlotPool(path, max_slots=4, margin_per_slot=100000, max_new_per_day=2)
+
+
+def test_state_fewer_slots_than_config_auto_expands(tmp_path):
+    # EXPANDING (state has FEWER slots than config) is safe and intentional:
+    # preserve existing slots, append free slots up to max_slots. This is what
+    # happens when max_slots is raised in config (e.g. paper->live sizing).
     path = tmp_path / "overnight_slots.json"
     data = {"slots": [{"slot_id": 1, "status": "free", "leverage": 1.0,
                        "margin_inr": 0.0, "notional_inr": 0.0}]}
     path.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(ValueError, match="has 1 slots but config"):
-        OvernightSlotPool(path, max_slots=4, margin_per_slot=100000, max_new_per_day=2)
+    pool = OvernightSlotPool(path, max_slots=4, margin_per_slot=100000, max_new_per_day=2)
+    assert len(pool._slots) == 4
 
 
 def test_slot_roundtrips_gtt_id(tmp_path):
