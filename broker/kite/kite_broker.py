@@ -34,7 +34,7 @@ Requires: `pip install kiteconnect`
 """
 import time
 import uuid
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from config.env_setup import env
 
 # Order tagging prefix for identifying app-placed trades
@@ -446,7 +446,7 @@ class KiteBroker:
             logger.warning(f"Could not get fill price for order {order_id} after {max_retries} attempts")
         return None
 
-    def get_order_status(self, order_id: str) -> Dict[str, Optional[float]]:
+    def get_order_status(self, order_id: str) -> Dict[str, Any]:
         """Return {'order_id','status','average_price'} for an order.
 
         Used by the overnight handler's fill-polling. status is upper-cased;
