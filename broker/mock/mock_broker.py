@@ -224,6 +224,29 @@ class MockBroker:
         """
         return {"order_id": str(order_id), "status": "COMPLETE", "average_price": 0.0}
 
+    def place_gtt_stop(self, *, symbol: str, qty: int, trigger_price: float,
+                       limit_price: float, product: str = "MTF") -> str:
+        """Paper-mode GTT stop: mint a fake trigger id, place nothing.
+
+        Lets the overnight place-exit cron exercise the full AMO+GTT flow in
+        paper (the GTT is a live-only catastrophe failsafe; in paper the
+        position still exits via the simulated next-open AMO fill). Without
+        this, run_place_exit would log a gtt_failed for every paper position.
+        """
+        with self._paper_order_lock:
+            self._paper_order_seq += 1
+            gid = f"PAPER_GTT_{self._paper_order_seq:08d}"
+        logger.info(
+            "[PAPER] MockBroker GTT stop: %s qty=%d trig=%s lim=%s (product=%s) -> %s",
+            symbol, int(qty), trigger_price, limit_price, product, gid,
+        )
+        return gid
+
+    def cancel_gtt(self, gtt_id: str) -> bool:
+        """Paper-mode GTT cancel: always succeeds (nothing was really placed)."""
+        logger.info("[PAPER] MockBroker cancel GTT: %s", gtt_id)
+        return True
+
     def set_intraday_5m_prefetch(self, mapping: Dict[str, Any]) -> None:
         """Stash a batch-fetched {symbol: today's-5m DataFrame} map (keys may be
         'NSE:SYM' or bare). get_intraday_5m serves from here before the live API."""
