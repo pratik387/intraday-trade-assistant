@@ -446,6 +446,29 @@ class KiteBroker:
             logger.warning(f"Could not get fill price for order {order_id} after {max_retries} attempts")
         return None
 
+    def get_order_status(self, order_id: str) -> Dict[str, Optional[float]]:
+        """Return {'order_id','status','average_price'} for an order.
+
+        Used by the overnight handler's fill-polling. status is upper-cased;
+        'UNKNOWN' when the order is not found. average_price is 0.0 until filled.
+        """
+        if self.dry_run:
+            for o in self._paper_orders:
+                if str(o.get("order_id")) == str(order_id):
+                    return {"order_id": str(order_id),
+                            "status": str(o.get("status", "COMPLETE")).upper(),
+                            "average_price": float(o.get("average_price") or 0.0)}
+            return {"order_id": str(order_id), "status": "UNKNOWN", "average_price": 0.0}
+        try:
+            for o in self.kc.orders():
+                if str(o.get("order_id")) == str(order_id):
+                    return {"order_id": str(order_id),
+                            "status": str(o.get("status") or "").upper(),
+                            "average_price": float(o.get("average_price") or 0.0)}
+        except Exception as e:
+            logger.warning(f"get_order_status failed for {order_id}: {e}")
+        return {"order_id": str(order_id), "status": "UNKNOWN", "average_price": 0.0}
+
     # ------------------------------ Paper Trading ---------------------------
     def _simulate_order(
         self,
