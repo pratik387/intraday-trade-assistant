@@ -980,7 +980,12 @@ def _today_5m(broker, symbol: str) -> Optional[pd.DataFrame]:
         try:
             bare = symbol.replace("NSE:", "")
             all_enriched = broker._load_enriched_5m()
-            df = all_enriched.get(bare) or all_enriched.get(symbol)
+            # NOTE: do NOT use `get(bare) or get(symbol)` — `bool(DataFrame)`
+            # raises "truth value ambiguous" on a non-empty frame, silently
+            # losing the archive fill (settlement then reports "fill unavailable").
+            df = all_enriched.get(bare)
+            if df is None:
+                df = all_enriched.get(symbol)
             if df is not None and not df.empty:
                 return df
         except Exception as e:
