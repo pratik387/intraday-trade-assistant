@@ -1,10 +1,11 @@
-from __future__ import annotations
 """Composite broker for LIVE overnight trading.
 
 Market DATA comes from Upstox (the paper-validated path); ORDERS, fills, and
 GTTs go to Kite. The signal pipeline is byte-identical to paper — only the
 order sink changes. Constructed by main.py for `--mode overnight` live runs.
 """
+from __future__ import annotations
+
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -17,6 +18,11 @@ class LiveOvernightBroker:
         self._data_sdk = data_sdk
         self._kite = kite
 
+    # NOTE: fetch_candles is intentionally NOT implemented. Live 5m data comes
+    # from Upstox via _data_sdk (get_intraday_5m / async batch); the handler's
+    # _get_5m_for_symbol_live Kite-fallback is guarded by hasattr and degrades
+    # to a symbol-skip, which is correct for this hybrid (Kite is order-only).
+
     # ---------------- market data (Upstox) ----------------
     def get_intraday_5m(self, symbol: str) -> Optional[pd.DataFrame]:
         return self._data_sdk.get_intraday_5m(symbol)
@@ -26,7 +32,11 @@ class LiveOvernightBroker:
 
     def list_symbols(self, exchange: str = "NSE", instrument_type: str = "EQ") -> List[str]:
         syms = getattr(self._data_sdk, "_equity_instruments", None)
-        return list(syms) if syms else []
+        if syms:
+            return list(syms)
+        if hasattr(self._data_sdk, "list_symbols"):
+            return self._data_sdk.list_symbols(exchange=exchange, instrument_type=instrument_type)
+        return []
 
     def get_symbol_map(self) -> Dict[str, int]:
         return self._data_sdk.get_symbol_map()
