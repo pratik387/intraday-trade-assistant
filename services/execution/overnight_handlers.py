@@ -711,9 +711,9 @@ def run_verify_exit(
     # The 15:25 entry cron reads the resulting candidates_latest.json
     # (~50 symbols on a typical day) instead of building the 1118-symbol
     # universe from scratch — drops cron wall-clock from minutes to seconds.
-    if paper_mode:
+    if getattr(broker, "_data_sdk", None) is not None:
         try:
-            data_sdk = getattr(broker, "_data_sdk", None)
+            data_sdk = broker._data_sdk
             if data_sdk is not None:
                 from services.execution.close_dn_baseline_build import (
                     build_baseline_and_candidates,
