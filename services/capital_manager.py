@@ -659,7 +659,7 @@ class CapitalManager:
 # to avoid entanglement between two unrelated capital cycles.
 # ============================================================================
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from datetime import date
 
 
@@ -691,13 +691,15 @@ class OvernightSlot:
     fees_inr: Optional[float] = None
     interest_inr: Optional[float] = None
     reserved_today: Optional[str] = None     # ISO date when reserve() was called
+    gtt_id: Optional[str] = None             # broker GTT trigger id for the catastrophe stop
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "OvernightSlot":
-        return cls(**d)
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in known})
 
 
 class OvernightSlotPool:

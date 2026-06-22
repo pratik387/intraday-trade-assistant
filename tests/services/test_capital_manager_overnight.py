@@ -124,3 +124,22 @@ def test_state_slot_count_mismatch_raises(tmp_path):
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="has 1 slots but config"):
         OvernightSlotPool(path, max_slots=4, margin_per_slot=100000, max_new_per_day=2)
+
+
+def test_slot_roundtrips_gtt_id(tmp_path):
+    from services.capital_manager import OvernightSlotPool
+    state = tmp_path / "slots.json"
+    pool = OvernightSlotPool(state, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    slot = pool.reserve(symbol="NSE:RELIANCE", product="MTF", leverage=2.5, today=__import__("datetime").date(2026, 6, 22))
+    slot.gtt_id = "GTT_123"
+    pool.persist()
+    pool2 = OvernightSlotPool(state, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    assert pool2._get_slot(slot.slot_id).gtt_id == "GTT_123"
+
+
+def test_from_dict_ignores_unknown_legacy_keys():
+    from services.capital_manager import OvernightSlot
+    d = {"slot_id": 1, "status": "free", "paper_variant_b": None}  # legacy key not on the dataclass
+    slot = OvernightSlot.from_dict(d)
+    assert slot.slot_id == 1
+    assert slot.gtt_id is None
