@@ -903,3 +903,48 @@ class KiteBroker:
                 "remaining_qty": None,  # Unknown
                 "verified": False
             }
+
+    # ------------------------------ GTT (Good-Till-Triggered) ---------------
+    def place_gtt_stop(self, *, symbol: str, qty: int, trigger_price: float,
+                       limit_price: float, product: str = "MTF") -> str:
+        """Place a single-leg GTT stop-loss SELL. Returns the GTT trigger_id (str).
+
+        Catastrophe failsafe for an overnight position whose AMO did not fill.
+        On trigger, a LIMIT SELL is submitted at `limit_price` (set a small buffer
+        below `trigger_price` to ensure fill).
+        """
+        exch, tsym = _split_symbol(symbol)
+        prod = product.upper()
+        kc_product = getattr(self.kc, "PRODUCT_MTF", "MTF") if prod == "MTF" else self.kc.PRODUCT_CNC
+        last_price = float(self.get_ltp(symbol) or 0.0)
+        orders = [{
+            "exchange": exch, "tradingsymbol": tsym,
+            "transaction_type": self.kc.TRANSACTION_TYPE_SELL,
+            "quantity": int(qty), "order_type": self.kc.ORDER_TYPE_LIMIT,
+            "product": kc_product, "price": float(limit_price),
+        }]
+        if self.dry_run:
+            self._paper_order_counter += 1
+            gid = f"PAPER_GTT_{self._paper_order_counter:08d}"
+            logger.info(f"[PAPER] GTT stop {symbol} trig={trigger_price} lim={limit_price} -> {gid}")
+            return gid
+        resp = self.kc.place_gtt(
+            trigger_type=self.kc.GTT_TYPE_SINGLE,
+            tradingsymbol=tsym, exchange=exch,
+            trigger_values=[float(trigger_price)],
+            last_price=last_price, orders=orders,
+        )
+        trigger_id = resp.get("trigger_id") if isinstance(resp, dict) else resp
+        logger.info(f"GTT stop placed: {symbol} trig={trigger_price} -> trigger_id={trigger_id}")
+        return str(trigger_id)
+
+    def cancel_gtt(self, gtt_id: str) -> bool:
+        """Delete a GTT by trigger_id. Returns True on success, False on failure."""
+        if self.dry_run:
+            return True
+        try:
+            self.kc.delete_gtt(int(gtt_id))
+            return True
+        except Exception as e:
+            logger.warning(f"cancel_gtt failed for {gtt_id}: {e}")
+            return False
