@@ -670,7 +670,7 @@ def _parse_args():
                          "'overnight' = short-lived cron-triggered run for close_dn_overnight_long. "
                          "'multi_day' = short-lived cron-triggered run for the CNC/MTF capitulation "
                          "batch (mtf_capitulation/low52/zscore/crash2d).")
-    ap.add_argument("--action", choices=["run", "entry", "exit", "verify-exit", "verify-entry"], default="run",
+    ap.add_argument("--action", choices=["run", "entry", "exit", "verify-exit", "place-exit", "verify-entry"], default="run",
                     help="What action to perform. 'run' (default) = main daemon loop (intraday only). "
                          "'entry' = place orders (overnight=run_entry @15:25; multi_day=POST-close "
                          "entry pass @~15:35: rank full day-T bar + AMO buy). "
@@ -710,6 +710,11 @@ if __name__ == "__main__":
                         "Overnight uses --action=verify-exit.")
         print(f"error: {parser_error}", file=sys.stderr)
         sys.exit(2)
+    if args.mode == "multi_day" and args.action == "place-exit":
+        parser_error = ("--action=place-exit is overnight-only (the GTT exit-order pass). "
+                        "Multi_day uses --action=exit / entry / verify-entry.")
+        print(f"error: {parser_error}", file=sys.stderr)
+        sys.exit(2)
 
     # Overnight / multi-day handlers run as short-lived cron-triggered scripts;
     # bypass the intraday daemon entirely so cron doesn't pay the startup cost.
@@ -743,8 +748,25 @@ if __name__ == "__main__":
             if args.session_date:
                 broker.set_session_date(args.session_date)
             paper_mode = True
+        elif args.mode == "overnight":
+            # Live mode: Upstox for data (paper-validated path) + Kite for orders.
+            from broker.kite.kite_broker import KiteBroker  # noqa: WPS433
+            from broker.upstox.upstox_data_client import UpstoxDataClient
+            from broker.live_overnight_broker import LiveOvernightBroker
+            kite = KiteBroker(
+                api_key=os.environ.get("KITE_API_KEY"),
+                access_token=os.environ.get("KITE_ACCESS_TOKEN"),
+            )
+            broker = LiveOvernightBroker(data_sdk=UpstoxDataClient(), kite=kite)
+            paper_mode = False
         else:
-            # Live mode: use KiteBroker (lazy import to avoid kiteconnect cost in dry-run/Lambda)
+            # Live mode, multi_day: bare KiteBroker. NOTE: LiveOvernightBroker is
+            # intentionally NOT used here — mtf_capitulation_handlers needs broker
+            # methods it does not expose (fetch_daily_window for the live daily
+            # panel, set_intraday_5m_prefetch for the 5m batch prewarm). Wrapping
+            # multi_day in LiveOvernightBroker would crash make_provider
+            # (ValueError: live DailyPanelProvider needs fetch_fn). Keep the
+            # existing bare-KiteBroker path to avoid a multi_day regression.
             from broker.kite.kite_broker import KiteBroker  # noqa: WPS433
             broker = KiteBroker(
                 api_key=os.environ.get("KITE_API_KEY"),
@@ -753,12 +775,19 @@ if __name__ == "__main__":
             paper_mode = False
 
         if args.mode == "overnight":
-            from services.execution.overnight_handlers import run_entry, run_verify_exit
+            from services.execution.overnight_handlers import run_entry, run_verify_exit, run_place_exit
             if args.action == "entry":
                 summary = run_entry(cfg, broker, paper_mode=paper_mode)
                 print(
                     f"[overnight entry] fired={summary['fired_count']} "
                     f"skipped={summary['skipped_count']} rejected={summary['rejected_count']}",
+                    file=sys.stderr,
+                )
+            elif args.action == "place-exit":
+                summary = run_place_exit(cfg, broker, paper_mode=paper_mode)
+                print(
+                    f"[overnight place-exit] placed={summary['placed_count']} "
+                    f"gtt_failed={summary['gtt_failed_count']}",
                     file=sys.stderr,
                 )
             else:  # verify-exit
