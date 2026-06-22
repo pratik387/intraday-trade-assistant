@@ -362,7 +362,7 @@ def run_entry(
                     )
                     fill_price = plan.entry_price
             else:
-                fill_price = _live_poll_fill(broker, buy_order_id, timeout_sec=60)
+                fill_price = _live_poll_fill(broker, buy_order_id, timeout_sec=int(spec.raw_config["fill_poll_timeout_sec"]))
                 if fill_price is None:
                     logger.warning(
                         "run_entry: %s BUY order %s did not fill within timeout",
@@ -459,8 +459,11 @@ def run_place_exit(
             continue
         if slot.amo_sell_order_id is not None:
             continue
-        if slot.buy_fill_price is None or slot.notional_inr <= 0:
+        if slot.buy_fill_price is None or slot.buy_fill_price <= 0 or slot.notional_inr <= 0:
             logger.warning("run_place_exit: slot %d has no buy fill; skipping", slot.slot_id)
+            continue
+        if slot.reserved_today is None:
+            logger.warning("run_place_exit: slot %d has no reserved_today; skipping", slot.slot_id)
             continue
         qty = int(round(slot.notional_inr / slot.buy_fill_price))
         next_day = _next_trading_day(date.fromisoformat(slot.reserved_today))
@@ -569,6 +572,15 @@ def run_verify_exit(
                 "orphan, requires manual settlement at correct historical price",
                 slot.slot_id, expected_exit, today,
             )
+            # Cancel any live GTT on this stale slot — the AMO almost certainly
+            # already filled at the correct open, so a surviving GTT could trigger
+            # on a now-flat position and open a NAKED SHORT.
+            if slot.gtt_id and hasattr(broker, "cancel_gtt"):
+                if not broker.cancel_gtt(slot.gtt_id):
+                    logger.warning("run_verify_exit: stale-slot GTT %s cancel returned False "
+                                   "for slot %d — verify manually (naked-short risk)",
+                                   slot.gtt_id, slot.slot_id)
+                slot.gtt_id = None
             summary["orphan_t0_count"] += 1
             continue
         if slot.buy_fill_price is None or slot.notional_inr <= 0:
@@ -726,8 +738,8 @@ def run_verify_exit(
                     )
                     or {}
                 )
-                cell_min = float(close_dn_cfg.get("cell_prior_day_return_pct_min", 3.0))
-                rolling_days = int(close_dn_cfg.get("baseline_rolling_days", 20))
+                cell_min = float(close_dn_cfg["cell_prior_day_return_pct_min"])
+                rolling_days = int(close_dn_cfg["baseline_rolling_days"])
                 stats = build_baseline_and_candidates(
                     data_sdk, today,
                     rolling_days=rolling_days,

@@ -906,7 +906,7 @@ class KiteBroker:
 
     # ------------------------------ GTT (Good-Till-Triggered) ---------------
     def place_gtt_stop(self, *, symbol: str, qty: int, trigger_price: float,
-                       limit_price: float, product: str = "MTF") -> str:
+                       limit_price: float, product: str) -> str:
         """Place a single-leg GTT stop-loss SELL. Returns the GTT trigger_id (str).
 
         Catastrophe failsafe for an overnight position whose AMO did not fill.
