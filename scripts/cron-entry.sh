@@ -38,12 +38,18 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
     fi
 fi
 
-# Default flags = paper trading via Upstox data. Override with MODE_FLAGS=""
-# (live + Kite) or any other combination from the crontab line.
+# Mode: default = paper trading via Upstox data. Set LIVE=1 in the crontab
+# line to trade live via Kite. (Do NOT revive the old MODE_FLAGS="" convention:
+# `${VAR:-default}` treats an empty string as unset, so MODE_FLAGS="" silently
+# fell back to PAPER — that bug cost a live session on 2026-06-23.)
 # --session-date is REQUIRED for MockBroker (paper mode) — without it,
 # broker.get_daily() crashes inside the silent except-Exception in
 # _gather_daily_dict and the universe quietly comes back empty.
-MODE_FLAGS="${MODE_FLAGS:---paper-trading --data-source upstox --session-date $(date +%F)}"
+if [[ "${LIVE:-0}" == "1" ]]; then
+    MODE_FLAGS=""
+else
+    MODE_FLAGS="--paper-trading --data-source upstox --session-date $(date +%F)"
+fi
 
 LOG_DIR="logs"
 mkdir -p "$LOG_DIR"

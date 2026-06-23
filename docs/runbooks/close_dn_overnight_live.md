@@ -1,9 +1,11 @@
 # close_dn_overnight_long — Go-Live Runbook
 
-## Live crontab (IST; CRON_TZ=Asia/Kolkata). MODE_FLAGS="" forces live + Kite.
-26 15 * * 1-5  cd /opt/intraday-trade-assistant && MODE_FLAGS="" scripts/cron-entry.sh
-05 16 * * 1-5  cd /opt/intraday-trade-assistant && MODE_FLAGS="" scripts/cron-place-exit.sh
-30 09 * * 1-5  cd /opt/intraday-trade-assistant && MODE_FLAGS="" scripts/cron-verify-exit.sh
+## Live crontab (IST; CRON_TZ=Asia/Kolkata). LIVE=1 forces live + Kite.
+## NOTE: do NOT use MODE_FLAGS="" — `${VAR:-default}` treats empty as unset and
+## falls back to paper (this bug ran a "live" session as paper on 2026-06-23).
+26 15 * * 1-5  cd /opt/intraday-trade-assistant && LIVE=1 scripts/cron-entry.sh
+05 16 * * 1-5  cd /opt/intraday-trade-assistant && LIVE=1 scripts/cron-place-exit.sh
+30 09 * * 1-5  cd /opt/intraday-trade-assistant && LIVE=1 scripts/cron-verify-exit.sh
 
 ## Preconditions (do ALL before flipping enabled)
 1. Confirm the VM forward-paper ledger exists and PF is acceptable (local state/ is backtest-seeded).
