@@ -593,7 +593,8 @@
         "window_trades": 30,
         "pf_floor": 1.2,
         "sustained_weeks": 6,
-        "state_file": "state/decay_tripwire_close_dn_overnight_long.json"
+        "_state_file_note": "LIVE ledger (real Rs10k fills only). The legacy state/decay_tripwire_close_dn_overnight_long.json is kept as the PAPER ledger (idealized Rs1L), continued by the slippage/reconstruction script.",
+        "state_file": "state/decay_tripwire_close_dn_overnight_long_live.json"
       }
     },
     "mtf_capitulation_revert_long": {
