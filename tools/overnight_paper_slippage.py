@@ -36,14 +36,19 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+# tools/ is not a package and this is run directly (python tools/overnight_paper_slippage.py),
+# so sys.path[0] is tools/, not the repo root. Put the repo root on the path BEFORE importing
+# config/services/broker, otherwise those imports raise ModuleNotFoundError at runtime.
+import sys
+ROOT = Path(__file__).resolve().parents[1]  # this file lives in tools/
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 try:
     from config.logging_config import get_agent_logger
     logger = get_agent_logger()
 except Exception:  # pragma: no cover - fallback when agent logger unavailable
     logger = logging.getLogger(__name__)
-
-# Project root (this file lives in tools/).
-ROOT = Path(__file__).resolve().parents[1]
 
 # Documented PAPER sizing constant (the historical Rs 1,00,000 margin/slot the
 # Phase-5 confidence card was computed under). NOT a trading threshold — it is
