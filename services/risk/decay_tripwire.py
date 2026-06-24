@@ -41,6 +41,11 @@ class _TradeRecord:
     exit_price: Optional[float] = None
     exit_reason: Optional[str] = None
     qty: Optional[int] = None
+    # Idealized paper-fill references captured at trade time (15:25 close /
+    # 09:15 open). Persisted so the slippage tool measures real-vs-idealized
+    # without post-hoc re-fetch drift. Legacy ledgers predate them -> None.
+    idealized_entry: Optional[float] = None
+    idealized_exit: Optional[float] = None
 
 
 class DecayTripwire:
@@ -102,6 +107,8 @@ class DecayTripwire:
                 exit_price=(float(t["exit_price"]) if t.get("exit_price") is not None else None),
                 exit_reason=(str(t["exit_reason"]) if t.get("exit_reason") is not None else None),
                 qty=(int(t["qty"]) if t.get("qty") is not None else None),
+                idealized_entry=(float(t["idealized_entry"]) if t.get("idealized_entry") is not None else None),
+                idealized_exit=(float(t["idealized_exit"]) if t.get("idealized_exit") is not None else None),
             )
             for t in trades
         ]
@@ -135,7 +142,9 @@ class DecayTripwire:
                      entry_price: Optional[float] = None,
                      exit_price: Optional[float] = None,
                      exit_reason: Optional[str] = None,
-                     qty: Optional[int] = None) -> None:
+                     qty: Optional[int] = None,
+                     idealized_entry: Optional[float] = None,
+                     idealized_exit: Optional[float] = None) -> None:
         """Append a settled trade and re-evaluate paused status.
 
         Call from run_verify_exit after pool.settle() completes.
@@ -153,6 +162,8 @@ class DecayTripwire:
             exit_price=(float(exit_price) if exit_price is not None else None),
             exit_reason=(str(exit_reason) if exit_reason is not None else None),
             qty=(int(qty) if qty is not None else None),
+            idealized_entry=(float(idealized_entry) if idealized_entry is not None else None),
+            idealized_exit=(float(idealized_exit) if idealized_exit is not None else None),
         ))
         # Keep buffer larger than window (we trim to last 200 to bound disk size)
         if len(self._trades) > max(self._window_trades * 5, 200):

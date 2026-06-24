@@ -433,10 +433,20 @@ def reconstruct_for_date(
             real_entry = float(live.get("entry_price")) if live.get("entry_price") is not None else None
             real_exit = float(live.get("exit_price")) if live.get("exit_price") is not None else None
             if real_entry is not None and real_exit is not None:
+                # Prefer the idealized refs PERSISTED on the live trade record at
+                # trade time — these are exact (no post-hoc re-fetch drift). Fall
+                # back to the fetched ie/ix only when a leg is absent (legacy
+                # ledgers predate the persisted refs).
+                persisted_ie = live.get("idealized_entry")
+                persisted_ix = live.get("idealized_exit")
+                slip_ie = float(persisted_ie) if persisted_ie is not None else ie
+                slip_ix = float(persisted_ix) if persisted_ix is not None else ix
                 slip = compute_slippage(
-                    idealized_entry=ie, real_entry=real_entry,
-                    idealized_exit=ix, real_exit=real_exit,
+                    idealized_entry=slip_ie, real_entry=real_entry,
+                    idealized_exit=slip_ix, real_exit=real_exit,
                 )
+                row["idealized_entry"] = slip_ie
+                row["idealized_exit"] = slip_ix
                 row["real_entry"] = real_entry
                 row["real_exit"] = real_exit
                 row["entry_slip"] = slip["entry_slip"]

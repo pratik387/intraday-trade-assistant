@@ -301,6 +301,87 @@ def test_slippage_report_with_live_match(tmp_path):
     assert row["live_net_10k"] == 584.4
 
 
+def test_slippage_prefers_persisted_idealized_refs(tmp_path):
+    # The live record carries idealized_entry/idealized_exit captured at trade
+    # time. Slippage must use THOSE (exact), not the re-fetched 103.2 / 110.0.
+    paper_path = tmp_path / "state" / "decay_tripwire_close_dn_overnight_long.json"
+    paper_path.parent.mkdir(parents=True, exist_ok=True)
+    paper_path.write_text(json.dumps({"trades": []}), encoding="utf-8")
+
+    live_path = tmp_path / "state" / "decay_tripwire_close_dn_overnight_long_live.json"
+    live_path.write_text(json.dumps({
+        "trades": [
+            {
+                "symbol": "NSE:SAMPANN",
+                "entry_price": 103.5,
+                "exit_price": 109.9,
+                # Persisted idealized refs DIFFER from the fetched 103.2 / 110.0
+                # (simulating data-revision drift). The tool must trust these.
+                "idealized_entry": 103.0,
+                "idealized_exit": 110.5,
+                "qty": 96, "net_pnl_inr": 584.4,
+                "ts_iso": "2026-06-17T09:30:01", "exit_reason": "t1_settle",
+            }
+        ]
+    }), encoding="utf-8")
+
+    log_path = _write_log(tmp_path, SAMPLE_LOG)
+    reports_dir = tmp_path / "reports"
+
+    res = reconstruct_for_date(
+        entry_date=date(2026, 6, 16),
+        log_path=log_path,
+        paper_ledger_path=paper_path,
+        live_ledger_path=live_path,
+        reports_dir=reports_dir,
+        fetch_fn=_fake_fetch_factory(),
+    )
+    assert res["n_traded_live"] == 1
+
+    report = json.loads((reports_dir / "overnight_slippage_2026-06-16.json").read_text())
+    row = next(r for r in report["per_trade"] if r["real_entry"] is not None)
+    # Slippage measured against the PERSISTED refs, not the fetched 103.2 / 110.0.
+    assert row["idealized_entry"] == 103.0
+    assert row["idealized_exit"] == 110.5
+    assert round(row["entry_slip"], 4) == round(103.5 - 103.0, 4)
+    assert round(row["exit_slip"], 4) == round(110.5 - 109.9, 4)
+
+
+def test_slippage_falls_back_to_fetched_refs_when_absent(tmp_path):
+    # Legacy live record WITHOUT persisted idealized refs -> use the fetched
+    # 103.2 / 110.0 (existing behavior preserved).
+    paper_path = tmp_path / "state" / "decay_tripwire_close_dn_overnight_long.json"
+    paper_path.parent.mkdir(parents=True, exist_ok=True)
+    paper_path.write_text(json.dumps({"trades": []}), encoding="utf-8")
+
+    live_path = tmp_path / "state" / "decay_tripwire_close_dn_overnight_long_live.json"
+    live_path.write_text(json.dumps({
+        "trades": [
+            {
+                "symbol": "NSE:SAMPANN",
+                "entry_price": 103.5, "exit_price": 109.9,
+                "qty": 96, "net_pnl_inr": 584.4,
+                "ts_iso": "2026-06-17T09:30:01", "exit_reason": "t1_settle",
+            }
+        ]
+    }), encoding="utf-8")
+
+    log_path = _write_log(tmp_path, SAMPLE_LOG)
+    reports_dir = tmp_path / "reports"
+    reconstruct_for_date(
+        entry_date=date(2026, 6, 16),
+        log_path=log_path,
+        paper_ledger_path=paper_path,
+        live_ledger_path=live_path,
+        reports_dir=reports_dir,
+        fetch_fn=_fake_fetch_factory(),
+    )
+    report = json.loads((reports_dir / "overnight_slippage_2026-06-16.json").read_text())
+    row = next(r for r in report["per_trade"] if r["real_entry"] is not None)
+    assert row["idealized_entry"] == 103.2   # fetched fallback
+    assert row["idealized_exit"] == 110.0
+
+
 def test_exit_today_uses_intraday_fetch(tmp_path, monkeypatch):
     # When exit_date == today, the orchestrator must use the INTRADAY fetch for
     # the exit price (the historical endpoint lacks today's bars) and the

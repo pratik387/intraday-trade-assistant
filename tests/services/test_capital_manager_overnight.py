@@ -153,6 +153,37 @@ def test_slot_roundtrips_gtt_id(tmp_path):
     assert pool2._get_slot(slot.slot_id).gtt_id == "GTT_123"
 
 
+def test_slot_roundtrips_idealized_entry_price(tmp_path):
+    state = tmp_path / "slots.json"
+    pool = OvernightSlotPool(state, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    slot = pool.reserve(symbol="NSE:RELIANCE", product="MTF", leverage=2.5, today=date(2026, 6, 22))
+    slot.idealized_entry_price = 142.75
+    pool.persist()
+    pool2 = OvernightSlotPool(state, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    assert pool2._get_slot(slot.slot_id).idealized_entry_price == 142.75
+
+
+def test_release_resets_idealized_entry_price(tmp_path):
+    state = tmp_path / "slots.json"
+    pool = OvernightSlotPool(state, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    slot = pool.reserve(symbol="NSE:RELIANCE", product="MTF", leverage=2.5, today=date(2026, 5, 21))
+    pool.attach_buy_fill(slot.slot_id, 100.0, "2026-05-21T15:30:00", "BUY-1")
+    slot.idealized_entry_price = 100.0
+    pool.attach_amo_sell(slot.slot_id, "AMO-1", date(2026, 5, 22))
+    pool.settle(slot.slot_id, 105.0, "2026-05-22T09:15:00", fees_inr=10.0, interest_inr=1.0)
+    pool.release(slot.slot_id, date(2026, 5, 25))
+    assert pool._get_slot(slot.slot_id).idealized_entry_price is None
+
+
+def test_idealized_entry_price_defaults_none_and_legacy_tolerant():
+    from services.capital_manager import OvernightSlot
+    # Default
+    assert OvernightSlot(slot_id=1).idealized_entry_price is None
+    # Legacy dict without the key still loads
+    slot = OvernightSlot.from_dict({"slot_id": 2, "status": "free"})
+    assert slot.idealized_entry_price is None
+
+
 def test_from_dict_ignores_unknown_legacy_keys():
     from services.capital_manager import OvernightSlot
     d = {"slot_id": 1, "status": "free", "paper_variant_b": None}  # legacy key not on the dataclass

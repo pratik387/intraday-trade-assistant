@@ -206,6 +206,32 @@ def test_records_optional_trade_detail(tmp_path):
     assert tw.state_summary()["trade_count"] == 1
 
 
+def test_records_idealized_entry_exit(tmp_path):
+    """record_trade can carry idealized_entry/idealized_exit; persisted + reloaded."""
+    path = _pwd(tmp_path)
+    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw.record_trade(
+        net_pnl_inr=850.0, ts_iso="2026-01-01T09:30:00",
+        symbol="TATAMOTORS", entry_price=650.5, exit_price=660.0,
+        idealized_entry=649.0, idealized_exit=661.0,
+    )
+    rec = json.loads(path.read_text(encoding="utf-8"))["trades"][0]
+    assert rec["idealized_entry"] == 649.0
+    assert rec["idealized_exit"] == 661.0
+    # Reload round-trips
+    tw2 = DecayTripwire("test", path, 30, 1.20, 6)
+    assert tw2.state_summary()["trade_count"] == 1
+
+
+def test_idealized_fields_omitted_when_none(tmp_path):
+    """A trade without idealized refs persists without the keys (compact)."""
+    path = _pwd(tmp_path)
+    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw.record_trade(net_pnl_inr=100.0, ts_iso="2026-01-01T09:30:00")
+    rec = json.loads(path.read_text(encoding="utf-8"))["trades"][0]
+    assert "idealized_entry" not in rec and "idealized_exit" not in rec
+
+
 def test_legacy_record_detail_defaults_none(tmp_path):
     """A net-only record persists without any detail keys (compact)."""
     path = _pwd(tmp_path)

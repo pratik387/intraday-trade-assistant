@@ -72,6 +72,45 @@ def test_run_place_exit_idempotent(state_path, patched_registry):
     broker.place_order.assert_not_called()
 
 
+def test_run_place_exit_captures_idealized_entry(state_path, patched_registry, monkeypatch):
+    import services.execution.overnight_handlers as oh
+    sid = _seed_t0_open_slot(state_path)
+    broker = MagicMock()
+    broker.place_order.return_value = "AMO1"
+    broker.place_gtt_stop.return_value = "GTT1"
+    # Idealized entry (15:25 close) returns a known value — stored on the slot.
+    monkeypatch.setattr(oh, "_paper_fill_price_entry", lambda b, sym, d: 138.42)
+    summary = oh.run_place_exit(_config(state_path), broker,
+                                now_ist=pd.Timestamp("2026-06-22 16:05:00"), paper_mode=False)
+    assert summary["placed_count"] == 1
+    pool = OvernightSlotPool(state_path, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    slot = pool._get_slot(sid)
+    assert slot.idealized_entry_price == 138.42
+    # AMO/GTT logic still ran (additive capture didn't disrupt placement).
+    assert slot.amo_sell_order_id == "AMO1"
+    assert slot.gtt_id == "GTT1"
+
+
+def test_run_place_exit_idealized_capture_failure_does_not_block(state_path, patched_registry, monkeypatch):
+    import services.execution.overnight_handlers as oh
+    sid = _seed_t0_open_slot(state_path)
+    broker = MagicMock()
+    broker.place_order.return_value = "AMO1"
+    broker.place_gtt_stop.return_value = "GTT1"
+
+    def _boom(b, sym, d):
+        raise RuntimeError("data unavailable")
+    monkeypatch.setattr(oh, "_paper_fill_price_entry", _boom)
+    summary = oh.run_place_exit(_config(state_path), broker,
+                                now_ist=pd.Timestamp("2026-06-22 16:05:00"), paper_mode=False)
+    # Placement still succeeds; idealized stays None.
+    assert summary["placed_count"] == 1
+    pool = OvernightSlotPool(state_path, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    slot = pool._get_slot(sid)
+    assert slot.idealized_entry_price is None
+    assert slot.amo_sell_order_id == "AMO1"
+
+
 def test_run_place_exit_refuses_before_amo_window(state_path, patched_registry):
     import services.execution.overnight_handlers as oh
     _seed_t0_open_slot(state_path)

@@ -465,6 +465,16 @@ def run_place_exit(
         if slot.reserved_today is None:
             logger.warning("run_place_exit: slot %d has no reserved_today; skipping", slot.slot_id)
             continue
+        # Capture the idealized paper entry reference (15:25 bar CLOSE, now
+        # complete post-15:30) for exact slippage measurement later. Best-effort:
+        # never let this block exit placement.
+        try:
+            ie = _paper_fill_price_entry(broker, slot.symbol, date.fromisoformat(slot.reserved_today))
+            if ie is not None:
+                slot.idealized_entry_price = float(ie)
+        except Exception as e:
+            logger.warning("run_place_exit: idealized-entry capture failed for %s: %s", slot.symbol, e)
+
         qty = int(round(slot.notional_inr / slot.buy_fill_price))
         next_day = _next_trading_day(date.fromisoformat(slot.reserved_today))
         amo_id = _place_amo_sell(
@@ -649,6 +659,15 @@ def run_verify_exit(
             interest_inr=float(interest),
         )
 
+        # Idealized exit reference (09:15 open) for slippage — distinct from the
+        # real live AMO fill. In paper mode this equals sell_price; in live it
+        # differs and is what we measure slippage against. Best-effort.
+        idealized_exit = None
+        try:
+            idealized_exit = _paper_fill_price_exit(broker, slot.symbol, expected_exit)
+        except Exception as e:
+            logger.warning("run_verify_exit: idealized-exit capture failed for %s: %s", slot.symbol, e)
+
         # Cancel the dangling catastrophe GTT now that the AMO has filled and
         # the slot is flat — a later GTT trigger would open a NAKED SHORT.
         if slot.gtt_id and hasattr(broker, "cancel_gtt"):
@@ -692,6 +711,8 @@ def run_verify_exit(
                     fees_inr=total_cost, gross_pnl_inr=net_pnl + total_cost,
                     symbol=slot.symbol, entry_price=slot.buy_fill_price,
                     exit_price=float(sell_price), exit_reason="t1_settle", qty=qty,
+                    idealized_entry=slot.idealized_entry_price,
+                    idealized_exit=(float(idealized_exit) if idealized_exit is not None else None),
                 )
             else:
                 tw.record_trade(net_pnl_inr=0.0, ts_iso=now.isoformat())

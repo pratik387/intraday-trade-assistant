@@ -692,6 +692,7 @@ class OvernightSlot:
     interest_inr: Optional[float] = None
     reserved_today: Optional[str] = None     # ISO date when reserve() was called
     gtt_id: Optional[str] = None             # broker GTT trigger id for the catastrophe stop
+    idealized_entry_price: Optional[float] = None  # 15:25 bar CLOSE captured at place-exit time (for exact slippage)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -879,6 +880,7 @@ class OvernightSlotPool:
         slot.interest_inr = None
         slot.reserved_today = None
         slot.gtt_id = None
+        slot.idealized_entry_price = None
 
     # ---------- Queries ----------
 
