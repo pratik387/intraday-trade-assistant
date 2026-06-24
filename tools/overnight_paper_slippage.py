@@ -282,7 +282,12 @@ def _next_trading_day(d: date) -> date:
 
 
 def _default_fetch_fn(symbols, from_date_iso, to_date_iso):  # pragma: no cover - network
-    """Real Upstox SDK fetch (integration path; needs live creds)."""
+    """Real Upstox SDK fetch (HISTORICAL path; needs live creds).
+
+    The historical endpoint does NOT contain the CURRENT day's bars (they only
+    land there after EOD processing). Use this for past dates only; for today's
+    bars use `_default_intraday_fetch_fn`.
+    """
     import asyncio
     from broker.upstox.upstox_data_client import UpstoxDataClient
 
@@ -294,6 +299,31 @@ def _default_fetch_fn(symbols, from_date_iso, to_date_iso):  # pragma: no cover 
     )
 
 
+def _default_intraday_fetch_fn(symbols):  # pragma: no cover - network
+    """Real Upstox SDK fetch for TODAY's 5m bars (intraday endpoint).
+
+    Returns {symbol: df_5m} of today's bars. Mirrors the call
+    services/execution/overnight_handlers.py run_entry uses.
+    """
+    import asyncio
+    from broker.upstox.upstox_data_client import UpstoxDataClient
+
+    sdk = UpstoxDataClient()
+    return asyncio.run(
+        sdk.async_fetch_intraday_5m_batch(symbols, concurrency=30, rps=20.0)
+    )
+
+
+def _today_ist() -> date:
+    """Today's date in IST (the VM runs IST; helper keeps it explicit)."""
+    try:
+        from utils.time_util import _now_naive_ist
+        return _now_naive_ist().date()
+    except Exception:  # pragma: no cover - fallback when helper unavailable
+        from datetime import datetime
+        return datetime.now().date()
+
+
 def reconstruct_for_date(
     *,
     entry_date: date,
@@ -302,13 +332,26 @@ def reconstruct_for_date(
     live_ledger_path: Path,
     reports_dir: Path,
     fetch_fn: Callable[[List[str], str, str], Dict[str, pd.DataFrame]],
+    intraday_fetch_fn: Optional[Callable[[List[str]], Dict[str, pd.DataFrame]]] = None,
 ) -> Dict:
     """End-to-end reconstruction + slippage for one entry date.
 
     Returns a summary dict. Writes:
       - reconstructed Rs1L trades into `paper_ledger_path` (idempotent),
       - a slippage report into `reports_dir/overnight_slippage_<DATE>.json`.
+
+    Price fetch is SPLIT by date because the Upstox historical endpoint does
+    NOT contain the current day's bars:
+      - entry price (15:25 close on the entry date, always past): `fetch_fn`
+        (historical).
+      - exit price (09:15 open on the exit date): if the exit date is today,
+        `intraday_fetch_fn` (today's intraday bars); else `fetch_fn`.
+    `intraday_fetch_fn` defaults to the real SDK intraday wrapper; tests inject
+    a fake.
     """
+    if intraday_fetch_fn is None:
+        intraday_fetch_fn = _default_intraday_fetch_fn
+
     exit_date = _next_trading_day(entry_date)
 
     fired = load_fired_signals(log_path)
@@ -318,9 +361,24 @@ def reconstruct_for_date(
         entry_date, exit_date, len(fired), len(symbols),
     )
 
-    bars_map: Dict[str, pd.DataFrame] = {}
+    # --- Entry-day bars: 15:25 close on the (always-past) entry date -> historical.
+    entry_bars: Dict[str, pd.DataFrame] = {}
+    # --- Exit-day bars: 09:15 open on the exit date. If exit is today, the
+    # historical endpoint lacks today's bars -> use the intraday endpoint.
+    exit_bars: Dict[str, pd.DataFrame] = {}
+    exit_is_today = exit_date == _today_ist()
     if symbols:
-        bars_map = fetch_fn(symbols, entry_date.isoformat(), exit_date.isoformat()) or {}
+        entry_iso = entry_date.isoformat()
+        entry_bars = fetch_fn(symbols, entry_iso, entry_iso) or {}
+        if exit_is_today:
+            logger.info(
+                "reconstruct_for_date: exit_date %s == today -> intraday endpoint for exit price",
+                exit_date,
+            )
+            exit_bars = intraday_fetch_fn(symbols) or {}
+        else:
+            exit_iso = exit_date.isoformat()
+            exit_bars = fetch_fn(symbols, exit_iso, exit_iso) or {}
 
     # hold_days: trading days between entry and exit (normally 1).
     hold_days = max(1, (exit_date - entry_date).days)
@@ -335,8 +393,10 @@ def reconstruct_for_date(
     n_missing_price = 0
 
     for symbol, product, lev in fired:
-        df = bars_map.get(symbol)
-        ie, ix = extract_idealized_prices(df, entry_date, exit_date)
+        # Entry price comes from the entry-day (historical) bars; exit price
+        # from the exit-day bars (intraday if today, else historical).
+        ie, _ = extract_idealized_prices(entry_bars.get(symbol), entry_date, exit_date)
+        _, ix = extract_idealized_prices(exit_bars.get(symbol), entry_date, exit_date)
         if ie is None or ix is None:
             n_missing_price += 1
             logger.warning(

@@ -171,6 +171,42 @@ def _fake_fetch_factory():
     return fake_fetch
 
 
+def _mock_df_entry_day():
+    """Entry-day (2026-06-16) bars only — what the historical endpoint returns
+    for the always-past entry date."""
+    idx = pd.to_datetime([
+        "2026-06-16 15:15", "2026-06-16 15:20", "2026-06-16 15:25",
+    ])
+    return pd.DataFrame(
+        {
+            "open":   [101.0, 102.0, 103.0],
+            "high":   [101.5, 102.5, 103.5],
+            "low":    [100.5, 101.5, 102.5],
+            "close":  [101.2, 102.2, 103.2],
+            "volume": [10, 20, 30],
+        },
+        index=idx,
+    )
+
+
+def _mock_df_exit_day():
+    """Exit-day (2026-06-17) bars only — what the intraday endpoint returns when
+    the exit date is today."""
+    idx = pd.to_datetime([
+        "2026-06-17 09:15", "2026-06-17 09:20",
+    ])
+    return pd.DataFrame(
+        {
+            "open":   [110.0, 111.0],
+            "high":   [110.5, 111.5],
+            "low":    [109.5, 110.5],
+            "close":  [110.2, 111.2],
+            "volume": [40, 50],
+        },
+        index=idx,
+    )
+
+
 def test_idempotent_append(tmp_path, monkeypatch):
     # Seed a paper ledger with one NON-reconstructed (real paper-run) trade
     # whose ts_iso date == the exit date, to prove we never remove it.
@@ -263,3 +299,113 @@ def test_slippage_report_with_live_match(tmp_path):
     assert round(row["entry_slip"], 4) == round(103.5 - 103.2, 4)
     assert round(row["exit_slip"], 4) == round(110.0 - 109.9, 4)
     assert row["live_net_10k"] == 584.4
+
+
+def test_exit_today_uses_intraday_fetch(tmp_path, monkeypatch):
+    # When exit_date == today, the orchestrator must use the INTRADAY fetch for
+    # the exit price (the historical endpoint lacks today's bars) and the
+    # HISTORICAL fetch for the entry price.
+    import tools.overnight_paper_slippage as mod
+
+    # exit date for entry 2026-06-16 is 2026-06-17; pretend today is that date.
+    monkeypatch.setattr(mod, "_today_ist", lambda: date(2026, 6, 17))
+
+    hist_calls = []
+    intraday_calls = []
+
+    def fake_hist(symbols, from_date_iso, to_date_iso):
+        hist_calls.append((tuple(symbols), from_date_iso, to_date_iso))
+        # Historical only ever asked for the (past) entry day.
+        return {s: _mock_df_entry_day() for s in symbols}
+
+    def fake_intraday(symbols):
+        intraday_calls.append(tuple(symbols))
+        # Intraday returns TODAY's (exit-day) bars only.
+        return {s: _mock_df_exit_day() for s in symbols}
+
+    paper_path = tmp_path / "state" / "decay_tripwire_close_dn_overnight_long.json"
+    paper_path.parent.mkdir(parents=True, exist_ok=True)
+    paper_path.write_text(json.dumps({"trades": []}), encoding="utf-8")
+    log_path = _write_log(tmp_path, SAMPLE_LOG)
+    reports_dir = tmp_path / "reports"
+
+    res = reconstruct_for_date(
+        entry_date=date(2026, 6, 16),
+        log_path=log_path,
+        paper_ledger_path=paper_path,
+        live_ledger_path=tmp_path / "state" / "no_live.json",
+        reports_dir=reports_dir,
+        fetch_fn=fake_hist,
+        intraday_fetch_fn=fake_intraday,
+    )
+
+    # Intraday fetch was used for the exit (today); historical for entry.
+    assert len(intraday_calls) == 1
+    # Historical was called only for the entry day (from==to==entry date).
+    assert all(f == t == "2026-06-16" for _, f, t in hist_calls)
+    assert res["n_fired"] == 2
+    assert res["n_reconstructed"] == 2
+    assert res["n_missing_price"] == 0
+
+    # Reconstruction used entry=103.2 (15:25 close) and exit=110.0 (09:15 open).
+    after = json.loads(paper_path.read_text())
+    recon = [t for t in after["trades"] if t.get("source") == "reconstructed"]
+    assert len(recon) == 2
+    for t in recon:
+        assert t["entry_price"] == 103.2
+        assert t["exit_price"] == 110.0
+
+
+def test_exit_past_uses_historical_fetch(tmp_path, monkeypatch):
+    # When exit_date is in the PAST (today is later), the orchestrator must use
+    # the HISTORICAL fetch for BOTH entry and exit — the intraday fetch is never
+    # called.
+    import tools.overnight_paper_slippage as mod
+
+    # Today is well after the exit date 2026-06-17.
+    monkeypatch.setattr(mod, "_today_ist", lambda: date(2026, 6, 22))
+
+    hist_calls = []
+    intraday_calls = []
+
+    def fake_hist(symbols, from_date_iso, to_date_iso):
+        hist_calls.append((tuple(symbols), from_date_iso, to_date_iso))
+        if from_date_iso == "2026-06-16":
+            return {s: _mock_df_entry_day() for s in symbols}
+        return {s: _mock_df_exit_day() for s in symbols}
+
+    def fake_intraday(symbols):
+        intraday_calls.append(tuple(symbols))
+        return {s: _mock_df_exit_day() for s in symbols}
+
+    paper_path = tmp_path / "state" / "decay_tripwire_close_dn_overnight_long.json"
+    paper_path.parent.mkdir(parents=True, exist_ok=True)
+    paper_path.write_text(json.dumps({"trades": []}), encoding="utf-8")
+    log_path = _write_log(tmp_path, SAMPLE_LOG)
+    reports_dir = tmp_path / "reports"
+
+    res = reconstruct_for_date(
+        entry_date=date(2026, 6, 16),
+        log_path=log_path,
+        paper_ledger_path=paper_path,
+        live_ledger_path=tmp_path / "state" / "no_live.json",
+        reports_dir=reports_dir,
+        fetch_fn=fake_hist,
+        intraday_fetch_fn=fake_intraday,
+    )
+
+    # Intraday NEVER called; historical used for both entry and exit days.
+    assert intraday_calls == []
+    from_to = {(f, t) for _, f, t in hist_calls}
+    assert ("2026-06-16", "2026-06-16") in from_to
+    assert ("2026-06-17", "2026-06-17") in from_to
+    assert res["n_fired"] == 2
+    assert res["n_reconstructed"] == 2
+    assert res["n_missing_price"] == 0
+
+    after = json.loads(paper_path.read_text())
+    recon = [t for t in after["trades"] if t.get("source") == "reconstructed"]
+    assert len(recon) == 2
+    for t in recon:
+        assert t["entry_price"] == 103.2
+        assert t["exit_price"] == 110.0
