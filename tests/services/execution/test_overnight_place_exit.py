@@ -151,3 +151,25 @@ def test_place_helpers_emit_limit_orders():
     k = broker.place_order.call_args.kwargs
     assert k["side"] == "SELL" and k["variety"] == "regular"
     assert k["order_type"] == "LIMIT" and k["price"] == 99.5
+
+
+def test_handlers_skip_on_holiday(state_path, patched_registry):
+    """Live cron fires Mon-Fri incl. holidays; handlers must self-guard so a
+    holiday never runs a live entry on stale data. 2026-06-26 is an NSE holiday."""
+    import services.execution.overnight_handlers as oh
+    from services.execution.overnight_handlers import run_entry, run_verify_exit
+    _seed_t0_open_slot(state_path)
+    broker = MagicMock()
+    hol = pd.Timestamp("2026-06-26 15:26:00")  # holiday (in assets/nse_holidays.json)
+    assert not oh._is_trading_day(hol.date())
+
+    s_entry = run_entry(_config(state_path), broker, now_ist=hol, paper_mode=False)
+    assert s_entry.get("skipped_non_trading_day") is True
+    s_pexit = oh.run_place_exit(_config(state_path), broker,
+                                now_ist=pd.Timestamp("2026-06-26 16:05:00"), paper_mode=False)
+    assert s_pexit.get("skipped_non_trading_day") is True
+    s_vexit = run_verify_exit(_config(state_path), broker,
+                              now_ist=pd.Timestamp("2026-06-26 09:30:00"), paper_mode=False)
+    assert s_vexit.get("skipped_non_trading_day") is True
+    # No orders placed on a holiday.
+    broker.place_order.assert_not_called()

@@ -64,6 +64,16 @@ def _nse_holidays() -> set:
     return _NSE_HOLIDAYS
 
 
+def _is_trading_day(d: date) -> bool:
+    """True iff d is an NSE trading day (not a weekend or exchange holiday).
+
+    The overnight crons fire on weekdays (Mon-Fri) regardless of holidays, so the
+    handlers must self-guard: running a LIVE entry on a holiday would compute
+    signals on stale/closed-market data and could place real orders. Fail safe.
+    """
+    return d.weekday() < 5 and d not in _nse_holidays()
+
+
 def _next_trading_day(d: date) -> date:
     """Next NSE trading day after `d`: skips weekends AND exchange holidays.
 
@@ -129,6 +139,14 @@ def run_entry(
         "fired_count": 0, "skipped_count": 0, "rejected_count": 0,
         "events": [],
     }
+
+    # Non-trading-day guard: the cron fires Mon-Fri regardless of holidays, but
+    # a LIVE entry on a holiday would compute signals on stale/closed-market data
+    # and could place real orders. Bail before any data fetch / order placement.
+    if not _is_trading_day(today):
+        logger.info("run_entry: %s is not an NSE trading day (weekend/holiday); skipping", today)
+        summary["skipped_non_trading_day"] = True
+        return summary
 
     paper_enabled_setups = _select_overnight_setups(config, paper_mode=paper_mode)
     if not paper_enabled_setups:
@@ -452,6 +470,11 @@ def run_place_exit(
         summary["refused_amo_window"] = True
         return summary
 
+    if not _is_trading_day(now.date()):
+        logger.info("run_place_exit: %s is not an NSE trading day; skipping", now.date())
+        summary["skipped_non_trading_day"] = True
+        return summary
+
     setups = _select_overnight_setups(config, paper_mode=paper_mode)
     if not setups:
         logger.info("run_place_exit: no overnight setups active; exit")
@@ -555,6 +578,14 @@ def run_verify_exit(
         "settled_count": 0, "released_count": 0,
         "orphan_t0_count": 0, "events": [],
     }
+
+    # Non-trading-day guard: exit dates are always trading days (via
+    # _next_trading_day), so a holiday morning has nothing legitimate to settle;
+    # any stale orphan defers safely to the next trading day's verify-exit.
+    if not _is_trading_day(today):
+        logger.info("run_verify_exit: %s is not an NSE trading day; skipping", today)
+        summary["skipped_non_trading_day"] = True
+        return summary
 
     paper_enabled_setups = _select_overnight_setups(config, paper_mode=paper_mode)
     if not paper_enabled_setups:
