@@ -329,13 +329,30 @@ def run_entry(
                 summary["skipped_count"] += 1
                 continue
 
-            # Place MOC BUY
+            # Place marketable-LIMIT BUY. Kite bars plain MARKET orders on the
+            # illiquid/trade-to-trade universe, so cross the spread with a LIMIT
+            # at ref*(1+buffer). Ref = live LTP when available (the actual price
+            # at 15:26), else the plan's 15:25-close entry.
+            entry_buf_pct = float(spec.raw_config["entry_limit_buffer_pct"])
+            ref_px = None
+            try:
+                ref_px = float(broker.get_ltp(symbol))
+            except Exception:
+                ref_px = None
+            if ref_px is None or ref_px <= 0:
+                # Expected in paper/dry-run (no live LTP) — price off the plan's
+                # 15:25-close entry. Logged so the live-vs-plan basis is observable.
+                logger.debug("run_entry: live LTP unavailable for %s (paper_mode=%s); "
+                             "pricing BUY limit off plan.entry_price", symbol, paper_mode)
+                ref_px = float(plan.entry_price)
+            buy_limit = ref_px * (1.0 + entry_buf_pct / 100.0)
             try:
                 buy_order_id = _place_buy(
                     broker, symbol=symbol, qty=plan.qty,
                     product=evt.context["product"],
                     paper_mode=paper_mode,
                     trade_id=f"OVERNIGHT_{today.isoformat()}_{slot.slot_id}",
+                    limit_price=buy_limit,
                 )
             except Exception as e:
                 logger.error("run_entry: BUY failed for %s: %s; releasing reservation", symbol, e)
@@ -477,10 +494,15 @@ def run_place_exit(
 
         qty = int(round(slot.notional_inr / slot.buy_fill_price))
         next_day = _next_trading_day(date.fromisoformat(slot.reserved_today))
+        # AMO LIMIT floor at the catastrophe level: fills at the pre-open auction
+        # for any open >= -catastrophe (limit sells fill at the better price);
+        # a gap below the floor is left to the GTT / morning failsafe.
+        amo_limit = slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0)
         amo_id = _place_amo_sell(
             broker, symbol=slot.symbol, qty=qty,
             product=slot.product or "CNC", paper_mode=paper_mode,
             trade_id=f"OVERNIGHT_AMO_{slot.reserved_today}_{slot.slot_id}",
+            limit_price=amo_limit,
         )
         pool.attach_amo_sell(slot.slot_id, str(amo_id), next_day)
         trigger = slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0)
@@ -617,15 +639,19 @@ def run_verify_exit(
                     "run_verify_exit: live AMO %s did not fill; placing failsafe SELL",
                     slot.amo_sell_order_id,
                 )
-                # Failsafe: place a regular market SELL at current LTP
+                # Failsafe: marketable-LIMIT SELL just below live LTP (Kite bars
+                # plain MARKET on this universe). Fetch LTP first to price it.
                 qty_for_failsafe = int(round(slot.notional_inr / slot.buy_fill_price))
+                failsafe_buf = float(paper_enabled_setups[0].raw_config["gtt_limit_buffer_pct"])
                 try:
+                    ltp = float(broker.get_ltp(slot.symbol))
                     _place_failsafe_sell(
                         broker,
                         symbol=slot.symbol, qty=qty_for_failsafe,
                         product=slot.product or "CNC",
+                        limit_price=ltp * (1.0 - failsafe_buf / 100.0),
                     )
-                    sell_price = float(broker.get_ltp(slot.symbol))
+                    sell_price = ltp
                 except Exception as e:
                     logger.error(
                         "run_verify_exit: failsafe SELL failed for slot %d: %s",
@@ -958,32 +984,45 @@ def _get_5m_for_symbol_live(broker, symbol: str, today: date, setup_cfg: dict) -
 
 
 def _place_buy(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
-               trade_id: str) -> str:
-    """Place a MOC BUY order (variety=regular, product=MTF or CNC)."""
+               trade_id: str, limit_price: float) -> str:
+    """Place a marketable-LIMIT BUY (variety=regular, product=MTF or CNC).
+
+    Kite bars plain MARKET orders on close_dn's illiquid/trade-to-trade
+    universe, so the BUY crosses the spread via a LIMIT at ref*(1+buffer).
+    """
     order_id = broker.place_order(
         symbol=symbol, side="BUY", qty=qty,
-        order_type="MARKET", product=product, variety="regular",
+        order_type="LIMIT", price=round(float(limit_price), 2),
+        product=product, variety="regular",
         trade_id=trade_id, check_margins=(product == "MIS"),
     )
     return str(order_id)
 
 
 def _place_amo_sell(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
-                    trade_id: str) -> str:
-    """Place an AMO SELL for next-day pre-open execution."""
+                    trade_id: str, limit_price: float) -> str:
+    """Place an AMO LIMIT SELL for next-day pre-open execution.
+
+    Floor is set at the catastrophe level so it fills at the pre-open auction
+    for any non-catastrophic open (limit sells fill at the better auction
+    price); a gap below the floor is left to the GTT / morning failsafe.
+    """
     order_id = broker.place_order(
         symbol=symbol, side="SELL", qty=qty,
-        order_type="MARKET", product=product, variety="amo",
+        order_type="LIMIT", price=round(float(limit_price), 2),
+        product=product, variety="amo",
         trade_id=trade_id, check_margins=False,
     )
     return str(order_id)
 
 
-def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str) -> str:
-    """Failsafe regular market SELL when AMO did not execute."""
+def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str,
+                         limit_price: float) -> str:
+    """Failsafe regular LIMIT SELL (marketable, below live LTP) when AMO did not execute."""
     order_id = broker.place_order(
         symbol=symbol, side="SELL", qty=qty,
-        order_type="MARKET", product=product, variety="regular",
+        order_type="LIMIT", price=round(float(limit_price), 2),
+        product=product, variety="regular",
         check_margins=False,
     )
     return str(order_id)
