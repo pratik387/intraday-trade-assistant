@@ -23,6 +23,7 @@ def _config(state_path):
         "capital_allocation": {"state_file": str(state_path), "max_concurrent_slots": 2,
                                "margin_per_slot_inr": 10000, "max_new_positions_per_day": 2},
         "catastrophe_stop_pct": 5.0, "gtt_limit_buffer_pct": 0.5,
+        "entry_limit_buffer_pct": 1.0,
     }}}
 
 
@@ -52,6 +53,10 @@ def test_run_place_exit_places_amo_and_gtt(state_path, patched_registry):
     assert summary["placed_count"] == 1
     amo_kwargs = broker.place_order.call_args.kwargs
     assert amo_kwargs["side"] == "SELL" and amo_kwargs["variety"] == "amo" and amo_kwargs["product"] == "MTF"
+    # AMO must be a LIMIT (Kite bars MARKET on this universe), floored at the
+    # catastrophe level: 140.0 buy_fill * (1 - 5%) = 133.0.
+    assert amo_kwargs["order_type"] == "LIMIT"
+    assert round(amo_kwargs["price"], 2) == 133.0
     gtt_kwargs = broker.place_gtt_stop.call_args.kwargs
     assert round(gtt_kwargs["trigger_price"], 2) == 133.0
     pool = OvernightSlotPool(state_path, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
@@ -119,3 +124,30 @@ def test_run_place_exit_refuses_before_amo_window(state_path, patched_registry):
                                 now_ist=pd.Timestamp("2026-06-22 15:30:00"), paper_mode=False)
     assert summary.get("refused_amo_window") is True
     broker.place_order.assert_not_called()
+
+
+def test_place_helpers_emit_limit_orders():
+    """All three order helpers must place LIMIT (not MARKET) — Kite bars plain
+    MARKET orders on close_dn's illiquid/trade-to-trade universe."""
+    import services.execution.overnight_handlers as oh
+    broker = MagicMock(); broker.place_order.return_value = "X"
+
+    oh._place_buy(broker, symbol="NSE:UCAL", qty=10, product="MTF",
+                  paper_mode=False, trade_id="T", limit_price=101.234)
+    k = broker.place_order.call_args.kwargs
+    assert k["side"] == "BUY" and k["variety"] == "regular"
+    assert k["order_type"] == "LIMIT" and k["price"] == 101.23  # rounded to 2dp
+
+    broker.place_order.reset_mock()
+    oh._place_amo_sell(broker, symbol="NSE:UCAL", qty=10, product="CNC",
+                       paper_mode=False, trade_id="T", limit_price=95.0)
+    k = broker.place_order.call_args.kwargs
+    assert k["side"] == "SELL" and k["variety"] == "amo"
+    assert k["order_type"] == "LIMIT" and k["price"] == 95.0
+
+    broker.place_order.reset_mock()
+    oh._place_failsafe_sell(broker, symbol="NSE:UCAL", qty=10, product="CNC",
+                            limit_price=99.5)
+    k = broker.place_order.call_args.kwargs
+    assert k["side"] == "SELL" and k["variety"] == "regular"
+    assert k["order_type"] == "LIMIT" and k["price"] == 99.5

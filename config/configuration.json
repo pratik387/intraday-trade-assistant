@@ -564,6 +564,8 @@
       "catastrophe_stop_pct": 5.0,
       "fill_poll_timeout_sec": 60,
       "gtt_limit_buffer_pct": 0.5,
+      "entry_limit_buffer_pct": 1.0,
+      "_comment_entry_limit_buffer_pct": "Marketable-LIMIT buffer ABOVE ref price for the entry BUY (and basis for the sell legs). Kite bars plain MARKET orders on close_dn's illiquid/trade-to-trade universe ('Market orders without market protection are not allowed via API'), so entries are placed as LIMIT at ref*(1+buffer/100) to guarantee acceptance and cap entry slippage. 1.0% covers the 15:25->15:26 drift on deep-illiquid small-caps while staying well inside catastrophe_stop_pct. Sell legs: AMO floor = buy_fill*(1-catastrophe_stop_pct/100) (exit at open unless catastrophe, GTT covers below); failsafe = live LTP*(1-gtt_limit_buffer_pct/100).",
       "capital_allocation": {
         "_status_LIVE_CAPS_APPLIED_2026_06_22": "Active caps set to the _live_* values for live trading (Rs2.5L / 25 slots / Rs10k per trade). These ALSO bound the paper run now (paper+live share the active keys). To revert to permissive paper observation, restore active_margin_inr=10000000 / 100 slots / margin_per_slot_inr=100000.",
         "active_margin_inr": 250000,

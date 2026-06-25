@@ -71,6 +71,10 @@ def _minimal_config(state_path: Path) -> dict:
                 "min_daily_avg_volume": 50000,
                 "min_trading_days_required": 30,
                 "universe_max_symbols": 1500,
+                "catastrophe_stop_pct": 5.0,
+                "gtt_limit_buffer_pct": 0.5,
+                "entry_limit_buffer_pct": 1.0,
+                "fill_poll_timeout_sec": 60,
                 "capital_allocation": {
                     "active_margin_inr": 400000,
                     "cushion_inr": 100000,

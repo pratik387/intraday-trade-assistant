@@ -19,6 +19,7 @@ def _config(state_path):
         "mode": "overnight", "enabled": True, "paper_enabled": True,
         "capital_allocation": {"state_file": str(state_path), "max_concurrent_slots": 2,
                                "margin_per_slot_inr": 10000, "max_new_positions_per_day": 2},
+        "catastrophe_stop_pct": 5.0, "gtt_limit_buffer_pct": 0.5, "entry_limit_buffer_pct": 1.0,
     }}}
 
 
