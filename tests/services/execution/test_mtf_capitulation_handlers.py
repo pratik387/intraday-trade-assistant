@@ -402,3 +402,36 @@ def test_composite_entries_skip_held_union(monkeypatch, tmp_path):
     summary = mh.run_eod(cfg, broker, now_ist=pd.Timestamp("2026-06-22 15:35:00"),
                          paper_mode=True, phase="entries")
     assert summary["entered_count"] == 0  # SHARED already held -> excluded
+
+
+def test_exit_feeds_all_contributors_tripwires(monkeypatch, tmp_path):
+    import services.execution.mtf_capitulation_handlers as mh
+    from services.state.position_persistence import PositionPersistence
+    from services.risk.decay_tripwire import DecayTripwire
+
+    cfg = _two_setup_config(tmp_path)
+    # give both setups a decay tripwire
+    for n in ("A2", "C1"):
+        cfg["setups"][n]["decay_tripwire"] = {
+            "window_trades": 30, "pf_floor": 1.2, "sustained_weeks": 6,
+            "state_file": str(tmp_path / f"tw_{n}.json")}
+    # Seed an owned-by-A2 position that exits today, tagged contributors=[A2,C1].
+    a2_store = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
+    a2_store.save_position(symbol="NSE:SHARED", side="BUY", qty=10, avg_price=100.0,
+                           trade_id="A2_2026-06-20_SHARED", entry_date="2026-06-20",
+                           exit_on_date="2026-06-22", product="MTF",
+                           state={"qty": 10, "leverage": 2.5, "entry_fill_price": 100.0,
+                                  "contributors": ["A2", "C1"]})
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"]),
+                                                       ("C1", cfg["setups"]["C1"])])
+    monkeypatch.setattr(mh, "_paper_close_price", lambda b, s, d: 110.0)  # +10% exit
+    broker = _stub_broker_amo()
+    mh.run_eod(cfg, broker, now_ist=pd.Timestamp("2026-06-22 15:28:00"),
+               paper_mode=True, phase="exits")
+    # both A2 and C1 tripwires recorded one trade
+    for n in ("A2", "C1"):
+        tw = DecayTripwire(setup_name=n, state_path=tmp_path / f"tw_{n}.json",
+                           window_trades=30, pf_floor=1.2, sustained_weeks=6)
+        assert len(tw._trades) == 1  # noqa: SLF001
+        assert tw._trades[0].net_pnl_inr > 0  # +10% gross, profitable

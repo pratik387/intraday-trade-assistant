@@ -351,11 +351,23 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
             "entry_date": pos.entry_date, "exit_date": exit_on.isoformat(),
         })
 
-        tw_cfg = raw.get("decay_tripwire")
-        if tw_cfg is not None:
+        # Feed the realized trade to EVERY contributing setup's decay tripwire,
+        # not just the owner's — the book holds the name once (owner store) but
+        # each setup that flagged it must see the outcome for standalone-edge
+        # measurement (spec section 5). Falls back to the owner when the position
+        # predates contributor tagging.
+        contributors = pos.state.get("contributors") or [name]
+        lookup = setups_by_name or {name: raw}
+        for cname in contributors:
+            craw = lookup.get(cname)
+            if craw is None:
+                continue
+            tw_cfg = craw.get("decay_tripwire")
+            if tw_cfg is None:
+                continue
             from services.risk.decay_tripwire import DecayTripwire
             DecayTripwire(
-                setup_name=name,
+                setup_name=cname,
                 state_path=Path(tw_cfg["state_file"]),
                 window_trades=int(tw_cfg["window_trades"]),
                 pf_floor=float(tw_cfg["pf_floor"]),
