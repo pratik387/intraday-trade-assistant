@@ -430,6 +430,44 @@ def _held_union(setups, persistences):
     return held
 
 
+def _log_selection_diagnostics(baskets, chosen, today, log_path_str):
+    """One jsonl row per (setup, symbol, day): cap_score + composite/owner/
+    contributors/consensus + chosen flag. Feeds the section 6.1 IC analysis.
+    Logs EVERY flagged name (not only chosen), so forward-return IC can be
+    computed for picks that were capped out. Never breaks the cron.
+    """
+    import json as _json
+    try:
+        # consensus + composite views keyed by bare symbol
+        consensus, by_sym = {}, {}
+        for _setup, cands in baskets.items():
+            for c in cands:
+                b = str(c["symbol"]).replace("NSE:", "").upper()
+                consensus[b] = consensus.get(b, 0) + 1
+        for c in chosen:
+            by_sym[c["bare"]] = c
+        path = Path(log_path_str)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            for setup_name, cands in baskets.items():
+                for c in cands:
+                    b = str(c["symbol"]).replace("NSE:", "").upper()
+                    ch = by_sym.get(b)
+                    f.write(_json.dumps({
+                        "session_date": today.isoformat(),
+                        "setup": setup_name, "symbol": b,
+                        "cap_score": float(c["cap_score"]), "tshock": float(c["tshock"]),
+                        "trail_ret": float(c["trail_ret"]), "rank_pct": float(c["rank_pct"]),
+                        "consensus_count": int(consensus[b]),
+                        "chosen": ch is not None,
+                        "composite": (float(ch["composite"]) if ch else None),
+                        "owner": (ch["owner"] if ch else None),
+                        "contributors": (ch["contributors"] if ch else None),
+                    }) + "\n")
+    except Exception as e:  # pragma: no cover - diagnostics must not break the cron
+        logger.warning("mtf_capitulation: selection diagnostics log failed: %s", e)
+
+
 def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
                            summary, *, ca_ex_dates, repo_root, config):
     from services.multiday_composite_selector import MultiDayCompositeSelector
@@ -457,6 +495,7 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
     limit = min(int(fam["max_new_per_day"]),
                 max(0, int(fam["max_concurrent"]) - total_held))
     chosen = selector.select(baskets, held_symbols=held, weights=weights, limit=limit)
+    _log_selection_diagnostics(baskets, chosen, today, fam["selection_log_path"])
     if not chosen:
         return
 

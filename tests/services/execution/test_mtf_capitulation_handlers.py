@@ -404,6 +404,40 @@ def test_composite_entries_skip_held_union(monkeypatch, tmp_path):
     assert summary["entered_count"] == 0  # SHARED already held -> excluded
 
 
+def test_selection_diagnostics_logged_per_setup_symbol(monkeypatch, tmp_path):
+    import json as _json
+    import services.execution.mtf_capitulation_handlers as mh
+    cfg = _two_setup_config(tmp_path)
+    log_path = tmp_path / "sel.jsonl"
+    cfg["multi_day_portfolio"]["selection_log_path"] = str(log_path)
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"]),
+                                                       ("C1", cfg["setups"]["C1"])])
+    monkeypatch.setattr(mh, "_decay_paused", lambda name, raw: False)
+    monkeypatch.setattr(mh, "_prewarm_daily_universe", lambda setups, broker: None)
+    monkeypatch.setattr(mh, "_rank_basket_for_setup",
+                        lambda name, raw, broker, today, ca_ex_dates, repo_root:
+                        ([{"symbol": "SHARED", "cap_score": 1.0, "tshock": 3.0, "close": 100.0,
+                           "trail_ret": -0.12, "adv_tier": 1, "rank_pct": 0.01}]
+                         if name == "C1" else
+                         [{"symbol": "SHARED", "cap_score": 1.0, "tshock": 3.0, "close": 100.0,
+                           "trail_ret": -0.12, "adv_tier": 1, "rank_pct": 0.01},
+                          {"symbol": "AONLY", "cap_score": 0.5, "tshock": 2.5, "close": 50.0,
+                           "trail_ret": -0.10, "adv_tier": 1, "rank_pct": 0.04}]))
+    broker = _stub_broker_amo()
+    mh.run_eod(cfg, broker, now_ist=pd.Timestamp("2026-06-22 15:35:00"),
+               paper_mode=True, phase="entries")
+    rows = [_json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+    # one row per (setup, symbol): A2/SHARED, A2/AONLY, C1/SHARED
+    keyed = {(r["setup"], r["symbol"]): r for r in rows}
+    assert set(keyed) == {("A2", "SHARED"), ("A2", "AONLY"), ("C1", "SHARED")}
+    assert keyed[("A2", "SHARED")]["cap_score"] == 1.0
+    assert keyed[("A2", "SHARED")]["session_date"] == "2026-06-22"
+    assert keyed[("A2", "SHARED")]["consensus_count"] == 2  # flagged by A2 + C1
+    assert keyed[("A2", "AONLY")]["consensus_count"] == 1
+    assert keyed[("A2", "SHARED")]["chosen"] is True
+
+
 def test_exit_feeds_all_contributors_tripwires(monkeypatch, tmp_path):
     import services.execution.mtf_capitulation_handlers as mh
     from services.state.position_persistence import PositionPersistence
