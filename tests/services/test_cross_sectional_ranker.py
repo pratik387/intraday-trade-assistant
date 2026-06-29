@@ -241,3 +241,18 @@ def test_zscore_mode_fail_fast_on_missing_key():
     del bad["zscore_max"]
     with pytest.raises(KeyError):
         CrossSectionalRanker(bad)
+
+
+def test_rank_emits_cap_score_oriented_and_nonnegative():
+    sd = date(2026, 3, 16)
+    ranker = CrossSectionalRanker(_cfg(loser_pct=0.25))
+    out = ranker.rank(_panel(sd), sd, mtf_eligible={f"LOSER{i}" for i in range(6)} | {f"FILL{i:02d}" for i in range(25)})
+    assert out, "expected a non-empty basket"
+    # every selected name carries a finite, non-negative cap_score
+    for r in out:
+        assert "cap_score" in r
+        assert r["cap_score"] >= 0.0
+        assert r["cap_score"] == r["cap_score"]  # not NaN
+    # the deepest loser (most negative trailing return) has the largest cap_score
+    deepest = min(out, key=lambda r: r["trail_ret"])
+    assert deepest["cap_score"] == max(r["cap_score"] for r in out)
