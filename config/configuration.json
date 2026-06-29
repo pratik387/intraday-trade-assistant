@@ -107,7 +107,8 @@
   "lunch_end": "13:15",
   "setups": {
     "gap_fade_short": {
-      "enabled": true,
+      "enabled": false,
+      "_disabled_2026_06_29": "DISABLED in production (was still firing in paper because the prior disable was parked on a research branch, not main). RAW geometry is a net loser on the full 40-month re-sim: pooled PF 0.95, Disc 1.26 / OOS 0.60 / Holdout 0.74. The loss is entirely against-the-index shorts (63% of fires short into a GREEN Nifty, PF 0.76 = 100% of loss). An index-direction veto ('no short when Nifty green at entry') restores pooled PF 1.39 / Disc 1.44 / OOS 1.11 / Holdout 1.57 — but that requires a per-setup HARD directional block in services/gates/directional_bias.py (currently enabled:false + boost-only). Re-enable ONLY after wiring + validating that veto. Evidence: analysis/backtest_findings.md + docs/retired_setups.md (2026-06-25) + branch research/2026-06-25-gap-fade-directional-veto.",
       "mechanism_tags": [
         "SEBI_FO_rule_version_2"
       ],
