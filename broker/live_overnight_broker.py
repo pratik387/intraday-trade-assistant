@@ -54,6 +54,11 @@ class LiveOvernightBroker:
     def get_ltp(self, symbol: str) -> float:
         return self._kite.get_ltp(symbol)
 
+    def get_quote(self, symbol: str) -> Dict[str, float]:
+        # Circuit bands + last_price from Kite — used by the marketable-LIMIT
+        # pricing to stay tick-valid and inside the circuit band.
+        return self._kite.get_quote(symbol)
+
     def place_gtt_stop(self, **kwargs) -> str:
         return self._kite.place_gtt_stop(**kwargs)
 

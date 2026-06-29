@@ -65,6 +65,27 @@ def test_run_place_exit_places_amo_and_gtt(state_path, patched_registry):
     assert slot.gtt_id == "GTT1"
 
 
+def test_run_place_exit_amo_respects_lower_circuit(state_path, patched_registry):
+    """Regression (2026-06-29 live): a SELL LIMIT below the lower circuit is
+    rejected by Kite. The catastrophe-floored AMO (140*0.95=133.0) must be
+    clamped UP to a tick-valid price >= the lower circuit when the quote binds."""
+    import services.execution.overnight_handlers as oh
+    _seed_t0_open_slot(state_path)
+    broker = MagicMock()
+    broker.place_order.return_value = "AMO1"
+    broker.place_gtt_stop.return_value = "GTT1"
+    # Lower circuit (135.0) sits ABOVE the raw catastrophe floor (133.0).
+    broker.get_quote.return_value = {
+        "last_price": 138.0, "upper_circuit_limit": 0.0, "lower_circuit_limit": 135.0,
+    }
+    oh.run_place_exit(_config(state_path), broker,
+                      now_ist=pd.Timestamp("2026-06-22 16:05:00"), paper_mode=False)
+    amo_kwargs = broker.place_order.call_args.kwargs
+    assert amo_kwargs["order_type"] == "LIMIT"
+    assert amo_kwargs["price"] == 135.0          # clamped up to the lower circuit, tick-valid
+    assert amo_kwargs["price"] >= 135.0
+
+
 def test_run_place_exit_idempotent(state_path, patched_registry):
     import services.execution.overnight_handlers as oh
     _seed_t0_open_slot(state_path)
@@ -136,7 +157,7 @@ def test_place_helpers_emit_limit_orders():
                   paper_mode=False, trade_id="T", limit_price=101.234)
     k = broker.place_order.call_args.kwargs
     assert k["side"] == "BUY" and k["variety"] == "regular"
-    assert k["order_type"] == "LIMIT" and k["price"] == 101.23  # rounded to 2dp
+    assert k["order_type"] == "LIMIT" and k["price"] == 101.25  # rounded to 0.05 tick
 
     broker.place_order.reset_mock()
     oh._place_amo_sell(broker, symbol="NSE:UCAL", qty=10, product="CNC",

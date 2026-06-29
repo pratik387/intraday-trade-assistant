@@ -333,6 +333,35 @@ class KiteBroker:
                 raise
         return 0.0
 
+    def get_quote(self, symbol: str) -> Dict[str, float]:
+        """Full quote incl. circuit bands for a single symbol (LIMIT-price safety).
+
+        Returns {last_price, upper_circuit_limit, lower_circuit_limit}. Kite's
+        quote() carries the per-instrument circuit band, which the overnight
+        marketable-LIMIT pricing clamps against (a buffer can otherwise push a
+        BUY above the upper circuit / a SELL below the lower circuit -> rejected).
+        Missing fields default to 0.0; callers treat 0.0 as "no band".
+        """
+        self._rate_limit_ltp()
+        exch, tsym = _split_symbol(symbol)
+        key = f"{exch}:{tsym}"
+        for attempt in range(3):
+            try:
+                data = self.kc.quote([key])
+                node = data.get(key) or {}
+                return {
+                    "last_price": float(node.get("last_price") or 0.0),
+                    "upper_circuit_limit": float(node.get("upper_circuit_limit") or 0.0),
+                    "lower_circuit_limit": float(node.get("lower_circuit_limit") or 0.0),
+                }
+            except Exception as e:
+                if "Too many requests" in str(e) and attempt < 2:
+                    logger.warning(f"Rate limited on quote call, backing off (attempt {attempt+1})")
+                    time.sleep(1.0 + attempt * 0.5)
+                    continue
+                raise
+        return {"last_price": 0.0, "upper_circuit_limit": 0.0, "lower_circuit_limit": 0.0}
+
     def get_ltp_with_level(self, symbol: str, check_level: Optional[float] = None, **kwargs) -> float:
         """
         Get LTP with optional level checking (for exit executor).

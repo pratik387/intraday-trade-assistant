@@ -30,6 +30,32 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
+from utils.price_utils import clamp_round_limit, round_to_tick
+
+
+def _safe_quote(broker, symbol):
+    """Best-effort (last_price, upper_circuit, lower_circuit) for LIMIT pricing.
+
+    Prefers broker.get_quote (circuit bands); falls back to get_ltp (no bands)
+    and finally (None, None, None). Never raises — a quote failure must not block
+    order placement (the caller still tick-rounds and has a plan-price fallback).
+    """
+    get_quote = getattr(broker, "get_quote", None)
+    if get_quote is not None:
+        try:
+            q = get_quote(symbol)
+            lp = float(q.get("last_price") or 0.0) or None
+            uc = float(q.get("upper_circuit_limit") or 0.0) or None
+            lc = float(q.get("lower_circuit_limit") or 0.0) or None
+            return lp, uc, lc
+        except Exception as e:
+            logger.debug("overnight: get_quote failed for %s (%s); falling back to LTP", symbol, e)
+    try:
+        lp = float(broker.get_ltp(symbol)) or None
+        return lp, None, None
+    except Exception:
+        return None, None, None
+
 
 _NSE_HOLIDAYS = None
 
@@ -352,18 +378,19 @@ def run_entry(
             # at ref*(1+buffer). Ref = live LTP when available (the actual price
             # at 15:26), else the plan's 15:25-close entry.
             entry_buf_pct = float(spec.raw_config["entry_limit_buffer_pct"])
-            ref_px = None
-            try:
-                ref_px = float(broker.get_ltp(symbol))
-            except Exception:
-                ref_px = None
+            ref_px, upper_circuit, _lc = _safe_quote(broker, symbol)
             if ref_px is None or ref_px <= 0:
                 # Expected in paper/dry-run (no live LTP) — price off the plan's
                 # 15:25-close entry. Logged so the live-vs-plan basis is observable.
-                logger.debug("run_entry: live LTP unavailable for %s (paper_mode=%s); "
+                logger.debug("run_entry: live LTP/quote unavailable for %s (paper_mode=%s); "
                              "pricing BUY limit off plan.entry_price", symbol, paper_mode)
                 ref_px = float(plan.entry_price)
-            buy_limit = ref_px * (1.0 + entry_buf_pct / 100.0)
+            # Tick-valid AND <= upper circuit (Kite rejects non-tick prices and
+            # any BUY above the circuit band — see 2026-06-29 DOLLAR/TIRUPATIFL).
+            buy_limit = clamp_round_limit(
+                ref_px * (1.0 + entry_buf_pct / 100.0), "BUY",
+                upper_circuit=upper_circuit,
+            )
             try:
                 buy_order_id = _place_buy(
                     broker, symbol=symbol, qty=plan.qty,
@@ -517,10 +544,17 @@ def run_place_exit(
 
         qty = int(round(slot.notional_inr / slot.buy_fill_price))
         next_day = _next_trading_day(date.fromisoformat(slot.reserved_today))
+        # Lower circuit for the SELL clamp (a catastrophe-floored sell could fall
+        # below the band on a name near its lower circuit).
+        _lp, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
         # AMO LIMIT floor at the catastrophe level: fills at the pre-open auction
         # for any open >= -catastrophe (limit sells fill at the better price);
-        # a gap below the floor is left to the GTT / morning failsafe.
-        amo_limit = slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0)
+        # a gap below the floor is left to the GTT / morning failsafe. Tick-valid
+        # AND >= lower circuit (Kite rejects non-tick / sub-circuit prices).
+        amo_limit = clamp_round_limit(
+            slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0), "SELL",
+            lower_circuit=lower_circuit,
+        )
         amo_id = _place_amo_sell(
             broker, symbol=slot.symbol, qty=qty,
             product=slot.product or "CNC", paper_mode=paper_mode,
@@ -528,12 +562,13 @@ def run_place_exit(
             limit_price=amo_limit,
         )
         pool.attach_amo_sell(slot.slot_id, str(amo_id), next_day)
-        trigger = slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0)
-        limit = trigger * (1.0 - gtt_buffer_pct / 100.0)
+        # GTT trigger/limit must also be tick-valid (Kite rejects non-tick GTTs).
+        trigger = round_to_tick(slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0))
+        limit = round_to_tick(trigger * (1.0 - gtt_buffer_pct / 100.0))
         try:
             gid = broker.place_gtt_stop(
                 symbol=slot.symbol, qty=qty,
-                trigger_price=round(trigger, 2), limit_price=round(limit, 2),
+                trigger_price=trigger, limit_price=limit,
                 product=slot.product or "CNC",
             )
             slot.gtt_id = str(gid)
@@ -675,12 +710,19 @@ def run_verify_exit(
                 qty_for_failsafe = int(round(slot.notional_inr / slot.buy_fill_price))
                 failsafe_buf = float(paper_enabled_setups[0].raw_config["gtt_limit_buffer_pct"])
                 try:
-                    ltp = float(broker.get_ltp(slot.symbol))
+                    ltp_q, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
+                    ltp = ltp_q if (ltp_q is not None and ltp_q > 0) else float(broker.get_ltp(slot.symbol))
+                    # Tick-valid AND >= lower circuit (Kite rejects non-tick /
+                    # sub-circuit SELL prices).
+                    failsafe_limit = clamp_round_limit(
+                        ltp * (1.0 - failsafe_buf / 100.0), "SELL",
+                        lower_circuit=lower_circuit,
+                    )
                     _place_failsafe_sell(
                         broker,
                         symbol=slot.symbol, qty=qty_for_failsafe,
                         product=slot.product or "CNC",
-                        limit_price=ltp * (1.0 - failsafe_buf / 100.0),
+                        limit_price=failsafe_limit,
                     )
                     sell_price = ltp
                 except Exception as e:
@@ -1023,7 +1065,7 @@ def _place_buy(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
     """
     order_id = broker.place_order(
         symbol=symbol, side="BUY", qty=qty,
-        order_type="LIMIT", price=round(float(limit_price), 2),
+        order_type="LIMIT", price=round_to_tick(float(limit_price)),
         product=product, variety="regular",
         trade_id=trade_id, check_margins=(product == "MIS"),
     )
@@ -1040,7 +1082,7 @@ def _place_amo_sell(broker, *, symbol: str, qty: int, product: str, paper_mode: 
     """
     order_id = broker.place_order(
         symbol=symbol, side="SELL", qty=qty,
-        order_type="LIMIT", price=round(float(limit_price), 2),
+        order_type="LIMIT", price=round_to_tick(float(limit_price)),
         product=product, variety="amo",
         trade_id=trade_id, check_margins=False,
     )
@@ -1052,7 +1094,7 @@ def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str,
     """Failsafe regular LIMIT SELL (marketable, below live LTP) when AMO did not execute."""
     order_id = broker.place_order(
         symbol=symbol, side="SELL", qty=qty,
-        order_type="LIMIT", price=round(float(limit_price), 2),
+        order_type="LIMIT", price=round_to_tick(float(limit_price)),
         product=product, variety="regular",
         check_margins=False,
     )
