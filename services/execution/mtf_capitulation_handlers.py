@@ -148,21 +148,16 @@ def run_eod(
         _prewarm_daily_universe(setups, broker)
 
     summary["by_setup"] = {}
-    for name, raw in setups:
-        persistence = PositionPersistence(_position_state_dir(raw))
-        # ---- Phase A: exits due today (pre-close pass) ----
-        if phase in ("both", "exits"):
-            _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary)
-        # ---- Phase B: rank + place AMO BUYs for next session (post-close pass) ----
-        if phase in ("both", "entries"):
-            if _decay_paused(name, raw):
-                logger.warning("mtf_capitulation.run_eod[%s]: decay tripwire PAUSED; skipping entries", name)
-                summary["by_setup"].setdefault(name, {})["decay_paused"] = True
-                continue
-            _run_entries(
-                name, raw, broker, persistence, today, now, paper_mode, summary,
-                ca_ex_dates=ca_ex_dates, repo_root=repo_root,
-            )
+    persistences = {name: PositionPersistence(_position_state_dir(raw)) for name, raw in setups}
+    # ---- Phase A: exits due today (per-setup, pre-close) ----
+    if phase in ("both", "exits"):
+        for name, raw in setups:
+            _run_exits(name, raw, broker, persistences[name], today, now, paper_mode, summary,
+                       setups_by_name={n: r for n, r in setups})
+    # ---- Phase B: rank + AMO BUY across the whole family (post-close) ----
+    if phase in ("both", "entries"):
+        _run_entries_composite(setups, broker, persistences, today, now, paper_mode, summary,
+                               ca_ex_dates=ca_ex_dates, repo_root=repo_root, config=config)
 
     logger.info(
         "mtf_capitulation.run_eod: complete | setups=%d exited=%d entered=%d skipped=%d rejected=%d",
@@ -259,7 +254,8 @@ def run_verify_entries(
 # Phase implementations
 # ---------------------------------------------------------------------------
 
-def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary) -> None:
+def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
+               setups_by_name=None) -> None:
     from tools.sub7_validation.build_per_setup_pnl import (
         calc_fee_cnc, calc_fee_mtf, MTF_INTEREST_RATE_PER_DAY,
     )
@@ -372,38 +368,22 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary) 
             )
 
 
-def _run_entries(name, raw, broker, persistence, today, now, paper_mode, summary,
-                 *, ca_ex_dates, repo_root) -> None:
-    cap = raw["capital_allocation"]
-    max_concurrent = int(cap["max_concurrent_slots"])
-    max_new_per_day = int(cap["max_new_positions_per_day"])
-    margin_per_slot = float(cap["margin_per_slot_inr"])
+def _rank_basket_for_setup(name, raw, broker, today, ca_ex_dates, repo_root):
+    """Build one setup's ranked basket (cap_score-bearing) for `today`.
 
-    held = persistence.load_snapshot()
-    if len(held) >= max_concurrent:
-        logger.info("mtf_capitulation: at concurrency cap (%d); no new entries", max_concurrent)
-        return
-
-    # MTF universe (eligibility + per-symbol leverage).
+    Returns [] when the setup has no MTF universe, no panel, or an empty basket.
+    The MTF prefetch + panel build are the same as the legacy per-setup path.
+    """
     mtf_cfg = raw["mtf"]
     mtf = MtfUniverse(Path(str(mtf_cfg["approved_list_snapshot_path"])))
     exclude_etf = bool(mtf_cfg["exclude_etf"])
-    fallback_cnc = bool(mtf_cfg["fallback_to_cnc_if_not_mtf"])
     eligible = {s for s in mtf.all_symbols() if mtf.is_eligible(s, exclude_etf=exclude_etf)}
     if not eligible:
-        logger.warning("mtf_capitulation: empty MTF eligible set; no entries")
-        return
-
-    # CA ex-dates (load from configured parquet if not injected).
+        logger.warning("mtf_capitulation[%s]: empty MTF eligible set; no basket", name)
+        return []
     if ca_ex_dates is None and bool(raw.get("exclude_ca_in_hold_window")):
         ca_ex_dates = _load_ca_ex_dates(raw, repo_root)
 
-    # Live/paper: batch-fetch today's 5m for the eligible universe ONCE and stash
-    # it on the broker, so the panel provider's current-day bar synthesis
-    # (fetch_daily_window -> get_intraday_5m) is a cache hit instead of one live
-    # API call per symbol. Mirrors overnight_handlers' async-batch prewarm. The
-    # cross-sectional ranker requires today's row, which get_daily drops as
-    # partial. Skipped under DRY_RUN (feather has today's bar already).
     if not _is_dry_run(broker) and hasattr(broker, "set_intraday_5m_prefetch"):
         sdk = getattr(broker, "_data_sdk", None)
         if sdk is not None and hasattr(sdk, "async_fetch_intraday_5m_batch"):
@@ -413,93 +393,107 @@ def _run_entries(name, raw, broker, persistence, today, now, paper_mode, summary
                 import asyncio
                 try:
                     fetched = asyncio.run(sdk.async_fetch_intraday_5m_batch(need, concurrency=30, rps=20.0))
-                    merged = dict(existing)
-                    merged.update(fetched or {})
+                    merged = dict(existing); merged.update(fetched or {})
                     broker.set_intraday_5m_prefetch(merged)
-                    logger.info("mtf_capitulation[%s]: prewarmed 5m for %d/%d symbols",
-                                name, len(fetched or {}), len(need))
                 except Exception as e:
                     logger.exception("mtf_capitulation[%s]: 5m batch prewarm failed: %s", name, e)
-        else:
-            logger.warning("mtf_capitulation[%s]: data_sdk has no async 5m batch — "
-                           "current-day synthesis will be per-symbol (slow)", name)
 
-    # Daily panel + rank. Backtest (DRY_RUN) slices the clean feather; live/paper
-    # fetches trailing adjusted daily bars via the broker's daily fetcher. If
-    # that fetcher isn't wired in live/paper, make_provider fails fast — an
-    # honest gate (you cannot run this setup without the daily panel source).
-    provider = make_provider(
-        raw, dry_run=_is_dry_run(broker),
-        fetch_fn=getattr(broker, "fetch_daily_window", None), mtf_symbols=eligible,
-        repo_root=repo_root,
-    )
+    provider = make_provider(raw, dry_run=_is_dry_run(broker),
+                             fetch_fn=getattr(broker, "fetch_daily_window", None),
+                             mtf_symbols=eligible, repo_root=repo_root)
     panel = provider.get_panel(today)
     if panel is None or panel.empty:
-        logger.warning("mtf_capitulation: empty daily panel for %s; no entries", today)
+        logger.warning("mtf_capitulation[%s]: empty daily panel for %s; no basket", name, today)
+        return []
+    basket = CrossSectionalRanker(raw).rank(panel, today, eligible, ca_ex_dates=ca_ex_dates)
+    return basket or []
+
+
+def _held_union(setups, persistences):
+    """Bare symbols currently held across ALL setups' stores (cross-day dedupe)."""
+    held = set()
+    for name, _raw in setups:
+        for sym in persistences[name].load_snapshot().keys():
+            held.add(str(sym).replace("NSE:", "").upper())
+    return held
+
+
+def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
+                           summary, *, ca_ex_dates, repo_root, config):
+    from services.multiday_composite_selector import MultiDayCompositeSelector
+
+    active = [(name, raw) for name, raw in setups if not _decay_paused(name, raw)]
+    for name, _raw in setups:
+        if (name, _raw) not in active:
+            summary.setdefault("by_setup", {}).setdefault(name, {})["decay_paused"] = True
+    if not active:
+        logger.info("mtf_capitulation: all multi-day setups decay-paused; no entries")
         return
 
-    ranker = CrossSectionalRanker(raw)
-    basket = ranker.rank(panel, today, eligible, ca_ex_dates=ca_ex_dates)
-    if not basket:
-        logger.info("mtf_capitulation: ranker returned empty basket for %s", today)
+    baskets = {}
+    for name, raw in active:
+        baskets[name] = _rank_basket_for_setup(name, raw, broker, today, ca_ex_dates, repo_root)
+    if not any(baskets.values()):
+        logger.info("mtf_capitulation: all baskets empty for %s; no entries", today)
+        return
+
+    fam = config["multi_day_portfolio"]
+    selector = MultiDayCompositeSelector(fam)
+    weights = {name: float(raw["composite_weight"]) for name, raw in active}
+    held = _held_union(setups, persistences)
+    total_held = sum(len(persistences[n].load_snapshot()) for n, _ in setups)
+    limit = min(int(fam["max_new_per_day"]),
+                max(0, int(fam["max_concurrent"]) - total_held))
+    chosen = selector.select(baskets, held_symbols=held, weights=weights, limit=limit)
+    if not chosen:
         return
 
     entry_date = _next_trading_day(today)
-    exit_on_date = _add_trading_days(entry_date, int(raw["hold_days"]))
-    new_today = 0
-    for cand in basket:
-        if len(persistence.load_snapshot()) >= max_concurrent:
-            break
-        if new_today >= max_new_per_day:
-            break
-        bare = str(cand["symbol"]).replace("NSE:", "").upper()
-        symbol = f"NSE:{bare}"
-        if persistence.get_position(symbol) is not None:
-            continue  # already held — basket is "diff vs target"
-
+    for c in chosen:
+        owner = c["owner"]
+        raw = dict(active)[owner]
+        exit_on_date = _add_trading_days(entry_date, int(raw["hold_days"]))
+        bare = c["bare"]; symbol = c["symbol"]
+        mtf = MtfUniverse(Path(str(raw["mtf"]["approved_list_snapshot_path"])))
         info = mtf.lookup(bare)
         if info is not None:
             product, leverage = "MTF", float(info.leverage)
-        elif fallback_cnc:
+        elif bool(raw["mtf"]["fallback_to_cnc_if_not_mtf"]):
             product, leverage = "CNC", 1.0
         else:
             summary["rejected_count"] += 1
             continue
-
-        signal_close = float(cand["close"])
-        qty = int((margin_per_slot * leverage) // signal_close)
+        margin_per_slot = float(raw["capital_allocation"]["margin_per_slot_inr"])
+        qty = int((margin_per_slot * leverage) // float(c["close"]))
         if qty <= 0:
             summary["rejected_count"] += 1
             continue
-
-        trade_id = f"{name}_{today.isoformat()}_{bare}"
+        trade_id = f"{owner}_{today.isoformat()}_{bare}"
         try:
             order_id = _place_amo_buy(broker, symbol, qty, product, trade_id)
         except Exception as e:
-            logger.error("mtf_capitulation[%s]: AMO BUY failed for %s: %s", name, symbol, e)
+            logger.error("mtf_capitulation[%s]: AMO BUY failed for %s: %s", owner, symbol, e)
             summary["skipped_count"] += 1
             continue
-
-        persistence.save_position(
+        persistences[owner].save_position(
             symbol=symbol, side="BUY", qty=qty, avg_price=0.0, trade_id=trade_id,
             order_id=str(order_id), order_tag=trade_id,
-            plan={"setup": name, "trail_ret": cand["trail_ret"], "tshock": cand["tshock"]},
-            state={
-                "pending_entry_fill": True, "qty": qty, "leverage": leverage,
-                "signal_close": signal_close, "signal_date": today.isoformat(),
-            },
-            entry_date=entry_date.isoformat(),
-            exit_on_date=exit_on_date.isoformat(),
-            product=product,
-        )
-        new_today += 1
+            plan={"setup": owner, "trail_ret": c["trail_ret"], "tshock": c["tshock"],
+                  "composite": c["composite"]},
+            state={"pending_entry_fill": True, "qty": qty, "leverage": leverage,
+                   "signal_close": float(c["close"]), "signal_date": today.isoformat(),
+                   "contributors": c["contributors"],
+                   "per_setup_cap_score": c["per_setup_cap_score"]},
+            entry_date=entry_date.isoformat(), exit_on_date=exit_on_date.isoformat(),
+            product=product)
         summary["entered_count"] += 1
-        summary["by_setup"].setdefault(name, {"entered": 0})
-        summary["by_setup"][name]["entered"] = summary["by_setup"][name].get("entered", 0) + 1
+        summary.setdefault("by_setup", {}).setdefault(owner, {"entered": 0})
+        summary["by_setup"][owner]["entered"] = summary["by_setup"][owner].get("entered", 0) + 1
         summary["events"].append({
-            "setup": name, "symbol": symbol, "qty": qty, "product": product, "leverage": leverage,
-            "entry_date": entry_date.isoformat(), "exit_on_date": exit_on_date.isoformat(),
-            "amo_buy_order_id": str(order_id),
+            "setup": owner, "symbol": symbol, "qty": qty, "product": product,
+            "leverage": leverage, "entry_date": entry_date.isoformat(),
+            "exit_on_date": exit_on_date.isoformat(), "amo_buy_order_id": str(order_id),
+            "composite": c["composite"], "contributors": c["contributors"],
         })
 
 
