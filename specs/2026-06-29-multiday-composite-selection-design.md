@@ -148,13 +148,49 @@ Result: one deduped, consensus-ranked basket for the whole family.
   `max_concurrent` (selection caps; generous in paper), `cap_score_clip`,
   tiebreaker source. Missing key = startup error (fail fast).
 
+### 6.1 Weight-promotion criterion (how equal-weight → IC-weight is decided)
+
+"Decide later" is only honest with a defined trigger and test. The procedure
+mirrors the existing setup lifecycle (Disc/OOS/Holdout + confidence card), not a
+new bespoke process.
+
+**Metrics** (from §7 diagnostics joined to realized forward K-day return — the
+decay tripwire already books realized net PnL per trade per contributor):
+- **Per-setup IC** — cross-sectional rank correlation between a setup's
+  `cap_score` and forward return, averaged across days. Reliability =
+  **IC t-stat = mean(IC)/std(IC) × √N_days** (bar: IC ≳ 0.03–0.05, t > 2).
+- **Marginal IC** — regress forward return on all setups' `cap_scores` jointly;
+  the per-coefficient t-stat = contribution *beyond the others*. The decisive
+  metric here: correlated setups can have decent standalone IC but ~zero marginal
+  IC (names already captured by consensus) — a redundancy signal, not a weighting
+  signal.
+- **Consensus lift** — forward return monotonic across composite/consensus-count
+  buckets; validates the sum-blend itself.
+
+**Sample gate:** ~60–120 independent daily cross-sections (≈3–6 months paper)
+before IC differences are estimable with less error than the difference. No
+decision on a few weeks (fitting noise).
+
+**Rule:** default **stays 1/N** (the "1/N beats optimized weights OOS" prior —
+DeMiguel et al.). Move to `w_s ∝ IC_s` **shrunk toward equal** (not raw ratios)
+only if ALL hold: (a) each setup IC t-stat > ~2; (b) IC dispersion across setups
+exceeds its estimation error (genuine skill difference, not noise); (c)
+IC-weighted composite beats equal-weight on a **held-out** window (fit Disc,
+confirm OOS/Holdout — never fit-and-deploy on the same data). A setup with ~zero
+or negative **marginal** IC is NOT down-weighted — it goes to the retire/keep
+decay-tripwire / confidence-card lifecycle. The weight vector handles skill
+dispersion among keepers; redundancy/decay are handled where they already are.
+
 ## 7. Diagnostics (the evidence that later tunes weights)
 
-Per-day selection record (jsonl): overlap rate (names flagged by ≥2 setups),
-composite ranking, owner + contributors per name, consensus distribution. This
-**empirically measures the family's effective breadth** and whether consensus
-names actually outperform — the evidence that justifies or rejects IC-weighting.
-Without it, weight choices are guesses.
+Per-day selection record (jsonl), one row **per (setup, symbol, day)** carrying the
+contributor's **`cap_score`** (REQUIRED — without per-setup `cap_score` persisted,
+the §6.1 IC/marginal-IC join is impossible), plus the per-name composite, owner,
+full contributor list, and consensus count. Aggregate fields: overlap rate (names
+flagged by ≥2 setups) and consensus distribution. This **empirically measures the
+family's effective breadth** and whether consensus names actually outperform — the
+evidence §6.1 consumes to justify or reject IC-weighting. Without it, weight
+choices are guesses.
 
 ## 8. Testing / validation
 
@@ -178,6 +214,7 @@ dry-run, paper, and live. IST-naive throughout. No wall-clock dependence.
 ## 10. Out of scope (explicit)
 
 - Capital/margin shared-pool arbitration (revisit at live activation).
-- IC/confidence-card composite weighting (v2, gated on §7 diagnostics).
+- IC/confidence-card composite weighting (v2, gated on the §6.1 promotion
+  criterion + §7 diagnostics).
 - Score-every-name integrated variant (selecting setups only contribute in v1).
 - `close_dn_overnight_long` (separate family).
