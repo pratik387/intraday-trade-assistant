@@ -20,6 +20,41 @@ from services.execution.mtf_capitulation_handlers import (
 SD = date(2025, 6, 16)  # Monday (signal day T)
 
 
+# ---- composite-selection helpers ------------------------------------------
+
+def _two_setup_config(tmp_path):
+    def _block(state_name, weight=1.0):
+        return {
+            "horizon": "multi_day", "enabled": False, "paper_enabled": True,
+            "selection_mode": "trailing_loser_decile", "lookback_days": 5, "loser_pct": 0.1,
+            "adv_tier": 1, "adv_tier_count": 5, "turnover_shock_min": 2.0,
+            "shock_lookback_days": 20, "adv_floor_inr": 2_000_000, "min_price": 5.0,
+            "min_universe_symbols_per_day": 20, "hold_days": 2,
+            "exclude_ca_in_hold_window": False, "ca_events_path": "",
+            "composite_weight": weight, "cap_score_clip": 3.0,
+            "mtf": {"approved_list_snapshot_path": "data/mtf_universe/approved_mtf_securities_2026-05-21.json",
+                    "interest_pct_per_day": 0.0004, "exclude_etf": True,
+                    "fallback_to_cnc_if_not_mtf": True, "stale_snapshot_warn_days": 7},
+            "capital_allocation": {"state_file": str(tmp_path / f"{state_name}.json"),
+                                   "max_concurrent_slots": 100, "margin_per_slot_inr": 100000,
+                                   "max_new_positions_per_day": 100},
+        }
+    return {
+        "setups": {"A2": _block("a2_slots"), "C1": _block("c1_slots")},
+        "multi_day_portfolio": {"max_new_per_day": 100, "max_concurrent": 200,
+                                "cap_score_clip": 3.0, "tiebreaker": "tshock",
+                                "selection_log_path": str(tmp_path / "sel.jsonl")},
+    }
+
+
+def _stub_broker_amo():
+    from unittest.mock import MagicMock
+    b = MagicMock()
+    b.place_order.return_value = "AMO1"
+    b._dry_session_date = None
+    return b
+
+
 # ---- fakes ----------------------------------------------------------------
 
 class _FakeMtfInfo:
@@ -117,6 +152,7 @@ def _cfg(tmp_path):
                 "min_universe_symbols_per_day": 20, "hold_days": 2,
                 "exclude_ca_in_hold_window": True,
                 "ca_events_path": "data/corporate_actions/does_not_exist.parquet",
+                "composite_weight": 1.0, "cap_score_clip": 3.0,
                 "capital_allocation": {
                     "state_file": str(tmp_path / "state" / "mtf_capitulation_slots.json"),
                     "max_concurrent_slots": 100, "max_new_positions_per_day": 100,
@@ -128,7 +164,10 @@ def _cfg(tmp_path):
                     "interest_pct_per_day": 0.0004,
                 },
             }
-        }
+        },
+        "multi_day_portfolio": {"max_new_per_day": 100, "max_concurrent": 200,
+                                "cap_score_clip": 3.0, "tiebreaker": "tshock",
+                                "selection_log_path": str(tmp_path / "sel.jsonl")},
     }
 
 
@@ -241,7 +280,9 @@ def test_full_lifecycle_entry_fill_exit(tmp_path):
 def test_concurrency_cap_blocks_entries(tmp_path):
     _write_feather(tmp_path)
     cfg = _cfg(tmp_path)
-    cfg["setups"]["mtf_capitulation_revert_long"]["capital_allocation"]["max_concurrent_slots"] = 0
+    # Concurrency is now capped at the FAMILY level (multi_day_portfolio), since
+    # the composite pass sizes one shared book across all multi-day setups.
+    cfg["multi_day_portfolio"]["max_concurrent"] = 0
     s = run_eod(cfg, _FakeBroker({}), now_ist=pd.Timestamp("2025-06-16 15:25"),
                 repo_root=tmp_path)
     assert s["entered_count"] == 0
@@ -250,7 +291,8 @@ def test_concurrency_cap_blocks_entries(tmp_path):
 def test_max_new_per_day_cap(tmp_path):
     _write_feather(tmp_path)
     cfg = _cfg(tmp_path)
-    cfg["setups"]["mtf_capitulation_revert_long"]["capital_allocation"]["max_new_positions_per_day"] = 0
+    # New-per-day is now capped at the FAMILY level (multi_day_portfolio).
+    cfg["multi_day_portfolio"]["max_new_per_day"] = 0
     s = run_eod(cfg, _FakeBroker({}), now_ist=pd.Timestamp("2025-06-16 15:25"),
                 repo_root=tmp_path)
     assert s["entered_count"] == 0
@@ -281,8 +323,149 @@ def test_batch_runs_both_setups(tmp_path):
     cfg["setups"]["low52_capitulation_revert_long"] = low
 
     s = run_eod(cfg, _FakeBroker({}), now_ist=pd.Timestamp("2025-06-16 15:25"), repo_root=tmp_path)
-    # LOSER1 qualifies for both triggers -> entered by each into separate stores.
-    assert s["entered_count"] == 2
+    # LOSER1 qualifies for both triggers -> deduped by composite selector to ONE
+    # position (cross-day held-union dedupe), owned by one setup with both as
+    # contributors.
+    assert s["entered_count"] == 1
     fired = {e["setup"] for e in s["events"]}
-    assert fired == {"mtf_capitulation_revert_long", "low52_capitulation_revert_long"}
-    assert set(s["by_setup"]) == fired
+    assert fired <= {"mtf_capitulation_revert_long", "low52_capitulation_revert_long"}
+    ev = s["events"][0]
+    assert sorted(ev["contributors"]) == ["low52_capitulation_revert_long",
+                                          "mtf_capitulation_revert_long"]
+
+
+def test_composite_entries_dedup_two_setups_one_position(monkeypatch, tmp_path):
+    import services.execution.mtf_capitulation_handlers as mh
+
+    # Two multi-day setups both flag SHARED; A2 also flags AONLY.
+    cfg = _two_setup_config(tmp_path)  # helper below
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"]),
+                                                       ("C1", cfg["setups"]["C1"])])
+    monkeypatch.setattr(mh, "_decay_paused", lambda name, raw: False)
+    monkeypatch.setattr(mh, "_prewarm_daily_universe", lambda setups, broker: None)
+
+    # Stub each setup's ranker output (cap_score-bearing baskets).
+    def fake_rank_for(name):
+        if name == "A2":
+            return [{"symbol": "SHARED", "cap_score": 1.0, "tshock": 3.0, "close": 100.0,
+                     "trail_ret": -0.12, "adv_tier": 1, "rank_pct": 0.01},
+                    {"symbol": "AONLY", "cap_score": 0.5, "tshock": 2.5, "close": 50.0,
+                     "trail_ret": -0.10, "adv_tier": 1, "rank_pct": 0.04}]
+        return [{"symbol": "SHARED", "cap_score": 1.0, "tshock": 2.0, "close": 100.0,
+                 "trail_ret": -0.09, "adv_tier": 1, "rank_pct": 0.02}]
+    monkeypatch.setattr(mh, "_rank_basket_for_setup",
+                        lambda name, raw, broker, today, ca_ex_dates, repo_root: fake_rank_for(name))
+
+    broker = _stub_broker_amo()  # place_order returns a fake order id
+    summary = mh.run_eod(cfg, broker, now_ist=pd.Timestamp("2026-06-22 15:35:00"),
+                         paper_mode=True, phase="entries")
+
+    # SHARED entered ONCE (deduped), owner = the higher weighted cap_score (tie -> deterministic).
+    placed = [e for e in summary["events"]]
+    symbols = sorted(e["symbol"] for e in placed)
+    assert symbols == ["NSE:AONLY", "NSE:SHARED"]
+    shared = next(e for e in placed if e["symbol"] == "NSE:SHARED")
+    assert sorted(shared["contributors"]) == ["A2", "C1"]
+
+    # SHARED persisted in exactly one store, with contributors tagged.
+    from services.state.position_persistence import PositionPersistence
+    a2_store = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
+    c1_store = PositionPersistence(mh._position_state_dir(cfg["setups"]["C1"]))
+    in_a2 = a2_store.get_position("NSE:SHARED") is not None
+    in_c1 = c1_store.get_position("NSE:SHARED") is not None
+    assert in_a2 ^ in_c1  # exactly one store holds it
+    owner_store = a2_store if in_a2 else c1_store
+    pos = owner_store.get_position("NSE:SHARED")
+    assert sorted(pos.state["contributors"]) == ["A2", "C1"]
+
+
+def test_composite_entries_skip_held_union(monkeypatch, tmp_path):
+    import services.execution.mtf_capitulation_handlers as mh
+    cfg = _two_setup_config(tmp_path)
+    # Pre-seed SHARED as held in C1's store (still inside its hold window).
+    from services.state.position_persistence import PositionPersistence
+    c1_store = PositionPersistence(mh._position_state_dir(cfg["setups"]["C1"]))
+    c1_store.save_position(symbol="NSE:SHARED", side="BUY", qty=10, avg_price=100.0,
+                           trade_id="t", entry_date="2026-06-20", exit_on_date="2026-06-24",
+                           product="MTF", state={"qty": 10})
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"]),
+                                                       ("C1", cfg["setups"]["C1"])])
+    monkeypatch.setattr(mh, "_decay_paused", lambda name, raw: False)
+    monkeypatch.setattr(mh, "_prewarm_daily_universe", lambda setups, broker: None)
+    monkeypatch.setattr(mh, "_rank_basket_for_setup",
+                        lambda name, raw, broker, today, ca_ex_dates, repo_root:
+                        [{"symbol": "SHARED", "cap_score": 5.0, "tshock": 3.0, "close": 100.0,
+                          "trail_ret": -0.2, "adv_tier": 1, "rank_pct": 0.01}])
+    broker = _stub_broker_amo()
+    summary = mh.run_eod(cfg, broker, now_ist=pd.Timestamp("2026-06-22 15:35:00"),
+                         paper_mode=True, phase="entries")
+    assert summary["entered_count"] == 0  # SHARED already held -> excluded
+
+
+def test_selection_diagnostics_logged_per_setup_symbol(monkeypatch, tmp_path):
+    import json as _json
+    import services.execution.mtf_capitulation_handlers as mh
+    cfg = _two_setup_config(tmp_path)
+    log_path = tmp_path / "sel.jsonl"
+    cfg["multi_day_portfolio"]["selection_log_path"] = str(log_path)
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"]),
+                                                       ("C1", cfg["setups"]["C1"])])
+    monkeypatch.setattr(mh, "_decay_paused", lambda name, raw: False)
+    monkeypatch.setattr(mh, "_prewarm_daily_universe", lambda setups, broker: None)
+    monkeypatch.setattr(mh, "_rank_basket_for_setup",
+                        lambda name, raw, broker, today, ca_ex_dates, repo_root:
+                        ([{"symbol": "SHARED", "cap_score": 1.0, "tshock": 3.0, "close": 100.0,
+                           "trail_ret": -0.12, "adv_tier": 1, "rank_pct": 0.01}]
+                         if name == "C1" else
+                         [{"symbol": "SHARED", "cap_score": 1.0, "tshock": 3.0, "close": 100.0,
+                           "trail_ret": -0.12, "adv_tier": 1, "rank_pct": 0.01},
+                          {"symbol": "AONLY", "cap_score": 0.5, "tshock": 2.5, "close": 50.0,
+                           "trail_ret": -0.10, "adv_tier": 1, "rank_pct": 0.04}]))
+    broker = _stub_broker_amo()
+    mh.run_eod(cfg, broker, now_ist=pd.Timestamp("2026-06-22 15:35:00"),
+               paper_mode=True, phase="entries")
+    rows = [_json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+    # one row per (setup, symbol): A2/SHARED, A2/AONLY, C1/SHARED
+    keyed = {(r["setup"], r["symbol"]): r for r in rows}
+    assert set(keyed) == {("A2", "SHARED"), ("A2", "AONLY"), ("C1", "SHARED")}
+    assert keyed[("A2", "SHARED")]["cap_score"] == 1.0
+    assert keyed[("A2", "SHARED")]["session_date"] == "2026-06-22"
+    assert keyed[("A2", "SHARED")]["consensus_count"] == 2  # flagged by A2 + C1
+    assert keyed[("A2", "AONLY")]["consensus_count"] == 1
+    assert keyed[("A2", "SHARED")]["chosen"] is True
+
+
+def test_exit_feeds_all_contributors_tripwires(monkeypatch, tmp_path):
+    import services.execution.mtf_capitulation_handlers as mh
+    from services.state.position_persistence import PositionPersistence
+    from services.risk.decay_tripwire import DecayTripwire
+
+    cfg = _two_setup_config(tmp_path)
+    # give both setups a decay tripwire
+    for n in ("A2", "C1"):
+        cfg["setups"][n]["decay_tripwire"] = {
+            "window_trades": 30, "pf_floor": 1.2, "sustained_weeks": 6,
+            "state_file": str(tmp_path / f"tw_{n}.json")}
+    # Seed an owned-by-A2 position that exits today, tagged contributors=[A2,C1].
+    a2_store = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
+    a2_store.save_position(symbol="NSE:SHARED", side="BUY", qty=10, avg_price=100.0,
+                           trade_id="A2_2026-06-20_SHARED", entry_date="2026-06-20",
+                           exit_on_date="2026-06-22", product="MTF",
+                           state={"qty": 10, "leverage": 2.5, "entry_fill_price": 100.0,
+                                  "contributors": ["A2", "C1"]})
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"]),
+                                                       ("C1", cfg["setups"]["C1"])])
+    monkeypatch.setattr(mh, "_paper_close_price", lambda b, s, d: 110.0)  # +10% exit
+    broker = _stub_broker_amo()
+    mh.run_eod(cfg, broker, now_ist=pd.Timestamp("2026-06-22 15:28:00"),
+               paper_mode=True, phase="exits")
+    # both A2 and C1 tripwires recorded one trade
+    for n in ("A2", "C1"):
+        tw = DecayTripwire(setup_name=n, state_path=tmp_path / f"tw_{n}.json",
+                           window_trades=30, pf_floor=1.2, sustained_weeks=6)
+        assert len(tw._trades) == 1  # noqa: SLF001
+        assert tw._trades[0].net_pnl_inr > 0  # +10% gross, profitable

@@ -130,7 +130,7 @@ class CrossSectionalRanker:
             & today["tshock"].notna()
             & (today["close"] >= self.min_price)
             & (today["adv"] >= self.adv_floor_inr)
-        ]
+        ].copy()  # own frame for the adv_tier/rank_pct/cap_score assignments below
         if len(today) < self.min_universe:
             logger.info(
                 "x_sectional_ranker: %s only %d qualifying symbols (< min %d) -> no basket",
@@ -147,6 +147,20 @@ class CrossSectionalRanker:
             logger.warning("x_sectional_ranker: %s qcut failed (degenerate adv); no basket", sd.date())
             return []
         today["rank_pct"] = today["signal"].rank(pct=True)
+
+        # Capitulation magnitude, oriented so MORE capitulated = larger, then
+        # standardized cross-sectionally over the qualifying universe and
+        # lower-clipped at 0 (tail only). The composite selector blends this
+        # across setups; the UPPER clip (family-level cap_score_clip) is applied
+        # there, so this stays a pure per-setup normalization (CLAUDE.md rule 1:
+        # the clip value is not read here).
+        mag = -today["signal"]
+        mu = float(mag.mean())
+        sd_mag = float(mag.std())
+        if np.isfinite(sd_mag) and sd_mag > 0.0:
+            today["cap_score"] = ((mag - mu) / sd_mag).clip(lower=0.0)
+        else:
+            today["cap_score"] = 0.0
 
         # Mode-specific selection rule (universe/tier/shock/CA gates are shared).
         if self.selection_mode == "trailing_loser_decile":
@@ -175,6 +189,7 @@ class CrossSectionalRanker:
                 "adv_tier": int(r["adv_tier"]),
                 "rank_pct": float(r["rank_pct"]),
                 "close": float(r["close"]),
+                "cap_score": float(r["cap_score"]),
             }
             for _, r in sel.iterrows()
         ]

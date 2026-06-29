@@ -610,6 +610,8 @@
       "data_source": "cache/preaggregate/clean_daily_from5m.feather",
       "lookback_days": 5,
       "hold_days": 2,
+      "composite_weight": 1.0,
+      "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "loser_pct": 0.05,
       "adv_tier": 1,
       "adv_tier_count": 5,
@@ -672,6 +674,8 @@
       "low_lookback_days": 252,
       "dist_low_max": 0.05,
       "hold_days": 2,
+      "composite_weight": 1.0,
+      "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "adv_tier": 1,
       "adv_tier_count": 5,
       "turnover_shock_min": 2.0,
@@ -733,6 +737,8 @@
       "zscore_lookback_days": 20,
       "zscore_max": -1.5,
       "hold_days": 2,
+      "composite_weight": 1.0,
+      "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "adv_tier": 1,
       "adv_tier_count": 5,
       "turnover_shock_min": 1.5,
@@ -794,6 +800,8 @@
       "lookback_days": 2,
       "loser_pct": 0.10,
       "hold_days": 3,
+      "composite_weight": 1.0,
+      "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "adv_tier": 1,
       "adv_tier_count": 5,
       "turnover_shock_min": 2.0,
@@ -842,6 +850,15 @@
         "state_file": "state/decay_tripwire_crash2d_revert_long.json"
       }
     }
+  },
+  "multi_day_portfolio": {
+    "_comment": "Cross-setup composite selection for horizon=multi_day setups. Technical selection only — margin-pool arbitration out of scope (paper testing). See specs/2026-06-29-multiday-composite-selection-design.md.",
+    "max_new_per_day": 100,
+    "max_concurrent": 200,
+    "_comment_caps": "Generous selection caps in paper (effectively 'take all'); ordering is still real. Tighten when a setup goes live.",
+    "cap_score_clip": 3.0,
+    "tiebreaker": "tshock",
+    "selection_log_path": "logs/multiday_selection.jsonl"
   },
   "filters": {
     "adx": {

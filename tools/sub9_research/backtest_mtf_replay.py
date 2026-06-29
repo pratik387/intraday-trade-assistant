@@ -130,7 +130,10 @@ def main():
         s["capital_allocation"] = {**s["capital_allocation"], "state_file": str(tmp / f"{n}_slots.json")}
         s.pop("decay_tripwire", None)  # disable the stateful live-safety tripwire for a clean parity replay
         sub[n] = s
-    cfg_run = {"setups": sub}
+    # Mirror production: the composite entry pass reads the top-level
+    # multi_day_portfolio block (cross-setup caps + selector params). main.py
+    # loads the full configuration.json; this partial cfg must carry it too.
+    cfg_run = {"setups": sub, "multi_day_portfolio": cfg_all["multi_day_portfolio"]}
 
     # Load clean_daily once; restrict the PROVIDER's panel to eligible symbols
     # within (SAMPLE_YEAR-1 .. SAMPLE_YEAR) so each ranker call is ~4x cheaper
