@@ -27,7 +27,10 @@ class MultiDayCompositeSelector:
     """Blend per-setup baskets into one deduped, consensus-ranked basket."""
 
     def __init__(self, config: Dict[str, Any]):
-        # Fail-fast on every key (no silent defaults).
+        # Fail-fast on every key (no silent defaults). max_new_per_day /
+        # max_concurrent are validated here but ENFORCED BY THE CALLER, which
+        # computes `limit` from them + the current book size and passes it to
+        # select(); they are intentionally not re-read inside select().
         self.max_new_per_day = int(config["max_new_per_day"])
         self.max_concurrent = int(config["max_concurrent"])
         self.cap_score_clip = float(config["cap_score_clip"])

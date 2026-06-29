@@ -149,11 +149,12 @@ def run_eod(
 
     summary["by_setup"] = {}
     persistences = {name: PositionPersistence(_position_state_dir(raw)) for name, raw in setups}
+    setups_by_name = {n: r for n, r in setups}
     # ---- Phase A: exits due today (per-setup, pre-close) ----
     if phase in ("both", "exits"):
         for name, raw in setups:
             _run_exits(name, raw, broker, persistences[name], today, now, paper_mode, summary,
-                       setups_by_name={n: r for n, r in setups})
+                       setups_by_name=setups_by_name)
     # ---- Phase B: rank + AMO BUY across the whole family (post-close) ----
     if phase in ("both", "entries"):
         _run_entries_composite(setups, broker, persistences, today, now, paper_mode, summary,
@@ -421,13 +422,20 @@ def _rank_basket_for_setup(name, raw, broker, today, ca_ex_dates, repo_root):
     return basket or []
 
 
-def _held_union(setups, persistences):
-    """Bare symbols currently held across ALL setups' stores (cross-day dedupe)."""
-    held = set()
+def _held_snapshots(setups, persistences):
+    """Single snapshot read per setup → (held bare-symbol set, total open count).
+
+    `held` is the cross-day dedupe set (a name already open in ANY store is not
+    re-entered); `total_held` is the book-slot count (sum of open positions) used
+    for the family concurrency cap. Read once to avoid two snapshot passes.
+    """
+    held, total_held = set(), 0
     for name, _raw in setups:
-        for sym in persistences[name].load_snapshot().keys():
+        snap = persistences[name].load_snapshot()
+        total_held += len(snap)
+        for sym in snap.keys():
             held.add(str(sym).replace("NSE:", "").upper())
-    return held
+    return held, total_held
 
 
 def _log_selection_diagnostics(baskets, chosen, today, log_path_str):
@@ -490,8 +498,7 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
     fam = config["multi_day_portfolio"]
     selector = MultiDayCompositeSelector(fam)
     weights = {name: float(raw["composite_weight"]) for name, raw in active}
-    held = _held_union(setups, persistences)
-    total_held = sum(len(persistences[n].load_snapshot()) for n, _ in setups)
+    held, total_held = _held_snapshots(setups, persistences)
     limit = min(int(fam["max_new_per_day"]),
                 max(0, int(fam["max_concurrent"]) - total_held))
     chosen = selector.select(baskets, held_symbols=held, weights=weights, limit=limit)
@@ -499,10 +506,11 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
     if not chosen:
         return
 
+    active_by_name = dict(active)
     entry_date = _next_trading_day(today)
     for c in chosen:
         owner = c["owner"]
-        raw = dict(active)[owner]
+        raw = active_by_name[owner]
         exit_on_date = _add_trading_days(entry_date, int(raw["hold_days"]))
         bare = c["bare"]; symbol = c["symbol"]
         mtf = MtfUniverse(Path(str(raw["mtf"]["approved_list_snapshot_path"])))

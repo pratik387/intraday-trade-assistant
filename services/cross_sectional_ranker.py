@@ -130,7 +130,7 @@ class CrossSectionalRanker:
             & today["tshock"].notna()
             & (today["close"] >= self.min_price)
             & (today["adv"] >= self.adv_floor_inr)
-        ]
+        ].copy()  # own frame for the adv_tier/rank_pct/cap_score assignments below
         if len(today) < self.min_universe:
             logger.info(
                 "x_sectional_ranker: %s only %d qualifying symbols (< min %d) -> no basket",
