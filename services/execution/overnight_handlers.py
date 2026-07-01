@@ -441,6 +441,7 @@ def run_entry(
                 fill_price=float(fill_price),
                 fill_ts_iso=now.isoformat(),
                 order_id=str(buy_order_id),
+                qty=int(plan.qty),
             )
 
             summary["fired_count"] += 1
@@ -542,44 +543,61 @@ def run_place_exit(
         except Exception as e:
             logger.warning("run_place_exit: idealized-entry capture failed for %s: %s", slot.symbol, e)
 
-        qty = int(round(slot.notional_inr / slot.buy_fill_price))
+        # Exit sells the ACTUAL filled qty (not a notional/fill re-estimate that
+        # over/under-sold on 2026-07-01).
+        qty = slot.exit_qty()
         next_day = _next_trading_day(date.fromisoformat(slot.reserved_today))
-        # Lower circuit for the SELL clamp (a catastrophe-floored sell could fall
-        # below the band on a name near its lower circuit).
-        _lp, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
-        # AMO LIMIT floor at the catastrophe level: fills at the pre-open auction
-        # for any open >= -catastrophe (limit sells fill at the better price);
-        # a gap below the floor is left to the GTT / morning failsafe. Tick-valid
-        # AND >= lower circuit (Kite rejects non-tick / sub-circuit prices).
-        amo_limit = clamp_round_limit(
-            slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0), "SELL",
-            lower_circuit=lower_circuit,
-        )
-        amo_id = _place_amo_sell(
-            broker, symbol=slot.symbol, qty=qty,
-            product=slot.product or "CNC", paper_mode=paper_mode,
-            trade_id=f"OVERNIGHT_AMO_{slot.reserved_today}_{slot.slot_id}",
-            limit_price=amo_limit,
-        )
-        pool.attach_amo_sell(slot.slot_id, str(amo_id), next_day)
-        # GTT trigger/limit must also be tick-valid (Kite rejects non-tick GTTs).
-        trigger = round_to_tick(slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0))
-        limit = round_to_tick(trigger * (1.0 - gtt_buffer_pct / 100.0))
+        # Per-slot isolation: a single AMO rejection (e.g. WELENT "insufficient
+        # holding" on 2026-07-01) MUST NOT abort exit placement for the remaining
+        # slots. Wrap the whole placement; persist in `finally` so an order that
+        # DID place is never lost from state (the earlier end-only persist orphaned
+        # 3 placed orders when the loop crashed).
         try:
-            gid = broker.place_gtt_stop(
-                symbol=slot.symbol, qty=qty,
-                trigger_price=trigger, limit_price=limit,
-                product=slot.product or "CNC",
+            # Lower circuit for the SELL clamp (a catastrophe-floored sell could
+            # fall below the band on a name near its lower circuit).
+            _lp, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
+            # AMO LIMIT floor at the catastrophe level: fills at the pre-open
+            # auction for any open >= -catastrophe (limit sells fill at the better
+            # price); a gap below the floor is left to the GTT / morning failsafe.
+            # Tick-valid AND >= lower circuit (Kite rejects non-tick/sub-circuit).
+            amo_limit = clamp_round_limit(
+                slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0), "SELL",
+                lower_circuit=lower_circuit,
             )
-            slot.gtt_id = str(gid)
+            amo_id = _place_amo_sell(
+                broker, symbol=slot.symbol, qty=qty,
+                product=slot.product or "CNC", paper_mode=paper_mode,
+                trade_id=f"OVERNIGHT_AMO_{slot.reserved_today}_{slot.slot_id}",
+                limit_price=amo_limit,
+            )
+            pool.attach_amo_sell(slot.slot_id, str(amo_id), next_day)
+            # GTT trigger/limit must also be tick-valid (Kite rejects non-tick GTTs).
+            trigger = round_to_tick(slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0))
+            limit = round_to_tick(trigger * (1.0 - gtt_buffer_pct / 100.0))
+            try:
+                gid = broker.place_gtt_stop(
+                    symbol=slot.symbol, qty=qty,
+                    trigger_price=trigger, limit_price=limit,
+                    product=slot.product or "CNC",
+                )
+                slot.gtt_id = str(gid)
+            except Exception as e:
+                logger.error("run_place_exit: GTT place failed for %s: %s "
+                             "(AMO still queued; morning failsafe covers it)", slot.symbol, e)
+                summary["gtt_failed_count"] += 1
+            summary["placed_count"] += 1
+            summary["events"].append({"slot_id": slot.slot_id, "symbol": slot.symbol,
+                                      "amo_sell_order_id": str(amo_id), "gtt_id": slot.gtt_id,
+                                      "expected_exit_date": next_day.isoformat()})
         except Exception as e:
-            logger.error("run_place_exit: GTT place failed for %s: %s "
-                         "(AMO still queued; morning failsafe covers it)", slot.symbol, e)
-            summary["gtt_failed_count"] += 1
-        summary["placed_count"] += 1
-        summary["events"].append({"slot_id": slot.slot_id, "symbol": slot.symbol,
-                                  "amo_sell_order_id": str(amo_id), "gtt_id": slot.gtt_id,
-                                  "expected_exit_date": next_day.isoformat()})
+            logger.error("run_place_exit: exit placement FAILED for slot %d %s: %s "
+                         "(continuing; 09:30 verify-exit will place a failsafe SELL)",
+                         slot.slot_id, slot.symbol, e)
+            summary["exit_failed_count"] = summary.get("exit_failed_count", 0) + 1
+        finally:
+            # Persist after EVERY slot so a later failure never orphans an
+            # already-placed AMO/GTT from state.
+            pool.persist()
 
     pool.persist()
     logger.info("run_place_exit: complete | placed=%d gtt_failed=%d",
@@ -707,7 +725,7 @@ def run_verify_exit(
                 )
                 # Failsafe: marketable-LIMIT SELL just below live LTP (Kite bars
                 # plain MARKET on this universe). Fetch LTP first to price it.
-                qty_for_failsafe = int(round(slot.notional_inr / slot.buy_fill_price))
+                qty_for_failsafe = slot.exit_qty()
                 failsafe_buf = float(paper_enabled_setups[0].raw_config["gtt_limit_buffer_pct"])
                 try:
                     ltp_q, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
@@ -732,8 +750,8 @@ def run_verify_exit(
                     )
                     continue
 
-        # Compute fees + interest
-        qty = int(round(slot.notional_inr / slot.buy_fill_price))
+        # Compute fees + interest — on the ACTUAL filled qty.
+        qty = slot.exit_qty()
         buy_value = slot.buy_fill_price * qty
         sell_value = float(sell_price) * qty
         if (slot.product or "").upper() == "MTF":

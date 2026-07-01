@@ -683,6 +683,7 @@ class OvernightSlot:
     buy_fill_price: Optional[float] = None
     buy_fill_ts: Optional[str] = None        # IST-naive ISO
     buy_order_id: Optional[str] = None
+    buy_qty: Optional[int] = None            # ACTUAL filled BUY qty (exit sells this)
     amo_sell_order_id: Optional[str] = None
     expected_exit_date: Optional[str] = None  # ISO date (next trading day)
     sell_fill_price: Optional[float] = None
@@ -701,6 +702,20 @@ class OvernightSlot:
     def from_dict(cls, d: dict) -> "OvernightSlot":
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in known})
+
+    def exit_qty(self) -> int:
+        """Shares to sell on exit: the ACTUAL filled BUY qty when known, else the
+        legacy notional/fill estimate (for slots persisted before buy_qty existed).
+
+        Using the real filled qty avoids the over/under-sell that
+        `int(round(notional/buy_fill))` caused on 2026-07-01 — WELENT asked to
+        sell 50 vs 49 held (AMO rejected), EMIL sold 225 of 227 (2-share residual).
+        """
+        if self.buy_qty is not None and int(self.buy_qty) > 0:
+            return int(self.buy_qty)
+        if self.buy_fill_price and self.buy_fill_price > 0 and self.notional_inr > 0:
+            return int(round(self.notional_inr / self.buy_fill_price))
+        return 0
 
 
 class OvernightSlotPool:
@@ -808,7 +823,8 @@ class OvernightSlotPool:
         return None
 
     def attach_buy_fill(self, slot_id: int, fill_price: float,
-                        fill_ts_iso: str, order_id: str) -> None:
+                        fill_ts_iso: str, order_id: str,
+                        qty: Optional[int] = None) -> None:
         slot = self._get_slot(slot_id)
         if slot.status != "t0_open":
             raise ValueError(
@@ -818,6 +834,10 @@ class OvernightSlotPool:
         slot.buy_fill_price = float(fill_price)
         slot.buy_fill_ts = fill_ts_iso
         slot.buy_order_id = order_id
+        # Record the ACTUAL filled qty so exits sell exactly what was bought
+        # (not a notional/fill re-estimate). None only for legacy callers.
+        if qty is not None:
+            slot.buy_qty = int(qty)
 
     def attach_amo_sell(self, slot_id: int, amo_order_id: str,
                         expected_exit_date: date) -> None:
@@ -842,8 +862,9 @@ class OvernightSlotPool:
             raise ValueError(
                 f"settle: slot {slot_id} missing buy_fill_price or notional"
             )
-        # Compute qty from notional and buy fill price (avoids storing qty separately)
-        qty = int(round(slot.notional_inr / slot.buy_fill_price))
+        # Actual filled BUY qty (falls back to the notional/fill estimate for
+        # legacy slots persisted before buy_qty). PnL must use the real qty.
+        qty = slot.exit_qty()
         gross_pnl = (float(sell_fill_price) - slot.buy_fill_price) * qty
         net_pnl = gross_pnl - float(fees_inr) - float(interest_inr)
         slot.sell_fill_price = float(sell_fill_price)

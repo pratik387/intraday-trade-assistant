@@ -190,3 +190,25 @@ def test_from_dict_ignores_unknown_legacy_keys():
     slot = OvernightSlot.from_dict(d)
     assert slot.slot_id == 1
     assert slot.gtt_id is None
+
+
+def test_exit_qty_prefers_actual_buy_qty(tmp_path):
+    """exit_qty() sells the ACTUAL filled qty, not a notional/fill re-estimate
+    (2026-07-01: notional/fill gave 50 vs 49 held -> AMO rejected)."""
+    pool, _ = _pool(tmp_path, max_slots=2, margin=10000, max_new=2)
+    slot = pool.reserve(symbol="NSE:WELENT", product="MTF", leverage=2.99, today=date(2026, 6, 30))
+    # notional = 10000*2.99 = 29900; 29900/602.93 -> round == 50 (the buggy value)
+    pool.attach_buy_fill(slot.slot_id, fill_price=602.93,
+                         fill_ts_iso="2026-06-30T15:26:00", order_id="B1", qty=49)
+    assert slot.exit_qty() == 49                       # real filled qty wins
+    assert int(round(slot.notional_inr / slot.buy_fill_price)) == 50  # the old wrong value
+
+
+def test_exit_qty_falls_back_when_no_buy_qty(tmp_path):
+    """Legacy slots (persisted before buy_qty) fall back to the notional/fill estimate."""
+    pool, _ = _pool(tmp_path, max_slots=2, margin=10000, max_new=2)
+    slot = pool.reserve(symbol="NSE:X", product="MTF", leverage=2.5, today=date(2026, 6, 30))
+    pool.attach_buy_fill(slot.slot_id, fill_price=100.0,
+                         fill_ts_iso="2026-06-30T15:26:00", order_id="B1")  # no qty
+    assert slot.buy_qty is None
+    assert slot.exit_qty() == int(round(25000.0 / 100.0)) == 250

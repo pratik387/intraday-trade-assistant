@@ -194,3 +194,41 @@ def test_handlers_skip_on_holiday(state_path, patched_registry):
     assert s_vexit.get("skipped_non_trading_day") is True
     # No orders placed on a holiday.
     broker.place_order.assert_not_called()
+
+
+def _seed_two_t0_slots(state_path):
+    pool = OvernightSlotPool(state_path, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    s1 = pool.reserve(symbol="NSE:AAA", product="MTF", leverage=2.5, today=date(2026, 6, 22))
+    pool.attach_buy_fill(s1.slot_id, fill_price=100.0, fill_ts_iso="2026-06-22T15:26:00", order_id="B_AAA", qty=250)
+    s2 = pool.reserve(symbol="NSE:BBB", product="MTF", leverage=2.5, today=date(2026, 6, 22))
+    pool.attach_buy_fill(s2.slot_id, fill_price=200.0, fill_ts_iso="2026-06-22T15:26:00", order_id="B_BBB", qty=125)
+    pool.persist()
+    return s1.slot_id, s2.slot_id
+
+
+def test_run_place_exit_isolates_amo_failure_and_persists(state_path, patched_registry):
+    """Regression (2026-07-01): one AMO rejection must NOT abort exits for other
+    slots, and orders that DID place must survive in state (per-slot persist)."""
+    import services.execution.overnight_handlers as oh
+    sid1, sid2 = _seed_two_t0_slots(state_path)
+    broker = MagicMock()
+    broker.place_gtt_stop.return_value = "GTT_OK"
+
+    def _po(**kw):
+        if kw.get("symbol") == "NSE:AAA" and kw.get("side") == "SELL":
+            raise RuntimeError("Insufficient stock holding in MTF")
+        return "AMO_OK"
+    broker.place_order.side_effect = _po
+
+    summary = oh.run_place_exit(_config(state_path), broker,
+                                now_ist=pd.Timestamp("2026-06-22 16:05:00"), paper_mode=False)
+    # AAA failed but BBB still placed; the failure was counted, not fatal.
+    assert summary["placed_count"] == 1
+    assert summary.get("exit_failed_count") == 1
+    # State persisted: BBB carries its AMO, AAA does not.
+    pool = OvernightSlotPool(state_path, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
+    assert pool._get_slot(sid1).amo_sell_order_id is None
+    assert pool._get_slot(sid2).amo_sell_order_id == "AMO_OK"
+    # BBB's AMO sold the ACTUAL filled qty (125), not a notional/fill estimate.
+    sell_calls = [c for c in broker.place_order.call_args_list if c.kwargs.get("symbol") == "NSE:BBB"]
+    assert sell_calls and sell_calls[0].kwargs["qty"] == 125
