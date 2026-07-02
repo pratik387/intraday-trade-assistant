@@ -385,6 +385,7 @@ def run_entry(
         # capitulation first, cheaper entry tiebreak — see _rank_detections),
         # then place BUYs in that order.
         ranked = _rank_detections(detections)
+        pending_fills: List[tuple] = []  # (slot_id, symbol, order_id, plan) — poll-timeout BUYs
         for rank_i, (symbol, evt, plan) in enumerate(ranked):
             # Reserve slot (fails if capacity or per-day cap hit)
             slot = pool.reserve(
@@ -457,11 +458,16 @@ def run_entry(
                 fill_price = _live_poll_fill(broker, buy_order_id, timeout_sec=int(spec.raw_config["fill_poll_timeout_sec"]))
                 if fill_price is None:
                     logger.warning(
-                        "run_entry: %s BUY order %s did not fill within timeout",
+                        "run_entry: %s BUY order %s did not fill within timeout; "
+                        "will re-check once after the entry pass",
                         symbol, buy_order_id,
                     )
-                    # Leave the slot in t0_open with no buy_fill — verify-exit
-                    # will detect the orphan and decide.
+                    # Slot stays reserved (t0_open, no fill). One more poll pass
+                    # runs after the ranked loop — a marketable LIMIT often fills
+                    # seconds after the poll window (2026-07-02 DBSTOCKBRO filled
+                    # COMPLETE right after timeout; without the re-check its slot
+                    # had no buy_fill and place-exit would have skipped its AMO).
+                    pending_fills.append((slot.slot_id, symbol, str(buy_order_id), plan, evt.context["product"]))
                     summary["skipped_count"] += 1
                     pool.persist()
                     continue
@@ -480,6 +486,35 @@ def run_entry(
                 "product": evt.context["product"],
                 "buy_fill_price": float(fill_price),
             })
+
+        # Final fill re-check: a marketable LIMIT can complete seconds after its
+        # poll window expired. One extra pass (same per-order timeout) before we
+        # finish, so a late fill gets its buy_fill attached and tonight's
+        # place-exit covers it instead of leaving an unhedged position.
+        if pending_fills and not paper_mode:
+            recheck_timeout = int(spec.raw_config["fill_poll_timeout_sec"])
+            for slot_id, sym, oid, pplan, pproduct in pending_fills:
+                fp = _live_poll_fill(broker, oid, timeout_sec=recheck_timeout)
+                if fp is None:
+                    logger.warning(
+                        "run_entry: %s BUY %s STILL unfilled after re-check; slot %d "
+                        "left t0_open (verify-exit orphan path decides)",
+                        sym, oid, slot_id,
+                    )
+                    continue
+                pool.attach_buy_fill(
+                    slot_id, fill_price=float(fp), fill_ts_iso=now.isoformat(),
+                    order_id=oid, qty=int(pplan.qty),
+                )
+                summary["fired_count"] += 1
+                summary["skipped_count"] = max(0, summary["skipped_count"] - 1)
+                summary["events"].append({
+                    "symbol": sym, "qty": pplan.qty,
+                    "product": pproduct, "buy_fill_price": float(fp),
+                    "late_fill_recheck": True,
+                })
+                logger.info("run_entry: late fill recovered on re-check | %s @ %.2f", sym, fp)
+            pool.persist()
 
     # Persist
     pool.persist()
