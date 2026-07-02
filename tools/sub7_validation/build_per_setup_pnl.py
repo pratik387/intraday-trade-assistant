@@ -45,6 +45,17 @@ MTF_INTEREST_RATE_PER_DAY = 0.0004   # 0.04% per day on borrowed amount; from T+
 MTF_PLEDGE_FEE_INR_PER_ISIN = 15.0
 MTF_UNPLEDGE_FEE_INR = 15.0
 MTF_PLEDGE_GST_RATE = 0.18
+# MTF brokerage — NOT free (delivery/CNC is, MTF is not). Zerodha MTF = 0.3% or
+# Rs20/executed order, whichever LOWER. The Rs20 cap binds for any position above
+# ~Rs6.7k, so in practice it's a FIXED ~Rs20/order — the cost that dominates small
+# positions. Calibrated to the 2026-07-01 live contract note (Rs240 brokerage over
+# ~12 MTF legs = Rs20/order). BUG FIXED 2026-07-02: the prior model built MTF fees
+# on the CNC base (brokerage Rs0), understating MTF cost by ~Rs47/round-trip
+# (brokerage + GST). Every MTF backtest PF before this fix is optimistic — re-run
+# the confidence cards with this correction.
+MTF_BROK_RATE = 0.003
+MTF_BROK_CAP_INR = 20.0
+MTF_BROK_GST_RATE = 0.18
 
 
 def calc_fee(entry_price: float, exit_price: float, qty: int, side: str,
@@ -169,14 +180,20 @@ def calc_fee_mtf(buy_value_inr: float, sell_value_inr: float,
     if buy_value_inr <= 0 or sell_value_inr <= 0 or margin_inr <= 0:
         return 0.0
 
-    # Base equity fees (same as CNC)
+    # Base equity STATUTORY fees (STT/stamp/txn/SEBI/GST-on-txn). calc_fee_cnc
+    # sets brokerage=0 (correct for delivery) — MTF brokerage is added below.
     base = calc_fee_cnc(buy_value_inr, sell_value_inr)
-    # MTF-specific
+    # MTF brokerage (0.3% or Rs20/order, whichever lower) + GST — NOT free.
+    # The Rs20 cap binds at realistic sizes, so this is a ~fixed Rs20/order cost.
+    brokerage = (min(MTF_BROK_RATE * buy_value_inr, MTF_BROK_CAP_INR)
+                 + min(MTF_BROK_RATE * sell_value_inr, MTF_BROK_CAP_INR))
+    brokerage_gst = brokerage * MTF_BROK_GST_RATE
+    # MTF-specific carrying costs
     borrowed = max(0.0, buy_value_inr - margin_inr)
     interest = borrowed * MTF_INTEREST_RATE_PER_DAY * max(0, int(hold_days))
     pledge = MTF_PLEDGE_FEE_INR_PER_ISIN * (1 + MTF_PLEDGE_GST_RATE)
     unpledge = MTF_UNPLEDGE_FEE_INR * (1 + MTF_PLEDGE_GST_RATE)
-    return base + interest + pledge + unpledge
+    return base + brokerage + brokerage_gst + interest + pledge + unpledge
 
 
 def calc_fee_by_mode(buy_value_inr: float, sell_value_inr: float, *,

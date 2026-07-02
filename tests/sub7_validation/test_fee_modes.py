@@ -23,18 +23,30 @@ def test_calc_fee_cnc_zero_for_zero_values():
     assert calc_fee_cnc(0.0, 0.0) == 0.0 or calc_fee_cnc(0.0, 0.0) < 0.01
 
 
-def test_calc_fee_mtf_one_night_includes_interest():
-    """Rs 2.79L buy / Rs 2.80L sell / Rs 1L margin / 1 day -> fee > CNC equivalent due to interest + pledge."""
+def test_calc_fee_mtf_one_night_includes_interest_brokerage_pledge():
+    """Rs 2.79L buy / Rs 2.80L sell / Rs 1L margin / 1 day -> MTF fee = CNC base
+    + brokerage(+GST) + interest + pledge/unpledge."""
     cnc_equivalent = calc_fee_cnc(279000.0, 280000.0)
     mtf = calc_fee_mtf(279000.0, 280000.0, 100000.0, 1)
-    # MTF fee = CNC base + interest + pledge + unpledge
-    # interest = (279000 - 100000) * 0.0004 * 1 = 71.6
-    # pledge + unpledge = 15*1.18 + 15*1.18 = 35.4
-    expected_extra = 71.6 + 35.4
+    # brokerage = min(.003*279000,20)+min(.003*280000,20) = 20+20 = 40 (cap binds); GST = 7.2
+    # interest = (279000-100000)*0.0004*1 = 71.6 ; pledge+unpledge = 35.4
+    expected_extra = 40.0 + 7.2 + 71.6 + 35.4
     assert abs(mtf - cnc_equivalent - expected_extra) < 0.5, (
         f"mtf={mtf:.2f}, cnc={cnc_equivalent:.2f}, "
         f"extra={mtf - cnc_equivalent:.2f}, expected_extra~={expected_extra}"
     )
+
+
+def test_calc_fee_mtf_brokerage_is_not_zero_regression():
+    """Regression (2026-07-02 contract note): MTF brokerage is NOT free. The
+    prior model built on the CNC base (brokerage 0) and understated MTF fees by
+    ~Rs47/round-trip. Rs20/order cap binds at all realistic sizes."""
+    # A ~Rs26k MTF position (the live Rs10k-slot size): brokerage cap binds.
+    cnc = calc_fee_cnc(26000.0, 26200.0)
+    mtf = calc_fee_mtf(26000.0, 26200.0, 10000.0, 1)
+    brokerage_plus_gst = (20.0 + 20.0) * 1.18   # Rs20/order both sides + 18% GST = 47.2
+    # MTF must exceed CNC by at least the brokerage+GST (plus interest+pledge on top).
+    assert (mtf - cnc) > brokerage_plus_gst, f"mtf-cnc={mtf-cnc:.2f} must exceed brokerage {brokerage_plus_gst:.2f}"
 
 
 def test_calc_fee_mtf_friday_to_monday_hold_days_3():
