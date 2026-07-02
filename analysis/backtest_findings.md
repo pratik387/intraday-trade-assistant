@@ -5,6 +5,16 @@ Review each after the full 3-year backtest completes and pipeline_health_analyze
 
 ---
 
+## 0b. [2026-06-29] Multi-day composite selection layer: replay parity = perfect fills + expected dedupe (NOT a regression)
+
+**Found by:** Stage-8 replay (`tools/sub9_research/backtest_mtf_replay.py`), Q1-2024, all 4 setups (A2/C1/C4/C6), on branch `feature/multiday-composite-selection` AFTER the cross-setup composite selector shipped.
+
+**Observed:** 399 book exits, exit 0. Fill parity perfect (`fill_diff_bps p50/p90 = 0.0/0.0`, 98–100% matched). Per-setup `exec_n ≪ res_n` (399 unique book positions vs 886 standalone-basket rows = ~55% cross-setup dup/held-carryover). Per-setup `exec_PF < res_PF` (e.g. crash2d 0.964 vs 1.780; low52 1.898 vs 2.774). **Only 4 stale exits** (vs 871 in finding #0 — the holiday-calendar bug is fixed).
+
+**Cause (by design, not a bug):** The composite layer dedupes a name flagged by several setups into ONE owner-attributed book position + applies cross-day held-union filtering. The research ledger (`research_ledger`) is per-setup standalone (no cross-setup dedupe), so it double-counts shared names → far more rows. `exec_PF < res_PF` is an **owner-attribution artifact of this tool**: it records owner-labeled book events and DISABLES the decay tripwire (line 131), so a setup that loses its strong shared names to a higher-`cap_score` owner (zscore_oversold wins most overlaps → low52 drops 59→9) shows a thinner owned-only ledger. The real per-setup edge is measured by the tripwire, which Task 5 feeds for ALL contributors — validated forward in paper (design §6.1), not by this owner-only replay.
+
+**Action:** None blocking. This is the intended hidden-concentration removal (886 overlapping → 399 unique). Open question for paper/§6.1: is owner = max-`cap_score` the right attribution, and does `zscore_oversold` over-dominating ownership warrant per-setup composite weights. Spec: `specs/2026-06-29-multiday-composite-selection-design.md`.
+
 ## 0. [2026-06-15] Multi-day CNC/MTF executor: trading-day math ignores NSE holiday calendar (BLOCKER before paper)
 
 **Found by:** Stage-8 replay parity harness (`tools/sub9_research/backtest_mtf_replay.py`) on the new multi-day batch (A2/C1/C4/C6), Q1-2024 sample. Branch `research/2026-06-14-mtf-capitulation-revert`.
