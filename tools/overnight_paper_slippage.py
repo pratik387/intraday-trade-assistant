@@ -565,9 +565,26 @@ def _append_reconstructed(
 # CLI
 # ---------------------------------------------------------------------------
 
+def _prev_trading_day(d: date) -> date:
+    """Most recent NSE trading day strictly before `d` (weekend/holiday-aware)."""
+    from datetime import timedelta
+    from services.execution.overnight_handlers import _is_trading_day
+    cur = d - timedelta(days=1)
+    while not _is_trading_day(cur):
+        cur -= timedelta(days=1)
+    return cur
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--date", required=True, help="ENTRY date (YYYY-MM-DD)")
+    p.add_argument("--date", required=False, default=None, help="ENTRY date (YYYY-MM-DD)")
+    p.add_argument(
+        "--auto", action="store_true",
+        help="Reconstruct the most recent completed cycle: entry = previous "
+             "trading day (its exit = today's open). No-op on non-trading days. "
+             "Used by the morning cron so the Rs1L paper ledger tracks the live "
+             "book automatically.",
+    )
     p.add_argument(
         "--log-dir", default=str(ROOT / "logs"),
         help="Directory holding overnight_entry_<DATE>.log",
@@ -582,6 +599,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     p.add_argument("--reports-dir", default=str(ROOT / "reports"))
     args = p.parse_args(argv)
+
+    if args.auto:
+        from services.execution.overnight_handlers import _is_trading_day
+        today = _today_ist()
+        if not _is_trading_day(today):
+            print(f"--auto: {today} is not an NSE trading day; nothing to reconstruct.")
+            return 0
+        args.date = _prev_trading_day(today).isoformat()
+        print(f"--auto: reconstructing entry date {args.date} (exited this morning)")
+    elif not args.date:
+        p.error("either --date or --auto is required")
 
     entry_date = date.fromisoformat(args.date)
     log_path = Path(args.log_dir) / f"overnight_entry_{args.date}.log"
