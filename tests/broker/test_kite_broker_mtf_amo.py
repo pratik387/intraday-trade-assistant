@@ -135,3 +135,71 @@ def test_existing_cnc_order_unaffected(dry_broker):
         check_margins=False,
     )
     assert order_id.startswith("PAPER_")
+
+
+# ---------------------------------------------------------------------------
+# Tick-size retry (2026-07-02: 0.10-tick names cost the day's top-2 MTF picks)
+# ---------------------------------------------------------------------------
+
+def _live_broker_with_kc():
+    """Live-mode broker whose kc is a MagicMock with real constant strings."""
+    with patch("broker.kite.kite_broker.KiteConnect") as MockKC:
+        kc = MagicMock()
+        kc.TRANSACTION_TYPE_BUY = "BUY"; kc.TRANSACTION_TYPE_SELL = "SELL"
+        kc.ORDER_TYPE_LIMIT = "LIMIT"; kc.ORDER_TYPE_MARKET = "MARKET"
+        kc.PRODUCT_MIS = "MIS"; kc.PRODUCT_CNC = "CNC"; kc.PRODUCT_MTF = "MTF"
+        kc.VARIETY_REGULAR = "regular"; kc.VARIETY_AMO = "amo"
+        MockKC.return_value = kc
+        from broker.kite.kite_broker import KiteBroker
+        return KiteBroker(dry_run=False), kc
+
+
+def test_tick_size_rejection_retries_with_parsed_tick():
+    """Kite rejects a 0.05-rounded price on a 0.10-tick script; the broker must
+    parse the tick from the error, re-round DIRECTIONALLY (BUY floors) and
+    retry once."""
+    broker, kc = _live_broker_with_kc()
+    calls = []
+
+    def _po(**kw):
+        calls.append(dict(kw))
+        if len(calls) == 1:
+            raise Exception("Tick size for this script is 0.10. Kindly enter price "
+                            "in the multiple of tick size for this script")
+        return "OID2"
+
+    kc.place_order.side_effect = _po
+    oid = broker.place_order(symbol="NSE:NPST", side="BUY", qty=10,
+                             order_type="LIMIT", price=101.25, product="MTF",
+                             variety="regular", check_margins=False)
+    assert oid == "OID2"
+    assert len(calls) == 2
+    assert calls[0]["price"] == 101.25
+    assert calls[1]["price"] == 101.20          # floored to 0.10 tick (BUY)
+
+
+def test_tick_size_retry_sell_ceils():
+    broker, kc = _live_broker_with_kc()
+    calls = []
+
+    def _po(**kw):
+        calls.append(dict(kw))
+        if len(calls) == 1:
+            raise Exception("Tick size for this script is 0.10.")
+        return "OID2"
+
+    kc.place_order.side_effect = _po
+    broker.place_order(symbol="NSE:NPST", side="SELL", qty=10,
+                       order_type="LIMIT", price=95.05, product="CNC",
+                       variety="amo", check_margins=False)
+    assert calls[1]["price"] == 95.10           # ceiled to 0.10 tick (SELL)
+
+
+def test_non_tick_error_does_not_retry():
+    broker, kc = _live_broker_with_kc()
+    kc.place_order.side_effect = Exception("Insufficient stock holding in MTF")
+    with pytest.raises(RuntimeError):
+        broker.place_order(symbol="NSE:X", side="SELL", qty=5,
+                           order_type="LIMIT", price=100.0, product="MTF",
+                           variety="amo", check_margins=False)
+    assert kc.place_order.call_count == 1       # no retry on unrelated errors

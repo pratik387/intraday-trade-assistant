@@ -32,6 +32,7 @@ Features:
 Requires env OR explicit params: KITE_API_KEY, KITE_ACCESS_TOKEN
 Requires: `pip install kiteconnect`
 """
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -295,6 +296,33 @@ class KiteBroker:
             if actual_product == "MIS" and "MIS" in str(e):
                 logger.warning(f"MIS blocked for {symbol} - skipping trade (no CNC fallback) | Error: {e}")
                 raise RuntimeError(f"MIS blocked for {symbol} - stock not allowed for intraday trading")
+
+            # Tick-size self-correction: NSE tick is PER-STOCK (0.01/0.05/0.10/…)
+            # and we round to 0.05 by default. Kite's rejection names the actual
+            # tick ("Tick size for this script is 0.10...") — parse it, re-round
+            # DIRECTIONALLY (BUY floors / SELL ceils, stays marketable and inside
+            # any circuit clamp already applied), retry ONCE. 2026-07-02: this
+            # rejection cost the day's top-2 ranked MTF picks (NPST, MIDWESTLTD).
+            tick_m = re.search(r"[Tt]ick size for this scrip\w* is (\d+(?:\.\d+)?)", str(e))
+            if tick_m and "price" in params and ot == self.kc.ORDER_TYPE_LIMIT:
+                from utils.price_utils import clamp_round_limit
+                tick = float(tick_m.group(1))
+                new_price = clamp_round_limit(float(params["price"]), side_u, tick_size=tick)
+                if new_price > 0 and abs(new_price - float(params["price"])) > 1e-9:
+                    logger.warning(
+                        f"Tick-size retry for {symbol}: {params['price']} -> {new_price} (tick {tick})"
+                    )
+                    params["price"] = new_price
+                    try:
+                        order_id = self.kc.place_order(variety=kc_variety, **params)
+                        logger.info(
+                            f"Order placed (tick-retry): {symbol} | {side} {qty} @ {product} "
+                            f"variety={variety_l} px={new_price} | Order ID: {order_id}"
+                        )
+                        return str(order_id)
+                    except Exception as e2:
+                        logger.error(f"Order placement failed for {symbol} after tick-retry: {e2}")
+                        raise RuntimeError(f"Order placement failed: {e2}")
 
             logger.error(f"Order placement failed for {symbol}: {e}")
             raise RuntimeError(f"Order placement failed: {e}")
