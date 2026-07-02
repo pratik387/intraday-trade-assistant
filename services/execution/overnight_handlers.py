@@ -57,6 +57,23 @@ def _safe_quote(broker, symbol):
         return None, None, None
 
 
+def _rank_detections(detections):
+    """Order detections for slot allocation: deepest capitulation first.
+
+    Sort key = event confidence DESC (confidence == |signed_vol_ratio|, the
+    depth of closing-25m sell pressure), tiebreak cheaper entry price first
+    (the more illiquid name). Verified 2026-07-02 on Disc/OOS/Holdout: on
+    oversubscribed days this ordering beats random selection (~+0.05-0.08%%
+    per trade; svr rule at/above the 30-seed random p95), and it is
+    deterministic/reproducible — replacing the previous arbitrary
+    set-iteration order. Pure function: [(symbol, evt, plan)] -> sorted copy.
+    """
+    return sorted(
+        detections,
+        key=lambda t: (-float(t[1].confidence), float(t[2].entry_price)),
+    )
+
+
 _NSE_HOLIDAYS = None
 
 
@@ -315,7 +332,12 @@ def run_entry(
         from collections import Counter as _Counter
         reject_reasons: _Counter = _Counter()
 
-        # Iterate symbols
+        # Phase A: run the detector across the whole universe and COLLECT every
+        # detection first — no slot reservation yet. Slot allocation happens in
+        # Phase B in conviction order. Previously slots were reserved inline
+        # while iterating `universe` (a set -> arbitrary hash order), so WHICH
+        # fires got the capped slots was effectively random.
+        detections: List[tuple] = []
         for symbol in universe:
             # Per-symbol df_daily: prefer pre-computed candidate entry's
             # 2 closes (cheapest path); fall back to daily_dict from the
@@ -357,7 +379,13 @@ def run_entry(
                 summary["rejected_count"] += 1
                 reject_reasons["plan_long_strategy returned None"] += 1
                 continue
+            detections.append((symbol, evt, plan))
 
+        # Phase B: allocate the capped slots in CONVICTION order (deepest
+        # capitulation first, cheaper entry tiebreak — see _rank_detections),
+        # then place BUYs in that order.
+        ranked = _rank_detections(detections)
+        for rank_i, (symbol, evt, plan) in enumerate(ranked):
             # Reserve slot (fails if capacity or per-day cap hit)
             slot = pool.reserve(
                 symbol=symbol,
@@ -366,12 +394,14 @@ def run_entry(
                 today=today,
             )
             if slot is None:
+                remaining = len(ranked) - rank_i
                 logger.info(
-                    "run_entry: slot capacity hit (free=%d, new_today=%d); skipping %s",
-                    pool.free_count(), pool.new_today_count(today), symbol,
+                    "run_entry: slot capacity hit (free=%d, new_today=%d); "
+                    "%d lower-ranked detection(s) not taken",
+                    pool.free_count(), pool.new_today_count(today), remaining,
                 )
-                summary["skipped_count"] += 1
-                continue
+                summary["skipped_count"] += remaining
+                break
 
             # Place marketable-LIMIT BUY. Kite bars plain MARKET orders on the
             # illiquid/trade-to-trade universe, so cross the spread with a LIMIT

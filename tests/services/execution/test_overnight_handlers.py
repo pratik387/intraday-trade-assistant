@@ -371,3 +371,25 @@ def test_run_verify_exit_orphan_t0_without_expected_exit_date(tmp_path):
     summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-05-22 09:30:00"))
     assert summary["orphan_t0_count"] == 1
     assert summary["settled_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _rank_detections (slot-allocation order)
+# ---------------------------------------------------------------------------
+
+def test_rank_detections_deepest_svr_first_cheap_tiebreak():
+    """Slots are allocated deepest-capitulation-first (confidence = |svr| desc),
+    tiebreak cheaper entry price — replacing arbitrary set-iteration order."""
+    from types import SimpleNamespace as NS
+    from services.execution.overnight_handlers import _rank_detections
+
+    dets = [
+        ("NSE:MILD",  NS(confidence=0.55), NS(entry_price=100.0)),
+        ("NSE:DEEP",  NS(confidence=0.95), NS(entry_price=500.0)),
+        ("NSE:TIE_EXPENSIVE", NS(confidence=0.80), NS(entry_price=900.0)),
+        ("NSE:TIE_CHEAP",     NS(confidence=0.80), NS(entry_price=50.0)),
+    ]
+    ranked = [s for s, _, _ in _rank_detections(dets)]
+    assert ranked == ["NSE:DEEP", "NSE:TIE_CHEAP", "NSE:TIE_EXPENSIVE", "NSE:MILD"]
+    # pure function: input untouched
+    assert dets[0][0] == "NSE:MILD"
