@@ -98,6 +98,13 @@ def _collect_files(session_date: str) -> List[Tuple[Path, str]]:
             "decay_tripwire.json",
         ),
         (
+            # LIVE (real-money) ledger — separate from the Rs1L paper ledger
+            # since the 2026-06-24 live activation. Archived so the dashboard's
+            # live-book history survives the tripwire's ~150-trade trim.
+            _REPO_ROOT / "state" / f"decay_tripwire_{_SETUP_NAME}_live.json",
+            "decay_tripwire_live.json",
+        ),
+        (
             _REPO_ROOT / "data" / "close_dn_baseline" / f"baseline_{session_date}.json",
             "baseline.json",
         ),
