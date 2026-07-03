@@ -46,6 +46,12 @@ class _TradeRecord:
     # without post-hoc re-fetch drift. Legacy ledgers predate them -> None.
     idealized_entry: Optional[float] = None
     idealized_exit: Optional[float] = None
+    # Multi-day composite attribution: True when this row MIRRORS a trade whose
+    # book position is OWNED by another setup (PnL fed to every contributor so
+    # each setup's standalone edge stays measurable). Pooled/portfolio views
+    # MUST exclude attributed rows or one position double-counts. None/False =
+    # this setup's own (owner) position. Legacy ledgers predate this -> None.
+    attributed: Optional[bool] = None
 
 
 class DecayTripwire:
@@ -109,6 +115,7 @@ class DecayTripwire:
                 qty=(int(t["qty"]) if t.get("qty") is not None else None),
                 idealized_entry=(float(t["idealized_entry"]) if t.get("idealized_entry") is not None else None),
                 idealized_exit=(float(t["idealized_exit"]) if t.get("idealized_exit") is not None else None),
+                attributed=(bool(t["attributed"]) if t.get("attributed") is not None else None),
             )
             for t in trades
         ]
@@ -144,7 +151,8 @@ class DecayTripwire:
                      exit_reason: Optional[str] = None,
                      qty: Optional[int] = None,
                      idealized_entry: Optional[float] = None,
-                     idealized_exit: Optional[float] = None) -> None:
+                     idealized_exit: Optional[float] = None,
+                     attributed: Optional[bool] = None) -> None:
         """Append a settled trade and re-evaluate paused status.
 
         Call from run_verify_exit after pool.settle() completes.
@@ -164,6 +172,7 @@ class DecayTripwire:
             qty=(int(qty) if qty is not None else None),
             idealized_entry=(float(idealized_entry) if idealized_entry is not None else None),
             idealized_exit=(float(idealized_exit) if idealized_exit is not None else None),
+            attributed=(bool(attributed) if attributed is not None else None),
         ))
         # Keep buffer larger than window (we trim to last 200 to bound disk size)
         if len(self._trades) > max(self._window_trades * 5, 200):

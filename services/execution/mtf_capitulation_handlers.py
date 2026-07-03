@@ -378,6 +378,10 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
                 fees_inr=float(fees_only) + float(interest), gross_pnl_inr=float(gross),
                 symbol=symbol, entry_price=float(entry_price),
                 exit_price=float(sell_price), exit_reason="kday_close_moc", qty=int(qty),
+                # Mirror rows (non-owner contributors) are tagged so pooled/
+                # portfolio views can exclude them — one book position must
+                # count once. The owner's row stays untagged.
+                attributed=(cname != name),
             )
 
 

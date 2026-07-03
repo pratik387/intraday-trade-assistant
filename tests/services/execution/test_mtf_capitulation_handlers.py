@@ -469,3 +469,12 @@ def test_exit_feeds_all_contributors_tripwires(monkeypatch, tmp_path):
                            window_trades=30, pf_floor=1.2, sustained_weeks=6)
         assert len(tw._trades) == 1  # noqa: SLF001
         assert tw._trades[0].net_pnl_inr > 0  # +10% gross, profitable
+    # Attribution flag: the position is OWNED by A2's store — A2's row is the
+    # real book trade (attributed False), C1's row is a MIRROR (True) so pooled
+    # views can exclude it (one position counts once).
+    tw_a2 = DecayTripwire(setup_name="A2", state_path=tmp_path / "tw_A2.json",
+                          window_trades=30, pf_floor=1.2, sustained_weeks=6)
+    tw_c1 = DecayTripwire(setup_name="C1", state_path=tmp_path / "tw_C1.json",
+                          window_trades=30, pf_floor=1.2, sustained_weeks=6)
+    assert tw_a2._trades[0].attributed is False  # noqa: SLF001
+    assert tw_c1._trades[0].attributed is True   # noqa: SLF001
