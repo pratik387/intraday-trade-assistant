@@ -12,6 +12,7 @@ Spec: specs/2026-05-21-close_dn_overnight_long-paper-trade-implementation-spec.m
 """
 from __future__ import annotations
 
+import json
 import logging
 import time as _time_mod
 from datetime import date, datetime, time, timedelta
@@ -384,6 +385,28 @@ def run_entry(
         # Phase B: allocate the capped slots in CONVICTION order (deepest
         # capitulation first, cheaper entry tiebreak — see _rank_detections),
         # then place BUYs in that order.
+        # Persist the PAPER-open snapshot: every fire (taken, capped, rejected
+        # alike) with its idealized entry (plan.entry_price = the 15:25 close).
+        # The Rs1L paper ledger only materializes these NEXT morning (09:45
+        # reconstruction), so this file is the dashboard's only view of paper
+        # positions while they are open overnight. Overwritten each entry day.
+        try:
+            snap = {
+                "session_date": today.isoformat(),
+                "written_at": now.isoformat(),
+                "fires": [
+                    {"symbol": sym, "product": e.context["product"],
+                     "leverage": float(e.context["leverage"]),
+                     "entry_price": float(p.entry_price)}
+                    for sym, e, p in detections
+                ],
+            }
+            snap_path = Path(spec.raw_config["capital_allocation"]["state_file"]).parent \
+                / "overnight_paper_open.json"
+            snap_path.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning("run_entry: paper-open snapshot write failed: %s", e)
+
         ranked = _rank_detections(detections)
         pending_fills: List[tuple] = []  # (slot_id, symbol, order_id, plan) — poll-timeout BUYs
         for rank_i, (symbol, evt, plan) in enumerate(ranked):
