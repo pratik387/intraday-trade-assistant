@@ -15,6 +15,8 @@ from services.execution.overnight_handlers import (  # noqa: E402
     run_entry,
     run_verify_exit,
     _next_trading_day,
+    _insufficient_funds_retry_qty,
+    _live_poll_fill_ex,
 )
 
 
@@ -74,6 +76,7 @@ def _minimal_config(state_path: Path) -> dict:
                 "catastrophe_stop_pct": 5.0,
                 "gtt_limit_buffer_pct": 0.5,
                 "entry_limit_buffer_pct": 1.0,
+                "insufficient_funds_retry_haircut": 0.95,
                 "fill_poll_timeout_sec": 60,
                 "capital_allocation": {
                     "active_margin_inr": 400000,
@@ -371,6 +374,104 @@ def test_run_verify_exit_orphan_t0_without_expected_exit_date(tmp_path):
     summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-05-22 09:30:00"))
     assert summary["orphan_t0_count"] == 1
     assert summary["settled_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _insufficient_funds_retry_qty (2026-07-06 incident: async REJECTED burn)
+# ---------------------------------------------------------------------------
+
+# Exact live status_message from the 2026-07-06 Kite rejection.
+_LIVE_REJECT_MSG = (
+    "Insufficient funds. Margin required: 152010.12. "
+    "Margin available: 149081.20. Check the funds statement for more details."
+)
+
+
+def test_insufficient_funds_retry_qty_live_message():
+    """qty=133 with the exact live message -> int(133*(149081.20/152010.12)*0.95)=123."""
+    expected = int(133 * (149081.20 / 152010.12) * 0.95)
+    assert expected == 123  # guard the arithmetic itself
+    assert _insufficient_funds_retry_qty(_LIVE_REJECT_MSG, 133, 0.95) == 123
+
+
+def test_insufficient_funds_retry_qty_non_matching_message():
+    """A rejection that is NOT insufficient-funds -> None (no retry)."""
+    assert _insufficient_funds_retry_qty(
+        "Order rejected: circuit limit exceeded", 133, 0.95) is None
+    assert _insufficient_funds_retry_qty("", 133, 0.95) is None
+    assert _insufficient_funds_retry_qty(None, 133, 0.95) is None
+
+
+def test_insufficient_funds_retry_qty_tiny_available_floor():
+    """Tiny available margin -> computed qty < 1 -> None (never place qty=0)."""
+    msg = ("Insufficient funds. Margin required: 152010.12. "
+           "Margin available: 100.00.")
+    assert _insufficient_funds_retry_qty(msg, 133, 0.95) is None
+
+
+def test_insufficient_funds_retry_qty_never_exceeds_original():
+    """Pathological available >= required must not scale qty UP."""
+    msg = ("Insufficient funds. Margin required: 100.00. "
+           "Margin available: 500.00.")
+    out = _insufficient_funds_retry_qty(msg, 133, 0.95)
+    assert out is not None and out <= 133
+
+
+def test_insufficient_funds_retry_qty_zero_required_guard():
+    """Margin required 0 -> None (no divide-by-zero)."""
+    msg = "Insufficient funds. Margin required: 0. Margin available: 100.00."
+    assert _insufficient_funds_retry_qty(msg, 133, 0.95) is None
+
+
+# ---------------------------------------------------------------------------
+# _live_poll_fill_ex (fast-fail on REJECTED/CANCELLED)
+# ---------------------------------------------------------------------------
+
+def test_live_poll_fill_ex_rejected_fast_fails_without_burning_timeout():
+    """A REJECTED order stops polling on the FIRST status check (the 2026-07-06
+    incident burned the whole poll window on an already-rejected order)."""
+    broker = MagicMock()
+    broker.get_order_status.return_value = {
+        "order_id": "X1", "status": "REJECTED", "average_price": 0.0,
+        "status_message": _LIVE_REJECT_MSG,
+    }
+    price, status = _live_poll_fill_ex(broker, "X1", timeout_sec=60)
+    assert price is None
+    assert status is not None and status["status"] == "REJECTED"
+    assert status["status_message"] == _LIVE_REJECT_MSG
+    assert broker.get_order_status.call_count == 1  # no repeat polling
+
+
+def test_live_poll_fill_ex_cancelled_fast_fails():
+    broker = MagicMock()
+    broker.get_order_status.return_value = {
+        "order_id": "X2", "status": "CANCELLED", "average_price": 0.0,
+    }
+    price, status = _live_poll_fill_ex(broker, "X2", timeout_sec=60)
+    assert price is None
+    assert status["status"] == "CANCELLED"
+    assert broker.get_order_status.call_count == 1
+
+
+def test_live_poll_fill_ex_complete_returns_price_and_status():
+    broker = MagicMock()
+    broker.get_order_status.return_value = {
+        "order_id": "X3", "status": "COMPLETE", "average_price": 101.25,
+    }
+    price, status = _live_poll_fill_ex(broker, "X3", timeout_sec=60)
+    assert price == 101.25
+    assert status["status"] == "COMPLETE"
+
+
+def test_live_poll_fill_ex_timeout_returns_last_status():
+    """An OPEN order that never fills -> (None, last_status) after timeout."""
+    broker = MagicMock()
+    broker.get_order_status.return_value = {
+        "order_id": "X4", "status": "OPEN", "average_price": 0.0,
+    }
+    price, status = _live_poll_fill_ex(broker, "X4", timeout_sec=0)
+    assert price is None
+    assert status is not None and status["status"] == "OPEN"
 
 
 # ---------------------------------------------------------------------------

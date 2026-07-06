@@ -504,27 +504,34 @@ class KiteBroker:
         return None
 
     def get_order_status(self, order_id: str) -> Dict[str, Any]:
-        """Return {'order_id','status','average_price'} for an order.
+        """Return {'order_id','status','average_price','status_message'} for an order.
 
         Used by the overnight handler's fill-polling. status is upper-cased;
         'UNKNOWN' when the order is not found. average_price is 0.0 until filled.
+        status_message carries Kite's rejection reason (e.g. the async
+        "Insufficient funds. Margin required: ..." of 2026-07-06) so callers
+        can fast-fail REJECTED orders and size a reduced-qty retry.
         """
         if self.dry_run:
             for o in self._paper_orders:
                 if str(o.get("order_id")) == str(order_id):
                     return {"order_id": str(order_id),
                             "status": str(o.get("status", "COMPLETE")).upper(),
-                            "average_price": float(o.get("average_price") or 0.0)}
-            return {"order_id": str(order_id), "status": "UNKNOWN", "average_price": 0.0}
+                            "average_price": float(o.get("average_price") or 0.0),
+                            "status_message": str(o.get("status_message") or "")}
+            return {"order_id": str(order_id), "status": "UNKNOWN",
+                    "average_price": 0.0, "status_message": ""}
         try:
             for o in self.kc.orders():
                 if str(o.get("order_id")) == str(order_id):
                     return {"order_id": str(order_id),
                             "status": str(o.get("status") or "").upper(),
-                            "average_price": float(o.get("average_price") or 0.0)}
+                            "average_price": float(o.get("average_price") or 0.0),
+                            "status_message": str(o.get("status_message") or "")}
         except Exception as e:
             logger.warning(f"get_order_status failed for {order_id}: {e}")
-        return {"order_id": str(order_id), "status": "UNKNOWN", "average_price": 0.0}
+        return {"order_id": str(order_id), "status": "UNKNOWN",
+                "average_price": 0.0, "status_message": ""}
 
     # ------------------------------ Paper Trading ---------------------------
     def _simulate_order(

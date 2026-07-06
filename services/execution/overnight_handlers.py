@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time as _time_mod
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -408,7 +409,7 @@ def run_entry(
             logger.warning("run_entry: paper-open snapshot write failed: %s", e)
 
         ranked = _rank_detections(detections)
-        pending_fills: List[tuple] = []  # (slot_id, symbol, order_id, plan) — poll-timeout BUYs
+        pending_fills: List[tuple] = []  # (slot_id, symbol, order_id, qty, product) — poll-timeout BUYs
         for rank_i, (symbol, evt, plan) in enumerate(ranked):
             # Reserve slot (fails if capacity or per-day cap hit)
             slot = pool.reserve(
@@ -458,13 +459,7 @@ def run_entry(
                 # Roll back the reservation by directly resetting (free) — slot
                 # never transitioned past t0_open, so cleanest is to release.
                 # Since release() requires t1_settling, we directly reset fields:
-                slot.status = "free"
-                slot.symbol = None
-                slot.product = None
-                slot.leverage = 1.0
-                slot.margin_inr = 0.0
-                slot.notional_inr = 0.0
-                slot.reserved_today = None
+                _rollback_slot_to_free(slot)
                 summary["skipped_count"] += 1
                 continue
 
@@ -478,8 +473,97 @@ def run_entry(
                     )
                     fill_price = plan.entry_price
             else:
-                fill_price = _live_poll_fill(broker, buy_order_id, timeout_sec=int(spec.raw_config["fill_poll_timeout_sec"]))
+                poll_timeout = int(spec.raw_config["fill_poll_timeout_sec"])
+                fill_price, last_status = _live_poll_fill_ex(
+                    broker, buy_order_id, timeout_sec=poll_timeout,
+                )
                 if fill_price is None:
+                    st = str((last_status or {}).get("status") or "").upper()
+                    if st in ("REJECTED", "CANCELLED"):
+                        # Terminally dead order — never re-check it (live
+                        # 2026-07-06: an async Kite margin rejection burned the
+                        # whole poll window and left a ghost t0_open slot). If it
+                        # was a margin shortfall, retry ONCE at the qty the
+                        # available margin affords.
+                        status_msg = str((last_status or {}).get("status_message") or "")
+                        haircut = float(spec.raw_config["insufficient_funds_retry_haircut"])
+                        retry_qty = (
+                            _insufficient_funds_retry_qty(status_msg, int(plan.qty), haircut)
+                            if st == "REJECTED" else None
+                        )
+                        if retry_qty is not None:
+                            logger.warning(
+                                "run_entry: %s BUY %s REJECTED for insufficient funds (%s); "
+                                "retrying ONCE with reduced qty %d (orig %d, haircut %.2f)",
+                                symbol, buy_order_id, status_msg,
+                                retry_qty, plan.qty, haircut,
+                            )
+                            retry_order_id = None
+                            try:
+                                retry_order_id = _place_buy(
+                                    broker, symbol=symbol, qty=retry_qty,
+                                    product=evt.context["product"],
+                                    paper_mode=paper_mode,
+                                    trade_id=f"OVERNIGHT_{today.isoformat()}_{slot.slot_id}_RETRY",
+                                    limit_price=buy_limit,
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    "run_entry: insufficient-funds retry BUY failed for %s: %s",
+                                    symbol, e,
+                                )
+                            if retry_order_id is not None:
+                                rfill, rstatus = _live_poll_fill_ex(
+                                    broker, retry_order_id, timeout_sec=poll_timeout,
+                                )
+                                if rfill is not None:
+                                    pool.attach_buy_fill(
+                                        slot.slot_id,
+                                        fill_price=float(rfill),
+                                        fill_ts_iso=now.isoformat(),
+                                        order_id=str(retry_order_id),
+                                        qty=int(retry_qty),
+                                    )
+                                    summary["fired_count"] += 1
+                                    summary["events"].append({
+                                        "symbol": symbol, "qty": retry_qty,
+                                        "product": evt.context["product"],
+                                        "buy_fill_price": float(rfill),
+                                        "insufficient_funds_retry": True,
+                                    })
+                                    pool.persist()
+                                    continue
+                                rst = str((rstatus or {}).get("status") or "").upper()
+                                if rst not in ("REJECTED", "CANCELLED"):
+                                    # Retry order is still live (poll timeout,
+                                    # OPEN) — keep the slot reserved and
+                                    # re-check after the entry pass.
+                                    logger.warning(
+                                        "run_entry: %s retry BUY %s did not fill within timeout; "
+                                        "will re-check once after the entry pass",
+                                        symbol, retry_order_id,
+                                    )
+                                    pending_fills.append((slot.slot_id, symbol, str(retry_order_id), int(retry_qty), evt.context["product"]))
+                                    summary["skipped_count"] += 1
+                                    pool.persist()
+                                    continue
+                                logger.error(
+                                    "run_entry: %s retry BUY %s also %s (%s)",
+                                    symbol, retry_order_id, rst,
+                                    (rstatus or {}).get("status_message") or "no status_message",
+                                )
+                        # No viable retry (non-margin rejection / affordable
+                        # qty < 1 / retry placement failed / retry also dead):
+                        # free the slot instead of leaving a ghost t0_open.
+                        logger.error(
+                            "run_entry: %s BUY %s %s (%s); rolling slot %d back to free",
+                            symbol, buy_order_id, st,
+                            status_msg or "no status_message", slot.slot_id,
+                        )
+                        _rollback_slot_to_free(slot)
+                        summary["skipped_count"] += 1
+                        pool.persist()
+                        continue
                     logger.warning(
                         "run_entry: %s BUY order %s did not fill within timeout; "
                         "will re-check once after the entry pass",
@@ -490,7 +574,7 @@ def run_entry(
                     # seconds after the poll window (2026-07-02 DBSTOCKBRO filled
                     # COMPLETE right after timeout; without the re-check its slot
                     # had no buy_fill and place-exit would have skipped its AMO).
-                    pending_fills.append((slot.slot_id, symbol, str(buy_order_id), plan, evt.context["product"]))
+                    pending_fills.append((slot.slot_id, symbol, str(buy_order_id), int(plan.qty), evt.context["product"]))
                     summary["skipped_count"] += 1
                     pool.persist()
                     continue
@@ -516,9 +600,22 @@ def run_entry(
         # place-exit covers it instead of leaving an unhedged position.
         if pending_fills and not paper_mode:
             recheck_timeout = int(spec.raw_config["fill_poll_timeout_sec"])
-            for slot_id, sym, oid, pplan, pproduct in pending_fills:
-                fp = _live_poll_fill(broker, oid, timeout_sec=recheck_timeout)
+            for slot_id, sym, oid, pqty, pproduct in pending_fills:
+                fp, fstatus = _live_poll_fill_ex(broker, oid, timeout_sec=recheck_timeout)
                 if fp is None:
+                    fst = str((fstatus or {}).get("status") or "").upper()
+                    if fst in ("REJECTED", "CANCELLED"):
+                        # Terminally dead on re-check — free the slot now instead
+                        # of leaving a ghost t0_open needing manual cleanup
+                        # (live 2026-07-06 incident).
+                        logger.error(
+                            "run_entry: %s BUY %s %s on re-check (%s); rolling slot %d back to free",
+                            sym, oid, fst,
+                            (fstatus or {}).get("status_message") or "no status_message",
+                            slot_id,
+                        )
+                        _rollback_slot_to_free(pool._get_slot(slot_id))  # noqa: SLF001
+                        continue
                     logger.warning(
                         "run_entry: %s BUY %s STILL unfilled after re-check; slot %d "
                         "left t0_open (verify-exit orphan path decides)",
@@ -527,12 +624,12 @@ def run_entry(
                     continue
                 pool.attach_buy_fill(
                     slot_id, fill_price=float(fp), fill_ts_iso=now.isoformat(),
-                    order_id=oid, qty=int(pplan.qty),
+                    order_id=oid, qty=int(pqty),
                 )
                 summary["fired_count"] += 1
                 summary["skipped_count"] = max(0, summary["skipped_count"] - 1)
                 summary["events"].append({
-                    "symbol": sym, "qty": pplan.qty,
+                    "symbol": sym, "qty": pqty,
                     "product": pproduct, "buy_fill_price": float(fp),
                     "late_fill_recheck": True,
                 })
@@ -1290,21 +1387,110 @@ def _paper_fill_price_exit(broker, symbol: str, exit_date: date) -> Optional[flo
         return None
 
 
-def _live_poll_fill(broker, order_id: str, timeout_sec: int = 60) -> Optional[float]:
-    """Poll broker for order status until filled or timeout. Returns avg fill price."""
-    if not hasattr(broker, "get_order_status"):
-        logger.warning("_live_poll_fill: broker has no get_order_status; returning None")
+# Kite async-rejection message for a margin shortfall, e.g. (live 2026-07-06):
+#   "Insufficient funds. Margin required: 152010.12. Margin available: 149081.20. ..."
+# (\d+(?:\.\d+)?) — NOT [\d.]+ — so the sentence's trailing period is never
+# captured into the number.
+_INSUFFICIENT_FUNDS_RE = re.compile(
+    r"Insufficient funds.*?[Mm]argin required:\s*(\d+(?:\.\d+)?)"
+    r".*?[Mm]argin available:\s*(\d+(?:\.\d+)?)",
+    re.DOTALL,
+)
+
+
+def _insufficient_funds_retry_qty(status_message: Optional[str], qty: int,
+                                  haircut: float) -> Optional[int]:
+    """Reduced qty for ONE retry after a Kite insufficient-funds rejection.
+
+    Parses required/available margin out of the rejection status_message and
+    scales the original qty to what the available margin affords, with a
+    config-driven haircut (setups.close_dn_overnight_long.
+    insufficient_funds_retry_haircut) absorbing margin-requirement drift
+    between the rejection snapshot and the retry.
+
+    Returns None when the message is not an insufficient-funds rejection or
+    the affordable qty is < 1 (never place a qty=0 order). Never exceeds the
+    original qty. Pure function — unit-tested directly.
+    """
+    if not status_message:
         return None
+    m = _INSUFFICIENT_FUNDS_RE.search(status_message)
+    if m is None:
+        return None
+    required = float(m.group(1))
+    available = float(m.group(2))
+    if required <= 0.0 or available <= 0.0:
+        return None
+    retry_qty = int(int(qty) * (available / required) * float(haircut))
+    retry_qty = min(retry_qty, int(qty))
+    return retry_qty if retry_qty >= 1 else None
+
+
+def _rollback_slot_to_free(slot) -> None:
+    """Roll a reserved slot back to free after its BUY failed/was rejected.
+
+    The slot never transitioned past t0_open (no buy_fill attached), so
+    pool.release() (which requires t1_settling) doesn't apply — reset the
+    reservation fields directly. Caller must pool.persist() afterwards.
+    Without this, a rejected BUY leaves a ghost t0_open slot that needs
+    manual cleanup (live 2026-07-06 incident).
+    """
+    slot.status = "free"
+    slot.symbol = None
+    slot.product = None
+    slot.leverage = 1.0
+    slot.margin_inr = 0.0
+    slot.notional_inr = 0.0
+    slot.reserved_today = None
+
+
+def _live_poll_fill_ex(broker, order_id: str,
+                       timeout_sec: int = 60) -> tuple:
+    """Poll broker for order status until filled, terminally dead, or timeout.
+
+    Returns (fill_price, last_status_dict):
+      - COMPLETE  -> (average_price, status)
+      - REJECTED / CANCELLED -> (None, status) IMMEDIATELY — a terminally-dead
+        order must not burn the poll window (live 2026-07-06: an async Kite
+        margin rejection was polled for the full timeout and mis-read as
+        "did not fill").
+      - timeout   -> (None, last_status_seen)
+
+    Always checks the status at least once, even with timeout_sec=0.
+    """
+    if not hasattr(broker, "get_order_status"):
+        logger.warning("_live_poll_fill_ex: broker has no get_order_status; returning None")
+        return None, None
     deadline = _time_mod.time() + timeout_sec
-    while _time_mod.time() < deadline:
+    last_status: Optional[dict] = None
+    while True:
         try:
             status = broker.get_order_status(order_id)
-            if status and status.get("status") == "COMPLETE":
-                return float(status.get("average_price", 0.0))
+            if status:
+                last_status = status
+                st = str(status.get("status") or "").upper()
+                if st == "COMPLETE":
+                    return float(status.get("average_price", 0.0)), status
+                if st in ("REJECTED", "CANCELLED"):
+                    logger.warning(
+                        "_live_poll_fill_ex: order %s is %s (%s); fast-failing poll",
+                        order_id, st, status.get("status_message") or "no status_message",
+                    )
+                    return None, status
         except Exception as e:
-            logger.warning("_live_poll_fill: status check failed: %s", e)
+            logger.warning("_live_poll_fill_ex: status check failed: %s", e)
+        if _time_mod.time() >= deadline:
+            return None, last_status
         _time_mod.sleep(2)
-    return None
+
+
+def _live_poll_fill(broker, order_id: str, timeout_sec: int = 60) -> Optional[float]:
+    """Poll broker for order status until filled or timeout. Returns avg fill price.
+
+    Thin wrapper over _live_poll_fill_ex (backward compat for call sites that
+    only need the price). Inherits the REJECTED/CANCELLED fast-fail.
+    """
+    return _live_poll_fill_ex(broker, order_id, timeout_sec=timeout_sec)[0]
 
 
 def _live_check_amo_fill(broker, amo_order_id: str) -> Optional[float]:
