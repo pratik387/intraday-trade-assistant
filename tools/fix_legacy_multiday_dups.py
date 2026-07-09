@@ -61,6 +61,12 @@ def main(argv=None) -> int:
     for key, rows in groups.items():
         if len(rows) < 2:
             continue
+        # POST-composite pairs are already correct: the engine wrote the mirror
+        # with attributed=True and the untagged row IS the owner. Tagging the
+        # owner too would make the trade count ZERO in pooled views. Only pure
+        # legacy groups (no attributed row at all) need retro-tagging.
+        if any(t.get("attributed") is True for _s, t in rows):
+            continue
         # rows are in alphabetical setup order; first = owner, rest = mirrors.
         for s, t in rows[1:]:
             if t.get("attributed") is True:
