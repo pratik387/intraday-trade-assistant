@@ -533,6 +533,34 @@ class KiteBroker:
         return {"order_id": str(order_id), "status": "UNKNOWN",
                 "average_price": 0.0, "status_message": ""}
 
+    def cancel_order(self, order_id: str, variety: str = "regular") -> bool:
+        """Cancel a pending (OPEN) order. Returns True on success, False on failure.
+
+        Used by the overnight handler to free the margin pinned by an unfilled
+        marketable-LIMIT BUY (2026-07-09 incident: an OPEN AMIRCHAND BUY kept
+        ~Rs50k blocked account-wide and every lower-ranked pick was rejected
+        for insufficient funds). A cancel can race a fill — callers must
+        re-check the order status afterwards and treat COMPLETE as a fill.
+        """
+        variety_l = str(variety).lower()
+        if variety_l not in ("regular", "amo"):
+            raise ValueError(f"variety must be 'regular' or 'amo', got {variety!r}")
+        if self.dry_run:
+            for o in self._paper_orders:
+                if str(o.get("order_id")) == str(order_id):
+                    if str(o.get("status", "")).upper() != "COMPLETE":
+                        o["status"] = "CANCELLED"
+                    return True
+            return True
+        kc_variety = self.kc.VARIETY_REGULAR if variety_l == "regular" else self.kc.VARIETY_AMO
+        try:
+            self.kc.cancel_order(variety=kc_variety, order_id=order_id)
+            logger.info(f"Order cancelled: {order_id} (variety={variety_l})")
+            return True
+        except Exception as e:
+            logger.warning(f"cancel_order failed for {order_id}: {e}")
+            return False
+
     # ------------------------------ Paper Trading ---------------------------
     def _simulate_order(
         self,

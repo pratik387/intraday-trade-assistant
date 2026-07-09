@@ -388,39 +388,63 @@ _LIVE_REJECT_MSG = (
 
 
 def test_insufficient_funds_retry_qty_live_message():
-    """qty=133 with the exact live message -> int(133*(149081.20/152010.12)*0.95)=123."""
-    expected = int(133 * (149081.20 / 152010.12) * 0.95)
-    assert expected == 123  # guard the arithmetic itself
-    assert _insufficient_funds_retry_qty(_LIVE_REJECT_MSG, 133, 0.95) == 123
+    """Jul-6 live message, shortfall-based: shrink THIS order by the account
+    shortfall S against its OWN margin M — not by the cumulative ratio."""
+    qty, price, lev = 133, 571.5, 2.93
+    own_margin = qty * price / lev                      # ~25,940
+    shortfall = 152010.12 - 149081.20                   # 2,928.92
+    expected = int(qty * ((own_margin - shortfall) / own_margin) * 0.95)
+    out = _insufficient_funds_retry_qty(_LIVE_REJECT_MSG, qty, 0.95, price, lev)
+    assert out == expected and 1 <= out < qty
+    # the retry must actually FIT: its own margin <= M - S
+    assert out * price / lev <= own_margin - shortfall
+
+
+def test_insufficient_funds_retry_qty_tvselect_2026_07_09():
+    """The incident that exposed the old math: cumulative required 189k vs
+    available 150k. Old ratio-scaling gave qty 145 (still bounced); shortfall
+    math must produce a qty whose own margin fits inside M - S."""
+    msg = ("Insufficient funds. Margin required: 189442.72. "
+           "Margin available: 150775.50. Check orderbook for open orders.")
+    qty, price, lev = 193, 750.0, 2.9
+    own_margin = qty * price / lev                      # ~49,913
+    shortfall = 189442.72 - 150775.50                   # 38,667.22
+    out = _insufficient_funds_retry_qty(msg, qty, 0.95, price, lev)
+    assert out is not None and out < 145                # strictly better than old math
+    assert out * price / lev <= own_margin - shortfall  # actually affordable
 
 
 def test_insufficient_funds_retry_qty_non_matching_message():
     """A rejection that is NOT insufficient-funds -> None (no retry)."""
     assert _insufficient_funds_retry_qty(
-        "Order rejected: circuit limit exceeded", 133, 0.95) is None
-    assert _insufficient_funds_retry_qty("", 133, 0.95) is None
-    assert _insufficient_funds_retry_qty(None, 133, 0.95) is None
+        "Order rejected: circuit limit exceeded", 133, 0.95, 571.5, 2.93) is None
+    assert _insufficient_funds_retry_qty("", 133, 0.95, 571.5, 2.93) is None
+    assert _insufficient_funds_retry_qty(None, 133, 0.95, 571.5, 2.93) is None
 
 
-def test_insufficient_funds_retry_qty_tiny_available_floor():
-    """Tiny available margin -> computed qty < 1 -> None (never place qty=0)."""
+def test_insufficient_funds_retry_qty_shortfall_exceeds_own_margin():
+    """Shortfall bigger than this order's whole margin -> None (shrinking this
+    order alone can never fit; don't place dust)."""
     msg = ("Insufficient funds. Margin required: 152010.12. "
            "Margin available: 100.00.")
-    assert _insufficient_funds_retry_qty(msg, 133, 0.95) is None
+    assert _insufficient_funds_retry_qty(msg, 133, 0.95, 571.5, 2.93) is None
 
 
-def test_insufficient_funds_retry_qty_never_exceeds_original():
-    """Pathological available >= required must not scale qty UP."""
+def test_insufficient_funds_retry_qty_no_positive_shortfall():
+    """available >= required -> no shortfall -> None (nothing to fix; the
+    rejection wasn't really about this order's size)."""
     msg = ("Insufficient funds. Margin required: 100.00. "
            "Margin available: 500.00.")
-    out = _insufficient_funds_retry_qty(msg, 133, 0.95)
-    assert out is not None and out <= 133
+    assert _insufficient_funds_retry_qty(msg, 133, 0.95, 571.5, 2.93) is None
 
 
 def test_insufficient_funds_retry_qty_zero_required_guard():
-    """Margin required 0 -> None (no divide-by-zero)."""
+    """Margin required 0 -> shortfall negative -> None (no divide-by-zero)."""
     msg = "Insufficient funds. Margin required: 0. Margin available: 100.00."
-    assert _insufficient_funds_retry_qty(msg, 133, 0.95) is None
+    assert _insufficient_funds_retry_qty(msg, 133, 0.95, 571.5, 2.93) is None
+    # degenerate order params guard
+    assert _insufficient_funds_retry_qty(_LIVE_REJECT_MSG, 133, 0.95, 0.0, 2.93) is None
+    assert _insufficient_funds_retry_qty(_LIVE_REJECT_MSG, 0, 0.95, 571.5, 2.93) is None
 
 
 # ---------------------------------------------------------------------------

@@ -51,6 +51,11 @@ class LiveOvernightBroker:
     def get_order_status(self, order_id: str) -> Dict[str, Any]:
         return self._kite.get_order_status(order_id)
 
+    def cancel_order(self, order_id: str, variety: str = "regular") -> bool:
+        # Frees the margin pinned by an unfilled entry BUY (2026-07-09
+        # incident) so lower-ranked candidates aren't rejected for funds.
+        return self._kite.cancel_order(order_id, variety=variety)
+
     def get_ltp(self, symbol: str) -> float:
         return self._kite.get_ltp(symbol)
 

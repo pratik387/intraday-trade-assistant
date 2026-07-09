@@ -247,6 +247,16 @@ class MockBroker:
         logger.info("[PAPER] MockBroker cancel GTT: %s", gtt_id)
         return True
 
+    def cancel_order(self, order_id: str, variety: str = "regular") -> bool:
+        """Paper-mode order cancel: no-op success (nothing was really placed).
+
+        Mirrors KiteBroker.cancel_order so the overnight handler's
+        cancel-unfilled-BUY path (2026-07-09 margin-pinning incident) is
+        exercisable in paper without a live broker.
+        """
+        logger.info("[PAPER] MockBroker cancel order: %s (variety=%s)", order_id, variety)
+        return True
+
     def set_intraday_5m_prefetch(self, mapping: Dict[str, Any]) -> None:
         """Stash a batch-fetched {symbol: today's-5m DataFrame} map (keys may be
         'NSE:SYM' or bare). get_intraday_5m serves from here before the live API."""

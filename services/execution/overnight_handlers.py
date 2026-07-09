@@ -409,7 +409,6 @@ def run_entry(
             logger.warning("run_entry: paper-open snapshot write failed: %s", e)
 
         ranked = _rank_detections(detections)
-        pending_fills: List[tuple] = []  # (slot_id, symbol, order_id, qty, product) — poll-timeout BUYs
         for rank_i, (symbol, evt, plan) in enumerate(ranked):
             # Reserve slot (fails if capacity or per-day cap hit)
             slot = pool.reserve(
@@ -488,7 +487,11 @@ def run_entry(
                         status_msg = str((last_status or {}).get("status_message") or "")
                         haircut = float(spec.raw_config["insufficient_funds_retry_haircut"])
                         retry_qty = (
-                            _insufficient_funds_retry_qty(status_msg, int(plan.qty), haircut)
+                            _insufficient_funds_retry_qty(
+                                status_msg, int(plan.qty), haircut,
+                                limit_price=float(buy_limit),
+                                leverage=float(evt.context["leverage"]),
+                            )
                             if st == "REJECTED" else None
                         )
                         if retry_qty is not None:
@@ -535,23 +538,40 @@ def run_entry(
                                     continue
                                 rst = str((rstatus or {}).get("status") or "").upper()
                                 if rst not in ("REJECTED", "CANCELLED"):
-                                    # Retry order is still live (poll timeout,
-                                    # OPEN) — keep the slot reserved and
-                                    # re-check after the entry pass.
-                                    logger.warning(
-                                        "run_entry: %s retry BUY %s did not fill within timeout; "
-                                        "will re-check once after the entry pass",
-                                        symbol, retry_order_id,
+                                    # Retry still OPEN after its window — a
+                                    # pending LIMIT blocks margin account-wide,
+                                    # so cancel it (fill race handled) rather
+                                    # than let it starve lower-ranked picks.
+                                    cst, cfill = _cancel_unfilled_buy(
+                                        broker, str(retry_order_id), symbol,
+                                        confirm_timeout_sec=int(spec.raw_config["cancel_confirm_timeout_sec"]),
                                     )
-                                    pending_fills.append((slot.slot_id, symbol, str(retry_order_id), int(retry_qty), evt.context["product"]))
-                                    summary["skipped_count"] += 1
-                                    pool.persist()
-                                    continue
-                                logger.error(
-                                    "run_entry: %s retry BUY %s also %s (%s)",
-                                    symbol, retry_order_id, rst,
-                                    (rstatus or {}).get("status_message") or "no status_message",
-                                )
+                                    if cfill is not None:
+                                        pool.attach_buy_fill(
+                                            slot.slot_id, fill_price=float(cfill),
+                                            fill_ts_iso=now.isoformat(),
+                                            order_id=str(retry_order_id),
+                                            qty=int(retry_qty),
+                                        )
+                                        summary["fired_count"] += 1
+                                        summary["events"].append({
+                                            "symbol": symbol, "qty": retry_qty,
+                                            "product": evt.context["product"],
+                                            "buy_fill_price": float(cfill),
+                                            "insufficient_funds_retry": True,
+                                        })
+                                        pool.persist()
+                                        continue
+                                    logger.warning(
+                                        "run_entry: %s retry BUY %s cancelled after timeout (%s)",
+                                        symbol, retry_order_id, cst,
+                                    )
+                                else:
+                                    logger.error(
+                                        "run_entry: %s retry BUY %s also %s (%s)",
+                                        symbol, retry_order_id, rst,
+                                        (rstatus or {}).get("status_message") or "no status_message",
+                                    )
                         # No viable retry (non-margin rejection / affordable
                         # qty < 1 / retry placement failed / retry also dead):
                         # free the slot instead of leaving a ghost t0_open.
@@ -564,20 +584,29 @@ def run_entry(
                         summary["skipped_count"] += 1
                         pool.persist()
                         continue
-                    logger.warning(
-                        "run_entry: %s BUY order %s did not fill within timeout; "
-                        "will re-check once after the entry pass",
-                        symbol, buy_order_id,
+                    # Still OPEN after the poll window. A pending LIMIT keeps its
+                    # margin blocked ACCOUNT-WIDE (2026-07-09 AMIRCHAND: one such
+                    # order starved every lower-ranked pick — fired 1 of 3), so
+                    # CANCEL it now to free margin for the next ranked candidate.
+                    # The cancel/fill race is handled inside _cancel_unfilled_buy:
+                    # a fill that wins the race (2026-07-02 DBSTOCKBRO late-fill
+                    # case) is attached normally below.
+                    cst, cfill = _cancel_unfilled_buy(
+                        broker, str(buy_order_id), symbol,
+                        confirm_timeout_sec=int(spec.raw_config["cancel_confirm_timeout_sec"]),
                     )
-                    # Slot stays reserved (t0_open, no fill). One more poll pass
-                    # runs after the ranked loop — a marketable LIMIT often fills
-                    # seconds after the poll window (2026-07-02 DBSTOCKBRO filled
-                    # COMPLETE right after timeout; without the re-check its slot
-                    # had no buy_fill and place-exit would have skipped its AMO).
-                    pending_fills.append((slot.slot_id, symbol, str(buy_order_id), int(plan.qty), evt.context["product"]))
-                    summary["skipped_count"] += 1
-                    pool.persist()
-                    continue
+                    if cfill is not None:
+                        fill_price = cfill  # late fill won the race — attach below
+                    else:
+                        logger.warning(
+                            "run_entry: %s BUY %s cancelled after poll timeout (%s); "
+                            "slot %d freed for the next ranked candidate",
+                            symbol, buy_order_id, cst, slot.slot_id,
+                        )
+                        _rollback_slot_to_free(slot)
+                        summary["skipped_count"] += 1
+                        pool.persist()
+                        continue
 
             pool.attach_buy_fill(
                 slot.slot_id,
@@ -594,47 +623,12 @@ def run_entry(
                 "buy_fill_price": float(fill_price),
             })
 
-        # Final fill re-check: a marketable LIMIT can complete seconds after its
-        # poll window expired. One extra pass (same per-order timeout) before we
-        # finish, so a late fill gets its buy_fill attached and tonight's
-        # place-exit covers it instead of leaving an unhedged position.
-        if pending_fills and not paper_mode:
-            recheck_timeout = int(spec.raw_config["fill_poll_timeout_sec"])
-            for slot_id, sym, oid, pqty, pproduct in pending_fills:
-                fp, fstatus = _live_poll_fill_ex(broker, oid, timeout_sec=recheck_timeout)
-                if fp is None:
-                    fst = str((fstatus or {}).get("status") or "").upper()
-                    if fst in ("REJECTED", "CANCELLED"):
-                        # Terminally dead on re-check — free the slot now instead
-                        # of leaving a ghost t0_open needing manual cleanup
-                        # (live 2026-07-06 incident).
-                        logger.error(
-                            "run_entry: %s BUY %s %s on re-check (%s); rolling slot %d back to free",
-                            sym, oid, fst,
-                            (fstatus or {}).get("status_message") or "no status_message",
-                            slot_id,
-                        )
-                        _rollback_slot_to_free(pool._get_slot(slot_id))  # noqa: SLF001
-                        continue
-                    logger.warning(
-                        "run_entry: %s BUY %s STILL unfilled after re-check; slot %d "
-                        "left t0_open (verify-exit orphan path decides)",
-                        sym, oid, slot_id,
-                    )
-                    continue
-                pool.attach_buy_fill(
-                    slot_id, fill_price=float(fp), fill_ts_iso=now.isoformat(),
-                    order_id=oid, qty=int(pqty),
-                )
-                summary["fired_count"] += 1
-                summary["skipped_count"] = max(0, summary["skipped_count"] - 1)
-                summary["events"].append({
-                    "symbol": sym, "qty": pqty,
-                    "product": pproduct, "buy_fill_price": float(fp),
-                    "late_fill_recheck": True,
-                })
-                logger.info("run_entry: late fill recovered on re-check | %s @ %.2f", sym, fp)
-            pool.persist()
+        # NOTE: the former post-loop "pending_fills re-check" is gone — an
+        # order still OPEN after its poll window is now cancelled IN the ranked
+        # loop (_cancel_unfilled_buy), because a pending LIMIT blocks its margin
+        # account-wide and starves lower-ranked picks (2026-07-09 AMIRCHAND).
+        # The cancel's confirm-poll still catches a racing late fill
+        # (2026-07-02 DBSTOCKBRO case) and attaches it normally.
 
     # Persist
     pool.persist()
@@ -1399,18 +1393,28 @@ _INSUFFICIENT_FUNDS_RE = re.compile(
 
 
 def _insufficient_funds_retry_qty(status_message: Optional[str], qty: int,
-                                  haircut: float) -> Optional[int]:
+                                  haircut: float, limit_price: float,
+                                  leverage: float) -> Optional[int]:
     """Reduced qty for ONE retry after a Kite insufficient-funds rejection.
 
-    Parses required/available margin out of the rejection status_message and
-    scales the original qty to what the available margin affords, with a
-    config-driven haircut (setups.close_dn_overnight_long.
-    insufficient_funds_retry_haircut) absorbing margin-requirement drift
-    between the rejection snapshot and the retry.
+    Kite's "Margin required" in the rejection message is CUMULATIVE — the
+    account-wide requirement including other open orders — NOT this order's
+    own margin (2026-07-09 incident: scaling qty by available/required barely
+    shrank the order, so every retry bounced too). Correct sizing is
+    shortfall-based:
 
-    Returns None when the message is not an insufficient-funds rejection or
-    the affordable qty is < 1 (never place a qty=0 order). Never exceeds the
-    original qty. Pure function — unit-tested directly.
+        S = required - available            (the true account-level gap)
+        M = qty * limit_price / leverage    (this order's own margin)
+        retry_qty = floor(qty * (M - S) / M * haircut)
+
+    i.e. shrink THIS order by exactly the shortfall (plus the config-driven
+    haircut, setups.close_dn_overnight_long.insufficient_funds_retry_haircut,
+    absorbing margin-requirement drift between rejection and retry).
+
+    Returns None when the message is not an insufficient-funds rejection,
+    there is no positive shortfall, the order's own margin cannot absorb the
+    shortfall, or the resulting qty is < 1 (never place a qty=0 order).
+    Never exceeds the original qty. Pure function — unit-tested directly.
     """
     if not status_message:
         return None
@@ -1419,11 +1423,62 @@ def _insufficient_funds_retry_qty(status_message: Optional[str], qty: int,
         return None
     required = float(m.group(1))
     available = float(m.group(2))
-    if required <= 0.0 or available <= 0.0:
+    shortfall = required - available
+    if shortfall <= 0.0:
         return None
-    retry_qty = int(int(qty) * (available / required) * float(haircut))
+    if int(qty) < 1 or float(limit_price) <= 0.0 or float(leverage) <= 0.0:
+        return None
+    own_margin = int(qty) * float(limit_price) / float(leverage)
+    if own_margin <= shortfall:
+        return None
+    retry_qty = int(int(qty) * ((own_margin - shortfall) / own_margin) * float(haircut))
     retry_qty = min(retry_qty, int(qty))
     return retry_qty if retry_qty >= 1 else None
+
+
+def _cancel_unfilled_buy(broker, order_id: str, symbol: str,
+                         confirm_timeout_sec: int) -> tuple:
+    """Cancel an entry BUY still OPEN after its fill-poll window, then confirm.
+
+    2026-07-09 incident: an unfilled AMIRCHAND marketable-LIMIT BUY stayed
+    OPEN and its pending order kept ~Rs50k margin blocked ACCOUNT-WIDE, so
+    Kite rejected every lower-ranked pick for insufficient funds (fired 1 of
+    3). Cancelling the dead order immediately frees that margin for the next
+    ranked candidate.
+
+    A cancel can race a fill — after issuing the cancel this re-polls the
+    status (bounded by confirm_timeout_sec, config key
+    cancel_confirm_timeout_sec); _live_poll_fill_ex fast-exits the moment the
+    order turns COMPLETE / CANCELLED / REJECTED.
+
+    Returns (final_status_str, fill_price):
+      - ("COMPLETE", price) — the fill won the race; caller MUST attach it
+        normally instead of rolling the slot back.
+      - (status, None)      — order is dead (CANCELLED/REJECTED) or the cancel
+        did not confirm in time; caller rolls the slot back to free.
+    """
+    if not hasattr(broker, "cancel_order"):
+        logger.error(
+            "_cancel_unfilled_buy: broker has no cancel_order; %s BUY %s left "
+            "pending (margin stays blocked)", symbol, order_id,
+        )
+        return "OPEN", None
+    try:
+        broker.cancel_order(str(order_id), variety="regular")
+    except Exception as e:
+        # Common benign race: order completed between poll timeout and cancel.
+        # The confirm poll below resolves it either way.
+        logger.warning(
+            "_cancel_unfilled_buy: cancel_order(%s) for %s raised: %s",
+            order_id, symbol, e,
+        )
+    fp, status = _live_poll_fill_ex(
+        broker, str(order_id), timeout_sec=int(confirm_timeout_sec),
+    )
+    if fp is not None:
+        return "COMPLETE", float(fp)
+    st = str((status or {}).get("status") or "").upper() or "UNKNOWN"
+    return st, None
 
 
 def _rollback_slot_to_free(slot) -> None:
