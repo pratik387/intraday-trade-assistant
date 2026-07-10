@@ -111,11 +111,13 @@ def simulate(sel, K, target_px_series):
         o = sel[f"o{j}"].values
         if h is None:
             break
-        # j==1 is the ENTRY day itself (entry at open); a touch after entry counts.
+        # j==1 is the ENTRY day itself (entry at open); a touch after entry
+        # counts. j==K+1 is the normal EXIT day — an intraday touch there fills
+        # at target instead of waiting for that day's close (same hold length,
+        # price difference only). Fixed 2026-07-10: the first version broke
+        # before applying the exit-day touch, testing only K of the K+1
+        # in-market sessions (user-caught).
         touch = ~done & np.isfinite(tgt) & (tgt > entry) & (h >= tgt)
-        if j == K + 1:
-            # past the normal exit day — baseline already exited at K-day close
-            break
         fill = np.where(o >= tgt, o, tgt)
         exit_px[touch] = fill[touch]
         hold[touch] = float(j)
