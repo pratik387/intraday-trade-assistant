@@ -615,6 +615,12 @@
       "data_source": "cache/preaggregate/clean_daily_from5m.feather",
       "lookback_days": 5,
       "hold_days": 2,
+      "target_exit": {
+        "enabled": true,
+        "mode": "vol_scaled_k",
+        "k": 2.0,
+        "_comment": "PAPER A/B (2026-07-10 study, tools/sub9_research/multiday_target_exit_study.py): exit intraday when high touches fill*(1+k*sigma20) — beat hold-to-close in all 4 setups x 4 years at k=2.0 (sell the snapback climax, not the faded close). Checked every hold day incl. entry+exit days. exit_reason=target_touch rows in the tripwire ledger are the A/B surface vs kday_close_moc. Setups are paper-only; a live activation needs a limit/GTT implementation instead of the 15:28 touch check."
+      },
       "composite_weight": 1.0,
       "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "loser_pct": 0.05,
@@ -679,6 +685,12 @@
       "low_lookback_days": 252,
       "dist_low_max": 0.05,
       "hold_days": 2,
+      "target_exit": {
+        "enabled": true,
+        "mode": "vol_scaled_k",
+        "k": 2.0,
+        "_comment": "PAPER A/B (2026-07-10 study, tools/sub9_research/multiday_target_exit_study.py): exit intraday when high touches fill*(1+k*sigma20) — beat hold-to-close in all 4 setups x 4 years at k=2.0 (sell the snapback climax, not the faded close). Checked every hold day incl. entry+exit days. exit_reason=target_touch rows in the tripwire ledger are the A/B surface vs kday_close_moc. Setups are paper-only; a live activation needs a limit/GTT implementation instead of the 15:28 touch check."
+      },
       "composite_weight": 1.0,
       "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "adv_tier": 1,
@@ -742,6 +754,12 @@
       "zscore_lookback_days": 20,
       "zscore_max": -1.5,
       "hold_days": 2,
+      "target_exit": {
+        "enabled": true,
+        "mode": "vol_scaled_k",
+        "k": 2.0,
+        "_comment": "PAPER A/B (2026-07-10 study, tools/sub9_research/multiday_target_exit_study.py): exit intraday when high touches fill*(1+k*sigma20) — beat hold-to-close in all 4 setups x 4 years at k=2.0 (sell the snapback climax, not the faded close). Checked every hold day incl. entry+exit days. exit_reason=target_touch rows in the tripwire ledger are the A/B surface vs kday_close_moc. Setups are paper-only; a live activation needs a limit/GTT implementation instead of the 15:28 touch check."
+      },
       "composite_weight": 1.0,
       "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "adv_tier": 1,
@@ -805,6 +823,12 @@
       "lookback_days": 2,
       "loser_pct": 0.10,
       "hold_days": 3,
+      "target_exit": {
+        "enabled": true,
+        "mode": "vol_scaled_k",
+        "k": 2.0,
+        "_comment": "PAPER A/B (2026-07-10 study, tools/sub9_research/multiday_target_exit_study.py): exit intraday when high touches fill*(1+k*sigma20) — beat hold-to-close in all 4 setups x 4 years at k=2.0 (sell the snapback climax, not the faded close). Checked every hold day incl. entry+exit days. exit_reason=target_touch rows in the tripwire ledger are the A/B surface vs kday_close_moc. Setups are paper-only; a live activation needs a limit/GTT implementation instead of the 15:28 touch check."
+      },
       "composite_weight": 1.0,
       "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "adv_tier": 1,

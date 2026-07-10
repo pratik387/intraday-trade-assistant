@@ -478,3 +478,101 @@ def test_exit_feeds_all_contributors_tripwires(monkeypatch, tmp_path):
                           window_trades=30, pf_floor=1.2, sustained_weeks=6)
     assert tw_a2._trades[0].attributed is False  # noqa: SLF001
     assert tw_c1._trades[0].attributed is True   # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Vol-scaled target exit (2026-07-10 study: k~2sigma beats hold-to-close)
+# ---------------------------------------------------------------------------
+
+def _cfg_with_target(tmp_path, enabled=True, k=2.0):
+    cfg = _two_setup_config(tmp_path)
+    for n in cfg["setups"]:
+        cfg["setups"][n]["target_exit"] = {"enabled": enabled, "mode": "vol_scaled_k", "k": k}
+    return cfg
+
+
+def test_verify_entries_prices_target_from_fill(monkeypatch, tmp_path):
+    """target_px = fill * (1 + k*sigma20) — priced at fill-confirm, not signal."""
+    import services.execution.mtf_capitulation_handlers as mh
+    from services.state.position_persistence import PositionPersistence
+    cfg = _cfg_with_target(tmp_path, k=2.0)
+    store = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
+    store.save_position(symbol="NSE:TGT", side="BUY", qty=100, avg_price=0.0,
+                        trade_id="t", entry_date="2026-07-10", exit_on_date="2026-07-14",
+                        product="MTF",
+                        state={"pending_entry_fill": True, "qty": 100, "leverage": 2.5,
+                               "target_k": 2.0, "target_sigma20_pct": 0.03})
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    monkeypatch.setattr(mh, "_paper_open_price", lambda b, s, d: 100.0)
+    mh.run_verify_entries(cfg, _stub_broker_amo(),
+                          now_ist=pd.Timestamp("2026-07-10 09:33:00"), paper_mode=True)
+    # fresh instance: PositionPersistence caches in memory at init, so the
+    # pre-run `store` object does not see the handler instance's writes.
+    pos = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"])).get_position("NSE:TGT")
+    assert pos.state["target_px"] == 106.0          # 100 * (1 + 2*0.03)
+    assert pos.state["pending_entry_fill"] is False
+
+
+def test_exit_on_target_touch_before_due_date(monkeypatch, tmp_path):
+    """High touches target before exit_on_date -> exit NOW at max(open, target),
+    exit_reason=target_touch, hold_days from ACTUAL exit date."""
+    import services.execution.mtf_capitulation_handlers as mh
+    from services.state.position_persistence import PositionPersistence
+    cfg = _cfg_with_target(tmp_path)
+    store = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
+    store.save_position(symbol="NSE:TGT", side="BUY", qty=100, avg_price=100.0,
+                        trade_id="t", entry_date="2026-07-10", exit_on_date="2026-07-14",
+                        product="MTF",
+                        state={"pending_entry_fill": False, "qty": 100, "leverage": 2.5,
+                               "entry_fill_price": 100.0, "target_px": 106.0})
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    # today's bars: open 101, high 107 (>= target 106) -> fill at 106
+    monkeypatch.setattr(mh, "_today_open_high", lambda b, s, d: (101.0, 107.0))
+    summary = mh.run_eod(cfg, _stub_broker_amo(),
+                         now_ist=pd.Timestamp("2026-07-11 15:28:00"),
+                         paper_mode=True, phase="exits")
+    assert summary["exited_count"] == 1
+    ev = summary["events"][0]
+    assert ev["exit"] == 106.0
+    assert ev["exit_date"] == "2026-07-11"          # actual, not exit_on 07-14
+    assert ev["hold_days"] == 1                     # 07-10 -> 07-11
+    fresh = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
+    assert fresh.get_position("NSE:TGT") is None    # position removed
+
+
+def test_no_target_exit_when_high_below_target_or_disabled(monkeypatch, tmp_path):
+    import services.execution.mtf_capitulation_handlers as mh
+    from services.state.position_persistence import PositionPersistence
+    cfg = _cfg_with_target(tmp_path)
+    store = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
+    store.save_position(symbol="NSE:TGT", side="BUY", qty=100, avg_price=100.0,
+                        trade_id="t", entry_date="2026-07-10", exit_on_date="2026-07-14",
+                        product="MTF",
+                        state={"pending_entry_fill": False, "qty": 100, "leverage": 2.5,
+                               "entry_fill_price": 100.0, "target_px": 106.0})
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    monkeypatch.setattr(mh, "_today_open_high", lambda b, s, d: (101.0, 104.0))  # high < target
+    summary = mh.run_eod(cfg, _stub_broker_amo(),
+                         now_ist=pd.Timestamp("2026-07-11 15:28:00"),
+                         paper_mode=True, phase="exits")
+    assert summary["exited_count"] == 0
+    assert PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"])).get_position("NSE:TGT") is not None
+
+    # No target_px persisted (feature disabled) -> undue position untouched even on a spike
+    store2 = PositionPersistence(mh._position_state_dir(cfg["setups"]["C1"]))
+    store2.save_position(symbol="NSE:PLAIN", side="BUY", qty=100, avg_price=100.0,
+                         trade_id="t2", entry_date="2026-07-10", exit_on_date="2026-07-14",
+                         product="MTF",
+                         state={"pending_entry_fill": False, "qty": 100, "leverage": 2.5,
+                                "entry_fill_price": 100.0})
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("C1", cfg["setups"]["C1"])])
+    monkeypatch.setattr(mh, "_today_open_high", lambda b, s, d: (101.0, 150.0))
+    summary2 = mh.run_eod(cfg, _stub_broker_amo(),
+                          now_ist=pd.Timestamp("2026-07-11 15:28:00"),
+                          paper_mode=True, phase="exits")
+    assert summary2["exited_count"] == 0
+    assert PositionPersistence(mh._position_state_dir(cfg["setups"]["C1"])).get_position("NSE:PLAIN") is not None

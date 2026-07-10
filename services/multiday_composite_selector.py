@@ -74,6 +74,7 @@ class MultiDayCompositeSelector:
                         "_owner_weighted": -1.0, "owner": None,
                         "close": float(cand["close"]),
                         "trail_ret": float(cand["trail_ret"]),
+                        "sigma20_pct": cand.get("sigma20_pct"),
                     }
                     agg[bare] = a
                 a["composite"] += contrib
@@ -85,6 +86,7 @@ class MultiDayCompositeSelector:
                     a["owner"] = setup_name
                     a["close"] = float(cand["close"])
                     a["trail_ret"] = float(cand["trail_ret"])
+                    a["sigma20_pct"] = cand.get("sigma20_pct")
 
         rows = sorted(
             agg.values(),

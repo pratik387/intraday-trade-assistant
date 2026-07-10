@@ -106,6 +106,15 @@ class CrossSectionalRanker:
             lambda s: s.shift(1).rolling(self.shock_lookback_days).mean()
         )
         df["tshock"] = df["turnover"] / df["adv_prior"]
+        # 20d close volatility as a fraction of price — computed for EVERY mode
+        # (not just zscore) because the optional vol-scaled target exit prices
+        # its target as fill*(1 + k*sigma20_pct). Window is fixed at 20d, the
+        # same realized-vol convention the zscore mode uses.
+        g20 = df.groupby("symbol", sort=False)["close"]
+        _mp20 = max(20, self.shock_lookback_days)
+        df["sigma20_pct"] = (
+            g20.transform(lambda s: s.rolling(20, min_periods=_mp20).std()) / df["close"]
+        )
         # Mode-specific signal. `signal` is the value the selection thresholds on;
         # both modes keep the same output schema (trail_ret carries the signal).
         if self.selection_mode == "trailing_loser_decile":
@@ -190,6 +199,10 @@ class CrossSectionalRanker:
                 "rank_pct": float(r["rank_pct"]),
                 "close": float(r["close"]),
                 "cap_score": float(r["cap_score"]),
+                # 20d vol fraction at the signal date (may be NaN early in a
+                # symbol's history); consumers must guard. Used by the optional
+                # vol-scaled target exit.
+                "sigma20_pct": (float(r["sigma20_pct"]) if np.isfinite(r["sigma20_pct"]) else None),
             }
             for _, r in sel.iterrows()
         ]

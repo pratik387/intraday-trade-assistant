@@ -9,7 +9,8 @@ def test_close_dn_has_gtt_and_live_pilot_keys():
     # Live-pilot caps documented for the 1-slot first run.
     assert int(ca["_live_pilot_max_concurrent_slots"]) == 1
     assert int(ca["_live_pilot_margin_per_slot_inr"]) == 10000
-    # Full live caps reflect Rs10k/slot, Rs2.5L total (covers observed 2-day fire-stack peak of 25).
-    assert int(ca["_live_margin_per_slot_inr"]) == 10000
-    assert int(ca["_live_active_margin_inr"]) == 250000
-    assert int(ca["_live_max_concurrent_slots"]) == 25
+    # Full live caps: 2026-07-02 resize — 6 x Rs50k slots / Rs3L (corrected-fee
+    # confidence card; the old 25 x Rs10k "capture-everything" failed the ship bar).
+    assert int(ca["_live_margin_per_slot_inr"]) == 50000
+    assert int(ca["_live_active_margin_inr"]) == 300000
+    assert int(ca["_live_max_concurrent_slots"]) == 6

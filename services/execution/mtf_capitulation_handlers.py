@@ -221,10 +221,18 @@ def run_verify_entries(
 
             # avg_price carries the realized entry price for exit PnL — persisted
             # atomically (under the store's lock) alongside the state update.
+            state_updates = {"pending_entry_fill": False, "entry_fill_price": float(fill)}
+            # Price the optional vol-scaled target off the REAL fill (the study
+            # geometry: target = entry * (1 + k*sigma20)). Only when the entry
+            # persisted target_k/sigma (config-gated + sigma available).
+            tk = pos.state.get("target_k")
+            tsig = pos.state.get("target_sigma20_pct")
+            if tk is not None and tsig is not None:
+                state_updates["target_px"] = round(float(fill) * (1.0 + float(tk) * float(tsig)), 2)
             persistence.update_position(
                 symbol,
                 avg_price=float(fill),
-                state_updates={"pending_entry_fill": False, "entry_fill_price": float(fill)},
+                state_updates=state_updates,
             )
             # Record the ENTRY fill on the single-writer events.jsonl surface so the
             # paper trade flows into analytics.jsonl + the session report (the cron
@@ -263,8 +271,20 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
 
     for symbol, pos in list(persistence.load_snapshot().items()):
         exit_on = _parse_iso_date(pos.exit_on_date)
+        target_touched = False
         if exit_on is None or today < exit_on:
-            continue
+            # Not due yet — but an enabled vol-scaled target that today's HIGH
+            # has touched exits NOW (study 2026-07-10: sell the snapback climax
+            # instead of the faded close; checked EVERY hold day incl. entry day).
+            tpx = pos.state.get("target_px")
+            entry_d = _parse_iso_date(pos.entry_date)
+            if (tpx is None or pos.state.get("pending_entry_fill")
+                    or entry_d is None or today < entry_d):
+                continue
+            day_open, day_high = _today_open_high(broker, symbol, today)
+            if day_high is None or day_high < float(tpx):
+                continue
+            target_touched = True
         if pos.state.get("pending_entry_fill"):
             # Entry never confirmed (AMO BUY didn't fill / verify never ran).
             # Nothing to exit; drop so it doesn't linger.
@@ -293,7 +313,15 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
             persistence.remove_position(symbol)
             continue
 
-        if paper_mode:
+        if target_touched:
+            # Vol-scaled target touched today: fill AT target (gap-open above
+            # target fills at the open) — the study's touch geometry. Paper-only
+            # family today; a live path would place a limit/GTT instead.
+            day_open, _dh = _today_open_high(broker, symbol, today)
+            tpx = float(pos.state.get("target_px"))
+            sell_price = max(day_open, tpx) if day_open is not None else tpx
+            exit_on = today  # actual exit date for hold-days/interest math
+        elif paper_mode:
             sell_price = _paper_close_price(broker, symbol, today)
         else:
             sell_price = _place_moc_sell_and_fill(broker, symbol, qty, pos.product or "CNC")
@@ -335,7 +363,8 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
         try:
             diag_event_log.log_exit(
                 symbol=symbol, plan={"trade_id": pos.trade_id, "setup": name},
-                reason="kday_close_moc", exit_price=float(sell_price), exit_qty=qty,
+                reason=("target_touch" if target_touched else "kday_close_moc"),
+                exit_price=float(sell_price), exit_qty=qty,
                 ts=now, pnl=float(net),
                 diagnostics={
                     "hold_days": hold_days, "entry_date": pos.entry_date,
@@ -377,7 +406,9 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
                 net_pnl_inr=float(net), ts_iso=now.isoformat(),
                 fees_inr=float(fees_only) + float(interest), gross_pnl_inr=float(gross),
                 symbol=symbol, entry_price=float(entry_price),
-                exit_price=float(sell_price), exit_reason="kday_close_moc", qty=int(qty),
+                exit_price=float(sell_price),
+                exit_reason=("target_touch" if target_touched else "kday_close_moc"),
+                qty=int(qty),
                 # Mirror rows (non-owner contributors) are tagged so pooled/
                 # portfolio views can exclude them — one book position must
                 # count once. The owner's row stays untagged.
@@ -424,6 +455,35 @@ def _rank_basket_for_setup(name, raw, broker, today, ca_ex_dates, repo_root):
         return []
     basket = CrossSectionalRanker(raw).rank(panel, today, eligible, ca_ex_dates=ca_ex_dates)
     return basket or []
+
+
+def _target_exit_state(raw: dict, sigma20_pct) -> dict:
+    """State fields for the optional vol-scaled target exit. Empty dict when the
+    setup has no enabled target_exit config or sigma is unavailable (early-history
+    names) — position then behaves exactly as hold-to-close."""
+    te = raw.get("target_exit")
+    if not te or not bool(te.get("enabled")):
+        return {}
+    if str(te["mode"]) != "vol_scaled_k":
+        raise ValueError(f"unsupported target_exit.mode {te.get('mode')!r}")
+    if sigma20_pct is None or not (float(sigma20_pct) > 0):
+        return {}
+    return {"target_k": float(te["k"]), "target_sigma20_pct": float(sigma20_pct)}
+
+
+def _today_open_high(broker, symbol: str, day) -> tuple:
+    """(day open, day high-so-far) from today's 5m bars; (None, None) if absent."""
+    df = _today_5m(broker, symbol)
+    if df is None or df.empty:
+        return None, None
+    try:
+        dd = df[df.index.normalize() == pd.Timestamp(day)]
+        if dd.empty:
+            return None, None
+        return float(dd["open"].iloc[0]), float(dd["high"].max())
+    except Exception as e:
+        logger.warning("_today_open_high failed for %s: %s", symbol, e)
+        return None, None
 
 
 def _held_snapshots(setups, persistences):
@@ -546,7 +606,12 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
             state={"pending_entry_fill": True, "qty": qty, "leverage": leverage,
                    "signal_close": float(c["close"]), "signal_date": today.isoformat(),
                    "contributors": c["contributors"],
-                   "per_setup_cap_score": c["per_setup_cap_score"]},
+                   "per_setup_cap_score": c["per_setup_cap_score"],
+                   # Optional vol-scaled target exit (config-gated per setup;
+                   # study 2026-07-10: k~2.0 sigma beats hold-to-close in all 4
+                   # setups by selling the snapback climax instead of the faded
+                   # close). target_px is priced at fill-confirm = fill*(1+k*sigma).
+                   **_target_exit_state(raw, c.get("sigma20_pct"))},
             entry_date=entry_date.isoformat(), exit_on_date=exit_on_date.isoformat(),
             product=product)
         summary["entered_count"] += 1
