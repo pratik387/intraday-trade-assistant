@@ -413,6 +413,7 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
                 # portfolio views can exclude them — one book position must
                 # count once. The owner's row stays untagged.
                 attributed=(cname != name),
+                entry_date=pos.entry_date,
             )
 
 

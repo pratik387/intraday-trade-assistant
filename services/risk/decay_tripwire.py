@@ -52,6 +52,10 @@ class _TradeRecord:
     # MUST exclude attributed rows or one position double-counts. None/False =
     # this setup's own (owner) position. Legacy ledgers predate this -> None.
     attributed: Optional[bool] = None
+    # Entry date (YYYY-MM-DD) of the position this settle belongs to. Needed by
+    # the target-exit A/B report to derive the SCHEDULED hold-to-close exit day
+    # (entry + K trading days) for counterfactuals. Legacy rows -> None.
+    entry_date: Optional[str] = None
 
 
 class DecayTripwire:
@@ -116,6 +120,7 @@ class DecayTripwire:
                 idealized_entry=(float(t["idealized_entry"]) if t.get("idealized_entry") is not None else None),
                 idealized_exit=(float(t["idealized_exit"]) if t.get("idealized_exit") is not None else None),
                 attributed=(bool(t["attributed"]) if t.get("attributed") is not None else None),
+                entry_date=(str(t["entry_date"]) if t.get("entry_date") is not None else None),
             )
             for t in trades
         ]
@@ -152,7 +157,8 @@ class DecayTripwire:
                      qty: Optional[int] = None,
                      idealized_entry: Optional[float] = None,
                      idealized_exit: Optional[float] = None,
-                     attributed: Optional[bool] = None) -> None:
+                     attributed: Optional[bool] = None,
+                     entry_date: Optional[str] = None) -> None:
         """Append a settled trade and re-evaluate paused status.
 
         Call from run_verify_exit after pool.settle() completes.
@@ -173,6 +179,7 @@ class DecayTripwire:
             idealized_entry=(float(idealized_entry) if idealized_entry is not None else None),
             idealized_exit=(float(idealized_exit) if idealized_exit is not None else None),
             attributed=(bool(attributed) if attributed is not None else None),
+            entry_date=(str(entry_date) if entry_date is not None else None),
         ))
         # Keep buffer larger than window (we trim to last 200 to bound disk size)
         if len(self._trades) > max(self._window_trades * 5, 200):
