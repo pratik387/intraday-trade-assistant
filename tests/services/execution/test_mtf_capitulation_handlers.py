@@ -576,3 +576,23 @@ def test_no_target_exit_when_high_below_target_or_disabled(monkeypatch, tmp_path
                           paper_mode=True, phase="exits")
     assert summary2["exited_count"] == 0
     assert PositionPersistence(mh._position_state_dir(cfg["setups"]["C1"])).get_position("NSE:PLAIN") is not None
+
+
+def test_mtf_delisted_held_sentinel(monkeypatch, tmp_path):
+    """A HELD name missing from the (fake) MTF approved list is flagged in the
+    run_eod summary — the mid-hold delisting alarm (2026-07-14 incident)."""
+    import services.execution.mtf_capitulation_handlers as mh
+    from services.state.position_persistence import PositionPersistence
+    cfg = _two_setup_config(tmp_path)
+    store = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
+    store.save_position(symbol="NSE:GHOSTNAME", side="BUY", qty=10, avg_price=100.0,
+                        trade_id="t", entry_date="2026-07-13", exit_on_date="2026-07-20",
+                        product="MTF", state={"pending_entry_fill": False, "qty": 10,
+                                              "leverage": 2.5, "entry_fill_price": 100.0})
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    # _FakeMtf (autouse fixture) does NOT contain GHOSTNAME -> must be flagged.
+    summary = mh.run_eod(cfg, _stub_broker_amo(),
+                         now_ist=pd.Timestamp("2026-07-14 15:28:00"),
+                         paper_mode=True, phase="exits")
+    assert summary.get("mtf_delisted_held") == ["A2:NSE:GHOSTNAME"]

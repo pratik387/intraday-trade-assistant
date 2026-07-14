@@ -150,6 +150,7 @@ def run_eod(
     summary["by_setup"] = {}
     persistences = {name: PositionPersistence(_position_state_dir(raw)) for name, raw in setups}
     setups_by_name = {n: r for n, r in setups}
+    _warn_mtf_delisted(setups, persistences, summary)
     # ---- Phase A: exits due today (per-setup, pre-close) ----
     if phase in ("both", "exits"):
         for name, raw in setups:
@@ -485,6 +486,34 @@ def _today_open_high(broker, symbol: str, day) -> tuple:
     except Exception as e:
         logger.warning("_today_open_high failed for %s: %s", symbol, e)
         return None, None
+
+
+def _warn_mtf_delisted(setups, persistences, summary) -> None:
+    """Surface held names that are NO LONGER on Zerodha's MTF approved list.
+
+    2026-07-14: refreshing an 8-week-stale snapshot revealed 3 of 11 held paper
+    positions had been dropped from the list mid-hold. Live, Zerodha can
+    force-convert or square off MTF positions on delisted names — this check
+    makes that visible in the daily cron log THE DAY the (daily-refreshed)
+    snapshot drops a held name, instead of at a broker rejection. Never raises.
+    """
+    try:
+        flagged = []
+        for name, raw in setups:
+            mtf = MtfUniverse(Path(str(raw["mtf"]["approved_list_snapshot_path"])))
+            approved = mtf.all_symbols()
+            for sym in persistences[name].load_snapshot().keys():
+                if sym.replace("NSE:", "").upper() not in approved:
+                    flagged.append(f"{name}:{sym}")
+        if flagged:
+            summary["mtf_delisted_held"] = flagged
+            logger.warning(
+                "mtf_capitulation: %d HELD position(s) no longer on the MTF "
+                "approved list (broker may force-convert/square off if live): %s",
+                len(flagged), ", ".join(flagged),
+            )
+    except Exception as e:  # pragma: no cover - sentinel must not break the cron
+        logger.warning("mtf_capitulation: MTF-delisting check failed: %s", e)
 
 
 def _held_snapshots(setups, persistences):

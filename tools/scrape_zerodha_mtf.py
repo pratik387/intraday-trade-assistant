@@ -40,6 +40,12 @@ def main() -> int:
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    # Stable alias — config points here so daily refreshes never need a config
+    # edit. The dated file above remains the audit trail.
+    latest = _OUT_DIR / "approved_mtf_securities_latest.json"
+    with open(latest, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    print(f"Alias updated: {latest}")
 
     # Summary
     by_cat: dict[str, int] = {}
