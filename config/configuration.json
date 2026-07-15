@@ -216,8 +216,9 @@
       "wide_open": false
     },
     "below_vwap_volume_revert_long": {
-      "enabled": true,
-      "paper_enabled": true,
+      "_disabled_2026_07_15": "Paper validation FAILED at n=126: PF 0.84 vs spec gate >=1.10 (expected 1.59). Mechanics per design (afternoon cell, exit economics match) but 33% hard-SL rate at -1.16R + 17bps entry slippage + Rs63 fees = ~0.3R/trade unmodeled friction; gross-of-friction PF ~1.1, not 1.59. Spec kill criteria met. Candidate returns to research (SL geometry) - see specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md.",
+      "enabled": false,
+      "paper_enabled": false,
       "universe_max_symbols": 1500,
       "_status": "Paper-trade validation phase started 2026-05-21. See specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md. Do NOT enable in live until paper passes acceptance criteria.",
       "mechanism_tags": [
