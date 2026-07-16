@@ -542,10 +542,27 @@ def run_entry(
                                     # pending LIMIT blocks margin account-wide,
                                     # so cancel it (fill race handled) rather
                                     # than let it starve lower-ranked picks.
-                                    cst, cfill = _cancel_unfilled_buy(
+                                    cst, cfill, _cstatus = _cancel_unfilled_buy(
                                         broker, str(retry_order_id), symbol,
                                         confirm_timeout_sec=int(spec.raw_config["cancel_confirm_timeout_sec"]),
                                     )
+                                    rpartial = _partial_fill_from_status(_cstatus) if cfill is None else None
+                                    if rpartial is not None:
+                                        pq, pa = rpartial
+                                        pool.attach_buy_fill(
+                                            slot.slot_id, fill_price=float(pa),
+                                            fill_ts_iso=now.isoformat(),
+                                            order_id=str(retry_order_id), qty=int(pq),
+                                        )
+                                        summary["fired_count"] += 1
+                                        summary["events"].append({
+                                            "symbol": symbol, "qty": pq,
+                                            "product": evt.context["product"],
+                                            "buy_fill_price": float(pa),
+                                            "partial_fill": True, "insufficient_funds_retry": True,
+                                        })
+                                        pool.persist()
+                                        continue
                                     if cfill is not None:
                                         pool.attach_buy_fill(
                                             slot.slot_id, fill_price=float(cfill),
@@ -572,6 +589,25 @@ def run_entry(
                                         symbol, retry_order_id, rst,
                                         (rstatus or {}).get("status_message") or "no status_message",
                                     )
+                        partial = _partial_fill_from_status(last_status)
+                        if partial is not None:
+                            pqty, pavg = partial
+                            logger.warning(
+                                "run_entry: %s BUY %s %s but PARTIALLY filled %d @ %.2f; "
+                                "attaching partial position",
+                                symbol, buy_order_id, st, pqty, pavg,
+                            )
+                            pool.attach_buy_fill(slot.slot_id, fill_price=float(pavg),
+                                                 fill_ts_iso=now.isoformat(),
+                                                 order_id=str(buy_order_id), qty=int(pqty))
+                            summary["fired_count"] += 1
+                            summary["events"].append({
+                                "symbol": symbol, "qty": pqty,
+                                "product": evt.context["product"],
+                                "buy_fill_price": float(pavg), "partial_fill": True,
+                            })
+                            pool.persist()
+                            continue
                         # No viable retry (non-margin rejection / affordable
                         # qty < 1 / retry placement failed / retry also dead):
                         # free the slot instead of leaving a ghost t0_open.
@@ -591,12 +627,33 @@ def run_entry(
                     # The cancel/fill race is handled inside _cancel_unfilled_buy:
                     # a fill that wins the race (2026-07-02 DBSTOCKBRO late-fill
                     # case) is attached normally below.
-                    cst, cfill = _cancel_unfilled_buy(
+                    cst, cfill, cstatus = _cancel_unfilled_buy(
                         broker, str(buy_order_id), symbol,
                         confirm_timeout_sec=int(spec.raw_config["cancel_confirm_timeout_sec"]),
                     )
+                    partial = _partial_fill_from_status(cstatus) if cfill is None else None
                     if cfill is not None:
-                        fill_price = cfill  # late fill won the race — attach below
+                        fill_price = cfill  # late FULL fill won the race — attach below
+                    elif partial is not None:
+                        # Cancel killed only the REMAINDER — the filled part is a
+                        # real position and MUST get its exit (2026-07-15 AJOONI).
+                        pqty, pavg = partial
+                        logger.warning(
+                            "run_entry: %s BUY %s PARTIALLY filled %d @ %.2f before "
+                            "cancel; attaching partial position",
+                            symbol, buy_order_id, pqty, pavg,
+                        )
+                        pool.attach_buy_fill(slot.slot_id, fill_price=float(pavg),
+                                             fill_ts_iso=now.isoformat(),
+                                             order_id=str(buy_order_id), qty=int(pqty))
+                        summary["fired_count"] += 1
+                        summary["events"].append({
+                            "symbol": symbol, "qty": pqty,
+                            "product": evt.context["product"],
+                            "buy_fill_price": float(pavg), "partial_fill": True,
+                        })
+                        pool.persist()
+                        continue
                     else:
                         logger.warning(
                             "run_entry: %s BUY %s cancelled after poll timeout (%s); "
@@ -1436,6 +1493,28 @@ def _insufficient_funds_retry_qty(status_message: Optional[str], qty: int,
     return retry_qty if retry_qty >= 1 else None
 
 
+def _partial_fill_from_status(status: Optional[dict]) -> Optional[tuple]:
+    """(filled_qty, avg_price) when a dead order (CANCELLED/REJECTED) actually
+    filled PART of its quantity first, else None.
+
+    2026-07-15 incident: AJOONI entry BUY partially filled, then our
+    poll-timeout cancel killed the remainder — the CANCELLED status was treated
+    as 'no position' and the slot rolled back, leaving 1,751 real shares with
+    NO AMO exit (unhedged overnight; recovered manually next morning inside the
+    AMO window). A dead order is only positionless when filled_quantity == 0.
+    """
+    if not status:
+        return None
+    try:
+        fq = int(status.get("filled_quantity") or 0)
+        ap = float(status.get("average_price") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if fq > 0 and ap > 0:
+        return fq, ap
+    return None
+
+
 def _cancel_unfilled_buy(broker, order_id: str, symbol: str,
                          confirm_timeout_sec: int) -> tuple:
     """Cancel an entry BUY still OPEN after its fill-poll window, then confirm.
@@ -1462,7 +1541,7 @@ def _cancel_unfilled_buy(broker, order_id: str, symbol: str,
             "_cancel_unfilled_buy: broker has no cancel_order; %s BUY %s left "
             "pending (margin stays blocked)", symbol, order_id,
         )
-        return "OPEN", None
+        return "OPEN", None, None
     try:
         broker.cancel_order(str(order_id), variety="regular")
     except Exception as e:
@@ -1476,9 +1555,9 @@ def _cancel_unfilled_buy(broker, order_id: str, symbol: str,
         broker, str(order_id), timeout_sec=int(confirm_timeout_sec),
     )
     if fp is not None:
-        return "COMPLETE", float(fp)
+        return "COMPLETE", float(fp), status
     st = str((status or {}).get("status") or "").upper() or "UNKNOWN"
-    return st, None
+    return st, None, status
 
 
 def _rollback_slot_to_free(slot) -> None:

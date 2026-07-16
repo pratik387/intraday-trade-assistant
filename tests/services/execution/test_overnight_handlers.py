@@ -518,3 +518,34 @@ def test_rank_detections_deepest_svr_first_cheap_tiebreak():
     assert ranked == ["NSE:DEEP", "NSE:TIE_CHEAP", "NSE:TIE_EXPENSIVE", "NSE:MILD"]
     # pure function: input untouched
     assert dets[0][0] == "NSE:MILD"
+
+
+# ---------------------------------------------------------------------------
+# Partial-fill handling (2026-07-15 AJOONI: cancelled remainder orphaned the
+# filled part — 1,751 real shares left with no AMO exit)
+# ---------------------------------------------------------------------------
+
+def test_partial_fill_from_status():
+    from services.execution.overnight_handlers import _partial_fill_from_status
+    assert _partial_fill_from_status({"status": "CANCELLED", "filled_quantity": 1751,
+                                      "average_price": 4.14}) == (1751, 4.14)
+    assert _partial_fill_from_status({"status": "CANCELLED", "filled_quantity": 0,
+                                      "average_price": 0}) is None
+    assert _partial_fill_from_status({"status": "REJECTED"}) is None
+    assert _partial_fill_from_status(None) is None
+    assert _partial_fill_from_status({"filled_quantity": "bad"}) is None
+    # filled qty but no price -> not attachable
+    assert _partial_fill_from_status({"filled_quantity": 10, "average_price": 0}) is None
+
+
+def test_cancel_unfilled_buy_returns_status_dict():
+    """Arity + passthrough: callers need the final status to detect partials."""
+    from types import SimpleNamespace as NS
+    from unittest.mock import MagicMock
+    import services.execution.overnight_handlers as oh
+    broker = MagicMock()
+    broker.get_order_status.return_value = {"status": "CANCELLED",
+                                            "filled_quantity": 100, "average_price": 9.5}
+    st, fp, status = oh._cancel_unfilled_buy(broker, "OID", "NSE:X", confirm_timeout_sec=1)
+    assert st == "CANCELLED" and fp is None
+    assert status["filled_quantity"] == 100  # partial detectable by caller
