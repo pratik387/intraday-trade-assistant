@@ -59,6 +59,53 @@ def _safe_quote(broker, symbol):
         return None, None, None
 
 
+def _est_next_day_lower_circuit(last_price, upper_circuit, lower_circuit):
+    """Estimate T+1's lower circuit for an AMO that executes tomorrow.
+
+    Today's band was set from YESTERDAY's close (lc = prev_close*(1-p),
+    uc = prev_close*(1+p)); overnight it re-centers on TODAY's close. An AMO
+    SELL clamped only to today's lc can therefore price below tomorrow's
+    re-centered floor and be REJECTED at the 08:58 exchange send (SABEVENTS
+    2026-07-20: floor 7.37 vs Monday band 7.50-8.28). Infer the band
+    fraction p from today's quote and re-center on last_price. Returns None
+    when any quote field is missing (caller falls back to today's lc).
+    """
+    if not (last_price and upper_circuit and lower_circuit):
+        return None
+    if upper_circuit <= lower_circuit or lower_circuit <= 0:
+        return None
+    band_frac = (upper_circuit - lower_circuit) / (upper_circuit + lower_circuit)
+    return float(last_price) * (1.0 - band_frac)
+
+
+def _find_out_of_band_sell(broker, symbol: str, qty: int, exclude_order_id=None):
+    """(order_id, avg_price) of a COMPLETE SELL matching symbol+qty that this
+    engine did not place — e.g. the user flattening manually from the app after
+    an AMO rejection (SABEVENTS 2026-07-20). None when absent or the broker
+    cannot list orders. Engine orders are excluded via their ITDA tag and the
+    slot's own AMO id so a filled engine order is never double-adopted.
+    """
+    get_orders = getattr(broker, "get_orders", None)
+    if get_orders is None:
+        return None
+    tsym = str(symbol).split(":", 1)[-1]
+    try:
+        for o in get_orders():
+            if str(o.get("order_id")) == str(exclude_order_id):
+                continue
+            if str(o.get("tag") or "").startswith("ITDA"):
+                continue
+            if (o.get("tradingsymbol") == tsym
+                    and o.get("transaction_type") == "SELL"
+                    and o.get("status") == "COMPLETE"
+                    and int(o.get("filled_quantity") or 0) == int(qty)
+                    and float(o.get("average_price") or 0.0) > 0):
+                return str(o.get("order_id")), float(o.get("average_price"))
+    except Exception as e:
+        logger.warning("_find_out_of_band_sell failed for %s: %s", symbol, e)
+    return None
+
+
 def _rank_detections(detections):
     """Order detections for slot allocation: deepest capitulation first.
 
@@ -790,15 +837,22 @@ def run_place_exit(
         # 3 placed orders when the loop crashed).
         try:
             # Lower circuit for the SELL clamp (a catastrophe-floored sell could
-            # fall below the band on a name near its lower circuit).
+            # fall below the band on a name near its lower circuit). The order
+            # executes TOMORROW, when the band re-centers on today's close, so
+            # the effective floor is the ESTIMATED next-day lower circuit — a
+            # price below it is rejected at the 08:58 exchange send even though
+            # it sits inside today's band (SABEVENTS 2026-07-20).
             _lp, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
+            est_next_lc = _est_next_day_lower_circuit(_lp, _uc, lower_circuit)
+            floors = [v for v in (lower_circuit, est_next_lc) if v]
+            sell_floor = max(floors) if floors else None
             # AMO LIMIT floor at the catastrophe level: fills at the pre-open
             # auction for any open >= -catastrophe (limit sells fill at the better
             # price); a gap below the floor is left to the GTT / morning failsafe.
             # Tick-valid AND >= lower circuit (Kite rejects non-tick/sub-circuit).
             amo_limit = clamp_round_limit(
                 slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0), "SELL",
-                lower_circuit=lower_circuit,
+                lower_circuit=sell_floor,
             )
             amo_id = _place_amo_sell(
                 broker, symbol=slot.symbol, qty=qty,
@@ -954,6 +1008,24 @@ def run_verify_exit(
                 continue
         else:
             sell_price = _live_check_amo_fill(broker, slot.amo_sell_order_id)
+            if sell_price is None:
+                # An out-of-band exit (manual sell from the app after an AMO
+                # rejection — SABEVENTS 2026-07-20) leaves the slot flat but
+                # unfilled by OUR order id. Adopt it as the exit fill instead of
+                # placing a failsafe that would double-sell / reject on zero
+                # holdings.
+                oob = _find_out_of_band_sell(
+                    broker, slot.symbol, slot.exit_qty(),
+                    exclude_order_id=slot.amo_sell_order_id,
+                )
+                if oob is not None:
+                    oob_id, oob_px = oob
+                    logger.warning(
+                        "run_verify_exit: AMO %s unfilled but found out-of-band "
+                        "COMPLETE SELL %s @ %.2f for %s — adopting as exit fill",
+                        slot.amo_sell_order_id, oob_id, oob_px, slot.symbol,
+                    )
+                    sell_price = oob_px
             if sell_price is None:
                 logger.warning(
                     "run_verify_exit: live AMO %s did not fill; placing failsafe SELL",

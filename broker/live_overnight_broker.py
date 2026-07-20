@@ -51,6 +51,11 @@ class LiveOvernightBroker:
     def get_order_status(self, order_id: str) -> Dict[str, Any]:
         return self._kite.get_order_status(order_id)
 
+    def get_orders(self) -> List[Dict]:
+        # Full orderbook — verify-exit scans it for out-of-band (manual) exits
+        # so it can adopt them instead of double-selling (SABEVENTS 2026-07-20).
+        return self._kite.get_orders()
+
     def cancel_order(self, order_id: str, variety: str = "regular") -> bool:
         # Frees the margin pinned by an unfilled entry BUY (2026-07-09
         # incident) so lower-ranked candidates aren't rejected for funds.

@@ -549,3 +549,138 @@ def test_cancel_unfilled_buy_returns_status_dict():
     st, fp, status = oh._cancel_unfilled_buy(broker, "OID", "NSE:X", confirm_timeout_sec=1)
     assert st == "CANCELLED" and fp is None
     assert status["filled_quantity"] == 100  # partial detectable by caller
+
+
+# ---------------------------------------------------------------------------
+# Next-day circuit-band estimate for the exit AMO (2026-07-20 SABEVENTS: AMO
+# limit 7.37 sat inside Friday's band but below Monday's re-centered 7.50
+# floor -> REJECTED at the 08:58 exchange send, position left unhedged)
+# ---------------------------------------------------------------------------
+
+def test_est_next_day_lower_circuit_math():
+    from services.execution.overnight_handlers import _est_next_day_lower_circuit
+    # Friday band from Thursday close 7.55 at +-5%: lc=7.1725 uc=7.9275.
+    # Friday close 7.89 -> Monday floor estimate = 7.89 * 0.95 = 7.4955.
+    est = _est_next_day_lower_circuit(7.89, 7.9275, 7.1725)
+    assert est == pytest.approx(7.4955, abs=1e-6)
+    # Missing quote fields -> None (caller falls back to today's lc)
+    assert _est_next_day_lower_circuit(None, 7.9275, 7.1725) is None
+    assert _est_next_day_lower_circuit(7.89, None, 7.1725) is None
+    assert _est_next_day_lower_circuit(7.89, 7.9275, None) is None
+    # Degenerate band -> None
+    assert _est_next_day_lower_circuit(7.89, 7.0, 7.5) is None
+
+
+def test_place_exit_amo_limit_respects_next_day_band(tmp_path):
+    """The AMO SELL limit must clear the ESTIMATED next-day lower circuit,
+    not just today's band (SABEVENTS 2026-07-20 rejection)."""
+    from services.execution.overnight_handlers import run_place_exit
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True  # live path
+    _seed_state(state_path, [
+        {
+            "slot_id": 1, "status": "t0_open", "symbol": "NSE:SABEVENTS",
+            "product": "CNC", "leverage": 1.0,
+            "margin_inr": 50000.0, "notional_inr": 50000.0,
+            "buy_fill_price": 7.7563, "buy_fill_ts": "2026-07-17T15:26:00",
+            "buy_order_id": "BUY-001", "buy_qty": 6426,
+            "amo_sell_order_id": None, "expected_exit_date": None,
+            "sell_fill_price": None, "sell_fill_ts": None,
+            "realized_pnl_inr": None, "fees_inr": None, "interest_inr": None,
+            "reserved_today": "2026-07-17",
+        },
+        _empty_free_slot(2), _empty_free_slot(3), _empty_free_slot(4),
+    ])
+    broker = MagicMock()
+    broker._data_sdk = None
+    broker.get_quote.return_value = {
+        "last_price": 7.89, "upper_circuit_limit": 7.9275,
+        "lower_circuit_limit": 7.1725,
+    }
+    broker.place_order.return_value = "AMO-NEW"
+    broker.place_gtt_stop.return_value = "GTT-NEW"
+
+    summary = run_place_exit(cfg, broker,
+                             now_ist=pd.Timestamp("2026-07-17 16:05:00"),
+                             paper_mode=False)
+    assert summary["placed_count"] == 1
+    # catastrophe floor 7.7563*0.95=7.3685 clamped UP to est next-day lc
+    # 7.4955, then ceil to tick -> 7.50 (Monday's actual floor).
+    amo_call = broker.place_order.call_args
+    assert amo_call.kwargs["variety"] == "amo"
+    assert amo_call.kwargs["price"] == pytest.approx(7.50)
+
+
+def test_verify_exit_adopts_out_of_band_manual_sell(tmp_path):
+    """AMO rejected + user flattened manually -> settle at the manual fill,
+    do NOT place a failsafe (it would reject on zero holdings / double-sell)."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True  # live path
+    _seed_state(state_path, [
+        {
+            "slot_id": 1, "status": "t0_open", "symbol": "NSE:SABEVENTS",
+            "product": "CNC", "leverage": 1.0,
+            "margin_inr": 50000.0, "notional_inr": 50000.0,
+            "buy_fill_price": 7.7563, "buy_fill_ts": "2026-07-17T15:26:00",
+            "buy_order_id": "BUY-001", "buy_qty": 6426,
+            "amo_sell_order_id": "AMO-001", "expected_exit_date": "2026-07-20",
+            "sell_fill_price": None, "sell_fill_ts": None,
+            "realized_pnl_inr": None, "fees_inr": None, "interest_inr": None,
+            "reserved_today": "2026-07-17",
+        },
+        _empty_free_slot(2), _empty_free_slot(3), _empty_free_slot(4),
+    ])
+    broker = MagicMock()
+    broker._data_sdk = None
+    broker.get_order_status.return_value = {"status": "REJECTED"}
+    broker.get_orders.return_value = [
+        # our own rejected AMO (engine tag) — must be ignored
+        {"order_id": "AMO-001", "tag": "ITDA_2026-07-17_1",
+         "tradingsymbol": "SABEVENTS", "transaction_type": "SELL",
+         "status": "REJECTED", "filled_quantity": 0, "average_price": 0},
+        # the user's manual market sell — must be adopted
+        {"order_id": "MANUAL-1", "tag": None,
+         "tradingsymbol": "SABEVENTS", "transaction_type": "SELL",
+         "status": "COMPLETE", "filled_quantity": 6426, "average_price": 7.51},
+    ]
+
+    summary = run_verify_exit(cfg, broker,
+                              now_ist=pd.Timestamp("2026-07-20 09:33:00"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 1
+    slot1 = next(s for s in json.loads(state_path.read_text())["slots"]
+                 if s["slot_id"] == 1)
+    assert slot1["status"] == "t1_settling"
+    assert slot1["sell_fill_price"] == 7.51
+    # no failsafe order placed
+    broker.place_order.assert_not_called()
+
+
+def test_find_out_of_band_sell_filters():
+    from services.execution.overnight_handlers import _find_out_of_band_sell
+    orders = [
+        {"order_id": "A1", "tag": "ITDA_x", "tradingsymbol": "X",
+         "transaction_type": "SELL", "status": "COMPLETE",
+         "filled_quantity": 10, "average_price": 5.0},   # engine-tagged
+        {"order_id": "A2", "tag": None, "tradingsymbol": "X",
+         "transaction_type": "SELL", "status": "COMPLETE",
+         "filled_quantity": 9, "average_price": 5.0},    # qty mismatch
+        {"order_id": "A3", "tag": None, "tradingsymbol": "X",
+         "transaction_type": "BUY", "status": "COMPLETE",
+         "filled_quantity": 10, "average_price": 5.0},   # wrong side
+        {"order_id": "A4", "tag": None, "tradingsymbol": "X",
+         "transaction_type": "SELL", "status": "COMPLETE",
+         "filled_quantity": 10, "average_price": 5.2},   # match
+    ]
+    broker = MagicMock()
+    broker.get_orders.return_value = orders
+    assert _find_out_of_band_sell(broker, "NSE:X", 10) == ("A4", 5.2)
+    # excluded id is skipped even if COMPLETE
+    assert _find_out_of_band_sell(broker, "NSE:X", 10,
+                                  exclude_order_id="A4") is None
+    # broker without get_orders -> None
+    class NoOrders:
+        pass
+    assert _find_out_of_band_sell(NoOrders(), "NSE:X", 10) is None
