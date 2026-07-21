@@ -73,6 +73,24 @@ inverse edge.
 3. If revived: implement at MultiDayCompositeSelector as ranker-emitted
    features (like sigma20_pct), paper A/B before any cap binding.
 
+## Follow-up screens (2026-07-21, same session) — NEGATIVE, recorded for M-accounting
+
+1. **Conditional-direction screen** (22 features: original 17 + NIFTYBEES
+   context ret5/ret20/dist_sma20/dist_sma50 + excess_ret5) on the high-ATR
+   movers pool, monster (>=+5%) vs disaster (<=-5%): NO new feature passes the
+   3-period bar. Passers = the already-parked depth/vol family only. RSI2/14,
+   BB %B, vol-z, gap, streaks, close-pos, tshock, all Nifty features: fail.
+2. **Nifty-below-SMA50 regime gate on RULE-T** (single confirmatory cut):
+   REVERSES in Disc23-24 (gateON 1.40 vs gateOFF 2.28), flat in OOS25
+   (1.59 vs 1.56), unusable in Rec26 (gate on 88% of days -> n=12 off).
+   The direction-screen index signal was a PERIOD CONFOUND (below-SMA50 share:
+   16%/22%/36%/88% by year), not within-period conditioning.
+
+**Cumulative testing bill on this panel for the monster question: ~40 looks**
+(17-feature screen + 22-feature conditional screen + gate cut). Any future
+retest must charge >= this M. The Jun-Jul forward window is SPENT as a veto
+set — the next veto set is forward paper data accumulated after 2026-07-21.
+
 ## Artifacts
 
 - tools/sub9_research/monster_conditioning_validation.py (rules + fees study)
