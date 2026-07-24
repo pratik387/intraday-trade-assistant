@@ -930,6 +930,18 @@ def run_verify_exit(
         summary["skipped_non_trading_day"] = True
         return summary
 
+    # Auth preflight (2026-07-24: a stale Kite token made every status fetch,
+    # failsafe, and GTT cancel fail one by one, half-touching state). Abort
+    # cleanly so the 10:30 retry cron gets a full consistent pass once the
+    # token is refreshed.
+    if not paper_mode and hasattr(broker, "check_auth") and not broker.check_auth():
+        logger.critical(
+            "run_verify_exit: KITE AUTH FAILED (stale token?) — aborting before "
+            "any half-actions. Refresh the token; the 10:30 retry cron re-runs "
+            "this idempotently.")
+        summary["auth_failed"] = True
+        return summary
+
     paper_enabled_setups = _select_overnight_setups(config, paper_mode=paper_mode)
     if not paper_enabled_setups:
         logger.info("run_verify_exit: no overnight setups active; exit")
@@ -1027,30 +1039,64 @@ def run_verify_exit(
                     )
                     sell_price = oob_px
             if sell_price is None:
-                logger.warning(
-                    "run_verify_exit: live AMO %s did not fill; placing failsafe SELL",
-                    slot.amo_sell_order_id,
-                )
-                # Failsafe: marketable-LIMIT SELL just below live LTP (Kite bars
-                # plain MARKET on this universe). Fetch LTP first to price it.
-                qty_for_failsafe = slot.exit_qty()
+                # Inspect the AMO's terminal state BEFORE acting: a still-OPEN
+                # order locks the holdings (a second SELL would be rejected) and
+                # a partially-filled one must never be failsafed at full qty
+                # (REGENCERAM 2026-07-24: 286/1388 filled at the floor, the
+                # remainder OPEN above the market).
                 failsafe_buf = float(paper_enabled_setups[0].raw_config["gtt_limit_buffer_pct"])
                 try:
+                    amo_status = None
+                    try:
+                        amo_status = broker.get_order_status(slot.amo_sell_order_id)
+                    except Exception as e:
+                        logger.warning("run_verify_exit: status fetch failed for AMO %s: %s",
+                                       slot.amo_sell_order_id, e)
+                    partial = _partial_fill_from_status(amo_status)
                     ltp_q, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
                     ltp = ltp_q if (ltp_q is not None and ltp_q > 0) else float(broker.get_ltp(slot.symbol))
                     # Tick-valid AND >= lower circuit (Kite rejects non-tick /
                     # sub-circuit SELL prices).
-                    failsafe_limit = clamp_round_limit(
+                    marketable = clamp_round_limit(
                         ltp * (1.0 - failsafe_buf / 100.0), "SELL",
                         lower_circuit=lower_circuit,
                     )
-                    _place_failsafe_sell(
-                        broker,
-                        symbol=slot.symbol, qty=qty_for_failsafe,
-                        product=slot.product or "CNC",
-                        limit_price=failsafe_limit,
+                    if (amo_status or {}).get("status") == "OPEN":
+                        # Re-price the existing order to marketable — placing a
+                        # second SELL against locked holdings would be rejected.
+                        # The next idempotent verify run settles it once COMPLETE.
+                        if hasattr(broker, "modify_order") and broker.modify_order(
+                                slot.amo_sell_order_id, marketable):
+                            logger.warning(
+                                "run_verify_exit: AMO %s still OPEN (filled %s) — "
+                                "re-priced to marketable %.2f; settle deferred to "
+                                "next verify run", slot.amo_sell_order_id,
+                                (partial[0] if partial else 0), marketable)
+                        else:
+                            logger.error(
+                                "run_verify_exit: AMO %s OPEN but modify unavailable/"
+                                "failed for slot %d — manual action needed",
+                                slot.amo_sell_order_id, slot.slot_id)
+                        continue
+                    # Dead order (REJECTED/CANCELLED/unknown): failsafe only the
+                    # UNSOLD remainder; settle at the blended price.
+                    filled_qty, filled_avg = partial if partial else (0, 0.0)
+                    remainder = slot.exit_qty() - filled_qty
+                    if remainder > 0:
+                        logger.warning(
+                            "run_verify_exit: live AMO %s did not fill "
+                            "(partial %d/%d); placing failsafe SELL for remainder",
+                            slot.amo_sell_order_id, filled_qty, slot.exit_qty())
+                        _place_failsafe_sell(
+                            broker,
+                            symbol=slot.symbol, qty=remainder,
+                            product=slot.product or "CNC",
+                            limit_price=marketable,
+                        )
+                    sell_price = (
+                        (filled_qty * filled_avg + remainder * ltp) / slot.exit_qty()
+                        if filled_qty > 0 else ltp
                     )
-                    sell_price = ltp
                 except Exception as e:
                     logger.error(
                         "run_verify_exit: failsafe SELL failed for slot %d: %s",

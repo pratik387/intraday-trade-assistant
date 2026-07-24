@@ -561,6 +561,50 @@ class KiteBroker:
             logger.warning(f"cancel_order failed for {order_id}: {e}")
             return False
 
+    def check_auth(self) -> bool:
+        """True when the session token is valid (cheap margins call).
+
+        get_orders()/get_order_status() swallow auth errors into []/None, so
+        callers that must distinguish 'no orders' from 'dead token' (the
+        overnight verify preflight — 2026-07-24 stale-token incident) need an
+        explicit probe.
+        """
+        if self.dry_run:
+            return True
+        try:
+            self.kc.margins()
+            return True
+        except Exception as e:
+            logger.error(f"Kite auth check failed: {e}")
+            return False
+
+    def modify_order(self, order_id: str, price: float, variety: str = "regular") -> bool:
+        """Re-price a pending (OPEN) LIMIT order. Returns True on success.
+
+        Used by the overnight verify failsafe: a partially-filled exit AMO that
+        is still OPEN blocks the holdings, so a second SELL would be rejected —
+        re-pricing the existing order to a marketable limit is the only safe
+        unwind (REGENCERAM 2026-07-24: 286/1388 filled at the floor price, the
+        remainder sat OPEN above the market all morning).
+        """
+        variety_l = str(variety).lower()
+        if variety_l not in ("regular", "amo"):
+            raise ValueError(f"variety must be 'regular' or 'amo', got {variety!r}")
+        if self.dry_run:
+            for o in self._paper_orders:
+                if str(o.get("order_id")) == str(order_id):
+                    o["price"] = float(price)
+                    return True
+            return False
+        kc_variety = self.kc.VARIETY_REGULAR if variety_l == "regular" else self.kc.VARIETY_AMO
+        try:
+            self.kc.modify_order(variety=kc_variety, order_id=order_id, price=float(price))
+            logger.info(f"Order modified: {order_id} -> price {price} (variety={variety_l})")
+            return True
+        except Exception as e:
+            logger.warning(f"modify_order failed for {order_id}: {e}")
+            return False
+
     # ------------------------------ Paper Trading ---------------------------
     def _simulate_order(
         self,

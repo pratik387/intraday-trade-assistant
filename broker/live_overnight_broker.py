@@ -56,6 +56,14 @@ class LiveOvernightBroker:
         # so it can adopt them instead of double-selling (SABEVENTS 2026-07-20).
         return self._kite.get_orders()
 
+    def modify_order(self, order_id: str, price: float, variety: str = "regular") -> bool:
+        # Re-price a still-OPEN exit AMO remainder (REGENCERAM 2026-07-24).
+        return self._kite.modify_order(order_id, price, variety=variety)
+
+    def check_auth(self) -> bool:
+        # Explicit token probe for the verify preflight (2026-07-24 incident).
+        return self._kite.check_auth()
+
     def cancel_order(self, order_id: str, variety: str = "regular") -> bool:
         # Frees the margin pinned by an unfilled entry BUY (2026-07-09
         # incident) so lower-ranked candidates aren't rejected for funds.

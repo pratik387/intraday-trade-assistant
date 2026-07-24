@@ -658,6 +658,102 @@ def test_verify_exit_adopts_out_of_band_manual_sell(tmp_path):
     broker.place_order.assert_not_called()
 
 
+def _live_slot_state(state_path, *, amo_id="AMO-001"):
+    """Seed one t0_open live slot expiring 2026-07-20 (a Monday)."""
+    _seed_state(state_path, [
+        {
+            "slot_id": 1, "status": "t0_open", "symbol": "NSE:REGENCERAM",
+            "product": "CNC", "leverage": 1.0,
+            "margin_inr": 50000.0, "notional_inr": 50000.0,
+            "buy_fill_price": 36.3757, "buy_fill_ts": "2026-07-17T15:26:00",
+            "buy_order_id": "BUY-001", "buy_qty": 1388,
+            "amo_sell_order_id": amo_id, "expected_exit_date": "2026-07-20",
+            "sell_fill_price": None, "sell_fill_ts": None,
+            "realized_pnl_inr": None, "fees_inr": None, "interest_inr": None,
+            "reserved_today": "2026-07-17",
+        },
+        _empty_free_slot(2), _empty_free_slot(3), _empty_free_slot(4),
+    ])
+
+
+def test_verify_exit_auth_preflight_aborts_cleanly(tmp_path):
+    """Dead token -> abort before any state/broker half-actions (2026-07-24)."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    broker = MagicMock()
+    broker.check_auth.return_value = False
+    summary = run_verify_exit(cfg, broker,
+                              now_ist=pd.Timestamp("2026-07-20 09:33:00"),
+                              paper_mode=False)
+    assert summary.get("auth_failed") is True
+    assert summary["settled_count"] == 0
+    broker.get_order_status.assert_not_called()
+    broker.place_order.assert_not_called()
+
+
+def test_verify_exit_open_partial_amo_gets_repriced_not_doubled(tmp_path):
+    """Still-OPEN partially-filled AMO locks holdings: re-price it via
+    modify_order, never place a second SELL (REGENCERAM 2026-07-24)."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    broker = MagicMock()
+    broker._data_sdk = None
+    broker.check_auth.return_value = True
+    broker.get_order_status.return_value = {
+        "status": "OPEN", "filled_quantity": 286, "average_price": 34.6}
+    broker.get_orders.return_value = []
+    broker.get_quote.return_value = {
+        "last_price": 34.0, "upper_circuit_limit": 41.56,
+        "lower_circuit_limit": 27.72}
+    broker.modify_order.return_value = True
+    summary = run_verify_exit(cfg, broker,
+                              now_ist=pd.Timestamp("2026-07-20 09:33:00"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 0  # settle deferred to next run
+    broker.modify_order.assert_called_once()
+    args, kwargs = broker.modify_order.call_args
+    assert args[0] == "AMO-001"
+    assert args[1] <= 34.0  # marketable: at/below LTP
+    broker.place_order.assert_not_called()
+    slot1 = next(s for s in json.loads(state_path.read_text())["slots"]
+                 if s["slot_id"] == 1)
+    assert slot1["status"] == "t0_open"  # untouched
+
+
+def test_verify_exit_dead_partial_amo_failsafes_remainder_blended(tmp_path):
+    """CANCELLED AMO with a partial fill: failsafe only the unsold remainder
+    and settle at the qty-blended price."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    broker = MagicMock()
+    broker._data_sdk = None
+    broker.check_auth.return_value = True
+    broker.get_order_status.return_value = {
+        "status": "CANCELLED", "filled_quantity": 286, "average_price": 34.6}
+    broker.get_orders.return_value = []
+    broker.get_quote.return_value = {
+        "last_price": 34.0, "upper_circuit_limit": 41.56,
+        "lower_circuit_limit": 27.72}
+    broker.place_order.return_value = "FAILSAFE-1"
+    summary = run_verify_exit(cfg, broker,
+                              now_ist=pd.Timestamp("2026-07-20 09:33:00"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 1
+    _, po_kwargs = broker.place_order.call_args
+    assert po_kwargs["qty"] == 1388 - 286  # remainder only
+    assert po_kwargs["side"] == "SELL"
+    slot1 = next(s for s in json.loads(state_path.read_text())["slots"]
+                 if s["slot_id"] == 1)
+    expected = (286 * 34.6 + (1388 - 286) * 34.0) / 1388
+    assert slot1["sell_fill_price"] == pytest.approx(expected, abs=1e-6)
+
+
 def test_find_out_of_band_sell_filters():
     from services.execution.overnight_handlers import _find_out_of_band_sell
     orders = [
