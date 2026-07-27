@@ -78,6 +78,8 @@ backtest-cache-download/*
 backtest_20*
 2026*_full
 docs/*
+!docs/experiment_ledger.md
+!docs/experiment_ledger.jsonl
 .claude/
 .claude/settings.local.json
 state/closed_trades.json

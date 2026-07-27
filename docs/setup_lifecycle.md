@@ -1,6 +1,6 @@
 # Setup Lifecycle — Idea → Live → Retirement
 
-**Status:** Active as of 2026-05-20. Single source of truth for moving a setup from initial hypothesis to live deployment and through retirement.
+**Status:** Active as of 2026-05-20; amended 2026-07-27 (forward-only validation, experiment ledger, data-integrity Stage-0 — see "2026-07-27 process amendments" below). Single source of truth for moving a setup from initial hypothesis to live deployment and through retirement.
 
 **Replaces:** `docs/methodology_walk_forward.md` (deprecated — per-window tier methodology was abandoned, see `tasks/lessons.md` #15). The 3-period chronological validation (Discovery / OOS / Holdout) survives as a research tool; the **decision** at each gate is now made via the confidence framework (`tools/methodology/confidence/`), not via tier classification.
 
@@ -10,6 +10,67 @@
 2. **Sanity inflates, OCI is gold standard.** A setup that looks dead on sanity is dead. A setup that looks alive on sanity might still be dead in production. The Lesson #13 caveat applies at every sanity-stage gate.
 3. **Pre-register mechanism before testing windows.** `mechanism_tags` + `mechanism_notes` go in config ≥ 1 commit before any window-based evidence. Falsifiable, not post-hoc (Lesson #12).
 4. **Three numeric inputs only — researcher judges.** At every gate the input is: aggregate PF CI, per-regime breakdown, adjusted Sharpe (Harvey-Liu sign-preserving haircut for effective M setups tested historically).
+
+## 2026-07-27 process amendments (BINDING for all new candidates)
+
+Context: the July 2026 retrospective found that all three intraday setups shipped off the historical
+gauntlet (`gap_fade_short`, `circuit_t1_fade_short`, `delivery_pct_anomaly_short`) subsequently died
+on forward data, while the historical OOS/Holdout windows had been reused across a year of candidate
+evaluation (hundreds of variants). A gate reused that many times passes candidates at the noise floor
+of the search process itself. These amendments fix the process, not any single setup.
+
+### A1. The historical OOS/Holdout windows are CONTAMINATED for new candidates
+
+- OOS Jan-Sep 2025 and Holdout Oct 2025-Apr 2026 have been touched by hundreds of variant
+  evaluations since 2026-04. For **new** candidates they are demoted to *development* data: usable
+  inside Stage 4-5 for cell selection exactly like Discovery, but **no longer admissible as the
+  decisive ship evidence**.
+- The decisive gate for a new candidate is a **fresh holdout**: develop and cell-lock on
+  Discovery(+demoted windows), commit the frozen spec + locked cell + R-geometry (the "freeze
+  commit"), THEN evaluate ONCE on the fresh holdout pool and/or the Stage 10 paper run. Freeze
+  first, then judge. No exceptions.
+- **Fresh holdout pool: 2026-05-01 onward**, growing monthly. Jan-Apr 2026 is inside the burned
+  window (gap_fade 40-month re-sim, below_vwap OCI, close_dn HO all judged on it) — not fresh.
+  May 2026+ has only a handful of known touches (monster-conditioning Jun-Jul forward mirror,
+  live-setup monitoring), recorded as ledger baseline.
+- **Windows are consumable; the ledger is the fuel gauge.** Contamination is a degree, not a
+  binary: a window's honest M = its ledger evaluation count. Each one-shot against the fresh pool
+  gets a ledger line; when the pool's count grows large (order tens), demote it and roll the
+  pool's start date forward. This is why Oct'25-Apr'26 is dead for decisions: its effective count
+  is in the hundreds.
+- Setups already live/paper before 2026-07-27 (`close_dn_overnight_long`,
+  `below_vwap_volume_revert_long`, `panic_crash_revert_long`, multiday composite) continue under
+  their existing forward clocks — their paper/live windows already ARE post-freeze data.
+
+### A2. Experiment ledger (`docs/experiment_ledger.jsonl`) — every evaluation counts toward M
+
+- Any run that computes a performance statistic on OOS, Holdout, or any post-freeze window for any
+  candidate/variant MUST append one JSONL line to `docs/experiment_ledger.jsonl` (schema in
+  `docs/experiment_ledger.md`) in the same session, pass or fail.
+- The selection-bias haircut M in confidence cards comes from the **ledger count** (per window
+  family), not from "ship-eligible count". Until `confidence_card.py` reads the ledger directly,
+  the card author sets M manually from the ledger and records the count in the card.
+- Historical baseline: pre-ledger M is undercounted; treat M_floor ≈ 200+ for anything judged on
+  the pre-2026-07 windows (see ledger's baseline entry). This is exactly why A1 demotes them.
+
+### A3. Data-integrity Stage-0 rule for illiquid-tail candidates
+
+Any candidate whose universe reaches small_cap / micro_cap / cap=unknown starts — at Stage 2, not
+Stage 9 — from the hardened dataset: CA-adjusted + bad-print-cleaned daily
+(`clean_daily_from5m.feather`), production universe via `ProductionUniverseGate`, intersected with
+the live Zerodha MIS-allowed list (Lesson #27), with 5m-archive coverage asymmetry checked
+(Lesson #16/#18). The dirty-instrument pattern (panic_crash −57% net on non-MIS names, CNC reversal
+edge = 100% bad prints, below_vwap = archive survivorship) means an illiquid-tail edge measured on
+raw `consolidated_daily.feather` is presumed artifact until reproduced on the hardened set.
+
+### A4. Factor budget — capitulation-reversion is ONE bet
+
+The 2026-07-27 factor-concentration study (memory: `project_factor_concentration_study_2026_07`)
+showed A2/C1/C4/C6 + `panic_crash_revert_long` share one factor (pairwise r 0.55-0.84, PC1 ≈ 38%
+of book variance). Stage 0's "adjacent setups" question is now answered empirically: a new
+candidate in the small-cap capitulation-reversion family inherits that factor's capital budget
+(sized as one position across the family) and must state what it adds beyond the existing cluster.
+Orthogonal-family candidates (different participant/direction/horizon) get priority.
 
 ## Gauntlet vs this lifecycle (NOT the same thing)
 
@@ -233,6 +294,10 @@ This stage has TWO sweeps over Discovery data — a **filter cell sweep** and an
 
 **Step 4 — Run Holdout ONCE on the locked joint cell.** Typically 2026+. Same gate.
 
+**Step 5 — Log the experiment.** Every Step-3/Step-4 run (and any re-run under a changed variant)
+appends one line to `docs/experiment_ledger.jsonl` in the same session — pass, kill, or marginal
+(amendment A2). Unlogged evaluations poison the M count for every future confidence card.
+
 **Anti-patterns (Lesson #2):**
 - **Post-hoc cell selection** — choosing a cell AFTER seeing OOS is p-hacking. The cell that wins on Disc+OOS combined (Step 1+2 + a confirmatory Step 3) is the cell tested on Holdout. Not the other way around.
 - **Salvage mining** — if no `(filter × R)` cell with n≥200 + PF≥1.20 wins on Disc+OOS combined, the setup is dead. Stop digging.
@@ -357,6 +422,7 @@ Read `reports/confidence_cards/<setup>_confidence_card.md`. The questions to ask
 - Is the aggregate PF CI lower bound > 1.0? (necessary, not sufficient)
 - In which regimes does the edge live? Is it concentrated in 1-2 regimes or spread across 5-7? Concentrated = regime-conditioned (high attrition risk)
 - Is the adjusted Sharpe positive after Bonferroni haircut? Sanity-source haircut is informational; the real test is at Stage 8
+- Is M sourced from `docs/experiment_ledger.jsonl` (amendment A2)? Record the ledger count used in the card. "Ship-eligible count" M is no longer acceptable.
 
 **Lesson #13 caveat at this stage:** sanity-GREEN does NOT permit live deployment. It only justifies the investment of Stage 7 structure-code work. Sanity-RED kills the setup here without spending the structure-code week.
 
