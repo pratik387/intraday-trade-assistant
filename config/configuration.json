@@ -1064,7 +1064,6 @@
       "min_volume_ratio": 2.0,
       "_volume_comment": "2.0x volume = institutional participation (same as ICT standard). Ensures quality opening moves, not retail noise.",
       "allowed_setups": [
-        "gap_fade_short",
         "orb_15_long",
         "orb_15_short",
         "pdh_pdl_reject_long",
@@ -1078,7 +1077,7 @@
         "camarilla_l3_reversal_long",
         "camarilla_l3_reversal_short"
       ],
-      "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). orb_15, pdh_pdl_reject, and pdh_pdl_sweep_reclaim listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
+      "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short removed 2026-07-27 (retired — see docs/retired_setups.md). orb_15, pdh_pdl_reject, and pdh_pdl_sweep_reclaim listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
     },
     "pattern_filters_enabled": true,
     "momentum_consolidation_enabled": true,
