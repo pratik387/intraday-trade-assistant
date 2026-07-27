@@ -59,6 +59,7 @@ htmlcov/
 oracle_cloud/
 .claude/
 *.md
+!specs/*.md
 analysis/
 aws/lambda/pure-python-layer/
 cloud_results/
