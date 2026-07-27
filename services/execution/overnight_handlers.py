@@ -59,6 +59,77 @@ def _safe_quote(broker, symbol):
         return None, None, None
 
 
+def _reconcile_unattached_buys(broker, pool, now, summary: dict) -> int:
+    """Attach any ITDA-tagged BUY fill that no active slot knows about.
+
+    2026-07-24 CREATIVEYE: the entry cancel raced the exchange fill — Kite's
+    status at cancel-confirm reported CANCELLED/filled=0, the slot was freed,
+    and 7,520 real shares went into the weekend with no exit order. The
+    orderbook minutes later IS authoritative, so run_entry (end) and
+    run_place_exit (start) both re-scan it: every engine-tagged BUY with
+    filled_quantity > 0 must be attached to a slot. Returns attach count.
+    """
+    get_orders = getattr(broker, "get_orders", None)
+    if get_orders is None:
+        return 0
+    attached_ids = {str(s.buy_order_id) for s in pool.active() if s.buy_order_id}
+    n_attached = 0
+    for o in get_orders():
+        try:
+            if not str(o.get("tag") or "").startswith("ITDA"):
+                continue
+            if o.get("transaction_type") != "BUY":
+                continue
+            if str(o.get("product") or "").upper() not in ("CNC", "MTF"):
+                continue
+            fq = int(o.get("filled_quantity") or 0)
+            avg = float(o.get("average_price") or 0.0)
+            oid = str(o.get("order_id"))
+            if fq <= 0 or avg <= 0 or oid in attached_ids:
+                continue
+        except (TypeError, ValueError):
+            continue
+        symbol = f"NSE:{o.get('tradingsymbol')}"
+        product = str(o.get("product")).upper()
+        buy_value = fq * avg
+        # The position is a FACT — bypass the daily-new cap if needed; only a
+        # genuinely full pool is unrecoverable here.
+        slot = pool.reserve(symbol, product, 1.0, now.date())
+        if slot is None:
+            free = [s for s in pool._slots if s.status == "free"]  # noqa: SLF001
+            if free:
+                slot = free[0]
+                slot.status = "t0_open"
+                slot.symbol = symbol
+                slot.product = product
+                slot.leverage = 1.0
+                slot.margin_inr = pool._margin_per_slot  # noqa: SLF001
+                slot.notional_inr = pool._margin_per_slot  # noqa: SLF001
+                slot.reserved_today = now.date().isoformat()
+                logger.warning(
+                    "reconcile_unattached_buys: daily-new cap bypassed to attach "
+                    "%s (the fill already exists on the exchange)", symbol)
+        if slot is None:
+            logger.critical(
+                "reconcile_unattached_buys: %s BUY %s filled %d @ %.2f has NO "
+                "slot and the pool is FULL — position is UNHEDGED, exit "
+                "manually before close!", symbol, oid, fq, avg)
+            summary.setdefault("reconcile_unhedged", []).append(symbol)
+            continue
+        pool.attach_buy_fill(slot.slot_id, fill_price=avg,
+                             fill_ts_iso=now.isoformat(), order_id=oid, qty=fq)
+        pool.persist()
+        n_attached += 1
+        logger.warning(
+            "reconcile_unattached_buys: attached orphaned BUY %s %s filled %d "
+            "@ %.2f (Rs%.0f) to slot %d — exit will be placed normally",
+            symbol, oid, fq, avg, buy_value, slot.slot_id)
+        summary.setdefault("reconciled_attach", []).append(
+            {"symbol": symbol, "order_id": oid, "qty": fq, "fill": avg,
+             "slot_id": slot.slot_id})
+    return n_attached
+
+
 def _est_next_day_lower_circuit(last_price, upper_circuit, lower_circuit):
     """Estimate T+1's lower circuit for an AMO that executes tomorrow.
 
@@ -750,6 +821,18 @@ def run_entry(
     except NameError:
         # reject_reasons only exists if at least one setup ran (paused setups skip the loop).
         pass
+    # Cancel-fill race sweep (2026-07-24 CREATIVEYE): re-scan the orderbook a
+    # beat after the loop — fills that beat a cancel but lagged in the status
+    # snapshot are visible here and get their slot back.
+    if not paper_mode:
+        try:
+            delay = int(paper_enabled_setups[0].raw_config["entry_reconcile_delay_sec"])
+            _time_mod.sleep(delay)
+            n = _reconcile_unattached_buys(broker, pool, now, summary)
+            if n:
+                summary["fired_count"] += n
+        except Exception as e:
+            logger.error("run_entry: unattached-buy reconcile failed: %s", e)
     logger.info(
         "run_entry: complete | fired=%d skipped=%d rejected=%d",
         summary["fired_count"], summary["skipped_count"], summary["rejected_count"],
@@ -804,6 +887,15 @@ def run_place_exit(
     )
     catastrophe_pct = float(sc["catastrophe_stop_pct"])
     gtt_buffer_pct = float(sc["gtt_limit_buffer_pct"])
+
+    # Last line of defense before the overnight hold: any engine-tagged BUY
+    # fill the entry pass missed (cancel-fill race) gets a slot here, so its
+    # exit AMO is placed in this very loop (2026-07-24 CREATIVEYE).
+    if not paper_mode:
+        try:
+            _reconcile_unattached_buys(broker, pool, now, summary)
+        except Exception as e:
+            logger.error("run_place_exit: unattached-buy reconcile failed: %s", e)
 
     for slot in list(pool.active()):
         if slot.status != "t0_open":

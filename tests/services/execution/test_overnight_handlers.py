@@ -754,6 +754,85 @@ def test_verify_exit_dead_partial_amo_failsafes_remainder_blended(tmp_path):
     assert slot1["sell_fill_price"] == pytest.approx(expected, abs=1e-6)
 
 
+# ---------------------------------------------------------------------------
+# Cancel-fill race reconcile (2026-07-24 CREATIVEYE: cancel-confirm status
+# said CANCELLED/filled=0, slot freed, 7,520 real shares left unhedged)
+# ---------------------------------------------------------------------------
+
+def _pool(tmp_path):
+    from services.capital_manager import OvernightSlotPool
+    state_path = tmp_path / "overnight_slots.json"
+    _seed_state(state_path, [_empty_free_slot(i) for i in range(1, 5)])
+    return OvernightSlotPool(state_path, max_slots=4,
+                             margin_per_slot=50000, max_new_per_day=2), state_path
+
+
+def _orph_order(**over):
+    o = {"order_id": "B-1", "tag": "ITDA_2026-07-24_5", "tradingsymbol": "CREATIVEYE",
+         "transaction_type": "BUY", "product": "CNC", "status": "CANCELLED",
+         "filled_quantity": 7520, "average_price": 6.63}
+    o.update(over)
+    return o
+
+
+def test_reconcile_attaches_orphaned_buy_fill(tmp_path):
+    from services.execution.overnight_handlers import _reconcile_unattached_buys
+    pool, state_path = _pool(tmp_path)
+    broker = MagicMock()
+    broker.get_orders.return_value = [
+        _orph_order(),
+        _orph_order(order_id="X-1", tag=None),                 # manual — ignored
+        _orph_order(order_id="X-2", transaction_type="SELL"),  # sell — ignored
+        _orph_order(order_id="X-3", product="MIS"),            # intraday — ignored
+        _orph_order(order_id="X-4", filled_quantity=0),        # no fill — ignored
+    ]
+    summary = {}
+    n = _reconcile_unattached_buys(broker, pool, pd.Timestamp("2026-07-24 15:28:00"), summary)
+    assert n == 1
+    slots = json.loads(state_path.read_text())["slots"]
+    s = next(x for x in slots if x["status"] == "t0_open")
+    assert s["symbol"] == "NSE:CREATIVEYE"
+    assert s["buy_qty"] == 7520
+    assert s["buy_fill_price"] == pytest.approx(6.63)
+    assert s["buy_order_id"] == "B-1"
+    assert summary["reconciled_attach"][0]["symbol"] == "NSE:CREATIVEYE"
+
+
+def test_reconcile_skips_already_attached(tmp_path):
+    from services.execution.overnight_handlers import _reconcile_unattached_buys
+    pool, _ = _pool(tmp_path)
+    slot = pool.reserve("NSE:CREATIVEYE", "CNC", 1.0, date(2026, 7, 24))
+    pool.attach_buy_fill(slot.slot_id, fill_price=6.63,
+                         fill_ts_iso="2026-07-24T15:26:00", order_id="B-1", qty=7520)
+    broker = MagicMock()
+    broker.get_orders.return_value = [_orph_order()]
+    n = _reconcile_unattached_buys(broker, pool, pd.Timestamp("2026-07-24 15:28:00"), {})
+    assert n == 0
+
+
+def test_reconcile_bypasses_daily_cap_but_not_full_pool(tmp_path):
+    from services.execution.overnight_handlers import _reconcile_unattached_buys
+    pool, _ = _pool(tmp_path)
+    # exhaust the daily-new cap (max_new_per_day=2) with other fills
+    for i, sym in enumerate(["NSE:AAA", "NSE:BBB"]):
+        s = pool.reserve(sym, "CNC", 1.0, date(2026, 7, 24))
+        pool.attach_buy_fill(s.slot_id, 10.0, "2026-07-24T15:26:00", f"O-{i}", qty=100)
+    broker = MagicMock()
+    broker.get_orders.return_value = [_orph_order()]
+    summary = {}
+    n = _reconcile_unattached_buys(broker, pool, pd.Timestamp("2026-07-24 15:28:00"), summary)
+    assert n == 1  # cap bypassed — the fill is a fact
+    # now fill the pool completely and try another orphan
+    for sym in ["NSE:CCC"]:
+        free = [s for s in pool._slots if s.status == "free"]
+        s = free[0]; s.status = "t0_open"; s.symbol = sym
+    broker.get_orders.return_value = [_orph_order(order_id="B-2", tradingsymbol="ZZZ")]
+    summary2 = {}
+    n2 = _reconcile_unattached_buys(broker, pool, pd.Timestamp("2026-07-24 15:28:00"), summary2)
+    assert n2 == 0
+    assert summary2["reconcile_unhedged"] == ["NSE:ZZZ"]
+
+
 def test_find_out_of_band_sell_filters():
     from services.execution.overnight_handlers import _find_out_of_band_sell
     orders = [

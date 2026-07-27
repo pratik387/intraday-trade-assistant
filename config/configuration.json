@@ -566,6 +566,8 @@
       "catastrophe_stop_pct": 5.0,
       "fill_poll_timeout_sec": 60,
       "cancel_confirm_timeout_sec": 15,
+      "entry_reconcile_delay_sec": 20,
+      "_comment_entry_reconcile_delay_sec": "2026-07-24 CREATIVEYE: the entry cancel raced the exchange fill — Kite's status at cancel-confirm said CANCELLED/filled=0, the slot was freed, and 7,520 real shares went unhedged into the weekend (manual exit Monday, -1,646). run_entry now sleeps this many seconds after the entry loop, then re-scans the orderbook for engine-tagged BUY fills no slot knows about and attaches them (run_place_exit repeats the sweep at 16:05 as the last line of defense).",
       "_comment_cancel_confirm_timeout_sec": "2026-07-09 incident: AMIRCHAND entry BUY stayed OPEN unfilled past fill_poll_timeout_sec and its pending LIMIT kept ~Rs50k margin blocked account-wide, so Kite rejected every lower-ranked pick (fired 1 of 3). The handler now CANCELS a still-OPEN BUY right after its poll window (freeing the margin for the next ranked candidate) and polls up to this many seconds for the cancel to confirm — a cancel can race a fill, in which case the fill is attached normally instead of rolling the slot back.",
       "gtt_limit_buffer_pct": 0.5,
       "entry_limit_buffer_pct": 1.0,
