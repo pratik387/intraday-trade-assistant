@@ -22,8 +22,10 @@ data and applies the haircut on that.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -31,6 +33,9 @@ import pandas as pd
 from scipy import stats
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_LEDGER_PATH = _REPO_ROOT / "docs" / "experiment_ledger.jsonl"
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,54 @@ def daily_sharpe(daily_pnl: pd.Series, *, annualization_factor: float = np.sqrt(
     if std == 0:
         return 0.0
     return mean / std * annualization_factor
+
+
+# ---------------------------------------------------------------------------
+# Experiment-ledger M (lifecycle amendment A2, 2026-07-27)
+# ---------------------------------------------------------------------------
+
+def ledger_M(
+    windows: set,
+    *,
+    ledger_path: Path = DEFAULT_LEDGER_PATH,
+) -> Tuple[int, Dict[str, int]]:
+    """Count of evaluations recorded against the given windows in
+    `docs/experiment_ledger.jsonl`, per lifecycle amendment A2.
+
+    M for a confidence card must reflect every candidate/variant that ever
+    touched the card's decisive evaluation windows — not just the survivors
+    in the currently loaded corpus. Before the ledger existed (2026-07-27),
+    M was set to the ONC cluster count of loaded setups (4-8) while the true
+    evaluation count on the historical OOS/Holdout windows was in the
+    hundreds; `_baseline` marker rows carry that floor via their `m_floor`
+    field.
+
+    Args:
+        windows: window labels the card is judged on, e.g.
+            {"oos_2025", "holdout_oct25_apr26"} or {"post_freeze:2026-05-01"}.
+            An entry counts when its `windows` list intersects this set.
+        ledger_path: JSONL ledger location.
+
+    Returns:
+        (M, detail) where detail = {"baseline_floor": ..., "logged": ...}
+        and M = baseline_floor + logged. Missing/empty ledger -> (0, zeros).
+    """
+    baseline_floor = 0
+    logged = 0
+    if ledger_path.exists():
+        for line in ledger_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            if not set(entry.get("windows", [])) & windows:
+                continue
+            if str(entry.get("setup", "")).startswith("_baseline"):
+                baseline_floor = max(baseline_floor, int(entry.get("m_floor", 0)))
+            else:
+                logged += 1
+    total = baseline_floor + logged
+    return total, {"baseline_floor": baseline_floor, "logged": logged}
 
 
 # ---------------------------------------------------------------------------
@@ -226,12 +279,17 @@ def analyze_setups_selection_bias(
     pnl_column: str = "net_pnl_inr",
     date_column: str = "signal_date",
     haircut_method: str = "Bonferroni",
+    M_floor: int = 0,
 ) -> Dict[str, HaircutResult]:
     """Apply selection-bias correction across N setups.
 
     1. Build daily equity curve for each setup
     2. Compute effective N via ONC clustering
-    3. Apply Harvey-Liu haircut to each setup's raw Sharpe
+    3. Apply Harvey-Liu haircut at M = max(effective N, M_floor)
+
+    M_floor is the experiment-ledger count for the decisive windows
+    (amendment A2): ONC only sees the surviving corpus, so the ledger floor
+    restores the dead candidates to the trial count.
 
     Returns dict of setup_name -> HaircutResult.
     """
@@ -241,13 +299,14 @@ def analyze_setups_selection_bias(
     }
 
     effective_N, cluster_map = compute_effective_N(daily_pnl_by_setup)
+    M_used = max(effective_N, M_floor)
 
     results = {}
     for setup_name, daily_pnl in daily_pnl_by_setup.items():
         results[setup_name] = harvey_liu_haircut(
             setup_name=setup_name,
             daily_pnl=daily_pnl,
-            M=effective_N,
+            M=M_used,
             method=haircut_method,
         )
     return results, effective_N, cluster_map

@@ -608,6 +608,22 @@
         "state_file": "state/decay_tripwire_close_dn_overnight_long_live.json"
       }
     },
+    "pead_reaction_drift": {
+      "enabled": false,
+      "paper_enabled": false,
+      "horizon": "multi_day",
+      "_status_2026_07_28_KILLED_phase5": "KILLED at Phase-5 demoted-window check 2026-07-28. Discovery locked cell (pct5/all/all/hold10/hold_close): n=258 PF_net 2.45 WR 60% — collapsed on one-shot demoted window 2025-01..2026-04 to n=157 PF_net 0.67 WR 40% (2025: 0.87, 2026JanApr: 0.36); gap 1.78 vs 0.30 overfit ceiling. Pre-registered falsifier #3 is the suspected contributor (announcements_fr source died Mar-2025 -> degraded reaction-day assignment over exactly the failing window) — NOT investigated (one-run discipline). Revival ONLY via repaired announcement-timing data + new ledger-logged evaluation. Fresh pool 2026-05+ untouched. Evidence: tools/sub9_research/pead_reaction_drift_cell_lock.json + docs/experiment_ledger.jsonl 2026-07-28 lines. Brief: specs/2026-07-27-brief-pead_reaction_drift.md.",
+      "mechanism_tags": ["earnings_underreaction_drift"],
+      "mechanism_notes": "Retail-dominated mid/small-cap holder base underreacts to quarterly earnings surprises (proxy: announcement-reaction-day return; no SUE feed exists). Limits to arbitrage (no cash-market shorting, thin SLB, MTF margin caps) let the reaction drift 3-10 sessions. LONG on positive surprises is primary; SHORT gated on volume confirmation + quantified tradable subset. Breaks if: drift migrates to top-ADV tier (arb capacity arrived), FII-regime sign flip appears, or announcement-timestamp classification degrades further (announcements_fr source died Mar-2025)."
+    },
+    "xsec_momentum_demeaned": {
+      "enabled": false,
+      "paper_enabled": false,
+      "horizon": "multi_day",
+      "_status_2026_07_28_stage3_preregistration": "Stage 3 pre-registration; NO detector code yet. Phase-2 PASSED 2026-07-28 on Discovery 2023-24 (tools/sub9_research/phase2_xsec_momentum_signature.py): demeaned winner-decile alpha positive in 191/192 cells (best +4.05% per 60d hold at 60d formation), monotone in formation length and signal concentration, loser leg genuinely negative at 120/250d formations, survives within-cap-segment size control. Formally overturns the 2026-06-15 A4 'survivorship beta' weak kill (lessons.md #28). Binding risks: capturability (alpha tilted to illiquid ADV tiers) + ASM/GSM winner-migration truncation (backfill running). Un-park review of illiquid_momentum_long triggered (shared factor budget). Brief: specs/2026-07-27-brief-xsec_momentum_demeaned.md. Next: Stage 4 sanity, Discovery only. Decisive gate per amendment A1: fresh pool 2026-05-01+ post-freeze.",
+      "mechanism_tags": ["disposition_effect_momentum"],
+      "mechanism_notes": "Cross-sectional 3-12-month relative winners keep outperforming: gradual information diffusion + retail disposition-effect supply (winners sold too early, losers held) + institutional factor-flow chasing. Alpha measured DEMEANED (minus universe mean) — raw returns carry no evidential weight in this candidate. Breaks if: demeaned alpha vanishes on fresh-pool/forward data, ASM/GSM-entry events consume the winner alpha, or the tradable (MTF-eligible, ASM-clean) subset shows no residual alpha."
+    },
     "mtf_capitulation_revert_long": {
       "enabled": false,
       "paper_enabled": true,
@@ -1064,7 +1080,6 @@
       "min_volume_ratio": 2.0,
       "_volume_comment": "2.0x volume = institutional participation (same as ICT standard). Ensures quality opening moves, not retail noise.",
       "allowed_setups": [
-        "gap_fade_short",
         "orb_15_long",
         "orb_15_short",
         "pdh_pdl_reject_long",
@@ -1078,7 +1093,7 @@
         "camarilla_l3_reversal_long",
         "camarilla_l3_reversal_short"
       ],
-      "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short fires at 09:30 (only one active in 09:15-09:30 window today). orb_15, pdh_pdl_reject, and pdh_pdl_sweep_reclaim listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
+      "_allowed_setups_comment": "Surviving sub7+sub8 setups after Phase 1 cleanup. gap_fade_short removed 2026-07-27 (retired — see docs/retired_setups.md). orb_15, pdh_pdl_reject, and pdh_pdl_sweep_reclaim listed for forward-compat — their detectors gate themselves on min_bars_required and active_window."
     },
     "pattern_filters_enabled": true,
     "momentum_consolidation_enabled": true,

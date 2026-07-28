@@ -250,3 +250,61 @@ def test_analyze_setups_selection_bias_e2e():
     assert "losing" in results
     # Winning setup should have positive raw Sharpe
     assert results["winning"].raw_sharpe > 0
+
+
+def test_ledger_M_counts_baseline_floor_plus_logged_entries(tmp_path):
+    """Amendment A2: M = baseline m_floor + logged evaluations for the
+    requested windows; entries on other windows don't count."""
+    from tools.methodology.confidence.selection_bias import ledger_M
+
+    ledger = tmp_path / "ledger.jsonl"
+    rows = [
+        {"date": "2026-07-27", "setup": "_baseline", "variant": "pre-ledger",
+         "stage": "adhoc", "windows": ["oos_2025", "holdout_oct25_apr26"],
+         "verdict": "marginal", "m_floor": 200, "evidence": "", "notes": ""},
+        {"date": "2026-07-28", "setup": "cand_a", "variant": "cell v1",
+         "stage": "phase5_oos", "windows": ["oos_2025"],
+         "verdict": "kill", "evidence": "", "notes": ""},
+        {"date": "2026-07-29", "setup": "cand_b", "variant": "cell v1",
+         "stage": "phase5_holdout", "windows": ["holdout_oct25_apr26"],
+         "verdict": "pass", "evidence": "", "notes": ""},
+        {"date": "2026-08-01", "setup": "cand_c", "variant": "frozen",
+         "stage": "post_freeze", "windows": ["post_freeze:2026-05-01"],
+         "verdict": "pass", "evidence": "", "notes": ""},
+    ]
+    import json as _json
+    ledger.write_text("\n".join(_json.dumps(r) for r in rows), encoding="utf-8")
+
+    M_old, detail_old = ledger_M({"oos_2025", "holdout_oct25_apr26"}, ledger_path=ledger)
+    assert detail_old == {"baseline_floor": 200, "logged": 2}
+    assert M_old == 202
+
+    M_fresh, detail_fresh = ledger_M({"post_freeze:2026-05-01"}, ledger_path=ledger)
+    assert detail_fresh == {"baseline_floor": 0, "logged": 1}
+    assert M_fresh == 1
+
+    M_missing, detail_missing = ledger_M({"oos_2025"}, ledger_path=tmp_path / "absent.jsonl")
+    assert M_missing == 0 and detail_missing == {"baseline_floor": 0, "logged": 0}
+
+
+def test_analyze_setups_selection_bias_M_floor_raises_haircut():
+    """The ledger M floor must override a small ONC effective-N: a corpus of
+    2 survivors judged on a window with 200 historical evaluations gets the
+    M=200 haircut, not M=2."""
+    rng = np.random.default_rng(seed=7)
+    dates = pd.date_range("2024-01-01", periods=200, freq="D")
+    setups = {
+        "a": pd.DataFrame({"signal_date": dates.date,
+                           "net_pnl_inr": rng.normal(50, 100, size=200).tolist()}),
+        "b": pd.DataFrame({"signal_date": dates.date,
+                           "net_pnl_inr": rng.normal(40, 120, size=200).tolist()}),
+    }
+    no_floor, eff_N, _ = analyze_setups_selection_bias(setups)
+    floored, eff_N_f, _ = analyze_setups_selection_bias(setups, M_floor=200)
+
+    assert eff_N == eff_N_f  # ONC itself unchanged
+    for name in setups:
+        assert floored[name].effective_M == 200
+        assert floored[name].haircut_pct > no_floor[name].haircut_pct
+        # Sign preserved, magnitude shrunk toward zero
+        assert abs(floored[name].adjusted_sharpe) < abs(no_floor[name].adjusted_sharpe)

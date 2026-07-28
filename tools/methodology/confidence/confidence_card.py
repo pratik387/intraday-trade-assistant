@@ -29,8 +29,17 @@ from tools.methodology.confidence.regime_breakdown import (
     compute_per_regime_stats, format_regime_table,
 )
 from tools.methodology.confidence.selection_bias import (
+    DEFAULT_LEDGER_PATH,
     analyze_setups_selection_bias,
+    ledger_M,
 )
+
+# Lifecycle amendment A1 (2026-07-27): trades before this date sit in the
+# burned OOS/Holdout windows; trades on/after it sit in the fresh
+# forward-only pool. Used to pick which ledger windows apply to a card.
+FRESH_POOL_START = "2026-05-01"
+BURNED_WINDOWS = {"oos_2025", "holdout_oct25_apr26"}
+FRESH_WINDOW = f"post_freeze:{FRESH_POOL_START}"
 
 
 def render_card(
@@ -39,6 +48,7 @@ def render_card(
     *,
     selection_bias_haircut=None,
     effective_N: Optional[int] = None,
+    ledger_info: Optional[dict] = None,
     source: str = "oci",
 ) -> str:
     """Render a single setup's confidence card as markdown text."""
@@ -102,8 +112,17 @@ def render_card(
             "## Selection-bias correction (Harvey-Liu haircut)",
             "",
             f"- **Raw daily Sharpe (annualized):** {haircut.raw_sharpe:.3f}",
-            f"- **Effective N (ONC clustering):** {haircut.effective_M}  "
-            f"(out of {effective_N or 'N/A'} total setups clustered)",
+            f"- **ONC effective N (surviving corpus only):** {effective_N or 'N/A'}",
+        ]
+        if ledger_info is not None:
+            lines += [
+                f"- **Experiment-ledger M (amendment A2):** {ledger_info['M']}  "
+                f"(baseline floor {ledger_info['detail']['baseline_floor']} "
+                f"+ {ledger_info['detail']['logged']} logged; "
+                f"windows: {', '.join(sorted(ledger_info['windows']))})",
+            ]
+        lines += [
+            f"- **M used (max of the above):** {haircut.effective_M}",
             f"- **Method:** {haircut.method}",
             f"- **Adjusted Sharpe:** {haircut.adjusted_sharpe:.3f}",
             f"- **Haircut:** {haircut.haircut_pct:.1f}%",
@@ -160,6 +179,8 @@ def main(argv=None):
                    help="Optional list of setup names to process; default = all")
     p.add_argument("--haircut-method", choices=["Bonferroni", "Holm", "BHY"],
                    default="Bonferroni")
+    p.add_argument("--ledger-path", type=Path, default=DEFAULT_LEDGER_PATH,
+                   help="Experiment ledger JSONL (amendment A2); M floor comes from here")
     args = p.parse_args(argv)
 
     # Load all setup CSVs and track source
@@ -192,12 +213,28 @@ def main(argv=None):
         print("No setups found", file=sys.stderr)
         return 2
 
-    # Component 3: selection-bias analysis across ALL loaded setups
+    # Component 3: selection-bias analysis across ALL loaded setups.
+    # M floor from the experiment ledger (amendment A2): which windows apply
+    # depends on where the corpus' trades fall relative to the fresh pool.
+    all_dates = pd.concat(
+        [pd.to_datetime(df["signal_date"]) for df in setups_trades.values()]
+    )
+    windows = set()
+    if (all_dates < FRESH_POOL_START).any():
+        windows |= BURNED_WINDOWS
+    if (all_dates >= FRESH_POOL_START).any():
+        windows.add(FRESH_WINDOW)
+    M_ledger, ledger_detail = ledger_M(windows, ledger_path=args.ledger_path)
+    ledger_info = {"M": M_ledger, "detail": ledger_detail, "windows": windows}
+
     print(f"\n[Selection-bias] Computing ONC + Harvey-Liu across {len(setups_trades)} setups...")
     haircut_results, effective_N, cluster_map = analyze_setups_selection_bias(
-        setups_trades, haircut_method=args.haircut_method,
+        setups_trades, haircut_method=args.haircut_method, M_floor=M_ledger,
     )
     print(f"  Effective N (ONC): {effective_N}")
+    print(f"  Ledger M: {M_ledger} (floor {ledger_detail['baseline_floor']} "
+          f"+ {ledger_detail['logged']} logged; windows {sorted(windows)})")
+    print(f"  M used: {max(effective_N, M_ledger)}")
     print(f"  Cluster assignments: {cluster_map}")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -208,6 +245,7 @@ def main(argv=None):
             setup_name, trades,
             selection_bias_haircut=haircut,
             effective_N=effective_N,
+            ledger_info=ledger_info,
             source=setup_sources[setup_name],
         )
         out = args.out_dir / f"{setup_name}_confidence_card.md"

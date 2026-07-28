@@ -2,13 +2,14 @@
 
 This document is the **single source of truth** for setups that were prototyped, (believed-)validated, then retired. It exists so we don't burn weeks re-implementing dead theses.
 
-**Inventory:** 20 retired setups across 5 retire batches:
+**Inventory:** 23 retired setups across 6 retire batches:
 
 - **Sub-5 ICT/SMC batch** (2026-04-25) — 3 setups: cargo-culted US/forex literature
 - **Sub-7 generic-pattern batch** (2026-04-25) — 5 setups: Indian-published but universal mechanics
 - **Sub-8 generic-pattern batch** (2026-04-26 to 2026-05-01) — 6 setups: same root cause as sub-7
 - **Sub-9 narrow-cell batch** (2026-05-07 to 2026-05-14) — 4 setups: each killed by a specific bug or threshold failure (look-ahead bias, regime non-reproducibility, never sanity-validated, Holdout n below floor)
 - **Sub-9 regulatory-regime batch** (2026-05-19) — 3 setups + 2 revival fails: `mis_unwind_vwap_revert_short`, `round_number_sweep_short`, `circuit_release_fade_short` (each shipped to production then collapsed in Holdout post-SEBI-Oct-2025); `capitulation_long_v2` (Phase 1-5 revival of earlier `capitulation_long_morning` — failed at Holdout ship gate); `pre_results_t1_fade` (Phase 1-5 candidate — failed v2 conservative re-run after data-classification correction; regime-conditioned edge with FII-positioning dependency)
+- **Active-trio retirement batch** (2026-05-22 → 2026-07-27) — the 3 production intraday setups themselves: `delivery_pct_anomaly_short` (Stage 13 soft-disable 2026-05-22), `circuit_t1_fade_short` (Stage 14 2026-05-23), `gap_fade_short` (disabled 2026-06-25/29, retirement confirmed after paper validation 2026-07-27). All three cleared the historical gauntlet, shipped, and died on forward/OCI-canonical data — the empirical basis for the 2026-07-27 lifecycle amendments (forward-only validation + experiment ledger, see `docs/setup_lifecycle.md`)
 
 **Hard rule: do NOT re-implement any setup listed here without:**
 
@@ -20,6 +21,8 @@ This document is the **single source of truth** for setups that were prototyped,
 If any of those four are skipped, the setup stays retired regardless of new PF.
 
 **Active setups at the time of writing (2026-05-14):** `gap_fade_short`, `circuit_t1_fade_short`, `delivery_pct_anomaly_short`. All three carry the load. The 3-setup portfolio produces NET +Rs.1.13M FINAL after tax on 2yr Discovery (OCI run `20260514-002008_full`).
+
+**[UPDATE 2026-07-27]** All three of the above are now retired: `circuit_t1_fade_short` (Stage 14, 2026-05-23, commit `0ae102b`), `delivery_pct_anomaly_short` (Stage 13 soft-disable, 2026-05-22, commit `845dc6a`), and `gap_fade_short` (disabled 2026-06-25/29, retirement confirmed after paper validation 2026-07-27). The +Rs.1.13M 2yr-Discovery portfolio figure no longer stands — it was dominated by gap_fade's Discovery-only PF, which did not reproduce out-of-sample (faithful re-sim: OOS 0.60 / Holdout 0.74). Re-baseline the portfolio before any intraday live activation. See the three entries below.
 
 ---
 
@@ -42,6 +45,162 @@ These patterns killed multiple setups. Watch for them when designing or validati
 7. **MIS-leveraged fee math.** Fees scale with `qty × mis_leverage` (5× for MIS-eligible names), not base qty. Discovery PFs that were computed on base-qty fees are over-stated by Rs.650K+ on 2yr aggregates. See commit 271a149.
 
 8. **Target-anchor stripping in plan dict.** Detector emits `target_anchor_type="r_multiple"` on the TradePlan, but the dict re-builder in `services/screener_live.py` strips the field — executor sees a missing key and defaults to `"structural"`, which keeps detect-time T1/T2 instead of recomputing from actual entry. Always verify `R_MULT_RECALCULATED` log lines fire for r-multiple detectors. See commits ee7e0a3 + 2c32a03.
+
+---
+
+## `gap_fade_short` — RETIRED 2026-07 (after paper validation; disabled 2026-06-25/29)
+
+**Retired:** 2026-07-27 (user-confirmed after paper trades; production disable 2026-06-29, commit `59c4b2c`; original disable 2026-06-25 was parked on branch `research/2026-06-25-gap-fade-directional-veto` and never reached main — the VM kept trading it in paper until 2026-06-29) [config `_disabled_2026_06_29`, configuration.json:111; commit `59c4b2c` message]
+**Predecessor specs:** `specs/2026-05-16-gap-fade-short-paper-trade-validation.md` (pre-registered kill rule), `specs/2026-06-03-gap_fade_short-illiquidity-filter-prereg.md` (never activated), `specs/2026-06-16-gap_fade_short-squeeze-filter-investigation.md` (filter rejected)
+**Config status:** `enabled: false` with `_disabled_2026_06_29` evidence string (configuration.json:110-111). Detector `structures/gap_fade_short_structure.py` + universe builder retained.
+
+### Original thesis
+
+SHORT fade of small-cap retail-FOMO gap-ups at the open. 09:15 gap-up 1.5-8% above PDC, exhaustion candle (upper wick ≥ 0.5× body, body ≤ 30%), volume decline after the gap, faded back toward PDC. Indian-microstructure anchor: small-cap retail-driven gap-up exhaustion + structural opening-window mechanics + SHORT-only (aligned with the SEBI FY23 long-bias-loses finding). [config `mechanism_notes` line 115, `_audit_decision_2026_05_01` line 161]
+
+### Universe + filters (shipped/locked geometry)
+
+- small_cap only (the Phase-7-validated cell; mid/micro not validated) [config lines 139-141, 153]
+- Gap vs PDC in [1.5%, 8%], entry window 09:15-09:30, min_upper_wick_ratio 0.5, max_body_size_pct 30, require_volume_decline_after_gap [config lines 129-138]
+- Locked exits from 2026-05-12 sweep: stop_buffer 0.10% above gap high, ATR mult 2.0, time_stop 13:00, partial_50_be_trail [config lines 126, 142-149]
+- Priority 70, capital_budget_pct 30 — was the PRIMARY intraday short [config lines 156-157]
+
+### Claimed validation (pre-retire)
+
+- `_audit_decision_2026_05_01`: NET PF 1.49 on 5,848 trades, 2yr Discovery [configuration.json:161]
+- Legacy sub7/sub8 chain: Discovery PF 1.153, Phase-1 v1/clean/v2/v3 1.118-1.227, OOS PF 0.993 (marginal), Holdout PF 1.128 [tasks/lessons.md:738]
+- 2026-05-12 SL/target sweep claim: Disc 2.36 / OOS 1.71 / Hold 1.69, "Net Discovery jumps to Rs.~3M" [config `_status_2026_05_12_SWEEP_FIX`, line 126]
+- `_live_status`: "PF=1.36, WR=70%, N=797 in 117-session Holdout" — already flagged non-reproducible by `_live_status_drift_note` 2026-05-15 (stored parquet `reports/sub8_oos_holdout_clean/gap_fade_short.parquet` shows PF 1.13, WR 64%) [config lines 153-154]
+- Stage-13 confidence card (OCI, 2023-01→2026-04, n=3,452): PF 1.588 CI [1.448, 1.749], net +Rs.594,111, adj Sharpe 3.733 after 25.8% Harvey-Liu haircut; but war_vol_2026 regime already PF 0.789 (n=153, −Rs.13,419) [reports/confidence_cards/gap_fade_short_confidence_card.md]
+
+### Why retired (the actual failure)
+
+**None of the claimed PF chains reproduce on a faithful re-sim, and the setup failed its own pre-registered kill rule.**
+
+1. **40-month faithful re-sim of the SHIPPED/LOCKED geometry** (sb=0.10 / atr=2.0 / ts=13:00 / partial_50_be_trail, via the canonical simulator `tools/sub9_research/_gap_fade_short_sl_target_sweep.simulate_trade`, driver `_tmp_gap_fade_rr_bucket.py`):
+   - Pooled n=6,836: **PF 0.953, WR 61%, net −Rs.70k** — a net loser.
+   - **Discovery 1.26 / OOS 0.60 / Holdout 0.74** (OOS+Holdout n=3,185, both net-negative).
+   - **20/40 months positive (coin-flip).** Catastrophe months: 2025-04 (PF 0.46, −66k), 2025-05 (0.37, −57k), **2026-04 (PF 0.29, −Rs.153k — worst month and the most recent full month pre-live)**.
+   - The sweep claim (2.36/1.71/1.69) and `_live_status` 1.36 are NOT reproducible — the drift was already flagged in `_live_status_drift_note`.
+   [memory `project_gap_fade_short_paper_trade_validation.md`; summarized in config `_disabled_2026_06_29` (configuration.json:111): "pooled PF 0.95, Disc 1.26 / OOS 0.60 / Holdout 0.74"]
+
+2. **Pre-registered kill rule executed.** `specs/2026-05-16-gap-fade-short-paper-trade-validation.md:118-120`: "If live PROD Holdout PF stays below 1.00 ... AND NET is negative, disable `gap_fade_short` from production." The same spec (line 15) already showed Holdout PF 0.93 for the locked combo.
+
+3. **The full June 2026 paper book confirmed forward failure** (computed 2026-07-27 from VM `~/intraday_fixed/intraday-trade-assistant/logs/paper_*/analytics.jsonl`, net of fees): **2026-06-01 → 2026-06-29, 18 sessions, n=87 trades, net −Rs.7,821, PF 0.71, WR 64%** — the win-small/lose-big signature at the predicted WR. Consistent earlier partial reads: PF 0.81 (memory, partial window), PF 0.61 / −Rs.7,804 on the 11-day audit 2026-06-01→16 during which the other 4 setups netted +Rs.5,421 [memory `project_intraday_paper_audit_2026_06.md`].
+
+4. **The index-direction-veto rescue was validated on backtest but NEVER paper-tested, and the avenue is closed.** The raw loss is entirely against-the-index shorts: **63% of fires short into a GREEN Nifty, PF 0.76 = 100% of the loss (−Rs.246k)**. An index-direction veto ("no short when Nifty green at entry", ±0.2% band; driver `_tmp_gap_fade_nifty_dir.py`) restored pooled PF 1.39 / Disc 1.44 / OOS 1.11 / Holdout 1.57 on backtest — this is why retirement was PAUSED Jun-Jul 2026 pending a per-setup hard directional block in `services/gates/directional_bias.py` (which is enabled:false + boost-only). The block was never wired: VM paper logs show **zero gap_fade fires after the 2026-06-29 disable** — no veto-conditioned variant ever traded paper. **User confirmed retirement 2026-07-27 on the raw June paper book, closing the veto avenue rather than funding its wiring + a fresh paper cycle.** [config `_disabled_2026_06_29` (configuration.json:111); memory `project_gap_fade_short_paper_trade_validation.md`; VM paper logs 2026-06/07]
+
+5. **Falsification done (do not re-litigate):** `rr_t2` reward-headroom gate does not generalize (keep≥0.8 → Disc 1.43 but OOS/Hold 0.58/0.71); NOT an inverse edge (PF≈0.95 at ~50% winning months — long-flip loses to double fees); daily-squeeze regime filter REJECTED as non-stationary (squeeze-cohort PF: Discovery 1.24, full-cut 1.93, Holdout 0.76 — filtering = overfit to 2025-26; `specs/2026-06-16-gap_fade_short-squeeze-filter-investigation.md`).
+
+### Root-cause pattern
+
+Regime non-stationarity, not geometry: PF-2 months and PF-0.3 months alternate with no trade-level separable signal; the payoff shape is win-small/lose-big (needs ~73% WR, gets ~61-63%). The Discovery window (2023-24) was simply the good regime.
+
+### Conditions for revival
+
+1. A dedicated regime-separation study isolating the PF-2 vs PF-0.3 months with a PRODUCTION-reproducible classifier, passing Disc+OOS+Holdout PF ≥ 1.10 simultaneously on the filtered subset. Geometry/exit tweaks alone won't fix regime non-stationarity.
+2. The index-direction veto is closed as gap_fade's revival avenue (paper-failed), though the veto principle itself remains validated for other directional setups.
+3. Config's own condition "Re-enable ONLY after wiring + validating that veto" is superseded by the paper failure — a revival needs a NEW pre-registered thesis, not the veto. [configuration.json:111]
+
+### Files/code status
+
+- `config/configuration.json` `setups.gap_fade_short`: enabled=false, block retained with full evidence strings (lines 109-163)
+- `structures/gap_fade_short_structure.py`, universe builder `services.setup_universe.gap_fade_universe`: retained
+- Confidence card: `reports/confidence_cards/gap_fade_short_confidence_card.md` (pre-retire numbers — treat as the "claimed validation" artifact, not current truth)
+- Holdout parquet: `reports/sub8_oos_holdout_clean/gap_fade_short.parquet`
+- Disable commits: research-branch disable 2026-06-25 (branch `research/2026-06-25-gap-fade-directional-veto`), main disable `59c4b2c` 2026-06-29
+- Still listed in `screening.allowed_setups` (configuration.json:1067) — harmless (detector gates on enabled) but should be cleaned up
+
+---
+
+## `circuit_t1_fade_short` — RETIRED 2026-05-23 (Stage 14; config flag flipped 2026-06-01)
+
+**Retired:** 2026-05-23, commit `0ae102b` ("setup-lifecycle: retire circuit_t1_fade_short (Stage 14)"). The commit set the lifecycle status but left `enabled: true` in config, so the detector kept loading a 6-symbol universe and consuming slots until `enabled: false` was set on 2026-06-01. [config `_status_2026_06_01_RETIRED`, configuration.json:439; commit `0ae102b`]
+**Predecessor spec:** `specs/2026-05-01-sub-project-9-brief-circuit_t1_fade_short.md`
+**Config status:** `enabled: false`, block retained (configuration.json:437-490). Detector + universe builder + sanity script preserved as negative-knowledge artifacts per the retire commit.
+
+### Original thesis
+
+SHORT fade T+1 after an upper-circuit-pin day in small/mid-cap: T+0 up ≥4.5% closing at/near high (high_to_close ≥ 0.995) with volume ≥1.5× 20d, T+1 gap-up 1-5%, entered at the 10:30 bar, ride to T2 = T+0 close, time-stop 15:10. Mechanism: post-circuit retail FOMO + operator pump exhaustion — Indian-microstructure-specific (NSE DPR flexing, no US/forex analog), 5 peer-reviewed sources. Sub-project #9's first APPROVED setup. [config `mechanism_notes` line 443, `_research_notes` line 488, thresholds lines 457-471]
+
+### Universe + filters
+
+mid_cap + small_cap (cell-level mid_cap-only restriction FAILED holdout and was reverted 2026-05-06); no regime restriction (trend_up-only cell also invalidated by holdout); locked exits per 2026-05-12 sweep: t1_qty_pct=0.0 (no partial — ride to T2=t0_close), stop = T1-high + 0.25%, min_stop 0.5%. [config lines 465-478 incl. `_comment_cap_post_holdout`, `_comment_regime_post_holdout`, `_comment_t1_qty_pct`]
+
+### Claimed validation (pre-retire)
+
+- Sub9 sanity: NET PF 1.473 on 654 trades over 2024 [config `_research_notes` line 488]; Discovery PF 1.404 (only 11mo of 2024, not full 2yr), OOS PF **0.982** (below the 1.10 ship gate), Holdout PF 1.890 — shipped on Discovery+Holdout despite the OOS failure [tasks/lessons.md:736]
+- 2026-05-12 sweep: production partial_50_be_trail was actively losing (PF 0.49 Disc / 0.91 Hold); locked all-in-to-T2 mechanic gave PF 1.74 Discovery / 1.88 Holdout [config `_status_2026_05_12_SWEEP_FIX` line 454]
+- `_status_2026_05_08_oci`: "Holdout PF 1.89 (Oct'25-Apr'26) confirmed robust through war + regulatory regime" — later found to be **sanity-sourced, not OCI** (Lesson #13 violation) [config line 455; commit `0ae102b`]
+- backtest_findings.md 8e table (run `20260519-123643_full`): OOS 1.29 / HO pre-war **1.88** / HO war **0.53** — initially classified "war-only collapse (kept active per portfolio decision)" [analysis/backtest_findings.md:254, 282]
+
+### Why retired (the actual failure)
+
+**Stage 14 triggered by the OCI-v2 confidence card, and the "war-only collapse, keep active" story collapsed on decomposition:**
+
+- Stage 14 confidence card on OCI v2 canonicals (2023-02→2026-04, n=632, net +Rs.33,299): aggregate **PF 1.174 CI [0.937, 1.459]** — CI lower bound 0.937 < 0.95 ship-floor. Expectancy +Rs.52.69/trade CI [−20.40, +127.45] crosses zero. [reports/confidence_cards/circuit_t1_fade_short_confidence_card.md]
+- **Pre-war Holdout (2025-10-01 → 2026-02-27, war excluded): n=51, net PF 0.74 — STILL fails the ship gate with the war carved out. Structurally broken, not regime-paused.** [commit `0ae102b`]
+- Two of seven regimes drag the CI below floor: post_tariff_consolidation PF 0.695 (n=84, −Rs.8,621) and war_vol_2026 PF 0.219 (n=30, −Rs.12,260). [confidence card per-regime table]
+- The prior HO PF 1.89 "robustness" claim was sanity-sourced (`_concern_2026_05_22_oci_v2_ho_discrepancy` resolved with full evidence chain in the retire commit) — the real OCI holdout never showed it. [commit `0ae102b`]
+- Post-retire hygiene bug: the Stage 14 commit didn't flip `enabled`, so the detector kept consuming universe slots for ~9 days until the 2026-06-01 config fix. [config `_status_2026_06_01_RETIRED` line 439]
+
+### Conditions for revival
+
+1. The 2026-05-19 decision principle ("war-only collapse = regime-temporary, keep active") no longer applies — the pre-war-HO decomposition (PF 0.74, n=51) shows structural decay. Any revival must first reproduce a NET-positive pre-war holdout on OCI-pipeline (not sanity) numbers. [commit `0ae102b`; analysis/backtest_findings.md:285]
+2. Never accept sanity-sourced holdout numbers as OCI validation (Lesson #13). The 1.89-vs-0.74 gap IS the retirement.
+3. Standard doc gates (corrected sanity, Disc+OOS+Holdout all ≥1.10 net, n≥30/period) — note this setup NEVER passed OOS (0.982) even in its best claimed chain.
+
+### Files/code status
+
+- `config/configuration.json` `setups.circuit_t1_fade_short`: enabled=false, block retained (lines 437-490)
+- `structures/circuit_t1_fade_short_structure.py`, `services.setup_universe.circuit_t1_universe`, `tools/sub9_research/sanity_circuit_t1_fade_short.py`: preserved as negative-knowledge artifacts [commit `0ae102b`]
+- Confidence card: `reports/confidence_cards/circuit_t1_fade_short_confidence_card.md`
+
+---
+
+## `delivery_pct_anomaly_short` — DISABLED 2026-05-22 (Stage 13 soft-disable; Stage 14 decision never recorded)
+
+**Retired:** 2026-05-22 soft-disable, commit `845dc6a` ("config(delivery_pct_anomaly_short): disable per Stage 13 confidence card"). Status is formally "soft-disabled pending researcher decision on Stage 14 full retirement vs chop-regime gate redesign" — no Stage 14 record exists as of 2026-07-27, and the setup has stayed disabled, so this entry documents it as de-facto retired. [config `_status_2026_05_22_disabled`, configuration.json:493]
+**Predecessor spec:** `specs/2026-05-08-sub-project-9-brief-nse_delivery_pct_anomaly.md`
+**Config status:** `enabled: false`, block retained (configuration.json:491-545).
+
+### Original thesis
+
+SHORT fade of next-day price action after a delivery-percentage anomaly: NSE bhavcopy delivery_pct < 20% + same-day pump > 3% = retail/operator pump signature (churned intraday, not held → speculator inventory must unwind). Cross-day RVOL confirmation rejects intra-session false signals. Mechanism CRITICALLY depends on F&O single-stock position math (MWPL) — the speculator-unwind flow this fades. [config `mechanism_notes` line 497, `_comment_depends_on` line 510, `_research_notes` line 543]
+
+### Universe + filters (shipped Cell B)
+
+mid_cap only (large_cap 0.83 / small_cap 0.76 diluted the edge), ADV Rs.100-1000 cr, prior-day return ≥ 3%, delivery_pct ≤ 20%, gap in [−2%, +3%], entry window 09:30-10:30, T1=0.25R (50% partial) / T2=0.75R, time-stop 13:00. [config lines 514-534 incl. `_comment_allowed_cap_segments`]
+
+### Claimed validation (pre-retire)
+
+- Sub9 sanity chain: Discovery PF 1.44 / OOS 1.90 / Holdout 1.13 / War-period 5.03 at tight targets [config `_status_2026_05_08_enabled` line 512; tasks/lessons.md:739]
+- Cell B production-replay (analytics.jsonl fee model), Jan-Sep 2025 OCI: PF 1.245, n=295 [config `_status_2026_05_14_paper_cell_B` line 511]
+- backtest_findings.md 8e table: OOS 1.43 / HO pre-war 1.29 / HO war 1.09 — "graceful war drag" [analysis/backtest_findings.md:280]
+
+### Why retired (the actual failure)
+
+**Two stacked failures: a SEBI-Oct-2025 mechanism break on the shipped cell, then a Stage 13 confidence card showing the decay is structural (pre-dates the war AND partly pre-dates SEBI) and fee-dominated.**
+
+1. **SEBI Oct 1, 2025 F&O rule change broke the load-bearing dependency.** Tightened MWPL + single-stock position limits altered the speculator-inventory-unwind flow the setup fades: Cell B PF 1.245 (OOS, pre-SEBI) → **0.879** (Holdout Oct'25-Apr'26, post-SEBI). This was known at ship time — the 2026-05-14 decision was to run Cell B at PAPER only to capture forward data. [config `_status_2026_05_14_paper_cell_B` line 511, `_comment_depends_on` line 510; same Oct-1-2025 cutover documented as breaking `mis_unwind_vwap_revert_short` and `circuit_release_fade_short` — tasks/lessons.md:627, analysis/backtest_findings.md:234]
+2. **Stage 13 OCI confidence card (2023-02→2026-04, 3.3y, n=542, net −Rs.7,530):** aggregate **PF 0.954 CI [0.777, 1.151]** — CI crosses 1.0, lower bound < 0.95 floor. Harvey-Liu adjusted Sharpe **−0.274 (NEGATIVE)** on the M=6 corpus — the "survivor" is consistent with the best of 6 coin flips. [reports/confidence_cards/delivery_pct_anomaly_short_confidence_card.md; config `_status_2026_05_22_disabled` line 493]
+3. **Decay is STRUCTURAL, not war-only** — multiple PRE-war regimes ≤ 1.0: pre_election_calm 0.94, post_election_consolidation 0.84, tariff_recovery_rally 0.58, post_tariff_consolidation 0.81; war_vol_2026 itself only 0.93. So the SEBI break is real but not the whole story — the aggregate edge was never robust across regimes even before Oct 2025, and the "war-only kept active for revival" principle (Lesson #4) explicitly does NOT apply. [confidence card per-regime table; commit `845dc6a`]
+4. **Fee-drag dynamic (Lesson #7):** gross PF 1.16 (a real, small signal) wiped by ~Rs.32K fees on 542 trades — only the "chop" regime would be net-positive after fees, and gating to it post-hoc would violate the Stage-5 Discovery cell-lock rule (Lesson #2). [config `_status_2026_05_22_disabled` line 493; commit `845dc6a`]
+
+Note the contradiction worth preserving: the 2026-05-19 per-period table (backtest_findings.md:280) showed 1.43/1.29/1.09 "graceful war drag" — three days later the OCI-canonical confidence card showed 0.954 aggregate. The lifecycle answer: pooled-period PF on one run ≠ regime-decomposed canonical PF with CIs; the card is the source of truth.
+
+### Conditions for revival
+
+1. Stage 14 decision is formally still open per the config string (full 7-step retirement vs chop-regime gate redesign) — if redesigned, the chop gate must be a Stage-5 Discovery cell-lock, NOT a post-hoc filter. [config line 493]
+2. Re-validate the MWPL dependency on every SEBI position-limit change; the mechanism is `regulatory_sensitivity: rule_dependent` — any revival must show post-Oct-2025 data alone passing net gates. [config lines 501-510]
+3. Fee floor: with gross PF 1.16 and this trade size, revival needs either bigger per-trade R or a materially higher gross edge; Apr-1-2026 STT hike adds further pressure. [config `_comment_depends_on` line 510]
+
+### Files/code status
+
+- `config/configuration.json` `setups.delivery_pct_anomaly_short`: enabled=false, block retained (lines 491-545)
+- `structures/delivery_pct_anomaly_short_structure.py`, `services.setup_universe.delivery_pct_universe`, `tools/sub9_research/sanity_nse_delivery_pct_anomaly.py`: retained per soft-disable ("detector/sanity/universe code retained pending researcher decision") [commit `845dc6a`]
+- Confidence card: `reports/confidence_cards/delivery_pct_anomaly_short_confidence_card.md`
+- Related deferred work: `specs/2026-05-09-delivery-pct-rvol-live-wiring-plan.md` (live wiring — moot unless revived)
 
 ---
 
@@ -381,7 +540,7 @@ These eleven setups have a **group-level retire reason** that's harder to overtu
 
 1. **Don't revive the pattern; revive the asymmetry.** `mis_unwind_short` is the canonical example — the SEBI MIS-square-off thesis is real, but the mechanic (short above-VWAP names with negative 3-bar momentum at 15:00) was wrong. A revival has to come from the asymmetry side: what's the right entry signal for forced unwind flow? (E.g., institutional algos initiate VWAP liquidations starting 14:45 — if you can detect those algos' price impact, you have an edge. The generic "above VWAP with weakening momentum" doesn't detect them.)
 2. **Don't revive universal patterns at all.** ORB-15, PDH/PDL reject, PDH/PDL sweep, ema5 pullback, camarilla L3, vwap_first_pullback, narrow_cpr_breakout, cpr_mean_revert — these are universal patterns. They are not allowed to be the PRIMARY thesis of a new setup. They can be MECHANICS used to harvest an Indian-specific asymmetry — but the asymmetry has to come first.
-3. **The `circuit_t1_fade_short` precedent.** Circuit_t1 was on the retire list per task #123 but was subsequently revived via a corrected SL/target sweep and now ships at PF 1.50. That revival succeeded because the underlying asymmetry (post-FOMO mean-reversion on Indian-specific circuit-band stocks) was sound; only the SL/target geometry was broken. None of the 11 setups above have that profile — they fail on the asymmetry, not on geometry.
+3. **The `circuit_t1_fade_short` precedent.** Circuit_t1 was on the retire list per task #123 but was subsequently revived via a corrected SL/target sweep and now ships at PF 1.50. That revival succeeded because the underlying asymmetry (post-FOMO mean-reversion on Indian-specific circuit-band stocks) was sound; only the SL/target geometry was broken. None of the 11 setups above have that profile — they fail on the asymmetry, not on geometry. *[2026-07-27: circuit_t1_fade_short has since been retired itself (Stage 14, 2026-05-23 — see its entry above); the precedent stands only as an example of the geometry-fix revival path, not as a live endorsement.]*
 
 ---
 
@@ -611,6 +770,8 @@ This makes mechanical sense in retrospect:
 4. The HFT/microstructure literature backing (Easley/Lopez de Prado on order flow toxicity) operates at tick-scale, not 5-minute-bar scale. At 5m bars, the aggregation washes out the toxicity signature.
 
 ### Comparison to gap_fade_short (which DOES work)
+
+**[Editorial note 2026-07-27: gap_fade_short was itself retired in July 2026 — see its entry in this document. The comparison below is kept as written (2026-05-16) because the mechanism contrast it draws is still the reason C-09 died at sanity; "DOES work" reflects the state of belief at the time.]**
 
 gap_fade_short captures retail-FOMO exhaustion in SMALL-CAPS at the OPEN (09:25-10:00 specifically). Different mechanism entirely:
 - Small-cap retail FOMO is mechanically distinct from large-cap institutional algo flow
