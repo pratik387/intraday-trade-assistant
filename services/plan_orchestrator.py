@@ -64,6 +64,7 @@ from config.logging_config import get_agent_logger, get_planning_logger
 # detector_class_path strings via _import_path() — no hardcoded imports needed.
 from structures.data_models import MarketContext
 
+from services.cb_state import is_cb_active
 from services.symbol_metadata import get_cap_segment, get_mis_info
 from services.plan_helpers import (
     PlanRejected,
@@ -183,20 +184,23 @@ def _setup_should_fire(setup_cfg: dict) -> tuple[bool, float]:
 
     Reads:
       - enabled: bool (existing — required True for fire)
-      - cb_state: 'enabled' | 'forward_validation' | 'disabled' (default 'enabled')
+      - cb_state: 'enabled' | 'forward_validation' | 'disabled' |
+        'paused_precondition' (default 'enabled')
       - position_size_multiplier: float (default 1.0)
 
     Returns (should_fire, size_multiplier).
-    A setup fires iff enabled AND cb_state in {'enabled', 'forward_validation'}.
+    A setup fires iff enabled AND cb_state is ACTIVE per services.cb_state
+    (allowlist: 'enabled' / 'forward_validation'; ANY other value blocks —
+    unknown states must never fall through to firing).
 
     Per walk-forward methodology spec
     docs/superpowers/specs/2026-05-19-walk-forward-methodology-design.md.
     """
     if not setup_cfg.get("enabled", False):
         return False, 0.0
-    cb_state = setup_cfg.get("cb_state", "enabled")
-    if cb_state == "disabled":
+    if not is_cb_active(setup_cfg):
         return False, 0.0
+    cb_state = setup_cfg.get("cb_state", "enabled")
     multiplier = float(setup_cfg.get("position_size_multiplier", 1.0))
     if cb_state == "forward_validation" and multiplier == 1.0:
         # AMBER tier defaults to 0.25 if not explicitly set

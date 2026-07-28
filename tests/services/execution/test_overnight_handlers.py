@@ -139,6 +139,19 @@ def test_run_entry_with_disabled_setup_exits_cleanly(tmp_path):
     assert summary["rejected_count"] == 0
 
 
+def test_run_entry_skips_setup_paused_by_edge_integrity(tmp_path):
+    """cb_state='paused_precondition' (jobs/check_edge_integrity.py) blocks NEW
+    overnight entries; run_entry exits with the pause recorded in the summary."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["cb_state"] = "paused_precondition"
+    broker = MagicMock()
+    summary = run_entry(cfg, broker, now_ist=pd.Timestamp("2026-05-21 15:25:00"))
+    assert summary["cb_paused_setups"] == ["close_dn_overnight_long"]
+    assert summary["fired_count"] == 0
+    broker.place_order.assert_not_called()
+
+
 def test_run_entry_with_empty_broker_universe_exits_cleanly(tmp_path):
     """If broker lists no symbols, universe is empty: no fires, no errors."""
     state_path = tmp_path / "overnight_slots.json"

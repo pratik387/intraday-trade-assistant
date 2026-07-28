@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from services.cb_state import is_cb_active
+
 # Use the agent logger so warnings/errors from the cron-triggered handlers
 # actually surface in the cron log file. The default `logging.getLogger(...)`
 # named logger has no handler in this entrypoint and was swallowing all
@@ -261,6 +263,11 @@ def _select_overnight_setups(config: dict, *, paper_mode: bool) -> list:
     work for paper-only setups (enabled=False, paper_enabled=True). We filter
     the full spec list directly so paper-mode can run setups that aren't yet
     live-active.
+
+    cb_state is deliberately NOT consulted here: this selector also feeds the
+    exit legs (run_place_exit / run_verify_exit), and a paused setup's EXISTING
+    positions must still run their exits. New-entry gating on cb_state happens
+    in run_entry (see the pause filter next to the decay-tripwire check).
     """
     from services.dispatch.setup_registry import SetupRegistry
     registry = SetupRegistry.load_from_config(config)
@@ -325,6 +332,30 @@ def run_entry(
         margin_per_slot=float(slot_cfg["margin_per_slot_inr"]),
         max_new_per_day=int(slot_cfg["max_new_positions_per_day"]),
     )
+
+    # Circuit-breaker / edge-integrity pause check — cb_state is written by
+    # jobs/check_circuit_breakers.py ('disabled') and jobs/check_edge_integrity.py
+    # ('paused_precondition'). Blocks NEW entries only; the exit crons
+    # (run_place_exit / run_verify_exit) never consult cb_state so existing
+    # positions always run their exits. Un-pause is manual (config edit).
+    cb_paused = [
+        s.name for s in paper_enabled_setups
+        if not is_cb_active(s.raw_config)
+    ]
+    for name in cb_paused:
+        logger.warning(
+            "run_entry: setup %s is PAUSED (cb_state=%s); skipping NEW entries",
+            name,
+            next(s.raw_config.get("cb_state") for s in paper_enabled_setups
+                 if s.name == name),
+        )
+    if cb_paused:
+        summary["cb_paused_setups"] = cb_paused
+        paper_enabled_setups = [s for s in paper_enabled_setups if s.name not in set(cb_paused)]
+    if not paper_enabled_setups:
+        pool.persist()
+        logger.info("run_entry: all overnight setups paused via cb_state; exit")
+        return summary
 
     # Decay tripwire check — skip dispatch for setups whose forward edge has
     # decayed (Task 7). The tripwire pauses dispatch when rolling N-trade PF
