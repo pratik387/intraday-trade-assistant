@@ -72,6 +72,26 @@ candidate in the small-cap capitulation-reversion family inherits that factor's 
 (sized as one position across the family) and must state what it adds beyond the existing cluster.
 Orthogonal-family candidates (different participant/direction/horizon) get priority.
 
+### A5. Era-consistency cell selection + what the fresh-pool gate actually certifies (2026-07-28)
+
+- **Era-consistency rule:** the pre-May-2026 development pool spans two structurally
+  different markets — the 2023-24 illiquid-bull era (universe 10-session drift +1.1% to
+  +3.3%/qtr, illiquidity premium positive) and the 2025→Apr-2026 era (drift ~0/negative,
+  illiquidity premium flipped negative from 2025Q4). Data: era study 2026-07-28, quarterly
+  illiquidity-premium sign persists 79% (AR +0.32) while raw drift does not (64%, AR ≈ 0).
+  A Phase-5 cell is lockable ONLY if its edge has the same sign in BOTH eras. This replaces
+  the "sweep on Discovery, get surprised by the demoted one-shot" pattern —
+  `pead_reaction_drift` (Disc PF 2.45 → demoted 0.67, killed 2026-07-28) is the canonical
+  case this rule would have caught at sweep time.
+- **Corrected rationale for the fresh-pool gate (replaces any "regime inertia" reading):**
+  month-to-month market direction is noise — last-month prediction of next month's drift
+  LOSES to a constant (mean |err| 2.45pp vs 2.03pp, same study). The fresh pool is decisive
+  NOT because recent data forecasts the future, but because it is **structural currency**:
+  a pass certifies "measured under today's structure (illiquidity-premium sign, rule
+  regime, participant mix)" — never "will survive tomorrow's." Confidence earned from a
+  fresh-pool pass must be sized accordingly: small live size, mechanism-precondition
+  monitors, fast tripwires. No historical window, however fresh, certifies the future.
+
 ## Gauntlet vs this lifecycle (NOT the same thing)
 
 The **per-setup lifecycle** below is what this document covers — Phase 1-5 + confidence framework + ship + monitor + retire.
