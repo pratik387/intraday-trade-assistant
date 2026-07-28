@@ -138,16 +138,34 @@ acceptable, documented here so it isn't "discovered" mid-study.
   disposition-effect supply + ASM truncation structure, and it operates at weeks, not
   intraday, where those retail patterns bled.
 
-## 9b. Phase-5 status note (added 2026-07-28)
+## 9b. Phase-5 sweep pre-registration (written 2026-07-28, BEFORE the ASM parquet
+materialized and BEFORE any 2025+ signal statistic was computed for this candidate)
 
-Stage-4 passed (alpha preserved within 2-5% under production-faithful construction; MTF
-subset retains ~88%). **Phase-5 sweep pre-registration is DEFERRED until the ASM/GSM
-backfill lands** — the Stage-4 distributional read (sub-50% hit rate, tail-carried alpha,
-mean MAE ~−15%) means exit geometry and the ASM-truncation falsifier are coupled: winners
-that migrate into ASM are exactly the tail the alpha lives on, so sweeping exits before
-that data exists would lock a cell blind to its binding risk. Pre-register the Phase-5
-dimensions in this section ONLY after `data/asm_gsm_history/asm_gsm_events.parquet`
-materializes, and include an ASM-aware exit dimension (e.g. exit-on-ASM-entry vs hold).
+Stage-4 passed (alpha preserved within 2-5%; MTF subset retains ~88%). The Stage-4
+distributional read (sub-50% hit rate, tail-carried alpha, mean MAE ~−15%) couples exit
+geometry to the ASM-truncation falsifier, so the exit grid includes an ASM-aware mode.
+Grid locked now:
+
+- **Development pool + era split (amendments A1+A5):** signals 2023-01 → 2026-04-30, split
+  era_A = 2023-01→2024-12 (illiquid-bull) / era_B = 2025-01→2026-04 (post-clampdown).
+  **Lockable cells require demeaned alpha > 0 in BOTH eras** (A5 sign rule) with n ≥ 100
+  positions per era, plus pooled PF_net ≥ 1.20 (lifecycle ship floor). The demeaned-alpha
+  statistic remains decisive; raw returns diagnostic only.
+- **Cell dimensions:** formation {60, 120} (Stage-4 locked variants) × hold {20, 40, 60}
+  sessions × cohort {winner decile, top-5%} × universe {all, MTF-eligible, ASM-clean-at-entry}.
+  Rebalance weekly (Stage-4 locked). No dimensions added after results are seen.
+- **Exit modes (selectable):** hold-to-H close; **exit-on-ASM-entry** (position's symbol
+  enters any ASM/GSM stage → sell next session open, else hold to H). **Diagnostic-only
+  (never selectable):** 3-sigma vol-scaled target and any stop variant — the PEAD Phase-5
+  finding (targets/stops clip tail-carried drift edges) transfers.
+- **Costs:** CNC round-trip (STT 0.20% + brokerage 0.06% + charges 0.047%) + 20bp slippage,
+  per-position equal notional (A2-family cost model).
+- **Ledger:** the sweep is ONE evaluation touching discovery+demoted windows → one ledger
+  line regardless of cell count; the later fresh-pool one-shot is a second line.
+- **After lock:** freeze commit (spec + cell JSON + geometry), then ONE shot on the fresh
+  pool (2026-05-01 → present) + paper as the decisive gates. ASM data source:
+  `data/asm_gsm_history/asm_gsm_events.parquet` (backfill in progress at time of writing;
+  this section was committed before the file existed — verifiable by commit order).
 
 ## 10. A1/A2 compliance plan
 
