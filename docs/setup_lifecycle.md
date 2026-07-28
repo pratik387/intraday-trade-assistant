@@ -83,6 +83,13 @@ Orthogonal-family candidates (different participant/direction/horizon) get prior
   the "sweep on Discovery, get surprised by the demoted one-shot" pattern —
   `pead_reaction_drift` (Disc PF 2.45 → demoted 0.67, killed 2026-07-28) is the canonical
   case this rule would have caught at sweep time.
+  **Structure-born exemption (2026-07-28):** a mechanism that could not have existed in the
+  earlier era because the new structure created it (a dated rule change, the post-2025
+  illiquidity-premium flip) is exempt from cross-era consistency — but then the brief MUST
+  date the structural birth to an observable event, validation runs post-birth + forward
+  only, and the shorter history means a wider haircut and a mandatory precondition monitor
+  on the structural cause (see edge-integrity monitors spec). "It only works recently" is
+  not a structure-born claim without the dated cause.
 - **Corrected rationale for the fresh-pool gate (replaces any "regime inertia" reading):**
   month-to-month market direction is noise — last-month prediction of next month's drift
   LOSES to a constant (mean |err| 2.45pp vs 2.03pp, same study). The fresh pool is decisive
