@@ -73,6 +73,11 @@ def _eligible_multiday_setups(config: dict, *, paper_mode: bool):
     shared ranker + entry/exit/position machinery (e.g. mtf_capitulation_revert_long
     = trailing-loser, low52_capitulation_revert_long = near-period-low). Paper mode
     gates on paper_enabled; live on enabled (mirrors close_dn).
+
+    cb_state is deliberately NOT consulted here: this list also drives the
+    exit leg (_run_exits) + entry-fill verification, and a paused setup's
+    EXISTING positions must still run their exits. New-entry gating on
+    cb_state happens in run_eod Phase B (see _cb_paused_setups).
     Returns list of (name, raw_cfg).
     """
     out = []
@@ -83,6 +88,18 @@ def _eligible_multiday_setups(config: dict, *, paper_mode: bool):
         if ok:
             out.append((name, raw))
     return out
+
+
+def _cb_paused_setups(setups) -> list:
+    """Names whose cb_state blocks NEW entries.
+
+    'disabled' is written by jobs/check_circuit_breakers.py;
+    'paused_precondition' by jobs/check_edge_integrity.py (rule-change /
+    data-health / factor-tripwire monitors, spec 2026-07-28). Exits are never
+    gated on this — only the Phase B entry basket. Un-pause is manual.
+    """
+    return [name for name, raw in setups
+            if raw.get("cb_state", "enabled") in ("disabled", "paused_precondition")]
 
 
 def _position_state_dir(raw: dict) -> Path:
@@ -158,8 +175,22 @@ def run_eod(
                        setups_by_name=setups_by_name)
     # ---- Phase B: rank + AMO BUY across the whole family (post-close) ----
     if phase in ("both", "entries"):
-        _run_entries_composite(setups, broker, persistences, today, now, paper_mode, summary,
-                               ca_ex_dates=ca_ex_dates, repo_root=repo_root, config=config)
+        # cb_state pause (circuit breaker / edge-integrity monitors) blocks
+        # NEW entries only — Phase A exits above already ran for all setups.
+        paused = set(_cb_paused_setups(setups))
+        if paused:
+            summary["cb_paused_setups"] = sorted(paused)
+            for name in sorted(paused):
+                logger.warning(
+                    "mtf_capitulation.run_eod: setup %s is PAUSED (cb_state=%s); "
+                    "skipping NEW entries", name,
+                    setups_by_name[name].get("cb_state"))
+        entry_setups = [(n, r) for n, r in setups if n not in paused]
+        if entry_setups:
+            _run_entries_composite(entry_setups, broker, persistences, today, now, paper_mode, summary,
+                                   ca_ex_dates=ca_ex_dates, repo_root=repo_root, config=config)
+        else:
+            logger.info("mtf_capitulation.run_eod: all multi-day setups paused via cb_state; no entries")
 
     logger.info(
         "mtf_capitulation.run_eod: complete | setups=%d exited=%d entered=%d skipped=%d rejected=%d",

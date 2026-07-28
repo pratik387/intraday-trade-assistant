@@ -183,11 +183,14 @@ def _setup_should_fire(setup_cfg: dict) -> tuple[bool, float]:
 
     Reads:
       - enabled: bool (existing — required True for fire)
-      - cb_state: 'enabled' | 'forward_validation' | 'disabled' (default 'enabled')
+      - cb_state: 'enabled' | 'forward_validation' | 'disabled' |
+        'paused_precondition' (default 'enabled')
       - position_size_multiplier: float (default 1.0)
 
     Returns (should_fire, size_multiplier).
     A setup fires iff enabled AND cb_state in {'enabled', 'forward_validation'}.
+    'paused_precondition' is set by jobs/check_edge_integrity.py (rule-change /
+    data-health / factor-tripwire monitors) and blocks like 'disabled'.
 
     Per walk-forward methodology spec
     docs/superpowers/specs/2026-05-19-walk-forward-methodology-design.md.
@@ -195,7 +198,7 @@ def _setup_should_fire(setup_cfg: dict) -> tuple[bool, float]:
     if not setup_cfg.get("enabled", False):
         return False, 0.0
     cb_state = setup_cfg.get("cb_state", "enabled")
-    if cb_state == "disabled":
+    if cb_state in ("disabled", "paused_precondition"):
         return False, 0.0
     multiplier = float(setup_cfg.get("position_size_multiplier", 1.0))
     if cb_state == "forward_validation" and multiplier == 1.0:
