@@ -153,6 +153,10 @@ def load_daily() -> pd.DataFrame:
     # GUARD 2: baselines EXCLUDE the current (reaction) day.
     dd["adv20"] = grp["turnover"].transform(lambda s: s.rolling(20).mean().shift(1))
     dd["avgvol20"] = grp["volume"].transform(lambda s: s.rolling(20).mean().shift(1))
+    # Phase-5 addition: 20d close std INCLUDING the reaction day — known at entry
+    # (reaction+1 open), used only for the vol-scaled target exit, never as a
+    # signal-time filter. Convention matches multiday_target_exit_study.py (std20).
+    dd["std20"] = grp["close"].transform(lambda s: s.rolling(20, min_periods=20).std())
 
     # Vectorized within-symbol forward shifts (rows are symbol-contiguous;
     # cross-symbol boundaries masked to NaN) — same helper as Phase 2.
@@ -187,10 +191,13 @@ def load_daily() -> pd.DataFrame:
     for k in range(LOCKED_ENTRY_LAG, LOCKED_ENTRY_LAG + H_MAX):
         dd[f"high_p{k}"] = shifted(dd["high"].to_numpy(), k)
         dd[f"low_p{k}"] = shifted(dd["low"].to_numpy(), k)
+        dd[f"open_p{k}"] = shifted(dd["open"].to_numpy(), k)
+        dd[f"close_p{k}"] = shifted(dd["close"].to_numpy(), k)
     return dd
 
 
-def load_events() -> pd.DataFrame:
+def load_events(window_start: pd.Timestamp = DISCOVERY_START,
+                window_end: pd.Timestamp = DISCOVERY_END) -> pd.DataFrame:
     ev = pd.read_parquet(EVENTS_PARQUET)
     log(f"earnings events: shape={ev.shape}  announce {pd.to_datetime(ev['announce_date']).min().date()}"
         f" -> {pd.to_datetime(ev['announce_date']).max().date()}")
@@ -198,10 +205,10 @@ def load_events() -> pd.DataFrame:
     ev["symbol"] = ev["symbol"].astype(str).str.replace("NSE:", "", regex=False).str.upper()
     ev["announce_date"] = pd.to_datetime(ev["announce_date"]).dt.normalize()
     # Load a small pad before window start so a Dec-31 AMC announcement can map to a
-    # Jan reaction day; the DISCOVERY assertion below is on REACTION dates.
-    lo = DISCOVERY_START - pd.Timedelta(days=EVENT_LOAD_PAD_DAYS)
-    ev = ev[(ev["announce_date"] >= lo) & (ev["announce_date"] <= DISCOVERY_END)]
-    log(f"  quarterly, announce in [{lo.date()} .. {DISCOVERY_END.date()}]: n={len(ev)}")
+    # Jan reaction day; the window assertion below is on REACTION dates.
+    lo = window_start - pd.Timedelta(days=EVENT_LOAD_PAD_DAYS)
+    ev = ev[(ev["announce_date"] >= lo) & (ev["announce_date"] <= window_end)]
+    log(f"  quarterly, announce in [{lo.date()} .. {window_end.date()}]: n={len(ev)}")
     hour = pd.to_datetime(ev["announce_time"], errors="coerce").dt.hour
     cls = ev["announce_time_class"]
     # Reaction-day rule — identical to Phase 2 / _tmp_b1_pead_killtest.
@@ -211,12 +218,16 @@ def load_events() -> pd.DataFrame:
     return ev
 
 
-def map_reaction_rows(ev: pd.DataFrame, dd: pd.DataFrame) -> pd.DataFrame:
+def map_reaction_rows(ev: pd.DataFrame, dd: pd.DataFrame,
+                      window_start: pd.Timestamp = DISCOVERY_START,
+                      window_end: pd.Timestamp = DISCOVERY_END) -> pd.DataFrame:
     keep = (["symbol", "date", "open", "close", "volume", "prev_close", "adv20", "avgvol20",
-             "entry_open", "entry_date"]
+             "std20", "entry_open", "entry_date"]
             + [f"exit_close_h{h}" for h in LOCKED_HOLDS]
             + [f"high_p{k}" for k in range(LOCKED_ENTRY_LAG, LOCKED_ENTRY_LAG + H_MAX)]
-            + [f"low_p{k}" for k in range(LOCKED_ENTRY_LAG, LOCKED_ENTRY_LAG + H_MAX)])
+            + [f"low_p{k}" for k in range(LOCKED_ENTRY_LAG, LOCKED_ENTRY_LAG + H_MAX)]
+            + [f"open_p{k}" for k in range(LOCKED_ENTRY_LAG, LOCKED_ENTRY_LAG + H_MAX)]
+            + [f"close_p{k}" for k in range(LOCKED_ENTRY_LAG, LOCKED_ENTRY_LAG + H_MAX)])
     bars = dd[keep]
 
     dd_syms = set(dd["symbol"].unique())
@@ -237,11 +248,11 @@ def map_reaction_rows(ev: pd.DataFrame, dd: pd.DataFrame) -> pd.DataFrame:
     evr = pd.concat([same, nxt], ignore_index=True)
     evr = evr.rename(columns={"date": "reaction_date"})
     evr = evr.drop_duplicates(subset=["symbol", "reaction_date"]).reset_index(drop=True)
-    # Reaction dates must be inside Discovery (announce-pad can push next-day maps in;
-    # nothing can leave the window because announce_date <= DISCOVERY_END and later
+    # Reaction dates must be inside the window (announce-pad can push next-day maps in;
+    # nothing can leave the window because announce_date <= window_end and later
     # reaction days are filtered here).
-    evr = evr[(evr["reaction_date"] >= DISCOVERY_START) & (evr["reaction_date"] <= DISCOVERY_END)]
-    log(f"events mapped to reaction rows in Discovery: n={len(evr)} "
+    evr = evr[(evr["reaction_date"] >= window_start) & (evr["reaction_date"] <= window_end)]
+    log(f"events mapped to reaction rows in window: n={len(evr)} "
         f"({evr['reaction_date'].min().date()} -> {evr['reaction_date'].max().date()})")
     return evr
 
@@ -265,12 +276,17 @@ def build_pool(evr: pd.DataFrame) -> pd.DataFrame:
     return pool
 
 
-def causal_thresholds(pool: pd.DataFrame) -> pd.DataFrame:
+def causal_thresholds(pool: pd.DataFrame,
+                      extra_long_pcts: tuple = ()) -> pd.DataFrame:
     """Per unique reaction date d: percentile thresholds from the trailing
     volume-confirmed event cross-section with reaction_date in [d-60cal, d).
     STRICTLY-BEFORE inclusion — no event sees its own date or any later event.
     A pooled-window percentile here would be look-ahead; Phase 2 used one as a
-    documented measurement simplification, and this script replaces it."""
+    documented measurement simplification, and this script replaces it.
+
+    extra_long_pcts: additional causal LONG percentiles (e.g. 0.97 for the
+    Phase-5 pre-registered pct3 threshold) emitted as thr_long_p<pct*100>
+    columns. Same trailing window, same min-events rule."""
     dates = pool["reaction_date"].to_numpy(dtype="datetime64[ns]")
     rets = pool["react_ret"].to_numpy(dtype=float)
     uniq = np.unique(dates)
@@ -280,14 +296,18 @@ def causal_thresholds(pool: pd.DataFrame) -> pd.DataFrame:
         lo_i = np.searchsorted(dates, d - win, side="left")
         hi_i = np.searchsorted(dates, d, side="left")   # strictly before d
         n_trail = hi_i - lo_i
+        row = {"reaction_date": pd.Timestamp(d), "n_trailing_events": int(n_trail)}
         if n_trail >= LOCKED_MIN_TRAILING_EVENTS:
             seg = rets[lo_i:hi_i]
-            thr_long = float(np.quantile(seg, LOCKED_PCT_LONG))
-            thr_short = float(np.quantile(seg, LOCKED_PCT_SHORT))
+            row["thr_long"] = float(np.quantile(seg, LOCKED_PCT_LONG))
+            row["thr_short"] = float(np.quantile(seg, LOCKED_PCT_SHORT))
+            for p in extra_long_pcts:
+                row[f"thr_long_p{int(round(p * 100))}"] = float(np.quantile(seg, p))
         else:
-            thr_long, thr_short = np.nan, np.nan
-        rows.append({"reaction_date": pd.Timestamp(d), "n_trailing_events": int(n_trail),
-                     "thr_long": thr_long, "thr_short": thr_short})
+            row["thr_long"], row["thr_short"] = np.nan, np.nan
+            for p in extra_long_pcts:
+                row[f"thr_long_p{int(round(p * 100))}"] = np.nan
+        rows.append(row)
     thr = pd.DataFrame(rows)
     n_defined = int(thr["thr_long"].notna().sum())
     log(f"causal thresholds: defined on {n_defined}/{len(thr)} reaction dates "
@@ -338,7 +358,10 @@ def emit_candidates(pool: pd.DataFrame, thr: pd.DataFrame) -> pd.DataFrame:
     return cands
 
 
-def build_ledger(cands: pd.DataFrame) -> pd.DataFrame:
+def build_ledger(cands: pd.DataFrame,
+                 window_start: pd.Timestamp = DISCOVERY_START,
+                 window_end: pd.Timestamp = DISCOVERY_END,
+                 carry_path: bool = False) -> pd.DataFrame:
     from services.symbol_metadata import get_cap_segment, in_fno_liquid_200
 
     # Tradability flags (current snapshots — NOT point-in-time; see header).
@@ -413,19 +436,56 @@ def build_ledger(cands: pd.DataFrame) -> pd.DataFrame:
         }
         for h in LOCKED_HOLDS:
             row[f"fwd_h{h}_pct"] = (float(d[f"exit_close_h{h}"]) / entry - 1.0) * 100.0
+        if carry_path:
+            # Phase-5 sweep extras: per-session forward path (positions +1..+H_MAX
+            # relative to reaction day; p1 = entry day) + at-entry vol scale +
+            # the pre-registered pct3 causal threshold when computed.
+            std20 = float(d.get("std20", np.nan))
+            close_t = float(d["close"])
+            row["sigma20_frac"] = (std20 / close_t) if np.isfinite(std20) and close_t > 0 else np.nan
+            if "thr_long_p97" in d:
+                row["thr_long_p97_pct"] = float(d["thr_long_p97"]) * 100.0
+            for k in range(LOCKED_ENTRY_LAG, LOCKED_ENTRY_LAG + H_MAX):
+                row[f"open_p{k}"] = float(d[f"open_p{k}"])
+                row[f"high_p{k}"] = float(d[f"high_p{k}"])
+                row[f"low_p{k}"] = float(d[f"low_p{k}"])
+                row[f"close_p{k}"] = float(d[f"close_p{k}"])
         rows.append(row)
 
     ledger = pd.DataFrame(rows).sort_values(
         ["reaction_date", "symbol", "leg"], kind="mergesort").reset_index(drop=True)
 
-    # DISCOVERY-WINDOW ASSERTION (hard): raise if any signal date leaked outside.
+    # WINDOW ASSERTION (hard): raise if any signal date leaked outside.
     sd = pd.to_datetime(ledger["signal_date"])
-    if ((sd < DISCOVERY_START) | (sd > DISCOVERY_END)).any():
-        bad = ledger.loc[(sd < DISCOVERY_START) | (sd > DISCOVERY_END),
+    if ((sd < window_start) | (sd > window_end)).any():
+        bad = ledger.loc[(sd < window_start) | (sd > window_end),
                          ["symbol", "signal_date"]].head()
-        raise RuntimeError(f"DISCOVERY-WINDOW VIOLATION: signal dates outside "
-                           f"[{DISCOVERY_START.date()} .. {DISCOVERY_END.date()}]:\n{bad}")
+        raise RuntimeError(f"WINDOW VIOLATION: signal dates outside "
+                           f"[{window_start.date()} .. {window_end.date()}]:\n{bad}")
     return ledger
+
+
+def build_window_ledger(window_start: pd.Timestamp, window_end: pd.Timestamp,
+                        extra_long_pcts: tuple = (0.97,),
+                        carry_path: bool = True) -> pd.DataFrame:
+    """Phase-5 entry point: same construction as main(), parameterized by
+    reaction-date window. Each window is built COLD (its causal thresholds use
+    only trailing events inside the window — identical to the Discovery
+    construction; the first ~MIN_TRAILING_EVENTS events warm the threshold).
+    HARD GUARD: refuses any window touching the fresh decisive pool
+    (reaction dates >= 2026-05-01, lifecycle amendment A1)."""
+    fresh_pool_start = pd.Timestamp("2026-05-01")
+    if window_end >= fresh_pool_start:
+        raise RuntimeError(f"FRESH-POOL VIOLATION: window_end {window_end.date()} >= "
+                           f"{fresh_pool_start.date()} — the fresh decisive pool is off-limits "
+                           f"until the freeze commit + one-shot gate.")
+    dd = load_daily()
+    ev = load_events(window_start, window_end)
+    evr = map_reaction_rows(ev, dd, window_start, window_end)
+    pool = build_pool(evr)
+    thr = causal_thresholds(pool, extra_long_pcts=extra_long_pcts)
+    cands = emit_candidates(pool, thr)
+    return build_ledger(cands, window_start, window_end, carry_path=carry_path)
 
 
 # ---------------------------------------------------------------------------

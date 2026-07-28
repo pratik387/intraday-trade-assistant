@@ -3,7 +3,14 @@
 **Date:** 2026-07-27
 **Stage:** 0 (idea) + Stage 1 (Indian-market research) combined
 **Family:** EVENT-DRIVEN continuation, 1-10 day CNC horizon
-**Status:** DRAFT — awaiting user review (lesson #20 gate). Not committed until approved.
+**Status:** **KILLED at Phase 5 (2026-07-28)** — Discovery cell PF_net 2.45 (n=258, broadest
+cell, year-stable) collapsed to PF_net 0.67 / WR 40% (n=157) on the one-shot demoted-window
+check (2025-01 → 2026-04), gap 1.78 vs the 0.30 overfit ceiling. 2026 (PF 0.36) worse than
+2025 (0.87). Ledger lines logged; fresh pool (2026-05+) never touched. **Revival path (the
+only one):** pre-registered falsifier #3 fired on schedule — the `announcements_fr` source
+died Mar-2025, degrading reaction-day assignment for exactly the failing window; a revival
+requires REPAIRED announcement-timing data first, and constitutes a NEW ledger-burning
+evaluation, not a salvage. Evidence: `tools/sub9_research/pead_reaction_drift_cell_lock.json`.
 **Lifecycle:** governed by `docs/setup_lifecycle.md` incl. 2026-07-27 amendments A1-A4.
 
 ---
