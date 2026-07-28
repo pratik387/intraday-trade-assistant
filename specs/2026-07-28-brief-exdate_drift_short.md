@@ -3,7 +3,18 @@
 **Date:** 2026-07-28
 **Stage:** 0 (idea) + 1 (Indian-market research) combined
 **Family:** EVENT-DRIVEN short, 1-5 day horizon (variant A intraday-D+1 MIS; variant B 5d CNC-short measured-only pending SLB)
-**Status:** DRAFT — awaiting user review (lesson #20 gate). Not committed until approved.
+**Status:** **KILLED at Phase 2 (2026-07-28)** — the pooling falsifier (§6.1) tripped: dividend
+members show era_A drift of −0.02% (interim, n=806, hit 49.6%) / −0.20% (final-yield-band,
+n=148) vs split/bonus +3.3% to +6.2%, with era_B-only positivity (+1.2-1.3%) — exactly the
+era-inconsistent pattern A5 rejects, and the no-salvage clause forbids re-filtering to the
+era_B slice. Sleeve degenerates to splits-only → same frequency kill as 2026-06-01.
+**What survives:** the split/bonus drift core re-confirmed at Phase-2 strength in BOTH eras
+(salience-monotone for splits — anchoring-consistent), on verified back-adjusted data, not a
+synthetic-bar artifact. It remains real, era-robust, and unshippable at ~55-60 trades/yr under
+current frequency policy. Evidence: `reports/sub9_sanity/_exdate_drift_phase2_discovery.csv` +
+ledger line 2026-07-28. Open policy question (user's, someday): whether a low-frequency event
+satellite with quarterly (not monthly) monitoring expectations is admissible — that, not more
+research, is the only thing standing between the split/bonus edge and a book slot.
 **Lifecycle:** `docs/setup_lifecycle.md` incl. amendments A1-A5.
 
 ---
