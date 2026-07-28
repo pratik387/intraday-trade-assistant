@@ -40,6 +40,7 @@ import sys
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -89,12 +90,20 @@ def _quarter_class_mix(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def drop_superseded_scheduled(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+def drop_superseded_scheduled(
+    df: pd.DataFrame,
+    min_announce_date: Optional[date] = None,
+) -> tuple[pd.DataFrame, int]:
     """Drop ``scheduled`` rows whose meeting produced a real-timestamped row
     on the NEXT calendar day (post-midnight filing => different dedupe key,
     so the stale synthetic row survives the merge).
 
     Same-day collisions are already resolved by dedupe priority.
+
+    ``min_announce_date``: only drop scheduled rows on/after this date. The
+    repair must leave the pre-death window untouched (frozen control region
+    for the PEAD falsifier-3 cohort comparison), so the caller passes the
+    repair-window start.
     """
     ads = df["announce_date"].map(_norm_date)
     real_keys = set(
@@ -104,6 +113,12 @@ def drop_superseded_scheduled(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
         )
     )
     is_sched = df["announce_time_class"] == "scheduled"
+    if min_announce_date is not None:
+        in_window = pd.Series(
+            [ad is not None and ad >= min_announce_date for ad in ads],
+            index=df.index,
+        )
+        is_sched = is_sched & in_window
     next_day_real = pd.Series(
         [
             (sym, ad + timedelta(days=1)) in real_keys if ad is not None else False
@@ -217,7 +232,9 @@ def run_repair(start: date, end: date, sleep_secs: float) -> int:
     print(f"[repair] scraped {len(rows)} candidate rows; merging ...")
     df_after = fe.write_events(rows, parquet, merge_existing=True)
 
-    df_after, n_superseded = drop_superseded_scheduled(df_after)
+    df_after, n_superseded = drop_superseded_scheduled(
+        df_after, min_announce_date=start,
+    )
     if n_superseded:
         df_after = fe._ensure_columns(df_after)
         df_after = df_after.sort_values(
