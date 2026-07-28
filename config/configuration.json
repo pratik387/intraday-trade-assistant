@@ -508,6 +508,28 @@
         "STT_drag"
       ],
       "_comment_depends_on": "Mechanism = fade post-pump speculator inventory unwind. CRITICAL dependency on F&O single-stock position math (MWPL). SEBI Oct 1, 2025 rules broke this (PF 1.245 OOS → 0.879 Holdout). Apr-1-2026 STT hike adds further fee pressure. Re-validate on every MWPL/position-limit change.",
+      "preconditions": [
+        {
+          "type": "rule",
+          "watch": "MWPL"
+        },
+        {
+          "type": "rule",
+          "watch": "single_stock_FO"
+        },
+        {
+          "type": "rule",
+          "watch": "single_stock_FO_speculator_unwind"
+        },
+        {
+          "type": "data_source",
+          "path": "data/delivery_pct/delivery_history.parquet",
+          "date_column": "date",
+          "max_staleness_days": 7,
+          "min_rows_per_week": 5000
+        }
+      ],
+      "_comment_preconditions": "Edge-integrity monitors (jobs/check_edge_integrity.py). rule watches = the load-bearing depends_on keys matched against rule_changes.csv `affects` tokens (this is the setup the Oct-2025 MWPL circular broke). data_source = NSE bhavcopy delivery feed (tools/delivery_pct/fetch_delivery.py); ~2,200 rows/day => 5,000/week floor is a >50% collapse; staleness 7d covers a dead scraper with the file still on disk.",
       "_status_2026_05_14_paper_cell_B": "PAPER ONLY. Production-replay analysis (analytics.jsonl fee model) on Jan-Sep 2025 OCI showed Cell B (mid_cap × 09:30-10:30) PF=1.245 n=295. Holdout (Oct'25-Apr'26) PF=0.879 — SEBI Oct 1, 2025 F&O rule changes (tightened MWPL, single-stock position limits) broke the speculator-inventory-unwind mechanism this setup fades. Pre-SEBI edge real; post-SEBI edge degraded. Shipping narrow Cell B at paper to capture forward data; re-evaluate live/retire after 30 days of paper.",
       "_status_2026_05_08_enabled": "ENABLED for OCI smoke + Phase-1 backtest. Sub9 sanity Discovery PF 1.44 + OOS 1.90 + Holdout 1.13 + War-period 5.03 at tight targets. Push to OCI for trade capture in wide_open mode.",
       "_status_2026_05_08": "NEW — sub9 sanity passed Discovery PF=1.44 + OOS PF=1.90 + Holdout PF=1.13 + War-period PF=5.03 at TIGHT targets (0.25R/0.75R/TS=1300). Phase-1 validation pending.",
@@ -614,7 +636,17 @@
       "horizon": "multi_day",
       "_status_2026_07_28_KILLED_phase5": "KILLED at Phase-5 demoted-window check 2026-07-28. Discovery locked cell (pct5/all/all/hold10/hold_close): n=258 PF_net 2.45 WR 60% — collapsed on one-shot demoted window 2025-01..2026-04 to n=157 PF_net 0.67 WR 40% (2025: 0.87, 2026JanApr: 0.36); gap 1.78 vs 0.30 overfit ceiling. Pre-registered falsifier #3 is the suspected contributor (announcements_fr source died Mar-2025 -> degraded reaction-day assignment over exactly the failing window) — NOT investigated (one-run discipline). Revival ONLY via repaired announcement-timing data + new ledger-logged evaluation. Fresh pool 2026-05+ untouched. Evidence: tools/sub9_research/pead_reaction_drift_cell_lock.json + docs/experiment_ledger.jsonl 2026-07-28 lines. Brief: specs/2026-07-27-brief-pead_reaction_drift.md.",
       "mechanism_tags": ["earnings_underreaction_drift"],
-      "mechanism_notes": "Retail-dominated mid/small-cap holder base underreacts to quarterly earnings surprises (proxy: announcement-reaction-day return; no SUE feed exists). Limits to arbitrage (no cash-market shorting, thin SLB, MTF margin caps) let the reaction drift 3-10 sessions. LONG on positive surprises is primary; SHORT gated on volume confirmation + quantified tradable subset. Breaks if: drift migrates to top-ADV tier (arb capacity arrived), FII-regime sign flip appears, or announcement-timestamp classification degrades further (announcements_fr source died Mar-2025)."
+      "mechanism_notes": "Retail-dominated mid/small-cap holder base underreacts to quarterly earnings surprises (proxy: announcement-reaction-day return; no SUE feed exists). Limits to arbitrage (no cash-market shorting, thin SLB, MTF margin caps) let the reaction drift 3-10 sessions. LONG on positive surprises is primary; SHORT gated on volume confirmation + quantified tradable subset. Breaks if: drift migrates to top-ADV tier (arb capacity arrived), FII-regime sign flip appears, or announcement-timestamp classification degrades further (announcements_fr source died Mar-2025).",
+      "preconditions": [
+        {
+          "type": "data_source",
+          "path": "data/earnings_calendar/earnings_events.parquet",
+          "date_column": "announce_date",
+          "max_staleness_days": 21,
+          "min_rows_per_week": 0
+        }
+      ],
+      "_comment_preconditions": "Edge-integrity monitor (jobs/check_edge_integrity.py). The announcements_fr death (Mar-2025) that killed this setup at Phase-5 is the motivating case. Earnings flow is quarterly-clustered (23 of 217 historical weeks have <5 rows) so min_rows_per_week=0 disables the weekly-volume check; staleness 21d is the tripwire (board-meeting rows trickle even between result seasons)."
     },
     "xsec_momentum_demeaned": {
       "enabled": false,
@@ -896,6 +928,33 @@
         "pf_floor": 1.2,
         "sustained_weeks": 6,
         "state_file": "state/decay_tripwire_crash2d_revert_long.json"
+      }
+    }
+  },
+  "edge_integrity": {
+    "_comment": "Edge-integrity monitors (spec: specs/2026-07-28-edge-integrity-monitors-design.md). Nightly job jobs/check_edge_integrity.py runs three monitor classes: (1) rule-change watch on data/sebi_calendar/rule_changes.csv against per-setup preconditions[{type:'rule'}], (2) data-source health (staleness + weekly-volume collapse) against preconditions[{type:'data_source'}], (3) factor-cluster drawdown tripwire on combined daily net PnL of cluster members. A trigger flips the setup's cb_state to 'paused_precondition' (same machinery as the circuit breaker; honored by the intraday orchestrator + overnight/multiday crons). Un-pause is MANUAL after researcher review (set cb_state back to 'enabled' or remove the key).",
+    "enabled": true,
+    "dry_run": true,
+    "_comment_dry_run": "v1 rollout stage 2: dry_run=true means the job logs WOULD_PAUSE lines and writes the nightly report JSON but NEVER writes cb_state. Flip to false only after >=1 week of clean dry-run calibration (spec section 4).",
+    "rule_watch_lookback_days": 90,
+    "_comment_rule_watch_lookback_days": "A watched rule triggers when rule_changes.csv contains a row whose `affects` tokens include the watch key AND effective_date >= today - 90d (future effective dates also trigger — the row lands when the circular is announced, which is exactly when detection must fire; the Oct-2025 MWPL circular was announced 2025-05-29, 125 days before effect, and bled ~Rs206k through PnL-based detection).",
+    "rule_changes_csv": "data/sebi_calendar/rule_changes.csv",
+    "report_dir": "state",
+    "_comment_report_dir": "Nightly report JSON written to <report_dir>/edge_integrity_report_<YYYY-MM-DD>.json in BOTH dry-run and live modes. The report is append-only evidence; it never gates anything.",
+    "factor_clusters": {
+      "capitulation_reversion": {
+        "members": [
+          "mtf_capitulation_revert_long",
+          "low52_capitulation_revert_long",
+          "zscore_oversold_revert_long",
+          "crash2d_revert_long",
+          "panic_crash_revert_long"
+        ],
+        "lookback_days": 20,
+        "drawdown_threshold_sigma": 2.5,
+        "min_baseline_days": 60,
+        "_comment_min_baseline_days": "The tripwire stays silent until the combined ledger has >= 60 distinct trading days (needs a stable mean/sigma before z-scores mean anything).",
+        "_comment_derivation": "Derived 2026-07-28 from the OCI-canonical ledgers: reports/sub9_sanity/_monster_cond_<setup>_baseline.csv for the 4 multiday members + reports/oci_canonical/panic_crash_revert_long_oci_canonical.csv for panic_crash (per-trade net_pnl_inr grouped by signal_date, summed across members = the July-2026 factor-study methodology; pairwise daily-PnL correlations on these exact inputs reproduce the study's r 0.55-0.84). Combined daily PnL: n_days=766 spanning 2023-01-27..2026-04-27, mean=+23,321 INR/day, sigma=294,627 INR/day. Trigger rule: z = (sum(last 20 trading days) - 20*mean) / (sigma*sqrt(20)) <= -2.5, with mean/sigma recomputed at runtime from the live+paper ledger itself (sigma-units transfer across book sizing; absolute OCI rupee thresholds would not). Calibration on the OCI series: worst 20d z = -3.01 (2026-03-24/25), second episode -2.66/-2.63 (2025-02-12..14, the midcap-correction capitulation-continuation month), p1 = -2.31. At 2.5 sigma the tripwire fires on 4 of 747 rolling windows (0.5%) = exactly the two genuine factor-wide drawdown episodes and nothing else."
       }
     }
   },
