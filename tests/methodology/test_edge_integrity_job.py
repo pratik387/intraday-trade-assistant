@@ -547,3 +547,40 @@ def test_multiday_cron_entry_gate_flags_paused_setups():
         ("d", {"cb_state": "enabled"}),
     ]
     assert _cb_paused_setups(setups) == ["a", "b"]
+
+
+def test_unknown_cb_state_blocks_in_all_three_entry_gates():
+    """REGRESSION (review 2026-07-28): the original blocklist let ANY unknown
+    cb_state value fall through and fire at full size. All entry gates now use
+    the shared allowlist (services.cb_state.is_cb_active) — an unrecognized or
+    typo'd state must BLOCK new entries everywhere."""
+    from services.cb_state import is_cb_active, ACTIVE_CB_STATES
+    from services.plan_orchestrator import _setup_should_fire
+    from services.execution.mtf_capitulation_handlers import _cb_paused_setups
+
+    for weird in ("paused_manual", "under_review", "DISABLED", "enabled ",
+                  "", None, 0):
+        cfg = {"enabled": True, "cb_state": weird}
+        assert is_cb_active(cfg) is False, weird
+        assert _setup_should_fire(cfg) == (False, 0.0), weird
+        assert _cb_paused_setups([("x", cfg)]) == ["x"], weird
+
+    # Allowlist itself still passes, and a missing key defaults to active.
+    for ok_state in ACTIVE_CB_STATES:
+        assert is_cb_active({"cb_state": ok_state}) is True
+    assert is_cb_active({}) is True
+
+
+def test_overnight_entry_gate_blocks_unknown_cb_state():
+    """Same regression class for the overnight run_entry filter, exercised at
+    the helper level (run_entry uses is_cb_active on raw_config)."""
+    from services.cb_state import is_cb_active
+
+    class FakeSetup:
+        def __init__(self, name, raw):
+            self.name, self.raw_config = name, raw
+
+    setups = [FakeSetup("good", {"cb_state": "enabled"}),
+              FakeSetup("weird", {"cb_state": "pausd_precondition"})]  # typo
+    paused = [s.name for s in setups if not is_cb_active(s.raw_config)]
+    assert paused == ["weird"]

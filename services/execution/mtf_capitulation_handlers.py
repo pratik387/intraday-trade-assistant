@@ -45,6 +45,7 @@ except Exception:  # pragma: no cover - logging fallback
     logger = logging.getLogger(__name__)
 
 from diagnostics.diag_event_log import diag_event_log
+from services.cb_state import is_cb_active
 from services.cross_sectional_ranker import CrossSectionalRanker
 from services.daily_panel_provider import make_provider
 from services.execution.overnight_handlers import _next_trading_day
@@ -93,13 +94,13 @@ def _eligible_multiday_setups(config: dict, *, paper_mode: bool):
 def _cb_paused_setups(setups) -> list:
     """Names whose cb_state blocks NEW entries.
 
-    'disabled' is written by jobs/check_circuit_breakers.py;
-    'paused_precondition' by jobs/check_edge_integrity.py (rule-change /
-    data-health / factor-tripwire monitors, spec 2026-07-28). Exits are never
-    gated on this — only the Phase B entry basket. Un-pause is manual.
+    Allowlist semantics via services.cb_state.is_cb_active — any cb_state
+    outside {'enabled', 'forward_validation'} blocks NEW entries ('disabled'
+    from check_circuit_breakers, 'paused_precondition' from
+    check_edge_integrity, and any unknown/typo value). Exits are never gated
+    on this — only the Phase B entry basket. Un-pause is manual.
     """
-    return [name for name, raw in setups
-            if raw.get("cb_state", "enabled") in ("disabled", "paused_precondition")]
+    return [name for name, raw in setups if not is_cb_active(raw)]
 
 
 def _position_state_dir(raw: dict) -> Path:

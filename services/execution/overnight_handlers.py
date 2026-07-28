@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from services.cb_state import is_cb_active
+
 # Use the agent logger so warnings/errors from the cron-triggered handlers
 # actually surface in the cron log file. The default `logging.getLogger(...)`
 # named logger has no handler in this entrypoint and was swallowing all
@@ -338,7 +340,7 @@ def run_entry(
     # positions always run their exits. Un-pause is manual (config edit).
     cb_paused = [
         s.name for s in paper_enabled_setups
-        if s.raw_config.get("cb_state", "enabled") in ("disabled", "paused_precondition")
+        if not is_cb_active(s.raw_config)
     ]
     for name in cb_paused:
         logger.warning(

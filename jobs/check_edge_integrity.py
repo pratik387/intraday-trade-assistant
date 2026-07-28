@@ -60,6 +60,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.methodology.setup_metadata import write_setup_block_atomic
+from utils.time_util import _now_naive_ist
 
 # Same alert channel as the overnight verify-exit failsafe: the agent logger
 # (config/logging_config) surfaces WARNING/CRITICAL lines in the cron log.
@@ -514,7 +515,7 @@ def write_report(
     report_dir.mkdir(parents=True, exist_ok=True)
     out = report_dir / f"edge_integrity_report_{today.isoformat()}.json"
     payload = {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": _now_naive_ist().isoformat(timespec="seconds"),
         "run_date": today.isoformat(),
         "dry_run": dry_run,
         "validation_errors": validation_errors,
@@ -563,6 +564,12 @@ def run(config_path: Path, trades_csv: Optional[Path], today: date,
     rules_df = load_rule_changes(rules_csv)
     lookback_days = int(ei["rule_watch_lookback_days"])
     for name, block in setups.items():
+        # Review fix 2026-07-28: killed/soft-disabled setups keep their
+        # preconditions[] as documentation, but monitoring them would clobber
+        # their recorded kill reason with paused_precondition and add alert
+        # noise. Only active (enabled or paper_enabled) setups are monitored.
+        if not (block.get("enabled") or block.get("paper_enabled")):
+            continue
         pres = block.get("preconditions") or []
         if not pres:
             continue
@@ -582,6 +589,25 @@ def run(config_path: Path, trades_csv: Optional[Path], today: date,
                                      repo_root)
             for m in cluster["members"]
         }
+        # Review fix 2026-07-28: a member with an entirely empty daily series
+        # silently contributes 0 PnL and degrades cluster coverage (e.g.
+        # panic_crash_revert_long has no decay-tripwire state file and relies
+        # on --trades-csv). Surface it as a loud finding every run.
+        for m, series in daily_by_member.items():
+            if len(series) == 0:
+                logger.warning(
+                    "[edge_integrity] cluster %s member %s has an EMPTY daily "
+                    "PnL series — check decay-tripwire state file / "
+                    "--trades-csv wiring", cname, m)
+                findings.append(Finding(
+                    monitor="factor_tripwire",
+                    setup_name=m,
+                    action="ok",
+                    reason="member_series_empty",
+                    detail={"cluster": cname,
+                            "note": "member contributes nothing to the "
+                                    "tripwire; fix data wiring"},
+                ))
         cfindings, cstats = check_factor_cluster(cname, cluster,
                                                  daily_by_member)
         findings.extend(cfindings)
@@ -614,9 +640,11 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--config", type=Path,
                    default=REPO_ROOT / "config" / "configuration.json")
-    p.add_argument("--trades-csv", type=Path, default=None,
+    p.add_argument("--trades-csv", type=Path, required=True,
                    help="trade_report.csv for intraday cluster members "
-                        "(same schema as jobs/check_circuit_breakers.py)")
+                        "(same schema as jobs/check_circuit_breakers.py; "
+                        "REQUIRED — review fix 2026-07-28 so intraday cluster "
+                        "members are never silently dropped from Monitor 3)")
     p.add_argument("--today",
                    type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(),
                    default=None,
