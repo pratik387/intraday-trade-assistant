@@ -82,6 +82,14 @@ tags:
     description: "Fear-driven retail selling in under-covered small/micro-caps with no analyst coverage; sells into a liquidity vacuum."
     source: "Behavioral thesis"
     live_computable: false
+  earnings_underreaction_drift:
+    description: "Slow diffusion of quarterly earnings surprises through a retail-dominated holder base; limits to arbitrage (no cash shorting, thin SLB, MTF caps) let the announcement reaction drift for days (Indian PEAD)."
+    source: "Behavioral thesis + data/earnings_calendar/ (reaction-day proxy; no SUE feed)"
+    live_computable: false
+  disposition_effect_momentum:
+    description: "Retail disposition-effect supply (winners sold early, losers held) plus gradual information diffusion and institutional factor-flow chasing sustain cross-sectional relative-winner drift at 3-12 month formation horizons."
+    source: "Behavioral thesis + Sehgal-Balakrishnan 2002 / PBFJ 2023 Indian momentum evidence"
+    live_computable: false
   retail_fomo_exhaustion:
     description: "Momentum-chasing retail drives an intraday up-spike in a thin name; buying exhausts and the spike fades into the close."
     source: "Behavioral thesis (sub9 T1 up-spike fade)"

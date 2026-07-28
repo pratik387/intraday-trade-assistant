@@ -608,6 +608,22 @@
         "state_file": "state/decay_tripwire_close_dn_overnight_long_live.json"
       }
     },
+    "pead_reaction_drift": {
+      "enabled": false,
+      "paper_enabled": false,
+      "horizon": "multi_day",
+      "_status_2026_07_28_stage3_preregistration": "Stage 3 pre-registration; NO detector code yet. Phase-2 PASSED 2026-07-28 on Discovery 2023-24 (tools/sub9_research/phase2_pead_reaction_drift_signature.py): LONG leg 129/144 cells clear the 0.1% floor, best cells +1.6% to +3.25% delta at h7-h10 (n=247-493, hit 0.58-0.62), drift dies in most-liquid ADV tier (mechanism-consistent). SHORT leg narrow: alive under volume-confirmed proxy only, tier-FLAT profile flagged as mechanism concern. Brief: specs/2026-07-27-brief-pead_reaction_drift.md. Next: Stage 4 sanity, Discovery only. Decisive gate per lifecycle amendment A1: fresh pool 2026-05-01+ post-freeze.",
+      "mechanism_tags": ["earnings_underreaction_drift"],
+      "mechanism_notes": "Retail-dominated mid/small-cap holder base underreacts to quarterly earnings surprises (proxy: announcement-reaction-day return; no SUE feed exists). Limits to arbitrage (no cash-market shorting, thin SLB, MTF margin caps) let the reaction drift 3-10 sessions. LONG on positive surprises is primary; SHORT gated on volume confirmation + quantified tradable subset. Breaks if: drift migrates to top-ADV tier (arb capacity arrived), FII-regime sign flip appears, or announcement-timestamp classification degrades further (announcements_fr source died Mar-2025)."
+    },
+    "xsec_momentum_demeaned": {
+      "enabled": false,
+      "paper_enabled": false,
+      "horizon": "multi_day",
+      "_status_2026_07_28_stage3_preregistration": "Stage 3 pre-registration; NO detector code yet. Phase-2 PASSED 2026-07-28 on Discovery 2023-24 (tools/sub9_research/phase2_xsec_momentum_signature.py): demeaned winner-decile alpha positive in 191/192 cells (best +4.05% per 60d hold at 60d formation), monotone in formation length and signal concentration, loser leg genuinely negative at 120/250d formations, survives within-cap-segment size control. Formally overturns the 2026-06-15 A4 'survivorship beta' weak kill (lessons.md #28). Binding risks: capturability (alpha tilted to illiquid ADV tiers) + ASM/GSM winner-migration truncation (backfill running). Un-park review of illiquid_momentum_long triggered (shared factor budget). Brief: specs/2026-07-27-brief-xsec_momentum_demeaned.md. Next: Stage 4 sanity, Discovery only. Decisive gate per amendment A1: fresh pool 2026-05-01+ post-freeze.",
+      "mechanism_tags": ["disposition_effect_momentum"],
+      "mechanism_notes": "Cross-sectional 3-12-month relative winners keep outperforming: gradual information diffusion + retail disposition-effect supply (winners sold too early, losers held) + institutional factor-flow chasing. Alpha measured DEMEANED (minus universe mean) — raw returns carry no evidential weight in this candidate. Breaks if: demeaned alpha vanishes on fresh-pool/forward data, ASM/GSM-entry events consume the winner alpha, or the tradable (MTF-eligible, ASM-clean) subset shows no residual alpha."
+    },
     "mtf_capitulation_revert_long": {
       "enabled": false,
       "paper_enabled": true,
