@@ -138,6 +138,17 @@ acceptable, documented here so it isn't "discovered" mid-study.
   disposition-effect supply + ASM truncation structure, and it operates at weeks, not
   intraday, where those retail patterns bled.
 
+## 9b. Phase-5 status note (added 2026-07-28)
+
+Stage-4 passed (alpha preserved within 2-5% under production-faithful construction; MTF
+subset retains ~88%). **Phase-5 sweep pre-registration is DEFERRED until the ASM/GSM
+backfill lands** — the Stage-4 distributional read (sub-50% hit rate, tail-carried alpha,
+mean MAE ~−15%) means exit geometry and the ASM-truncation falsifier are coupled: winners
+that migrate into ASM are exactly the tail the alpha lives on, so sweeping exits before
+that data exists would lock a cell blind to its binding risk. Pre-register the Phase-5
+dimensions in this section ONLY after `data/asm_gsm_history/asm_gsm_events.parquet`
+materializes, and include an ASM-aware exit dimension (e.g. exit-on-ASM-entry vs hold).
+
 ## 10. A1/A2 compliance plan
 
 Identical to the sibling brief: development on Discovery + demoted windows (2023 →

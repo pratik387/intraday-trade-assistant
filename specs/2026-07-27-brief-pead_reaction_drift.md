@@ -137,6 +137,26 @@ defensible verdict.
   `pre_results_t1_fade` (FII-regime dependence — falsifier #2), `earnings_t1_runup_fade_short`
   (drafted-never-built; different window, fade not drift).
 
+## 9b. Phase-5 sweep pre-registration (added 2026-07-28, BEFORE any Phase-5 run)
+
+Stage-4 result: LONG n=258 on Discovery (long-leg-primary; SHORT parked pending a tradable
+implementation case — F&O-shortable subset was n=38/thin). Phase-5 dimensions, locked now:
+
+- **Cell dimensions (filter sweep):** threshold {causal pct5, causal pct3}; hold {5, 7, 10
+  sessions}; cap_segment {all, large+mid, mid+small+unknown}; ADV tier {all, tiers 1-4 (drop
+  most-liquid)}. Floors: n >= 100 per cell (Discovery), PF floor per lifecycle. NO other
+  dimensions may be added after seeing results (lesson #2).
+- **Exit sweep:** hold-to-H close (baseline); vol-scaled target (2-sigma, multiday
+  target-exit precedent) with H time-stop; NO tight stop variants — Stage-4 MAE profile
+  (mean −6.3%) says stops would clip the drift; a stopped variant may be measured but only
+  as a diagnostic, never selected without both windows agreeing.
+- **Costs:** CNC delivery round-trip (STT 0.20% + brokerage + charges) + 20bp slippage,
+  the mtf_capitulation cost model.
+- **Window discipline (amendment A1):** sweep + cell-lock on Discovery 2023-24; the locked
+  cell then runs ONCE on the demoted development window (2025-01 → 2026-04-30) as a
+  stability check — logged to the experiment ledger; freeze commit; then ONE shot on the
+  fresh pool (2026-05-01 → present) which is decisive together with paper.
+
 ## 10. A1/A2 compliance plan
 
 - **Development data:** Discovery 2023-2024 + demoted windows (2025-01 → 2026-04-30),
