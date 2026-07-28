@@ -368,3 +368,21 @@ Bug 5 in particular: rejection messages at `bar_scheduler.py:68, 88, 95-98` were
 - [ ] Decision: retire mis_unwind_vwap_revert_short if no cell ships
 - [ ] Update spec docs (`specs/2026-05-14-research-post-sebi-edges.md`, related) to reflect realistic PF expectations
 - [ ] Investigate the 5 other modules with dead loggers (`circuit_breaker.py`, `market_hours_manager.py`, `runtime_rvol_baseline.py`, `scan/energy_scanner.py`, `setup_universe.py`) — same fix pattern as bar_scheduler
+
+## 9. close_dn_overnight_long — ex-date live/backtest parity asymmetry (2026-07-28)
+
+Found during the exdate_drift_short consolidation (spec 2026-07-28). `close_dn_overnight_long`
+computes `prior_day_return_pct` from LIVE unadjusted traded prices
+(`structures/close_dn_overnight_long_structure.py:214,324-379`), but backtests run on
+back-adjusted monthly 5m feathers.
+
+- **Split/bonus ex-dates:** live prior_ret shows a huge spurious NEGATIVE (e.g. −50% on a 1:1
+  bonus) → live can never fire cell #5 (`prior_ret >= +3%`) on ex-dates, while the adjusted
+  backtest sees normal continuity. Direction of error: backtest may contain fires that live
+  would BLOCK (missed-fire asymmetry, never false-fires) — low severity.
+- **Dividend ex-dates:** mechanical 0.5-3% drop suppresses borderline `>= +3%` fires on
+  ~1,600 ex-date events/yr across the MTF universe. Same direction (blocks, never false).
+- **Action (when convenient, not urgent):** annotate ex-dates in the daily panel using the CA
+  event calendars (`data/corporate_actions/split_bonus_events.parquet` once materialized +
+  `data/dividend_ex_date/dividend_events.parquet`) and quantify how many backtest fires land
+  on ex-dates; if >2-3% of fires, add an ex-date exclusion to the detector for parity.
