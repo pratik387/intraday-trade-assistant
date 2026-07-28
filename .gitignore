@@ -95,3 +95,4 @@ models/conviction/*-xgboost.json
 models/conviction/*-training-metrics.json
 models/conviction/per_setup/
 models/gauntlet/*.parquet
+data/earnings_calendar/bse_scrip_master.json
