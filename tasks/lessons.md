@@ -11,6 +11,36 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-07-29 (#31) — Proposed a parameter change fitted to the outcomes that revealed it — and half the "finding" was tautological
+
+**What went wrong:** From paper logs I decomposed each setup's P&L by exit reason, observed that losses concentrate in `hard_sl`, and proposed an R-geometry sweep to widen/remove stops — "could flip the intraday book from −₹21.5k to positive." User: *"but u r violating the rule where we work on numbers and make it fit."* Correct, on two counts:
+1. **The observation is circular.** A stop-out is a loss BY DEFINITION. "Losses are concentrated in stop-outs" is true of every strategy that has a stop, working or broken. It carries zero information about whether the stop is mis-sized. I presented a tautology as a discovery.
+2. **The proposal fits the parameter to the window that produced the observation** — on n=43 (below_vwap) and n=22 (gap_fade) stop-outs from a single 30-day paper window. That is the salvage-mining the lifecycle bans, and both setups' geometries had ALREADY been swept and locked at Phase 5; re-sweeping after watching a locked cell fail is the canonical anti-pattern.
+3. The question I actually wanted answered — *would the stopped trades have recovered?* — is **unanswerable from an exit-reason decomposition**, because a stop truncates the path. It needs a post-exit re-simulation. I jumped from "can't answer" straight to "so change the stop."
+
+**What WAS legitimate:** the avg-loss/avg-win **magnitude ratio** (gap_fade 2.50×, below_vwap 1.34× vs the profitable up_spike 1.09×) is a genuine structural statistic, not a bucketing artifact. But it was already documented in gap_fade's own retirement evidence ("needs ~73% WR, gets 61%"). I rediscovered a known fact and framed it as a new lead.
+
+**Rule:**
+1. **Before reporting a decomposition, ask whether the split is definitionally guaranteed.** Exit-reason buckets, winner/loser splits, "the drawdown came from the losing trades" — these are tautologies. Only cross-cutting statistics (magnitude ratios, hit rates, MFE/MAE distributions, post-exit paths) carry information.
+2. **Never propose a parameter change justified by the window that revealed the pattern.** If geometry is genuinely suspect: pre-register the hypothesis, sweep on development data the observation did NOT come from, freeze, then judge on forward data. A locked cell that fails forward is evidence about the setup, NOT an invitation to re-open its parameters.
+3. **When the decisive question needs data you don't have (post-stop paths, counterfactual exits), say so and stop.** Do not substitute the question you can answer for the question that matters.
+
+---
+
+### 2026-07-29 (#30) — Quoted research-replication numbers as if they described the live book; paper logs said the opposite
+
+**What went wrong:** Twice in one session I reported research-harness output as forward evidence about the book: the universe re-cut one-shot ("the capitulation cluster is at −38.8 bps") and the multi-day path study ("the down-bounce collapsed, era_A +3.64% → era_B +0.26%"), concluding the book's core factor had decayed. The user asked *"can't u do the diagnostics on paper trade logs?"* — and the production-path paper logs said the **opposite**: the capitulation cluster was n=106, net **+₹85,419, PF 1.26**, improving month-over-month (June 0.71 → July 1.59), and close_dn was PF 1.95 on n=228. Two research instruments agreed with each other and disagreed with production.
+
+**Why:** research harnesses and production trade **different populations**. Research took 621 below_vwap fires where production took 110 (~3× per day after window alignment); production applies slot caps, per-day limits, `capital_budget_pct`, ranking and priority. Research also measures *signal drift over a horizon* while production trades a *stop/target geometry*. Both numbers can be correct about different objects. This is already lesson #19 rule 3 ("realistic forward expectation = OCI actual PF, not sanity PF; treat sanity as a candidate-filter, not a backtest") — I violated a documented rule.
+
+**Rule:**
+1. **Research PF is an upper bound on the raw signal. It is never a forward P&L estimate for the book.** Never quote it as "the setup is doing X forward."
+2. **When forward evidence is wanted, use production-path artifacts in this order:** live/paper `analytics.jsonl` + decay-tripwire ledgers > OCI canonical > research sanity. Check whether paper logs exist BEFORE running a research replication to answer a forward question.
+3. **Note the deployment location** — multiday setups log to a separate tree (`~/multiday_cnc/.../state/decay_tripwire_*.json`), overnight/CNC to the tripwire ledger, intraday to `logs/paper_*/analytics.jsonl`. "Not in the intraday logs" does NOT mean "not deployed".
+4. When research and production disagree, **production wins**, and the gap itself is the finding worth chasing (population mismatch vs genuine bug).
+
+---
+
 ### 2026-07-29 (#29) — A pre-registered gate can be *technically* passed by a statistic that doesn't match the product (relative alpha vs absolute PF)
 
 **What went wrong:** `xsec_momentum_demeaned` passed every gate — Phase-2 (demeaned alpha positive in 191/192 cells), Stage-4 (alpha preserved within 2-5% under production-faithful construction), and the blind-pre-registered Phase-5 era-split (35/72 eligible cells under amendment A5's "demeaned alpha > 0 in BOTH eras"). Then the locked cell turned out to be **net-negative in era_B (PF 0.898, −0.57%/position)**: its demeaned alpha was positive only because the universe mean fell *harder* than the winner cohort. For a **long-only cash** product that pays nothing — you cannot bank "I fell less than the index" unless you actually short the index. The A5 era-consistency gate had been written with a relative statistic, so the whole chain was internally consistent and still pointed at an untradeable cell. Caught only because the sweep agent was instructed to report absolute PF alongside alpha and flagged it unsoftened.
