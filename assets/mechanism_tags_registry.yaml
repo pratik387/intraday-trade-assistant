@@ -103,6 +103,24 @@ tags:
     source: "Microstructure thesis"
     live_computable: false
 
+  # Event-driven post-announcement drift (sub-project #9, orthogonal family).
+  # NEW TAG — added 2026-07-29 for earnings_downshock_continuation_short.
+  # JUSTIFICATION: no existing tag covers it. The illiquid over-extension ->
+  # reversion family above (capitulation_overshoot / retail_panic /
+  # retail_fomo_exhaustion / intraday_overshoot) all describe an INTRADAY
+  # over-shoot that MEAN-REVERTS with no dated catalyst. This mechanism is the
+  # opposite sign and a different clock: a DATED, exogenous information event
+  # (a SEBI LODR Reg-33 result filing) whose price impact is INCOMPLETE at the
+  # reaction-day close and CONTINUES in the same direction on the following
+  # session. Tagging it capitulation_overshoot would assert reversion, which is
+  # the falsifier, not the thesis. retail_panic and illiquidity_premium are
+  # co-tagged because they supply the holder-base and thinness preconditions,
+  # but neither carries the "slow diffusion of dated public news" claim.
+  earnings_underreaction_drift:
+    description: "A dated earnings disclosure (SEBI LODR Reg 33) is under-reacted to on its reaction day in analyst-uncovered, retail-held small/mid-caps: price discovery takes more than one session, so the reaction-day move continues into the following session. Direction-preserving continuation, NOT reversion. Distinct from classical PEAD, which trades SMALL surprises over 3-10 sessions on the long side; this trades LARGE down-shocks over ONE session on the short side."
+    source: "Behavioral/information-diffusion thesis (sub9 event-class screen 2026-07-29; brief specs/2026-07-29-brief-earnings_downshock_continuation_short.md)"
+    live_computable: false
+
   # Explicit no-dependency declaration — for setups whose mechanism is
   # genuinely rule-orthogonal (no F&O, no FII flow, no SEBI regulatory
   # dependency). Documenting this explicitly is preferable to leaving
