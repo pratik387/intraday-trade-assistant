@@ -50,7 +50,12 @@ and that continuation is short-able for one session.
   `data/earnings_calendar/earnings_events.parquet`.
 - **De-duplicate `(symbol, reaction_date)`** — MANDATORY, see §7.1.
 - **Entry: T+1 09:20, the close of the first 5m bar** — NOT the 09:15 open print (§7.2).
-- **Exit:** same-day close (single session, intraday MIS short).
+- **Exit: the 15:15 print** (close of the 15:10-15:15 5m bar). **CORRECTED 2026-07-29 —
+  the original "same-day close" was INFEASIBLE**: Zerodha auto-squares MIS equity from ~15:20
+  (lifecycle Stage-1 note / lesson #4: Upstox-Angel 15:15, ICICI 15:15-20, Zerodha 15:20-24),
+  and this is an MIS short, so the 15:29 leg cannot be held. 15:15 is fixed by BROKER
+  MECHANICS, not chosen by performance — 15:20 scores higher (+0.650% vs +0.552%) and was
+  deliberately NOT taken because it sits inside the square-off window (lesson #31).
 - **Universe:** low+mid ADV tiers; exclude circuit-blocked opens; exclude any NSE ASM / BSE GSM
   listing on T+1; `ProductionUniverseGate` at Stage 4 (A3).
 - Costs: full MIS round trip + per-trade slippage at Stage 4 (see §9 risk 1).
@@ -146,6 +151,64 @@ conventionally.
 3. The universe is confined to the 5m archive (~1,451-2,574 symbols); the event population was
    born inside it.
 4. era_A is the weaker half on every cut before the 09:20 fix and remains the thinner one after.
+
+## 9b. STAGE 4 RESULT (2026-07-29) — PASSED on real P&L with a feasible exit
+
+`tools/sub9_research/sanity_earnings_downshock_continuation_short.py` (Discovery only,
+n=220 after dedup → ADV tier → ProductionUniverseGate → ASM/GSM-clean → circuit-clean;
+177 symbols, 97 sessions, canonical schema, no deviations, first run, zero tuning).
+
+| basis (15:15 feasible exit) | net %/trade | PF | win | t |
+|---|---|---|---|---|
+| RAW gross | +1.007% | 2.19 | 65.9% | +4.45 |
+| real Zerodha MIS fees only (**0.083%**) | +0.924% | 2.06 | 65.0% | +4.08 |
+| **CENTRAL slippage 18.7bp/side (measured)** | **+0.552%** | **1.55** | 61.4% | +2.43 |
+| CONSERVATIVE 27.5bp/side | +0.377% | 1.35 | 58.6% | +1.66 |
+
+Per year: 2023 +0.617% PF 1.82 / 2024 +0.481% PF 1.37 (CENTRAL) — both positive, both tiers
+positive (adv_low +0.520%, adv_mid +0.584%). **Break-even 46.5bp/side vs 18.1 measured.**
+Falsifier #1 (+0.15% floor): CENTRAL is **3.7×** it, CONSERVATIVE **2.5×**. PASS.
+
+**Cost structure (the key discovery):** real MIS-short fees are only **0.083%** of notional
+(brokerage is ₹20-capped both legs) — an order of magnitude below the 0.31% flat assumption.
+**Slippage is therefore the entire verdict**, which is why it was measured rather than assumed
+(`tools/sub9_research/measure_slippage_earnings_downshock.py`, 5 methods triangulated on 1m
+data, 220/220 matched): CENTRAL 18.7bp/side, CONSERVATIVE 27.5, STRESS 46.6. Spread is
+tier-invariant (~11bp); **impact** separates the tiers (13.2 adv_low vs 5.2 adv_mid).
+Model-free check: filling at real 5m-block VWAP is −5.4bp/side vs the assumed mark, so the
+mark carries **no** optimistic bias.
+
+**The exit correction cost nothing.** 15:15 vs the infeasible 15:29: gross +1.007% vs +0.993%,
+net +0.552% vs +0.538% — the last 15 minutes contribute ≈ −1.4bp to this short, i.e. the
+continuation drift is complete by 15:15 and the closing print adds nothing. Exit-leg slippage
+is also slightly *cheaper* at 15:15 (16.1 vs 17.4bp): the close has more turnover but is 2.3×
+more volatile, and the two effects net in our favour.
+
+**What keeps this from being a clean pass:** the STRESS slippage case (39.8bp/side, spread =
+full intra-bar half-range) gives +0.132%/trade, PF 1.11 — a **FAIL**. STRESS is a definitional
+ceiling, not the pre-registered basis, but it is the honest upper bound on execution risk for a
+post-earnings gap-down book. Weakest grid cell: 2024 CONSERVATIVE (PF 1.222, t 0.79).
+
+**Execution requirement (not optional):** at ₹1L the order is ~25% of the entry *minute's*
+turnover in adv_low (49% at the exit minute) — it must be **worked across the 5m block**, never
+fired as a single-minute market order. A naive market order costs materially more than any
+number above.
+
+## 9c. PHASE-5 PRE-REGISTRATION (written BEFORE any Phase-5 run)
+
+- **Fixed, NOT swept:** signal ≤−8%, de-dup, 09:20 entry, **15:15 exit** (broker mechanics),
+  ProductionUniverseGate, ASM/GSM + circuit exclusions, measured per-tier slippage.
+- **Cell dimensions:** ADV tier {low, mid, both} × shock depth {−8%, −10%, −12%} ×
+  announce class {AMC, intraday, all}. Nothing else; no dimension added after seeing results.
+- **Geometry sweep (the MFE p50 2.65% vs MAE p50 1.48% profile says there is room):**
+  stop ∈ {none, 2%, 3%, 4%} × target ∈ {none, 1.5%, 2.5%}. **`none/none` (the Stage-4
+  construction) is the incumbent and wins ties** — a geometry only displaces it on a strictly
+  better result in BOTH eras, not on pooled numbers.
+- **Lockable-cell rule (A5 + A5-b):** net expectancy > 0 on the ABSOLUTE statistic in BOTH eras
+  at CONSERVATIVE slippage, n ≥ 100/era, pooled PF ≥ 1.20. Stability-first selection
+  (smallest era gap at comparable PF), never top-PF-only.
+- **Then:** one-shot demoted-window check (2025-01→2026-04), ledger-logged; freeze commit;
+  fresh-pool one-shot + paper as the decisive gates (A1).
 
 ## 10. A1/A2 compliance
 

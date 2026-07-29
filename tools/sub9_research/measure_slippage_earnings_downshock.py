@@ -106,10 +106,22 @@ OUTPUT
     stdout report                                          (tables + verdict)
 
 Run:  .venv/Scripts/python tools/sub9_research/measure_slippage_earnings_downshock.py
+
+FEASIBILITY CORRECTION (2026-07-29) -- parameterised EXIT LEG
+--------------------------------------------------------------
+Point 5 of "WHAT THIS MEASUREMENT CANNOT SEE" below became the binding constraint:
+Zerodha auto-squares MIS equity from ~15:20, so the 15:29 exit leg measured by the
+default run is UNREACHABLE.  `--cohort-csv` / `--out-csv` / `--exit-fill-minute` /
+`--exit-5m-window` / `--exit-window` / `--exit-roll-window` let the SAME triangulation
+be re-run against the feasible 15:15 exit, so the exit leg's slippage is MEASURED at
+15:15 rather than assumed equal to the 15:29 measurement.
+Defaults are unchanged -> the original run is reproducible with no arguments.
+This is a feasibility correction, NOT an exit-time sweep (lesson #31).
 """
 
 from __future__ import annotations
 
+import argparse
 import math
 import sys
 from pathlib import Path
@@ -232,6 +244,33 @@ def q(s: pd.Series) -> dict:
 
 # ----------------------------------------------------------------------------------
 def main() -> int:
+    ap = argparse.ArgumentParser(description="slippage measurement (see module docstring)")
+    ap.add_argument("--cohort-csv", default=None)
+    ap.add_argument("--out-csv", default=None)
+    ap.add_argument("--exit-fill-minute", default=None, metavar="HH:MM",
+                    help="the 1m bar a live cover order executes inside "
+                         "(15:29 = session close; 15:14 = the feasible 15:15 MIS exit)")
+    ap.add_argument("--exit-5m-window", default=None, metavar="HH:MM,HH:MM")
+    ap.add_argument("--exit-window", default=None, metavar="HH:MM,HH:MM")
+    ap.add_argument("--exit-roll-window", default=None, metavar="HH:MM,HH:MM")
+    a = ap.parse_args()
+    if a.cohort_csv:
+        LOCKED["cohort_csv"] = a.cohort_csv
+    if a.out_csv:
+        LOCKED["out_csv"] = a.out_csv
+    if a.exit_fill_minute:
+        LOCKED["exit_fill_minute"] = a.exit_fill_minute
+    for key, val in (("exit_5m_window", a.exit_5m_window),
+                     ("exit_window", a.exit_window),
+                     ("exit_roll_window", a.exit_roll_window)):
+        if val:
+            lo, hi = val.split(",")
+            LOCKED[key] = (lo.strip(), hi.strip())
+    print(f"[cfg] cohort={LOCKED['cohort_csv']}")
+    print(f"[cfg] exit leg: fill_minute={LOCKED['exit_fill_minute']}  "
+          f"5m_block={LOCKED['exit_5m_window']}  window={LOCKED['exit_window']}  "
+          f"roll={LOCKED['exit_roll_window']}")
+
     root = Path(__file__).resolve().parents[2]
     tr = pd.read_csv(root / LOCKED["cohort_csv"])
     tr["sym"] = tr["symbol"].str.replace("NSE:", "", regex=False)
@@ -732,9 +771,15 @@ def main() -> int:
         "4. SHORT-SIDE BORROW/BAN.  Intraday shorting is fine on MIS, but an F&O-ban or a",
         "   circuit-locked down move makes the SHORT unfillable at any price.  Stage-4 flags",
         "   exist for circuit/locked but a real broker rejection is not modelled here.",
-        "5. MIS AUTO-SQUARE-OFF.  Zerodha squares MIS equity off from ~15:20, before this",
-        "   cohort's 15:25-15:30 exit bar.  The measured 'close' leg may not be the leg you",
-        "   actually get -- a 15:20 forced exit is a different (usually worse) print.",
+        ("5. MIS AUTO-SQUARE-OFF.  Zerodha squares MIS equity off from ~15:20, before this"
+         if LOCKED["exit_fill_minute"] >= "15:20" else
+         "5. MIS AUTO-SQUARE-OFF is RESPECTED by this run: the exit leg is measured at"),
+        (f"   cohort's 15:25-15:30 exit bar.  The measured 'close' leg may not be the leg you"
+         if LOCKED["exit_fill_minute"] >= "15:20" else
+         f"   {LOCKED['exit_fill_minute']}, inside every relevant broker's pre-square-off window."),
+        ("   actually get -- a 15:20 forced exit is a different (usually worse) print."
+         if LOCKED["exit_fill_minute"] >= "15:20" else
+         "   A broker-initiated square-off is still not modelled (we exit voluntarily first)."),
         "6. OUR OWN FOOTPRINT.  M1-M4 read a tape that did NOT contain our order.  Only M6",
         "   models impact, and it does so parametrically, not empirically.",
         "",

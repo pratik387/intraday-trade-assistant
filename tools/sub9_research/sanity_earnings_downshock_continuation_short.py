@@ -104,14 +104,46 @@ LEDGER NOTE
 Development-window (Discovery) sanity.  No cell locked, nothing shipped, no OOS/Holdout
 or fresh-pool statistic computed -> no `docs/experiment_ledger.jsonl` line required.
 
+FEASIBILITY CORRECTION (2026-07-29) -- `--exit-bar-start`
+---------------------------------------------------------
+The LOCKED construction above exits at the session close (the 15:25-15:30 5m bar, i.e.
+the 15:29 1m print).  `measure_slippage_earnings_downshock.py` flagged that this is
+**INFEASIBLE for an MIS short**: Zerodha auto-squares MIS equity positions from ~15:20
+(project Stage-1 note in `docs/setup_lifecycle.md`, lesson #4: Upstox/Angel 15:15,
+ICICI 15:15-15:20, Zerodha 15:20-15:24).  The position cannot be held to 15:29.
+
+`--exit-bar-start HH:MM` names the START stamp of the 5m bar whose CLOSE is the exit
+print (5m bars in the archive are start-stamped; the last bar of a session is 15:25 and
+its close IS the 15:30 session close).  So:
+    --exit-bar-start 15:10   -> exit at the 15:15 print   <-- the FEASIBLE exit
+    --exit-bar-start 15:15   -> exit at the 15:20 print   (sensitivity only)
+    (omitted)                -> exit at the session close (the original, INFEASIBLE)
+
+*** THIS IS A FEASIBILITY CORRECTION, NOT AN OPTIMISATION (lesson #31). ***
+The corrected exit time is determined by BROKER MECHANICS ALONE: 15:15 is the latest
+exit safely inside every relevant broker's pre-square-off window.  It was NOT selected
+by sweeping exit times and taking the best.  15:20 and the original session close are
+reported as SENSITIVITIES ONLY and are never permitted to become the verdict basis.
+
+MEASURED SLIPPAGE COLUMNS (additive; the locked 0/20/50bp columns are untouched)
+--------------------------------------------------------------------------------
+`measure_slippage_earnings_downshock.py` measured this exact cohort:
+    CENTRAL      18.7 bp/side  (adv_low 23.2 / adv_mid 14.3)
+    CONSERVATIVE 27.5 bp/side
+Emitted as `net_pct_central` / `net_pct_centralTier` / `net_pct_conservative`.
+These are MEASURED rates substituted for the earlier flat guesses -- not new tuning.
+
 Output:
   reports/sub9_sanity/_earnings_downshock_continuation_short_trades_discovery.csv
+  ... _trades_discovery_exit<HHMM>.csv   when --exit-bar-start is given
 
 Usage:
   .venv/Scripts/python tools/sub9_research/sanity_earnings_downshock_continuation_short.py
+  .venv/Scripts/python tools/sub9_research/sanity_earnings_downshock_continuation_short.py --exit-bar-start 15:10
 """
 from __future__ import annotations
 
+import argparse
 import sys
 import warnings
 from pathlib import Path
@@ -151,6 +183,17 @@ LOCKED_FILTERS = {
     "min_bars_in_session":      2,             # need an entry bar + >=1 later bar
     "notional_inr":             100_000.0,
     "slippage_bps_per_side":    (0.0, 20.0, 50.0),
+}
+
+# =============================================================================
+# MEASURED slippage (reports/sub9_sanity/_earnings_downshock_slippage.csv).
+# NOT tuned here -- these are the outputs of the measurement run, substituted for the
+# 20/50bp guesses above.  Reporting-only additions; nothing selects on them.
+# =============================================================================
+MEASURED_SLIP = {
+    "central_flat_bps":      18.7,
+    "conservative_flat_bps": 27.5,
+    "central_by_tier_bps":   {"adv_low": 23.2, "adv_mid": 14.3},
 }
 
 # ---- Discovery window.  Stage 4 must NOT touch 2025+ at all. ----
@@ -421,10 +464,21 @@ def show(b: dict) -> None:
 
 
 # =============================================================================
-def main() -> None:
+def main(exit_bar_start: str | None = None) -> None:
     print("=" * 96)
     print(f"STAGE 4 SANITY -- {SETUP_NAME}  (REAL P&L SIMULATION, Discovery only)")
     print("=" * 96)
+    if exit_bar_start is None:
+        print("  EXIT = session close (last 5m bar close = the 15:30 print).")
+        print("  *** INFEASIBLE for an MIS short: Zerodha auto-squares from ~15:20. ***")
+        out_path = OUT_PATH
+    else:
+        et = pd.Timestamp(f"1900-01-01 {exit_bar_start}") + pd.Timedelta(minutes=5)
+        print(f"  EXIT = close of the {exit_bar_start} 5m bar (the {et.strftime('%H:%M')} print).")
+        print("  FEASIBILITY CORRECTION (lesson #31): fixed by broker MIS square-off")
+        print("  mechanics, NOT selected by sweeping exit times.")
+        out_path = OUT_PATH.with_name(
+            OUT_PATH.stem + "_exit" + exit_bar_start.replace(":", "") + OUT_PATH.suffix)
 
     print("\n--- loading CA-adjusted / bad-print-cleaned daily panel ---", flush=True)
     px, meta = S.load_prices()
@@ -495,7 +549,10 @@ def main() -> None:
     # =====================================================================
     NOTIONAL = LOCKED_FILTERS["notional_inr"]
     ENTRY_T = pd.Timestamp(f"1900-01-01 {LOCKED_FILTERS['entry_bar_start_time']}").time()
+    EXIT_T = (pd.Timestamp(f"1900-01-01 {exit_bar_start}").time()
+              if exit_bar_start is not None else None)
     rows, n_nobars, n_short_sess, n_badstart, n_badqty, n_circuit = [], 0, 0, 0, 0, 0
+    n_noexitbar = 0
 
     for r in ev.itertuples(index=False):
         b = g.get((r.symbol, r.entry_date))
@@ -519,8 +576,22 @@ def main() -> None:
         # ---- ENTRY: close of bar 0 (09:20).  GUARD 3: walk starts at bar 1. ----
         entry_price = float(b["close"].iloc[0])
         entry_ts = b["date"].iloc[0]
-        exit_price = float(b["close"].iloc[-1])
-        exit_ts = b["date"].iloc[-1]
+
+        # ---- EXIT ----
+        if EXIT_T is None:
+            exit_idx = len(b) - 1
+        else:
+            # the bar START-stamped EXIT_T; its close IS the exit print.
+            hit = np.flatnonzero(b["date"].dt.time.values == EXIT_T)
+            if hit.size == 0:
+                n_noexitbar += 1
+                continue
+            exit_idx = int(hit[0])
+        if exit_idx <= 0:                      # exit bar must be strictly after entry
+            n_noexitbar += 1
+            continue
+        exit_price = float(b["close"].iloc[exit_idx])
+        exit_ts = b["date"].iloc[exit_idx]
         if not (entry_price > 0 and exit_price > 0):
             n_badqty += 1
             continue
@@ -529,7 +600,7 @@ def main() -> None:
             n_badqty += 1
             continue
 
-        path = b.iloc[1:]
+        path = b.iloc[1:exit_idx + 1]
         path_hi = float(path["high"].max())
         path_lo = float(path["low"].min())
         # SHORT: favorable = price falls
@@ -567,6 +638,8 @@ def main() -> None:
             mfe_pct=round(mfe_pct, 4),
             mae_pct=round(mae_pct, 4),
             n_bars=len(b),
+            exit_bar_start=exit_ts.strftime("%H:%M"),
+            n_bars_held=exit_idx,
             # --- exclusion flags (all False by construction; kept for audit) ---
             flag_circuit_blocked=False,
             flag_locked_all_day=bool(cf["locked_all_day"]),
@@ -578,7 +651,8 @@ def main() -> None:
             # metadata only -- MUST NOT be used as a filter dimension
             day_high=round(float(b["high"].max()), 4),
             day_low=round(float(b["low"].min()), 4),
-            day_close=round(exit_price, 4),
+            day_close=round(float(b["close"].iloc[-1]), 4),
+            session_close=round(float(b["close"].iloc[-1]), 4),
         )
 
         # ---- cost stack at each slippage assumption ----
@@ -594,6 +668,25 @@ def main() -> None:
             rec[f"fees_{sfx}"] = round(fee, 2)
             rec[f"net_pnl_{sfx}"] = round(net, 2)
             rec[f"net_pct_{sfx}"] = round(net / (entry_price * qty) * 100.0, 5)
+
+        # ---- MEASURED slippage variants (additive; nothing above is changed) ----
+        for tag, bps in (
+            ("central",      MEASURED_SLIP["central_flat_bps"]),
+            ("conservative", MEASURED_SLIP["conservative_flat_bps"]),
+            ("centralTier",  MEASURED_SLIP["central_by_tier_bps"].get(r.adv_tier,
+                             MEASURED_SLIP["central_flat_bps"])),
+        ):
+            s = bps / 10_000.0
+            e_fill = entry_price * (1.0 - s)
+            x_fill = exit_price * (1.0 + s)
+            gross = (e_fill - x_fill) * qty
+            fee = calc_fee(e_fill, x_fill, qty, "SELL", 1.0)
+            net = gross - fee
+            rec[f"slip_bps_{tag}"] = bps
+            rec[f"gross_pnl_{tag}"] = round(gross, 2)
+            rec[f"fees_{tag}"] = round(fee, 2)
+            rec[f"net_pnl_{tag}"] = round(net, 2)
+            rec[f"net_pct_{tag}"] = round(net / (entry_price * qty) * 100.0, 5)
 
         # canonical aliases (0bp = no-slippage reference)
         rec["gross_pnl"] = rec["gross_pnl_0bp"]
@@ -611,6 +704,10 @@ def main() -> None:
            f"{n_short_sess} too short, {n_badstart} bad start bar")
     funnel("not circuit-blocked (strict)", len(ev) - n_nobars - n_short_sess
            - n_badstart - n_circuit, f"{n_circuit} blocked")
+    funnel("exit bar present", len(ev) - n_nobars - n_short_sess - n_badstart
+           - n_circuit - n_noexitbar,
+           f"{n_noexitbar} missing the "
+           f"{exit_bar_start if exit_bar_start else 'session-close'} exit bar")
     funnel("SIMULATED TRADES", len(rows), f"{n_badqty} dropped on price/qty")
 
     tr = pd.DataFrame(rows)
@@ -626,9 +723,9 @@ def main() -> None:
     if not res.is_valid:
         raise RuntimeError("SCHEMA VALIDATION FAILED")
 
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tr.to_csv(OUT_PATH, index=False)
-    print(f"\n  wrote {OUT_PATH}  rows={len(tr)}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tr.to_csv(out_path, index=False)
+    print(f"\n  wrote {out_path}  rows={len(tr)}")
 
     # =====================================================================
     # RESULTS
@@ -647,11 +744,29 @@ def main() -> None:
                "_r", "pnl_pct")
     show(gb)
 
-    print("\n  NET by slippage assumption:")
+    print("\n  NET by slippage assumption (locked 0/20/50bp reference grid):")
     nets = {}
     for bps in (0, 20, 50):
         nets[bps] = block(f"NET @ {bps}bp/side", tr, f"net_pnl_{bps}bp", f"net_pct_{bps}bp")
         show(nets[bps])
+
+    print("\n  NET at MEASURED slippage (_earnings_downshock_slippage.csv):")
+    meas = {}
+    for tag, lbl in (("central",      f"CENTRAL {MEASURED_SLIP['central_flat_bps']}bp/side"),
+                     ("centralTier",  "CENTRAL per-ADV-tier (23.2/14.3)"),
+                     ("conservative", f"CONSERV {MEASURED_SLIP['conservative_flat_bps']}bp/side")):
+        meas[tag] = block(lbl, tr, f"net_pnl_{tag}", f"net_pct_{tag}")
+        show(meas[tag])
+    print("\n  falsifier #1 (brief SS6.1): kill if net < +0.15%/trade")
+    for tag in ("central", "centralTier", "conservative"):
+        v = meas[tag]["exp_pct"]
+        print(f"    {tag:<14s} net {v:+.4f}%/trade -> "
+              f"{'PASS' if v >= 0.15 else 'FAIL'}")
+
+    print("\n  PER YEAR at MEASURED slippage:")
+    for yr, sub in tr.groupby("year"):
+        for tag in ("central", "conservative"):
+            show(block(f"{yr} NET {tag}", sub, f"net_pnl_{tag}", f"net_pct_{tag}"))
 
     print("\n  Cost decomposition (mean per trade, Rs):")
     for bps in (0, 20, 50):
@@ -744,4 +859,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--exit-bar-start", default=None, metavar="HH:MM",
+        help="START stamp of the 5m bar whose CLOSE is the exit print. "
+             "15:10 -> exit at the 15:15 print (the FEASIBLE MIS exit). "
+             "Omit to reproduce the original session-close exit.")
+    a = ap.parse_args()
+    main(exit_bar_start=a.exit_bar_start)
