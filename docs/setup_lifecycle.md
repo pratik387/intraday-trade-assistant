@@ -83,6 +83,17 @@ Orthogonal-family candidates (different participant/direction/horizon) get prior
   the "sweep on Discovery, get surprised by the demoted one-shot" pattern —
   `pead_reaction_drift` (Disc PF 2.45 → demoted 0.67, killed 2026-07-28) is the canonical
   case this rule would have caught at sweep time.
+  **A5-b — the era-consistency statistic must match the PRODUCT (added 2026-07-29, from the
+  `xsec_momentum_demeaned` decline):** for a **single-leg (long-only or short-only) cash**
+  candidate, era consistency is tested on **net PF / net return per position**, NOT on a
+  relative statistic. Momentum passed A5 on demeaned alpha in both eras yet its locked cell
+  was net-NEGATIVE in era_B — its "alpha" was the universe falling harder, which pays nothing
+  unless you actually short the universe. Relative statistics (demeaned alpha, market-adjusted
+  return) are valid era-consistency metrics ONLY for a candidate whose product is genuinely
+  hedged/long-short. Choose the statistic from the implementation, then pre-register it.
+  Corollary: overriding a pre-registered PASS in the CONSERVATIVE direction (declining a
+  freeze) is always permitted and needs no ceremony; overriding a FAIL in the permissive
+  direction is never permitted.
   **Structure-born exemption (2026-07-28):** a mechanism that could not have existed in the
   earlier era because the new structure created it (a dated rule change, the post-2025
   illiquidity-premium flip) is exempt from cross-era consistency — but then the brief MUST

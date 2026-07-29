@@ -3,7 +3,25 @@
 **Date:** 2026-07-27
 **Stage:** 0 (idea) + Stage 1 (Indian-market research) combined
 **Family:** MOMENTUM-CONTINUATION, cross-sectional, 2-8 week CNC/MTF horizon
-**Status:** DRAFT — awaiting user review (lesson #20 gate). Not committed until approved.
+**Status:** **FREEZE DECLINED 2026-07-29 (user decision) — recorded as an era_A artifact for
+long-only cash implementation.** Phase-5 was a technical PASS (35/72 eligible cells; locked
+`all/f60/decile/hold20/asm_exit`, pooled PF_net 1.42) but the era split is disqualifying in
+substance: **the locked cell is NET-NEGATIVE in era_B (PF_net 0.898, −0.57%/position, WR
+45.2%)**, and its demeaned alpha stayed positive only because the universe mean fell harder.
+f120 alpha goes outright negative in era_B. Since the fresh pool continues era_B structure, a
+one-shot would almost certainly fail — the freeze commit and the ledger line were declined
+rather than spent. **Overriding a pre-registered PASS in the CONSERVATIVE direction is
+permitted; the reverse never is.**
+**Live residue (a DIFFERENT candidate, needs its own brief):** momentum still beats the
+universe in era_B (+0.2 to +1.0pp demeaned at f60) — that is an **index-hedged long/short**
+thesis, a different product with different costs, borrow, and execution. Do not resurrect this
+brief for it.
+**Kept findings:** ASM falsifier #3 NOT triggered — surveillance migration truncates 5-20% of
+positions and consumes ~10-25% of the long-hold winner tail (real regulatory haircut, not
+confiscation); asm_exit helps marginally at h20, hurts at h40/h60; stops/targets clip the
+tail-carried edge everywhere (the PEAD geometry finding replicates). Evidence:
+`reports/sub9_sanity/_xsec_momentum_phase5_cells.csv`,
+`tools/sub9_research/xsec_momentum_demeaned_cell_lock.json`, ledger line 2026-07-28.
 **Lifecycle:** governed by `docs/setup_lifecycle.md` incl. 2026-07-27 amendments A1-A4.
 
 ---

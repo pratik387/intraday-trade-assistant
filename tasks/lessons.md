@@ -11,6 +11,24 @@ Review at the start of each session to avoid repeating mistakes.
 **Rule:** ...
 -->
 
+### 2026-07-29 (#29) — A pre-registered gate can be *technically* passed by a statistic that doesn't match the product (relative alpha vs absolute PF)
+
+**What went wrong:** `xsec_momentum_demeaned` passed every gate — Phase-2 (demeaned alpha positive in 191/192 cells), Stage-4 (alpha preserved within 2-5% under production-faithful construction), and the blind-pre-registered Phase-5 era-split (35/72 eligible cells under amendment A5's "demeaned alpha > 0 in BOTH eras"). Then the locked cell turned out to be **net-negative in era_B (PF 0.898, −0.57%/position)**: its demeaned alpha was positive only because the universe mean fell *harder* than the winner cohort. For a **long-only cash** product that pays nothing — you cannot bank "I fell less than the index" unless you actually short the index. The A5 era-consistency gate had been written with a relative statistic, so the whole chain was internally consistent and still pointed at an untradeable cell. Caught only because the sweep agent was instructed to report absolute PF alongside alpha and flagged it unsoftened.
+
+**Why it matters:** every pre-registration protects against *changing your mind after seeing results* — it does NOT protect against having chosen the wrong metric before you started. A gate whose statistic doesn't match the implementation is a gate that can be passed by something you can't trade.
+
+**Rule:**
+1. **Pick the gate statistic from the PRODUCT, then pre-register it.** Single-leg (long-only / short-only) cash candidate → era consistency and ship gates on **net PF / net return per position**. Relative statistics (demeaned alpha, market-adjusted, sector-neutral) are legitimate ONLY when the product is genuinely hedged or long/short. Codified as lifecycle amendment **A5-b**.
+2. **Always report the absolute metric next to the relative one**, at every stage, even when the relative one is the pre-registered decision variable. The divergence between them IS the diagnostic.
+3. **Overriding a pre-registered PASS in the conservative direction (declining a freeze/ship) is always permitted and needs no ceremony.** Pre-registration exists to stop *optimistic* overrides. Declining costs one candidate; the reverse costs the validity of the whole framework.
+4. When a relative edge survives an era but the absolute one dies, that is not a dead candidate — it is a **different product** (here: index-hedged long/short) that needs its own brief, costs, and borrow analysis. Do not resurrect the original brief for it.
+
+---
+
+### 2026-07-10 — Simulation skipped the final decision point; user's "did you check ALL days?" flipped the conclusion
+**What went wrong:** The target-exit study's touch loop broke before applying the EXIT day's intraday touch — testing K of K+1 in-market sessions. I presented a decisive "targets don't help" verdict. The user asked whether all days were checked; including the exit day flipped the loose-target result (2σ vol-scaled targets beat baseline in all 4 setups, +6–15% net) because most of the benefit is selling the final-day spike instead of the faded close.
+**Rule:** Before presenting a simulation's verdict, enumerate the decision points the strategy change touches and assert the sim covers EVERY one (entry day, each middle day, exit day, gap cases). A boundary day silently excluded biases the whole study. State the coverage explicitly in the results ("touch tested on sessions 1..K+1 including exit day").
+
 ### 2026-07-09 — Subagents repeatedly stalled on small live-critical edits; user escalated twice
 **What went wrong:** Three dispatched subagents in one day stalled with 0-byte transcripts (their file edits landed on disk but they hung mid-task and never reported). Each stall cost the user waiting time on LIVE-money fixes and forced kill→relaunch or kill→finish-inline. The third stall (margin-blocking fix) was ~80% done on disk when killed; finishing inline took minutes.
 **Rule:** For small, well-understood edits (< ~100 lines, 1-3 files) on live-critical paths, do the work INLINE — subagent dispatch+review overhead plus stall risk exceeds the context saved. Reserve subagents for genuinely large/parallel work (multi-file features, research sweeps). When a subagent goes quiet: check its output file size/mtime AND `git status` — a 0-byte transcript with real disk edits means the work may be nearly done; inspect the diff and finish inline rather than relaunching from scratch. Also: ops scripts must never instantiate KiteBroker for status queries (its constructor loads ~96k instruments, 10-20s) — use `tools/ops_quick.py` / direct kiteconnect.
