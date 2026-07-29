@@ -2,8 +2,49 @@
 
 **Date:** 2026-07-29
 **Type:** UNIVERSE re-specification (not a new setup) — applies to mechanisms already owned
-**Status:** PRE-REGISTERED. Committed BEFORE any fresh-pool statistic is computed; the freeze
-is verifiable by commit order.
+**Status:** **REJECTED at the fresh-pool one-shot, 2026-07-29.** (Pre-registration committed
+`550071f` BEFORE any fresh-pool statistic existed; freeze verifiable by commit order.)
+
+**RESULT (§7 applied mechanically).** Power gate PASSED (pooled A 2,224 fires / B 556, gate
+≥50). Outcomes, absolute statistic per A5-b:
+
+| decision unit | n_A | exp_bps A | PF A | n_B | exp_bps B | PF B | B better |
+|---|---|---|---|---|---|---|---|
+| below_vwap_long | 621 | +6.20 | 1.018 | 170 | +15.91 | 1.084 | **yes** |
+| capitulation_multiday | 466 | −38.79 | 0.786 | 326 | −45.35 | 0.748 | no |
+| close_dn_overnight | 243 | **+19.34** | **1.601** | 59 | −16.93 | 0.682 | no |
+| short_open_fade | 894 | −6.17 | 0.866 | 1 | −94.31 | — | ineligible (n_B<15) |
+| **POOLED** | **2,224** | **−6.76** | **0.837** | **556** | **−23.69** | **0.759** | — |
+
+**REJECT:** pooled B expectancy worse than A by ~250% of |A| (far outside the ±10% NO-CHANGE
+band); majority test fails independently (B better in 1 of 3 eligible units). §8.2
+decomposition flag NOT raised (B did not win). **Do not change production universes.**
+Mechanistically the gates gut rather than refine: B retains only 24-27% of close_dn and
+below_vwap fires and **0.1%** of or_window (894→1), and damages the very mechanism they were
+meant to protect (capitulation −38.8 → −45.3 bps).
+
+**PROCESS DISCLOSURE (recorded deliberately).** The evaluation script was run TWICE. Run 1
+scored `below_vwap_volume_revert_long` on its raw sanity population (18,518 fires, ~100× its
+production rate) instead of its shipped 3D cell lock + locked exit grid — an unfaithful
+replication. It was corrected (via `cell_sweep._row_simulate`, the same resim
+`apply_lock_below_vwap_oos_ho.py` uses) and re-run; the table above is run 2. **Both runs
+returned REJECT** (run 1: pooled A −10.16 vs B −15.59 bps, 0/3 units B-better). The correction
+could not have reached ADOPT (that needs 2 of 3 units; below_vwap is one). Run 1's ledger line
+was deleted so exactly one line exists — the record is therefore "one evaluation, run twice,
+first run defective", disclosed here rather than hidden.
+
+**Caveats on the read:** Universe A is itself net-negative on this window (−6.76 bps, PF 0.84)
+— this compares a losing quarter to a worse one. `or_window` fires ~12× production rate (its
+sanity harness has no portfolio slot/capital gating; raw sanity is its documented standard).
+`below_vwap` — the only unit where B won — is also the only setup whose data coverage begins
+in 2026, so the 18-month history gate is doing something structurally different there.
+Three setups could NOT be faithfully replicated on the fresh pool and were EXCLUDED, not
+approximated: `panic_crash_revert_long` and `up_spike_fade_short` (no offline harness; only
+source is the OCI pipeline, which has not run past 2026-04-30) and `long_panic_gap_down` (its
+sanity sources PDH/PDL/PDC from `consolidated_daily.feather`, which ends 2026-04-30 and
+silently returns 0 trades past it; repointing would change the signal-defining inputs).
+Evidence: `reports/sub9_sanity/_universe_recut_freshpool.csv`,
+`tools/sub9_research/oneshot_universe_recut_freshpool.py`, ledger line 2026-07-29.
 **Lifecycle:** `docs/setup_lifecycle.md` A1 (fresh-pool decisive), A5-b (absolute statistic —
 these are single-leg cash mechanisms), A2 (ledger line mandatory).
 
