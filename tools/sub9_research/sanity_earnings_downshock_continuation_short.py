@@ -207,12 +207,25 @@ DISCOVERY_END   = pd.Timestamp("2024-12-31")
 DEMOTED_START = pd.Timestamp("2025-01-01")
 DEMOTED_END   = pd.Timestamp("2026-04-30")
 
-# HARD FLOOR: the fresh pool. NOTHING in this module may read a signal on/after this.
+# HARD FLOOR: the fresh pool. NOTHING in this module may read a signal on/after this
+# UNLESS `build_cohort(..., allow_fresh_pool=True)` is passed EXPLICITLY.  See below.
 FRESH_POOL_START = pd.Timestamp("2026-05-01")
+
+# ---- FRESH POOL (lifecycle amendment A1: the DECISIVE gate).
+# Signals from 2026-05-01 to the latest session on disk.  The end is a sentinel: it is
+# CLAMPED at run time to the daily panel's max date, so "latest available" is derived
+# from the data, never hand-set.
+# *** Reading this window is ONE-SHOT and IRREVERSIBLE for a frozen candidate. ***
+# The guard in `build_cohort` refuses it by DEFAULT.  Bypassing it requires an explicit
+# `allow_fresh_pool=True`, which prints a logged banner naming the freeze commit.  The
+# guard is a safety feature: it is bypassed deliberately, never deleted.
+FRESH_START = FRESH_POOL_START
+FRESH_END_SENTINEL = pd.Timestamp("2100-01-01")
 
 WINDOWS = {
     "discovery": (DISCOVERY_START, DISCOVERY_END),
     "demoted":   (DEMOTED_START,   DEMOTED_END),
+    "freshpool": (FRESH_START,     FRESH_END_SENTINEL),
 }
 
 # ---- circuit-band proxy (identical to the gauntlet's STRICT rule; not tuned) ----
@@ -244,7 +257,8 @@ def funnel(step: str, n: int, note: str = "") -> None:
 # =============================================================================
 # 1. Event construction  (mirrors the gauntlet's build_events EXACTLY, + dedupe)
 # =============================================================================
-def build_events(px: pd.DataFrame, meta: dict) -> pd.DataFrame:
+def build_events(px: pd.DataFrame, meta: dict,
+                 allow_fresh_pool: bool = False) -> pd.DataFrame:
     df = pd.read_parquet(EARN_PATH)
     funnel("earnings filings on disk (raw rows)", len(df))
 
@@ -291,7 +305,7 @@ def build_events(px: pd.DataFrame, meta: dict) -> pd.DataFrame:
            f"{len(shock) - len(dedup)} duplicate filings dropped")
 
     # ---- attach entry session (strictly AFTER the reaction date) + adv20 ----
-    ev = S.attach_returns(dedup, px, meta)
+    ev = S.attach_returns(dedup, px, meta, allow_fresh_pool=allow_fresh_pool)
     ev = ev.drop(columns=[c for c in ev.columns
                           if c.startswith(("ret_h", "raw_h", "base_h"))], errors="ignore")
     funnel("with a tradeable T+1 entry session", len(ev))
@@ -499,7 +513,8 @@ def show(b: dict) -> None:
 # (`phase5_sweep_earnings_downshock_continuation_short.py`).  Extracted verbatim from
 # `main` so there is exactly ONE implementation of the LOCKED construction.
 # =============================================================================
-def build_cohort(window: str = "discovery", adv_cuts: tuple | None = None):
+def build_cohort(window: str = "discovery", adv_cuts: tuple | None = None,
+                 allow_fresh_pool: bool = False, fresh_pool_reason: str = ""):
     """Return (px, ev, bars_by_key, adv_cuts_used) for the requested window.
 
     `ev` is the fully-filtered event set: reaction move <= -8%, de-duplicated,
@@ -511,16 +526,31 @@ def build_cohort(window: str = "discovery", adv_cuts: tuple | None = None):
     if window not in WINDOWS:
         raise ValueError(f"unknown window {window!r}; expected one of {list(WINDOWS)}")
     win_start, win_end = WINDOWS[window]
-    if win_end >= FRESH_POOL_START:
+    if win_end >= FRESH_POOL_START and not allow_fresh_pool:
         raise RuntimeError("window would touch the 2026-05-01+ fresh pool -- refused")
+    if allow_fresh_pool:
+        # The guard above is INTACT.  This branch is the deliberate, logged bypass.
+        print("\n" + "!" * 96)
+        print("!! FRESH-POOL GUARD DELIBERATELY BYPASSED (allow_fresh_pool=True)")
+        print("!! Signals on/after 2026-05-01 WILL be read.  Lifecycle amendment A1: this")
+        print("!! is the DECISIVE one-shot gate for a FROZEN candidate and it BURNS the")
+        print("!! window permanently.  It is legitimate ONLY when the construction was")
+        print("!! frozen and the decision rule pre-registered BEFORE this run.")
+        print(f"!! reason/authority: {fresh_pool_reason or '(NONE GIVEN -- this is a red flag)'}")
+        print("!" * 96, flush=True)
 
     print(f"\n--- loading CA-adjusted / bad-print-cleaned daily panel ---", flush=True)
     px, meta = S.load_prices()
     print(f"  panel {px.shape}  {px['date'].min().date()} -> {px['date'].max().date()}")
+    if win_end >= FRESH_END_SENTINEL:
+        # "latest available" is DERIVED from the panel, never hand-set.
+        win_end = pd.Timestamp(px["date"].max())
+        print(f"  [freshpool] window end clamped to the panel's last session: "
+              f"{win_end.date()}")
 
     print(f"\n--- FUNNEL  [window={window}: "
           f"{win_start.date()} .. {win_end.date()}] ---")
-    ev = build_events(px, meta)
+    ev = build_events(px, meta, allow_fresh_pool=allow_fresh_pool)
 
     # ---------- window enforcement ----------
     ev = ev[(ev["signal_date"] >= win_start) & (ev["signal_date"] <= win_end)]
@@ -535,9 +565,13 @@ def build_cohort(window: str = "discovery", adv_cuts: tuple | None = None):
     assert ev["signal_date"].min() >= win_start, "window violation (signal min)"
     assert ev["signal_date"].max() <= win_end, "window violation (signal max)"
     assert ev["entry_date"].max() <= win_end, "window violation (entry max)"
-    assert ev["entry_date"].max() < FRESH_POOL_START, "FRESH POOL TOUCHED -- abort"
+    if not allow_fresh_pool:
+        assert ev["entry_date"].max() < FRESH_POOL_START, "FRESH POOL TOUCHED -- abort"
+    else:
+        assert ev["signal_date"].min() >= FRESH_POOL_START, \
+            "fresh-pool run must contain ONLY post-freeze signals"
     assert (ev["entry_date"] > ev["signal_date"]).all(), "LOOKAHEAD: entry <= signal"
-    print(f"  [assert] {window}-only window + causal entry + fresh pool untouched: OK")
+    print(f"  [assert] {window}-only window + causal entry + fresh-pool policy: OK")
 
     # ---------- ADV tiers ----------
     ev, cuts_used = add_adv_tiers(ev, cuts=adv_cuts)

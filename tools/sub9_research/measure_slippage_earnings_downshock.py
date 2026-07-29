@@ -253,6 +253,10 @@ def main() -> int:
     ap.add_argument("--exit-5m-window", default=None, metavar="HH:MM,HH:MM")
     ap.add_argument("--exit-window", default=None, metavar="HH:MM,HH:MM")
     ap.add_argument("--exit-roll-window", default=None, metavar="HH:MM,HH:MM")
+    ap.add_argument("--allow-fresh-pool", action="store_true",
+                    help="Deliberate, logged bypass of the 2026-05-01 fresh-pool assert "
+                         "below.  Legitimate ONLY for a frozen candidate's A1 one-shot. "
+                         "The assert stays in place; this makes crossing it explicit.")
     a = ap.parse_args()
     if a.cohort_csv:
         LOCKED["cohort_csv"] = a.cohort_csv
@@ -285,7 +289,11 @@ def main() -> int:
     print(f"ADV tiers                : {dict(tr['adv_tier'].value_counts())}")
     print(f"mean notional deployed   : Rs {(tr.entry_price*tr.qty).mean():,.0f}")
     print(f"gross pnl_pct mean       : {tr.pnl_pct.mean():+.4f}%")
-    assert max(tr.entry_date) < pd.Timestamp("2026-05-01").date(), "cohort leaks past 2026-05-01"
+    if a.allow_fresh_pool:
+        print("!! FRESH-POOL GUARD DELIBERATELY BYPASSED (--allow-fresh-pool): this cohort "
+              "may contain post-2026-05-01 signals (A1 one-shot on a FROZEN candidate).")
+    else:
+        assert max(tr.entry_date) < pd.Timestamp("2026-05-01").date(), "cohort leaks past 2026-05-01"
 
     # ------------------------------------------------------------------ load 1m
     tr["ym"] = pd.to_datetime(tr["entry_date"]).dt.strftime("%Y_%m")

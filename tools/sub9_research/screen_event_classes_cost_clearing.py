@@ -149,13 +149,26 @@ def normalise_symbol(s: pd.Series) -> pd.Series:
     )
 
 
-def attach_returns(events: pd.DataFrame, px: pd.DataFrame, meta: dict) -> pd.DataFrame:
-    """events needs columns: symbol, signal_date (+ arbitrary passthrough cols)."""
+def attach_returns(events: pd.DataFrame, px: pd.DataFrame, meta: dict,
+                   allow_fresh_pool: bool = False) -> pd.DataFrame:
+    """events needs columns: symbol, signal_date (+ arbitrary passthrough cols).
+
+    `allow_fresh_pool` -- by DEFAULT this function refuses to attach an entry session to
+    any signal dated on/after `FRESH_POOL_CUTOFF` (2026-05-01): every screen in this
+    module is development-window work and must not see the fresh pool.  A FROZEN
+    candidate running its pre-registered A1 one-shot passes True, which prints a logged
+    banner.  The filter stays in place; bypassing it is a deliberate, auditable act.
+    """
     ev = events.copy()
     ev["symbol"] = normalise_symbol(ev["symbol"])
     ev["signal_date"] = pd.to_datetime(ev["signal_date"]).astype("datetime64[ns]")
     ev = ev[ev["signal_date"].notna() & ev["symbol"].notna()]
-    ev = ev[ev["signal_date"] < FRESH_POOL_CUTOFF]
+    if allow_fresh_pool:
+        n_fresh = int((ev["signal_date"] >= FRESH_POOL_CUTOFF).sum())
+        print(f"  !! attach_returns: FRESH-POOL CUTOFF BYPASSED (allow_fresh_pool=True) "
+              f"-- {n_fresh} signals on/after {FRESH_POOL_CUTOFF.date()} RETAINED")
+    else:
+        ev = ev[ev["signal_date"] < FRESH_POOL_CUTOFF]
     if ev.empty:
         return ev
 

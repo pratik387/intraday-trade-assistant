@@ -266,6 +266,66 @@ present, ONE shot, no iteration, ledger-logged.
 Judged on CONSERVATIVE, not CENTRAL — the 2026 decay above is the reason to use the pessimistic
 basis rather than the central one.
 
+## 9e. FRESH-POOL ONE-SHOT (2026-07-29) — **PASS by 1.4bp. Fresh pool now BURNED.**
+
+Window 2026-05-01 → 2026-07-24. Power gate: **n=77 ≥ 40 → proceed** (counted before any
+outcome; frozen ADV cuts imposed, never re-fitted). 77 trades / 77 distinct symbols / 21
+sessions. Guard bypass required an explicit `--i-am-burning-the-fresh-pool` flag naming freeze
+commit `33d2046`; a second undocumented fresh-pool guard was found in the shared screen module
+(it silently returned n=0 on the first run) and was made an explicit opt-in rather than deleted.
+
+| basis | n | net %/trade | PF | win | t |
+|---|---|---|---|---|---|
+| GROSS | 77 | +0.847% | 2.13 | 61.0% | — |
+| fees only (0.083%) | 77 | +0.764% | 1.97 | 61.0% | — |
+| CENTRAL 18.7bp | 77 | +0.391% | 1.41 | 57.1% | +1.21 |
+| **CONSERVATIVE 30.1bp — the verdict basis** | 77 | **+0.164%** | **1.15** | 53.2% | **+0.49** |
+
+**VERDICT: PASS** (+0.164% ≥ the +0.15% pre-registered floor), applied mechanically.
+
+**Slippage method deviation, disclosed:** 1m feathers end 2026-04, so the frozen 1m method is
+not runnable on this cohort. Slippage was measured on 5m bars with identical impact formulas
+and **calibrated against the 1m truth on the demoted cohort** (n=180 overlap, per-trade
+correlation 0.66/0.74). Fresh-vs-demoted proxy ratio 0.995 central / 1.047 conservative — the
+fresh tape is **not** tighter. Chosen before any outcome was computed.
+
+### The disclosures that belong next to the PASS
+
+1. **The margin is 1.4bp of expectancy / 0.7bp of slippage.** Net crosses the +0.15% floor at
+   30.8bp/side against 30.07 measured. It crosses zero at 38.4bp. **t = +0.49 — not significant.**
+2. **One month carries the entire result.** Per signal month (CONSERVATIVE):
+   **2026-05 n=53 +0.983% PF 2.49 · 2026-06 n=17 −1.487% PF 0.19 · 2026-07 n=7 −2.034% PF 0.13.**
+   **Ex-May = −1.647% on n=24.**
+3. **Tail-fragile:** median +0.277% and a 3+3 trimmed mean of +0.243% are healthy, but dropping
+   the single best trade gives +0.077% (MARGINAL band) and dropping the top 3 gives −0.073%
+   (KILL band).
+4. **Not a book:** one session (2026-06-02) holds 17 of 77 trades and −₹25,263, larger than the
+   total net of +₹12,578. Production slot caps would never take 17 concurrent shorts. This is a
+   per-signal ledger (lesson #30).
+5. Not driven by a bad print: the one suspect CA row (SILVERTUC −88.5%) is a LOSER; excluding it
+   *improves* the result to +0.203%.
+
+### Standing interpretation (NOT a construction change)
+
+The mechanism is earnings-driven and Indian results seasons are inherently seasonal (Q4/annual
+≈ Apr-May, Q1 ≈ Jul-Aug, Q2 ≈ Oct-Nov, Q3 ≈ Jan-Feb). May is peak season (n=53); June is a dead
+month (n=17); July is a season just starting and truncated at the 24th (n=7). **Whether the
+negative months are decay or off-season noise is UNRESOLVED at n=24 combined.**
+**Per lesson #31 this must NOT be turned into a seasonal filter** — proposing "trade only in
+results season" after seeing this month split would be fitting to the window that revealed it.
+If it is ever tested it requires its own pre-registration on data that did not generate the
+observation.
+
+### Status → PAPER, sized as a genuine test
+
+The rule permits the detector build. The honest forward expectation this evidence supports is
+**near zero, not the +0.39% central figure**. Paper is the decisive instrument (lesson #30:
+paper > OCI > research) and must carry pre-registered kill criteria before it starts, sized
+small. A conservative override (declining the PASS) is permitted by A5-b and was **considered
+and not taken**, because unlike `xsec_momentum_demeaned` — declined for being net-NEGATIVE in
+era_B — this candidate is net-POSITIVE in every window tested (era_A +0.396%, era_B +0.229%,
+fresh +0.164%), merely declining. That distinction is the whole basis for the different call.
+
 ## 10. A1/A2 compliance
 
 Development = 2023-01 → 2026-04-30 with the A5 era split. Freeze commit after Stage-5
