@@ -200,6 +200,21 @@ MEASURED_SLIP = {
 DISCOVERY_START = pd.Timestamp("2023-01-01")
 DISCOVERY_END   = pd.Timestamp("2024-12-31")
 
+# ---- DEMOTED development window (lifecycle amendment A1).
+# 2025-01-01 .. 2026-04-30 is the old OOS + Holdout, demoted to *development* data for
+# any NEW candidate.  It is usable ONCE, at Stage 5, on an ALREADY-LOCKED cell -- it is
+# NOT sweepable and it is NOT the decisive gate (that is the 2026-05-01+ fresh pool).
+DEMOTED_START = pd.Timestamp("2025-01-01")
+DEMOTED_END   = pd.Timestamp("2026-04-30")
+
+# HARD FLOOR: the fresh pool. NOTHING in this module may read a signal on/after this.
+FRESH_POOL_START = pd.Timestamp("2026-05-01")
+
+WINDOWS = {
+    "discovery": (DISCOVERY_START, DISCOVERY_END),
+    "demoted":   (DEMOTED_START,   DEMOTED_END),
+}
+
 # ---- circuit-band proxy (identical to the gauntlet's STRICT rule; not tuned) ----
 PIN_BARS = 3                 # leading bars pinned to one price
 MIN_GAP_FOR_BLOCK_PCT = -1.5 # a "band open" must actually be a gap DOWN
@@ -286,8 +301,8 @@ def build_events(px: pd.DataFrame, meta: dict) -> pd.DataFrame:
 # =============================================================================
 # 2. ADV terciles  (same construction as the gauntlet / the screen's adv_split)
 # =============================================================================
-def add_adv_tiers(ev: pd.DataFrame) -> pd.DataFrame:
-    """Terciles of PRIOR-ONLY adv20 within the Discovery event set.
+def add_adv_tiers(ev: pd.DataFrame, cuts: tuple | None = None) -> tuple[pd.DataFrame, tuple]:
+    """Terciles of PRIOR-ONLY adv20 within the event set.
 
     GUARD 2: `adv20` is rolling(20).mean().shift(1) of turnover -- the reaction day
     itself is excluded from its own baseline.
@@ -297,16 +312,30 @@ def add_adv_tiers(ev: pd.DataFrame) -> pd.DataFrame:
     the panel's per-date cross-sectional tercile) is reported as a robustness line in
     `main`.  The brief's "low+mid ADV" refers to the event-set tercile, so that is what
     is LOCKED here.
+
+    `cuts` -- when given, the (q33, q66) rupee-turnover cut points are IMPOSED rather
+    than recomputed.  Stage-5 Step 3 passes the FROZEN Discovery cuts so that "run the
+    locked cell UNCHANGED on the demoted window" means literally unchanged: the tier
+    definition itself is part of the lock and must not be re-fitted on the new window.
+    A second column `adv_tier_win` always carries the within-window tercile so the
+    re-fitted variant can be reported as a robustness line without a second run.
     """
     ev = ev.copy()
     d = ev["adv20"]
-    q = d.quantile([0.33, 0.66]).to_list()
-    ev["adv_tier"] = np.where(d.isna(), "adv_na",
-                       np.where(d <= q[0], "adv_low",
-                       np.where(d <= q[1], "adv_mid", "adv_high")))
+    q_win = tuple(d.quantile([0.33, 0.66]).to_list())
+    q = tuple(cuts) if cuts is not None else q_win
+
+    def _tier(cut):
+        return np.where(d.isna(), "adv_na",
+                 np.where(d <= cut[0], "adv_low",
+                 np.where(d <= cut[1], "adv_mid", "adv_high")))
+
+    ev["adv_tier"] = _tier(q)
+    ev["adv_tier_win"] = _tier(q_win)
     ev["lowmid"] = ev["adv_tier"].isin(LOCKED_FILTERS["adv_tiers"])
+    ev["lowmid_win"] = ev["adv_tier_win"].isin(LOCKED_FILTERS["adv_tiers"])
     ev["adv_tier_x_lowmid"] = ev["adv_tier_x"].isin([0.0, 1.0])
-    return ev
+    return ev, q
 
 
 # =============================================================================
@@ -372,11 +401,13 @@ def circuit_blocked_strict(b: pd.DataFrame, react_close: float) -> dict:
 # =============================================================================
 # 4. Surveillance (NSE ASM any stage / BSE GSM) membership on the ENTRY date
 # =============================================================================
-def surveillance_flags(ev: pd.DataFrame) -> pd.DataFrame:
+def surveillance_flags(ev: pd.DataFrame,
+                       win_start: pd.Timestamp = DISCOVERY_START,
+                       win_end: pd.Timestamp = DISCOVERY_END) -> pd.DataFrame:
     asm = pd.read_parquet(ASM_PATH)
     asm["date"] = pd.to_datetime(asm["date"])
-    asm = asm[(asm["date"] >= DISCOVERY_START - pd.Timedelta(days=5))
-              & (asm["date"] <= DISCOVERY_END + pd.Timedelta(days=5))]
+    asm = asm[(asm["date"] >= win_start - pd.Timedelta(days=5))
+              & (asm["date"] <= win_end + pd.Timedelta(days=5))]
 
     nse = asm[asm["exchange"] == "NSE"].copy()
     nse["symbol"] = S.normalise_symbol(nse["symbol"])
@@ -464,49 +495,56 @@ def show(b: dict) -> None:
 
 
 # =============================================================================
-def main(exit_bar_start: str | None = None) -> None:
-    print("=" * 96)
-    print(f"STAGE 4 SANITY -- {SETUP_NAME}  (REAL P&L SIMULATION, Discovery only)")
-    print("=" * 96)
-    if exit_bar_start is None:
-        print("  EXIT = session close (last 5m bar close = the 15:30 print).")
-        print("  *** INFEASIBLE for an MIS short: Zerodha auto-squares from ~15:20. ***")
-        out_path = OUT_PATH
-    else:
-        et = pd.Timestamp(f"1900-01-01 {exit_bar_start}") + pd.Timedelta(minutes=5)
-        print(f"  EXIT = close of the {exit_bar_start} 5m bar (the {et.strftime('%H:%M')} print).")
-        print("  FEASIBILITY CORRECTION (lesson #31): fixed by broker MIS square-off")
-        print("  mechanics, NOT selected by sweeping exit times.")
-        out_path = OUT_PATH.with_name(
-            OUT_PATH.stem + "_exit" + exit_bar_start.replace(":", "") + OUT_PATH.suffix)
+# COHORT BUILDER -- shared by the Stage-4 sanity (`main`) and the Stage-5 sweep driver
+# (`phase5_sweep_earnings_downshock_continuation_short.py`).  Extracted verbatim from
+# `main` so there is exactly ONE implementation of the LOCKED construction.
+# =============================================================================
+def build_cohort(window: str = "discovery", adv_cuts: tuple | None = None):
+    """Return (px, ev, bars_by_key, adv_cuts_used) for the requested window.
 
-    print("\n--- loading CA-adjusted / bad-print-cleaned daily panel ---", flush=True)
+    `ev` is the fully-filtered event set: reaction move <= -8%, de-duplicated,
+    tradeable T+1 entry, ADV tier in (low, mid), ProductionUniverseGate PASS on the
+    entry date, no NSE ASM / BSE GSM on the entry date.  Circuit-blocking and the
+    bar-level checks happen at simulation time (they need the bars).
+    `bars_by_key` maps (symbol, entry_date) -> the session's 5m bars.
+    """
+    if window not in WINDOWS:
+        raise ValueError(f"unknown window {window!r}; expected one of {list(WINDOWS)}")
+    win_start, win_end = WINDOWS[window]
+    if win_end >= FRESH_POOL_START:
+        raise RuntimeError("window would touch the 2026-05-01+ fresh pool -- refused")
+
+    print(f"\n--- loading CA-adjusted / bad-print-cleaned daily panel ---", flush=True)
     px, meta = S.load_prices()
     print(f"  panel {px.shape}  {px['date'].min().date()} -> {px['date'].max().date()}")
 
-    print("\n--- FUNNEL ---")
+    print(f"\n--- FUNNEL  [window={window}: "
+          f"{win_start.date()} .. {win_end.date()}] ---")
     ev = build_events(px, meta)
 
-    # ---------- Discovery window enforcement ----------
-    ev = ev[(ev["signal_date"] >= DISCOVERY_START) & (ev["signal_date"] <= DISCOVERY_END)]
-    funnel("reaction_date in Discovery 2023-01..2024-12", len(ev))
-    n_spill = int((ev["entry_date"] > DISCOVERY_END).sum())
-    ev = ev[ev["entry_date"] <= DISCOVERY_END].copy()
-    funnel("entry_date also <= 2024-12-31", len(ev),
-           f"{n_spill} dropped: entry spilled into 2025 (OOS untouched)")
+    # ---------- window enforcement ----------
+    ev = ev[(ev["signal_date"] >= win_start) & (ev["signal_date"] <= win_end)]
+    funnel(f"reaction_date in {window}", len(ev))
+    n_spill = int((ev["entry_date"] > win_end).sum())
+    ev = ev[ev["entry_date"] <= win_end].copy()
+    funnel("entry_date also inside the window", len(ev),
+           f"{n_spill} dropped: entry spilled past {win_end.date()}")
 
     if len(ev) == 0:
-        raise RuntimeError("no Discovery events -- abort")
-    assert ev["signal_date"].min() >= DISCOVERY_START, "window violation (signal min)"
-    assert ev["signal_date"].max() <= DISCOVERY_END, "window violation (signal max)"
-    assert ev["entry_date"].max() <= DISCOVERY_END, "window violation (entry max)"
+        raise RuntimeError(f"no {window} events -- abort")
+    assert ev["signal_date"].min() >= win_start, "window violation (signal min)"
+    assert ev["signal_date"].max() <= win_end, "window violation (signal max)"
+    assert ev["entry_date"].max() <= win_end, "window violation (entry max)"
+    assert ev["entry_date"].max() < FRESH_POOL_START, "FRESH POOL TOUCHED -- abort"
     assert (ev["entry_date"] > ev["signal_date"]).all(), "LOOKAHEAD: entry <= signal"
-    print("  [assert] Discovery-only window + causal entry: OK")
+    print(f"  [assert] {window}-only window + causal entry + fresh pool untouched: OK")
 
     # ---------- ADV tiers ----------
-    ev = add_adv_tiers(ev)
+    ev, cuts_used = add_adv_tiers(ev, cuts=adv_cuts)
+    print(f"  [adv] tercile cut points used (Rs turnover): "
+          f"q33={cuts_used[0]:,.0f}  q66={cuts_used[1]:,.0f}"
+          f"{'  (FROZEN from Discovery)' if adv_cuts is not None else '  (within-window)'}")
     n_pre_adv = len(ev)
-    ev_all_adv = ev.copy()
     ev = ev[ev["lowmid"]].copy()
     funnel("ADV tier in (low, mid)", len(ev), f"from {n_pre_adv} all-ADV events")
 
@@ -519,8 +557,7 @@ def main(exit_bar_start: str | None = None) -> None:
     )
     keep, caps = [], []
     for sym, ed in zip(ev["symbol"], ev["entry_date"]):
-        ok = gate.is_eligible(sym, ed.date())
-        keep.append(ok)
+        keep.append(gate.is_eligible(sym, ed.date()))
         caps.append(gate._cap_segment(sym))
     ev["cap_segment"] = caps
     ev["universe_ok"] = keep
@@ -530,10 +567,9 @@ def main(exit_bar_start: str | None = None) -> None:
            f"{n_pre - len(ev)} rejected (cap/MIS; lesson #27 = upper bound)")
 
     # ---------- surveillance ----------
-    ev = surveillance_flags(ev)
+    ev = surveillance_flags(ev, win_start, win_end)
     n_pre = len(ev)
     n_t2t = int(ev["asm_t2t"].sum())
-    ev_surv = ev[ev["surv_any"]].copy()
     ev = ev[~ev["surv_any"]].copy()
     funnel("no NSE ASM / BSE GSM on entry date", len(ev),
            f"{n_pre - len(ev)} excluded ({n_t2t} were Stage III/IV T2T)")
@@ -543,6 +579,30 @@ def main(exit_bar_start: str | None = None) -> None:
     bars = load_entry_bars(ev)
     print(f"  bars {bars.shape}  symbols={bars['symbol'].nunique()}")
     g = {k: v for k, v in bars.groupby(["symbol", "session"], sort=False)}
+    return px, ev, g, cuts_used
+
+
+# =============================================================================
+def main(exit_bar_start: str | None = None, window: str = "discovery") -> None:
+    print("=" * 96)
+    print(f"STAGE 4 SANITY -- {SETUP_NAME}  (REAL P&L SIMULATION, window={window})")
+    print("=" * 96)
+    if exit_bar_start is None:
+        print("  EXIT = session close (last 5m bar close = the 15:30 print).")
+        print("  *** INFEASIBLE for an MIS short: Zerodha auto-squares from ~15:20. ***")
+        out_path = OUT_PATH
+    else:
+        et = pd.Timestamp(f"1900-01-01 {exit_bar_start}") + pd.Timedelta(minutes=5)
+        print(f"  EXIT = close of the {exit_bar_start} 5m bar (the {et.strftime('%H:%M')} print).")
+        print("  FEASIBILITY CORRECTION (lesson #31): fixed by broker MIS square-off")
+        print("  mechanics, NOT selected by sweeping exit times.")
+        out_path = OUT_PATH.with_name(
+            OUT_PATH.stem + "_exit" + exit_bar_start.replace(":", "") + OUT_PATH.suffix)
+    if window != "discovery":
+        out_path = out_path.with_name(out_path.stem.replace("_discovery", f"_{window}")
+                                      + out_path.suffix)
+
+    px, ev, g, _cuts = build_cohort(window)
 
     # =====================================================================
     # SIMULATION
@@ -865,5 +925,10 @@ if __name__ == "__main__":
         help="START stamp of the 5m bar whose CLOSE is the exit print. "
              "15:10 -> exit at the 15:15 print (the FEASIBLE MIS exit). "
              "Omit to reproduce the original session-close exit.")
+    ap.add_argument(
+        "--window", default="discovery", choices=sorted(WINDOWS),
+        help="'discovery' = 2023-01..2024-12 (Stage 4). "
+             "'demoted' = 2025-01..2026-04, the A1-demoted development window; "
+             "Stage-5 Step-3 ONE-SHOT on an already-locked cell only.")
     a = ap.parse_args()
-    main(exit_bar_start=a.exit_bar_start)
+    main(exit_bar_start=a.exit_bar_start, window=a.window)

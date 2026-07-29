@@ -210,6 +210,62 @@ number above.
 - **Then:** one-shot demoted-window check (2025-01→2026-04), ledger-logged; freeze commit;
   fresh-pool one-shot + paper as the decisive gates (A1).
 
+## 9d. PHASE-5 RESULT + **FREEZE** (2026-07-29)
+
+**Sweep:** 324 combinations (27 cells × 12 geometries), all reported in
+`reports/sub9_sanity/_earnings_downshock_phase5_cells.csv`.
+
+**Eligible: 2 of 324, both inside ONE cell.** The binding gate was n ≥ 100/era — Discovery is
+220 trades (115/105 by year), so only the un-subsetted cell can clear it (21/27 cells pass the
+era-expectancy gate and 23/27 pass pooled PF ≥ 1.20). **The mechanism is broad; the sample is
+not.** Stability-first selection was trivially satisfied (one eligible cell, year gap 0.081pp).
+
+**LOCKED CELL = `both ADV tiers / −8% / all announce classes / geometry none-none` — i.e. the
+Stage-4 construction, unchanged.** Discovery: CENTRAL +0.565%/PF 1.55/t 2.48; CONSERVATIVE
++0.396%/PF 1.36 (2023 +0.434%, 2024 +0.354%).
+
+**No geometry displaced the incumbent.** Inside the locked cell, 0 of 11 non-incumbent
+geometries are strictly better in BOTH eras; every stop degrades it (sl2 PF 1.36→1.07, sl3
+1.11, sl4 1.17), every target degrades it (tp1.5 0.99, tp2.5 1.21), and 8 of 11 are pooled
+net-NEGATIVE at CONSERVATIVE. The only 6 pairs that beat their incumbent sit in dead cells
+(n=9-48) where the incumbent is negative. Disclosed bias: measured slippage is anchored on the
+09:20/15:14 minutes so an intraday stop-out is charged the 15:15 rate — this **flatters**
+geometries and never the incumbent, i.e. the bias points away from displacement.
+
+**Demoted-window check (ONE SHOT, 2025-01-01 → 2026-04-30, cell unchanged):** n=219, slippage
+re-measured on this cohort (wider: CENTRAL 19.3 / CONSERVATIVE 29.5 bp/side).
+CENTRAL **+0.432%/PF 1.441**; CONSERVATIVE **+0.229%/PF 1.212**.
+**PF gap 0.114 (CENTRAL) / 0.152 (CONSERVATIVE) — well inside the 0.30 overfit threshold**, and
+the opposite of `pead_reaction_drift`, which died at this exact step with a gap of 1.78.
+Robustness: re-fitting ADV terciles in-window instead of using frozen Discovery cuts gives
+n=216, +0.234%, PF 1.216 — no dependence on the frozen cut.
+
+**A5/A5-b now hold on the TRUE era split, on the absolute statistic, at CONSERVATIVE slippage:**
+era_A +0.396%/PF 1.364 · era_B +0.229%/PF 1.212 — both net-positive.
+
+**⚠ NAMED WEAKNESS (must not be buried):** the edge **decays within era_B**. 2025 (n=160) is
++0.327%/PF 1.310 conservative, but **2026 Jan-Apr (n=59) is net-NEGATIVE at conservative
+(−0.037%, PF 0.969)** and the win rate falls 62.3% → 55.3%. The fresh-pool one-shot is
+therefore **genuinely decisive, not confirmatory**.
+
+### 🔒 FREEZE — declared 2026-07-29, this commit
+
+Frozen: signal ≤−8% reaction move · de-dup (symbol, reaction_date) · entry T+1 09:20 ·
+**exit 15:15** · universe low+mid ADV + ProductionUniverseGate + ASM/GSM-clean + circuit-clean ·
+geometry none/none · real Zerodha MIS-short fees · measured per-tier slippage · order worked
+across the 5m block. Cell lock:
+`tools/sub9_research/earnings_downshock_continuation_short_cell_lock.json`.
+
+**PRE-REGISTERED FRESH-POOL DECISION RULE (fixed here, before the run):** window 2026-05-01 →
+present, ONE shot, no iteration, ledger-logged.
+- n < 40 → **POWER-BLOCKED**: report counts only, compute no verdict, schedule the re-shoot for
+  the month projected to reach 40 (the C-09 pattern). Do not burn the verdict.
+- net ≥ **+0.15%/trade at CONSERVATIVE measured slippage** → **PASS** → detector build + paper.
+- 0 to +0.15% → **MARGINAL** → hold, re-shoot at larger n; no detector work.
+- < 0 → **KILL**.
+Judged on CONSERVATIVE, not CENTRAL — the 2026 decay above is the reason to use the pessimistic
+basis rather than the central one.
+
 ## 10. A1/A2 compliance
 
 Development = 2023-01 → 2026-04-30 with the A5 era split. Freeze commit after Stage-5
