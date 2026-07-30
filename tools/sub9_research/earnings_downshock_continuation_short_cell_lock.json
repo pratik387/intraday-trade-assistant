@@ -1,0 +1,148 @@
+{
+  "setup": "earnings_downshock_continuation_short",
+  "stage": "phase5_cell_lock",
+  "locked_at": "2026-07-29 18:32:40",
+  "prereg_source": "specs/2026-07-29-brief-earnings_downshock_continuation_short.md SS9c (commit 0c69ed5)",
+  "window": "discovery_2023_24",
+  "within_development_era_split": [
+    2023,
+    2024
+  ],
+  "true_era_B_test": "step3_demoted_window_2025_01_to_2026_04",
+  "locked_cell": {
+    "adv_tier": "both",
+    "shock_depth_pct": -8.0,
+    "announce_class": "all"
+  },
+  "locked_geometry": {
+    "label": "none/none",
+    "stop_pct": null,
+    "target_pct": null,
+    "incumbent_held": true,
+    "displacement_rule": "strictly better net expectancy in BOTH eras at CONSERVATIVE slippage; ties -> incumbent"
+  },
+  "fixed_not_swept": {
+    "signal_pct": -8.0,
+    "dedupe_key": [
+      "symbol",
+      "reaction_date"
+    ],
+    "entry": "close of the 09:15-09:20 5m bar (the 09:20 print)",
+    "exit": "close of the 15:10-15:15 5m bar (the 15:15 print) -- BROKER MECHANICS",
+    "universe": "low+mid ADV tercile + ProductionUniverseGate(entry_date)",
+    "exclusions": "NSE ASM any stage / BSE GSM on entry date; circuit-blocked sessions",
+    "fees": "real Zerodha MIS short round trip (calc_fee, SELL, lev=1.0)",
+    "slippage": "measured per-trade (measure_slippage_earnings_downshock.py, 15:15 exit): CENTRAL perside_blend_bps, CONSERVATIVE perside_cons_bps",
+    "notional_inr": 100000.0
+  },
+  "adv_tercile_cut_points_rs_turnover": {
+    "q33": 78904012.13420002,
+    "q66": 258413058.72030002,
+    "note": "FROZEN. Step 3 imposes these on the demoted window rather than re-fitting terciles there -- 'unchanged' taken literally."
+  },
+  "lockable_rule": {
+    "statistic": "net %/trade (ABSOLUTE) -- single-leg cash SHORT, A5-b",
+    "era_expectancy_gt": 0.0,
+    "n_min_per_era": 100,
+    "pooled_pf_min": 1.2,
+    "gate_slippage": "conservative",
+    "selection": "stability-first (smallest era expectancy gap), never top-PF-only"
+  },
+  "discovery_stats": {
+    "central": {
+      "n": 220,
+      "exp_pct": 0.5648866534376804,
+      "pf": 1.5545398231892653,
+      "win": 0.6227272727272727,
+      "t": 2.481646366138701,
+      "net_inr": 123763.38999999998
+    },
+    "conservative": {
+      "n": 220,
+      "exp_pct": 0.3958708457712836,
+      "pf": 1.3638925143944265,
+      "win": 0.5954545454545455,
+      "t": 1.737953467349967,
+      "net_inr": 86683.56000000001
+    },
+    "centralFlat": {
+      "n": 220,
+      "exp_pct": 0.5521898925162928,
+      "pf": 1.5447897684306011,
+      "win": 0.6136363636363636,
+      "t": 2.433990407192069,
+      "net_inr": 121008.47999999998
+    },
+    "conservativeFlat": {
+      "n": 220,
+      "exp_pct": 0.3770957008795811,
+      "pf": 1.347413282398097,
+      "win": 0.5863636363636363,
+      "t": 1.6607363495068075,
+      "net_inr": 82604.87999999999
+    }
+  },
+  "discovery_per_year": {
+    "2023": {
+      "n": 115,
+      "exp_pct_conservative": 0.4344826413862886,
+      "pf_conservative": 1.5153635395888674,
+      "exp_pct_central": 0.6025787904939621,
+      "pf_central": 1.7760239007418153
+    },
+    "2024": {
+      "n": 105,
+      "exp_pct_conservative": 0.35358173628818285,
+      "pf_conservative": 1.260284419800249,
+      "exp_pct_central": 0.5236047890427051,
+      "pf_central": 1.4072993907290778
+    }
+  },
+  "eligible_cell_table": [
+    {
+      "cell": "both/-8/all",
+      "geom": "none/none",
+      "n": 220,
+      "n_2023": 115,
+      "n_2024": 105,
+      "exp_2023_cons": 0.4344826413862886,
+      "exp_2024_cons": 0.35358173628818285,
+      "pf_2023_cons": 1.5153635395888674,
+      "pf_2024_cons": 1.260284419800249,
+      "exp_pct_central": 0.5648866534376804,
+      "pf_central": 1.5545398231892653,
+      "win_central": 0.6227272727272727,
+      "t_central": 2.481646366138701,
+      "exp_pct_conservative": 0.3958708457712836,
+      "pf_conservative": 1.3638925143944265,
+      "win_conservative": 0.5954545454545455,
+      "t_conservative": 1.737953467349967,
+      "era_gap_exp": 0.08090090509810577,
+      "exit_mix": "eod:220"
+    },
+    {
+      "cell": "both/-8/all",
+      "geom": "none/tp2.5",
+      "n": 220,
+      "n_2023": 115,
+      "n_2024": 105,
+      "exp_2023_cons": 0.2952680444734422,
+      "exp_2024_cons": 0.0653664037067127,
+      "pf_2023_cons": 1.4187359905071497,
+      "pf_2024_cons": 1.0585587817505746,
+      "exp_pct_central": 0.3548435556922215,
+      "pf_central": 1.4191651299100925,
+      "win_central": 0.7045454545454546,
+      "t_central": 2.058775309755086,
+      "exp_pct_conservative": 0.1855422613802304,
+      "pf_conservative": 1.2066154393965907,
+      "win_conservative": 0.6909090909090909,
+      "t_conservative": 1.0727240996993026,
+      "era_gap_exp": 0.22990164076672948,
+      "exit_mix": "eod:108|target:112"
+    }
+  ],
+  "n_cells_evaluated": 324,
+  "n_eligible": 2,
+  "evidence": "reports/sub9_sanity/_earnings_downshock_phase5_cells.csv"
+}

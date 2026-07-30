@@ -233,6 +233,18 @@ Monotonically improving PF - real edge strengthening, not regime artifact.
 - If Holdout n reaches 100+ with PF still >= 1.30, ship cell-locked
 - Otherwise retire
 
+**[2026-07-28 Q3 review — FRESH-POOL ONE-SHOT RUN, VERDICT: HOLD]**
+First A1 post-freeze one-shot (frozen cell, park-era universe pinned via
+`get_cap_segment(session_date=2026-05-16)`, pre-registered gates 1.30/1.00, ledger-logged):
+window 2026-05-01→07-24, **n=44, PF_net 1.191, WR 54.5%, +Rs 78.8/trade** (May 1.38 / Jun 0.28
+on n=5 / Jul 1.39). In the hold band → **re-evaluate at fresh n >= 85, ~Nov 2026.** Evidence:
+`reports/sub9_sanity/_c09_fresh_oneshot_trades.csv` + ledger line 2026-07-28.
+**CRITICAL ship blocker found:** under the CURRENT production cap taxonomy (NIFTY-Smallcap-250
+snapshot 2026-05-27), **0 of 44** fires are small_cap (37 unknown, 7 micro_cap) — the frozen
+cell's universe is fully disjoint from today's production `small_cap`. Any unpark requires a
+universe-definition reconciliation FIRST (below_vwap-class trap, lesson #16), and the Nov
+re-check must pin the park-era definition again for comparability.
+
 **Files of record:**
 - `tools/sub9_research/sanity_volume_spike_reversal.py` (small_cap variant via config knobs)
 - `reports/sub9_sanity/_volume_spike_reversal_trades_{discovery,oos,holdout}_smallcap.csv`

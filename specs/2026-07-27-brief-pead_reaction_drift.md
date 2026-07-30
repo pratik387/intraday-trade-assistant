@@ -11,6 +11,19 @@ only one):** pre-registered falsifier #3 fired on schedule — the `announcement
 died Mar-2025, degrading reaction-day assignment for exactly the failing window; a revival
 requires REPAIRED announcement-timing data first, and constitutes a NEW ledger-burning
 evaluation, not a salvage. Evidence: `tools/sub9_research/pead_reaction_drift_cell_lock.json`.
+
+**[2026-07-28 FALSIFIER-3 RE-TEST ON REPAIRED DATA: KILL CONFIRMED, FILE CLOSED PERMANENTLY.]**
+The timestamp repair (commits 68ee6f3/8692ae8; 1,308 classes corrected, 2025Q2 scheduled
+942→96) was run and the locked cell re-tested once on the demoted window under pre-registered
+bands (>=1.20 revive / 1.00-1.20 ambiguous / <1.00 confirmed): repaired PF_net 0.851 → KILL
+CONFIRMED. Decisive decomposition: ZERO traded events had changed reaction dates; the
+unchanged-cohort trades lose identically under both parquets (PF 0.669 pre vs 0.644 repaired);
+the apparent improvement came entirely from 33 newly-recovered events (composition, not
+correction); 2026JanApr sits at PF ~0.33 under BOTH parquets. The era decay is real. Integrity
+check: Discovery reproduced exactly (n=258, PF 2.4505, zero deviation). Fresh pool never
+touched. Do not spend a fresh-pool shot on this candidate. Evidence:
+`reports/sub9_sanity/_pead_repaired_retest_trades.csv` + ledger line 2026-07-28
+(falsifier3_retest_repaired_data).
 **Lifecycle:** governed by `docs/setup_lifecycle.md` incl. 2026-07-27 amendments A1-A4.
 
 ---

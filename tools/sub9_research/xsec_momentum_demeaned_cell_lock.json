@@ -1,0 +1,30 @@
+{
+  "setup": "xsec_momentum_demeaned",
+  "locked_at": "2026-07-28",
+  "stage": "phase5_erasplit_sweep",
+  "selection_rule": "most stable eligible cell = smallest |era_A-era_B| demeaned-alpha gap (feedback_cell_sweep_stability_over_top_pf); eligibility = alpha>0 both eras, n>=100/era, pooled PF_net>=1.20",
+  "cell": {
+    "universe": "all",
+    "formation": 60,
+    "cohort": "decile",
+    "hold": 20,
+    "exit_mode": "asm_exit",
+    "rebalance": "weekly",
+    "skip": 2,
+    "adv_floor_rs": 2000000.0,
+    "cost_round_trip": 0.00507
+  },
+  "stats": {
+    "n_era_A": 10800,
+    "n_era_B": 8727,
+    "alpha_era_A_pct": 1.4442,
+    "alpha_era_B_pct": 0.2708,
+    "alpha_gap_pct": 1.1734,
+    "pf_net_pooled": 1.4233,
+    "wr_net_pooled": 0.5105,
+    "mean_net_pooled_pct": 1.9598
+  },
+  "evidence": "reports/sub9_sanity/_xsec_momentum_phase5_cells.csv",
+  "era_caveat": "Locked cell is NET-NEGATIVE in era_B (PF_net 0.8979, mean net -0.57%/position, WR 45.2%) despite positive demeaned alpha (+0.27pp) - alpha survives only because the universe mean fell harder. Every one of the 35 eligible cells degrades era_A->era_B (PF ~2.0-3.4 -> 0.86-1.27); only long-hold (40/60) asm_clean/f60 cells stay net-positive in era_B (best: asm_clean/decile/h60 hold_close PF_B 1.267) and those carry 3.0-6.0pp alpha gaps. Pre-registered eligibility keys on alpha sign + pooled PF, so the lock stands; the fresh-pool one-shot (structural currency, amendment A5) is the decisive judge.",
+  "next_gate": "freeze commit, then ONE shot on fresh pool 2026-05-01+ (amendment A1) + paper"
+}
