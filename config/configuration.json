@@ -646,8 +646,8 @@
       "entry_zone_mode": "symmetric",
       "min_stop_distance_pct": 0.5,
       "priority": 60,
-      "capital_budget_pct": 10,
-      "max_concurrent_positions": 3,
+      "capital_budget_pct": 35,
+      "max_concurrent_positions": 10,
       "_comment_max_concurrent_positions": "Deliberately small. Brief SS9e disclosure 4: the fresh-pool ledger put 17 of 77 trades in ONE session (2026-06-02) for -Rs25,263, larger than the whole net. That is a per-signal ledger, not a book - production slot caps must prevent it.",
       "per_symbol_cooloff_min": 30,
       "max_fires_per_5min": 8,
@@ -674,7 +674,8 @@
         }
       ],
       "_comment_preconditions": "Registered with jobs/check_edge_integrity.py 2026-07-30. The earnings calendar is the LOAD-BEARING feed: stale or missing => EMPTY universe => the setup silently never fires (lesson #16). The ASM/GSM list fails OPEN, so staleness leaves names that entered surveillance since the last refresh tradeable on a live SHORT - the risk-INCREASING direction. max_staleness_days=21 tolerates the earnings off-season (June is nearly empty) while still catching a dead feed; min_rows_per_week=0 disables the volume check because both feeds are seasonally clustered (quarterly results, episodic surveillance) - staleness is the meaningful signal. rule watch SEBI_LODR_reg33 fires if result-filing timing changes, which would invalidate the reaction-day assignment this setup is built on.",
-      "_comment_enabled_for_oci_backtest": "TEMPORARILY enabled=true 2026-07-30 SOLELY so the OCI Stage-8 backtest loads the detector (SetupRegistry only imports active setups; run 20260730-131854 produced 0 fires because the setup was never loaded, not because it did not signal). REVERT TO false BEFORE ANY LIVE OR PAPER DEPLOY. paper_enabled stays false. Stage-8 parity target for Q1-2023 (2023-01-02..2023-03-31) = 36 trades per reports/sub9_sanity/_earnings_downshock_continuation_short_trades_discovery.csv."
+      "_comment_enabled_for_oci_backtest": "TEMPORARILY enabled=true 2026-07-30 SOLELY so the OCI Stage-8 backtest loads the detector (SetupRegistry only imports active setups; run 20260730-131854 produced 0 fires because the setup was never loaded, not because it did not signal). REVERT TO false BEFORE ANY LIVE OR PAPER DEPLOY. paper_enabled stays false. Stage-8 parity target for Q1-2023 (2023-01-02..2023-03-31) = 36 trades per reports/sub9_sanity/_earnings_downshock_continuation_short_trades_discovery.csv.",
+      "_comment_capital_budget_pct": "RAISED 2026-07-30 for the Stage-8 PARITY RUN ONLY (was 10%/3 concurrent, which were copy-pasted from panic_crash/up_spike and never derived from the brief or cell lock). At Rs 500k paper capital and Rs 1L notional per trade with 5x MIS margin (Rs 20k/position), 10% = Rs 50k = exactly 2 positions — which is precisely the max/day OCI run 20260730-165500 took, capturing only 21 of the 36 validated Q1-2023 trades and discarding the highest-density days (Feb-14 7->2, Feb-15 5->2). The research construction peaks at 7 concurrent, needing 7 x Rs 20k = Rs 140k = 28%; 35%/10 gives headroom so the cap CANNOT bind and the detector's fires can be compared 1:1 against the ledger. *** THIS IS NOT A RISK DECISION AND MUST NOT SURVIVE TO PAPER OR LIVE. *** 35% to a single unproven setup whose fresh-pool margin was 1.4bp is indefensible as an allocation. Before paper: revert to a deliberate cap AND recompute the research expectancy on the capped subset, because the discarded trades are not random — Phase 5 already flagged that one session held 17 of 77 trades with net larger than the whole sample."
     },
     "close_dn_overnight_long": {
       "enabled": true,
