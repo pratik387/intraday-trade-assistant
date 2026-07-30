@@ -30,7 +30,7 @@ def _cfg(**over):
         "paper_enabled": False,
         "active_window_start": "09:15",
         "active_window_end": "09:15",
-        "time_stop_at": "15:15",
+        "time_stop_at": "15:10",
         "shock_threshold_pct": -8.0,
         "reaction_same_day_classes": ["intraday", "BMO"],
         "reaction_same_day_hour_max": 15,
@@ -99,7 +99,7 @@ def test_missing_config_key_raises():
 def test_locked_parameters_are_read_from_config():
     d = _det()
     assert d.shock_threshold_pct == -8.0
-    assert d.time_stop_at == "15:15"          # broker mechanics, not performance
+    assert d.time_stop_at == "15:10"          # broker mechanics, not performance
     assert d.catastrophe_stop_pct == 15.0
     assert d.active_start == time(9, 15) and d.active_end == time(9, 15)
 
@@ -222,7 +222,7 @@ def test_plan_is_short_with_no_targets_and_a_time_exit():
     assert plan.side == "short"
     # geometry none/none: no profit targets, single exit on the time stop
     assert plan.exit_levels.targets == []
-    assert plan.exit_levels.time_exit == "15:15"
+    assert plan.exit_levels.time_exit == "15:10"
     # catastrophe backstop ABOVE entry for a short, at the configured pct
     assert plan.risk_params.hard_sl == pytest.approx(plan.entry_price * 1.15, rel=1e-6)
 
@@ -263,4 +263,4 @@ def test_get_exit_levels_carries_the_time_exit():
     plan = d.plan_short_strategy(ctx, d.detect(ctx).events[0])
     levels = d.get_exit_levels(plan)
     assert levels.targets == []
-    assert levels.time_exit == "15:15"
+    assert levels.time_exit == "15:10"
