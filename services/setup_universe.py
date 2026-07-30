@@ -742,3 +742,150 @@ def compute_static_universes(
     # circuit_release_fade_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# earnings_downshock_continuation_short — post-earnings down-shock T+1 SHORT
+# ---------------------------------------------------------------------------
+
+def earnings_downshock_continuation_short_universe(
+    daily_dict: Dict[str, pd.DataFrame],
+    session_date: date,
+    config: Dict[str, Any],
+) -> Set[str]:
+    """Symbols whose T-1 session was an earnings reaction with a move
+    <= shock_threshold_pct, in the locked ADV tiers, MIS-shortable and not
+    under ASM/GSM surveillance today.
+
+    A NARROW, signal-bearing universe — same shape as circuit_t1_universe
+    (which pre-qualifies the T-1 circuit hit rather than handing the whole
+    market to the detector). Research funnel yields ~150-210 events/YEAR, so
+    a normal session contributes 0-3 symbols.
+
+    Owns per-DATE eligibility; the detector owns per-BAR logic (it re-checks
+    the reaction independently, so a divergence here fails closed).
+
+    Frozen parameters (brief §4 / cell lock; CLAUDE.md rule 1 — no defaults):
+      shock_threshold_pct            -8.0
+      adv_lookback_days / min_periods 20 / 10   (rupee turnover, ending T-1)
+      adv_tercile_q33_inr / q66_inr  frozen cut points from Discovery
+      adv_tiers                      ['adv_low', 'adv_mid']
+      allowed_cap_segments, require_mis, exclude_surveillance_on_entry_date
+    """
+    from services.earnings_reaction_enrichment import enrich as _enrich_earnings
+    from services.earnings_reaction_enrichment import load_error as _earnings_err
+    from services.surveillance_lookup import is_under_surveillance
+    from services.surveillance_lookup import load_error as _surv_err
+    from services.symbol_metadata import get_cap_segment, get_mis_info
+
+    if not daily_dict:
+        return set()
+
+    shock_threshold = float(config["shock_threshold_pct"])
+    same_day_classes = list(config["reaction_same_day_classes"])
+    same_day_hour_max = int(config["reaction_same_day_hour_max"])
+    max_staleness = int(config["reaction_max_staleness_days"])
+    adv_lookback = int(config["adv_lookback_days"])
+    adv_min_periods = int(config["adv_min_periods"])
+    q33 = float(config["adv_tercile_q33_inr"])
+    q66 = float(config["adv_tercile_q66_inr"])
+    allowed_tiers = set(config["adv_tiers"])
+    allowed_caps = set(config["allowed_cap_segments"])
+    require_mis = bool(config["require_mis"])
+    exclude_surv = bool(config["exclude_surveillance_on_entry_date"])
+    max_symbols = int(config["universe_max_symbols"])
+
+    def _tier(adv: float) -> str:
+        if adv < q33:
+            return "adv_low"
+        if adv < q66:
+            return "adv_mid"
+        return "adv_high"
+
+    qual: Set[str] = set()
+    n_reaction = 0
+    for sym, ddf in daily_dict.items():
+        bare = sym.replace("NSE:", "")
+        nse_sym = f"NSE:{bare}"
+
+        # --- static metadata gates (cheapest first) ---
+        try:
+            if get_cap_segment(nse_sym) not in allowed_caps:
+                continue
+            if require_mis and not get_mis_info(nse_sym).get("mis_enabled", False):
+                continue
+        except Exception:
+            continue
+
+        if ddf is None or ddf.empty or len(ddf) < max(adv_min_periods + 1, 3):
+            continue
+
+        # daily_dict is pre-sliced to dates < session_date, so the last row
+        # is T-1 (the reaction session under test).
+        try:
+            enriched = _enrich_earnings(
+                ddf, nse_sym,
+                same_day_classes=same_day_classes,
+                same_day_hour_max=same_day_hour_max,
+            )
+            if "is_earnings_reaction_day" not in enriched.columns:
+                continue
+            t1 = enriched.iloc[-1]
+            if not bool(t1.get("is_earnings_reaction_day", False)):
+                continue
+
+            t1_date = pd.Timestamp(enriched.index[-1]).date()
+            if (session_date - t1_date).days > max_staleness:
+                continue
+
+            t1_close = float(t1["close"])
+            t2_close = float(enriched.iloc[-2]["close"])
+            if t2_close <= 0 or t1_close <= 0:
+                continue
+            reaction_move = (t1_close / t2_close - 1.0) * 100.0
+            if reaction_move > shock_threshold:
+                continue
+            n_reaction += 1
+
+            # --- ADV tier on rupee turnover ENDING at T-1 (causal) ---
+            turnover = (enriched["close"] * enriched["volume"]).tail(adv_lookback)
+            if len(turnover) < adv_min_periods:
+                continue
+            adv20 = float(turnover.mean())
+            if adv20 <= 0 or _tier(adv20) not in allowed_tiers:
+                continue
+        except Exception:
+            continue
+
+        # --- surveillance exclusion on the ENTRY date ---
+        if exclude_surv and is_under_surveillance(nse_sym, session_date):
+            continue
+
+        qual.add(sym)
+        if len(qual) >= max_symbols:
+            logger.warning(
+                "setup_universe.earnings_downshock_continuation_short: hit "
+                "max_symbols=%d cap", max_symbols,
+            )
+            break
+
+    e_err, s_err = _earnings_err(), _surv_err()
+    if e_err:
+        logger.error(
+            "setup_universe.earnings_downshock_continuation_short: EARNINGS "
+            "CALENDAR UNAVAILABLE (%s) — universe will be EMPTY and the setup "
+            "will silently never fire. Upload "
+            "data/earnings_calendar/earnings_events.parquet.", e_err,
+        )
+    if s_err:
+        logger.warning(
+            "setup_universe.earnings_downshock_continuation_short: surveillance "
+            "parquet unavailable (%s) — ASM/GSM exclusion is INACTIVE (fails "
+            "open by design; see services/surveillance_lookup.py).", s_err,
+        )
+    logger.info(
+        "setup_universe.earnings_downshock_continuation_short: %d qualifying "
+        "on %s (%d passed the reaction gate before liquidity/surveillance)",
+        len(qual), session_date, n_reaction,
+    )
+    return qual
