@@ -200,7 +200,11 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
             return None
 
         reaction_move_pct = (close_t1 / close_t2 - 1.0) * 100.0
-        if reaction_move_pct > self.shock_threshold_pct:
+        # Epsilon guards the INCLUSIVE boundary against float representation:
+        # a genuine -8.00% close computes as -7.999999999999996 in IEEE-754 and
+        # would otherwise be rejected. The spec is "<= shock_threshold_pct", so
+        # this makes the implementation match the spec rather than change it.
+        if reaction_move_pct > self.shock_threshold_pct + 1e-9:
             return None  # not a deep-enough down-shock
 
         return {
