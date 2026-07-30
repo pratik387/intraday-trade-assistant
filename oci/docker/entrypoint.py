@@ -216,6 +216,87 @@ def download_delivery_pct():
             log(f"ERROR downloading {object_name}: {e}")
 
 
+def _download_single_parquet(object_name: str, local_dir: str, setup_label: str,
+                             upload_hint: str, *, critical: bool):
+    """Download one single-file parquet from the OCI cache bucket.
+
+    Shared by download_earnings_calendar() and download_asm_gsm_history().
+    `critical=True` means the consuming setup produces an EMPTY universe
+    without this file — logged as ERROR because a silent zero-fire run is
+    the most expensive failure mode we have (below_vwap, 2026-05).
+    """
+    log(f"Downloading {object_name} for {setup_label}...")
+
+    config = oci.config.from_file()
+    os_client = oci.object_storage.ObjectStorageClient(config)
+    namespace = os_client.get_namespace().data
+    bucket = os.environ.get('OCI_BUCKET_CACHE', 'backtest-cache')
+
+    out_dir = Path(local_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    local_file = out_dir / Path(object_name).name
+
+    try:
+        get_obj = os_client.get_object(
+            namespace_name=namespace, bucket_name=bucket, object_name=object_name,
+        )
+        with open(local_file, 'wb') as f:
+            for chunk in get_obj.data.raw.stream(1024 * 1024, decode_content=False):
+                f.write(chunk)
+        size_mb = local_file.stat().st_size / (1024 * 1024)
+        log(f"Downloaded {object_name}: {size_mb:.1f} MB")
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            level = "ERROR" if critical else "WARNING"
+            log(f"{level}: {object_name} not found in OCI cache; "
+                f"{setup_label} will produce NO fires"
+                f"{' (EMPTY universe)' if critical else ''}. "
+                f"Run {upload_hint} to upload.")
+        else:
+            log(f"ERROR downloading {object_name}: {e}")
+
+
+def download_earnings_calendar():
+    """Earnings-announcement calendar for earnings_downshock_continuation_short.
+
+    Read by services/earnings_reaction_enrichment.py to mark each symbol's
+    earnings REACTION session on df_daily. Without it the universe builder
+    returns an EMPTY set and the setup silently never fires — hence critical.
+
+    NOTE: this download was DELETED on 2026-05-14 when
+    earnings_day_intraday_fade was retired (it was the only consumer then).
+    Restored 2026-07-30 for the new setup. Repaired feed as of 2026-07-28
+    (NSE retired the 'Financial Result Updates' subject in Mar-2025; the
+    stream moved to 'Outcome of Board Meeting').
+    """
+    _download_single_parquet(
+        "earnings_calendar/earnings_events.parquet",
+        "/app/data/earnings_calendar",
+        "earnings_downshock_continuation_short",
+        "oci/tools/upload_event_data.py --dataset earnings",
+        critical=True,
+    )
+
+
+def download_asm_gsm_history():
+    """NSE ASM / BSE GSM surveillance history for the same setup.
+
+    Read by services/surveillance_lookup.py to exclude names under
+    surveillance on the entry date (ASM carries 100% margin, so an MIS short
+    cannot be placed). Fails OPEN by design: absence disables the EXCLUSION
+    rather than emptying the universe, so it is a WARNING not an ERROR — but
+    the backtest then over-trades vs the validated cohort (research: 9.2%
+    era_A / 6.7% era_B of events were ASM-listed).
+    """
+    _download_single_parquet(
+        "asm_gsm_history/asm_gsm_events.parquet",
+        "/app/data/asm_gsm_history",
+        "earnings_downshock_continuation_short (surveillance exclusion)",
+        "oci/tools/upload_event_data.py --dataset asm_gsm",
+        critical=False,
+    )
+
+
 def download_cross_day_rvol():
     """Look up the precomputed cross-day RVOL baseline parquet from OCI cache.
 
@@ -377,9 +458,10 @@ def download_index_ohlcv():
             raise
 
 
-# download_earnings_calendar() and download_option_chain() removed 2026-05-14
-# with earnings_day_intraday_fade + expiry_pin_strike_reversal retire
-# (see docs/retired_setups.md). No active setup consumes either feed.
+# download_option_chain() removed 2026-05-14 with expiry_pin_strike_reversal
+# retire (see docs/retired_setups.md). No active setup consumes that feed.
+# download_earnings_calendar() was removed in the same sweep and RESTORED
+# 2026-07-30 for earnings_downshock_continuation_short — see above.
 
 
 def generate_analytics(date_str):
@@ -664,15 +746,18 @@ def main():
     # Download index OHLCV for directional bias
     download_index_ohlcv()
 
-    # download_option_chain / download_iv_rank / download_earnings_calendar
-    # removed 2026-05-14 — no active setup consumes those feeds. The
-    # corresponding setups (expiry_pin_strike_reversal, options_vol_iv_rank_revert,
-    # earnings_day_intraday_fade) are retired. See docs/retired_setups.md.
+    # download_option_chain / download_iv_rank removed 2026-05-14 — no active
+    # setup consumes those feeds (expiry_pin_strike_reversal,
+    # options_vol_iv_rank_revert are retired). See docs/retired_setups.md.
+    # download_earnings_calendar was removed in that sweep too and is
+    # RESTORED below for earnings_downshock_continuation_short.
 
     # Download NSE delivery-percentage history parquet for
     # delivery_pct_anomaly_short (~39 MB, single file). Detector auto-skips
     # if absent — sub9 round-8 ship.
     download_delivery_pct()
+    download_earnings_calendar()
+    download_asm_gsm_history()
 
     # Download precomputed cross-day RVOL baseline parquet for
     # delivery_pct_anomaly_short (~77 MB, single file). Required because
