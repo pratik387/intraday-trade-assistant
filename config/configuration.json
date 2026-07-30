@@ -652,7 +652,28 @@
       "per_symbol_cooloff_min": 30,
       "max_fires_per_5min": 8,
       "wide_open": false,
-      "_research_notes": "Sub-project #9 orthogonal-family candidate. Sole survivor of the 2026-07-29 ten-class event screen (tools/sub9_research/screen_event_classes_cost_clearing.py). EVENT-DRIVEN SHORT continuation, intraday, T+1 09:20 -> 15:15. Orthogonal to the live book (one capitulation-reversion LONG factor + close_dn per the 2026-07-27 factor study); zero overlap with panic_crash_revert_long (config-faithful replay fires on 0/380 era_A and 0/360 era_B T+1 sessions). Sanity: tools/sub9_research/sanity_earnings_downshock_continuation_short.py. Phase 5 sweep: tools/sub9_research/phase5_sweep_earnings_downshock_continuation_short.py. Slippage measurement: tools/sub9_research/measure_slippage_earnings_downshock.py. Fresh-pool one-shot: tools/sub9_research/oneshot_freshpool_earnings_downshock.py."
+      "_research_notes": "Sub-project #9 orthogonal-family candidate. Sole survivor of the 2026-07-29 ten-class event screen (tools/sub9_research/screen_event_classes_cost_clearing.py). EVENT-DRIVEN SHORT continuation, intraday, T+1 09:20 -> 15:15. Orthogonal to the live book (one capitulation-reversion LONG factor + close_dn per the 2026-07-27 factor study); zero overlap with panic_crash_revert_long (config-faithful replay fires on 0/380 era_A and 0/360 era_B T+1 sessions). Sanity: tools/sub9_research/sanity_earnings_downshock_continuation_short.py. Phase 5 sweep: tools/sub9_research/phase5_sweep_earnings_downshock_continuation_short.py. Slippage measurement: tools/sub9_research/measure_slippage_earnings_downshock.py. Fresh-pool one-shot: tools/sub9_research/oneshot_freshpool_earnings_downshock.py.",
+      "preconditions": [
+        {
+          "type": "rule",
+          "watch": "SEBI_LODR_reg33"
+        },
+        {
+          "type": "data_source",
+          "path": "data/earnings_calendar/earnings_events.parquet",
+          "date_column": "announce_date",
+          "max_staleness_days": 21,
+          "min_rows_per_week": 0
+        },
+        {
+          "type": "data_source",
+          "path": "data/asm_gsm_history/asm_gsm_events.parquet",
+          "date_column": "date",
+          "max_staleness_days": 21,
+          "min_rows_per_week": 0
+        }
+      ],
+      "_comment_preconditions": "Registered with jobs/check_edge_integrity.py 2026-07-30. The earnings calendar is the LOAD-BEARING feed: stale or missing => EMPTY universe => the setup silently never fires (lesson #16). The ASM/GSM list fails OPEN, so staleness leaves names that entered surveillance since the last refresh tradeable on a live SHORT - the risk-INCREASING direction. max_staleness_days=21 tolerates the earnings off-season (June is nearly empty) while still catching a dead feed; min_rows_per_week=0 disables the volume check because both feeds are seasonally clustered (quarterly results, episodic surveillance) - staleness is the meaningful signal. rule watch SEBI_LODR_reg33 fires if result-filing timing changes, which would invalidate the reaction-day assignment this setup is built on."
     },
     "close_dn_overnight_long": {
       "enabled": true,
@@ -724,7 +745,9 @@
       "paper_enabled": false,
       "horizon": "multi_day",
       "_status_2026_07_28_KILLED_phase5": "KILLED at Phase-5 demoted-window check 2026-07-28. Discovery locked cell (pct5/all/all/hold10/hold_close): n=258 PF_net 2.45 WR 60% — collapsed on one-shot demoted window 2025-01..2026-04 to n=157 PF_net 0.67 WR 40% (2025: 0.87, 2026JanApr: 0.36); gap 1.78 vs 0.30 overfit ceiling. Pre-registered falsifier #3 is the suspected contributor (announcements_fr source died Mar-2025 -> degraded reaction-day assignment over exactly the failing window) — NOT investigated (one-run discipline). Revival path EXHAUSTED 2026-07-28: timestamp repair built + falsifier-3 retest run (pre-registered bands) -> repaired demoted PF 0.851 < 1.00 = KILL CONFIRMED; zero traded events had changed reaction dates, unchanged cohort loses identically both parquets, 2026JanApr PF ~0.33 both ways. Era decay real; file closed PERMANENTLY. Fresh pool 2026-05+ untouched. Evidence: tools/sub9_research/pead_reaction_drift_cell_lock.json + reports/sub9_sanity/_pead_repaired_retest_trades.csv + docs/experiment_ledger.jsonl 2026-07-28 lines. Brief: specs/2026-07-27-brief-pead_reaction_drift.md.",
-      "mechanism_tags": ["earnings_underreaction_drift"],
+      "mechanism_tags": [
+        "earnings_underreaction_drift"
+      ],
       "mechanism_notes": "Retail-dominated mid/small-cap holder base underreacts to quarterly earnings surprises (proxy: announcement-reaction-day return; no SUE feed exists). Limits to arbitrage (no cash-market shorting, thin SLB, MTF margin caps) let the reaction drift 3-10 sessions. LONG on positive surprises is primary; SHORT gated on volume confirmation + quantified tradable subset. Breaks if: drift migrates to top-ADV tier (arb capacity arrived), FII-regime sign flip appears, or announcement-timestamp classification degrades further (announcements_fr source died Mar-2025).",
       "preconditions": [
         {
@@ -742,7 +765,9 @@
       "paper_enabled": false,
       "horizon": "multi_day",
       "_status_2026_07_29_FREEZE_DECLINED": "Freeze DECLINED by researcher 2026-07-29; NO detector code, NOT proceeding to fresh-pool one-shot. Chain: Phase-2 PASS (demeaned alpha 191/192 cells, overturning the A4 weak kill) -> Stage-4 PASS (alpha preserved within 2-5% under production-faithful construction) -> Phase-5 technical PASS (35/72 eligible; locked all/f60/decile/hold20/asm_exit pooled PF_net 1.42) BUT locked cell is NET-NEGATIVE in era_B (PF 0.898, -0.57%/position); demeaned alpha stayed positive only because the universe mean fell harder, and f120 alpha goes negative in era_B. Fresh pool continues era_B structure -> one-shot declined rather than spent. Recorded as an era_A (illiquid-bull) artifact for LONG-ONLY CASH implementation. Residue: index-hedged long/short remains viable in principle = a NEW brief/product, not this one. illiquid_momentum_long stays PARKED (shared factor budget, same era dependence). Evidence: reports/sub9_sanity/_xsec_momentum_phase5_cells.csv + tools/sub9_research/xsec_momentum_demeaned_cell_lock.json + ledger 2026-07-28. Brief: specs/2026-07-27-brief-xsec_momentum_demeaned.md.",
-      "mechanism_tags": ["disposition_effect_momentum"],
+      "mechanism_tags": [
+        "disposition_effect_momentum"
+      ],
       "mechanism_notes": "Cross-sectional 3-12-month relative winners keep outperforming: gradual information diffusion + retail disposition-effect supply (winners sold too early, losers held) + institutional factor-flow chasing. Alpha measured DEMEANED (minus universe mean) — raw returns carry no evidential weight in this candidate. Breaks if: demeaned alpha vanishes on fresh-pool/forward data, ASM/GSM-entry events consume the winner alpha, or the tradable (MTF-eligible, ASM-clean) subset shows no residual alpha."
     },
     "mtf_capitulation_revert_long": {
@@ -785,10 +810,10 @@
         "stale_snapshot_warn_days": 7
       },
       "cost_model": {
-        "delivery_stt_round_trip": 0.0020,
+        "delivery_stt_round_trip": 0.002,
         "brokerage_round_trip": 0.0006,
         "charges_round_trip": 0.00047,
-        "assumed_slippage_round_trip": 0.0020
+        "assumed_slippage_round_trip": 0.002
       },
       "capital_allocation": {
         "_status_PAPER_ONLY": "Paper-validation: caps lifted to observe full PF distribution. Restore _live_* before live.",
@@ -816,7 +841,11 @@
       "enabled": false,
       "paper_enabled": true,
       "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF capitulation-reversion, level-triggered (near 252d low). Stage-6 confidence card PASSED (borderline): Disc PF 1.86 [BCa 1.41,2.44], OOS 1.08, HO 2026 1.39, Harvey-Liu adj-Sharpe 0.93 at M=58. Regime-conditioned (weak in FII-exit). Brief: specs/2026-06-15-brief-2to3day-reversion-batch.md. Distinct trigger from mtf_capitulation_revert_long (level vs trailing-%-drop). Paper-batch with A2.",
-      "mechanism_tags": ["capitulation_overshoot", "retail_panic", "illiquidity_premium"],
+      "mechanism_tags": [
+        "capitulation_overshoot",
+        "retail_panic",
+        "illiquidity_premium"
+      ],
       "mechanism_notes": "A thin MTF-eligible name trading at/near its trailing-252d low on a turnover shock is in terminal capitulation into a liquidity vacuum; with no institutional bid the over-shoot snaps back over 2-3 sessions. Distinct from mtf_capitulation_revert_long (which triggers on recent 5d %-drop, a rate; this triggers on price LEVEL vs the 1y low). Breaks if: near-low names keep making new lows (terminal decline not capitulation); low-vol regime (needs volatility — Disc shows it dies in FII-exit); MTF tier-1 leverage withdrawn.",
       "horizon": "multi_day",
       "ranker_class": "services.cross_sectional_ranker.CrossSectionalRanker",
@@ -854,10 +883,10 @@
         "stale_snapshot_warn_days": 7
       },
       "cost_model": {
-        "delivery_stt_round_trip": 0.0020,
+        "delivery_stt_round_trip": 0.002,
         "brokerage_round_trip": 0.0006,
         "charges_round_trip": 0.00047,
-        "assumed_slippage_round_trip": 0.0020
+        "assumed_slippage_round_trip": 0.002
       },
       "capital_allocation": {
         "_status_PAPER_ONLY": "Paper-validation: caps lifted to observe full PF distribution. Restore _live_* before live.",
@@ -885,7 +914,11 @@
       "enabled": false,
       "paper_enabled": true,
       "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF reversion, volatility-normalized (close <= -1.5 sd below 20d mean). Stage-6 confidence card PASSED (borderline): Disc PF 1.43 [BCa 1.28,1.58], OOS 1.06, HO 2026 1.17, Harvey-Liu adj-Sharpe 0.73 at M=66. Most-stable candidate (dPF 0.37), high-freq, 3/4 Disc regimes positive (FII-exit 0.91). Brief: specs/2026-06-15-brief-zscore_oversold_revert_long.md. Distinct trigger (z-score, vol-normalized) from A2/C1. Paper-batch with A2+C1.",
-      "mechanism_tags": ["capitulation_overshoot", "retail_panic", "illiquidity_premium"],
+      "mechanism_tags": [
+        "capitulation_overshoot",
+        "retail_panic",
+        "illiquidity_premium"
+      ],
       "mechanism_notes": "An MTF tier-1 illiquid name whose close sits >=1.5 sd below its 20d mean on a turnover shock is statistically over-extended below its own band; in a thin book the deviation mean-reverts toward the band over 2-3 sessions. Distinct from mtf_capitulation_revert_long (raw 5d %-return) and low52_capitulation_revert_long (level vs 252d low): z-score normalizes by realized volatility, selecting a different cohort (a calm name with a statistically-extreme modest drop). Breaks if: the deviation is an informational regime shift (continues, no revert); low-vol regime (band too tight); shock filter removed (quiet drift-downs continue).",
       "horizon": "multi_day",
       "ranker_class": "services.cross_sectional_ranker.CrossSectionalRanker",
@@ -923,10 +956,10 @@
         "stale_snapshot_warn_days": 7
       },
       "cost_model": {
-        "delivery_stt_round_trip": 0.0020,
+        "delivery_stt_round_trip": 0.002,
         "brokerage_round_trip": 0.0006,
         "charges_round_trip": 0.00047,
-        "assumed_slippage_round_trip": 0.0020
+        "assumed_slippage_round_trip": 0.002
       },
       "capital_allocation": {
         "_status_PAPER_ONLY": "Paper-validation: caps lifted to observe full PF distribution. Restore _live_* before live.",
@@ -954,14 +987,18 @@
       "enabled": false,
       "paper_enabled": true,
       "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF reversion, 2-day cumulative-return loser decile (formation horizon BETWEEN A2's 5d and the killed 1d). Stage-6 card PASSED (borderline, cleanest of batch): Disc PF 1.355 [BCa 1.12,1.61], OOS 1.17, HO 2026 1.37, Harvey-Liu adj-Sharpe 0.93 at M=72. 3/4 Disc regimes positive (FII-exit 0.85 weak). Brief: specs/2026-06-15-brief-range_exhaustion_revert_long.md (covers C5 KILL + C6). NB: same selection_mode as mtf_capitulation_revert_long (trailing_loser_decile) at lookback=2 vs 5 -> A2-adjacent (return-decile family), less mechanistically distinct than low52/zscore; cleanest numbers. Paper-batch with A2+C1+C4.",
-      "mechanism_tags": ["capitulation_overshoot", "retail_panic", "illiquidity_premium"],
+      "mechanism_tags": [
+        "capitulation_overshoot",
+        "retail_panic",
+        "illiquidity_premium"
+      ],
       "mechanism_notes": "MTF tier-1 illiquid name in the bottom decile of trailing 2-day cumulative return on a turnover shock -> 2-3d snapback. Formation window (2d) sits between A2 (5d slow bleed) and the killed C3 (1d acute/news-driven) — captures a faster capitulation than A2 without the 1d news-continuation contamination. Same over-extension->reversion family; distinct by formation horizon. Breaks if: 2d drop is informational (continues); low-vol regime; shock filter removed.",
       "horizon": "multi_day",
       "ranker_class": "services.cross_sectional_ranker.CrossSectionalRanker",
       "selection_mode": "trailing_loser_decile",
       "data_source": "cache/preaggregate/clean_daily_from5m.feather",
       "lookback_days": 2,
-      "loser_pct": 0.10,
+      "loser_pct": 0.1,
       "hold_days": 3,
       "target_exit": {
         "enabled": true,
@@ -992,10 +1029,10 @@
         "stale_snapshot_warn_days": 7
       },
       "cost_model": {
-        "delivery_stt_round_trip": 0.0020,
+        "delivery_stt_round_trip": 0.002,
         "brokerage_round_trip": 0.0006,
         "charges_round_trip": 0.00047,
-        "assumed_slippage_round_trip": 0.0020
+        "assumed_slippage_round_trip": 0.002
       },
       "capital_allocation": {
         "_status_PAPER_ONLY": "Paper-validation: caps lifted to observe full PF distribution. Restore _live_* before live.",
