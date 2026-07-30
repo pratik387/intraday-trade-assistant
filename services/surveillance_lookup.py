@@ -44,8 +44,14 @@ _REPO = Path(__file__).resolve().parents[1]
 _PARQUET = _REPO / "data" / "asm_gsm_history" / "asm_gsm_events.parquet"
 
 _MEMBERSHIP: Optional[Set[Tuple[str, date]]] = None
+_MAX_EVENT_DATE: Optional[date] = None
 _LOAD_ATTEMPTED = False
 _LOAD_ERROR: Optional[str] = None
+
+# Existence is NOT freshness. A stale-but-present list fails OPEN for every
+# name that entered ASM/GSM after its last refresh — the risk-INCREASING
+# direction for a live-money short. Callers must surface load_error().
+_MAX_STALENESS_DAYS = 21
 
 
 def _bare(sym: str) -> str:
@@ -70,6 +76,8 @@ def _load() -> Optional[Set[Tuple[str, date]]]:
         sym = df["symbol"].map(_bare)
         dts = pd.to_datetime(df["date"]).dt.date
         _MEMBERSHIP = set(zip(sym, dts))
+        global _MAX_EVENT_DATE
+        _MAX_EVENT_DATE = max(dts) if len(dts) else None
         return _MEMBERSHIP
     except Exception as exc:  # never raise into the universe path
         _LOAD_ERROR = f"{type(exc).__name__}: {exc}"
@@ -81,6 +89,14 @@ def load_error() -> Optional[str]:
     return _LOAD_ERROR
 
 
+def staleness_days(as_of: date) -> Optional[int]:
+    """Age of the newest surveillance record vs `as_of`, or None if unloaded."""
+    _load()
+    if _MAX_EVENT_DATE is None:
+        return None
+    return (as_of - _MAX_EVENT_DATE).days
+
+
 def is_under_surveillance(symbol: str, on_date: date) -> bool:
     """True iff `symbol` was in an ASM/GSM list on `on_date`.
 
@@ -90,4 +106,14 @@ def is_under_surveillance(symbol: str, on_date: date) -> bool:
     keys = _load()
     if not keys:
         return False
+    global _LOAD_ERROR
+    if _MAX_EVENT_DATE is not None and _LOAD_ERROR is None:
+        age = (on_date - _MAX_EVENT_DATE).days
+        if age > _MAX_STALENESS_DAYS:
+            _LOAD_ERROR = (
+                f"STALE surveillance list: newest record {_MAX_EVENT_DATE} is "
+                f"{age}d before {on_date} (limit {_MAX_STALENESS_DAYS}d) — names "
+                f"that entered ASM/GSM since then are NOT being excluded; "
+                f"refresh via tools/asm_gsm_history/fetch_asm_gsm.py"
+            )
     return (_bare(symbol), on_date) in keys

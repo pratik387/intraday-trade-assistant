@@ -796,9 +796,12 @@ def earnings_downshock_continuation_short_universe(
     max_symbols = int(config["universe_max_symbols"])
 
     def _tier(adv: float) -> str:
-        if adv < q33:
+        # Boundaries are INCLUSIVE per the cell lock (adv_low = adv20 <= q33).
+        # Practically unreachable at float cut points, but kept literal so the
+        # code and the lock read identically under audit.
+        if adv <= q33:
             return "adv_low"
-        if adv < q66:
+        if adv <= q66:
             return "adv_mid"
         return "adv_high"
 
@@ -843,7 +846,11 @@ def earnings_downshock_continuation_short_universe(
             if t2_close <= 0 or t1_close <= 0:
                 continue
             reaction_move = (t1_close / t2_close - 1.0) * 100.0
-            if reaction_move > shock_threshold:
+            # Same 1e-9 epsilon the detector uses: an exact -8.00% close is
+            # -7.999999999999996 in IEEE-754. Without it the universe would
+            # SILENTLY drop a legitimate boundary trade that the detector
+            # would have accepted — a divergence with no log at all.
+            if reaction_move > shock_threshold + 1e-9:
                 continue
             n_reaction += 1
 
@@ -878,10 +885,12 @@ def earnings_downshock_continuation_short_universe(
             "data/earnings_calendar/earnings_events.parquet.", e_err,
         )
     if s_err:
-        logger.warning(
+        logger.error(
             "setup_universe.earnings_downshock_continuation_short: surveillance "
-            "parquet unavailable (%s) — ASM/GSM exclusion is INACTIVE (fails "
-            "open by design; see services/surveillance_lookup.py).", s_err,
+            "parquet unavailable (%s) — ASM/GSM exclusion is INACTIVE. This "
+            "FAILS OPEN by design (a missing exclusion must not empty the "
+            "universe) but leaves known-risky ASM names tradeable on a "
+            "live-money SHORT. Upload data/asm_gsm_history/.", s_err,
         )
     logger.info(
         "setup_universe.earnings_downshock_continuation_short: %d qualifying "

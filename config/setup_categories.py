@@ -76,6 +76,15 @@ SETUP_CATEGORIES: Dict[str, SetupCategory] = {
     "low52_capitulation_revert": SetupCategory.REVERSION,
     "zscore_oversold_revert": SetupCategory.REVERSION,
     "crash2d_revert": SetupCategory.REVERSION,
+
+    # 2026-07-30: post-earnings down-shock CONTINUATION (T+1 intraday SHORT).
+    # Note this is a CONTINUATION mechanism, not a reversion one — it rides the
+    # post-shock bleed rather than fading it — but it is categorised REVERSION
+    # because the category drives extension/exhaustion quality scoring, and the
+    # entry is on a deeply extended (<= -8% the prior session) name. Ships
+    # enabled=false / paper_enabled=false. Base name (suffix stripped by
+    # get_base_setup_name). Spec: specs/2026-07-29-brief-earnings_downshock_continuation_short.md
+    "earnings_downshock_continuation": SetupCategory.REVERSION,
 }
 
 

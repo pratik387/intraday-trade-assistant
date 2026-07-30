@@ -128,6 +128,10 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
 
         # --- plumbing ---
         self.min_bars_required = int(config["min_bars_required"])
+        # Execution-working contract (fail-fast like every other trading
+        # parameter — this one gates whether fills are economically valid at all).
+        self.entry_order_working_required = bool(config["entry_order_working_required"])
+        self.entry_order_working_supported = bool(config["entry_order_working_supported"])
         uk = config.get("universe_key")
         self.universe_key = str(uk) if uk else None
 
@@ -280,11 +284,31 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
         if self.exclude_circuit_blocked_open:
             hi = float(entry_bar["high"])
             lo = float(entry_bar["low"])
+            vol = float(entry_bar.get("volume", 0.0) or 0.0)
             gap_pct = (bar_open / info["reaction_close"] - 1.0) * 100.0
-            if hi == lo and abs(gap_pct) >= self.circuit_block_min_gap_pct:
+            # circuit_block_min_gap_pct is NEGATIVE (-1.5): reject only when the
+            # session opened PINNED AT A LOWER BAND, i.e. gap_pct <= threshold.
+            # A previous `abs(gap_pct) >= threshold` made this always-true for a
+            # negative threshold, collapsing the guard to "reject every
+            # zero-range bar" and over-rejecting vs the validated construction
+            # (research measured this filter at 0.26-0.28% of events).
+            if hi == lo and vol > 0 and gap_pct <= self.circuit_block_min_gap_pct:
                 return _empty(
-                    f"circuit-blocked open (zero-range bar, gap {gap_pct:.2f}%)"
+                    f"circuit-blocked open (zero-range bar, gap {gap_pct:.2f}% "
+                    f"<= {self.circuit_block_min_gap_pct}%)"
                 )
+
+        # The config documents that this warning fires on EVERY fire so the
+        # order-layer gap can never be silent. At Rs 1L this order is ~25% of the
+        # entry MINUTE's turnover in the adv_low tier; a single MARKET order
+        # costs materially more than the entire 1.4bp fresh-pool margin.
+        if self.entry_order_working_required and not self.entry_order_working_supported:
+            logger.warning(
+                "EXECUTION_WORKING_UNSUPPORTED | %s | %s | order must be WORKED "
+                "across the 5m block but the order layer only sends MARKET; "
+                "fills will be worse than every number in the validation chain",
+                self.structure_type, ctx.symbol,
+            )
 
         confidence = 0.6
         evt = StructureEvent(
@@ -306,9 +330,7 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
                 # layer: at Rs 1L this order is ~25% of the entry MINUTE's
                 # turnover in the illiquid tier, so it must be WORKED across
                 # the 5m block, never sent as one market order.
-                "entry_order_working_required": bool(
-                    self.config.get("entry_order_working_required", False)
-                ),
+                "entry_order_working_required": self.entry_order_working_required,
             },
             price=bar_close,
         )
@@ -359,7 +381,7 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
             )
             assert_sl_outside_entry_zone(_zone, hard_sl, "short")
             enforce_min_stop_distance(
-                close, hard_sl, self.config.get("min_stop_distance_pct"),
+                close, hard_sl, self.min_stop_distance_pct,
             )
         except PlanRejected as e:
             logger.warning(

@@ -11,12 +11,15 @@ reads the column off `ctx.df_daily` so the detector itself does no I/O
 
 REACTION-DAY ASSIGNMENT (must stay identical to the research reference,
 `tools/sub9_research/sanity_earnings_downshock_continuation_short.py`):
-  announce_time_class in `reaction_same_day_classes` (intraday / BMO)
-      -> the announcement date IS the reaction day
-  announce_time_class == "scheduled" with announce hour < reaction_same_day_hour_max
-      -> the announcement date IS the reaction day
-  otherwise (AMC, or scheduled at/after the hour cutoff)
-      -> the NEXT trading day is the reaction day
+  SAME-DAY requires BOTH an eligible class (`reaction_same_day_classes`,
+  i.e. intraday / BMO) AND announce hour < `reaction_same_day_hour_max`.
+  An 'intraday' filing at 15:27 is 3 minutes from the close and reacts the
+  NEXT session. 'scheduled' rows carry a SYNTHETIC 09:00 stamp from the
+  calendar scrape, so their hour is meaningless and they NEVER qualify as
+  same-day. Missing hour -> next session. A same-day anchor landing on a
+  NON-TRADING day (Saturday board meetings are common and still classed
+  'intraday') rolls forward to the next real session.
+  Everything else -> the NEXT trading session is the reaction day.
 Both class lists and the hour cutoff come from the setup's config block —
 no defaults here (CLAUDE.md rule 1).
 
@@ -31,25 +34,39 @@ Repaired 2026-07-28 (`tools/earnings_calendar/repair_post_fr_window.py`)
 after NSE retired the "Financial Result Updates" subject in Mar-2025 and
 the stream migrated to "Outcome of Board Meeting". A stale copy silently
 degrades reaction-day assignment for ~1/3 of post-Mar-2025 events, which
-is exactly the failure the data-health monitor in
-`jobs/check_edge_integrity.py` watches for. Missing file = no fires (the
-detector rejects with a loud reason), never a crash.
+is why `_load()` now enforces a FRESHNESS gate (existence is not freshness)
+and surfaces it via `load_error()`. Missing OR stale file = no fires with a
+loud reason, never a crash. NOTE: `jobs/check_edge_integrity.py` (the
+data-health monitor that should also watch this) lives on `main` and is NOT
+in this branch — registering these parquets as its `preconditions` is a
+post-merge step.
 
 All timestamps IST-naive (CLAUDE.md rule 2).
 """
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
-from typing import Optional, Set, Tuple
+from typing import Optional, Tuple
 
 import pandas as pd
 
 _REPO = Path(__file__).resolve().parents[1]
 _PARQUET = _REPO / "data" / "earnings_calendar" / "earnings_events.parquet"
 
-_REACTION_KEYS: Optional[Set[Tuple[str, object]]] = None
+# Pre-indexed BY SYMBOL: {bare_symbol: [(anchor_date, is_same_day), ...]}.
+# A flat set forced an O(all_events) scan per symbol, i.e. O(n_symbols x n_events)
+# synchronously at session_start — tens of millions of comparisons at production
+# universe size, on the critical path of a SINGLE-BAR entry window.
+_REACTION_BY_SYMBOL: Optional[dict] = None
+_MAX_EVENT_DATE = None
 _LOAD_ATTEMPTED = False
 _LOAD_ERROR: Optional[str] = None
+
+# A parquet that EXISTS but is stale loads "successfully" and then silently
+# produces no reaction flags for recent events — availability masquerading as
+# freshness (lesson #16 in a different guise). Callers get load_error() set.
+_MAX_STALENESS_DAYS = 21
 
 
 def _bare(sym: str) -> str:
@@ -59,11 +76,13 @@ def _bare(sym: str) -> str:
 def _load(
     same_day_classes: Tuple[str, ...],
     same_day_hour_max: int,
-) -> Optional[Set[Tuple[str, object]]]:
-    """Build the {(bare_symbol, reaction_date)} set once. None on failure."""
-    global _REACTION_KEYS, _LOAD_ATTEMPTED, _LOAD_ERROR
+    *,
+    as_of: Optional[date] = None,
+) -> Optional[dict]:
+    """Build {bare_symbol: [(anchor_date, is_same_day)]} once. None on failure."""
+    global _REACTION_BY_SYMBOL, _MAX_EVENT_DATE, _LOAD_ATTEMPTED, _LOAD_ERROR
     if _LOAD_ATTEMPTED:
-        return _REACTION_KEYS
+        return _REACTION_BY_SYMBOL
     _LOAD_ATTEMPTED = True
 
     if not _PARQUET.exists():
@@ -93,10 +112,25 @@ def _load(
         # Next-trading-day resolution is deferred to the caller, which owns
         # the symbol's real session calendar (df_daily). Here we emit the
         # ANCHOR date plus the same-day flag; `enrich` walks it forward.
-        _REACTION_KEYS = set(
-            zip(df["symbol"], df["announce_date"].dt.date, same_day.astype(bool))
+        by_sym: dict = {}
+        for sym_v, anchor_v, sd_v in zip(
+            df["symbol"], df["announce_date"].dt.date, same_day.astype(bool)
+        ):
+            by_sym.setdefault(sym_v, []).append((anchor_v, bool(sd_v)))
+        _REACTION_BY_SYMBOL = by_sym
+        _MAX_EVENT_DATE = max(
+            (d for lst in by_sym.values() for d, _ in lst), default=None
         )
-        return _REACTION_KEYS
+        # Freshness gate: existence is NOT freshness.
+        if _MAX_EVENT_DATE is not None and as_of is not None:
+            age = (as_of - _MAX_EVENT_DATE).days
+            if age > _MAX_STALENESS_DAYS:
+                _LOAD_ERROR = (
+                    f"STALE calendar: newest event {_MAX_EVENT_DATE} is {age}d "
+                    f"before {as_of} (limit {_MAX_STALENESS_DAYS}d) — refresh "
+                    f"via tools/earnings_calendar/fetch_earnings.py"
+                )
+        return _REACTION_BY_SYMBOL
     except Exception as exc:  # never raise into the detector path
         _LOAD_ERROR = f"{type(exc).__name__}: {exc}"
         return None
@@ -126,8 +160,10 @@ def enrich(
     if daily_df is None or daily_df.empty:
         return daily_df
 
-    keys = _load(tuple(same_day_classes), int(same_day_hour_max))
-    if not keys:
+    sessions_probe = pd.to_datetime(pd.Index(daily_df.index)).normalize()
+    as_of = sessions_probe.date.max() if len(sessions_probe) else None
+    by_sym = _load(tuple(same_day_classes), int(same_day_hour_max), as_of=as_of)
+    if not by_sym:
         daily_df = daily_df.copy()
         daily_df["is_earnings_reaction_day"] = False
         return daily_df
@@ -138,9 +174,7 @@ def enrich(
     session_pos = {d: i for i, d in enumerate(session_dates)}
 
     flags = [False] * len(session_dates)
-    for sym, anchor_date, is_same_day in keys:
-        if sym != bare:
-            continue
+    for anchor_date, is_same_day in by_sym.get(bare, ()):   # O(events for THIS symbol)
         if is_same_day:
             # Same-day classes resolve to the announcement date ONLY if it is
             # a real trading session. Filings land on Saturdays (board meetings

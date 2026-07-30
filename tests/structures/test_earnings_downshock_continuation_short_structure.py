@@ -38,8 +38,10 @@ def _cfg(**over):
         "catastrophe_stop_pct": 15.0,
         "min_stop_distance_pct": 0.5,
         "exclude_circuit_blocked_open": True,
-        "circuit_block_min_gap_pct": 0.5,
+        "circuit_block_min_gap_pct": -1.5,   # PRODUCTION value (negative)
         "min_bars_required": 1,
+        "entry_order_working_required": True,
+        "entry_order_working_supported": False,
         "entry_zone_pct": 0.3,
         "entry_zone_mode": "symmetric",
     }
@@ -157,15 +159,51 @@ def test_latch_allows_only_one_fire_per_session():
 
 # ---------------------------------------------------------------- guards
 
-def test_circuit_blocked_zero_range_open_is_rejected():
-    r = _det().detect(_ctx(_daily(-10.0), close=PX, hi=PX, lo=PX))
+def test_circuit_blocked_when_zero_range_AND_gapped_down_past_threshold():
+    """REGRESSION: the guard read `abs(gap_pct) >= threshold` with a NEGATIVE
+    production threshold (-1.5), which is always true — it rejected every
+    zero-range bar regardless of gap direction, over-rejecting vs the validated
+    construction (research measured this filter at 0.26-0.28% of events)."""
+    # reaction close is PX*0.90; open PX*0.80 => gap ~-11% (well past -1.5)
+    df = _daily(-10.0)
+    r = _det().detect(_ctx(df, close=PX * 0.80, hi=PX * 0.80, lo=PX * 0.80))
     assert not r.structure_detected
     assert "circuit-blocked" in (r.rejection_reason or "")
 
 
+def test_zero_range_bar_that_did_NOT_gap_down_still_fires():
+    """The magnitude gate must be live: a flat zero-range open is not a lower
+    circuit lock. Under the old abs() bug this was wrongly rejected."""
+    df = _daily(-10.0)
+    flat = PX * 0.90                      # == the reaction close, gap ~0%
+    r = _det().detect(_ctx(df, close=flat, hi=flat, lo=flat))
+    assert r.structure_detected, r.rejection_reason
+
+
 def test_circuit_guard_can_be_disabled_by_config():
     d = _det(exclude_circuit_blocked_open=False)
-    assert d.detect(_ctx(_daily(-10.0), close=PX, hi=PX, lo=PX)).structure_detected
+    r = d.detect(_ctx(_daily(-10.0), close=PX * 0.80, hi=PX * 0.80, lo=PX * 0.80))
+    assert r.structure_detected
+
+
+def test_execution_working_flags_are_fail_fast():
+    """The order layer cannot yet WORK an order across the 5m block; the flags
+    that surface that gap must be validated like any other trading parameter."""
+    for key in ("entry_order_working_required", "entry_order_working_supported"):
+        bad = _cfg()
+        del bad[key]
+        with pytest.raises(KeyError):
+            EarningsDownshockContinuationShortStructure(bad)
+
+
+def test_execution_working_unsupported_warning_is_emitted_on_every_fire(caplog):
+    """config documents this warning fires on EVERY fire so the order-layer gap
+    can never be silent. It previously did not exist in code at all."""
+    import logging
+    d = _det()
+    with caplog.at_level(logging.WARNING):
+        assert d.detect(_ctx(_daily(-10.0))).structure_detected
+    assert any("EXECUTION_WORKING_UNSUPPORTED" in rec.getMessage() for rec in caplog.records)
 
 
 def test_insufficient_bars_rejected():
