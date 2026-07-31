@@ -32,6 +32,7 @@ def _cfg(**over):
         "active_window_end": "09:15",
         "time_stop_at": "15:10",
         "shock_threshold_pct": -8.0,
+        "shock_floor_pct": -12.0,
         "reaction_same_day_classes": ["intraday", "BMO"],
         "reaction_same_day_hour_max": 15,
         "reaction_max_staleness_days": 7,
@@ -87,8 +88,8 @@ def _det(**over):
 def test_missing_config_key_raises():
     """CLAUDE.md rule 1: no hardcoded defaults — missing key must fail fast."""
     for key in (
-        "shock_threshold_pct", "time_stop_at", "catastrophe_stop_pct",
-        "active_window_start", "min_bars_required",
+        "shock_threshold_pct", "shock_floor_pct", "time_stop_at",
+        "catastrophe_stop_pct", "active_window_start", "min_bars_required",
     ):
         bad = _cfg()
         del bad[key]
@@ -122,6 +123,31 @@ def test_does_not_fire_when_shock_too_shallow():
 
 def test_threshold_is_inclusive_at_minus_eight():
     assert _det().detect(_ctx(_daily(-8.0))).structure_detected
+
+
+def test_capitulation_deeper_than_floor_is_excluded():
+    """V2 band: -15% is capitulation, not disappointment — and it is the cohort
+    panic_crash_revert_long goes LONG on. Shorting it fights our own book."""
+    assert not _det().detect(_ctx(_daily(-15.0))).structure_detected
+
+
+def test_floor_is_inclusive_at_minus_twelve():
+    """Band is [-12, -8] INCLUSIVE at both ends, mirroring the threshold."""
+    assert _det().detect(_ctx(_daily(-12.0))).structure_detected
+
+
+def test_just_inside_the_floor_fires_and_just_outside_does_not():
+    """The band edge must be a real boundary, not a float artifact."""
+    assert _det().detect(_ctx(_daily(-11.99))).structure_detected
+    assert not _det().detect(_ctx(_daily(-12.01))).structure_detected
+
+
+def test_floor_is_read_from_config_not_hardcoded():
+    """Widening the band by config must admit a previously-excluded shock."""
+    deep = _daily(-15.0)
+    assert not _det().detect(_ctx(deep)).structure_detected
+    wide = EarningsDownshockContinuationShortStructure(_cfg(shock_floor_pct=-20.0))
+    assert wide.detect(_ctx(deep)).structure_detected
 
 
 def test_does_not_fire_on_up_move():

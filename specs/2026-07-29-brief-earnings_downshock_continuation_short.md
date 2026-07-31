@@ -332,3 +332,98 @@ Development = 2023-01 → 2026-04-30 with the A5 era split. Freeze commit after 
 cell-lock, BEFORE any statistic on 2026-05-01+. Decisive gate = fresh-pool one-shot + paper.
 Every demoted/fresh evaluation logs a `docs/experiment_ledger.jsonl` line. Screens to date were
 development-window Phase-1/2 and are exempt; the gauntlet likewise.
+
+---
+
+## §10 — V2 REFINED CONSTRUCTION (pre-registered 2026-07-31, NOT validated)
+
+### 10a. What Stage-8 actually established
+
+Production ran the frozen V1 construction through the real pipeline (OCI, real MIS-short
+fees, ProductionUniverseGate, measured slippage) across three windows:
+
+| window | n | mean/trade @27.5bp | PF | t |
+|---|---|---|---|---|
+| Discovery Apr-23 → Dec-24 | 150 | +0.373% | 1.350 | +1.34 |
+| OOS 2025 | 129 | +0.305% | 1.306 | +1.04 |
+| Holdout 2026 Jan → Jul-24 | 106 | +0.404% | 1.397 | +1.23 |
+| **true out-of-sample (OOS+HO)** | **235** | **+0.349%** | **1.348** | **+1.60** |
+
+Research replication is near-exact (Discovery +0.377→+0.373, OOS +0.327→+0.305; PF 1.35→1.350,
+1.31→1.306). **Stage-8 parity is closed.**
+
+Two structural findings travel with it:
+
+1. **The V1 trigger was measured on the wrong price series.** Research computed the reaction
+   move from LAST-5m-PRINT closes (`clean_daily_from5m`); production and live use OFFICIAL NSE
+   closes (a last-30-min VWAP) via `consolidated_daily` / the Upstox daily API. The two disagree
+   on ~21% of the population at the −8% boundary — yet expectancy is identical, so the edge is
+   NOT knife-edge on the trigger definition. Official close is also the correct variable on
+   mechanism grounds: it is the number every other participant reacts to.
+2. **V1 is unholdable as a book.** 16/30 months positive, rolling-12m PF below 1.0 in 6 of 28
+   windows, max drawdown −Rs28,567 and a **15-month underwater stretch** (Oct-2023 → Feb-2025)
+   sitting in the middle of the sample, not the tail.
+
+### 10b. The two V2 filters
+
+| filter | config key | rule |
+|---|---|---|
+| reaction BAND | `shock_floor_pct: -12.0` | fire only for `reaction_move_pct ∈ [−12%, −8%]` |
+| cap restriction | `allowed_cap_segments: ["small_cap"]` | small_cap only (was all five) |
+
+Era-stability is the selection criterion, not pooled PF:
+
+| bucket | DISC | OOS | HOLD |
+|---|---|---|---|
+| reaction −9..−8 | +0.87 | +0.38 | +0.51 |
+| reaction −12..−10 | +0.52 | +0.14 | +0.82 |
+| reaction −15..−12 | +1.33 | −0.55 | **−2.02** |
+| reaction ≤−15 | −0.76 | +1.04 | +0.01 |
+| small_cap | +0.45 | +0.54 | +0.86 |
+| mid_cap | +0.30 | −0.91 | −0.20 |
+
+**Mechanism.** −8% is a disappointment the retail holder base digests over T+1; ≤−12% is
+capitulation that reverts — and it is precisely the cohort `panic_crash_revert_long` goes LONG
+on (≤−7% deep illiquid crash → EOD snapback). Shorting it fights our own book and doubles the
+capitulation-factor exposure the 2026-07 factor study flagged. The cap filter follows the stated
+thesis: analyst-uncovered retail-held names digest slowly; mid_caps carry coverage and price the
+news same-day, leaving no T+1 drift.
+
+In-sample effect: n=210, +0.629%/trade, PF 1.77, t +3.10, 21/27 months positive,
+max DD −Rs14,705 (vs −Rs28,567).
+
+### 10c. What these numbers are NOT
+
+**The filters were mined from the same data they improve.** ~17 bucket evaluations across
+regime × reaction-depth × cap-segment. A crude Bonferroni at M=17 puts the bar near t≈3.0;
+V2 sits at **3.10 — on the line, not clear of it** — and discards 45% of trades, so part of the
+drawdown improvement is simply less exposure. **The V2 in-sample figures are not a forward
+expectation.**
+
+**Regime conditioning was tested and rejected as noise**: chop +1.17/−0.38/+1.04,
+trend_up +0.21/−0.19/+1.11, trend_down +0.11/+1.09/−0.50. There is no "right regime" to trade
+this in. Any future seasonal or regime filter needs its own pre-registration (lesson #31).
+
+### 10d. Concurrency cap — derived, not inherited
+
+The 35%/10 used for the Stage-8 parity run is retired. Across 3.3 years the V2 construction
+**never exceeds 5 concurrent positions** (per-day max 5, p95 4, median 1; only 8 sessions exceed
+3). At Rs 500k paper capital and Rs 1L notional with 5× MIS margin (Rs 20k blocked/position),
+5 slots = Rs 100k = 20%. So `max_concurrent_positions: 5` / `capital_budget_pct: 20` truncates
+**nothing** — no capped-subset expectancy correction is required for V2 — while halving V1's
+capital footprint (V1 peaked at 8 concurrent / 32%).
+
+### 10e. Pre-registered forward gate
+
+Every archive window is spent: Discovery, OOS, Holdout and the original fresh pool have all been
+evaluated. **No clean historical data remains.** Forward data from **2026-08-01** is the only
+admissible test, and this section is committed before any August bar exists.
+
+- **ONE SHOT** at **n ≥ 40** filtered trades, counted BEFORE any outcome is computed
+- Expected ~4–5 trades/month post-filter → shot due **~Dec-2026**, after Q1 (Jul-Aug) and
+  Q2 (Oct-Nov) results seasons
+- Statistic: mean net %/trade at **CONSERVATIVE 27.5 bp/side**, real Zerodha MIS-short fees
+- **PASS floor +0.15%/trade**, applied mechanically (same floor as the V1 fresh-pool one-shot)
+- Scored on the **official-close** trigger — what production actually reads
+- No re-filtering, no seasonal filter, no regime filter
+- **If V2 fails, V1 is not resurrected as a fallback — the candidate retires.**

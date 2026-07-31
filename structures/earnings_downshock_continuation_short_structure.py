@@ -109,6 +109,7 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
 
         # --- signal (CLAUDE.md rule 1: no defaults, KeyError on missing) ---
         self.shock_threshold_pct = float(config["shock_threshold_pct"])
+        self.shock_floor_pct = float(config["shock_floor_pct"])
         self.reaction_same_day_classes = list(config["reaction_same_day_classes"])
         self.reaction_same_day_hour_max = int(config["reaction_same_day_hour_max"])
         self.reaction_max_staleness_days = int(config["reaction_max_staleness_days"])
@@ -210,6 +211,13 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
         # this makes the implementation match the spec rather than change it.
         if reaction_move_pct > self.shock_threshold_pct + 1e-9:
             return None  # not a deep-enough down-shock
+        # Lower bound of the reaction BAND (pre-registered 2026-07-31). Reactions
+        # deeper than shock_floor_pct are capitulation, not disappointment: they
+        # revert rather than continue, and they are the same cohort
+        # panic_crash_revert_long buys — shorting them fights our own book.
+        # Same IEEE-754 epsilon reasoning as the threshold above, mirrored.
+        if reaction_move_pct < self.shock_floor_pct - 1e-9:
+            return None  # capitulation zone — excluded by the band
 
         return {
             "reaction_move_pct": reaction_move_pct,
