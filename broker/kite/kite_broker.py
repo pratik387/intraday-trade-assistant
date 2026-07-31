@@ -629,7 +629,11 @@ class KiteBroker:
                         self._tick_size_map[str(ts)] = float(tick)
                 logger.info(f"get_tick_size: instruments dump loaded ({len(self._tick_size_map)} NSE scrips)")
             except Exception as e:
-                logger.warning(f"get_tick_size: instruments dump fetch failed: {e}")
+                # ERROR, not warning: a failed dump silently reverts EVERY order
+                # this run to the blanket config fallback — the exact failure
+                # mode (0.10-tick scrip at a 0.05-odd price) this method fixes.
+                logger.error(f"get_tick_size: instruments dump fetch failed — "
+                             f"ALL orders this run fall back to config tick: {e}")
         bare = str(symbol).split(":", 1)[-1]
         tick = self._tick_size_map.get(bare)
         return float(tick) if tick else None
