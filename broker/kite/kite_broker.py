@@ -605,6 +605,35 @@ class KiteBroker:
             logger.warning(f"modify_order failed for {order_id}: {e}")
             return False
 
+    def get_tick_size(self, symbol: str) -> Optional[float]:
+        """Per-instrument NSE tick size from the Kite instruments dump, or None.
+
+        NSE ticks are per-scrip (0.01 / 0.05 / 0.10 bands — e.g. NPST and
+        MIDWESTLTD are 0.10), so a price rounded to a blanket 0.05 gets the
+        order REJECTED outright ('Tick size for this script is 0.10',
+        2026-06-30 JINDALPHOT / 2026-07-02 NPST+MIDWESTLTD). The instruments
+        dump is fetched once per process on first call (~7MB; placement paths
+        only, so days with zero fires never pay for it). Returns None in
+        dry_run or when the dump/symbol is unavailable — callers fall back to
+        the configured tick_size_fallback_inr.
+        """
+        if self.dry_run:
+            return None
+        if not hasattr(self, "_tick_size_map"):
+            self._tick_size_map: Dict[str, float] = {}
+            try:
+                for row in self.kc.instruments("NSE"):
+                    ts = row.get("tradingsymbol")
+                    tick = row.get("tick_size")
+                    if ts and tick:
+                        self._tick_size_map[str(ts)] = float(tick)
+                logger.info(f"get_tick_size: instruments dump loaded ({len(self._tick_size_map)} NSE scrips)")
+            except Exception as e:
+                logger.warning(f"get_tick_size: instruments dump fetch failed: {e}")
+        bare = str(symbol).split(":", 1)[-1]
+        tick = self._tick_size_map.get(bare)
+        return float(tick) if tick else None
+
     # ------------------------------ Paper Trading ---------------------------
     def _simulate_order(
         self,

@@ -76,6 +76,7 @@ def _minimal_config(state_path: Path) -> dict:
                 "catastrophe_stop_pct": 5.0,
                 "gtt_limit_buffer_pct": 0.5,
                 "entry_limit_buffer_pct": 1.0,
+                "tick_size_fallback_inr": 0.05,
                 "insufficient_funds_retry_haircut": 0.95,
                 "fill_poll_timeout_sec": 60,
                 "capital_allocation": {
@@ -872,3 +873,63 @@ def test_find_out_of_band_sell_filters():
     class NoOrders:
         pass
     assert _find_out_of_band_sell(NoOrders(), "NSE:X", 10) is None
+
+
+# ---------------------------------------------------------------------------
+# Per-instrument tick size (2026-07-02 NPST/MIDWESTLTD rejections)
+# ---------------------------------------------------------------------------
+
+def test_instrument_tick_prefers_broker_value():
+    from services.execution.overnight_handlers import _instrument_tick
+    broker = MagicMock()
+    broker.get_tick_size.return_value = 0.10
+    assert _instrument_tick(broker, "NSE:NPST", {"tick_size_fallback_inr": 0.05}) == 0.10
+
+
+def test_instrument_tick_falls_back_on_none_mock_or_missing():
+    from services.execution.overnight_handlers import _instrument_tick
+    cfg = {"tick_size_fallback_inr": 0.05}
+    # None (dry_run / symbol not in dump) -> fallback
+    broker = MagicMock()
+    broker.get_tick_size.return_value = None
+    assert _instrument_tick(broker, "NSE:X", cfg) == 0.05
+    # Non-numeric return (raw MagicMock: float() == 1.0 would poison prices
+    # if it leaked through) -> fallback
+    broker2 = MagicMock()
+    assert _instrument_tick(broker2, "NSE:X", cfg) == 0.05
+    # Broker without the method at all -> fallback
+    class NoTick:
+        pass
+    assert _instrument_tick(NoTick(), "NSE:X", cfg) == 0.05
+
+
+def test_place_buy_rounds_to_instrument_tick():
+    """Regression for 2026-07-02: a 0.10-tick scrip priced at a 0.05-odd limit
+    was REJECTED outright ('Tick size for this script is 0.10'), silently
+    dropping the top-2 ranked fires of the day. The BUY limit must round to
+    the INSTRUMENT tick, not the blanket 0.05."""
+    from services.execution.overnight_handlers import _place_buy
+    broker = MagicMock()
+    broker.place_order.return_value = "OID-1"
+    _place_buy(broker, symbol="NSE:NPST", qty=10, product="MTF",
+               paper_mode=False, trade_id="T", limit_price=256.85,
+               tick_size=0.10)
+    sent = broker.place_order.call_args.kwargs["price"]
+    assert sent == pytest.approx(256.8)  # nearest 0.10 multiple (half-even), valid tick
+    assert round(sent / 0.10) * 0.10 == pytest.approx(sent)
+
+
+def test_place_amo_sell_and_failsafe_round_to_instrument_tick():
+    from services.execution.overnight_handlers import (
+        _place_amo_sell, _place_failsafe_sell)
+    broker = MagicMock()
+    broker.place_order.return_value = "OID-2"
+    _place_amo_sell(broker, symbol="NSE:NPST", qty=10, product="MTF",
+                    paper_mode=False, trade_id="T", limit_price=241.65,
+                    tick_size=0.10)
+    assert broker.place_order.call_args.kwargs["price"] == pytest.approx(241.6)
+    _place_failsafe_sell(broker, symbol="NSE:NPST", qty=10, product="MTF",
+                         limit_price=239.95, tick_size=0.10)
+    sent = broker.place_order.call_args.kwargs["price"]
+    assert sent == pytest.approx(239.9)  # float repr of 239.95/0.10 rounds down
+    assert round(sent / 0.10) * 0.10 == pytest.approx(sent)

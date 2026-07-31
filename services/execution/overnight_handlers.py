@@ -179,6 +179,28 @@ def _find_out_of_band_sell(broker, symbol: str, qty: int, exclude_order_id=None)
     return None
 
 
+def _instrument_tick(broker, symbol: str, raw_config: dict) -> float:
+    """Resolve the instrument's NSE tick size for order pricing.
+
+    NSE ticks are per-scrip (0.01 / 0.05 / 0.10 bands), and Kite REJECTS any
+    LIMIT/GTT price that is not a multiple of the scrip's own tick
+    (2026-06-30 JINDALPHOT, 2026-07-02 NPST + MIDWESTLTD — the top-2 ranked
+    fires of the day were dropped outright). Prefer broker.get_tick_size()
+    (Kite instruments dump); fall back to config tick_size_fallback_inr when
+    the broker has no dump (paper/dry-run) or the symbol is missing from it.
+    """
+    try:
+        if hasattr(broker, "get_tick_size"):
+            tick = broker.get_tick_size(symbol)
+            # Strict numeric check: a non-numeric return (None, mock, junk)
+            # must fall through to the configured fallback, never float()'d.
+            if isinstance(tick, (int, float)) and not isinstance(tick, bool) and tick > 0:
+                return float(tick)
+    except Exception as e:
+        logger.warning("_instrument_tick: lookup failed for %s: %s", symbol, e)
+    return float(raw_config["tick_size_fallback_inr"])
+
+
 def _rank_detections(detections):
     """Order detections for slot allocation: deepest capitulation first.
 
@@ -590,8 +612,11 @@ def run_entry(
                 ref_px = float(plan.entry_price)
             # Tick-valid AND <= upper circuit (Kite rejects non-tick prices and
             # any BUY above the circuit band — see 2026-06-29 DOLLAR/TIRUPATIFL).
+            # Tick is per-instrument (2026-07-02 NPST/MIDWESTLTD are 0.10).
+            tick = _instrument_tick(broker, symbol, spec.raw_config)
             buy_limit = clamp_round_limit(
                 ref_px * (1.0 + entry_buf_pct / 100.0), "BUY",
+                tick_size=tick,
                 upper_circuit=upper_circuit,
             )
             try:
@@ -601,6 +626,7 @@ def run_entry(
                     paper_mode=paper_mode,
                     trade_id=f"OVERNIGHT_{today.isoformat()}_{slot.slot_id}",
                     limit_price=buy_limit,
+                    tick_size=tick,
                 )
             except Exception as e:
                 logger.error("run_entry: BUY failed for %s: %s; releasing reservation", symbol, e)
@@ -658,6 +684,7 @@ def run_entry(
                                     paper_mode=paper_mode,
                                     trade_id=f"OVERNIGHT_{today.isoformat()}_{slot.slot_id}_RETRY",
                                     limit_price=buy_limit,
+                                    tick_size=tick,
                                 )
                             except Exception as e:
                                 logger.error(
@@ -973,8 +1000,11 @@ def run_place_exit(
             # auction for any open >= -catastrophe (limit sells fill at the better
             # price); a gap below the floor is left to the GTT / morning failsafe.
             # Tick-valid AND >= lower circuit (Kite rejects non-tick/sub-circuit).
+            # Tick is per-instrument (2026-07-02 NPST/MIDWESTLTD are 0.10).
+            tick = _instrument_tick(broker, slot.symbol, sc)
             amo_limit = clamp_round_limit(
                 slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0), "SELL",
+                tick_size=tick,
                 lower_circuit=sell_floor,
             )
             amo_id = _place_amo_sell(
@@ -982,11 +1012,12 @@ def run_place_exit(
                 product=slot.product or "CNC", paper_mode=paper_mode,
                 trade_id=f"OVERNIGHT_AMO_{slot.reserved_today}_{slot.slot_id}",
                 limit_price=amo_limit,
+                tick_size=tick,
             )
             pool.attach_amo_sell(slot.slot_id, str(amo_id), next_day)
             # GTT trigger/limit must also be tick-valid (Kite rejects non-tick GTTs).
-            trigger = round_to_tick(slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0))
-            limit = round_to_tick(trigger * (1.0 - gtt_buffer_pct / 100.0))
+            trigger = round_to_tick(slot.buy_fill_price * (1.0 - catastrophe_pct / 100.0), tick)
+            limit = round_to_tick(trigger * (1.0 - gtt_buffer_pct / 100.0), tick)
             try:
                 gid = broker.place_gtt_stop(
                     symbol=slot.symbol, qty=qty,
@@ -1179,9 +1210,12 @@ def run_verify_exit(
                     ltp_q, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
                     ltp = ltp_q if (ltp_q is not None and ltp_q > 0) else float(broker.get_ltp(slot.symbol))
                     # Tick-valid AND >= lower circuit (Kite rejects non-tick /
-                    # sub-circuit SELL prices).
+                    # sub-circuit SELL prices). Tick is per-instrument.
+                    tick = _instrument_tick(
+                        broker, slot.symbol, paper_enabled_setups[0].raw_config)
                     marketable = clamp_round_limit(
                         ltp * (1.0 - failsafe_buf / 100.0), "SELL",
+                        tick_size=tick,
                         lower_circuit=lower_circuit,
                     )
                     if (amo_status or {}).get("status") == "OPEN":
@@ -1215,6 +1249,7 @@ def run_verify_exit(
                             symbol=slot.symbol, qty=remainder,
                             product=slot.product or "CNC",
                             limit_price=marketable,
+                            tick_size=tick,
                         )
                     sell_price = (
                         (filled_qty * filled_avg + remainder * ltp) / slot.exit_qty()
@@ -1552,15 +1587,17 @@ def _get_5m_for_symbol_live(broker, symbol: str, today: date, setup_cfg: dict) -
 
 
 def _place_buy(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
-               trade_id: str, limit_price: float) -> str:
+               trade_id: str, limit_price: float, tick_size: float) -> str:
     """Place a marketable-LIMIT BUY (variety=regular, product=MTF or CNC).
 
     Kite bars plain MARKET orders on close_dn's illiquid/trade-to-trade
     universe, so the BUY crosses the spread via a LIMIT at ref*(1+buffer).
+    tick_size is the INSTRUMENT's tick (see _instrument_tick) — a blanket
+    0.05 got NPST/MIDWESTLTD rejected on 2026-07-02.
     """
     order_id = broker.place_order(
         symbol=symbol, side="BUY", qty=qty,
-        order_type="LIMIT", price=round_to_tick(float(limit_price)),
+        order_type="LIMIT", price=round_to_tick(float(limit_price), tick_size),
         product=product, variety="regular",
         trade_id=trade_id, check_margins=(product == "MIS"),
     )
@@ -1568,16 +1605,17 @@ def _place_buy(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
 
 
 def _place_amo_sell(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
-                    trade_id: str, limit_price: float) -> str:
+                    trade_id: str, limit_price: float, tick_size: float) -> str:
     """Place an AMO LIMIT SELL for next-day pre-open execution.
 
     Floor is set at the catastrophe level so it fills at the pre-open auction
     for any non-catastrophic open (limit sells fill at the better auction
     price); a gap below the floor is left to the GTT / morning failsafe.
+    tick_size is the INSTRUMENT's tick (see _instrument_tick).
     """
     order_id = broker.place_order(
         symbol=symbol, side="SELL", qty=qty,
-        order_type="LIMIT", price=round_to_tick(float(limit_price)),
+        order_type="LIMIT", price=round_to_tick(float(limit_price), tick_size),
         product=product, variety="amo",
         trade_id=trade_id, check_margins=False,
     )
@@ -1585,11 +1623,14 @@ def _place_amo_sell(broker, *, symbol: str, qty: int, product: str, paper_mode: 
 
 
 def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str,
-                         limit_price: float) -> str:
-    """Failsafe regular LIMIT SELL (marketable, below live LTP) when AMO did not execute."""
+                         limit_price: float, tick_size: float) -> str:
+    """Failsafe regular LIMIT SELL (marketable, below live LTP) when AMO did not execute.
+
+    tick_size is the INSTRUMENT's tick (see _instrument_tick).
+    """
     order_id = broker.place_order(
         symbol=symbol, side="SELL", qty=qty,
-        order_type="LIMIT", price=round_to_tick(float(limit_price)),
+        order_type="LIMIT", price=round_to_tick(float(limit_price), tick_size),
         product=product, variety="regular",
         check_margins=False,
     )

@@ -64,6 +64,11 @@ class LiveOvernightBroker:
         # Explicit token probe for the verify preflight (2026-07-24 incident).
         return self._kite.check_auth()
 
+    def get_tick_size(self, symbol: str):
+        # Per-instrument tick for order pricing (2026-07-02 NPST/MIDWESTLTD
+        # rejections: NSE ticks are per-scrip, not a blanket 0.05).
+        return self._kite.get_tick_size(symbol)
+
     def cancel_order(self, order_id: str, variety: str = "regular") -> bool:
         # Frees the margin pinned by an unfilled entry BUY (2026-07-09
         # incident) so lower-ranked candidates aren't rejected for funds.
