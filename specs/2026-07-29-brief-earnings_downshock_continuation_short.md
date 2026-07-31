@@ -427,3 +427,45 @@ admissible test, and this section is committed before any August bar exists.
 - Scored on the **official-close** trigger — what production actually reads
 - No re-filtering, no seasonal filter, no regime filter
 - **If V2 fails, V1 is not resurrected as a fallback — the candidate retires.**
+
+### 10f. Seasonality and reporting-wave position — TESTED, DELIBERATELY NOT FILTERED
+
+Both were tested on 2026-07-31 (the config note required any seasonal filter to carry its own
+pre-registration). Both are REAL in V1 and both are ABSORBED by the V2 filters. Neither is
+added to the construction.
+
+**Season phase** (peak = Feb/May/Aug/Nov, ramp = Jan/Apr/Jul/Oct, off = Mar/Jun/Sep/Dec):
+
+| phase | V1 mean / PF | V1 eras D/O/H | V2 mean / PF | V2 eras D/O/H |
+|---|---|---|---|---|
+| peak | +0.557% / 1.58 | +0.63/+0.66/+0.34 | +0.638% / 1.82 | +0.41/+0.69/+0.99 |
+| ramp | −0.013% / 0.99 | −0.58/−0.72/+1.12 | +0.817% / 1.84 | +0.44/−0.33/+2.45 |
+| off  | +0.041% / 1.04 | −0.06/−0.16/+0.25 | +0.302% (n=12) | — |
+
+**Reporting-wave position** (days since quarter-end anchor; SEBI LODR Reg 33 deadline = 45d):
+
+| bucket | V1 mean / PF | V1 eras | V2 mean / PF | V2 eras |
+|---|---|---|---|---|
+| 21–35 mid | +0.132% / 1.12 | −0.54/−0.20/+0.91 | +0.894% / 1.93 | +0.50/+0.53/+1.84 |
+| 36–45 deadline | +0.841% / 1.96 | +0.88/+0.93/+0.60 | +0.883% / 2.31 | +0.43/+1.23/+1.41 |
+| 46–60 late | +0.113% / 1.10 | +0.22/+0.06/+0.04 | +0.159% / 1.16 | +0.34/−0.48/+1.04 |
+
+**Why neither becomes a filter:**
+
+1. **They are proxies, not causes.** V1's dead ramp months (−0.013%) and dead mid-wave bucket
+   (+0.132%) both turn strongly positive under V2 (+0.817% / +0.894%). Off-peak periods simply
+   held a worse MIX — more deep capitulation shocks and more covered mid_caps. Filtering the
+   trade characteristic directly is strictly better than filtering the calendar slot it
+   clustered in.
+2. **The wave mechanism runs backwards.** If late filing were the tell, weaker/more retail-held
+   late reporters should drift MORE. Measured drift is LESS (+0.159% vs +0.88%). A filter whose
+   mechanism contradicts its measured sign is far more likely to be noise.
+3. **Multiplicity.** Adding these would take the search to ~27 bucket evaluations, pushing the
+   Bonferroni bar above the t=3.10 that V2 already only just clears, while cutting n by a
+   further 22–29% and delaying the forward one-shot past Dec-2026.
+
+**Monitored, not filtered.** Both dimensions are recorded here so the forward one-shot can
+report them as a PRE-SPECIFIED SECONDARY analysis. They are descriptive only and CANNOT be
+promoted to filters on the strength of the forward window that also scores the primary gate —
+that would be the same re-mining this section exists to prevent. Promotion requires its own
+fresh pre-registration and its own subsequent data.
