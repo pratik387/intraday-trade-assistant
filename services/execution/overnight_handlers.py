@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from services.cb_state import is_cb_active
+from utils.time_util import _now_naive_ist
 
 # Use the agent logger so warnings/errors from the cron-triggered handlers
 # actually surface in the cron log file. The default `logging.getLogger(...)`
@@ -177,6 +178,21 @@ def _find_out_of_band_sell(broker, symbol: str, qty: int, exclude_order_id=None)
     except Exception as e:
         logger.warning("_find_out_of_band_sell failed for %s: %s", symbol, e)
     return None
+
+
+def _entry_cutoff_reached(raw_config: dict, paper_mode: bool) -> bool:
+    """LIVE-only placement deadline check for the entry ranked loop.
+
+    NSE closes at 15:30 — a BUY sent later bounces with 'Markets are closed'
+    (2026-07-30: 4 of 7 fires wasted). Wall clock is the correct clock here:
+    this is the live cron's exchange-acceptance deadline, not a trading-signal
+    decision. Paper/backtest fills are idealized + instant, so the guard is
+    skipped there (returns False) to keep live/backtest signal parity.
+    """
+    if paper_mode:
+        return False
+    cutoff_t = time.fromisoformat(str(raw_config["entry_placement_cutoff_hhmmss"]))
+    return _now_naive_ist().time() >= cutoff_t
 
 
 def _instrument_tick(broker, symbol: str, raw_config: dict) -> float:
@@ -469,9 +485,12 @@ def run_entry(
         logger.info("run_entry: universe size for %s = %d", spec.name, len(universe))
 
         # Batch-fetch today's 5m bars for the (now small) candidate universe.
-        # rps=20 / concurrency=30 — the memo's "40 RPS safe" data point
-        # assumed a single consumer; during 15:25 the long-running paper-trade
-        # is also hitting Upstox from the same IP, so half-rate coexists cleanly.
+        # rps/concurrency from config (entry_fetch_rps / entry_fetch_concurrency):
+        # the old hardcoded 20 rps took 101.5s for 2047 symbols on 2026-07-30 and
+        # pushed first placement to ~15:28, blowing the 15:30 close (2 dust
+        # partials + 4 'Markets are closed' rejections). 30 rps stays under the
+        # intraday endpoint's tested 40-rps ceiling shared with the co-located
+        # paper process on this IP.
         intraday_5m_by_symbol: Dict[str, pd.DataFrame] = {}
         try:
             data_sdk = getattr(broker, "_data_sdk", None)
@@ -481,7 +500,9 @@ def run_entry(
                 _t0 = _time_perf.perf_counter()
                 intraday_5m_by_symbol = _asyncio.run(
                     data_sdk.async_fetch_intraday_5m_batch(
-                        list(universe), concurrency=30, rps=20.0,
+                        list(universe),
+                        concurrency=int(spec.raw_config["entry_fetch_concurrency"]),
+                        rps=float(spec.raw_config["entry_fetch_rps"]),
                     )
                 )
                 logger.info(
@@ -580,7 +601,22 @@ def run_entry(
             logger.warning("run_entry: paper-open snapshot write failed: %s", e)
 
         ranked = _rank_detections(detections)
+        # LIVE-only placement deadline: NSE closes at 15:30 and any BUY sent
+        # later bounces with 'Markets are closed' (2026-07-30: 4 of 7 fires).
+        # Wall clock is the correct clock here — this is the live cron's
+        # exchange-acceptance deadline, not a trading-signal decision; paper/
+        # backtest fills are idealized+instant so the guard is skipped there.
         for rank_i, (symbol, evt, plan) in enumerate(ranked):
+            if _entry_cutoff_reached(spec.raw_config, paper_mode):
+                remaining = len(ranked) - rank_i
+                logger.warning(
+                    "run_entry: placement cutoff %s reached; %d ranked "
+                    "detection(s) not attempted (market close guard)",
+                    spec.raw_config["entry_placement_cutoff_hhmmss"], remaining,
+                )
+                summary["skipped_count"] += remaining
+                summary["cutoff_skipped"] = remaining
+                break
             # Reserve slot (fails if capacity or per-day cap hit)
             slot = pool.reserve(
                 symbol=symbol,

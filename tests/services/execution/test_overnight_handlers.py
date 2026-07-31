@@ -78,7 +78,10 @@ def _minimal_config(state_path: Path) -> dict:
                 "entry_limit_buffer_pct": 1.0,
                 "tick_size_fallback_inr": 0.05,
                 "insufficient_funds_retry_haircut": 0.95,
-                "fill_poll_timeout_sec": 60,
+                "fill_poll_timeout_sec": 20,
+                "entry_fetch_rps": 30.0,
+                "entry_fetch_concurrency": 30,
+                "entry_placement_cutoff_hhmmss": "15:29:20",
                 "capital_allocation": {
                     "active_margin_inr": 400000,
                     "cushion_inr": 100000,
@@ -933,3 +936,30 @@ def test_place_amo_sell_and_failsafe_round_to_instrument_tick():
     sent = broker.place_order.call_args.kwargs["price"]
     assert sent == pytest.approx(239.9)  # float repr of 239.95/0.10 rounds down
     assert round(sent / 0.10) * 0.10 == pytest.approx(sent)
+
+
+# ---------------------------------------------------------------------------
+# Entry placement cutoff (2026-07-30 'Markets are closed' overrun)
+# ---------------------------------------------------------------------------
+
+def test_entry_cutoff_never_fires_in_paper_mode():
+    from services.execution.overnight_handlers import _entry_cutoff_reached
+    cfg = {"entry_placement_cutoff_hhmmss": "15:29:20"}
+    assert _entry_cutoff_reached(cfg, paper_mode=True) is False
+
+
+def test_entry_cutoff_live_respects_wall_clock(monkeypatch):
+    import services.execution.overnight_handlers as oh
+    cfg = {"entry_placement_cutoff_hhmmss": "15:29:20"}
+    monkeypatch.setattr(
+        oh, "_now_naive_ist", lambda: pd.Timestamp("2026-07-30 15:29:20"))
+    assert oh._entry_cutoff_reached(cfg, paper_mode=False) is True
+    monkeypatch.setattr(
+        oh, "_now_naive_ist", lambda: pd.Timestamp("2026-07-30 15:28:59"))
+    assert oh._entry_cutoff_reached(cfg, paper_mode=False) is False
+
+
+def test_entry_cutoff_missing_config_key_fails_fast():
+    from services.execution.overnight_handlers import _entry_cutoff_reached
+    with pytest.raises(KeyError):
+        _entry_cutoff_reached({}, paper_mode=False)
