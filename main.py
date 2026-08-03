@@ -21,9 +21,15 @@ import time
 import signal
 import argparse
 import threading
+import subprocess
+from datetime import timedelta
 from pathlib import Path
 from typing import Optional
 import pandas as pd
+
+from utils.time_util import _now_naive_ist
+
+ROOT = Path(__file__).resolve().parent
 
 from config.logging_config import get_agent_logger, get_trading_logger
 from config.filters_setup import load_filters
@@ -270,6 +276,18 @@ def main() -> int:
     execution_mode = "in_process"
     oq = OrderQueue()
 
+    def _refresh_event_feeds():
+        """Refresh + validate event feeds for enabled setups (paper/live only).
+
+        Delegates to services.event_feeds so the logic is unit-testable; see that
+        module for why this guard exists (a missing feed silently produced an empty
+        universe for a whole session on 2026-08-03).
+        """
+        from services.event_feeds import refresh_and_validate_all
+        refresh_and_validate_all(
+            cfg, repo_root=ROOT, now=_now_naive_ist(), logger=logger
+        )
+
     def _prewarm_daily_cache(sdk, mis_fetcher=None):
         """Pre-warm daily cache: disk (2-5s) -> API (15min)."""
         cache_persistence = DailyCachePersistence()
@@ -327,6 +345,8 @@ def main() -> int:
             except Exception as e:
                 logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
 
+        _refresh_event_feeds()
+
         if not args.skip_prewarm:
             _prewarm_daily_cache(sdk, mis_fetcher=mis_fetcher)
     elif args.dry_run:
@@ -356,6 +376,8 @@ def main() -> int:
         # Broker ALWAYS stays Zerodha (preserves full MIS universe for orders)
         broker = KiteBroker(dry_run=False, ltp_cache=ltp_cache)
         logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
+
+        _refresh_event_feeds()
 
         # Initialize tick recorder for live trading
         tick_cfg = cfg.get("tick_recording", {})
