@@ -1031,11 +1031,20 @@ def dedupe_per_symbol_day(rows: list[dict]) -> list[dict]:
     )
     # Sort: highest source_priority first; within that, consolidated first;
     # then earliest announce_time.
+    _sort_keys = [
+        "symbol", "announce_date",
+        "_source_priority", "_consolidated_priority", "announce_time",
+    ]
+    # `announce_date` arrives as a MIXED object column: datetime.date from the
+    # already-persisted parquet, pd.Timestamp from a fresh scrape. pandas cannot
+    # lexsort a mixed object column — it falls back to building an unordered
+    # Categorical and dies with the misleading "'values' is not ordered".
+    # This crashed the 2026-08-03 top-up scrape inside write_events, so the
+    # calendar silently could not be topped up at all. Normalise to datetime64
+    # before sorting; every consumer already calls pd.to_datetime() on it.
+    df["announce_date"] = pd.to_datetime(df["announce_date"], errors="coerce")
     df = df.sort_values(
-        by=[
-            "symbol", "announce_date",
-            "_source_priority", "_consolidated_priority", "announce_time",
-        ],
+        by=_sort_keys,
         ascending=[True, True, False, True, True],
     )
     df = df.drop_duplicates(subset=["symbol", "announce_date"], keep="first")
