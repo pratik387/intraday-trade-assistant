@@ -386,6 +386,29 @@ paper-only **by deployment** (the daemon runs `--paper-trading`), not by design.
 **Fix:** wire the intraday gate to `paper_enabled if paper_mode else enabled`, mirroring the
 overnight pattern. `paper_enabled: true` is already set so no config change is needed after.
 
+### 9.1b ⚠⚠ Event data is NOT deployed by git, and NOT refreshed by anything
+`data/` is in `.gitignore`. `data/earnings_calendar/` therefore **never reached the VM at all** —
+found on 2026-08-03, the setup's first live paper session, which logged
+`DISPATCH_BUILD_UNIVERSE | earnings_downshock_continuation_short | 0 symbols`. The setup was
+registered, dispatching, and structurally incapable of firing: no calendar → no reaction day is
+ever flagged → empty universe, forever, with no error. 150 qualifying announcements existed on
+2026-07-30/31; the day was simply lost.
+
+Two separate problems, both still open:
+1. **Deployment.** Event parquets must be copied to the VM by hand (`scp`). `asm_gsm_events.parquet`
+   happened to be there; `earnings_events.parquet` was not. Nothing checks.
+2. **Freshness.** The calendar is a static file. `earnings_downshock` needs the *previous trading
+   day's* announcements, so a stale calendar silently produces zero fires. It was frozen at
+   2026-07-28. **A daily refresh cron is required** (`tools/earnings_calendar/fetch_earnings.py
+   --start <T-7> --end <T>`, which merges), plus a push to the VM.
+
+Until that cron exists, this setup produces no forward data — which is the entire point of the
+2026-08-01 pre-registration. Treat as blocking.
+
+**Add a startup assertion**: any setup whose universe depends on an event feed should fail loudly
+at load if the feed is missing or older than N days, rather than dispatching an empty universe
+every session.
+
 ### 9.2 ⚠ Nothing restarts the intraday paper daemon
 `main.py` runs one session and exits at EOD. No cron entry starts `trading_fixed`. It must be
 started manually each trading day, or the forward data the pre-registration depends on will not
