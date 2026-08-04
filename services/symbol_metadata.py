@@ -263,6 +263,35 @@ def get_cap_segment(symbol: str, session_date=None) -> str:
     return cache.get(_normalize_symbol(symbol), "unknown")
 
 
+_NSE_ALL_TAXONOMY_CACHE: Optional[Dict[str, str]] = None
+
+
+def get_cap_segment_nse_all(symbol: str) -> str:
+    """Cap bucket resolved STRICTLY from nse_all.json market-cap bands,
+    bypassing the data/cap_segments snapshots entirely.
+
+    Exists for validation-parity pinning: the earnings_downshock V1+V2
+    validation chain (Stage-4 → Phase-5 → demoted → fresh-pool → Stage-8 OCI
+    parity → V2 pre-registration 2026-07-31) classified every trade via the
+    nse_all.json taxonomy (519 small_caps of 2,333). The live NSE-Indices
+    snapshot (cap_segments_latest.json, ~755 index members) is a DIFFERENT
+    taxonomy under which the validated small_cap population maps to
+    'unknown' — gating the pre-registered forward test on it produced a
+    permanently-empty universe (found 2026-08-04: SIGNPOST/EPACKPEB/SIGMA
+    all dropped). A pre-registered filter must be scored on the taxonomy it
+    was mined under; new setups should NOT adopt this helper without the
+    same provenance argument.
+    """
+    global _NSE_ALL_TAXONOMY_CACHE
+    if _NSE_ALL_TAXONOMY_CACHE is None:
+        data = _load_nse_all()
+        _NSE_ALL_TAXONOMY_CACHE = {
+            _normalize_symbol(item["symbol"]): item.get("cap_segment", "unknown")
+            for item in (data or [])
+        }
+    return _NSE_ALL_TAXONOMY_CACHE.get(_normalize_symbol(symbol), "unknown")
+
+
 def get_mis_info(symbol: str) -> dict:
     """Return MIS (Margin Intraday Square-off) info for `symbol`:
         {"mis_enabled": bool, "mis_leverage": float | None}

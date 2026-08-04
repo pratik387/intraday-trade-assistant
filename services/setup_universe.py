@@ -776,7 +776,24 @@ def earnings_downshock_continuation_short_universe(
     from services.earnings_reaction_enrichment import load_error as _earnings_err
     from services.surveillance_lookup import is_under_surveillance
     from services.surveillance_lookup import load_error as _surv_err
-    from services.symbol_metadata import get_cap_segment, get_mis_info
+    from services.symbol_metadata import (
+        get_cap_segment, get_cap_segment_nse_all, get_mis_info)
+
+    # Cap-taxonomy pinning (2026-08-04): the V2 'small_cap only' filter was
+    # mined and pre-registered under the nse_all.json market-cap bands; the
+    # live NSE-Indices snapshot is a different taxonomy under which the whole
+    # validated population reads 'unknown' (2 zero-universe days before the
+    # divergence was caught). The config names the taxonomy explicitly so the
+    # forward test scores on the population it was registered on.
+    taxonomy = str(config["cap_segment_taxonomy"])
+    if taxonomy == "nse_all":
+        _cap_fn = get_cap_segment_nse_all
+    elif taxonomy == "snapshot":
+        _cap_fn = get_cap_segment
+    else:
+        raise ValueError(
+            f"earnings_downshock_continuation_short_universe: unknown "
+            f"cap_segment_taxonomy {taxonomy!r}")
 
     if not daily_dict:
         return set()
@@ -813,7 +830,7 @@ def earnings_downshock_continuation_short_universe(
 
         # --- static metadata gates (cheapest first) ---
         try:
-            if get_cap_segment(nse_sym) not in allowed_caps:
+            if _cap_fn(nse_sym) not in allowed_caps:
                 continue
             if require_mis and not get_mis_info(nse_sym).get("mis_enabled", False):
                 continue
