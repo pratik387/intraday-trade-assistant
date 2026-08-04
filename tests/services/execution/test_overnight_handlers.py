@@ -82,6 +82,7 @@ def _minimal_config(state_path: Path) -> dict:
                 "entry_fetch_rps": 30.0,
                 "entry_fetch_concurrency": 30,
                 "entry_placement_cutoff_hhmmss": "15:29:20",
+                "slot_ranking_mode": "unbiased_hash",
                 "capital_allocation": {
                     "active_margin_inr": 400000,
                     "cushion_inr": 100000,
@@ -519,9 +520,8 @@ def test_live_poll_fill_ex_timeout_returns_last_status():
 # _rank_detections (slot-allocation order)
 # ---------------------------------------------------------------------------
 
-def test_rank_detections_deepest_svr_first_cheap_tiebreak():
-    """Slots are allocated deepest-capitulation-first (confidence = |svr| desc),
-    tiebreak cheaper entry price — replacing arbitrary set-iteration order."""
+def test_rank_detections_conviction_mode_deepest_first_cheap_tiebreak():
+    """Legacy 'conviction' mode: deepest |svr| desc, cheaper entry tiebreak."""
     from types import SimpleNamespace as NS
     from services.execution.overnight_handlers import _rank_detections
 
@@ -531,12 +531,39 @@ def test_rank_detections_deepest_svr_first_cheap_tiebreak():
         ("NSE:TIE_EXPENSIVE", NS(confidence=0.80), NS(entry_price=900.0)),
         ("NSE:TIE_CHEAP",     NS(confidence=0.80), NS(entry_price=50.0)),
     ]
-    ranked = [s for s, _, _ in _rank_detections(dets)]
+    ranked = [s for s, _, _ in _rank_detections(
+        dets, mode="conviction", session_date=date(2026, 8, 4))]
     assert ranked == ["NSE:DEEP", "NSE:TIE_CHEAP", "NSE:TIE_EXPENSIVE", "NSE:MILD"]
-    # pure function: input untouched
-    assert dets[0][0] == "NSE:MILD"
+    assert dets[0][0] == "NSE:MILD"  # pure function: input untouched
 
 
+def test_rank_detections_unbiased_hash_deterministic_and_conviction_blind():
+    """'unbiased_hash' (production): same date -> same order (idempotent
+    re-runs); different date -> reshuffled; confidence plays no role."""
+    from types import SimpleNamespace as NS
+    from services.execution.overnight_handlers import _rank_detections
+
+    dets = [
+        (f"NSE:SYM{i}", NS(confidence=0.5 + i * 0.05), NS(entry_price=100.0 + i))
+        for i in range(8)
+    ]
+    d1 = date(2026, 8, 4)
+    r1 = [s for s, _, _ in _rank_detections(dets, mode="unbiased_hash", session_date=d1)]
+    r2 = [s for s, _, _ in _rank_detections(dets, mode="unbiased_hash", session_date=d1)]
+    assert r1 == r2  # deterministic within a session
+    r3 = [s for s, _, _ in _rank_detections(
+        dets, mode="unbiased_hash", session_date=date(2026, 8, 5))]
+    assert r3 != r1  # date salt reshuffles across days
+    # conviction-blind: order is NOT the conviction order
+    conv = [s for s, _, _ in _rank_detections(dets, mode="conviction", session_date=d1)]
+    assert r1 != conv
+    assert sorted(r1) == sorted(conv)  # same members, different order
+
+
+def test_rank_detections_unknown_mode_fails_fast():
+    from services.execution.overnight_handlers import _rank_detections
+    with pytest.raises(ValueError):
+        _rank_detections([], mode="best_first", session_date=date(2026, 8, 4))
 # ---------------------------------------------------------------------------
 # Partial-fill handling (2026-07-15 AJOONI: cancelled remainder orphaned the
 # filled part — 1,751 real shares left with no AMO exit)

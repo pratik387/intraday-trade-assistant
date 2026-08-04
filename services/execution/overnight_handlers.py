@@ -217,21 +217,44 @@ def _instrument_tick(broker, symbol: str, raw_config: dict) -> float:
     return float(raw_config["tick_size_fallback_inr"])
 
 
-def _rank_detections(detections):
-    """Order detections for slot allocation: deepest capitulation first.
+def _rank_detections(detections, *, mode: str, session_date: date):
+    """Order detections for slot allocation. Pure function -> sorted copy.
 
-    Sort key = event confidence DESC (confidence == |signed_vol_ratio|, the
-    depth of closing-25m sell pressure), tiebreak cheaper entry price first
-    (the more illiquid name). Verified 2026-07-02 on Disc/OOS/Holdout: on
-    oversubscribed days this ordering beats random selection (~+0.05-0.08%%
-    per trade; svr rule at/above the 30-seed random p95), and it is
-    deterministic/reproducible — replacing the previous arbitrary
-    set-iteration order. Pure function: [(symbol, evt, plan)] -> sorted copy.
+    mode == "unbiased_hash" (production since 2026-08-04):
+        Deterministic date-salted hash order — NO view on which fire is
+        better. History of the alternative: "conviction" (deepest |svr|
+        first, cheap-price tiebreak) was validated on Disc/OOS/Holdout
+        2026-07-02 (~+0.05-0.08%/trade over random) and then REVERSED
+        forward — July 2026 live picks did -43.6 bps mean vs +72.0 for the
+        skipped fires (worse on 12/15 subset days, permutation p<0.001; the
+        actual picks sat at the 0th percentile of 3,000 random draws). Same
+        forward-reversal signature as the parked monster-conditioning study.
+        An unbiased order (a) removes that losing bet without making the
+        opposite one, and (b) makes the live book a random sample of the
+        paper mirror, so live PF ~= mirror PF - fees and the decay tripwire /
+        monthly three-way stay interpretable. Date salt: reproducible within
+        a session (idempotent re-runs), re-shuffled across days (no symbol
+        is permanently favored).
+
+    mode == "conviction": the legacy 2026-07-02 ordering (kept for
+        research/backtest comparisons).
+
+    Unknown mode -> ValueError (fail fast, no silent default).
     """
-    return sorted(
-        detections,
-        key=lambda t: (-float(t[1].confidence), float(t[2].entry_price)),
-    )
+    if mode == "unbiased_hash":
+        import hashlib
+        salt = session_date.isoformat()
+        return sorted(
+            detections,
+            key=lambda t: hashlib.sha1(
+                ("%s|%s" % (salt, t[0])).encode("utf-8")).hexdigest(),
+        )
+    if mode == "conviction":
+        return sorted(
+            detections,
+            key=lambda t: (-float(t[1].confidence), float(t[2].entry_price)),
+        )
+    raise ValueError("_rank_detections: unknown slot_ranking_mode %r" % (mode,))
 
 
 _NSE_HOLIDAYS = None
@@ -575,9 +598,9 @@ def run_entry(
                 continue
             detections.append((symbol, evt, plan))
 
-        # Phase B: allocate the capped slots in CONVICTION order (deepest
-        # capitulation first, cheaper entry tiebreak — see _rank_detections),
-        # then place BUYs in that order.
+        # Phase B: allocate the capped slots in slot_ranking_mode order
+        # (production: unbiased date-salted hash — see _rank_detections for
+        # why conviction ordering was retired), then place BUYs in that order.
         # Persist the PAPER-open snapshot: every fire (taken, capped, rejected
         # alike) with its idealized entry (plan.entry_price = the 15:25 close).
         # The Rs1L paper ledger only materializes these NEXT morning (09:45
@@ -600,7 +623,11 @@ def run_entry(
         except Exception as e:
             logger.warning("run_entry: paper-open snapshot write failed: %s", e)
 
-        ranked = _rank_detections(detections)
+        ranked = _rank_detections(
+            detections,
+            mode=str(spec.raw_config["slot_ranking_mode"]),
+            session_date=today,
+        )
         # LIVE-only placement deadline: NSE closes at 15:30 and any BUY sent
         # later bounces with 'Markets are closed' (2026-07-30: 4 of 7 fires).
         # Wall clock is the correct clock here — this is the live cron's
