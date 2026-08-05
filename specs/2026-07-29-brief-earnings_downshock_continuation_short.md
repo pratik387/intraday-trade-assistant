@@ -469,3 +469,71 @@ report them as a PRE-SPECIFIED SECONDARY analysis. They are descriptive only and
 promoted to filters on the strength of the forward window that also scores the primary gate —
 that would be the same re-mining this section exists to prevent. Promotion requires its own
 fresh pre-registration and its own subsequent data.
+
+### 10g. TAXONOMY INPUT CHANGE 2026-08-05 — market-cap backfill (declared, not silent)
+
+**This changes the INPUT to the pre-registered V2 cap filter. It is recorded here
+because the forward one-shot must be scored on a known taxonomy, not one that
+shifted underneath it.**
+
+**What was wrong.** `nse_all.json` derives `cap_segment` from `market_cap_cr`.
+1,037 of 2,333 symbols (44%) had `market_cap_cr == 0.0` and fell through to
+`cap_segment == "unknown"`. Verified: EVERY `unknown` symbol had exactly 0.0, and
+no symbol with a real cap was `unknown` — so `unknown` was a **missing-value
+sentinel, never a size class**. V2 admits `small_cap` only, so every in-band
+candidate that happened to be unclassified was silently discarded.
+
+The gap was **growing**, which is why it did not show up in validation:
+
+| year | `unknown` share of this setup's trades |
+|---|---|
+| 2023 | 0.0% (0 of 60) |
+| 2024 | 0.0% (0 of 90) |
+| 2025 | 2.3% (3 of 129) |
+| 2026 | **38.7% (41 of 106)** |
+
+The two eras that established small_cap's edge contained essentially no `unknown`,
+so the filter's measured benefit is unaffected — but forward it was discarding an
+accelerating share of candidates. On 2026-08-05 the setup's ONLY in-band candidate
+(BUTTERFLY, −9.78%) was dropped solely for a missing cap.
+
+**Fix.** `tools/backfill_market_caps.py`. Chain, all public / no auth:
+`NSE symbol → ISIN (EQUITY_L.csv) → BSE scripcode (local scrip master) → MktCapFull`.
+`MktCapFull` is natively in ₹ crore — unit verified against Reliance
+(17,38,931 = ₹17.4 lakh crore). Bands reverse-engineered from the already-classified
+symbols, every cut point falling inside an observed gap with no overlap:
+micro < 500 < small < 5,000 < mid < 20,000 < large.
+
+**Applied 2026-08-05**, 648 of 1,037 resolved:
+
+| | before | after |
+|---|---|---|
+| small_cap | 519 | **736 (+42%)** |
+| micro_cap | 67 | 432 |
+| mid_cap | 378 | 428 |
+| large_cap | 332 | 348 |
+| unknown | 1037 | 389 |
+
+The residual 389 are NSE-only listings (SME/recent) with no BSE counterpart; they
+remain `unknown` and stay excluded.
+
+**Safety properties.** Only symbols *currently* `unknown` are touched — an existing
+classification is never overwritten, so the validated population cannot move.
+`nse_all.json.bak-2026-08-05` holds the pre-change file and
+`data/cap_segments/market_cap_backfill_2026-08-05.json` holds every applied delta,
+so the exact taxonomy in force on any date is reconstructible.
+
+**How this must be treated at the one-shot.** The V2 in-sample figures (n=210,
++0.629%, PF 1.77) were computed with these 217 symbols classified `unknown`, i.e.
+excluded. Forward they are *included*. This is a correction of a data defect, not a
+loosening of the filter — the filter is unchanged and still `small_cap` only — but
+the eligible population is ~42% larger than the one that produced the in-sample
+number. Two consequences to carry into December:
+
+1. **Do not read a higher forward trade count as edge decay or improvement.** The
+   candidate pool genuinely widened on 2026-08-05.
+2. **The recovered names skew smaller: median ₹919 cr vs ₹2,262 cr for the
+   pre-existing small_caps.** They will land disproportionately in `adv_low`, where
+   measured slippage is worst (18.7–30 bp/side against a 46.2 bp break-even). If the
+   forward result underperforms the in-sample figure, the size-mix shift is the first
+   hypothesis to test — before decay.

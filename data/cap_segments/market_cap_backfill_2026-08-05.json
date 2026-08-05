@@ -1,0 +1,2604 @@
+{
+  "applied": "2026-08-05",
+  "source": "BSE StockTrading MktCapFull via ISIN",
+  "bands_cr": {
+    "micro_cap": "<500",
+    "small_cap": "<5000",
+    "mid_cap": "<20000",
+    "large_cap": ">=20000"
+  },
+  "deltas": {
+    "AAATECH.NS": {
+      "market_cap_cr": 116.01,
+      "cap_segment": "micro_cap"
+    },
+    "AARNAV.NS": {
+      "market_cap_cr": 130.52,
+      "cap_segment": "micro_cap"
+    },
+    "AARTECH.NS": {
+      "market_cap_cr": 146.78,
+      "cap_segment": "micro_cap"
+    },
+    "AARTISURF.NS": {
+      "market_cap_cr": 449.34,
+      "cap_segment": "micro_cap"
+    },
+    "ABCOTS.NS": {
+      "market_cap_cr": 442.02,
+      "cap_segment": "micro_cap"
+    },
+    "ABINFRA.NS": {
+      "market_cap_cr": 641.34,
+      "cap_segment": "small_cap"
+    },
+    "ACCURACY.NS": {
+      "market_cap_cr": 73.77,
+      "cap_segment": "micro_cap"
+    },
+    "ACL.NS": {
+      "market_cap_cr": 436.9,
+      "cap_segment": "micro_cap"
+    },
+    "ADL.NS": {
+      "market_cap_cr": 43.91,
+      "cap_segment": "micro_cap"
+    },
+    "ADROITINFO.NS": {
+      "market_cap_cr": 54.14,
+      "cap_segment": "micro_cap"
+    },
+    "ADVAIT.NS": {
+      "market_cap_cr": 2522.09,
+      "cap_segment": "small_cap"
+    },
+    "ADVANCE.NS": {
+      "market_cap_cr": 842.14,
+      "cap_segment": "small_cap"
+    },
+    "ADVANIHOTR.NS": {
+      "market_cap_cr": 480.68,
+      "cap_segment": "micro_cap"
+    },
+    "AEPL.NS": {
+      "market_cap_cr": 351.95,
+      "cap_segment": "micro_cap"
+    },
+    "AEQUS.NS": {
+      "market_cap_cr": 16018.85,
+      "cap_segment": "mid_cap"
+    },
+    "AERONEU.NS": {
+      "market_cap_cr": 223.11,
+      "cap_segment": "micro_cap"
+    },
+    "AFSL.NS": {
+      "market_cap_cr": 1021.88,
+      "cap_segment": "small_cap"
+    },
+    "AGRITECH.NS": {
+      "market_cap_cr": 65.64,
+      "cap_segment": "micro_cap"
+    },
+    "AHCL.NS": {
+      "market_cap_cr": 769.1,
+      "cap_segment": "small_cap"
+    },
+    "AHLEAST.NS": {
+      "market_cap_cr": 246.41,
+      "cap_segment": "micro_cap"
+    },
+    "AHLWEST.NS": {
+      "market_cap_cr": 594.1,
+      "cap_segment": "small_cap"
+    },
+    "AIRAN.NS": {
+      "market_cap_cr": 188.41,
+      "cap_segment": "micro_cap"
+    },
+    "AKI.NS": {
+      "market_cap_cr": 42.62,
+      "cap_segment": "micro_cap"
+    },
+    "AKSHAR.NS": {
+      "market_cap_cr": 35.44,
+      "cap_segment": "micro_cap"
+    },
+    "AKSHARCHEM.NS": {
+      "market_cap_cr": 212.88,
+      "cap_segment": "micro_cap"
+    },
+    "AKSHOPTFBR.NS": {
+      "market_cap_cr": 102.5,
+      "cap_segment": "micro_cap"
+    },
+    "ALANKIT.NS": {
+      "market_cap_cr": 215.84,
+      "cap_segment": "micro_cap"
+    },
+    "ALBERTDAVD.NS": {
+      "market_cap_cr": 393.57,
+      "cap_segment": "micro_cap"
+    },
+    "ALGOQUANT.NS": {
+      "market_cap_cr": 1898.24,
+      "cap_segment": "small_cap"
+    },
+    "ALKALI.NS": {
+      "market_cap_cr": 68.85,
+      "cap_segment": "micro_cap"
+    },
+    "ALLTIME.NS": {
+      "market_cap_cr": 1452.96,
+      "cap_segment": "small_cap"
+    },
+    "ALMONDZ.NS": {
+      "market_cap_cr": 256.4,
+      "cap_segment": "micro_cap"
+    },
+    "ALPA.NS": {
+      "market_cap_cr": 142.91,
+      "cap_segment": "micro_cap"
+    },
+    "ALPHAGEO.NS": {
+      "market_cap_cr": 152.05,
+      "cap_segment": "micro_cap"
+    },
+    "AMAGI.NS": {
+      "market_cap_cr": 14813.81,
+      "cap_segment": "mid_cap"
+    },
+    "AMANTA.NS": {
+      "market_cap_cr": 663.98,
+      "cap_segment": "small_cap"
+    },
+    "AMBICAAGAR.NS": {
+      "market_cap_cr": 42.86,
+      "cap_segment": "micro_cap"
+    },
+    "AMDIND.NS": {
+      "market_cap_cr": 90.33,
+      "cap_segment": "micro_cap"
+    },
+    "AMJLAND.NS": {
+      "market_cap_cr": 160.8,
+      "cap_segment": "micro_cap"
+    },
+    "AMNPLST.NS": {
+      "market_cap_cr": 1091.05,
+      "cap_segment": "small_cap"
+    },
+    "ANDHRAPAP.NS": {
+      "market_cap_cr": 1219.95,
+      "cap_segment": "small_cap"
+    },
+    "ANIKINDS.NS": {
+      "market_cap_cr": 120.56,
+      "cap_segment": "micro_cap"
+    },
+    "ANMOL.NS": {
+      "market_cap_cr": 59.59,
+      "cap_segment": "micro_cap"
+    },
+    "ANTELOPUS.NS": {
+      "market_cap_cr": 3028.71,
+      "cap_segment": "small_cap"
+    },
+    "ANUHPHR.NS": {
+      "market_cap_cr": 799.59,
+      "cap_segment": "small_cap"
+    },
+    "APCL.NS": {
+      "market_cap_cr": 310.05,
+      "cap_segment": "micro_cap"
+    },
+    "APTECHT.NS": {
+      "market_cap_cr": 556.83,
+      "cap_segment": "small_cap"
+    },
+    "AQYLON.NS": {
+      "market_cap_cr": 641.94,
+      "cap_segment": "small_cap"
+    },
+    "ARCHIDPLY.NS": {
+      "market_cap_cr": 164.68,
+      "cap_segment": "micro_cap"
+    },
+    "ARCHIES.NS": {
+      "market_cap_cr": 47.53,
+      "cap_segment": "micro_cap"
+    },
+    "ARE&M.NS": {
+      "market_cap_cr": 17302.3,
+      "cap_segment": "mid_cap"
+    },
+    "ARENTERP.NS": {
+      "market_cap_cr": 11.97,
+      "cap_segment": "micro_cap"
+    },
+    "ARIES.NS": {
+      "market_cap_cr": 442.21,
+      "cap_segment": "micro_cap"
+    },
+    "ARIHANTSUP.NS": {
+      "market_cap_cr": 1122.34,
+      "cap_segment": "small_cap"
+    },
+    "ARIS.NS": {
+      "market_cap_cr": 1051.87,
+      "cap_segment": "small_cap"
+    },
+    "AROGRANITE.NS": {
+      "market_cap_cr": 39.24,
+      "cap_segment": "micro_cap"
+    },
+    "ARROWGREEN.NS": {
+      "market_cap_cr": 1146.68,
+      "cap_segment": "small_cap"
+    },
+    "ARSSBL.NS": {
+      "market_cap_cr": 3256.75,
+      "cap_segment": "small_cap"
+    },
+    "ASAHISONG.NS": {
+      "market_cap_cr": 453.81,
+      "cap_segment": "micro_cap"
+    },
+    "ASAL.NS": {
+      "market_cap_cr": 813.84,
+      "cap_segment": "small_cap"
+    },
+    "ASHIMASYN.NS": {
+      "market_cap_cr": 343.26,
+      "cap_segment": "micro_cap"
+    },
+    "ASHOKAMET.NS": {
+      "market_cap_cr": 35.69,
+      "cap_segment": "micro_cap"
+    },
+    "ASIANHOTNR.NS": {
+      "market_cap_cr": 1291.15,
+      "cap_segment": "small_cap"
+    },
+    "ASIANTILES.NS": {
+      "market_cap_cr": 1592.67,
+      "cap_segment": "small_cap"
+    },
+    "ASTRON.NS": {
+      "market_cap_cr": 17.3,
+      "cap_segment": "micro_cap"
+    },
+    "ATALREAL.NS": {
+      "market_cap_cr": 425.58,
+      "cap_segment": "micro_cap"
+    },
+    "ATAM.NS": {
+      "market_cap_cr": 75.77,
+      "cap_segment": "micro_cap"
+    },
+    "ATL.NS": {
+      "market_cap_cr": 586.54,
+      "cap_segment": "small_cap"
+    },
+    "ATLANTAA.NS": {
+      "market_cap_cr": 322.74,
+      "cap_segment": "micro_cap"
+    },
+    "ATLANTAELE.NS": {
+      "market_cap_cr": 12822.9,
+      "cap_segment": "mid_cap"
+    },
+    "ATLASCYCLE.NS": {
+      "market_cap_cr": 64.9,
+      "cap_segment": "micro_cap"
+    },
+    "AUTOIND.NS": {
+      "market_cap_cr": 417.91,
+      "cap_segment": "micro_cap"
+    },
+    "AVG.NS": {
+      "market_cap_cr": 383.52,
+      "cap_segment": "micro_cap"
+    },
+    "AVONMORE.NS": {
+      "market_cap_cr": 318.59,
+      "cap_segment": "micro_cap"
+    },
+    "AVROIND.NS": {
+      "market_cap_cr": 125.72,
+      "cap_segment": "micro_cap"
+    },
+    "AVTNPL.NS": {
+      "market_cap_cr": 1077.41,
+      "cap_segment": "small_cap"
+    },
+    "AXISCADES.NS": {
+      "market_cap_cr": 6698.63,
+      "cap_segment": "mid_cap"
+    },
+    "AXITA.NS": {
+      "market_cap_cr": 282.8,
+      "cap_segment": "micro_cap"
+    },
+    "AYE.NS": {
+      "market_cap_cr": 4107.72,
+      "cap_segment": "small_cap"
+    },
+    "BAFNAPH.NS": {
+      "market_cap_cr": 672.19,
+      "cap_segment": "small_cap"
+    },
+    "BAGFILMS.NS": {
+      "market_cap_cr": 92.23,
+      "cap_segment": "micro_cap"
+    },
+    "BAIDFIN.NS": {
+      "market_cap_cr": 155.97,
+      "cap_segment": "micro_cap"
+    },
+    "BAJEL.NS": {
+      "market_cap_cr": 2071.55,
+      "cap_segment": "small_cap"
+    },
+    "BALAJEE.NS": {
+      "market_cap_cr": 228.64,
+      "cap_segment": "micro_cap"
+    },
+    "BALAJITELE.NS": {
+      "market_cap_cr": 1041.53,
+      "cap_segment": "small_cap"
+    },
+    "BALKRISHNA.NS": {
+      "market_cap_cr": 57.58,
+      "cap_segment": "micro_cap"
+    },
+    "BALPHARMA.NS": {
+      "market_cap_cr": 141.7,
+      "cap_segment": "micro_cap"
+    },
+    "BALUFORGE.NS": {
+      "market_cap_cr": 5392.23,
+      "cap_segment": "mid_cap"
+    },
+    "BANARBEADS.NS": {
+      "market_cap_cr": 75.02,
+      "cap_segment": "micro_cap"
+    },
+    "BANG.NS": {
+      "market_cap_cr": 40.95,
+      "cap_segment": "micro_cap"
+    },
+    "BANSWRAS.NS": {
+      "market_cap_cr": 423.11,
+      "cap_segment": "micro_cap"
+    },
+    "BASML.NS": {
+      "market_cap_cr": 220.58,
+      "cap_segment": "micro_cap"
+    },
+    "BBOX.NS": {
+      "market_cap_cr": 13328.82,
+      "cap_segment": "mid_cap"
+    },
+    "BBTCL.NS": {
+      "market_cap_cr": 451.25,
+      "cap_segment": "micro_cap"
+    },
+    "BCONCEPTS.NS": {
+      "market_cap_cr": 234.16,
+      "cap_segment": "micro_cap"
+    },
+    "BCPL.NS": {
+      "market_cap_cr": 117.02,
+      "cap_segment": "micro_cap"
+    },
+    "BELLACASA.NS": {
+      "market_cap_cr": 334.42,
+      "cap_segment": "micro_cap"
+    },
+    "BHAGYANGR.NS": {
+      "market_cap_cr": 1219.81,
+      "cap_segment": "small_cap"
+    },
+    "BHANDARI.NS": {
+      "market_cap_cr": 96.89,
+      "cap_segment": "micro_cap"
+    },
+    "BHARATCOAL.NS": {
+      "market_cap_cr": 16020.08,
+      "cap_segment": "mid_cap"
+    },
+    "BHARATGEAR.NS": {
+      "market_cap_cr": 169.52,
+      "cap_segment": "micro_cap"
+    },
+    "BHARATSE.NS": {
+      "market_cap_cr": 1421.48,
+      "cap_segment": "small_cap"
+    },
+    "BIOFILCHEM.NS": {
+      "market_cap_cr": 52.09,
+      "cap_segment": "micro_cap"
+    },
+    "BIRLACABLE.NS": {
+      "market_cap_cr": 710.7,
+      "cap_segment": "small_cap"
+    },
+    "BLAL.NS": {
+      "market_cap_cr": 722.12,
+      "cap_segment": "small_cap"
+    },
+    "BLSE.NS": {
+      "market_cap_cr": 2883.33,
+      "cap_segment": "small_cap"
+    },
+    "BLUECOAST.NS": {
+      "market_cap_cr": 50.46,
+      "cap_segment": "micro_cap"
+    },
+    "BLUESTONE.NS": {
+      "market_cap_cr": 13423.98,
+      "cap_segment": "mid_cap"
+    },
+    "BMWVENTLTD.NS": {
+      "market_cap_cr": 496.88,
+      "cap_segment": "micro_cap"
+    },
+    "BOROSCI.NS": {
+      "market_cap_cr": 1268.38,
+      "cap_segment": "small_cap"
+    },
+    "BPL.NS": {
+      "market_cap_cr": 262.51,
+      "cap_segment": "micro_cap"
+    },
+    "BRNL.NS": {
+      "market_cap_cr": 148.26,
+      "cap_segment": "micro_cap"
+    },
+    "BROOKS.NS": {
+      "market_cap_cr": 179.69,
+      "cap_segment": "micro_cap"
+    },
+    "BSHSL.NS": {
+      "market_cap_cr": 894.59,
+      "cap_segment": "small_cap"
+    },
+    "BSL.NS": {
+      "market_cap_cr": 129.68,
+      "cap_segment": "micro_cap"
+    },
+    "BTML.NS": {
+      "market_cap_cr": 120.83,
+      "cap_segment": "micro_cap"
+    },
+    "BUILDPRO.NS": {
+      "market_cap_cr": 3188.3,
+      "cap_segment": "small_cap"
+    },
+    "BUTTERFLY.NS": {
+      "market_cap_cr": 1192.57,
+      "cap_segment": "small_cap"
+    },
+    "BVCL.NS": {
+      "market_cap_cr": 92.65,
+      "cap_segment": "micro_cap"
+    },
+    "BYKE.NS": {
+      "market_cap_cr": 177.12,
+      "cap_segment": "micro_cap"
+    },
+    "CALSOFT.NS": {
+      "market_cap_cr": 77.08,
+      "cap_segment": "micro_cap"
+    },
+    "CAMLINFINE.NS": {
+      "market_cap_cr": 2516.47,
+      "cap_segment": "small_cap"
+    },
+    "CANHLIFE.NS": {
+      "market_cap_cr": 14079.0,
+      "cap_segment": "mid_cap"
+    },
+    "CAPILLARY.NS": {
+      "market_cap_cr": 4634.01,
+      "cap_segment": "small_cap"
+    },
+    "CAPITALSFB.NS": {
+      "market_cap_cr": 1344.63,
+      "cap_segment": "small_cap"
+    },
+    "CCAVENUE.NS": {
+      "market_cap_cr": 6052.37,
+      "cap_segment": "mid_cap"
+    },
+    "CCCL.NS": {
+      "market_cap_cr": 705.88,
+      "cap_segment": "small_cap"
+    },
+    "CCHHL.NS": {
+      "market_cap_cr": 210.71,
+      "cap_segment": "micro_cap"
+    },
+    "CEINSYS.NS": {
+      "market_cap_cr": 1811.11,
+      "cap_segment": "small_cap"
+    },
+    "CELEBRITY.NS": {
+      "market_cap_cr": 47.12,
+      "cap_segment": "micro_cap"
+    },
+    "CEMPRO.NS": {
+      "market_cap_cr": 22634.73,
+      "cap_segment": "large_cap"
+    },
+    "CENTEXT.NS": {
+      "market_cap_cr": 184.08,
+      "cap_segment": "micro_cap"
+    },
+    "CENTRUM.NS": {
+      "market_cap_cr": 1162.55,
+      "cap_segment": "small_cap"
+    },
+    "CHEMBOND.NS": {
+      "market_cap_cr": 239.38,
+      "cap_segment": "micro_cap"
+    },
+    "CHEMBONDCH.NS": {
+      "market_cap_cr": 599.79,
+      "cap_segment": "small_cap"
+    },
+    "CHEMCON.NS": {
+      "market_cap_cr": 721.08,
+      "cap_segment": "small_cap"
+    },
+    "CHEMFAB.NS": {
+      "market_cap_cr": 529.53,
+      "cap_segment": "small_cap"
+    },
+    "CHEVIOT.NS": {
+      "market_cap_cr": 740.25,
+      "cap_segment": "small_cap"
+    },
+    "CIFL.NS": {
+      "market_cap_cr": 830.99,
+      "cap_segment": "small_cap"
+    },
+    "CINELINE.NS": {
+      "market_cap_cr": 306.38,
+      "cap_segment": "micro_cap"
+    },
+    "CINEVISTA.NS": {
+      "market_cap_cr": 86.15,
+      "cap_segment": "micro_cap"
+    },
+    "CLEANMAX.NS": {
+      "market_cap_cr": 15926.6,
+      "cap_segment": "mid_cap"
+    },
+    "CMPDI.NS": {
+      "market_cap_cr": 17421.6,
+      "cap_segment": "mid_cap"
+    },
+    "CNL.NS": {
+      "market_cap_cr": 1623.08,
+      "cap_segment": "small_cap"
+    },
+    "COASTCORP.NS": {
+      "market_cap_cr": 320.79,
+      "cap_segment": "micro_cap"
+    },
+    "COMPUSOFT.NS": {
+      "market_cap_cr": 103.89,
+      "cap_segment": "micro_cap"
+    },
+    "COMSYN.NS": {
+      "market_cap_cr": 854.18,
+      "cap_segment": "small_cap"
+    },
+    "CORALFINAC.NS": {
+      "market_cap_cr": 136.62,
+      "cap_segment": "micro_cap"
+    },
+    "CORDSCABLE.NS": {
+      "market_cap_cr": 284.41,
+      "cap_segment": "micro_cap"
+    },
+    "CORONA.NS": {
+      "market_cap_cr": 12837.81,
+      "cap_segment": "mid_cap"
+    },
+    "COUNCODOS.NS": {
+      "market_cap_cr": 46.56,
+      "cap_segment": "micro_cap"
+    },
+    "CPCAP.NS": {
+      "market_cap_cr": 207.49,
+      "cap_segment": "micro_cap"
+    },
+    "CPEDU.NS": {
+      "market_cap_cr": 391.15,
+      "cap_segment": "micro_cap"
+    },
+    "CRAMC.NS": {
+      "market_cap_cr": 5281.57,
+      "cap_segment": "mid_cap"
+    },
+    "CREATIVEYE.NS": {
+      "market_cap_cr": 12.28,
+      "cap_segment": "micro_cap"
+    },
+    "CREST.NS": {
+      "market_cap_cr": 1087.21,
+      "cap_segment": "small_cap"
+    },
+    "CSLFINANCE.NS": {
+      "market_cap_cr": 500.65,
+      "cap_segment": "small_cap"
+    },
+    "CTE.NS": {
+      "market_cap_cr": 75.66,
+      "cap_segment": "micro_cap"
+    },
+    "CUBEXTUB.NS": {
+      "market_cap_cr": 112.68,
+      "cap_segment": "micro_cap"
+    },
+    "CYBERMEDIA.NS": {
+      "market_cap_cr": 32.23,
+      "cap_segment": "micro_cap"
+    },
+    "CYBERTECH.NS": {
+      "market_cap_cr": 419.56,
+      "cap_segment": "micro_cap"
+    },
+    "DAMODARIND.NS": {
+      "market_cap_cr": 66.06,
+      "cap_segment": "micro_cap"
+    },
+    "DAVANGERE.NS": {
+      "market_cap_cr": 443.3,
+      "cap_segment": "micro_cap"
+    },
+    "DBEIL.NS": {
+      "market_cap_cr": 347.96,
+      "cap_segment": "micro_cap"
+    },
+    "DBSTOCKBRO.NS": {
+      "market_cap_cr": 112.49,
+      "cap_segment": "micro_cap"
+    },
+    "DCAL.NS": {
+      "market_cap_cr": 2975.74,
+      "cap_segment": "small_cap"
+    },
+    "DCM.NS": {
+      "market_cap_cr": 153.16,
+      "cap_segment": "micro_cap"
+    },
+    "DCMNVL.NS": {
+      "market_cap_cr": 283.06,
+      "cap_segment": "micro_cap"
+    },
+    "DCMSRIND.NS": {
+      "market_cap_cr": 378.42,
+      "cap_segment": "micro_cap"
+    },
+    "DECCANCE.NS": {
+      "market_cap_cr": 805.85,
+      "cap_segment": "small_cap"
+    },
+    "DELPHIFX.NS": {
+      "market_cap_cr": 163.1,
+      "cap_segment": "micro_cap"
+    },
+    "DELTAMAGNT.NS": {
+      "market_cap_cr": 64.34,
+      "cap_segment": "micro_cap"
+    },
+    "DENORA.NS": {
+      "market_cap_cr": 476.9,
+      "cap_segment": "micro_cap"
+    },
+    "DEVIT.NS": {
+      "market_cap_cr": 155.79,
+      "cap_segment": "micro_cap"
+    },
+    "DEVX.NS": {
+      "market_cap_cr": 325.16,
+      "cap_segment": "micro_cap"
+    },
+    "DGCONTENT.NS": {
+      "market_cap_cr": 136.27,
+      "cap_segment": "micro_cap"
+    },
+    "DHARMAJ.NS": {
+      "market_cap_cr": 926.89,
+      "cap_segment": "small_cap"
+    },
+    "DHRUV.NS": {
+      "market_cap_cr": 48.46,
+      "cap_segment": "micro_cap"
+    },
+    "DHUNINV.NS": {
+      "market_cap_cr": 548.75,
+      "cap_segment": "small_cap"
+    },
+    "DIAMINESQ.NS": {
+      "market_cap_cr": 275.46,
+      "cap_segment": "micro_cap"
+    },
+    "DICIND.NS": {
+      "market_cap_cr": 466.29,
+      "cap_segment": "micro_cap"
+    },
+    "DIGIDRIVE.NS": {
+      "market_cap_cr": 69.41,
+      "cap_segment": "micro_cap"
+    },
+    "DIGISPICE.NS": {
+      "market_cap_cr": 400.11,
+      "cap_segment": "micro_cap"
+    },
+    "DIGJAMLMTD.NS": {
+      "market_cap_cr": 99.48,
+      "cap_segment": "micro_cap"
+    },
+    "DISHTV.NS": {
+      "market_cap_cr": 521.07,
+      "cap_segment": "small_cap"
+    },
+    "DIVGIITTS.NS": {
+      "market_cap_cr": 3009.51,
+      "cap_segment": "small_cap"
+    },
+    "DMCC.NS": {
+      "market_cap_cr": 710.79,
+      "cap_segment": "small_cap"
+    },
+    "DNAMEDIA.NS": {
+      "market_cap_cr": 34.37,
+      "cap_segment": "micro_cap"
+    },
+    "DPWIRES.NS": {
+      "market_cap_cr": 258.86,
+      "cap_segment": "micro_cap"
+    },
+    "DRCSYSTEMS.NS": {
+      "market_cap_cr": 193.36,
+      "cap_segment": "micro_cap"
+    },
+    "DREAMFOLKS.NS": {
+      "market_cap_cr": 372.14,
+      "cap_segment": "micro_cap"
+    },
+    "DSFCL.NS": {
+      "market_cap_cr": 221.83,
+      "cap_segment": "micro_cap"
+    },
+    "DTIL.NS": {
+      "market_cap_cr": 140.33,
+      "cap_segment": "micro_cap"
+    },
+    "DUCON.NS": {
+      "market_cap_cr": 96.83,
+      "cap_segment": "micro_cap"
+    },
+    "DVL.NS": {
+      "market_cap_cr": 904.69,
+      "cap_segment": "small_cap"
+    },
+    "EFCIL.NS": {
+      "market_cap_cr": 2810.98,
+      "cap_segment": "small_cap"
+    },
+    "ELDEHSG.NS": {
+      "market_cap_cr": 750.31,
+      "cap_segment": "small_cap"
+    },
+    "ELIN.NS": {
+      "market_cap_cr": 504.3,
+      "cap_segment": "small_cap"
+    },
+    "EMAMIPAP.NS": {
+      "market_cap_cr": 673.35,
+      "cap_segment": "small_cap"
+    },
+    "EMMBI.NS": {
+      "market_cap_cr": 167.01,
+      "cap_segment": "micro_cap"
+    },
+    "EMMVEE.NS": {
+      "market_cap_cr": 22622.37,
+      "cap_segment": "large_cap"
+    },
+    "EPACKPEB.NS": {
+      "market_cap_cr": 2622.39,
+      "cap_segment": "small_cap"
+    },
+    "ESSENTIA.NS": {
+      "market_cap_cr": 222.92,
+      "cap_segment": "micro_cap"
+    },
+    "ESTER.NS": {
+      "market_cap_cr": 919.05,
+      "cap_segment": "small_cap"
+    },
+    "EUROBOND.NS": {
+      "market_cap_cr": 395.06,
+      "cap_segment": "micro_cap"
+    },
+    "EUROTEXIND.NS": {
+      "market_cap_cr": 12.45,
+      "cap_segment": "micro_cap"
+    },
+    "EVERESTIND.NS": {
+      "market_cap_cr": 759.01,
+      "cap_segment": "small_cap"
+    },
+    "EXCELSOFT.NS": {
+      "market_cap_cr": 954.16,
+      "cap_segment": "small_cap"
+    },
+    "EXXARO.NS": {
+      "market_cap_cr": 273.82,
+      "cap_segment": "micro_cap"
+    },
+    "FABTECH.NS": {
+      "market_cap_cr": 676.1,
+      "cap_segment": "small_cap"
+    },
+    "FAIRCHEMOR.NS": {
+      "market_cap_cr": 978.7,
+      "cap_segment": "small_cap"
+    },
+    "FCSSOFT.NS": {
+      "market_cap_cr": 254.72,
+      "cap_segment": "micro_cap"
+    },
+    "FILATFASH.NS": {
+      "market_cap_cr": 158.35,
+      "cap_segment": "micro_cap"
+    },
+    "FINKURVE.NS": {
+      "market_cap_cr": 828.25,
+      "cap_segment": "small_cap"
+    },
+    "FLEXITUFF.NS": {
+      "market_cap_cr": 12.74,
+      "cap_segment": "micro_cap"
+    },
+    "FOODSIN.NS": {
+      "market_cap_cr": 397.07,
+      "cap_segment": "micro_cap"
+    },
+    "FRACTAL.NS": {
+      "market_cap_cr": 13739.15,
+      "cap_segment": "mid_cap"
+    },
+    "GANDHITUBE.NS": {
+      "market_cap_cr": 1085.54,
+      "cap_segment": "small_cap"
+    },
+    "GANESHBE.NS": {
+      "market_cap_cr": 878.99,
+      "cap_segment": "small_cap"
+    },
+    "GANESHCP.NS": {
+      "market_cap_cr": 701.57,
+      "cap_segment": "small_cap"
+    },
+    "GANESHHOU.NS": {
+      "market_cap_cr": 6503.78,
+      "cap_segment": "mid_cap"
+    },
+    "GANGESSECU.NS": {
+      "market_cap_cr": 116.64,
+      "cap_segment": "micro_cap"
+    },
+    "GATECH.NS": {
+      "market_cap_cr": 69.47,
+      "cap_segment": "micro_cap"
+    },
+    "GATECHDVR.NS": {
+      "market_cap_cr": 9.29,
+      "cap_segment": "micro_cap"
+    },
+    "GAUDIUMIVF.NS": {
+      "market_cap_cr": 942.59,
+      "cap_segment": "small_cap"
+    },
+    "GAYAHWS.NS": {
+      "market_cap_cr": 47.45,
+      "cap_segment": "micro_cap"
+    },
+    "GCSL.NS": {
+      "market_cap_cr": 1251.33,
+      "cap_segment": "small_cap"
+    },
+    "GEECEE.NS": {
+      "market_cap_cr": 731.91,
+      "cap_segment": "small_cap"
+    },
+    "GENCON.NS": {
+      "market_cap_cr": 227.32,
+      "cap_segment": "micro_cap"
+    },
+    "GENUSPAPER.NS": {
+      "market_cap_cr": 321.41,
+      "cap_segment": "micro_cap"
+    },
+    "GENUSPOWER.NS": {
+      "market_cap_cr": 9458.9,
+      "cap_segment": "mid_cap"
+    },
+    "GFLLIMITED.NS": {
+      "market_cap_cr": 542.0,
+      "cap_segment": "small_cap"
+    },
+    "GILLANDERS.NS": {
+      "market_cap_cr": 189.95,
+      "cap_segment": "micro_cap"
+    },
+    "GINNIFILA.NS": {
+      "market_cap_cr": 392.62,
+      "cap_segment": "micro_cap"
+    },
+    "GKENERGY.NS": {
+      "market_cap_cr": 2660.96,
+      "cap_segment": "small_cap"
+    },
+    "GKSL.NS": {
+      "market_cap_cr": 1058.47,
+      "cap_segment": "small_cap"
+    },
+    "GLOBALE.NS": {
+      "market_cap_cr": 11.27,
+      "cap_segment": "micro_cap"
+    },
+    "GLOBALVECT.NS": {
+      "market_cap_cr": 227.5,
+      "cap_segment": "micro_cap"
+    },
+    "GLOBECIVIL.NS": {
+      "market_cap_cr": 235.71,
+      "cap_segment": "micro_cap"
+    },
+    "GLOSTERLTD.NS": {
+      "market_cap_cr": 750.82,
+      "cap_segment": "small_cap"
+    },
+    "GLOTTIS.NS": {
+      "market_cap_cr": 623.72,
+      "cap_segment": "small_cap"
+    },
+    "GMRP&UI.NS": {
+      "market_cap_cr": 7557.13,
+      "cap_segment": "mid_cap"
+    },
+    "GOKUL.NS": {
+      "market_cap_cr": 392.91,
+      "cap_segment": "micro_cap"
+    },
+    "GRPLTD.NS": {
+      "market_cap_cr": 1116.05,
+      "cap_segment": "small_cap"
+    },
+    "GTL.NS": {
+      "market_cap_cr": 116.71,
+      "cap_segment": "micro_cap"
+    },
+    "GTLINFRA.NS": {
+      "market_cap_cr": 1652.61,
+      "cap_segment": "small_cap"
+    },
+    "GTPL.NS": {
+      "market_cap_cr": 688.05,
+      "cap_segment": "small_cap"
+    },
+    "GUJRAFFIA.NS": {
+      "market_cap_cr": 21.56,
+      "cap_segment": "micro_cap"
+    },
+    "GULFPETRO.NS": {
+      "market_cap_cr": 277.56,
+      "cap_segment": "micro_cap"
+    },
+    "GVT&D.NS": {
+      "market_cap_cr": 111330.31,
+      "cap_segment": "large_cap"
+    },
+    "HALDER.NS": {
+      "market_cap_cr": 314.68,
+      "cap_segment": "micro_cap"
+    },
+    "HALEOSLABS.NS": {
+      "market_cap_cr": 478.54,
+      "cap_segment": "micro_cap"
+    },
+    "HARRMALAYA.NS": {
+      "market_cap_cr": 410.73,
+      "cap_segment": "micro_cap"
+    },
+    "HAVISHA.NS": {
+      "market_cap_cr": 21.5,
+      "cap_segment": "micro_cap"
+    },
+    "HBSL.NS": {
+      "market_cap_cr": 41.97,
+      "cap_segment": "micro_cap"
+    },
+    "HCC.NS": {
+      "market_cap_cr": 5702.58,
+      "cap_segment": "mid_cap"
+    },
+    "HEADSUP.NS": {
+      "market_cap_cr": 15.9,
+      "cap_segment": "micro_cap"
+    },
+    "HEXATRADEX.NS": {
+      "market_cap_cr": 911.26,
+      "cap_segment": "small_cap"
+    },
+    "HGM.NS": {
+      "market_cap_cr": 63.96,
+      "cap_segment": "micro_cap"
+    },
+    "HILINFRA.NS": {
+      "market_cap_cr": 328.77,
+      "cap_segment": "micro_cap"
+    },
+    "HILTON.NS": {
+      "market_cap_cr": 109.11,
+      "cap_segment": "micro_cap"
+    },
+    "HINDCOMPOS.NS": {
+      "market_cap_cr": 635.07,
+      "cap_segment": "small_cap"
+    },
+    "HISARMETAL.NS": {
+      "market_cap_cr": 82.62,
+      "cap_segment": "micro_cap"
+    },
+    "HITECHCORP.NS": {
+      "market_cap_cr": 547.13,
+      "cap_segment": "small_cap"
+    },
+    "HLVLTD.NS": {
+      "market_cap_cr": 477.96,
+      "cap_segment": "micro_cap"
+    },
+    "HMAAGRO.NS": {
+      "market_cap_cr": 1051.12,
+      "cap_segment": "small_cap"
+    },
+    "HMVL.NS": {
+      "market_cap_cr": 745.92,
+      "cap_segment": "small_cap"
+    },
+    "HPAL.NS": {
+      "market_cap_cr": 314.67,
+      "cap_segment": "micro_cap"
+    },
+    "HPIL.NS": {
+      "market_cap_cr": 147.37,
+      "cap_segment": "micro_cap"
+    },
+    "HTMEDIA.NS": {
+      "market_cap_cr": 651.53,
+      "cap_segment": "small_cap"
+    },
+    "HYBRIDFIN.NS": {
+      "market_cap_cr": 52.99,
+      "cap_segment": "micro_cap"
+    },
+    "IBULLSLTD.NS": {
+      "market_cap_cr": 6778.97,
+      "cap_segment": "mid_cap"
+    },
+    "ICICIAMC.NS": {
+      "market_cap_cr": 152226.68,
+      "cap_segment": "large_cap"
+    },
+    "IFBAGRO.NS": {
+      "market_cap_cr": 909.55,
+      "cap_segment": "small_cap"
+    },
+    "IFGLEXPOR.NS": {
+      "market_cap_cr": 1591.14,
+      "cap_segment": "small_cap"
+    },
+    "IGPL.NS": {
+      "market_cap_cr": 1570.23,
+      "cap_segment": "small_cap"
+    },
+    "IITL.NS": {
+      "market_cap_cr": 317.92,
+      "cap_segment": "micro_cap"
+    },
+    "IMPAL.NS": {
+      "market_cap_cr": 1390.27,
+      "cap_segment": "small_cap"
+    },
+    "INA.NS": {
+      "market_cap_cr": 2508.71,
+      "cap_segment": "small_cap"
+    },
+    "INDIANCARD.NS": {
+      "market_cap_cr": 131.89,
+      "cap_segment": "micro_cap"
+    },
+    "INDORAMA.NS": {
+      "market_cap_cr": 1665.12,
+      "cap_segment": "small_cap"
+    },
+    "INDOTHAI.NS": {
+      "market_cap_cr": 1576.86,
+      "cap_segment": "small_cap"
+    },
+    "INDSWFTLAB.NS": {
+      "market_cap_cr": 2004.9,
+      "cap_segment": "small_cap"
+    },
+    "INNOVISION.NS": {
+      "market_cap_cr": 680.23,
+      "cap_segment": "small_cap"
+    },
+    "INOXGREEN.NS": {
+      "market_cap_cr": 6959.86,
+      "cap_segment": "mid_cap"
+    },
+    "INTERARCH.NS": {
+      "market_cap_cr": 3149.92,
+      "cap_segment": "small_cap"
+    },
+    "INTLCONV.NS": {
+      "market_cap_cr": 480.91,
+      "cap_segment": "micro_cap"
+    },
+    "INVENTURE.NS": {
+      "market_cap_cr": 96.6,
+      "cap_segment": "micro_cap"
+    },
+    "IRIS.NS": {
+      "market_cap_cr": 530.76,
+      "cap_segment": "small_cap"
+    },
+    "ISFT.NS": {
+      "market_cap_cr": 128.13,
+      "cap_segment": "micro_cap"
+    },
+    "ISHANCH.NS": {
+      "market_cap_cr": 145.12,
+      "cap_segment": "micro_cap"
+    },
+    "IVALUE.NS": {
+      "market_cap_cr": 1518.72,
+      "cap_segment": "small_cap"
+    },
+    "IVC.NS": {
+      "market_cap_cr": 263.79,
+      "cap_segment": "micro_cap"
+    },
+    "J&KBANK.NS": {
+      "market_cap_cr": 17431.72,
+      "cap_segment": "mid_cap"
+    },
+    "JAINREC.NS": {
+      "market_cap_cr": 11144.55,
+      "cap_segment": "mid_cap"
+    },
+    "JARO.NS": {
+      "market_cap_cr": 1021.21,
+      "cap_segment": "small_cap"
+    },
+    "JAYAGROGN.NS": {
+      "market_cap_cr": 676.35,
+      "cap_segment": "small_cap"
+    },
+    "JAYSREETEA.NS": {
+      "market_cap_cr": 255.65,
+      "cap_segment": "micro_cap"
+    },
+    "JETFREIGHT.NS": {
+      "market_cap_cr": 104.59,
+      "cap_segment": "micro_cap"
+    },
+    "JHS.NS": {
+      "market_cap_cr": 67.48,
+      "cap_segment": "micro_cap"
+    },
+    "JINDALPHOT.NS": {
+      "market_cap_cr": 1092.92,
+      "cap_segment": "small_cap"
+    },
+    "JISLDVREQS.NS": {
+      "market_cap_cr": 44.72,
+      "cap_segment": "micro_cap"
+    },
+    "JKIPL.NS": {
+      "market_cap_cr": 383.86,
+      "cap_segment": "micro_cap"
+    },
+    "JPOLYINVST.NS": {
+      "market_cap_cr": 1103.75,
+      "cap_segment": "small_cap"
+    },
+    "KALYANIFRG.NS": {
+      "market_cap_cr": 220.66,
+      "cap_segment": "micro_cap"
+    },
+    "KANORICHEM.NS": {
+      "market_cap_cr": 625.03,
+      "cap_segment": "small_cap"
+    },
+    "KANPRPLA.NS": {
+      "market_cap_cr": 515.28,
+      "cap_segment": "small_cap"
+    },
+    "KAYA.NS": {
+      "market_cap_cr": 413.48,
+      "cap_segment": "micro_cap"
+    },
+    "KCPSUGIND.NS": {
+      "market_cap_cr": 351.61,
+      "cap_segment": "micro_cap"
+    },
+    "KEEPLEARN.NS": {
+      "market_cap_cr": 30.21,
+      "cap_segment": "micro_cap"
+    },
+    "KERNEX.NS": {
+      "market_cap_cr": 4220.23,
+      "cap_segment": "small_cap"
+    },
+    "KESORAMIND.NS": {
+      "market_cap_cr": 410.98,
+      "cap_segment": "micro_cap"
+    },
+    "KEYFINSERV.NS": {
+      "market_cap_cr": 142.65,
+      "cap_segment": "micro_cap"
+    },
+    "KHAICHEM.NS": {
+      "market_cap_cr": 511.13,
+      "cap_segment": "small_cap"
+    },
+    "KHAITANLTD.NS": {
+      "market_cap_cr": 67.59,
+      "cap_segment": "micro_cap"
+    },
+    "KMSUGAR.NS": {
+      "market_cap_cr": 264.87,
+      "cap_segment": "micro_cap"
+    },
+    "KOHINOOR.NS": {
+      "market_cap_cr": 86.41,
+      "cap_segment": "micro_cap"
+    },
+    "KOKUYOCMLN.NS": {
+      "market_cap_cr": 874.25,
+      "cap_segment": "small_cap"
+    },
+    "KOTHARIPRO.NS": {
+      "market_cap_cr": 406.71,
+      "cap_segment": "micro_cap"
+    },
+    "KOTYARK.NS": {
+      "market_cap_cr": 444.71,
+      "cap_segment": "micro_cap"
+    },
+    "KREBSBIO.NS": {
+      "market_cap_cr": 119.6,
+      "cap_segment": "micro_cap"
+    },
+    "KRIDHANINF.NS": {
+      "market_cap_cr": 21.8,
+      "cap_segment": "micro_cap"
+    },
+    "KRISHIVAL.NS": {
+      "market_cap_cr": 1007.7,
+      "cap_segment": "small_cap"
+    },
+    "KRITI.NS": {
+      "market_cap_cr": 374.04,
+      "cap_segment": "micro_cap"
+    },
+    "KRITINUT.NS": {
+      "market_cap_cr": 442.56,
+      "cap_segment": "micro_cap"
+    },
+    "KRONOX.NS": {
+      "market_cap_cr": 590.32,
+      "cap_segment": "small_cap"
+    },
+    "KRYSTAL.NS": {
+      "market_cap_cr": 838.32,
+      "cap_segment": "small_cap"
+    },
+    "KSHINTL.NS": {
+      "market_cap_cr": 6125.12,
+      "cap_segment": "mid_cap"
+    },
+    "KSOLVES.NS": {
+      "market_cap_cr": 664.41,
+      "cap_segment": "small_cap"
+    },
+    "KUANTUM.NS": {
+      "market_cap_cr": 704.3,
+      "cap_segment": "small_cap"
+    },
+    "KWIL.NS": {
+      "market_cap_cr": 7598.58,
+      "cap_segment": "mid_cap"
+    },
+    "LAMBODHARA.NS": {
+      "market_cap_cr": 100.25,
+      "cap_segment": "micro_cap"
+    },
+    "LANDSMILL.NS": {
+      "market_cap_cr": 117.09,
+      "cap_segment": "micro_cap"
+    },
+    "LASA.NS": {
+      "market_cap_cr": 36.02,
+      "cap_segment": "micro_cap"
+    },
+    "LENSKART.NS": {
+      "market_cap_cr": 99689.55,
+      "cap_segment": "large_cap"
+    },
+    "LGEINDIA.NS": {
+      "market_cap_cr": 106584.23,
+      "cap_segment": "large_cap"
+    },
+    "LIBERTSHOE.NS": {
+      "market_cap_cr": 451.99,
+      "cap_segment": "micro_cap"
+    },
+    "LIKHITHA.NS": {
+      "market_cap_cr": 873.82,
+      "cap_segment": "small_cap"
+    },
+    "LINC.NS": {
+      "market_cap_cr": 609.17,
+      "cap_segment": "small_cap"
+    },
+    "LINCOLN.NS": {
+      "market_cap_cr": 1224.22,
+      "cap_segment": "small_cap"
+    },
+    "LOKESHMACH.NS": {
+      "market_cap_cr": 704.82,
+      "cap_segment": "small_cap"
+    },
+    "LORDSCHLO.NS": {
+      "market_cap_cr": 414.62,
+      "cap_segment": "micro_cap"
+    },
+    "LOTUSEYE.NS": {
+      "market_cap_cr": 242.28,
+      "cap_segment": "micro_cap"
+    },
+    "LOVABLE.NS": {
+      "market_cap_cr": 107.49,
+      "cap_segment": "micro_cap"
+    },
+    "LPDC.NS": {
+      "market_cap_cr": 83.44,
+      "cap_segment": "micro_cap"
+    },
+    "LTM.NS": {
+      "market_cap_cr": 134428.78,
+      "cap_segment": "large_cap"
+    },
+    "LYKALABS.NS": {
+      "market_cap_cr": 247.33,
+      "cap_segment": "micro_cap"
+    },
+    "M&M.NS": {
+      "market_cap_cr": 431243.36,
+      "cap_segment": "large_cap"
+    },
+    "M&MFIN.NS": {
+      "market_cap_cr": 55119.31,
+      "cap_segment": "large_cap"
+    },
+    "MAANALU.NS": {
+      "market_cap_cr": 773.5,
+      "cap_segment": "small_cap"
+    },
+    "MADHAV.NS": {
+      "market_cap_cr": 31.29,
+      "cap_segment": "micro_cap"
+    },
+    "MADHUCON.NS": {
+      "market_cap_cr": 39.41,
+      "cap_segment": "micro_cap"
+    },
+    "MADRASFERT.NS": {
+      "market_cap_cr": 1079.22,
+      "cap_segment": "small_cap"
+    },
+    "MAGADSUGAR.NS": {
+      "market_cap_cr": 731.21,
+      "cap_segment": "small_cap"
+    },
+    "MAGNUM.NS": {
+      "market_cap_cr": 133.88,
+      "cap_segment": "micro_cap"
+    },
+    "MAHEPC.NS": {
+      "market_cap_cr": 294.74,
+      "cap_segment": "micro_cap"
+    },
+    "MANAKSIA.NS": {
+      "market_cap_cr": 370.6,
+      "cap_segment": "micro_cap"
+    },
+    "MANAKSTEEL.NS": {
+      "market_cap_cr": 528.73,
+      "cap_segment": "small_cap"
+    },
+    "MANOMAY.NS": {
+      "market_cap_cr": 388.77,
+      "cap_segment": "micro_cap"
+    },
+    "MANUGRAPH.NS": {
+      "market_cap_cr": 48.45,
+      "cap_segment": "micro_cap"
+    },
+    "MARALOVER.NS": {
+      "market_cap_cr": 230.78,
+      "cap_segment": "micro_cap"
+    },
+    "MARKOLINES.NS": {
+      "market_cap_cr": 393.12,
+      "cap_segment": "micro_cap"
+    },
+    "MARSONS.NS": {
+      "market_cap_cr": 1854.38,
+      "cap_segment": "small_cap"
+    },
+    "MAWANASUG.NS": {
+      "market_cap_cr": 465.49,
+      "cap_segment": "micro_cap"
+    },
+    "MAZDA.NS": {
+      "market_cap_cr": 430.54,
+      "cap_segment": "micro_cap"
+    },
+    "MBLINFRA.NS": {
+      "market_cap_cr": 396.42,
+      "cap_segment": "micro_cap"
+    },
+    "MCLOUD.NS": {
+      "market_cap_cr": 1715.36,
+      "cap_segment": "small_cap"
+    },
+    "MEIL.NS": {
+      "market_cap_cr": 799.34,
+      "cap_segment": "small_cap"
+    },
+    "MENONBE.NS": {
+      "market_cap_cr": 1194.77,
+      "cap_segment": "small_cap"
+    },
+    "MGEL.NS": {
+      "market_cap_cr": 514.11,
+      "cap_segment": "small_cap"
+    },
+    "MHLXMIRU.NS": {
+      "market_cap_cr": 169.66,
+      "cap_segment": "micro_cap"
+    },
+    "MINDTECK.NS": {
+      "market_cap_cr": 620.39,
+      "cap_segment": "small_cap"
+    },
+    "MKPL.NS": {
+      "market_cap_cr": 156.15,
+      "cap_segment": "micro_cap"
+    },
+    "MODINATUR.NS": {
+      "market_cap_cr": 532.92,
+      "cap_segment": "small_cap"
+    },
+    "MODIRUBBER.NS": {
+      "market_cap_cr": 314.88,
+      "cap_segment": "micro_cap"
+    },
+    "MODIS.NS": {
+      "market_cap_cr": 795.99,
+      "cap_segment": "small_cap"
+    },
+    "MODTHREAD.NS": {
+      "market_cap_cr": 162.92,
+      "cap_segment": "micro_cap"
+    },
+    "MOHITIND.NS": {
+      "market_cap_cr": 38.96,
+      "cap_segment": "micro_cap"
+    },
+    "MOLDTECH.NS": {
+      "market_cap_cr": 473.84,
+      "cap_segment": "micro_cap"
+    },
+    "MONEYBOXX.NS": {
+      "market_cap_cr": 426.53,
+      "cap_segment": "micro_cap"
+    },
+    "MOTOGENFIN.NS": {
+      "market_cap_cr": 101.12,
+      "cap_segment": "micro_cap"
+    },
+    "MUKANDLTD.NS": {
+      "market_cap_cr": 2066.29,
+      "cap_segment": "small_cap"
+    },
+    "MUKTAARTS.NS": {
+      "market_cap_cr": 123.95,
+      "cap_segment": "micro_cap"
+    },
+    "MUNJALAU.NS": {
+      "market_cap_cr": 1050.0,
+      "cap_segment": "small_cap"
+    },
+    "MUNJALSHOW.NS": {
+      "market_cap_cr": 551.73,
+      "cap_segment": "small_cap"
+    },
+    "MURUDCERA.NS": {
+      "market_cap_cr": 181.64,
+      "cap_segment": "micro_cap"
+    },
+    "MUTHOOTCAP.NS": {
+      "market_cap_cr": 420.89,
+      "cap_segment": "micro_cap"
+    },
+    "MWL.NS": {
+      "market_cap_cr": 1267.03,
+      "cap_segment": "small_cap"
+    },
+    "NACLIND.NS": {
+      "market_cap_cr": 4263.23,
+      "cap_segment": "small_cap"
+    },
+    "NAGREEKCAP.NS": {
+      "market_cap_cr": 30.15,
+      "cap_segment": "micro_cap"
+    },
+    "NAGREEKEXP.NS": {
+      "market_cap_cr": 69.28,
+      "cap_segment": "micro_cap"
+    },
+    "NAHARCAP.NS": {
+      "market_cap_cr": 446.03,
+      "cap_segment": "micro_cap"
+    },
+    "NAHARINDUS.NS": {
+      "market_cap_cr": 529.92,
+      "cap_segment": "small_cap"
+    },
+    "NAHARPOLY.NS": {
+      "market_cap_cr": 683.55,
+      "cap_segment": "small_cap"
+    },
+    "NATCAPSUQ.NS": {
+      "market_cap_cr": 155.75,
+      "cap_segment": "micro_cap"
+    },
+    "NATHBIOGEN.NS": {
+      "market_cap_cr": 313.57,
+      "cap_segment": "micro_cap"
+    },
+    "NAVKARURB.NS": {
+      "market_cap_cr": 115.58,
+      "cap_segment": "micro_cap"
+    },
+    "NDL.NS": {
+      "market_cap_cr": 343.07,
+      "cap_segment": "micro_cap"
+    },
+    "NDLVENTURE.NS": {
+      "market_cap_cr": 432.68,
+      "cap_segment": "micro_cap"
+    },
+    "NDTV.NS": {
+      "market_cap_cr": 873.26,
+      "cap_segment": "small_cap"
+    },
+    "NECCLTD.NS": {
+      "market_cap_cr": 165.53,
+      "cap_segment": "micro_cap"
+    },
+    "NECLIFE.NS": {
+      "market_cap_cr": 204.95,
+      "cap_segment": "micro_cap"
+    },
+    "NELCAST.NS": {
+      "market_cap_cr": 1097.52,
+      "cap_segment": "small_cap"
+    },
+    "NEPHROPLUS.NS": {
+      "market_cap_cr": 7144.22,
+      "cap_segment": "mid_cap"
+    },
+    "NETWORK18.NS": {
+      "market_cap_cr": 4575.11,
+      "cap_segment": "small_cap"
+    },
+    "NEXTMEDIA.NS": {
+      "market_cap_cr": 27.23,
+      "cap_segment": "micro_cap"
+    },
+    "NGIL.NS": {
+      "market_cap_cr": 67.56,
+      "cap_segment": "micro_cap"
+    },
+    "NGLFINE.NS": {
+      "market_cap_cr": 2067.78,
+      "cap_segment": "small_cap"
+    },
+    "NIMBSPROJ.NS": {
+      "market_cap_cr": 392.36,
+      "cap_segment": "micro_cap"
+    },
+    "NINSYS.NS": {
+      "market_cap_cr": 1337.47,
+      "cap_segment": "small_cap"
+    },
+    "NIPPOBATRY.NS": {
+      "market_cap_cr": 246.26,
+      "cap_segment": "micro_cap"
+    },
+    "NIRAJ.NS": {
+      "market_cap_cr": 173.41,
+      "cap_segment": "micro_cap"
+    },
+    "NKIND.NS": {
+      "market_cap_cr": 36.73,
+      "cap_segment": "micro_cap"
+    },
+    "NOIDATOLL.NS": {
+      "market_cap_cr": 80.06,
+      "cap_segment": "micro_cap"
+    },
+    "NOVAAGRI.NS": {
+      "market_cap_cr": 219.27,
+      "cap_segment": "micro_cap"
+    },
+    "NRAIL.NS": {
+      "market_cap_cr": 825.43,
+      "cap_segment": "small_cap"
+    },
+    "NURECA.NS": {
+      "market_cap_cr": 313.93,
+      "cap_segment": "micro_cap"
+    },
+    "OAL.NS": {
+      "market_cap_cr": 1281.19,
+      "cap_segment": "small_cap"
+    },
+    "OBCL.NS": {
+      "market_cap_cr": 116.08,
+      "cap_segment": "micro_cap"
+    },
+    "OCCLLTD.NS": {
+      "market_cap_cr": 857.15,
+      "cap_segment": "small_cap"
+    },
+    "ODIGMA.NS": {
+      "market_cap_cr": 71.18,
+      "cap_segment": "micro_cap"
+    },
+    "OILCOUNTUB.NS": {
+      "market_cap_cr": 309.91,
+      "cap_segment": "micro_cap"
+    },
+    "OMAXAUTO.NS": {
+      "market_cap_cr": 391.08,
+      "cap_segment": "micro_cap"
+    },
+    "OMFREIGHT.NS": {
+      "market_cap_cr": 295.84,
+      "cap_segment": "micro_cap"
+    },
+    "OMNI.NS": {
+      "market_cap_cr": 8706.09,
+      "cap_segment": "mid_cap"
+    },
+    "ONELIFECAP.NS": {
+      "market_cap_cr": 127.81,
+      "cap_segment": "micro_cap"
+    },
+    "ONEPOINT.NS": {
+      "market_cap_cr": 1482.7,
+      "cap_segment": "small_cap"
+    },
+    "ONWARDTEC.NS": {
+      "market_cap_cr": 632.48,
+      "cap_segment": "small_cap"
+    },
+    "ORIENTALTL.NS": {
+      "market_cap_cr": 38.08,
+      "cap_segment": "micro_cap"
+    },
+    "ORKLAINDIA.NS": {
+      "market_cap_cr": 7838.52,
+      "cap_segment": "mid_cap"
+    },
+    "OSWALAGRO.NS": {
+      "market_cap_cr": 519.62,
+      "cap_segment": "small_cap"
+    },
+    "PACEDIGITK.NS": {
+      "market_cap_cr": 4391.5,
+      "cap_segment": "small_cap"
+    },
+    "PALASHSECU.NS": {
+      "market_cap_cr": 90.46,
+      "cap_segment": "micro_cap"
+    },
+    "PASUPTAC.NS": {
+      "market_cap_cr": 555.21,
+      "cap_segment": "small_cap"
+    },
+    "PAVNAIND.NS": {
+      "market_cap_cr": 246.27,
+      "cap_segment": "micro_cap"
+    },
+    "PINELABS.NS": {
+      "market_cap_cr": 17590.57,
+      "cap_segment": "mid_cap"
+    },
+    "PLASTIBLEN.NS": {
+      "market_cap_cr": 490.03,
+      "cap_segment": "micro_cap"
+    },
+    "PNC.NS": {
+      "market_cap_cr": 28.21,
+      "cap_segment": "micro_cap"
+    },
+    "PODDARMENT.NS": {
+      "market_cap_cr": 268.96,
+      "cap_segment": "micro_cap"
+    },
+    "PRAKASHSTL.NS": {
+      "market_cap_cr": 70.88,
+      "cap_segment": "micro_cap"
+    },
+    "PRAXIS.NS": {
+      "market_cap_cr": 121.89,
+      "cap_segment": "micro_cap"
+    },
+    "PRITIKAUTO.NS": {
+      "market_cap_cr": 299.72,
+      "cap_segment": "micro_cap"
+    },
+    "PRUDMOULI.NS": {
+      "market_cap_cr": 40.64,
+      "cap_segment": "micro_cap"
+    },
+    "PVSL.NS": {
+      "market_cap_cr": 776.06,
+      "cap_segment": "small_cap"
+    },
+    "PWL.NS": {
+      "market_cap_cr": 36536.67,
+      "cap_segment": "large_cap"
+    },
+    "PYRAMID.NS": {
+      "market_cap_cr": 672.61,
+      "cap_segment": "small_cap"
+    },
+    "RADAAN.NS": {
+      "market_cap_cr": 12.65,
+      "cap_segment": "micro_cap"
+    },
+    "RADIANTCMS.NS": {
+      "market_cap_cr": 409.01,
+      "cap_segment": "micro_cap"
+    },
+    "RADIOCITY.NS": {
+      "market_cap_cr": 240.25,
+      "cap_segment": "micro_cap"
+    },
+    "RAJSREESUG.NS": {
+      "market_cap_cr": 101.39,
+      "cap_segment": "micro_cap"
+    },
+    "RAJTV.NS": {
+      "market_cap_cr": 53.52,
+      "cap_segment": "micro_cap"
+    },
+    "RAMANEWS.NS": {
+      "market_cap_cr": 489.92,
+      "cap_segment": "micro_cap"
+    },
+    "RAMAPHO.NS": {
+      "market_cap_cr": 442.69,
+      "cap_segment": "micro_cap"
+    },
+    "RAMCOSYS.NS": {
+      "market_cap_cr": 2338.89,
+      "cap_segment": "small_cap"
+    },
+    "RANASUG.NS": {
+      "market_cap_cr": 200.41,
+      "cap_segment": "micro_cap"
+    },
+    "REGAAL.NS": {
+      "market_cap_cr": 898.83,
+      "cap_segment": "small_cap"
+    },
+    "RELCHEMQ.NS": {
+      "market_cap_cr": 97.24,
+      "cap_segment": "micro_cap"
+    },
+    "RELIABLE.NS": {
+      "market_cap_cr": 146.18,
+      "cap_segment": "micro_cap"
+    },
+    "RELTD.NS": {
+      "market_cap_cr": 3426.96,
+      "cap_segment": "small_cap"
+    },
+    "REPRO.NS": {
+      "market_cap_cr": 535.44,
+      "cap_segment": "small_cap"
+    },
+    "RETAIL.NS": {
+      "market_cap_cr": 14.11,
+      "cap_segment": "micro_cap"
+    },
+    "RHETAN.NS": {
+      "market_cap_cr": 2572.31,
+      "cap_segment": "small_cap"
+    },
+    "RHL.NS": {
+      "market_cap_cr": 296.73,
+      "cap_segment": "micro_cap"
+    },
+    "RITCO.NS": {
+      "market_cap_cr": 892.89,
+      "cap_segment": "small_cap"
+    },
+    "RKDL.NS": {
+      "market_cap_cr": 45.74,
+      "cap_segment": "micro_cap"
+    },
+    "RKSWAMY.NS": {
+      "market_cap_cr": 516.63,
+      "cap_segment": "small_cap"
+    },
+    "ROML.NS": {
+      "market_cap_cr": 66.15,
+      "cap_segment": "micro_cap"
+    },
+    "ROSSELLIND.NS": {
+      "market_cap_cr": 218.07,
+      "cap_segment": "micro_cap"
+    },
+    "RPOWER.NS": {
+      "market_cap_cr": 9987.89,
+      "cap_segment": "mid_cap"
+    },
+    "RSSOFTWARE.NS": {
+      "market_cap_cr": 76.85,
+      "cap_segment": "micro_cap"
+    },
+    "RUBICON.NS": {
+      "market_cap_cr": 25509.46,
+      "cap_segment": "large_cap"
+    },
+    "RUBYMILLS.NS": {
+      "market_cap_cr": 1217.22,
+      "cap_segment": "small_cap"
+    },
+    "RUCHINFRA.NS": {
+      "market_cap_cr": 136.42,
+      "cap_segment": "micro_cap"
+    },
+    "RUCHIRA.NS": {
+      "market_cap_cr": 328.89,
+      "cap_segment": "micro_cap"
+    },
+    "RUDRA.NS": {
+      "market_cap_cr": 183.73,
+      "cap_segment": "micro_cap"
+    },
+    "RUSHIL.NS": {
+      "market_cap_cr": 516.71,
+      "cap_segment": "small_cap"
+    },
+    "RVHL.NS": {
+      "market_cap_cr": 283.57,
+      "cap_segment": "micro_cap"
+    },
+    "RVTH.NS": {
+      "market_cap_cr": 221.13,
+      "cap_segment": "micro_cap"
+    },
+    "SAATVIKGL.NS": {
+      "market_cap_cr": 5356.2,
+      "cap_segment": "mid_cap"
+    },
+    "SADBHIN.NS": {
+      "market_cap_cr": 91.93,
+      "cap_segment": "micro_cap"
+    },
+    "SADHNANIQ.NS": {
+      "market_cap_cr": 880.51,
+      "cap_segment": "small_cap"
+    },
+    "SAHYADRI.NS": {
+      "market_cap_cr": 348.26,
+      "cap_segment": "micro_cap"
+    },
+    "SAIPARENT.NS": {
+      "market_cap_cr": 2328.47,
+      "cap_segment": "small_cap"
+    },
+    "SAKHTISUG.NS": {
+      "market_cap_cr": 208.7,
+      "cap_segment": "micro_cap"
+    },
+    "SALONA.NS": {
+      "market_cap_cr": 134.82,
+      "cap_segment": "micro_cap"
+    },
+    "SAMPANN.NS": {
+      "market_cap_cr": 134.67,
+      "cap_segment": "micro_cap"
+    },
+    "SANDESH.NS": {
+      "market_cap_cr": 768.22,
+      "cap_segment": "small_cap"
+    },
+    "SARLAPOLY.NS": {
+      "market_cap_cr": 810.93,
+      "cap_segment": "small_cap"
+    },
+    "SARVESHWAR.NS": {
+      "market_cap_cr": 423.68,
+      "cap_segment": "micro_cap"
+    },
+    "SAURASHCEM.NS": {
+      "market_cap_cr": 774.78,
+      "cap_segment": "small_cap"
+    },
+    "SBGLP.NS": {
+      "market_cap_cr": 437.01,
+      "cap_segment": "micro_cap"
+    },
+    "SCHAND.NS": {
+      "market_cap_cr": 500.87,
+      "cap_segment": "small_cap"
+    },
+    "SECMARK.NS": {
+      "market_cap_cr": 128.34,
+      "cap_segment": "micro_cap"
+    },
+    "SECURKLOUD.NS": {
+      "market_cap_cr": 61.61,
+      "cap_segment": "micro_cap"
+    },
+    "SEDEMAC.NS": {
+      "market_cap_cr": 12544.67,
+      "cap_segment": "mid_cap"
+    },
+    "SEJALLTD.NS": {
+      "market_cap_cr": 820.91,
+      "cap_segment": "small_cap"
+    },
+    "SELMC.NS": {
+      "market_cap_cr": 92.78,
+      "cap_segment": "micro_cap"
+    },
+    "SEMAC.NS": {
+      "market_cap_cr": 97.93,
+      "cap_segment": "micro_cap"
+    },
+    "SESHAPAPER.NS": {
+      "market_cap_cr": 1450.57,
+      "cap_segment": "small_cap"
+    },
+    "SETL.NS": {
+      "market_cap_cr": 5519.93,
+      "cap_segment": "mid_cap"
+    },
+    "SGIL.NS": {
+      "market_cap_cr": 922.63,
+      "cap_segment": "small_cap"
+    },
+    "SGL.NS": {
+      "market_cap_cr": 26.93,
+      "cap_segment": "micro_cap"
+    },
+    "SGMART.NS": {
+      "market_cap_cr": 9089.66,
+      "cap_segment": "mid_cap"
+    },
+    "SHADOWFAX.NS": {
+      "market_cap_cr": 14281.8,
+      "cap_segment": "mid_cap"
+    },
+    "SHAH.NS": {
+      "market_cap_cr": 392.95,
+      "cap_segment": "micro_cap"
+    },
+    "SHAHALLOYS.NS": {
+      "market_cap_cr": 138.19,
+      "cap_segment": "micro_cap"
+    },
+    "SHALPAINTS.NS": {
+      "market_cap_cr": 696.64,
+      "cap_segment": "small_cap"
+    },
+    "SHEKHAWATI.NS": {
+      "market_cap_cr": 47.91,
+      "cap_segment": "micro_cap"
+    },
+    "SHEMAROO.NS": {
+      "market_cap_cr": 332.7,
+      "cap_segment": "micro_cap"
+    },
+    "SHILPAMED.NS": {
+      "market_cap_cr": 12644.36,
+      "cap_segment": "mid_cap"
+    },
+    "SHIVAMILLS.NS": {
+      "market_cap_cr": 53.58,
+      "cap_segment": "micro_cap"
+    },
+    "SHIVATEX.NS": {
+      "market_cap_cr": 219.91,
+      "cap_segment": "micro_cap"
+    },
+    "SHREEJISPG.NS": {
+      "market_cap_cr": 10860.13,
+      "cap_segment": "mid_cap"
+    },
+    "SHREYANIND.NS": {
+      "market_cap_cr": 196.66,
+      "cap_segment": "micro_cap"
+    },
+    "SHRINGARMS.NS": {
+      "market_cap_cr": 2267.6,
+      "cap_segment": "small_cap"
+    },
+    "SHYAMTEL.NS": {
+      "market_cap_cr": 17.91,
+      "cap_segment": "micro_cap"
+    },
+    "SIGIND.NS": {
+      "market_cap_cr": 180.18,
+      "cap_segment": "micro_cap"
+    },
+    "SIGMA.NS": {
+      "market_cap_cr": 487.67,
+      "cap_segment": "micro_cap"
+    },
+    "SIL.NS": {
+      "market_cap_cr": 110.2,
+      "cap_segment": "micro_cap"
+    },
+    "SILINV.NS": {
+      "market_cap_cr": 445.34,
+      "cap_segment": "micro_cap"
+    },
+    "SILVERTUC.NS": {
+      "market_cap_cr": 2415.1,
+      "cap_segment": "small_cap"
+    },
+    "SINGERIND.NS": {
+      "market_cap_cr": 413.76,
+      "cap_segment": "micro_cap"
+    },
+    "SMARTLINK.NS": {
+      "market_cap_cr": 230.32,
+      "cap_segment": "micro_cap"
+    },
+    "SMLMAH.NS": {
+      "market_cap_cr": 8631.76,
+      "cap_segment": "mid_cap"
+    },
+    "SPECTRUM.NS": {
+      "market_cap_cr": 3973.32,
+      "cap_segment": "small_cap"
+    },
+    "SPENCERS.NS": {
+      "market_cap_cr": 296.62,
+      "cap_segment": "micro_cap"
+    },
+    "SPLIL.NS": {
+      "market_cap_cr": 89.9,
+      "cap_segment": "micro_cap"
+    },
+    "SRD.NS": {
+      "market_cap_cr": 247.55,
+      "cap_segment": "micro_cap"
+    },
+    "SRTL.NS": {
+      "market_cap_cr": 161.26,
+      "cap_segment": "micro_cap"
+    },
+    "STARTECK.NS": {
+      "market_cap_cr": 261.68,
+      "cap_segment": "micro_cap"
+    },
+    "STUDDS.NS": {
+      "market_cap_cr": 1727.61,
+      "cap_segment": "small_cap"
+    },
+    "STYL.NS": {
+      "market_cap_cr": 5896.2,
+      "cap_segment": "mid_cap"
+    },
+    "SUBEXLTD.NS": {
+      "market_cap_cr": 792.99,
+      "cap_segment": "small_cap"
+    },
+    "SUDARCOLOR.NS": {
+      "market_cap_cr": 888.07,
+      "cap_segment": "small_cap"
+    },
+    "SUDEEPPHRM.NS": {
+      "market_cap_cr": 10523.99,
+      "cap_segment": "mid_cap"
+    },
+    "SUKHJITS.NS": {
+      "market_cap_cr": 515.37,
+      "cap_segment": "small_cap"
+    },
+    "SUMEETINDS.NS": {
+      "market_cap_cr": 1333.23,
+      "cap_segment": "small_cap"
+    },
+    "SUNDARAM.NS": {
+      "market_cap_cr": 59.71,
+      "cap_segment": "micro_cap"
+    },
+    "SUNDRMBRAK.NS": {
+      "market_cap_cr": 304.93,
+      "cap_segment": "micro_cap"
+    },
+    "SUPERHOUSE.NS": {
+      "market_cap_cr": 173.09,
+      "cap_segment": "micro_cap"
+    },
+    "SUPERSPIN.NS": {
+      "market_cap_cr": 29.7,
+      "cap_segment": "micro_cap"
+    },
+    "SUPREME.NS": {
+      "market_cap_cr": 174.65,
+      "cap_segment": "micro_cap"
+    },
+    "SURAJLTD.NS": {
+      "market_cap_cr": 409.52,
+      "cap_segment": "micro_cap"
+    },
+    "SURAKSHA.NS": {
+      "market_cap_cr": 1314.0,
+      "cap_segment": "small_cap"
+    },
+    "SURANASOL.NS": {
+      "market_cap_cr": 128.38,
+      "cap_segment": "micro_cap"
+    },
+    "SURANAT&P.NS": {
+      "market_cap_cr": 244.23,
+      "cap_segment": "micro_cap"
+    },
+    "SURYALAXMI.NS": {
+      "market_cap_cr": 116.57,
+      "cap_segment": "micro_cap"
+    },
+    "SUTLEJTEX.NS": {
+      "market_cap_cr": 622.71,
+      "cap_segment": "small_cap"
+    },
+    "SUVEN.NS": {
+      "market_cap_cr": 8509.8,
+      "cap_segment": "mid_cap"
+    },
+    "SUVIDHAA.NS": {
+      "market_cap_cr": 53.92,
+      "cap_segment": "micro_cap"
+    },
+    "SVPGLOB.NS": {
+      "market_cap_cr": 47.44,
+      "cap_segment": "micro_cap"
+    },
+    "SWANCORP.NS": {
+      "market_cap_cr": 9776.72,
+      "cap_segment": "mid_cap"
+    },
+    "SYNCOMF.NS": {
+      "market_cap_cr": 1259.6,
+      "cap_segment": "small_cap"
+    },
+    "SYSTMTXC.NS": {
+      "market_cap_cr": 832.88,
+      "cap_segment": "small_cap"
+    },
+    "TAINWALCHM.NS": {
+      "market_cap_cr": 199.45,
+      "cap_segment": "micro_cap"
+    },
+    "TARAPUR.NS": {
+      "market_cap_cr": 27.79,
+      "cap_segment": "micro_cap"
+    },
+    "TATACAP.NS": {
+      "market_cap_cr": 156550.77,
+      "cap_segment": "large_cap"
+    },
+    "TCC.NS": {
+      "market_cap_cr": 1361.2,
+      "cap_segment": "small_cap"
+    },
+    "TCIFINANCE.NS": {
+      "market_cap_cr": 19.31,
+      "cap_segment": "micro_cap"
+    },
+    "TEAMGTY.NS": {
+      "market_cap_cr": 206.93,
+      "cap_segment": "micro_cap"
+    },
+    "TECILCHEM.NS": {
+      "market_cap_cr": 18.98,
+      "cap_segment": "micro_cap"
+    },
+    "TENNIND.NS": {
+      "market_cap_cr": 22995.36,
+      "cap_segment": "large_cap"
+    },
+    "TERASOFT.NS": {
+      "market_cap_cr": 537.32,
+      "cap_segment": "small_cap"
+    },
+    "TEXINFRA.NS": {
+      "market_cap_cr": 1405.52,
+      "cap_segment": "small_cap"
+    },
+    "TEXMOPIPES.NS": {
+      "market_cap_cr": 126.41,
+      "cap_segment": "micro_cap"
+    },
+    "TFL.NS": {
+      "market_cap_cr": 62.01,
+      "cap_segment": "micro_cap"
+    },
+    "TGBHOTELS.NS": {
+      "market_cap_cr": 27.94,
+      "cap_segment": "micro_cap"
+    },
+    "THEMISMED.NS": {
+      "market_cap_cr": 1052.7,
+      "cap_segment": "small_cap"
+    },
+    "THOMASCOTT.NS": {
+      "market_cap_cr": 444.59,
+      "cap_segment": "micro_cap"
+    },
+    "TICL.NS": {
+      "market_cap_cr": 151.13,
+      "cap_segment": "micro_cap"
+    },
+    "TIL.NS": {
+      "market_cap_cr": 2102.8,
+      "cap_segment": "small_cap"
+    },
+    "TIPSFILMS.NS": {
+      "market_cap_cr": 166.8,
+      "cap_segment": "micro_cap"
+    },
+    "TMCV.NS": {
+      "market_cap_cr": 167341.9,
+      "cap_segment": "large_cap"
+    },
+    "TMPV.NS": {
+      "market_cap_cr": 128393.25,
+      "cap_segment": "large_cap"
+    },
+    "TNPETRO.NS": {
+      "market_cap_cr": 868.13,
+      "cap_segment": "small_cap"
+    },
+    "TNTELE.NS": {
+      "market_cap_cr": 40.47,
+      "cap_segment": "micro_cap"
+    },
+    "TOKYOPLAST.NS": {
+      "market_cap_cr": 76.0,
+      "cap_segment": "micro_cap"
+    },
+    "TPHQ.NS": {
+      "market_cap_cr": 47.14,
+      "cap_segment": "micro_cap"
+    },
+    "TPLPLASTEH.NS": {
+      "market_cap_cr": 609.2,
+      "cap_segment": "small_cap"
+    },
+    "TRACXN.NS": {
+      "market_cap_cr": 332.84,
+      "cap_segment": "micro_cap"
+    },
+    "TRANSWORLD.NS": {
+      "market_cap_cr": 351.32,
+      "cap_segment": "micro_cap"
+    },
+    "TREJHARA.NS": {
+      "market_cap_cr": 363.08,
+      "cap_segment": "micro_cap"
+    },
+    "TREL.NS": {
+      "market_cap_cr": 601.71,
+      "cap_segment": "small_cap"
+    },
+    "TRF.NS": {
+      "market_cap_cr": 252.02,
+      "cap_segment": "micro_cap"
+    },
+    "TRIGYN.NS": {
+      "market_cap_cr": 163.9,
+      "cap_segment": "micro_cap"
+    },
+    "TRU.NS": {
+      "market_cap_cr": 54.8,
+      "cap_segment": "micro_cap"
+    },
+    "TRUALT.NS": {
+      "market_cap_cr": 3921.04,
+      "cap_segment": "small_cap"
+    },
+    "TTML.NS": {
+      "market_cap_cr": 7813.85,
+      "cap_segment": "mid_cap"
+    },
+    "TVSELECT.NS": {
+      "market_cap_cr": 927.95,
+      "cap_segment": "small_cap"
+    },
+    "UEL.NS": {
+      "market_cap_cr": 3096.83,
+      "cap_segment": "small_cap"
+    },
+    "UFBL.NS": {
+      "market_cap_cr": 3017.27,
+      "cap_segment": "small_cap"
+    },
+    "UGARSUGAR.NS": {
+      "market_cap_cr": 492.75,
+      "cap_segment": "micro_cap"
+    },
+    "UMAEXPORTS.NS": {
+      "market_cap_cr": 68.3,
+      "cap_segment": "micro_cap"
+    },
+    "UNIDT.NS": {
+      "market_cap_cr": 497.43,
+      "cap_segment": "micro_cap"
+    },
+    "UNIENTER.NS": {
+      "market_cap_cr": 683.43,
+      "cap_segment": "small_cap"
+    },
+    "UNIMECH.NS": {
+      "market_cap_cr": 6709.55,
+      "cap_segment": "mid_cap"
+    },
+    "UNITECH.NS": {
+      "market_cap_cr": 1098.15,
+      "cap_segment": "small_cap"
+    },
+    "UNITEDPOLY.NS": {
+      "market_cap_cr": 677.07,
+      "cap_segment": "small_cap"
+    },
+    "URAVIDEF.NS": {
+      "market_cap_cr": 131.67,
+      "cap_segment": "micro_cap"
+    },
+    "URBANCO.NS": {
+      "market_cap_cr": 22037.76,
+      "cap_segment": "large_cap"
+    },
+    "UTLSOLAR.NS": {
+      "market_cap_cr": 12068.91,
+      "cap_segment": "mid_cap"
+    },
+    "UYFINCORP.NS": {
+      "market_cap_cr": 365.26,
+      "cap_segment": "micro_cap"
+    },
+    "V2RETAIL.NS": {
+      "market_cap_cr": 7919.93,
+      "cap_segment": "mid_cap"
+    },
+    "VAKRANGEE.NS": {
+      "market_cap_cr": 651.0,
+      "cap_segment": "small_cap"
+    },
+    "VALIANTLAB.NS": {
+      "market_cap_cr": 339.45,
+      "cap_segment": "micro_cap"
+    },
+    "VALIANTORG.NS": {
+      "market_cap_cr": 804.59,
+      "cap_segment": "small_cap"
+    },
+    "VASWANI.NS": {
+      "market_cap_cr": 174.61,
+      "cap_segment": "micro_cap"
+    },
+    "VENUSREM.NS": {
+      "market_cap_cr": 2108.58,
+      "cap_segment": "small_cap"
+    },
+    "VETO.NS": {
+      "market_cap_cr": 237.41,
+      "cap_segment": "micro_cap"
+    },
+    "VGL.NS": {
+      "market_cap_cr": 321.02,
+      "cap_segment": "micro_cap"
+    },
+    "VHL.NS": {
+      "market_cap_cr": 1071.18,
+      "cap_segment": "small_cap"
+    },
+    "VIDHIING.NS": {
+      "market_cap_cr": 1622.96,
+      "cap_segment": "small_cap"
+    },
+    "VIDYAWIRES.NS": {
+      "market_cap_cr": 1975.06,
+      "cap_segment": "small_cap"
+    },
+    "VIKASECO.NS": {
+      "market_cap_cr": 198.1,
+      "cap_segment": "micro_cap"
+    },
+    "VIKASLIFE.NS": {
+      "market_cap_cr": 234.07,
+      "cap_segment": "micro_cap"
+    },
+    "VIKRAMSOLR.NS": {
+      "market_cap_cr": 6538.68,
+      "cap_segment": "mid_cap"
+    },
+    "VIKRAN.NS": {
+      "market_cap_cr": 1875.01,
+      "cap_segment": "small_cap"
+    },
+    "VINEETLAB.NS": {
+      "market_cap_cr": 76.25,
+      "cap_segment": "micro_cap"
+    },
+    "VINNY.NS": {
+      "market_cap_cr": 49.78,
+      "cap_segment": "micro_cap"
+    },
+    "VINYLINDIA.NS": {
+      "market_cap_cr": 445.96,
+      "cap_segment": "micro_cap"
+    },
+    "VIRINCHI.NS": {
+      "market_cap_cr": 174.68,
+      "cap_segment": "micro_cap"
+    },
+    "VISAKAIND.NS": {
+      "market_cap_cr": 743.08,
+      "cap_segment": "small_cap"
+    },
+    "VISHWARAJ.NS": {
+      "market_cap_cr": 118.28,
+      "cap_segment": "micro_cap"
+    },
+    "VIVIDHA.NS": {
+      "market_cap_cr": 15.51,
+      "cap_segment": "micro_cap"
+    },
+    "VIVIMEDLAB.NS": {
+      "market_cap_cr": 42.62,
+      "cap_segment": "micro_cap"
+    },
+    "VIYASH.NS": {
+      "market_cap_cr": 11933.25,
+      "cap_segment": "mid_cap"
+    },
+    "VLEGOV.NS": {
+      "market_cap_cr": 116.37,
+      "cap_segment": "micro_cap"
+    },
+    "VLSFINANCE.NS": {
+      "market_cap_cr": 804.86,
+      "cap_segment": "small_cap"
+    },
+    "VMSTMT.NS": {
+      "market_cap_cr": 223.59,
+      "cap_segment": "micro_cap"
+    },
+    "VRAJ.NS": {
+      "market_cap_cr": 408.32,
+      "cap_segment": "micro_cap"
+    },
+    "VSTL.NS": {
+      "market_cap_cr": 208.4,
+      "cap_segment": "micro_cap"
+    },
+    "WAAREEINDO.NS": {
+      "market_cap_cr": 1349.0,
+      "cap_segment": "small_cap"
+    },
+    "WAKEFIT.NS": {
+      "market_cap_cr": 4345.42,
+      "cap_segment": "small_cap"
+    },
+    "WALCHANNAG.NS": {
+      "market_cap_cr": 1584.11,
+      "cap_segment": "small_cap"
+    },
+    "WEALTH.NS": {
+      "market_cap_cr": 989.74,
+      "cap_segment": "small_cap"
+    },
+    "WEIZMANIND.NS": {
+      "market_cap_cr": 119.33,
+      "cap_segment": "micro_cap"
+    },
+    "WELINV.NS": {
+      "market_cap_cr": 712.59,
+      "cap_segment": "small_cap"
+    },
+    "WEWIN.NS": {
+      "market_cap_cr": 44.71,
+      "cap_segment": "micro_cap"
+    },
+    "WEWORK.NS": {
+      "market_cap_cr": 10457.33,
+      "cap_segment": "mid_cap"
+    },
+    "WILLAMAGOR.NS": {
+      "market_cap_cr": 29.52,
+      "cap_segment": "micro_cap"
+    },
+    "WORTHPERI.NS": {
+      "market_cap_cr": 239.73,
+      "cap_segment": "micro_cap"
+    },
+    "XCHANGING.NS": {
+      "market_cap_cr": 758.1,
+      "cap_segment": "small_cap"
+    },
+    "XELPMOC.NS": {
+      "market_cap_cr": 122.1,
+      "cap_segment": "micro_cap"
+    },
+    "XTGLOBAL.NS": {
+      "market_cap_cr": 445.29,
+      "cap_segment": "micro_cap"
+    },
+    "YUKEN.NS": {
+      "market_cap_cr": 1018.8,
+      "cap_segment": "small_cap"
+    },
+    "ZEELEARN.NS": {
+      "market_cap_cr": 262.19,
+      "cap_segment": "micro_cap"
+    },
+    "ZENITHEXPO.NS": {
+      "market_cap_cr": 107.93,
+      "cap_segment": "micro_cap"
+    },
+    "ZODIACLOTH.NS": {
+      "market_cap_cr": 215.24,
+      "cap_segment": "micro_cap"
+    }
+  }
+}

@@ -2,8 +2,8 @@
   {
     "symbol": "AAATECH.NS",
     "instrument_token": 1665739078,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 116.01,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20,8 +20,8 @@
   {
     "symbol": "AARNAV.NS",
     "instrument_token": 180162998,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 130.52,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -38,8 +38,8 @@
   {
     "symbol": "AARTECH.NS",
     "instrument_token": 1493648801,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 146.78,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -65,8 +65,8 @@
   {
     "symbol": "AARTISURF.NS",
     "instrument_token": 1208054646,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 449.34,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -119,8 +119,8 @@
   {
     "symbol": "ABCOTS.NS",
     "instrument_token": 1160467724,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 442.02,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -146,8 +146,8 @@
   {
     "symbol": "ABINFRA.NS",
     "instrument_token": 2313190351,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 641.34,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -245,8 +245,8 @@
   {
     "symbol": "ACCURACY.NS",
     "instrument_token": 1435987501,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 73.77,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -281,8 +281,8 @@
   {
     "symbol": "ACL.NS",
     "instrument_token": 738522105,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 436.9,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -362,8 +362,8 @@
   {
     "symbol": "ADL.NS",
     "instrument_token": 1665249144,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 43.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -380,8 +380,8 @@
   {
     "symbol": "ADROITINFO.NS",
     "instrument_token": 1224716841,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 54.14,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -398,8 +398,8 @@
   {
     "symbol": "ADVAIT.NS",
     "instrument_token": 3984330279,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2522.09,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -407,8 +407,8 @@
   {
     "symbol": "ADVANCE.NS",
     "instrument_token": 1721549875,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 842.14,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -416,8 +416,8 @@
   {
     "symbol": "ADVANIHOTR.NS",
     "instrument_token": 1480047197,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 480.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -461,8 +461,8 @@
   {
     "symbol": "AEPL.NS",
     "instrument_token": 2875706972,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 351.95,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -470,8 +470,8 @@
   {
     "symbol": "AEQUS.NS",
     "instrument_token": 3361801794,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 16018.85,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -497,8 +497,8 @@
   {
     "symbol": "AERONEU.NS",
     "instrument_token": 596542188,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 223.11,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -542,8 +542,8 @@
   {
     "symbol": "AFSL.NS",
     "instrument_token": 1006895184,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1021.88,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -587,8 +587,8 @@
   {
     "symbol": "AGRITECH.NS",
     "instrument_token": 3735148049,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 65.64,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -605,8 +605,8 @@
   {
     "symbol": "AHCL.NS",
     "instrument_token": 4257031881,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 769.1,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -623,8 +623,8 @@
   {
     "symbol": "AHLEAST.NS",
     "instrument_token": 4172584386,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 246.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -641,8 +641,8 @@
   {
     "symbol": "AHLWEST.NS",
     "instrument_token": 3652656415,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 594.1,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -668,8 +668,8 @@
   {
     "symbol": "AIRAN.NS",
     "instrument_token": 4172605628,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 188.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -740,8 +740,8 @@
   {
     "symbol": "AKI.NS",
     "instrument_token": 2173552108,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 42.62,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -749,8 +749,8 @@
   {
     "symbol": "AKSHAR.NS",
     "instrument_token": 2106450391,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 35.44,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -758,8 +758,8 @@
   {
     "symbol": "AKSHARCHEM.NS",
     "instrument_token": 3805069247,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 212.88,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -767,8 +767,8 @@
   {
     "symbol": "AKSHOPTFBR.NS",
     "instrument_token": 2194980236,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 102.5,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -794,8 +794,8 @@
   {
     "symbol": "ALANKIT.NS",
     "instrument_token": 951944094,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 215.84,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -803,8 +803,8 @@
   {
     "symbol": "ALBERTDAVD.NS",
     "instrument_token": 175518608,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 393.57,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -821,8 +821,8 @@
   {
     "symbol": "ALGOQUANT.NS",
     "instrument_token": 1052487846,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1898.24,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -848,8 +848,8 @@
   {
     "symbol": "ALKALI.NS",
     "instrument_token": 1734790808,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 68.85,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -893,8 +893,8 @@
   {
     "symbol": "ALLTIME.NS",
     "instrument_token": 1323505761,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1452.96,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -902,8 +902,8 @@
   {
     "symbol": "ALMONDZ.NS",
     "instrument_token": 2527939898,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 256.4,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -920,8 +920,8 @@
   {
     "symbol": "ALPA.NS",
     "instrument_token": 505294241,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 142.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -938,8 +938,8 @@
   {
     "symbol": "ALPHAGEO.NS",
     "instrument_token": 1432199948,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 152.05,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -947,8 +947,8 @@
   {
     "symbol": "AMAGI.NS",
     "instrument_token": 4098424193,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 14813.81,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -956,8 +956,8 @@
   {
     "symbol": "AMANTA.NS",
     "instrument_token": 3158724436,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 663.98,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -974,8 +974,8 @@
   {
     "symbol": "AMBICAAGAR.NS",
     "instrument_token": 3459699538,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 42.86,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1001,8 +1001,8 @@
   {
     "symbol": "AMDIND.NS",
     "instrument_token": 4078685896,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 90.33,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1019,8 +1019,8 @@
   {
     "symbol": "AMJLAND.NS",
     "instrument_token": 1989639281,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 160.8,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1028,8 +1028,8 @@
   {
     "symbol": "AMNPLST.NS",
     "instrument_token": 2851605119,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1091.05,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1064,8 +1064,8 @@
   {
     "symbol": "ANDHRAPAP.NS",
     "instrument_token": 3626838977,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1219.95,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1091,8 +1091,8 @@
   {
     "symbol": "ANIKINDS.NS",
     "instrument_token": 1152345389,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 120.56,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1100,8 +1100,8 @@
   {
     "symbol": "ANMOL.NS",
     "instrument_token": 3199841128,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 59.59,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1109,8 +1109,8 @@
   {
     "symbol": "ANTELOPUS.NS",
     "instrument_token": 2430918233,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3028.71,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1136,8 +1136,8 @@
   {
     "symbol": "ANUHPHR.NS",
     "instrument_token": 1123449219,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 799.59,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1226,8 +1226,8 @@
   {
     "symbol": "APCL.NS",
     "instrument_token": 363131938,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 310.05,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1316,8 +1316,8 @@
   {
     "symbol": "APTECHT.NS",
     "instrument_token": 3532262314,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 556.83,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1334,8 +1334,8 @@
   {
     "symbol": "AQYLON.NS",
     "instrument_token": 2883597857,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 641.94,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1343,8 +1343,8 @@
   {
     "symbol": "ARCHIDPLY.NS",
     "instrument_token": 999757260,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 164.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1352,8 +1352,8 @@
   {
     "symbol": "ARCHIES.NS",
     "instrument_token": 766088518,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 47.53,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1361,8 +1361,8 @@
   {
     "symbol": "ARE&M.NS",
     "instrument_token": 2887791295,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 17302.3,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1370,8 +1370,8 @@
   {
     "symbol": "ARENTERP.NS",
     "instrument_token": 3205020445,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 11.97,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1388,8 +1388,8 @@
   {
     "symbol": "ARIES.NS",
     "instrument_token": 3564284979,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 442.21,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1406,8 +1406,8 @@
   {
     "symbol": "ARIHANTSUP.NS",
     "instrument_token": 602235298,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1122.34,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1415,8 +1415,8 @@
   {
     "symbol": "ARIS.NS",
     "instrument_token": 1296851490,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1051.87,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1442,8 +1442,8 @@
   {
     "symbol": "AROGRANITE.NS",
     "instrument_token": 2088796082,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 39.24,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1451,8 +1451,8 @@
   {
     "symbol": "ARROWGREEN.NS",
     "instrument_token": 1415181004,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1146.68,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1460,8 +1460,8 @@
   {
     "symbol": "ARSSBL.NS",
     "instrument_token": 1786616800,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3256.75,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1532,8 +1532,8 @@
   {
     "symbol": "ASAHISONG.NS",
     "instrument_token": 394012102,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 453.81,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1541,8 +1541,8 @@
   {
     "symbol": "ASAL.NS",
     "instrument_token": 507475499,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 813.84,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1577,8 +1577,8 @@
   {
     "symbol": "ASHIMASYN.NS",
     "instrument_token": 2478569709,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 343.26,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1595,8 +1595,8 @@
   {
     "symbol": "ASHOKAMET.NS",
     "instrument_token": 1888580405,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 35.69,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1622,8 +1622,8 @@
   {
     "symbol": "ASIANHOTNR.NS",
     "instrument_token": 1093974571,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1291.15,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1640,8 +1640,8 @@
   {
     "symbol": "ASIANTILES.NS",
     "instrument_token": 170429318,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1592.67,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1721,8 +1721,8 @@
   {
     "symbol": "ASTRON.NS",
     "instrument_token": 4247351835,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 17.3,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1730,8 +1730,8 @@
   {
     "symbol": "ATALREAL.NS",
     "instrument_token": 3600553752,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 425.58,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1739,8 +1739,8 @@
   {
     "symbol": "ATAM.NS",
     "instrument_token": 1928984808,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 75.77,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1766,8 +1766,8 @@
   {
     "symbol": "ATL.NS",
     "instrument_token": 3116774096,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 586.54,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1775,8 +1775,8 @@
   {
     "symbol": "ATLANTAA.NS",
     "instrument_token": 119199912,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 322.74,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1784,8 +1784,8 @@
   {
     "symbol": "ATLANTAELE.NS",
     "instrument_token": 3347764274,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12822.9,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1793,8 +1793,8 @@
   {
     "symbol": "ATLASCYCLE.NS",
     "instrument_token": 2871814811,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 64.9,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1883,8 +1883,8 @@
   {
     "symbol": "AUTOIND.NS",
     "instrument_token": 4049277434,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 417.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1928,8 +1928,8 @@
   {
     "symbol": "AVG.NS",
     "instrument_token": 2368257870,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 383.52,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1946,8 +1946,8 @@
   {
     "symbol": "AVONMORE.NS",
     "instrument_token": 2861130570,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 318.59,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1955,8 +1955,8 @@
   {
     "symbol": "AVROIND.NS",
     "instrument_token": 286107175,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 125.72,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -1964,8 +1964,8 @@
   {
     "symbol": "AVTNPL.NS",
     "instrument_token": 4212936995,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1077.41,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2009,8 +2009,8 @@
   {
     "symbol": "AXISCADES.NS",
     "instrument_token": 97509507,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 6698.63,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2045,8 +2045,8 @@
   {
     "symbol": "AXITA.NS",
     "instrument_token": 442146653,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 282.8,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2063,8 +2063,8 @@
   {
     "symbol": "AYE.NS",
     "instrument_token": 3503641044,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 4107.72,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2090,8 +2090,8 @@
   {
     "symbol": "BAFNAPH.NS",
     "instrument_token": 3785356031,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 672.19,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2099,8 +2099,8 @@
   {
     "symbol": "BAGFILMS.NS",
     "instrument_token": 2267532478,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 92.23,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2108,8 +2108,8 @@
   {
     "symbol": "BAIDFIN.NS",
     "instrument_token": 2648048442,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 155.97,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2189,8 +2189,8 @@
   {
     "symbol": "BAJEL.NS",
     "instrument_token": 1768642411,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2071.55,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2207,8 +2207,8 @@
   {
     "symbol": "BALAJEE.NS",
     "instrument_token": 582533857,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 228.64,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2216,8 +2216,8 @@
   {
     "symbol": "BALAJITELE.NS",
     "instrument_token": 2175168946,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1041.53,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2243,8 +2243,8 @@
   {
     "symbol": "BALKRISHNA.NS",
     "instrument_token": 1534944030,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 57.58,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2270,8 +2270,8 @@
   {
     "symbol": "BALPHARMA.NS",
     "instrument_token": 382949036,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 141.7,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2288,8 +2288,8 @@
   {
     "symbol": "BALUFORGE.NS",
     "instrument_token": 3919578432,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 5392.23,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2297,8 +2297,8 @@
   {
     "symbol": "BANARBEADS.NS",
     "instrument_token": 3528244586,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 75.02,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2333,8 +2333,8 @@
   {
     "symbol": "BANG.NS",
     "instrument_token": 57815361,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 40.95,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2423,8 +2423,8 @@
   {
     "symbol": "BANSWRAS.NS",
     "instrument_token": 2505727567,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 423.11,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2441,8 +2441,8 @@
   {
     "symbol": "BASML.NS",
     "instrument_token": 260046576,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 220.58,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2495,8 +2495,8 @@
   {
     "symbol": "BBOX.NS",
     "instrument_token": 3847955666,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 13328.82,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2513,8 +2513,8 @@
   {
     "symbol": "BBTCL.NS",
     "instrument_token": 3564186249,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 451.25,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2531,8 +2531,8 @@
   {
     "symbol": "BCONCEPTS.NS",
     "instrument_token": 2975766199,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 234.16,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2540,8 +2540,8 @@
   {
     "symbol": "BCPL.NS",
     "instrument_token": 1437000810,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 117.02,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2585,8 +2585,8 @@
   {
     "symbol": "BELLACASA.NS",
     "instrument_token": 1474553350,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 334.42,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2675,8 +2675,8 @@
   {
     "symbol": "BHAGYANGR.NS",
     "instrument_token": 826213133,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1219.81,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2684,8 +2684,8 @@
   {
     "symbol": "BHANDARI.NS",
     "instrument_token": 538669676,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 96.89,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2693,8 +2693,8 @@
   {
     "symbol": "BHARATCOAL.NS",
     "instrument_token": 4207274279,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 16020.08,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2711,8 +2711,8 @@
   {
     "symbol": "BHARATGEAR.NS",
     "instrument_token": 1418131912,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 169.52,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2729,8 +2729,8 @@
   {
     "symbol": "BHARATSE.NS",
     "instrument_token": 4126072647,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1421.48,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2810,8 +2810,8 @@
   {
     "symbol": "BIOFILCHEM.NS",
     "instrument_token": 555058100,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 52.09,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2819,8 +2819,8 @@
   {
     "symbol": "BIRLACABLE.NS",
     "instrument_token": 2175791500,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 710.7,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2864,8 +2864,8 @@
   {
     "symbol": "BLAL.NS",
     "instrument_token": 232888989,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 722.12,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2900,8 +2900,8 @@
   {
     "symbol": "BLSE.NS",
     "instrument_token": 2333347278,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2883.33,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2909,8 +2909,8 @@
   {
     "symbol": "BLUECOAST.NS",
     "instrument_token": 2067311647,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 50.46,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2945,8 +2945,8 @@
   {
     "symbol": "BLUESTONE.NS",
     "instrument_token": 1857926395,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 13423.98,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -2963,8 +2963,8 @@
   {
     "symbol": "BMWVENTLTD.NS",
     "instrument_token": 2083721553,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 496.88,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3008,8 +3008,8 @@
   {
     "symbol": "BOROSCI.NS",
     "instrument_token": 1068943347,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1268.38,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3035,8 +3035,8 @@
   {
     "symbol": "BPL.NS",
     "instrument_token": 3893365602,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 262.51,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3071,8 +3071,8 @@
   {
     "symbol": "BRNL.NS",
     "instrument_token": 166605213,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 148.26,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3080,8 +3080,8 @@
   {
     "symbol": "BROOKS.NS",
     "instrument_token": 3128882109,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 179.69,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3098,8 +3098,8 @@
   {
     "symbol": "BSHSL.NS",
     "instrument_token": 288428106,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 894.59,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3107,8 +3107,8 @@
   {
     "symbol": "BSL.NS",
     "instrument_token": 2198916846,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 129.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3143,8 +3143,8 @@
   {
     "symbol": "BTML.NS",
     "instrument_token": 3357423065,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 120.83,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3152,8 +3152,8 @@
   {
     "symbol": "BUILDPRO.NS",
     "instrument_token": 3879854576,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3188.3,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3161,8 +3161,8 @@
   {
     "symbol": "BUTTERFLY.NS",
     "instrument_token": 2868715018,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1192.57,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3170,8 +3170,8 @@
   {
     "symbol": "BVCL.NS",
     "instrument_token": 3710206867,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 92.65,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3179,8 +3179,8 @@
   {
     "symbol": "BYKE.NS",
     "instrument_token": 2874894372,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 177.12,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3188,8 +3188,8 @@
   {
     "symbol": "CALSOFT.NS",
     "instrument_token": 2693162660,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 77.08,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3197,8 +3197,8 @@
   {
     "symbol": "CAMLINFINE.NS",
     "instrument_token": 2768845205,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2516.47,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3242,8 +3242,8 @@
   {
     "symbol": "CANHLIFE.NS",
     "instrument_token": 2293226022,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 14079.0,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3269,8 +3269,8 @@
   {
     "symbol": "CAPILLARY.NS",
     "instrument_token": 3763941894,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 4634.01,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3278,8 +3278,8 @@
   {
     "symbol": "CAPITALSFB.NS",
     "instrument_token": 1744183610,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1344.63,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3350,8 +3350,8 @@
   {
     "symbol": "CCAVENUE.NS",
     "instrument_token": 2429486956,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 6052.37,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3359,8 +3359,8 @@
   {
     "symbol": "CCCL.NS",
     "instrument_token": 6267150,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 705.88,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3368,8 +3368,8 @@
   {
     "symbol": "CCHHL.NS",
     "instrument_token": 1312044804,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 210.71,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3413,8 +3413,8 @@
   {
     "symbol": "CEINSYS.NS",
     "instrument_token": 3789313085,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1811.11,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3422,8 +3422,8 @@
   {
     "symbol": "CELEBRITY.NS",
     "instrument_token": 316109751,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 47.12,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3440,8 +3440,8 @@
   {
     "symbol": "CEMPRO.NS",
     "instrument_token": 1266419432,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 22634.73,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3458,8 +3458,8 @@
   {
     "symbol": "CENTEXT.NS",
     "instrument_token": 3543624042,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 184.08,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3476,8 +3476,8 @@
   {
     "symbol": "CENTRUM.NS",
     "instrument_token": 132755581,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1162.55,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3566,8 +3566,8 @@
   {
     "symbol": "CHEMBOND.NS",
     "instrument_token": 2688750387,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 239.38,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3575,8 +3575,8 @@
   {
     "symbol": "CHEMBONDCH.NS",
     "instrument_token": 1786121224,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 599.79,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3584,8 +3584,8 @@
   {
     "symbol": "CHEMCON.NS",
     "instrument_token": 2745557383,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 721.08,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3593,8 +3593,8 @@
   {
     "symbol": "CHEMFAB.NS",
     "instrument_token": 1519164112,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 529.53,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3629,8 +3629,8 @@
   {
     "symbol": "CHEVIOT.NS",
     "instrument_token": 2009328593,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 740.25,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3683,8 +3683,8 @@
   {
     "symbol": "CIFL.NS",
     "instrument_token": 2930605201,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 830.99,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3701,8 +3701,8 @@
   {
     "symbol": "CINELINE.NS",
     "instrument_token": 941592038,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 306.38,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3710,8 +3710,8 @@
   {
     "symbol": "CINEVISTA.NS",
     "instrument_token": 365977971,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 86.15,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3737,8 +3737,8 @@
   {
     "symbol": "CLEANMAX.NS",
     "instrument_token": 585324702,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 15926.6,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3755,8 +3755,8 @@
   {
     "symbol": "CMPDI.NS",
     "instrument_token": 1994441584,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 17421.6,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3773,8 +3773,8 @@
   {
     "symbol": "CNL.NS",
     "instrument_token": 3157740774,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1623.08,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3791,8 +3791,8 @@
   {
     "symbol": "COASTCORP.NS",
     "instrument_token": 186874245,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 320.79,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3845,8 +3845,8 @@
   {
     "symbol": "COMPUSOFT.NS",
     "instrument_token": 3130817319,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 103.89,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3854,8 +3854,8 @@
   {
     "symbol": "COMSYN.NS",
     "instrument_token": 529101363,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 854.18,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3917,8 +3917,8 @@
   {
     "symbol": "CORALFINAC.NS",
     "instrument_token": 2002931889,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 136.62,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3926,8 +3926,8 @@
   {
     "symbol": "CORDSCABLE.NS",
     "instrument_token": 3566982942,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 284.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3944,8 +3944,8 @@
   {
     "symbol": "CORONA.NS",
     "instrument_token": 720583012,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12837.81,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3962,8 +3962,8 @@
   {
     "symbol": "COUNCODOS.NS",
     "instrument_token": 2846048255,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 46.56,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3971,8 +3971,8 @@
   {
     "symbol": "CPCAP.NS",
     "instrument_token": 2160367212,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 207.49,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -3980,8 +3980,8 @@
   {
     "symbol": "CPEDU.NS",
     "instrument_token": 3637462673,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 391.15,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4007,8 +4007,8 @@
   {
     "symbol": "CRAMC.NS",
     "instrument_token": 4008972979,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 5281.57,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4016,8 +4016,8 @@
   {
     "symbol": "CREATIVEYE.NS",
     "instrument_token": 819632517,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12.28,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4034,8 +4034,8 @@
   {
     "symbol": "CREST.NS",
     "instrument_token": 4197976262,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1087.21,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4088,8 +4088,8 @@
   {
     "symbol": "CSLFINANCE.NS",
     "instrument_token": 3269934241,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 500.65,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4097,8 +4097,8 @@
   {
     "symbol": "CTE.NS",
     "instrument_token": 133047049,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 75.66,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4115,8 +4115,8 @@
   {
     "symbol": "CUBEXTUB.NS",
     "instrument_token": 2476763438,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 112.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4142,8 +4142,8 @@
   {
     "symbol": "CYBERMEDIA.NS",
     "instrument_token": 667606239,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 32.23,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4151,8 +4151,8 @@
   {
     "symbol": "CYBERTECH.NS",
     "instrument_token": 634524596,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 419.56,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4214,8 +4214,8 @@
   {
     "symbol": "DAMODARIND.NS",
     "instrument_token": 1492611310,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 66.06,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4250,8 +4250,8 @@
   {
     "symbol": "DAVANGERE.NS",
     "instrument_token": 1184102376,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 443.3,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4268,8 +4268,8 @@
   {
     "symbol": "DBEIL.NS",
     "instrument_token": 3439841382,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 347.96,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4304,8 +4304,8 @@
   {
     "symbol": "DBSTOCKBRO.NS",
     "instrument_token": 3745499243,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 112.49,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4313,8 +4313,8 @@
   {
     "symbol": "DCAL.NS",
     "instrument_token": 1355120348,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2975.74,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4331,8 +4331,8 @@
   {
     "symbol": "DCM.NS",
     "instrument_token": 898247529,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 153.16,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4340,8 +4340,8 @@
   {
     "symbol": "DCMNVL.NS",
     "instrument_token": 3334558181,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 283.06,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4358,8 +4358,8 @@
   {
     "symbol": "DCMSRIND.NS",
     "instrument_token": 2716026551,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 378.42,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4394,8 +4394,8 @@
   {
     "symbol": "DECCANCE.NS",
     "instrument_token": 4083491106,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 805.85,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4457,8 +4457,8 @@
   {
     "symbol": "DELPHIFX.NS",
     "instrument_token": 106835243,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 163.1,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4475,8 +4475,8 @@
   {
     "symbol": "DELTAMAGNT.NS",
     "instrument_token": 707832574,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 64.34,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4493,8 +4493,8 @@
   {
     "symbol": "DENORA.NS",
     "instrument_token": 4253876289,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 476.9,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4511,8 +4511,8 @@
   {
     "symbol": "DEVIT.NS",
     "instrument_token": 2649774932,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 155.79,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4520,8 +4520,8 @@
   {
     "symbol": "DEVX.NS",
     "instrument_token": 71368595,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 325.16,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4538,8 +4538,8 @@
   {
     "symbol": "DGCONTENT.NS",
     "instrument_token": 4273813587,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 136.27,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4574,8 +4574,8 @@
   {
     "symbol": "DHARMAJ.NS",
     "instrument_token": 3129516151,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 926.89,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4583,8 +4583,8 @@
   {
     "symbol": "DHRUV.NS",
     "instrument_token": 2049036729,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 48.46,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4592,8 +4592,8 @@
   {
     "symbol": "DHUNINV.NS",
     "instrument_token": 4197236715,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 548.75,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4610,8 +4610,8 @@
   {
     "symbol": "DIAMINESQ.NS",
     "instrument_token": 3994199905,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 275.46,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4628,8 +4628,8 @@
   {
     "symbol": "DICIND.NS",
     "instrument_token": 1115193667,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 466.29,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4646,8 +4646,8 @@
   {
     "symbol": "DIGIDRIVE.NS",
     "instrument_token": 1092642569,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 69.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4655,8 +4655,8 @@
   {
     "symbol": "DIGISPICE.NS",
     "instrument_token": 131717755,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 400.11,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4673,8 +4673,8 @@
   {
     "symbol": "DIGJAMLMTD.NS",
     "instrument_token": 3140836857,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 99.48,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4682,8 +4682,8 @@
   {
     "symbol": "DISHTV.NS",
     "instrument_token": 3285315988,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 521.07,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4691,8 +4691,8 @@
   {
     "symbol": "DIVGIITTS.NS",
     "instrument_token": 168864841,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3009.51,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4754,8 +4754,8 @@
   {
     "symbol": "DMCC.NS",
     "instrument_token": 1387449843,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 710.79,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4763,8 +4763,8 @@
   {
     "symbol": "DNAMEDIA.NS",
     "instrument_token": 3465490833,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 34.37,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4844,8 +4844,8 @@
   {
     "symbol": "DPWIRES.NS",
     "instrument_token": 2117413502,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 258.86,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4853,8 +4853,8 @@
   {
     "symbol": "DRCSYSTEMS.NS",
     "instrument_token": 602708164,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 193.36,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4862,8 +4862,8 @@
   {
     "symbol": "DREAMFOLKS.NS",
     "instrument_token": 798151887,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 372.14,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4889,8 +4889,8 @@
   {
     "symbol": "DSFCL.NS",
     "instrument_token": 3078485442,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 221.83,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4907,8 +4907,8 @@
   {
     "symbol": "DTIL.NS",
     "instrument_token": 3548523196,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 140.33,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4916,8 +4916,8 @@
   {
     "symbol": "DUCON.NS",
     "instrument_token": 3187954800,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 96.83,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -4925,8 +4925,8 @@
   {
     "symbol": "DVL.NS",
     "instrument_token": 1577562926,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 904.69,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5060,8 +5060,8 @@
   {
     "symbol": "EFCIL.NS",
     "instrument_token": 3547548873,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2810.98,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5150,8 +5150,8 @@
   {
     "symbol": "ELDEHSG.NS",
     "instrument_token": 1190402361,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 750.31,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5204,8 +5204,8 @@
   {
     "symbol": "ELIN.NS",
     "instrument_token": 1916757710,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 504.3,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5249,8 +5249,8 @@
   {
     "symbol": "EMAMIPAP.NS",
     "instrument_token": 4039922973,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 673.35,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5294,8 +5294,8 @@
   {
     "symbol": "EMMBI.NS",
     "instrument_token": 2256865730,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 167.01,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5303,8 +5303,8 @@
   {
     "symbol": "EMMVEE.NS",
     "instrument_token": 1684001018,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 22622.37,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5420,8 +5420,8 @@
   {
     "symbol": "EPACKPEB.NS",
     "instrument_token": 3720153210,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2622.39,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5555,8 +5555,8 @@
   {
     "symbol": "ESSENTIA.NS",
     "instrument_token": 1539218486,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 222.92,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5564,8 +5564,8 @@
   {
     "symbol": "ESTER.NS",
     "instrument_token": 3274904677,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 919.05,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5600,8 +5600,8 @@
   {
     "symbol": "EUROBOND.NS",
     "instrument_token": 2768394981,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 395.06,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5618,8 +5618,8 @@
   {
     "symbol": "EUROTEXIND.NS",
     "instrument_token": 1013018984,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12.45,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5636,8 +5636,8 @@
   {
     "symbol": "EVERESTIND.NS",
     "instrument_token": 658977571,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 759.01,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5663,8 +5663,8 @@
   {
     "symbol": "EXCELSOFT.NS",
     "instrument_token": 3529368026,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 954.16,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5699,8 +5699,8 @@
   {
     "symbol": "EXXARO.NS",
     "instrument_token": 988769891,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 273.82,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5708,8 +5708,8 @@
   {
     "symbol": "FABTECH.NS",
     "instrument_token": 1084327894,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 676.1,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5726,8 +5726,8 @@
   {
     "symbol": "FAIRCHEMOR.NS",
     "instrument_token": 2094547479,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 978.7,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5744,8 +5744,8 @@
   {
     "symbol": "FCSSOFT.NS",
     "instrument_token": 403223458,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 254.72,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5798,8 +5798,8 @@
   {
     "symbol": "FILATFASH.NS",
     "instrument_token": 453027337,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 158.35,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5825,8 +5825,8 @@
   {
     "symbol": "FINKURVE.NS",
     "instrument_token": 229027119,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 828.25,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5897,8 +5897,8 @@
   {
     "symbol": "FLEXITUFF.NS",
     "instrument_token": 2027015164,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12.74,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5942,8 +5942,8 @@
   {
     "symbol": "FOODSIN.NS",
     "instrument_token": 2787011852,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 397.07,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -5978,8 +5978,8 @@
   {
     "symbol": "FRACTAL.NS",
     "instrument_token": 27969845,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 13739.15,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6068,8 +6068,8 @@
   {
     "symbol": "GANDHITUBE.NS",
     "instrument_token": 2235397620,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1085.54,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6086,8 +6086,8 @@
   {
     "symbol": "GANESHBE.NS",
     "instrument_token": 3245024619,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 878.99,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6095,8 +6095,8 @@
   {
     "symbol": "GANESHCP.NS",
     "instrument_token": 298342090,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 701.57,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6104,8 +6104,8 @@
   {
     "symbol": "GANESHHOU.NS",
     "instrument_token": 2604374658,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 6503.78,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6122,8 +6122,8 @@
   {
     "symbol": "GANGESSECU.NS",
     "instrument_token": 2479617833,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 116.64,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6149,8 +6149,8 @@
   {
     "symbol": "GATECH.NS",
     "instrument_token": 1827026196,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 69.47,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6158,8 +6158,8 @@
   {
     "symbol": "GATECHDVR.NS",
     "instrument_token": 2454006098,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 9.29,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6176,8 +6176,8 @@
   {
     "symbol": "GAUDIUMIVF.NS",
     "instrument_token": 77621418,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 942.59,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6185,8 +6185,8 @@
   {
     "symbol": "GAYAHWS.NS",
     "instrument_token": 4122360274,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 47.45,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6194,8 +6194,8 @@
   {
     "symbol": "GCSL.NS",
     "instrument_token": 986572655,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1251.33,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6203,8 +6203,8 @@
   {
     "symbol": "GEECEE.NS",
     "instrument_token": 1996382924,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 731.91,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6221,8 +6221,8 @@
   {
     "symbol": "GENCON.NS",
     "instrument_token": 3327639051,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 227.32,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6239,8 +6239,8 @@
   {
     "symbol": "GENUSPAPER.NS",
     "instrument_token": 826082149,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 321.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6248,8 +6248,8 @@
   {
     "symbol": "GENUSPOWER.NS",
     "instrument_token": 4267330135,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 9458.9,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6275,8 +6275,8 @@
   {
     "symbol": "GFLLIMITED.NS",
     "instrument_token": 297295089,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 542.0,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6329,8 +6329,8 @@
   {
     "symbol": "GILLANDERS.NS",
     "instrument_token": 4200846679,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 189.95,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6374,8 +6374,8 @@
   {
     "symbol": "GINNIFILA.NS",
     "instrument_token": 3964892274,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 392.62,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6392,8 +6392,8 @@
   {
     "symbol": "GKENERGY.NS",
     "instrument_token": 2543473366,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2660.96,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6401,8 +6401,8 @@
   {
     "symbol": "GKSL.NS",
     "instrument_token": 3528542445,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1058.47,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6455,8 +6455,8 @@
   {
     "symbol": "GLOBALE.NS",
     "instrument_token": 1450710149,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 11.27,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6464,8 +6464,8 @@
   {
     "symbol": "GLOBALVECT.NS",
     "instrument_token": 4169083324,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 227.5,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6482,8 +6482,8 @@
   {
     "symbol": "GLOBECIVIL.NS",
     "instrument_token": 2237440184,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 235.71,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6500,8 +6500,8 @@
   {
     "symbol": "GLOSTERLTD.NS",
     "instrument_token": 1555754960,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 750.82,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6509,8 +6509,8 @@
   {
     "symbol": "GLOTTIS.NS",
     "instrument_token": 1789065963,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 623.72,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6554,8 +6554,8 @@
   {
     "symbol": "GMRP&UI.NS",
     "instrument_token": 1696962981,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 7557.13,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -6680,8 +6680,8 @@
   {
     "symbol": "GOKUL.NS",
     "instrument_token": 806271938,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 392.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7139,8 +7139,8 @@
   {
     "symbol": "GRPLTD.NS",
     "instrument_token": 2323119319,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1116.05,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7175,8 +7175,8 @@
   {
     "symbol": "GTL.NS",
     "instrument_token": 296866384,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 116.71,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7184,8 +7184,8 @@
   {
     "symbol": "GTLINFRA.NS",
     "instrument_token": 3731515960,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1652.61,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7193,8 +7193,8 @@
   {
     "symbol": "GTPL.NS",
     "instrument_token": 3613956736,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 688.05,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7238,8 +7238,8 @@
   {
     "symbol": "GUJRAFFIA.NS",
     "instrument_token": 1601780603,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 21.56,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7265,8 +7265,8 @@
   {
     "symbol": "GULFPETRO.NS",
     "instrument_token": 4169316965,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 277.56,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7292,8 +7292,8 @@
   {
     "symbol": "GVT&D.NS",
     "instrument_token": 2795862379,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 111330.31,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7310,8 +7310,8 @@
   {
     "symbol": "HALDER.NS",
     "instrument_token": 2380939249,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 314.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7319,8 +7319,8 @@
   {
     "symbol": "HALEOSLABS.NS",
     "instrument_token": 4228868805,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 478.54,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7355,8 +7355,8 @@
   {
     "symbol": "HARRMALAYA.NS",
     "instrument_token": 156463129,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 410.73,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7400,8 +7400,8 @@
   {
     "symbol": "HAVISHA.NS",
     "instrument_token": 2653493218,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 21.5,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7418,8 +7418,8 @@
   {
     "symbol": "HBSL.NS",
     "instrument_token": 199076977,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 41.97,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7427,8 +7427,8 @@
   {
     "symbol": "HCC.NS",
     "instrument_token": 3541458827,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 5702.58,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7652,8 +7652,8 @@
   {
     "symbol": "HEADSUP.NS",
     "instrument_token": 2483751906,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 15.9,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7760,8 +7760,8 @@
   {
     "symbol": "HEXATRADEX.NS",
     "instrument_token": 2402980206,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 911.26,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7796,8 +7796,8 @@
   {
     "symbol": "HGM.NS",
     "instrument_token": 1551325588,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 63.96,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7814,8 +7814,8 @@
   {
     "symbol": "HILINFRA.NS",
     "instrument_token": 3478926072,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 328.77,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7823,8 +7823,8 @@
   {
     "symbol": "HILTON.NS",
     "instrument_token": 1998412651,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 109.11,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7850,8 +7850,8 @@
   {
     "symbol": "HINDCOMPOS.NS",
     "instrument_token": 2684604716,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 635.07,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7931,8 +7931,8 @@
   {
     "symbol": "HISARMETAL.NS",
     "instrument_token": 384116357,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 82.62,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7949,8 +7949,8 @@
   {
     "symbol": "HITECHCORP.NS",
     "instrument_token": 2709537978,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 547.13,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7967,8 +7967,8 @@
   {
     "symbol": "HLVLTD.NS",
     "instrument_token": 3870897579,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 477.96,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7976,8 +7976,8 @@
   {
     "symbol": "HMAAGRO.NS",
     "instrument_token": 2548544701,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1051.12,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -7985,8 +7985,8 @@
   {
     "symbol": "HMVL.NS",
     "instrument_token": 2357645383,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 745.92,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8039,8 +8039,8 @@
   {
     "symbol": "HPAL.NS",
     "instrument_token": 3322473966,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 314.67,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8048,8 +8048,8 @@
   {
     "symbol": "HPIL.NS",
     "instrument_token": 1574249553,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 147.37,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8084,8 +8084,8 @@
   {
     "symbol": "HTMEDIA.NS",
     "instrument_token": 1558486311,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 651.53,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8120,8 +8120,8 @@
   {
     "symbol": "HYBRIDFIN.NS",
     "instrument_token": 828274465,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 52.99,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8138,8 +8138,8 @@
   {
     "symbol": "IBULLSLTD.NS",
     "instrument_token": 189874532,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 6778.97,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 1.0,
     "mis_margin_pct": 1.0
@@ -8156,8 +8156,8 @@
   {
     "symbol": "ICICIAMC.NS",
     "instrument_token": 558065278,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 152226.68,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8273,8 +8273,8 @@
   {
     "symbol": "IFBAGRO.NS",
     "instrument_token": 1612427777,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 909.55,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8300,8 +8300,8 @@
   {
     "symbol": "IFGLEXPOR.NS",
     "instrument_token": 2055413318,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1591.14,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8345,8 +8345,8 @@
   {
     "symbol": "IGPL.NS",
     "instrument_token": 2426710926,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1570.23,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8372,8 +8372,8 @@
   {
     "symbol": "IITL.NS",
     "instrument_token": 1184755605,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 317.92,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8417,8 +8417,8 @@
   {
     "symbol": "IMPAL.NS",
     "instrument_token": 3717944367,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1390.27,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8426,8 +8426,8 @@
   {
     "symbol": "INA.NS",
     "instrument_token": 2427718120,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2508.71,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8507,8 +8507,8 @@
   {
     "symbol": "INDIANCARD.NS",
     "instrument_token": 761815345,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 131.89,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8606,8 +8606,8 @@
   {
     "symbol": "INDORAMA.NS",
     "instrument_token": 1568398277,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1665.12,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8633,8 +8633,8 @@
   {
     "symbol": "INDOTHAI.NS",
     "instrument_token": 324010397,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1576.86,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8669,8 +8669,8 @@
   {
     "symbol": "INDSWFTLAB.NS",
     "instrument_token": 2271540339,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2004.9,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8768,8 +8768,8 @@
   {
     "symbol": "INNOVISION.NS",
     "instrument_token": 1515901359,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 680.23,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8777,8 +8777,8 @@
   {
     "symbol": "INOXGREEN.NS",
     "instrument_token": 516081493,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 6959.86,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8831,8 +8831,8 @@
   {
     "symbol": "INTERARCH.NS",
     "instrument_token": 772280686,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3149.92,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8849,8 +8849,8 @@
   {
     "symbol": "INTLCONV.NS",
     "instrument_token": 2700518273,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 480.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8858,8 +8858,8 @@
   {
     "symbol": "INVENTURE.NS",
     "instrument_token": 3282076783,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 96.6,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8966,8 +8966,8 @@
   {
     "symbol": "IRIS.NS",
     "instrument_token": 1652427761,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 530.76,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -8993,8 +8993,8 @@
   {
     "symbol": "ISFT.NS",
     "instrument_token": 1940507929,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 128.13,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9011,8 +9011,8 @@
   {
     "symbol": "ISHANCH.NS",
     "instrument_token": 428582958,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 145.12,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9083,8 +9083,8 @@
   {
     "symbol": "IVALUE.NS",
     "instrument_token": 373778176,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1518.72,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9092,8 +9092,8 @@
   {
     "symbol": "IVC.NS",
     "instrument_token": 911071656,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 263.79,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9119,8 +9119,8 @@
   {
     "symbol": "J&KBANK.NS",
     "instrument_token": 2727751787,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 17431.72,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9155,8 +9155,8 @@
   {
     "symbol": "JAINREC.NS",
     "instrument_token": 71270967,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 11144.55,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9182,8 +9182,8 @@
   {
     "symbol": "JARO.NS",
     "instrument_token": 1056202478,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1021.21,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9200,8 +9200,8 @@
   {
     "symbol": "JAYAGROGN.NS",
     "instrument_token": 1844381750,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 676.35,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9236,8 +9236,8 @@
   {
     "symbol": "JAYSREETEA.NS",
     "instrument_token": 1788732809,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 255.65,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9263,8 +9263,8 @@
   {
     "symbol": "JETFREIGHT.NS",
     "instrument_token": 3880816307,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 104.59,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9281,8 +9281,8 @@
   {
     "symbol": "JHS.NS",
     "instrument_token": 1357733228,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 67.48,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9290,8 +9290,8 @@
   {
     "symbol": "JINDALPHOT.NS",
     "instrument_token": 1790207730,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1092.92,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9353,8 +9353,8 @@
   {
     "symbol": "JISLDVREQS.NS",
     "instrument_token": 3924750576,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 44.72,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9389,8 +9389,8 @@
   {
     "symbol": "JKIPL.NS",
     "instrument_token": 2449257743,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 383.86,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9470,8 +9470,8 @@
   {
     "symbol": "JPOLYINVST.NS",
     "instrument_token": 2917001910,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1103.75,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9713,8 +9713,8 @@
   {
     "symbol": "KALYANIFRG.NS",
     "instrument_token": 2587990103,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 220.66,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9767,8 +9767,8 @@
   {
     "symbol": "KANORICHEM.NS",
     "instrument_token": 2173619213,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 625.03,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9776,8 +9776,8 @@
   {
     "symbol": "KANPRPLA.NS",
     "instrument_token": 1325098918,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 515.28,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9821,8 +9821,8 @@
   {
     "symbol": "KAYA.NS",
     "instrument_token": 2969293053,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 413.48,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9848,8 +9848,8 @@
   {
     "symbol": "KCPSUGIND.NS",
     "instrument_token": 2615620749,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 351.61,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9884,8 +9884,8 @@
   {
     "symbol": "KEEPLEARN.NS",
     "instrument_token": 908096528,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 30.21,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9911,8 +9911,8 @@
   {
     "symbol": "KERNEX.NS",
     "instrument_token": 2913433560,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 4220.23,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9920,8 +9920,8 @@
   {
     "symbol": "KESORAMIND.NS",
     "instrument_token": 629357188,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 410.98,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9929,8 +9929,8 @@
   {
     "symbol": "KEYFINSERV.NS",
     "instrument_token": 1899469588,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 142.65,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9956,8 +9956,8 @@
   {
     "symbol": "KHAICHEM.NS",
     "instrument_token": 1533821648,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 511.13,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -9965,8 +9965,8 @@
   {
     "symbol": "KHAITANLTD.NS",
     "instrument_token": 1167585212,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 67.59,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10100,8 +10100,8 @@
   {
     "symbol": "KMSUGAR.NS",
     "instrument_token": 1158336515,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 264.87,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10127,8 +10127,8 @@
   {
     "symbol": "KOHINOOR.NS",
     "instrument_token": 4049776428,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 86.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10136,8 +10136,8 @@
   {
     "symbol": "KOKUYOCMLN.NS",
     "instrument_token": 3135383602,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 874.25,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10190,8 +10190,8 @@
   {
     "symbol": "KOTHARIPRO.NS",
     "instrument_token": 476876096,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 406.71,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10199,8 +10199,8 @@
   {
     "symbol": "KOTYARK.NS",
     "instrument_token": 1870515534,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 444.71,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10262,8 +10262,8 @@
   {
     "symbol": "KREBSBIO.NS",
     "instrument_token": 2398546793,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 119.6,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10271,8 +10271,8 @@
   {
     "symbol": "KRIDHANINF.NS",
     "instrument_token": 3358598162,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 21.8,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10289,8 +10289,8 @@
   {
     "symbol": "KRISHIVAL.NS",
     "instrument_token": 2401715400,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1007.7,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10307,8 +10307,8 @@
   {
     "symbol": "KRITI.NS",
     "instrument_token": 3834429918,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 374.04,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10325,8 +10325,8 @@
   {
     "symbol": "KRITINUT.NS",
     "instrument_token": 2739387640,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 442.56,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10343,8 +10343,8 @@
   {
     "symbol": "KRONOX.NS",
     "instrument_token": 2724935960,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 590.32,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10370,8 +10370,8 @@
   {
     "symbol": "KRYSTAL.NS",
     "instrument_token": 1480746466,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 838.32,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10397,8 +10397,8 @@
   {
     "symbol": "KSHINTL.NS",
     "instrument_token": 2513421352,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 6125.12,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10415,8 +10415,8 @@
   {
     "symbol": "KSOLVES.NS",
     "instrument_token": 1604357471,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 664.41,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10433,8 +10433,8 @@
   {
     "symbol": "KUANTUM.NS",
     "instrument_token": 1733181890,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 704.3,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10442,8 +10442,8 @@
   {
     "symbol": "KWIL.NS",
     "instrument_token": 1254742849,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 7598.58,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10478,8 +10478,8 @@
   {
     "symbol": "LAMBODHARA.NS",
     "instrument_token": 3732250808,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 100.25,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10496,8 +10496,8 @@
   {
     "symbol": "LANDSMILL.NS",
     "instrument_token": 32406009,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 117.09,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10514,8 +10514,8 @@
   {
     "symbol": "LASA.NS",
     "instrument_token": 276185282,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 36.02,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10586,8 +10586,8 @@
   {
     "symbol": "LENSKART.NS",
     "instrument_token": 518516315,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 99689.55,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10613,8 +10613,8 @@
   {
     "symbol": "LGEINDIA.NS",
     "instrument_token": 2503420163,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 106584.23,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10640,8 +10640,8 @@
   {
     "symbol": "LIBERTSHOE.NS",
     "instrument_token": 1921325236,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 451.99,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10703,8 +10703,8 @@
   {
     "symbol": "LIKHITHA.NS",
     "instrument_token": 3729450832,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 873.82,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10712,8 +10712,8 @@
   {
     "symbol": "LINC.NS",
     "instrument_token": 1434951908,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 609.17,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10721,8 +10721,8 @@
   {
     "symbol": "LINCOLN.NS",
     "instrument_token": 1247669942,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1224.22,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10856,8 +10856,8 @@
   {
     "symbol": "LOKESHMACH.NS",
     "instrument_token": 269711888,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 704.82,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10865,8 +10865,8 @@
   {
     "symbol": "LORDSCHLO.NS",
     "instrument_token": 2828848732,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 414.62,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10883,8 +10883,8 @@
   {
     "symbol": "LOTUSEYE.NS",
     "instrument_token": 3580114682,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 242.28,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10892,8 +10892,8 @@
   {
     "symbol": "LOVABLE.NS",
     "instrument_token": 1636896822,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 107.49,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10919,8 +10919,8 @@
   {
     "symbol": "LPDC.NS",
     "instrument_token": 1932391325,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 83.44,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -10964,8 +10964,8 @@
   {
     "symbol": "LTM.NS",
     "instrument_token": 1992917148,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 134428.78,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11027,8 +11027,8 @@
   {
     "symbol": "LYKALABS.NS",
     "instrument_token": 1588906023,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 247.33,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11045,8 +11045,8 @@
   {
     "symbol": "M&M.NS",
     "instrument_token": 962547226,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 431243.36,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11054,8 +11054,8 @@
   {
     "symbol": "M&MFIN.NS",
     "instrument_token": 2893799857,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 55119.31,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11063,8 +11063,8 @@
   {
     "symbol": "MAANALU.NS",
     "instrument_token": 2741232809,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 773.5,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11081,8 +11081,8 @@
   {
     "symbol": "MADHAV.NS",
     "instrument_token": 1376271780,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 31.29,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11090,8 +11090,8 @@
   {
     "symbol": "MADHUCON.NS",
     "instrument_token": 3327086269,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 39.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11099,8 +11099,8 @@
   {
     "symbol": "MADRASFERT.NS",
     "instrument_token": 1602102805,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1079.22,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11117,8 +11117,8 @@
   {
     "symbol": "MAGADSUGAR.NS",
     "instrument_token": 2432006842,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 731.21,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11126,8 +11126,8 @@
   {
     "symbol": "MAGNUM.NS",
     "instrument_token": 1625463229,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 133.88,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11153,8 +11153,8 @@
   {
     "symbol": "MAHEPC.NS",
     "instrument_token": 2863935767,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 294.74,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11270,8 +11270,8 @@
   {
     "symbol": "MANAKSIA.NS",
     "instrument_token": 1096887166,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 370.6,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11279,8 +11279,8 @@
   {
     "symbol": "MANAKSTEEL.NS",
     "instrument_token": 863900768,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 528.73,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11360,8 +11360,8 @@
   {
     "symbol": "MANOMAY.NS",
     "instrument_token": 2889080957,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 388.77,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11396,8 +11396,8 @@
   {
     "symbol": "MANUGRAPH.NS",
     "instrument_token": 925761765,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 48.45,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11423,8 +11423,8 @@
   {
     "symbol": "MARALOVER.NS",
     "instrument_token": 750149157,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 230.78,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11459,8 +11459,8 @@
   {
     "symbol": "MARKOLINES.NS",
     "instrument_token": 1194210870,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 393.12,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11477,8 +11477,8 @@
   {
     "symbol": "MARSONS.NS",
     "instrument_token": 1978506204,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1854.38,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11549,8 +11549,8 @@
   {
     "symbol": "MAWANASUG.NS",
     "instrument_token": 2679256686,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 465.49,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11594,8 +11594,8 @@
   {
     "symbol": "MAZDA.NS",
     "instrument_token": 2029053550,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 430.54,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11630,8 +11630,8 @@
   {
     "symbol": "MBLINFRA.NS",
     "instrument_token": 59572357,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 396.42,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11648,8 +11648,8 @@
   {
     "symbol": "MCLOUD.NS",
     "instrument_token": 1271108463,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1715.36,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11729,8 +11729,8 @@
   {
     "symbol": "MEIL.NS",
     "instrument_token": 1397957204,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 799.34,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11738,8 +11738,8 @@
   {
     "symbol": "MENONBE.NS",
     "instrument_token": 492635965,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1194.77,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11792,8 +11792,8 @@
   {
     "symbol": "MGEL.NS",
     "instrument_token": 4227664880,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 514.11,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11810,8 +11810,8 @@
   {
     "symbol": "MHLXMIRU.NS",
     "instrument_token": 348300625,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 169.66,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11927,8 +11927,8 @@
   {
     "symbol": "MINDTECK.NS",
     "instrument_token": 2302432459,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 620.39,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -11972,8 +11972,8 @@
   {
     "symbol": "MKPL.NS",
     "instrument_token": 1564196359,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 156.15,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12053,8 +12053,8 @@
   {
     "symbol": "MODINATUR.NS",
     "instrument_token": 3098118829,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 532.92,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12062,8 +12062,8 @@
   {
     "symbol": "MODIRUBBER.NS",
     "instrument_token": 3859717115,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 314.88,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12071,8 +12071,8 @@
   {
     "symbol": "MODIS.NS",
     "instrument_token": 3815919926,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 795.99,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12089,8 +12089,8 @@
   {
     "symbol": "MODTHREAD.NS",
     "instrument_token": 396284021,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 162.92,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12125,8 +12125,8 @@
   {
     "symbol": "MOHITIND.NS",
     "instrument_token": 797841421,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 38.96,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12179,8 +12179,8 @@
   {
     "symbol": "MOLDTECH.NS",
     "instrument_token": 3921332708,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 473.84,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12296,8 +12296,8 @@
   {
     "symbol": "MONEYBOXX.NS",
     "instrument_token": 4121739835,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 426.53,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12440,8 +12440,8 @@
   {
     "symbol": "MOTOGENFIN.NS",
     "instrument_token": 2775414759,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 101.12,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12584,8 +12584,8 @@
   {
     "symbol": "MUKANDLTD.NS",
     "instrument_token": 1167149371,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2066.29,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12602,8 +12602,8 @@
   {
     "symbol": "MUKTAARTS.NS",
     "instrument_token": 1918008542,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 123.95,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12620,8 +12620,8 @@
   {
     "symbol": "MUNJALAU.NS",
     "instrument_token": 4277254049,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1050.0,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12629,8 +12629,8 @@
   {
     "symbol": "MUNJALSHOW.NS",
     "instrument_token": 2057376675,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 551.73,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12638,8 +12638,8 @@
   {
     "symbol": "MURUDCERA.NS",
     "instrument_token": 808346148,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 181.64,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12647,8 +12647,8 @@
   {
     "symbol": "MUTHOOTCAP.NS",
     "instrument_token": 1461981995,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 420.89,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12683,8 +12683,8 @@
   {
     "symbol": "MWL.NS",
     "instrument_token": 4045509397,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1267.03,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12692,8 +12692,8 @@
   {
     "symbol": "NACLIND.NS",
     "instrument_token": 1383889249,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 4263.23,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12710,8 +12710,8 @@
   {
     "symbol": "NAGREEKCAP.NS",
     "instrument_token": 3081341336,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 30.15,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12719,8 +12719,8 @@
   {
     "symbol": "NAGREEKEXP.NS",
     "instrument_token": 2378762215,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 69.28,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12728,8 +12728,8 @@
   {
     "symbol": "NAHARCAP.NS",
     "instrument_token": 1502744435,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 446.03,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12737,8 +12737,8 @@
   {
     "symbol": "NAHARINDUS.NS",
     "instrument_token": 1435623789,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 529.92,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12746,8 +12746,8 @@
   {
     "symbol": "NAHARPOLY.NS",
     "instrument_token": 4113961945,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 683.55,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12773,8 +12773,8 @@
   {
     "symbol": "NATCAPSUQ.NS",
     "instrument_token": 4246709688,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 155.75,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12791,8 +12791,8 @@
   {
     "symbol": "NATHBIOGEN.NS",
     "instrument_token": 1980585367,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 313.57,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12845,8 +12845,8 @@
   {
     "symbol": "NAVKARURB.NS",
     "instrument_token": 3430853097,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 115.58,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12917,8 +12917,8 @@
   {
     "symbol": "NDL.NS",
     "instrument_token": 214809815,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 343.07,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12926,8 +12926,8 @@
   {
     "symbol": "NDLVENTURE.NS",
     "instrument_token": 3099364702,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 432.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12944,8 +12944,8 @@
   {
     "symbol": "NDTV.NS",
     "instrument_token": 3273038561,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 873.26,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12953,8 +12953,8 @@
   {
     "symbol": "NECCLTD.NS",
     "instrument_token": 3710513811,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 165.53,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12962,8 +12962,8 @@
   {
     "symbol": "NECLIFE.NS",
     "instrument_token": 2878745939,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 204.95,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12971,8 +12971,8 @@
   {
     "symbol": "NELCAST.NS",
     "instrument_token": 3674798217,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1097.52,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -12998,8 +12998,8 @@
   {
     "symbol": "NEPHROPLUS.NS",
     "instrument_token": 706307657,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 7144.22,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13034,8 +13034,8 @@
   {
     "symbol": "NETWORK18.NS",
     "instrument_token": 1158024296,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 4575.11,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13097,8 +13097,8 @@
   {
     "symbol": "NEXTMEDIA.NS",
     "instrument_token": 6696253,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 27.23,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13115,8 +13115,8 @@
   {
     "symbol": "NGIL.NS",
     "instrument_token": 2285853854,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 67.56,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13124,8 +13124,8 @@
   {
     "symbol": "NGLFINE.NS",
     "instrument_token": 3107279041,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2067.78,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13268,8 +13268,8 @@
   {
     "symbol": "NIMBSPROJ.NS",
     "instrument_token": 1606854044,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 392.36,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13277,8 +13277,8 @@
   {
     "symbol": "NINSYS.NS",
     "instrument_token": 2714577862,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1337.47,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13286,8 +13286,8 @@
   {
     "symbol": "NIPPOBATRY.NS",
     "instrument_token": 649334444,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 246.26,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13295,8 +13295,8 @@
   {
     "symbol": "NIRAJ.NS",
     "instrument_token": 2199976806,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 173.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13340,8 +13340,8 @@
   {
     "symbol": "NKIND.NS",
     "instrument_token": 659285032,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 36.73,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13376,8 +13376,8 @@
   {
     "symbol": "NOIDATOLL.NS",
     "instrument_token": 2903530738,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 80.06,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13394,8 +13394,8 @@
   {
     "symbol": "NOVAAGRI.NS",
     "instrument_token": 1367570362,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 219.27,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13421,8 +13421,8 @@
   {
     "symbol": "NRAIL.NS",
     "instrument_token": 1688191032,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 825.43,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13493,8 +13493,8 @@
   {
     "symbol": "NURECA.NS",
     "instrument_token": 3040258622,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 313.93,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13538,8 +13538,8 @@
   {
     "symbol": "OAL.NS",
     "instrument_token": 3291150725,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1281.19,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13547,8 +13547,8 @@
   {
     "symbol": "OBCL.NS",
     "instrument_token": 3061224253,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 116.08,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13565,8 +13565,8 @@
   {
     "symbol": "OCCLLTD.NS",
     "instrument_token": 3499801713,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 857.15,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13574,8 +13574,8 @@
   {
     "symbol": "ODIGMA.NS",
     "instrument_token": 2511272535,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 71.18,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13601,8 +13601,8 @@
   {
     "symbol": "OILCOUNTUB.NS",
     "instrument_token": 3115512523,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 309.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13628,8 +13628,8 @@
   {
     "symbol": "OMAXAUTO.NS",
     "instrument_token": 2764176904,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 391.08,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13646,8 +13646,8 @@
   {
     "symbol": "OMFREIGHT.NS",
     "instrument_token": 2831232945,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 295.84,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13664,8 +13664,8 @@
   {
     "symbol": "OMNI.NS",
     "instrument_token": 1266367298,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 8706.09,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13673,8 +13673,8 @@
   {
     "symbol": "ONELIFECAP.NS",
     "instrument_token": 1904207782,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 127.81,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13682,8 +13682,8 @@
   {
     "symbol": "ONEPOINT.NS",
     "instrument_token": 3371917416,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1482.7,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13718,8 +13718,8 @@
   {
     "symbol": "ONWARDTEC.NS",
     "instrument_token": 758274192,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 632.48,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13772,8 +13772,8 @@
   {
     "symbol": "ORIENTALTL.NS",
     "instrument_token": 52393192,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 38.08,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13862,8 +13862,8 @@
   {
     "symbol": "ORKLAINDIA.NS",
     "instrument_token": 4234928520,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 7838.52,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13880,8 +13880,8 @@
   {
     "symbol": "OSWALAGRO.NS",
     "instrument_token": 2696793511,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 519.62,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13916,8 +13916,8 @@
   {
     "symbol": "PACEDIGITK.NS",
     "instrument_token": 1182875555,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 4391.5,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -13952,8 +13952,8 @@
   {
     "symbol": "PALASHSECU.NS",
     "instrument_token": 386968984,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 90.46,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14078,8 +14078,8 @@
   {
     "symbol": "PASUPTAC.NS",
     "instrument_token": 976239405,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 555.21,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14132,8 +14132,8 @@
   {
     "symbol": "PAVNAIND.NS",
     "instrument_token": 3444121355,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 246.27,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14375,8 +14375,8 @@
   {
     "symbol": "PINELABS.NS",
     "instrument_token": 3184597712,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 17590.57,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14429,8 +14429,8 @@
   {
     "symbol": "PLASTIBLEN.NS",
     "instrument_token": 553334231,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 490.03,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14483,8 +14483,8 @@
   {
     "symbol": "PNC.NS",
     "instrument_token": 181654500,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 28.21,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14519,8 +14519,8 @@
   {
     "symbol": "PODDARMENT.NS",
     "instrument_token": 199453122,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 268.96,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14690,8 +14690,8 @@
   {
     "symbol": "PRAKASHSTL.NS",
     "instrument_token": 3359851580,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 70.88,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14699,8 +14699,8 @@
   {
     "symbol": "PRAXIS.NS",
     "instrument_token": 3451284365,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 121.89,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14798,8 +14798,8 @@
   {
     "symbol": "PRITIKAUTO.NS",
     "instrument_token": 892631086,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 299.72,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14861,8 +14861,8 @@
   {
     "symbol": "PRUDMOULI.NS",
     "instrument_token": 1171894515,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 40.64,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14969,8 +14969,8 @@
   {
     "symbol": "PVSL.NS",
     "instrument_token": 3430798864,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 776.06,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14987,8 +14987,8 @@
   {
     "symbol": "PWL.NS",
     "instrument_token": 196735869,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 36536.67,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -14996,8 +14996,8 @@
   {
     "symbol": "PYRAMID.NS",
     "instrument_token": 1252398386,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 672.61,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15077,8 +15077,8 @@
   {
     "symbol": "RADAAN.NS",
     "instrument_token": 2802048721,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12.65,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15095,8 +15095,8 @@
   {
     "symbol": "RADIANTCMS.NS",
     "instrument_token": 846542752,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 409.01,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15113,8 +15113,8 @@
   {
     "symbol": "RADIOCITY.NS",
     "instrument_token": 2141143482,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 240.25,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15176,8 +15176,8 @@
   {
     "symbol": "RAJSREESUG.NS",
     "instrument_token": 2922524912,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 101.39,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15185,8 +15185,8 @@
   {
     "symbol": "RAJTV.NS",
     "instrument_token": 2877790629,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 53.52,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15203,8 +15203,8 @@
   {
     "symbol": "RAMANEWS.NS",
     "instrument_token": 4034455950,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 489.92,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15212,8 +15212,8 @@
   {
     "symbol": "RAMAPHO.NS",
     "instrument_token": 3093644158,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 442.69,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15248,8 +15248,8 @@
   {
     "symbol": "RAMCOSYS.NS",
     "instrument_token": 2084142679,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2338.89,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15275,8 +15275,8 @@
   {
     "symbol": "RANASUG.NS",
     "instrument_token": 2833465596,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 200.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15419,8 +15419,8 @@
   {
     "symbol": "REGAAL.NS",
     "instrument_token": 3392419585,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 898.83,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15446,8 +15446,8 @@
   {
     "symbol": "RELCHEMQ.NS",
     "instrument_token": 3744657456,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 97.24,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15455,8 +15455,8 @@
   {
     "symbol": "RELIABLE.NS",
     "instrument_token": 3392386468,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 146.18,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15482,8 +15482,8 @@
   {
     "symbol": "RELTD.NS",
     "instrument_token": 4172709952,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3426.96,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15527,8 +15527,8 @@
   {
     "symbol": "REPRO.NS",
     "instrument_token": 4128260755,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 535.44,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15545,8 +15545,8 @@
   {
     "symbol": "RETAIL.NS",
     "instrument_token": 4219467237,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 14.11,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15563,8 +15563,8 @@
   {
     "symbol": "RHETAN.NS",
     "instrument_token": 4142921662,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2572.31,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15581,8 +15581,8 @@
   {
     "symbol": "RHL.NS",
     "instrument_token": 200793839,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 296.73,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15617,8 +15617,8 @@
   {
     "symbol": "RITCO.NS",
     "instrument_token": 131931681,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 892.89,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15635,8 +15635,8 @@
   {
     "symbol": "RKDL.NS",
     "instrument_token": 2131709289,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 45.74,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15662,8 +15662,8 @@
   {
     "symbol": "RKSWAMY.NS",
     "instrument_token": 1494486233,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 516.63,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15698,8 +15698,8 @@
   {
     "symbol": "ROML.NS",
     "instrument_token": 2617025870,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 66.15,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15716,8 +15716,8 @@
   {
     "symbol": "ROSSELLIND.NS",
     "instrument_token": 3603810239,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 218.07,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15770,8 +15770,8 @@
   {
     "symbol": "RPOWER.NS",
     "instrument_token": 2089036345,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 9987.89,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15833,8 +15833,8 @@
   {
     "symbol": "RSSOFTWARE.NS",
     "instrument_token": 492047537,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 76.85,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15887,8 +15887,8 @@
   {
     "symbol": "RUBICON.NS",
     "instrument_token": 3098204066,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 25509.46,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15896,8 +15896,8 @@
   {
     "symbol": "RUBYMILLS.NS",
     "instrument_token": 1197799215,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1217.22,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15905,8 +15905,8 @@
   {
     "symbol": "RUCHINFRA.NS",
     "instrument_token": 3724778691,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 136.42,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15914,8 +15914,8 @@
   {
     "symbol": "RUCHIRA.NS",
     "instrument_token": 3763309135,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 328.89,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15923,8 +15923,8 @@
   {
     "symbol": "RUDRA.NS",
     "instrument_token": 748687289,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 183.73,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15941,8 +15941,8 @@
   {
     "symbol": "RUSHIL.NS",
     "instrument_token": 3246093818,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 516.71,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15959,8 +15959,8 @@
   {
     "symbol": "RVHL.NS",
     "instrument_token": 3855981000,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 283.57,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15977,8 +15977,8 @@
   {
     "symbol": "RVTH.NS",
     "instrument_token": 1082323052,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 221.13,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15986,8 +15986,8 @@
   {
     "symbol": "SAATVIKGL.NS",
     "instrument_token": 4253943937,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 5356.2,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -15995,8 +15995,8 @@
   {
     "symbol": "SADBHIN.NS",
     "instrument_token": 2697131160,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 91.93,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16004,8 +16004,8 @@
   {
     "symbol": "SADHNANIQ.NS",
     "instrument_token": 560989599,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 880.51,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16049,8 +16049,8 @@
   {
     "symbol": "SAHYADRI.NS",
     "instrument_token": 3765121391,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 348.26,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16076,8 +16076,8 @@
   {
     "symbol": "SAIPARENT.NS",
     "instrument_token": 292007796,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2328.47,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16094,8 +16094,8 @@
   {
     "symbol": "SAKHTISUG.NS",
     "instrument_token": 1036907495,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 208.7,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16130,8 +16130,8 @@
   {
     "symbol": "SALONA.NS",
     "instrument_token": 2696995149,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 134.82,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16193,8 +16193,8 @@
   {
     "symbol": "SAMPANN.NS",
     "instrument_token": 2345839327,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 134.67,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16211,8 +16211,8 @@
   {
     "symbol": "SANDESH.NS",
     "instrument_token": 343500125,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 768.22,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16319,8 +16319,8 @@
   {
     "symbol": "SARLAPOLY.NS",
     "instrument_token": 1702089745,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 810.93,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16328,8 +16328,8 @@
   {
     "symbol": "SARVESHWAR.NS",
     "instrument_token": 594353429,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 423.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16373,8 +16373,8 @@
   {
     "symbol": "SAURASHCEM.NS",
     "instrument_token": 530524367,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 774.78,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16409,8 +16409,8 @@
   {
     "symbol": "SBGLP.NS",
     "instrument_token": 3461265374,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 437.01,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16526,8 +16526,8 @@
   {
     "symbol": "SCHAND.NS",
     "instrument_token": 3617951462,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 500.87,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16580,8 +16580,8 @@
   {
     "symbol": "SECMARK.NS",
     "instrument_token": 895142081,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 128.34,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16589,8 +16589,8 @@
   {
     "symbol": "SECURKLOUD.NS",
     "instrument_token": 2354483398,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 61.61,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16598,8 +16598,8 @@
   {
     "symbol": "SEDEMAC.NS",
     "instrument_token": 218918803,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12544.67,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16607,8 +16607,8 @@
   {
     "symbol": "SEJALLTD.NS",
     "instrument_token": 1781498546,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 820.91,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16625,8 +16625,8 @@
   {
     "symbol": "SELMC.NS",
     "instrument_token": 3357560145,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 92.78,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16634,8 +16634,8 @@
   {
     "symbol": "SEMAC.NS",
     "instrument_token": 2835591483,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 97.93,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16697,8 +16697,8 @@
   {
     "symbol": "SESHAPAPER.NS",
     "instrument_token": 2613595816,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1450.57,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16751,8 +16751,8 @@
   {
     "symbol": "SETL.NS",
     "instrument_token": 3653932794,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 5519.93,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16778,8 +16778,8 @@
   {
     "symbol": "SGIL.NS",
     "instrument_token": 1152223213,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 922.63,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16787,8 +16787,8 @@
   {
     "symbol": "SGL.NS",
     "instrument_token": 764927727,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 26.93,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16796,8 +16796,8 @@
   {
     "symbol": "SGMART.NS",
     "instrument_token": 3272083630,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 9089.66,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16805,8 +16805,8 @@
   {
     "symbol": "SHADOWFAX.NS",
     "instrument_token": 1207013693,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 14281.8,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16814,8 +16814,8 @@
   {
     "symbol": "SHAH.NS",
     "instrument_token": 1701211933,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 392.95,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16823,8 +16823,8 @@
   {
     "symbol": "SHAHALLOYS.NS",
     "instrument_token": 2273460726,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 138.19,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16859,8 +16859,8 @@
   {
     "symbol": "SHALPAINTS.NS",
     "instrument_token": 1871780311,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 696.64,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16922,8 +16922,8 @@
   {
     "symbol": "SHEKHAWATI.NS",
     "instrument_token": 3118566099,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 47.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16931,8 +16931,8 @@
   {
     "symbol": "SHEMAROO.NS",
     "instrument_token": 2315907099,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 332.7,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16949,8 +16949,8 @@
   {
     "symbol": "SHILPAMED.NS",
     "instrument_token": 2723897584,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12644.36,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16976,8 +16976,8 @@
   {
     "symbol": "SHIVAMILLS.NS",
     "instrument_token": 954458413,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 53.58,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -16985,8 +16985,8 @@
   {
     "symbol": "SHIVATEX.NS",
     "instrument_token": 446764989,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 219.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17039,8 +17039,8 @@
   {
     "symbol": "SHREEJISPG.NS",
     "instrument_token": 3688963406,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 10860.13,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17066,8 +17066,8 @@
   {
     "symbol": "SHREYANIND.NS",
     "instrument_token": 2013764197,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 196.66,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17075,8 +17075,8 @@
   {
     "symbol": "SHRINGARMS.NS",
     "instrument_token": 2684467541,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2267.6,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17129,8 +17129,8 @@
   {
     "symbol": "SHYAMTEL.NS",
     "instrument_token": 1469379756,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 17.91,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17156,8 +17156,8 @@
   {
     "symbol": "SIGIND.NS",
     "instrument_token": 2288911951,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 180.18,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17165,8 +17165,8 @@
   {
     "symbol": "SIGMA.NS",
     "instrument_token": 1091522164,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 487.67,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17201,8 +17201,8 @@
   {
     "symbol": "SIL.NS",
     "instrument_token": 1024198544,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 110.2,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17219,8 +17219,8 @@
   {
     "symbol": "SILINV.NS",
     "instrument_token": 3843684399,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 445.34,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17318,8 +17318,8 @@
   {
     "symbol": "SILVERTUC.NS",
     "instrument_token": 3482145774,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2415.1,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17354,8 +17354,8 @@
   {
     "symbol": "SINGERIND.NS",
     "instrument_token": 3325755672,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 413.76,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17489,8 +17489,8 @@
   {
     "symbol": "SMARTLINK.NS",
     "instrument_token": 44631790,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 230.32,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17525,8 +17525,8 @@
   {
     "symbol": "SMLMAH.NS",
     "instrument_token": 1889761967,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 8631.76,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17750,8 +17750,8 @@
   {
     "symbol": "SPECTRUM.NS",
     "instrument_token": 49101177,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3973.32,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17759,8 +17759,8 @@
   {
     "symbol": "SPENCERS.NS",
     "instrument_token": 31664030,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 296.62,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17777,8 +17777,8 @@
   {
     "symbol": "SPLIL.NS",
     "instrument_token": 3769503766,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 89.9,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17813,8 +17813,8 @@
   {
     "symbol": "SRD.NS",
     "instrument_token": 1333735369,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 247.55,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17867,8 +17867,8 @@
   {
     "symbol": "SRTL.NS",
     "instrument_token": 3122106687,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 161.26,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -17939,8 +17939,8 @@
   {
     "symbol": "STARTECK.NS",
     "instrument_token": 456444053,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 261.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18029,8 +18029,8 @@
   {
     "symbol": "STUDDS.NS",
     "instrument_token": 1410139842,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1727.61,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18038,8 +18038,8 @@
   {
     "symbol": "STYL.NS",
     "instrument_token": 206738122,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 5896.2,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18074,8 +18074,8 @@
   {
     "symbol": "SUBEXLTD.NS",
     "instrument_token": 2262159662,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 792.99,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18092,8 +18092,8 @@
   {
     "symbol": "SUDARCOLOR.NS",
     "instrument_token": 3452966770,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 888.07,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18110,8 +18110,8 @@
   {
     "symbol": "SUDEEPPHRM.NS",
     "instrument_token": 1795059450,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 10523.99,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18119,8 +18119,8 @@
   {
     "symbol": "SUKHJITS.NS",
     "instrument_token": 2524008706,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 515.37,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18137,8 +18137,8 @@
   {
     "symbol": "SUMEETINDS.NS",
     "instrument_token": 784449893,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1333.23,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18182,8 +18182,8 @@
   {
     "symbol": "SUNDARAM.NS",
     "instrument_token": 1195162960,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 59.71,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18200,8 +18200,8 @@
   {
     "symbol": "SUNDRMBRAK.NS",
     "instrument_token": 3103028374,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 304.93,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18263,8 +18263,8 @@
   {
     "symbol": "SUPERHOUSE.NS",
     "instrument_token": 4091390411,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 173.09,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18272,8 +18272,8 @@
   {
     "symbol": "SUPERSPIN.NS",
     "instrument_token": 3720216671,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 29.7,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18290,8 +18290,8 @@
   {
     "symbol": "SUPREME.NS",
     "instrument_token": 3370738135,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 174.65,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18326,8 +18326,8 @@
   {
     "symbol": "SURAJLTD.NS",
     "instrument_token": 2006308079,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 409.52,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18335,8 +18335,8 @@
   {
     "symbol": "SURAKSHA.NS",
     "instrument_token": 2503853783,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1314.0,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18344,8 +18344,8 @@
   {
     "symbol": "SURANASOL.NS",
     "instrument_token": 2148316828,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 128.38,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18353,8 +18353,8 @@
   {
     "symbol": "SURANAT&P.NS",
     "instrument_token": 273454081,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 244.23,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18362,8 +18362,8 @@
   {
     "symbol": "SURYALAXMI.NS",
     "instrument_token": 2548323465,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 116.57,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18389,8 +18389,8 @@
   {
     "symbol": "SUTLEJTEX.NS",
     "instrument_token": 2100521060,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 622.71,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18398,8 +18398,8 @@
   {
     "symbol": "SUVEN.NS",
     "instrument_token": 3774831237,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 8509.8,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18407,8 +18407,8 @@
   {
     "symbol": "SUVIDHAA.NS",
     "instrument_token": 2008949802,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 53.92,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18443,8 +18443,8 @@
   {
     "symbol": "SVPGLOB.NS",
     "instrument_token": 2300542152,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 47.44,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18452,8 +18452,8 @@
   {
     "symbol": "SWANCORP.NS",
     "instrument_token": 2445087233,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 9776.72,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18506,8 +18506,8 @@
   {
     "symbol": "SYNCOMF.NS",
     "instrument_token": 1042975790,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1259.6,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18533,8 +18533,8 @@
   {
     "symbol": "SYSTMTXC.NS",
     "instrument_token": 4067706356,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 832.88,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18542,8 +18542,8 @@
   {
     "symbol": "TAINWALCHM.NS",
     "instrument_token": 1840809857,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 199.45,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18587,8 +18587,8 @@
   {
     "symbol": "TARAPUR.NS",
     "instrument_token": 1349405795,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 27.79,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18632,8 +18632,8 @@
   {
     "symbol": "TATACAP.NS",
     "instrument_token": 2325416507,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 156550.77,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18758,8 +18758,8 @@
   {
     "symbol": "TCC.NS",
     "instrument_token": 1579750590,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1361.2,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18785,8 +18785,8 @@
   {
     "symbol": "TCIFINANCE.NS",
     "instrument_token": 70050038,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 19.31,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18821,8 +18821,8 @@
   {
     "symbol": "TEAMGTY.NS",
     "instrument_token": 874108860,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 206.93,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18866,8 +18866,8 @@
   {
     "symbol": "TECILCHEM.NS",
     "instrument_token": 2204877230,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 18.98,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18902,8 +18902,8 @@
   {
     "symbol": "TENNIND.NS",
     "instrument_token": 1529926375,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 22995.36,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18911,8 +18911,8 @@
   {
     "symbol": "TERASOFT.NS",
     "instrument_token": 3575615013,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 537.32,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18920,8 +18920,8 @@
   {
     "symbol": "TEXINFRA.NS",
     "instrument_token": 2865686658,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1405.52,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18929,8 +18929,8 @@
   {
     "symbol": "TEXMOPIPES.NS",
     "instrument_token": 1204405450,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 126.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18956,8 +18956,8 @@
   {
     "symbol": "TFL.NS",
     "instrument_token": 3431666164,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 62.01,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -18965,8 +18965,8 @@
   {
     "symbol": "TGBHOTELS.NS",
     "instrument_token": 3711973005,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 27.94,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19010,8 +19010,8 @@
   {
     "symbol": "THEMISMED.NS",
     "instrument_token": 46416711,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1052.7,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19037,8 +19037,8 @@
   {
     "symbol": "THOMASCOTT.NS",
     "instrument_token": 3302038863,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 444.59,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19064,8 +19064,8 @@
   {
     "symbol": "TICL.NS",
     "instrument_token": 2274221031,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 151.13,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19091,8 +19091,8 @@
   {
     "symbol": "TIL.NS",
     "instrument_token": 3506837760,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2102.8,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19127,8 +19127,8 @@
   {
     "symbol": "TIPSFILMS.NS",
     "instrument_token": 2723623818,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 166.8,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19181,8 +19181,8 @@
   {
     "symbol": "TMCV.NS",
     "instrument_token": 3628696720,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 167341.9,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19190,8 +19190,8 @@
   {
     "symbol": "TMPV.NS",
     "instrument_token": 2191368308,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 128393.25,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19199,8 +19199,8 @@
   {
     "symbol": "TNPETRO.NS",
     "instrument_token": 2468301665,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 868.13,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19217,8 +19217,8 @@
   {
     "symbol": "TNTELE.NS",
     "instrument_token": 558739351,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 40.47,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19226,8 +19226,8 @@
   {
     "symbol": "TOKYOPLAST.NS",
     "instrument_token": 1550370733,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 76.0,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19307,8 +19307,8 @@
   {
     "symbol": "TPHQ.NS",
     "instrument_token": 2563630626,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 47.14,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19316,8 +19316,8 @@
   {
     "symbol": "TPLPLASTEH.NS",
     "instrument_token": 4190715366,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 609.2,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19325,8 +19325,8 @@
   {
     "symbol": "TRACXN.NS",
     "instrument_token": 3704493257,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 332.84,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19343,8 +19343,8 @@
   {
     "symbol": "TRANSWORLD.NS",
     "instrument_token": 1439005721,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 351.32,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19361,8 +19361,8 @@
   {
     "symbol": "TREJHARA.NS",
     "instrument_token": 3891763490,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 363.08,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19370,8 +19370,8 @@
   {
     "symbol": "TREL.NS",
     "instrument_token": 3137690225,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 601.71,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19388,8 +19388,8 @@
   {
     "symbol": "TRF.NS",
     "instrument_token": 3820593750,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 252.02,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19406,8 +19406,8 @@
   {
     "symbol": "TRIGYN.NS",
     "instrument_token": 3205837041,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 163.9,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19433,8 +19433,8 @@
   {
     "symbol": "TRU.NS",
     "instrument_token": 1881565946,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 54.8,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19442,8 +19442,8 @@
   {
     "symbol": "TRUALT.NS",
     "instrument_token": 322684128,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3921.04,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19478,8 +19478,8 @@
   {
     "symbol": "TTML.NS",
     "instrument_token": 370868048,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 7813.85,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19487,8 +19487,8 @@
   {
     "symbol": "TVSELECT.NS",
     "instrument_token": 640804605,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 927.95,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19577,8 +19577,8 @@
   {
     "symbol": "UEL.NS",
     "instrument_token": 4122618535,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3096.83,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 1.0,
     "mis_margin_pct": 1.0
@@ -19586,8 +19586,8 @@
   {
     "symbol": "UFBL.NS",
     "instrument_token": 4116813657,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 3017.27,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19613,8 +19613,8 @@
   {
     "symbol": "UGARSUGAR.NS",
     "instrument_token": 3474646489,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 492.75,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19649,8 +19649,8 @@
   {
     "symbol": "UMAEXPORTS.NS",
     "instrument_token": 65299157,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 68.3,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19667,8 +19667,8 @@
   {
     "symbol": "UNIDT.NS",
     "instrument_token": 2948020836,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 497.43,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19685,8 +19685,8 @@
   {
     "symbol": "UNIENTER.NS",
     "instrument_token": 3289820313,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 683.43,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19703,8 +19703,8 @@
   {
     "symbol": "UNIMECH.NS",
     "instrument_token": 2024448418,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 6709.55,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19748,8 +19748,8 @@
   {
     "symbol": "UNITECH.NS",
     "instrument_token": 4180324970,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1098.15,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19757,8 +19757,8 @@
   {
     "symbol": "UNITEDPOLY.NS",
     "instrument_token": 1285978068,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 677.07,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19811,8 +19811,8 @@
   {
     "symbol": "URAVIDEF.NS",
     "instrument_token": 3966870371,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 131.67,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19820,8 +19820,8 @@
   {
     "symbol": "URBANCO.NS",
     "instrument_token": 3536144661,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 22037.76,
+    "cap_segment": "large_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19865,8 +19865,8 @@
   {
     "symbol": "UTLSOLAR.NS",
     "instrument_token": 1875849352,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 12068.91,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19883,8 +19883,8 @@
   {
     "symbol": "UYFINCORP.NS",
     "instrument_token": 2492901970,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 365.26,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19892,8 +19892,8 @@
   {
     "symbol": "V2RETAIL.NS",
     "instrument_token": 1273561728,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 7919.93,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19928,8 +19928,8 @@
   {
     "symbol": "VAKRANGEE.NS",
     "instrument_token": 2117382960,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 651.0,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19937,8 +19937,8 @@
   {
     "symbol": "VALIANTLAB.NS",
     "instrument_token": 3924192795,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 339.45,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19946,8 +19946,8 @@
   {
     "symbol": "VALIANTORG.NS",
     "instrument_token": 2316236375,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 804.59,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -19991,8 +19991,8 @@
   {
     "symbol": "VASWANI.NS",
     "instrument_token": 3666301445,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 174.61,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20063,8 +20063,8 @@
   {
     "symbol": "VENUSREM.NS",
     "instrument_token": 2187605815,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 2108.58,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20099,8 +20099,8 @@
   {
     "symbol": "VETO.NS",
     "instrument_token": 3866518878,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 237.41,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20108,8 +20108,8 @@
   {
     "symbol": "VGL.NS",
     "instrument_token": 3124939722,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 321.02,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20126,8 +20126,8 @@
   {
     "symbol": "VHL.NS",
     "instrument_token": 976208671,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1071.18,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20135,8 +20135,8 @@
   {
     "symbol": "VIDHIING.NS",
     "instrument_token": 2945556390,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1622.96,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20144,8 +20144,8 @@
   {
     "symbol": "VIDYAWIRES.NS",
     "instrument_token": 2735048530,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1975.06,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20162,8 +20162,8 @@
   {
     "symbol": "VIKASECO.NS",
     "instrument_token": 3107480570,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 198.1,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20171,8 +20171,8 @@
   {
     "symbol": "VIKASLIFE.NS",
     "instrument_token": 883516629,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 234.07,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20180,8 +20180,8 @@
   {
     "symbol": "VIKRAMSOLR.NS",
     "instrument_token": 1787369055,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 6538.68,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20189,8 +20189,8 @@
   {
     "symbol": "VIKRAN.NS",
     "instrument_token": 802909807,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1875.01,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20234,8 +20234,8 @@
   {
     "symbol": "VINEETLAB.NS",
     "instrument_token": 3174518021,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 76.25,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20243,8 +20243,8 @@
   {
     "symbol": "VINNY.NS",
     "instrument_token": 834824025,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 49.78,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20252,8 +20252,8 @@
   {
     "symbol": "VINYLINDIA.NS",
     "instrument_token": 4167964720,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 445.96,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20279,8 +20279,8 @@
   {
     "symbol": "VIRINCHI.NS",
     "instrument_token": 57493353,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 174.68,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20288,8 +20288,8 @@
   {
     "symbol": "VISAKAIND.NS",
     "instrument_token": 2808803977,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 743.08,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20315,8 +20315,8 @@
   {
     "symbol": "VISHWARAJ.NS",
     "instrument_token": 2903208398,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 118.28,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20333,8 +20333,8 @@
   {
     "symbol": "VIVIDHA.NS",
     "instrument_token": 2956278710,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 15.51,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20342,8 +20342,8 @@
   {
     "symbol": "VIVIMEDLAB.NS",
     "instrument_token": 2869710939,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 42.62,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20351,8 +20351,8 @@
   {
     "symbol": "VIYASH.NS",
     "instrument_token": 2620312917,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 11933.25,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20360,8 +20360,8 @@
   {
     "symbol": "VLEGOV.NS",
     "instrument_token": 3854011633,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 116.37,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20369,8 +20369,8 @@
   {
     "symbol": "VLSFINANCE.NS",
     "instrument_token": 3040806707,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 804.86,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20396,8 +20396,8 @@
   {
     "symbol": "VMSTMT.NS",
     "instrument_token": 3311984284,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 223.59,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20432,8 +20432,8 @@
   {
     "symbol": "VRAJ.NS",
     "instrument_token": 2637505353,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 408.32,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20468,8 +20468,8 @@
   {
     "symbol": "VSTL.NS",
     "instrument_token": 1154132991,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 208.4,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20504,8 +20504,8 @@
   {
     "symbol": "WAAREEINDO.NS",
     "instrument_token": 1204099233,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1349.0,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20531,8 +20531,8 @@
   {
     "symbol": "WAKEFIT.NS",
     "instrument_token": 2131837388,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 4345.42,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20540,8 +20540,8 @@
   {
     "symbol": "WALCHANNAG.NS",
     "instrument_token": 2172842775,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1584.11,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20558,8 +20558,8 @@
   {
     "symbol": "WEALTH.NS",
     "instrument_token": 2406979609,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 989.74,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20576,8 +20576,8 @@
   {
     "symbol": "WEIZMANIND.NS",
     "instrument_token": 2660595895,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 119.33,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20612,8 +20612,8 @@
   {
     "symbol": "WELINV.NS",
     "instrument_token": 2595057388,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 712.59,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20648,8 +20648,8 @@
   {
     "symbol": "WEWIN.NS",
     "instrument_token": 3699738648,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 44.71,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20657,8 +20657,8 @@
   {
     "symbol": "WEWORK.NS",
     "instrument_token": 1919088073,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 10457.33,
+    "cap_segment": "mid_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20684,8 +20684,8 @@
   {
     "symbol": "WILLAMAGOR.NS",
     "instrument_token": 908401312,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 29.52,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20747,8 +20747,8 @@
   {
     "symbol": "WORTHPERI.NS",
     "instrument_token": 3232208269,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 239.73,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20774,8 +20774,8 @@
   {
     "symbol": "XCHANGING.NS",
     "instrument_token": 4270286388,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 758.1,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20783,8 +20783,8 @@
   {
     "symbol": "XELPMOC.NS",
     "instrument_token": 1941751195,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 122.1,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20801,8 +20801,8 @@
   {
     "symbol": "XTGLOBAL.NS",
     "instrument_token": 3792010111,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 445.29,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20846,8 +20846,8 @@
   {
     "symbol": "YUKEN.NS",
     "instrument_token": 4036075590,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 1018.8,
+    "cap_segment": "small_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20873,8 +20873,8 @@
   {
     "symbol": "ZEELEARN.NS",
     "instrument_token": 1598351164,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 262.19,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20882,8 +20882,8 @@
   {
     "symbol": "ZENITHEXPO.NS",
     "instrument_token": 3109887364,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 107.93,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
@@ -20945,8 +20945,8 @@
   {
     "symbol": "ZODIACLOTH.NS",
     "instrument_token": 413571507,
-    "market_cap_cr": 0,
-    "cap_segment": "unknown",
+    "market_cap_cr": 215.24,
+    "cap_segment": "micro_cap",
     "mis_enabled": true,
     "mis_leverage": 5.0,
     "mis_margin_pct": 0.2
