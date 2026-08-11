@@ -494,7 +494,9 @@ slippage median +3.8bp / mean +7.5bp, exit median 0.0bp / mean −2.8bp, **net
 −0.101%/trade**. 39 of 79 trades land within ±0.25%; the damage is a tail of six
 entries at **92–147bp**.
 
-**The entry basis does not match between books.** In `overnight_handlers.py`
+**The entry basis does not match between books.** *(NOTE: the DIRECTION of this
+finding was corrected 2026-08-11 — see 11a-CORRECTION below. Paper's anchor is
+unreachable, but it UNDERSTATES the edge; live's 15:26 entry is an advantage.)* In `overnight_handlers.py`
 around line 668, the marketable-limit is built as `ref_px * (1 + buffer/100)`
 where `ref_px` is the **live LTP at 15:26** (falling back to `plan.entry_price`
 only when no quote is available). The paper mirror books `plan.entry_price` = the
@@ -508,6 +510,62 @@ and limit-vs-plan in bp) so the drift-vs-buffer split is attributable. **No pric
 change was made** — repricing off `plan.entry_price` would cap the gap but
 introduce adverse selection, only filling when the name has *not* run. Decide that
 once the logged drift is visible.
+
+### 11a-CORRECTION (2026-08-11, supersedes the entry-basis claim above)
+
+**The entry-basis finding in 11a was directionally WRONG and is corrected here.**
+11a states that paper "books an unreachable price" and implies live is
+disadvantaged by entering at 15:26 instead of the close. Measured, the opposite
+is true.
+
+Re-anchoring the whole recon-era ledger (176 of 195 trades matched to a 15:25
+bar; the recon anchor reproduces the stored ledger to **0.0000 pp**, so the
+method is verified):
+
+| entry anchor | n | mean/trade | PF | win |
+|---|---|---|---|---|
+| 15:30 close — what paper books, **unreachable** | 176 | +0.240% | 1.527 | 59.1% |
+| 15:25 open — **achievable, ≈ what live prices against** | 176 | **+0.349%** | **1.812** | 63.6% |
+
+**Paper has been UNDERSTATING the edge by +0.108%/trade.** Stocks bounce in the
+final five minutes: 15:25 open → 15:30 close is median **+7.5 bp** / mean +11.2 bp,
+and only **39%** of fires fall into the close.
+
+That is consistent with the mechanism, not a fluke: the signal is an EOD
+sell-flush computed on the 15:00–15:20 bars, so by 15:25 the selling has largely
+exhausted and the reversion has already started. Buying at 15:26 **catches the
+turn earlier than the close** — a structural advantage of the live path.
+
+**Consequences:**
+
+1. **Do NOT move the entry to the close** (post-close session, MOC-style, or
+   otherwise). 15:26 is the better entry on measured data, and the post-close
+   route would additionally cost the MTF leverage that makes this book's return
+   on capital work (§11b).
+2. **The execution leak is ~2.5× larger than 11a reports.** Measuring against the
+   close flattered it:
+   - live fill vs 15:30 close: **+7.5 bp**
+   - 15:25 open vs 15:30 close: **−11.2 bp**
+   - ⇒ live fills ~**18.7 bp** worse than the price available at its own entry time
+   So the edge at an achievable entry is +0.349%/trade and live gives back roughly
+   0.19% of it in fill quality — the marketable-limit at `ref × 1.01` on illiquid
+   names. That is the thing to attack, and the `ENTRY_BASIS` logging added
+   2026-08-11 is what will expose it.
+3. **The "validation optimism PF 3.69 → ~1.28" line in 11a is wrong.** On an
+   achievable anchor the paper-era figure is **PF 1.812**. The live shortfall is
+   selection (fixed 2026-08-04) plus fill quality — not the entry basis.
+
+**Still true from 11a:** `plan.entry_price` remains a non-deterministic proxy
+(15:20 *or* 15:25 bar open, depending on which bar Upstox has surfaced per symbol)
+that is nonetheless load-bearing for `qty` sizing and for the limit-price fallback
+when no live quote exists. That is an independent defect and is unaffected by this
+correction.
+
+**Method note for anyone re-running this:** the paper reconstruction anchors entry
+at `ENTRY_BAR_HHMM = "15:25"` and takes that bar's **close**. Bars are
+START-labelled (verified: 75 bars/session, first 09:15, last 15:25), so that close
+is the **15:30** print — the actual close, not a 15:25 price. The achievable proxy
+is the same bar's **open**.
 
 ### 11b. Overnight economics — MTF is correct, do NOT switch to CNC
 
