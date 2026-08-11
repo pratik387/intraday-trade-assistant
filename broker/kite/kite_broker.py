@@ -377,10 +377,17 @@ class KiteBroker:
             try:
                 data = self.kc.quote([key])
                 node = data.get(key) or {}
+                # `depth` (5-level bid/ask) ships in the SAME quote() response and
+                # was previously discarded. Passed through 2026-08-11 for entry
+                # observability: the marketable-LIMIT prices off last_price, which
+                # is a traded print rather than where liquidity sits, and measured
+                # fills land ~18.7bp wide of the price available at entry time.
+                # Free — no extra API call. Callers must treat it as optional.
                 return {
                     "last_price": float(node.get("last_price") or 0.0),
                     "upper_circuit_limit": float(node.get("upper_circuit_limit") or 0.0),
                     "lower_circuit_limit": float(node.get("lower_circuit_limit") or 0.0),
+                    "depth": node.get("depth") or {},
                 }
             except Exception as e:
                 if "Too many requests" in str(e) and attempt < 2:

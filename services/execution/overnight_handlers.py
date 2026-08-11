@@ -62,6 +62,48 @@ def _safe_quote(broker, symbol):
         return None, None, None
 
 
+def _safe_top_of_book(broker, symbol):
+    """Best-effort (best_bid, best_ask, bid_qty, ask_qty). All None on failure.
+
+    OBSERVABILITY ONLY as of 2026-08-11 — nothing prices off this yet.
+
+    Why it exists: the entry BUY is a marketable LIMIT at ``LTP * (1 + buffer)``,
+    but LTP is a *last traded* print, not where liquidity sits. On this illiquid
+    universe the offer can be well above a stale LTP, so the band is arbitrary
+    relative to the book. Measured 2026-08-11: live fills land ~18.7bp worse than
+    the price available at entry time (the 15:25 print), against an achievable
+    edge of ~35bp — i.e. fill quality eats over half the edge.
+
+    Kite's quote() ALREADY returns 5-level depth in the same response
+    ``_safe_quote`` consumes; it was simply being discarded. This reads it at no
+    extra API cost so the spread is visible on every fire. Once a few sessions of
+    ENTRY_BASIS lines exist, the spread distribution is what calibrates (a)
+    pricing off the ask instead of LTP and (b) a cost-aware skip for names whose
+    spread alone exceeds a meaningful fraction of the edge.
+
+    Deliberately NOT used for pricing yet: setting a buffer or skip threshold
+    without the measured distribution would be guesswork.
+    """
+    get_quote = getattr(broker, "get_quote_raw", None) or getattr(broker, "get_quote_full", None)
+    if get_quote is None:
+        get_quote = getattr(broker, "get_quote", None)
+    if get_quote is None:
+        return None, None, None, None
+    try:
+        q = get_quote(symbol) or {}
+        depth = q.get("depth") or {}
+        buys = depth.get("buy") or []
+        sells = depth.get("sell") or []
+        bid = float(buys[0].get("price") or 0.0) or None if buys else None
+        ask = float(sells[0].get("price") or 0.0) or None if sells else None
+        bq = int(buys[0].get("quantity") or 0) if buys else None
+        aq = int(sells[0].get("quantity") or 0) if sells else None
+        return bid, ask, bq, aq
+    except Exception as e:
+        logger.debug("overnight: top-of-book unavailable for %s (%s)", symbol, e)
+        return None, None, None, None
+
+
 def _reconcile_unattached_buys(broker, pool, now, summary: dict) -> int:
     """Attach any ITDA-tagged BUY fill that no active slot knows about.
 
@@ -693,14 +735,22 @@ def run_entry(
             # repricing off plan.entry_price would cap the gap but introduce
             # adverse selection — only filling when the name has NOT run.
             _plan_px = float(plan.entry_price) if plan.entry_price else 0.0
+            _bid, _ask, _bq, _aq = _safe_top_of_book(broker, symbol)
+            # Spread and ask-vs-LTP are the two numbers that calibrate the eventual
+            # fix: whether to price off the ask instead of LTP, and where to set a
+            # cost-aware skip. Observability only — nothing branches on them yet.
+            _spread_bp = (1e4 * (_ask / _bid - 1.0)) if (_bid and _ask and _bid > 0) else float("nan")
+            _ask_vs_ref_bp = (1e4 * (_ask / ref_px - 1.0)) if (_ask and ref_px) else float("nan")
             logger.info(
                 "ENTRY_BASIS | %s | plan_15:25=%.4f ref_15:26=%.4f drift=%+.1fbp "
-                "buffer=%.2f%% limit=%.4f limit_vs_plan=%+.1fbp tick=%s src=%s",
+                "buffer=%.2f%% limit=%.4f limit_vs_plan=%+.1fbp tick=%s src=%s | "
+                "bid=%s ask=%s spread=%.1fbp ask_vs_ref=%+.1fbp bidqty=%s askqty=%s reqqty=%s",
                 symbol, _plan_px, ref_px,
                 (1e4 * (ref_px / _plan_px - 1.0)) if _plan_px > 0 else float("nan"),
                 entry_buf_pct, float(buy_limit),
                 (1e4 * (float(buy_limit) / _plan_px - 1.0)) if _plan_px > 0 else float("nan"),
                 tick, "live_quote" if ref_px != _plan_px else "plan_fallback",
+                _bid, _ask, _spread_bp, _ask_vs_ref_bp, _bq, _aq, plan.qty,
             )
             try:
                 buy_order_id = _place_buy(
