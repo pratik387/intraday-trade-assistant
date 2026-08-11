@@ -30,6 +30,7 @@ def _cfg(**over):
         "paper_enabled": False,
         "active_window_start": "09:15",
         "active_window_end": "09:15",
+        "active_window_sentinel_hhmm": "09:20",
         "time_stop_at": "15:10",
         "shock_threshold_pct": -8.0,
         "shock_floor_pct": -12.0,
@@ -169,10 +170,51 @@ def test_stale_reaction_is_rejected():
 # ---------------------------------------------------------------- timing
 
 def test_does_not_fire_outside_the_single_bar_window():
-    for hh, mm in ((9, 20), (10, 30), (14, 55)):
+    for hh, mm in ((10, 30), (14, 55)):
         r = _det().detect(_ctx(_daily(-10.0), hh=hh, mm=mm))
         assert not r.structure_detected
         assert "Outside active window" in (r.rejection_reason or "")
+
+
+def test_sentinel_bar_alone_rejects_for_missing_entry_bar():
+    """A lone 09:20-labelled bar passes the (sentinel) window check but must
+    reject because the completed 09:15 ENTRY bar is absent from df_5m."""
+    r = _det().detect(_ctx(_daily(-10.0), hh=9, mm=20))
+    assert not r.structure_detected
+    assert "entry bar" in (r.rejection_reason or "")
+
+
+def _ctx_with_sentinel(df_daily, *, close=PX, sym="NSE:TESTCO"):
+    """df_5m holds the completed 09:15 bar plus a PARTIAL 09:20 bar with junk
+    prices — the live shape at the ~09:21-09:23 dispatch."""
+    t915 = pd.Timestamp(SESSION) + pd.Timedelta(hours=9, minutes=15)
+    t920 = pd.Timestamp(SESSION) + pd.Timedelta(hours=9, minutes=20)
+    d5 = pd.DataFrame(
+        {"open": [close * 1.002, close * 5.0],
+         "high": [close * 1.004, close * 5.0],
+         "low": [close * 0.998, close * 5.0],
+         "close": [close, close * 5.0],       # junk sentinel close
+         "volume": [1e4, 1.0]},
+        index=[t915, t920],
+    )
+    return MarketContext(
+        symbol=sym, df_5m=d5, df_daily=df_daily, session_date=SESSION,
+        regime="chop", current_price=close, timestamp=t920,
+    )
+
+
+def test_fires_with_partial_sentinel_bar_and_prices_off_0915_close():
+    """Regression for 2026-08-11 (Aug-5..11: 9 candidate-days, 0 fires): live
+    df_5m ends with the partial 09:20 bar; the detector must still fire and
+    price the entry from the COMPLETED 09:15 bar, never the sentinel."""
+    det = _det()
+    r = det.detect(_ctx_with_sentinel(_daily(-10.0)))
+    assert r.structure_detected, r.rejection_reason
+    evt = r.events[0]
+    assert evt.price == pytest.approx(PX)          # 09:15 close, not PX*5 junk
+    plan = det.plan_short_strategy(_ctx_with_sentinel(_daily(-10.0)), r.events[0])
+    assert plan is not None
+    assert plan.entry_price == pytest.approx(PX)
 
 
 def test_latch_allows_only_one_fire_per_session():

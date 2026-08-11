@@ -117,6 +117,17 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
         # --- entry window (single bar) + hard time exit ---
         self.active_start = self._parse_time(config["active_window_start"])
         self.active_end = self._parse_time(config["active_window_end"])
+        # Sentinel bar label (2026-08-11 fix): in LIVE, by the time the
+        # dispatcher evaluates the 09:15 bar (~09:21-09:23 wall clock) Upstox
+        # has usually surfaced the PARTIAL 09:20-labelled bar, so df_5m's last
+        # bar is 09:20 and a strict `last bar == 09:15` window rejected every
+        # candidate on every session (Aug-5..Aug-11: 9 candidate-days, 0
+        # fires; backtest replay feeds bars only up to 09:15 so Stage-8 parity
+        # never saw it). The sentinel bar PROVES the 09:15 bar is complete and
+        # is NEVER read — entry pricing selects the 09:15-labelled bar
+        # explicitly (_select_entry_bar). Same pattern as the overnight
+        # detector's _ACTIVE_HHMMS ("15:20", "15:25").
+        self.active_sentinel = self._parse_time(config["active_window_sentinel_hhmm"])
         self.time_stop_at = str(config["time_stop_at"])
 
         # --- risk: catastrophe backstop only (geometry is none/none) ---
@@ -254,10 +265,12 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
         if df is None or len(df) < self.min_bars_required:
             return _empty("Insufficient bars")
 
-        # ---- Active window: the single 09:15-labelled bar ----
+        # ---- Active window: the single 09:15-labelled ENTRY bar, with the
+        # next bar label accepted as a live-mode sentinel (never read) ----
         last_ts = df.index[-1]
         cur_t = last_ts.time() if hasattr(last_ts, "time") else last_ts
-        if not (self.active_start <= cur_t <= self.active_end):
+        in_window = self.active_start <= cur_t <= self.active_end
+        if not (in_window or cur_t == self.active_sentinel):
             return _empty(f"Outside active window: {cur_t}")
 
         session_date = ctx.session_date or pd.Timestamp(last_ts).date()
@@ -278,7 +291,13 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
         today = df[pd.to_datetime(pd.Index(df.index)).normalize().date == session_date]
         if today.empty:
             return _empty("no bars for this session")
-        entry_bar = today.iloc[-1]
+        # Entry bar = the bar LABELLED inside the active window (09:15),
+        # selected explicitly — when the sentinel (partial 09:20) bar is last,
+        # iloc[-1] would price the entry off incomplete data.
+        entry_bar = self._select_entry_bar(today)
+        if entry_bar is None:
+            return _empty(
+                f"entry bar ({self.active_start}-{self.active_end}) not present")
         bar_close = float(entry_bar["close"])
         bar_open = float(today.iloc[0]["open"])
         if bar_close <= 0:
@@ -361,6 +380,17 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
         """Short-only setup — no long trades."""
         return None
 
+    def _select_entry_bar(self, bars):
+        """Last row labelled inside [active_start, active_end] — the ENTRY bar.
+
+        Never returns the sentinel (partial next) bar; callers price the
+        entry off the completed 09:15 bar's close (the 09:20 print).
+        """
+        times = pd.to_datetime(pd.Index(bars.index))
+        mask = [self.active_start <= t.time() <= self.active_end for t in times]
+        sel = bars[mask]
+        return None if sel.empty else sel.iloc[-1]
+
     def plan_short_strategy(
         self, ctx: MarketContext, event: Optional[StructureEvent] = None,
     ) -> Optional[TradePlan]:
@@ -371,7 +401,10 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
         df = ctx.df_5m
         if df is None or df.empty:
             return None
-        close = float(df.iloc[-1]["close"])
+        entry_bar = self._select_entry_bar(df)
+        if entry_bar is None:
+            return None
+        close = float(entry_bar["close"])
         if close <= 0:
             return None
 
@@ -457,4 +490,5 @@ class EarningsDownshockContinuationShortStructure(BaseStructure):
 
     def validate_timing(self, current_time):
         t = current_time.time() if hasattr(current_time, "time") else current_time
-        return self.active_start <= t <= self.active_end
+        return (self.active_start <= t <= self.active_end
+                or t == self.active_sentinel)
