@@ -682,6 +682,26 @@ def run_entry(
                 tick_size=tick,
                 upper_circuit=upper_circuit,
             )
+            # ENTRY BASIS (2026-08-11). The buffer is applied to the LIVE 15:26
+            # quote, NOT to plan.entry_price (the 15:25 close the paper mirror
+            # books). So worst-case entry vs the mirror is (15:25->15:26 drift)
+            # + buffer, not buffer alone — measured live entry slippage vs
+            # idealized ran median +3.8bp / mean +7.5bp with a tail to +147bp
+            # (PIONRINV 2026-07-20 filled +146.6bp against a nominal 1% cap).
+            # Neither ref_px nor buy_limit was previously recorded, so that
+            # split was unattributable after the fact. Logged (not changed):
+            # repricing off plan.entry_price would cap the gap but introduce
+            # adverse selection — only filling when the name has NOT run.
+            _plan_px = float(plan.entry_price) if plan.entry_price else 0.0
+            logger.info(
+                "ENTRY_BASIS | %s | plan_15:25=%.4f ref_15:26=%.4f drift=%+.1fbp "
+                "buffer=%.2f%% limit=%.4f limit_vs_plan=%+.1fbp tick=%s src=%s",
+                symbol, _plan_px, ref_px,
+                (1e4 * (ref_px / _plan_px - 1.0)) if _plan_px > 0 else float("nan"),
+                entry_buf_pct, float(buy_limit),
+                (1e4 * (float(buy_limit) / _plan_px - 1.0)) if _plan_px > 0 else float("nan"),
+                tick, "live_quote" if ref_px != _plan_px else "plan_fallback",
+            )
             try:
                 buy_order_id = _place_buy(
                     broker, symbol=symbol, qty=plan.qty,

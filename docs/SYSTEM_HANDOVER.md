@@ -466,3 +466,133 @@ Dozens of `_tmp_*.py` research scripts and `2026*_full/` backtest dirs sit untra
 .venv/Scripts/python -m pytest tests/ -q --continue-on-collection-errors   # expect 56 pre-existing failures
 python main.py --dry-run --session-date 2026-05-05                          # single-session smoke test
 ```
+
+---
+
+## 11. Book economics + parity findings (2026-08-11)
+
+### 11a. Overnight (`close_dn_overnight_long`) — the live-vs-paper gap, decomposed
+
+Live ran ~1% per trade below the paper mirror. It decomposes into three distinct
+causes, only one of which is a bug:
+
+| cause | size | status |
+|---|---|---|
+| **selection** — the `conviction` ranker | −0.474%/trade | **FIXED 2026-08-04** |
+| **execution** — fills vs idealized | −0.101%/trade | measurable, partly structural |
+| **validation optimism** — paper books an unreachable price | PF 3.69 → ~1.28 | structural |
+
+**Selection.** `conviction` ordering (deepest |svr| first) was *anti-predictive*:
+taken −0.306% vs skipped +0.624%, at the **0.0th percentile of 20,000 permutations
+(p=0.0001)**. Replaced by `unbiased_hash` on 2026-08-04. Post-fix sits at the
+**25.9th percentile (p=0.26)** — statistically random, exactly as designed. Only 9
+post-fix trades exist, so this is "no longer broken", not "proven good".
+
+**Execution.** Measured self-contained from the live ledger, which carries its own
+`idealized_entry` / `idealized_exit` (no cross-ledger matching needed): entry
+slippage median +3.8bp / mean +7.5bp, exit median 0.0bp / mean −2.8bp, **net
+−0.101%/trade**. 39 of 79 trades land within ±0.25%; the damage is a tail of six
+entries at **92–147bp**.
+
+**The entry basis does not match between books.** In `overnight_handlers.py`
+around line 668, the marketable-limit is built as `ref_px * (1 + buffer/100)`
+where `ref_px` is the **live LTP at 15:26** (falling back to `plan.entry_price`
+only when no quote is available). The paper mirror books `plan.entry_price` = the
+**15:25 close**. So worst-case entry vs the mirror is `(15:25 to 15:26 drift) +
+1%`, not 1% — which is how PIONRINV (2026-07-20) filled at +146.6bp against a
+nominal 1% cap. The config comment claiming the buffer "covers the 15:25 to 15:26
+drift" is **wrong**: it stacks on top of it.
+
+`ENTRY_BASIS` logging was added 2026-08-11 (plan px, ref px, drift, buffer, limit,
+and limit-vs-plan in bp) so the drift-vs-buffer split is attributable. **No pricing
+change was made** — repricing off `plan.entry_price` would cap the gap but
+introduce adverse selection, only filling when the name has *not* run. Decide that
+once the logged drift is visible.
+
+### 11b. Overnight economics — MTF is correct, do NOT switch to CNC
+
+Per-trade, paper recon-era:
+
+| product | n | lev | gross | fees | net | **return on capital** |
+|---|---|---|---|---|---|---|
+| CNC | 90 | 1.00 | 0.403% | 0.223% | 0.180% | **+0.180%** |
+| MTF | 105 | 2.92 | 0.589% | 0.288% | 0.301% | **+0.882%** |
+
+**MTF interest is only 0.065% of notional.** On the same capital MTF returns ~4.9x
+CNC; on the counterfactual (same MTF trades booked as CNC) it is still +0.882% vs
++0.366%, because CNC needs 2.9x the capital for identical notional.
+
+The irreducible cost is **delivery STT, 0.1% each side = 0.2% round-trip**, charged
+identically on both products. No product choice escapes it on an overnight hold.
+
+**Do not read "costs consume 71% of gross edge" as marginal economics** — that
+measures return on *notional*, and this book deploys *margin*. On capital employed,
++0.882%/trade at ~1-day holds is a good return. Caveat: the two cohorts are not
+randomly assigned (MTF gross 0.589% vs CNC 0.403%), so product correlates with
+something; a clean test needs the same names run both ways.
+
+### 11c. Tripwire is NOT affected by the ledger's mixed regimes
+
+The paper ledger holds two eras — 93 `t1_settle` rows (2026-06-10 to 06-24,
+pre-live, PF 3.625) and 195 `reconstructed_paper` rows (2026-06-29 onward, PF
+1.728). Pooled they read PF 1.925, which is misleading for hand analysis — **but
+`DecayTripwire._rolling_pf` slices `self._trades[-window_trades:]`, a trailing
+30**, so the June rows fall far outside the window and have zero effect. Checked
+before changing anything; **no fix needed**. Just segment when analysing by hand.
+
+### 11d. Cross-setup correlation — capital allocation implications
+
+Measured on daily P&L (intraday: 45 sessions; multiday: 22 entry days).
+
+**Intraday setups do NOT share a factor.** Mean pairwise correlation −0.087,
+diversification ratio 3.31, effective independent bets ~11 vs 6 nominal.
+*Caveat:* with 45 observations the SE on a correlation is ~0.15, so the negative
+mean is **indistinguishable from zero** — the honest claim is "uncorrelated", not
+"actively hedging". Per-setup capital silos therefore under-use real
+diversification: `long_panic_gap_down` is capped at 3 while firing p90=7, whilst
+`panic_crash` holds an unused cap of 5.
+
+**Multiday setups largely ARE one factor.** crash2d x zscore **+0.68**, crash2d x
+mtf +0.50, mtf x zscore +0.38; only `low52` diversifies (−0.19 to +0.08).
+Per-setup slots would let the book hold the same capitulation bet four times.
+Book-level unique positions/day: median 4, **p90 8**.
+
+**Multiday has no capital management at all** — `max_new_per_day: 100`,
+`max_concurrent: 200` ("effectively take-all"), margin-pool arbitration explicitly
+out of scope, `max_slots: None`. Its paper P&L is therefore an **unconstrained
+upper bound and not achievable**: adding real slots forces a selection policy, and
+the overnight book has already measured what a bad one costs (+0.182% to −0.465%).
+
+**Any cross-setup multiday analysis must dedupe on (symbol, entry_date) first.**
+The composite selector holds one book position but credits every contributing
+setup's tripwire — 28% of pooled rows are duplicate attributions, weighted toward
+high-consensus names.
+
+### 11e. Day-of-week: investigated and REJECTED
+
+"Multiday's worst day is Friday" is an **exit-day artifact** — by entry day Friday
+is the *best* (+2.456%) and Wednesday the worst (−1.324%); with 2-day holds,
+Wednesday entries exit Friday. Weekend-spanning holds are *better* (+0.367%,
+t=+0.59), so weekend risk is not the mechanism.
+
+Wednesday survives dedup at t=−2.07 / p=0.017 **but is not actionable**: only 4
+distinct Wednesdays exist, **one day (07-29, three trades) is 76% of the loss**,
+and the most recent and largest Wednesday (n=13) was positive. Excluding 07-29 the
+gap collapses from −1.88% to −1.06%. The expiry hypothesis is untestable here —
+NIFTY weekly expiry falls every Thursday, so every Wednesday entry faces it
+equally. **Revisit at ~20 Wednesdays, not 4.**
+
+### 11f. Capital management — what is derived and what is not
+
+Standard and verifiable: diversification ratio `DR = sum(w_i * sigma_i) / sigma_p`
+and `N_eff = DR^2` (Choueifaty & Coignard 2008); equal-weight constant-correlation
+variance `sigma_p = sigma * sqrt((1 + (n-1)*rho) / n)`. At rho=0.5, n=8 the risk
+ratio is **2.121x** versus independent — so a correlated sleeve must size down ~2x
+for equal risk.
+
+**Not derived — placeholders only:** every specific concurrency cap (p90 was
+chosen by convenience), the per-setup concentration limit, and the target daily
+vol. Sizing has **not** been derived from measured edge and variance; doing that
+properly needs fractional Kelly with an uncertainty haircut plus a capacity model,
+on mu estimates whose confidence intervals currently cross zero. **Do not treat
+the earlier cap numbers as research.**
