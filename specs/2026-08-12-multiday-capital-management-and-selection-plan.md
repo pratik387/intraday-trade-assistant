@@ -330,3 +330,41 @@ The gate in S1 is UNMET. Removing crash2d moves the book from negative to
 **neutral**, not to positive: the surviving three all have confidence intervals
 crossing zero, and monthly stability is poor (July +0.587%, August −0.566%). The
 risk framework now sizes the book sanely; it does not create an edge.
+
+### 11e. The boundary is on ENTRY date, not settle date
+
+Resetting the ledgers was not sufficient. 38 positions were still OPEN at the
+boundary, all entered under the old rules, and they settle over the following
+week. Recording them on settle would have dripped every one back into the
+"fresh" ledger — re-creating exactly the pooling the reset removed, and
+polluting the first 38 rows of the rolling PF that governs the tripwire.
+
+`DecayTripwire` now routes on entry date. A settle whose position was entered
+before `archive_entries_before` is appended to the archive ledger and never
+enters `self._trades`, so it cannot move the rolling PF or the paused state.
+It stays visible in the dashboard's Archive tab, so no history is lost.
+
+**The boundary is 2026-08-14, not 2026-08-12.** `entry_date` is the FILL date
+(T+1 of the plan). The 2026-08-12 16:08 cron still ran the old code — the
+deploy landed at 19:06 — so its 15 positions carry `entry_date` 2026-08-13 and
+are old-regime despite the date. The first genuinely new-regime fills come
+from the 2026-08-13 16:08 plan. Independent confirmation: three of those 15
+are crash2d, which the new config disables outright.
+
+Verified against the live snapshot before deploy — all 38 route to archive,
+none to the live ledger:
+
+| setup | in-flight → archive |
+|---|---|
+| zscore_oversold_revert_long | 24 |
+| crash2d_revert_long | 13 |
+| low52_capitulation_revert_long | 1 |
+| **total** | **38** |
+
+Consequence for reading the dashboard: the multiday History tab stays EMPTY
+until roughly 2026-08-18, when the first position that both opened and closed
+under the new rules settles. That is correct, not a fault, and the page now
+says so.
+
+Config is per-setup and fail-fast (`KeyError` if absent). The overnight book,
+whose ledger was never reset, carries explicit nulls and is unchanged.
