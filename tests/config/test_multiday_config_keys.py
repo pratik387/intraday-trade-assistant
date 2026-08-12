@@ -11,11 +11,29 @@ def _load():
 
 
 def test_each_multiday_setup_has_composite_weight():
+    """Equal-weight v1 for every ACTIVE setup; a disabled one may be zeroed.
+
+    The point of this assertion is to stop weights being quietly tuned into an
+    implicit alpha bet — composite ordering has no measured predictive power
+    (consensus test 2026-08-12: permutation p=0.69), so unequal weights would be
+    an unvalidated claim.
+
+    A setup that is switched OFF is a different case: `crash2d_revert_long` was
+    disabled 2026-08-12 (mean -0.885%, 95% CI [-1.758, -0.012], the only CI in
+    the book excluding zero) and its weight set to 0.0 so it also stops pulling
+    shared names in through consensus scoring. Zero-weight is therefore allowed
+    ONLY while disabled; re-enabling must restore 1.0.
+    """
     cfg = _load()
     for name in _MULTIDAY:
         block = cfg["setups"][name]
         assert isinstance(block["composite_weight"], (int, float))
-        assert float(block["composite_weight"]) == 1.0  # equal-weight v1
+        w = float(block["composite_weight"])
+        enabled = bool(block.get("enabled")) or bool(block.get("paper_enabled"))
+        if enabled:
+            assert w == 1.0, f"{name} is active but not equal-weight (w={w})"
+        else:
+            assert w in (0.0, 1.0), f"{name} disabled with unexpected weight {w}"
         # cap_score_clip is family-level only (multi_day_portfolio); the
         # composite selector reads it there, not per-setup. No dead per-setup key.
         assert "cap_score_clip" not in block

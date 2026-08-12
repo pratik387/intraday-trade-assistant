@@ -1014,7 +1014,7 @@
     },
     "crash2d_revert_long": {
       "enabled": false,
-      "paper_enabled": true,
+      "paper_enabled": false,
       "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF reversion, 2-day cumulative-return loser decile (formation horizon BETWEEN A2's 5d and the killed 1d). Stage-6 card PASSED (borderline, cleanest of batch): Disc PF 1.355 [BCa 1.12,1.61], OOS 1.17, HO 2026 1.37, Harvey-Liu adj-Sharpe 0.93 at M=72. 3/4 Disc regimes positive (FII-exit 0.85 weak). Brief: specs/2026-06-15-brief-range_exhaustion_revert_long.md (covers C5 KILL + C6). NB: same selection_mode as mtf_capitulation_revert_long (trailing_loser_decile) at lookback=2 vs 5 -> A2-adjacent (return-decile family), less mechanistically distinct than low52/zscore; cleanest numbers. Paper-batch with A2+C1+C4.",
       "mechanism_tags": [
         "capitulation_overshoot",
@@ -1035,7 +1035,7 @@
         "k": 2.0,
         "_comment": "PAPER A/B (2026-07-10 study, tools/sub9_research/multiday_target_exit_study.py): exit intraday when high touches fill*(1+k*sigma20) — beat hold-to-close in all 4 setups x 4 years at k=2.0 (sell the snapback climax, not the faded close). Checked every hold day incl. entry+exit days. exit_reason=target_touch rows in the tripwire ledger are the A/B surface vs kday_close_moc. Setups are paper-only; a live activation needs a limit/GTT implementation instead of the 15:28 touch check."
       },
-      "composite_weight": 1.0,
+      "composite_weight": 0.0,
       "_comment_composite_weight": "Equal-weight v1 (1/N). Promotion to IC-weighted gated on specs/2026-06-29-multiday-composite-selection-design.md section 6.1.",
       "adv_tier": 1,
       "adv_tier_count": 5,
@@ -1083,7 +1083,8 @@
         "pf_floor": 1.2,
         "sustained_weeks": 6,
         "state_file": "state/decay_tripwire_crash2d_revert_long.json"
-      }
+      },
+      "_status_2026_08_12": "DISABLED (paper) 2026-08-12. The ONLY setup in the multi-day book whose confidence interval excludes zero -- and it is negative: mean -0.885%/position, 95% CI [-1.758, -0.012], PF 0.59, t -1.98, n=76. It alone dragged the book from +0.121% to -0.164%; removing it swings the book -Rs 8,923 -> +Rs 70,406 and PF 0.98 -> 1.21. Its 22 sole-owner positions averaged -1.449%. composite_weight set to 0.0 as well so it also stops pulling shared names into the book via consensus scoring (32 shared positions averaged -0.528%). Its decay tripwire had been below floor since 2026-07-23 and would have auto-paused ~2026-09-03; disabling early is a PORTFOLIO decision, not a risk one -- this is a paper book, so there was no bleed to stop, but a setup with a wholly-negative CI does not belong in a book being sized for capital. Re-enable ONLY on a fresh pre-registered test, not on the same sample."
     }
   },
   "edge_integrity": {
@@ -1120,7 +1121,45 @@
     "_comment_caps": "Generous selection caps in paper (effectively 'take all'); ordering is still real. Tighten when a setup goes live.",
     "cap_score_clip": 3.0,
     "tiebreaker": "tshock",
-    "selection_log_path": "logs/multiday_selection.jsonl"
+    "selection_log_path": "logs/multiday_selection.jsonl",
+    "risk_budget": {
+      "_comment": "PHASE 1 of specs/2026-08-12-multiday-capital-management-and-selection-plan.md. Until 2026-08-12 this book had NO risk budget at all: take-all caps and a flat Rs1L margin per position, which measured 65-87% ANNUALISED volatility (daily book P&L SD Rs 33,035, worst day -Rs 60,452) against a 10-15% institutional norm. capital_inr and daily_vol_target_pct are OPERATOR CHOICES, not fitted values -- set daily_vol_target_pct from the drawdown you can tolerate, NEVER by maximising backtested P&L. book_position_sd_pct and mean_pairwise_corr are MEASURED (23 entry days, 121 deduped positions) and should be re-measured, not guessed, as the sample grows.",
+      "capital_inr": 500000.0,
+      "_comment_capital": "Matches capital_management.paper_initial_capital so paper and the risk budget share one denominator. At this capital the book must size to ~14% of its pre-2026-08-12 notional to hit a 15% annual vol target -- see the spec's capital table (Rs 34.8 lakh would be needed to run the OLD sizing at that target).",
+      "daily_vol_target_pct": 0.95,
+      "_comment_vol_target": "0.95%/day ~= 15% annualised (x sqrt(250)), the institutional systematic norm. CHOSEN, not derived. Raising this scales every position linearly.",
+      "max_daily_loss_pct": 3.0,
+      "_comment_max_daily_loss": "Hard halt on NEW entries for the session. ~3.2 sigma against the 0.95% target; the worst observed day was -Rs 60,452 = -12% of Rs 5L at the OLD sizing, which is exactly what this budget exists to prevent.",
+      "book_position_sd_pct": 3.87,
+      "_comment_position_sd": "MEASURED per-position daily-return SD across 121 deduped book positions (worst single position -10.20%). Used as the sigma fallback when a candidate has no sigma20_pct.",
+      "mean_pairwise_corr": 0.227,
+      "_comment_corr": "MEASURED mean pairwise daily-P&L correlation across the 4 setups. Drives the sqrt(n(1+(n-1)rho)) breadth term: at this rho, 8 positions carry 1.61x the risk of 8 independent ones. Within the capitulation cluster it is far higher (crash2d x zscore +0.68), which is why cluster caps exist.",
+      "min_notional_inr": 25000.0,
+      "_comment_min_notional": "Below this a position is skipped rather than shrunk: Zerodha's Rs 20/order brokerage cap stops helping under ~Rs 67k notional while delivery STT (0.2% round-trip) stays proportional, so tiny positions pay a worse effective cost for the same edge.",
+      "max_notional_inr": 150000.0,
+      "_comment_max_notional": "Concentration cap. Vol targeting alone would hand a very low-vol name an unbounded position."
+    },
+    "clusters": {
+      "_comment": "PHASE 3. Per-setup slot pools would let the book hold the SAME capitulation bet up to 4x, precisely when the setups co-fire. MEASURED correlations: crash2d x zscore +0.68, crash2d x mtf +0.50, mtf x zscore +0.38; low52 vs all of them -0.19..+0.08. So three of the four are one sleeve and low52 is the genuine diversifier. max_concurrent per cluster is CHOSEN from measured demand (~13 concurrent typical, p90 8 entries/day) haircut for correlation.",
+      "capitulation": {
+        "setups": [
+          "crash2d_revert_long",
+          "zscore_oversold_revert_long",
+          "mtf_capitulation_revert_long"
+        ],
+        "max_concurrent": 6,
+        "max_new_per_day": 3,
+        "mean_pairwise_corr": 0.52
+      },
+      "low52": {
+        "setups": [
+          "low52_capitulation_revert_long"
+        ],
+        "max_concurrent": 4,
+        "max_new_per_day": 2,
+        "mean_pairwise_corr": 0.0
+      }
+    }
   },
   "filters": {
     "adx": {

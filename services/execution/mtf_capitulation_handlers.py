@@ -50,6 +50,7 @@ from services.cross_sectional_ranker import CrossSectionalRanker
 from services.daily_panel_provider import make_provider
 from services.execution.overnight_handlers import _next_trading_day
 from services.mtf_universe import MtfUniverse
+from services.risk.multiday_sizing import per_position_risk_inr, size_position
 from services.state.position_persistence import PositionPersistence
 
 # Infra tuning for the daily-history prewarm (NOT trading thresholds). The Upstox
@@ -548,6 +549,29 @@ def _warn_mtf_delisted(setups, persistences, summary) -> None:
         logger.warning("mtf_capitulation: MTF-delisting check failed: %s", e)
 
 
+def _cluster_for(fam: dict, setup_name: str):
+    """(cluster_name, cluster_cfg) owning `setup_name`, or (setup_name, None).
+
+    Clusters exist because per-setup slot pools understate risk for this book:
+    crash2d x zscore is +0.68, so three of the four setups are ONE bet and would
+    otherwise each get their own concurrency budget. A setup not listed in any
+    cluster falls back to the family-level cap (returns None), which fails OPEN
+    rather than blocking entries on a config omission.
+    """
+    clusters = (fam or {}).get("clusters") or {}
+    for cl_name, cl in clusters.items():
+        if cl_name.startswith("_") or not isinstance(cl, dict):
+            continue
+        if setup_name in (cl.get("setups") or []):
+            return cl_name, cl
+    return setup_name, None
+
+
+def _cluster_open_count(cl_cfg: dict, held_by_setup: dict) -> int:
+    """Open positions across every setup in the cluster."""
+    return sum(int(held_by_setup.get(s, 0)) for s in (cl_cfg.get("setups") or []))
+
+
 def _held_snapshots(setups, persistences):
     """Single snapshot read per setup → (held bare-symbol set, total open count).
 
@@ -634,6 +658,10 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
 
     active_by_name = dict(active)
     entry_date = _next_trading_day(today)
+    # Per-setup open counts, for the cluster cap. Same snapshot source as
+    # _held_snapshots (which returns only the union) — we need it split by setup.
+    held_by_setup = {name: len(persistences[name].load_snapshot()) for name, _ in active}
+    cluster_new_today: dict = {}
     for c in chosen:
         owner = c["owner"]
         raw = active_by_name[owner]
@@ -648,11 +676,65 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
         else:
             summary["rejected_count"] += 1
             continue
-        margin_per_slot = float(raw["capital_allocation"]["margin_per_slot_inr"])
-        qty = int((margin_per_slot * leverage) // float(c["close"]))
+        # --- PHASE 3: cluster cap -------------------------------------------
+        # Per-setup slot pools would let the book hold the same capitulation bet
+        # up to 4x, exactly when the setups co-fire (crash2d x zscore +0.68).
+        # Cap by CLUSTER instead. Owner decides the cluster; a name pulled in by
+        # several setups still consumes only its owner's cluster budget, which is
+        # correct because the dedupe means it is one book position.
+        cl_name, cl_cfg = _cluster_for(fam, owner)
+        if cl_cfg is not None:
+            open_in_cl = _cluster_open_count(cl_cfg, held_by_setup)
+            new_in_cl = cluster_new_today.get(cl_name, 0)
+            if open_in_cl + new_in_cl >= int(cl_cfg["max_concurrent"]):
+                logger.info("mtf_capitulation: cluster %s at max_concurrent=%d; skipping %s",
+                            cl_name, int(cl_cfg["max_concurrent"]), symbol)
+                summary["skipped_count"] += 1
+                continue
+            if new_in_cl >= int(cl_cfg["max_new_per_day"]):
+                logger.info("mtf_capitulation: cluster %s at max_new_per_day=%d; skipping %s",
+                            cl_name, int(cl_cfg["max_new_per_day"]), symbol)
+                summary["skipped_count"] += 1
+                continue
+
+        # --- PHASE 2: volatility-targeted, correlation-aware sizing ---------
+        # Was: qty = (margin_per_slot * leverage) // close -- flat rupee notional
+        # for every name regardless of its volatility or how many correlated
+        # positions the book already held. That measured 65-87% annualised book
+        # vol. Now each position contributes an equal RISK share of an explicit
+        # book budget, and a high-vol name gets a proportionally smaller notional.
+        rb = fam["risk_budget"]
+        cl_rho = float(cl_cfg["mean_pairwise_corr"]) if cl_cfg is not None \
+            else float(rb["mean_pairwise_corr"])
+        n_planned = int(cl_cfg["max_concurrent"]) if cl_cfg is not None \
+            else int(fam["max_concurrent"])
+        risk_inr = per_position_risk_inr(
+            capital_inr=float(rb["capital_inr"]),
+            daily_vol_target_pct=float(rb["daily_vol_target_pct"]),
+            n_planned=n_planned,
+            mean_pairwise_corr=cl_rho,
+        )
+        sized = size_position(
+            risk_budget_inr=risk_inr,
+            sigma_pct=c.get("sigma20_pct"),
+            close=float(c["close"]),
+            leverage=leverage,
+            min_notional_inr=float(rb["min_notional_inr"]),
+            max_notional_inr=float(rb["max_notional_inr"]),
+            fallback_sigma_pct=float(rb["book_position_sd_pct"]),
+        )
+        qty = sized.qty
+        logger.info(
+            "MD_SIZING | %s | owner=%s cluster=%s rho=%.3f n_planned=%d risk=Rs%.0f "
+            "sigma=%s notional=Rs%.0f margin=Rs%.0f qty=%d reason=%s",
+            symbol, owner, cl_name, cl_rho, n_planned, risk_inr,
+            c.get("sigma20_pct"), sized.notional_inr, sized.margin_inr, qty, sized.reason,
+        )
         if qty <= 0:
             summary["rejected_count"] += 1
             continue
+        if cl_cfg is not None:
+            cluster_new_today[cl_name] = cluster_new_today.get(cl_name, 0) + 1
         trade_id = f"{owner}_{today.isoformat()}_{bare}"
         try:
             order_id = _place_amo_buy(broker, symbol, qty, product, trade_id)
