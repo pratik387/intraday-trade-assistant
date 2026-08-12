@@ -3,7 +3,8 @@
 **Date:** 2026-08-12
 **Scope:** `horizon: multi_day` book — `crash2d_revert_long`, `zscore_oversold_revert_long`,
 `low52_capitulation_revert_long`, `mtf_capitulation_revert_long`. Currently PAPER only.
-**Status:** PLAN. Nothing implemented. Every number below is labelled DERIVED (measured),
+**Status:** Phases 0-4 + 6 IMPLEMENTED and deployed 2026-08-12. Phase 5 TESTED AND REJECTED.
+See S11 for outcomes. Original plan text below is left intact as the pre-registration. Every number below is labelled DERIVED (measured),
 CHOSEN (a judgement call, not fitted), or UNVALIDATED (needs its own test).
 
 ---
@@ -252,3 +253,80 @@ and you would be choosing a policy blind at the moment it starts costing money.
 
 Both point the same way here: we currently size in rupees with no vol adjustment, on an edge
 estimate whose confidence interval crosses zero.
+
+
+---
+
+## 11. OUTCOMES (2026-08-12, after implementation)
+
+| phase | status | commit |
+|---|---|---|
+| 0 crash2d disabled | DONE | `aaa7a86` |
+| 1 risk budget (Rs 10L, 0.95%/day) | DONE | `aaa7a86` / `2c0e76a` |
+| 2 vol-targeted sizing | DONE | `aaa7a86` |
+| 3 cluster caps | DONE | `aaa7a86` |
+| 4 unbiased-hash ranking | DONE | `8680a18` |
+| 5 re-entry cooldown | **REJECTED** — see below | — |
+| 6 shadow harness | DONE | `8a4e657` |
+
+### 11a. Replay of the paper history under the new rules
+
+| | n | net | mean/position | PF |
+|---|---|---|---|---|
+| actual (flat Rs 1L, take-all) | 121 | −Rs 8,923 | −0.164% | 0.98 |
+| new rules | 59 | +Rs 62,589 | +0.783% | 1.92 |
+
+Risk moved as designed: daily P&L SD **Rs 33,035 → Rs 8,316** (0.83% of Rs 10L
+against a 0.95% target); worst day **−Rs 60,452 → −Rs 11,271** (−1.13% of capital);
+median notional Rs 282,297 → Rs 148,867.
+
+Skips: cluster_concurrent 25, crash2d_disabled 22, cluster_new_per_day 15. Zero
+`below_min_notional` — the Rs 25k floor did not cut the illiquid tail on this
+sample, contrary to the concern raised in S3.
+
+⚠ **The P&L improvement is in-sample and proves nothing** — every parameter
+(cluster membership, rho, caps, crash2d's removal) was chosen from this data. The
+RISK numbers are real, because vol targeting is an identity rather than a
+forecast.
+
+### 11b. Ordering: nothing beats random (Phase 6 first run)
+
+166 of 221 candidates resolved, 32 sessions, 6 slots, 2,000 draws:
+
+```
+candidate pool    mean +0.128%          <- take-all ceiling
+RANDOM baseline   mean +0.231%   90% band [+0.083, +0.383]
+
+random      +0.360%  pctile 92.0  indistinguishable
+composite   +0.235%  pctile 52.5  indistinguishable
+tshock      +0.177%  pctile 28.2  indistinguishable
+cap_score   +0.184%  pctile 30.1  indistinguishable
+```
+
+`composite` lands at the 52nd percentile — dead centre — independently confirming
+the permutation p=0.69 consensus result by a different method. **Three orderings
+have now been tested (conviction, composite, tshock/cap_score) and none beats
+chance.** The unbiased hash stands.
+
+The `random` row at the 92nd percentile is NOT evidence the hash is good: it is
+one seed drawn from the distribution the baseline describes, and sits inside the
+band by construction.
+
+### 11c. Phase 5 REJECTED
+
+```
+cooldown_5   +0.229%  pctile 50.0  indistinguishable
+cooldown_10  +0.053%  pctile  2.3  WORSE
+```
+
+The re-entry cooldown does not survive. The −0.921% vs +0.143% repeat-name
+finding was tail noise across 16 symbols — which is exactly why it was
+pre-registered rather than shipped. **Do not revive it without a new mechanism
+and a fresh sample.**
+
+### 11d. What remains true
+
+The gate in S1 is UNMET. Removing crash2d moves the book from negative to
+**neutral**, not to positive: the surviving three all have confidence intervals
+crossing zero, and monthly stability is poor (July +0.587%, August −0.566%). The
+risk framework now sizes the book sanely; it does not create an edge.
