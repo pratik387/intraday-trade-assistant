@@ -8,7 +8,7 @@ def _cand(sym, cap_score, tshock=2.0, close=100.0, trail_ret=-0.1):
 
 def _sel(clip=3.0):
     return MultiDayCompositeSelector({"max_new_per_day": 10, "max_concurrent": 50,
-                                      "cap_score_clip": clip, "tiebreaker": "tshock"})
+                                      "cap_score_clip": clip, "tiebreaker": "tshock", "slot_ranking_mode": "composite"})
 
 
 def test_consensus_sum_outranks_single_setup():

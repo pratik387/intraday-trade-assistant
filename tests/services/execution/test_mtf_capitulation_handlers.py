@@ -43,6 +43,10 @@ def _two_setup_config(tmp_path):
         "setups": {"A2": _block("a2_slots"), "C1": _block("c1_slots")},
         "multi_day_portfolio": {"max_new_per_day": 100, "max_concurrent": 200,
                                 "cap_score_clip": 3.0, "tiebreaker": "tshock",
+                                # composite ordering kept in fixtures so existing
+                                # assertions about WHICH names are taken stay valid;
+                                # production uses unbiased_hash (see Phase 4).
+                                "slot_ranking_mode": "composite",
                                 "selection_log_path": str(tmp_path / "sel.jsonl"),
                                 # Vol-targeted sizing (2026-08-12). Deliberately no
                                 # defaults in prod, so fixtures must supply these.
@@ -179,6 +183,10 @@ def _cfg(tmp_path):
         },
         "multi_day_portfolio": {"max_new_per_day": 100, "max_concurrent": 200,
                                 "cap_score_clip": 3.0, "tiebreaker": "tshock",
+                                # composite ordering kept in fixtures so existing
+                                # assertions about WHICH names are taken stay valid;
+                                # production uses unbiased_hash (see Phase 4).
+                                "slot_ranking_mode": "composite",
                                 "selection_log_path": str(tmp_path / "sel.jsonl"),
                                 # Vol-targeted sizing (2026-08-12). Deliberately no
                                 # defaults in prod, so fixtures must supply these.

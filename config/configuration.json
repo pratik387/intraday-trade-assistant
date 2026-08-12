@@ -1159,7 +1159,9 @@
         "max_new_per_day": 2,
         "mean_pairwise_corr": 0.0
       }
-    }
+    },
+    "slot_ranking_mode": "unbiased_hash",
+    "_comment_slot_ranking_mode": "PHASE 4, 2026-08-12. 'composite' ordering exists to promote CONSENSUS names (it sums weight*cap_score across contributing setups), but consensus DOES NOT PREDICT: measured on 121 deduped book positions, 1 contributor -0.049%, 2 contributors -1.033%, 3 contributors +1.204% (n=8); pooled consensus -0.448% vs solo -0.049%, t=-0.52, permutation p=0.69. Non-monotonic and statistically nothing. Same failure shape as the overnight book's 'conviction' ranker, which was validated on Disc/OOS/Holdout then measured ANTI-predictive forward at p=0.0001 and had to be replaced by exactly this hash ordering. Ordering became LOAD-BEARING on 2026-08-12: with cluster caps, 40 of 121 historical positions are dropped by a cap, so the order now decides which trades the book gets -- previously caps never bound and ordering was inert. composite is still computed and logged to selection_log_path so it can be scored against this random baseline; it just decides nothing. Switch back only if it beats random out-of-sample on pre-registered terms."
   },
   "filters": {
     "adx": {

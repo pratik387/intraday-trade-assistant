@@ -37,6 +37,50 @@ class MultiDayCompositeSelector:
         self.tiebreaker = str(config["tiebreaker"])
         if self.tiebreaker != "tshock":
             raise ValueError(f"unsupported tiebreaker {self.tiebreaker!r} (v1: 'tshock')")
+        # No silent default: an unknown/missing mode must fail at construction.
+        self.slot_ranking_mode = str(config["slot_ranking_mode"])
+        if self.slot_ranking_mode not in ("unbiased_hash", "composite"):
+            raise ValueError(
+                f"unknown slot_ranking_mode {self.slot_ranking_mode!r} "
+                "(expected 'unbiased_hash' or 'composite')"
+            )
+
+    def _rank(self, rows, session_date):
+        """Order the deduped candidates for slot allocation.
+
+        mode == 'unbiased_hash' (production since 2026-08-12):
+            Deterministic date-salted hash — NO view on which candidate is
+            better. `composite` is still computed and returned so it can be
+            scored against this baseline, it just does not decide anything.
+
+            Why: composite exists to promote CONSENSUS names (it sums
+            weight * cap_score across contributing setups). Measured on 121
+            deduped book positions, consensus does not predict — 1 contributor
+            -0.049%, 2 contributors -1.033%, 3 contributors +1.204% (n=8);
+            pooled consensus -0.448% vs solo -0.049%, t=-0.52, permutation
+            p=0.69. Non-monotonic and statistically nothing.
+
+            This is the same failure shape as the overnight book's 'conviction'
+            ranker, which was validated on Disc/OOS/Holdout and then measured
+            ANTI-predictive forward at p=0.0001 (0th percentile of 3,000 draws)
+            and had to be replaced by exactly this hash ordering.
+
+            Ordering became load-bearing on 2026-08-12: with cluster caps in
+            place, 40 of 121 historical positions get dropped by a cap, so the
+            order now decides which trades the book actually gets. Previously
+            caps never bound and the ordering was inert.
+
+        mode == 'composite': the legacy consensus ordering, kept for research
+            comparison against the random baseline.
+        """
+        if self.slot_ranking_mode == "composite":
+            return sorted(rows, key=lambda a: (-a["composite"], -a["tshock"], a["bare"]))
+        import hashlib
+        salt = session_date.isoformat() if hasattr(session_date, "isoformat") else str(session_date)
+        return sorted(
+            rows,
+            key=lambda a: hashlib.sha1(("%s|%s" % (salt, a["bare"])).encode("utf-8")).hexdigest(),
+        )
 
     def select(
         self,
@@ -44,8 +88,14 @@ class MultiDayCompositeSelector:
         held_symbols: Set[str],
         weights: Dict[str, float],
         limit: int,
+        session_date=None,
     ) -> List[Dict[str, Any]]:
-        """Return the deduped, composite-ranked basket (≤ `limit` rows).
+        """Return the deduped, RANKED basket (≤ `limit` rows).
+
+        `session_date` salts the unbiased-hash order: reproducible within a
+        session (idempotent re-runs pick the same names) and reshuffled across
+        days (no symbol is permanently favoured). Required when
+        slot_ranking_mode == 'unbiased_hash'.
 
         Args:
             baskets: {setup_name: [ranker cand dict, ...]} — each cand carries
@@ -88,10 +138,9 @@ class MultiDayCompositeSelector:
                     a["trail_ret"] = float(cand["trail_ret"])
                     a["sigma20_pct"] = cand.get("sigma20_pct")
 
-        rows = sorted(
-            agg.values(),
-            key=lambda a: (-a["composite"], -a["tshock"], a["bare"]),
-        )
+        if self.slot_ranking_mode == "unbiased_hash" and session_date is None:
+            raise ValueError("select(session_date=...) is required for unbiased_hash ordering")
+        rows = self._rank(agg.values(), session_date)
         capped = rows[: max(0, int(limit))]
         out: List[Dict[str, Any]] = []
         for a in capped:

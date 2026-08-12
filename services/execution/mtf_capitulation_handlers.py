@@ -651,7 +651,8 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
     held, total_held = _held_snapshots(setups, persistences)
     limit = min(int(fam["max_new_per_day"]),
                 max(0, int(fam["max_concurrent"]) - total_held))
-    chosen = selector.select(baskets, held_symbols=held, weights=weights, limit=limit)
+    chosen = selector.select(baskets, held_symbols=held, weights=weights, limit=limit,
+                             session_date=today)
     _log_selection_diagnostics(baskets, chosen, today, fam["selection_log_path"])
     if not chosen:
         return
