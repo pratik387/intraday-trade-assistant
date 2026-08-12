@@ -766,7 +766,11 @@
         "pf_floor": 1.2,
         "sustained_weeks": 6,
         "_state_file_note": "LIVE ledger (real Rs10k fills only). The legacy state/decay_tripwire_close_dn_overnight_long.json is kept as the PAPER ledger (idealized Rs1L), continued by the slippage/reconstruction script.",
-        "state_file": "state/decay_tripwire_close_dn_overnight_long_live.json"
+        "state_file": "state/decay_tripwire_close_dn_overnight_long_live.json",
+          "_archive_note": "No regime boundary for this book — its ledger was never reset.",
+          "archive_entries_before": null,
+          "archive_label": null,
+          "archive_regime": null
       }
     },
     "pead_reaction_drift": {
@@ -863,7 +867,11 @@
         "window_trades": 30,
         "pf_floor": 1.2,
         "sustained_weeks": 6,
-        "state_file": "state/decay_tripwire_mtf_capitulation_revert_long.json"
+        "state_file": "state/decay_tripwire_mtf_capitulation_revert_long.json",
+          "_archive_note": "Positions ENTERED before archive_entries_before were sized/selected by the pre-2026-08-12 ruleset (flat Rs1L margin, take-all caps, composite ordering, crash2d enabled). Their settles are appended to the archive ledger, not this one, so the rolling PF measures a single regime. Routing is on ENTRY date, not settle date. Boundary is 2026-08-14 because entry_date is the FILL date (T+1 of the plan): the 2026-08-12 16:08 cron still ran the old code (deploy landed 19:06) and its 15 positions fill on 2026-08-13, so the first genuinely new-regime fills come from the 2026-08-13 16:08 plan.",
+          "archive_entries_before": "2026-08-14",
+          "archive_label": "pre-sizing-2026-08-12",
+          "archive_regime": "pre_sizing"
       }
     },
     "low52_capitulation_revert_long": {
@@ -936,7 +944,11 @@
         "window_trades": 30,
         "pf_floor": 1.2,
         "sustained_weeks": 6,
-        "state_file": "state/decay_tripwire_low52_capitulation_revert_long.json"
+        "state_file": "state/decay_tripwire_low52_capitulation_revert_long.json",
+          "_archive_note": "Positions ENTERED before archive_entries_before were sized/selected by the pre-2026-08-12 ruleset (flat Rs1L margin, take-all caps, composite ordering, crash2d enabled). Their settles are appended to the archive ledger, not this one, so the rolling PF measures a single regime. Routing is on ENTRY date, not settle date. Boundary is 2026-08-14 because entry_date is the FILL date (T+1 of the plan): the 2026-08-12 16:08 cron still ran the old code (deploy landed 19:06) and its 15 positions fill on 2026-08-13, so the first genuinely new-regime fills come from the 2026-08-13 16:08 plan.",
+          "archive_entries_before": "2026-08-14",
+          "archive_label": "pre-sizing-2026-08-12",
+          "archive_regime": "pre_sizing"
       }
     },
     "zscore_oversold_revert_long": {
@@ -1009,7 +1021,11 @@
         "window_trades": 30,
         "pf_floor": 1.2,
         "sustained_weeks": 6,
-        "state_file": "state/decay_tripwire_zscore_oversold_revert_long.json"
+        "state_file": "state/decay_tripwire_zscore_oversold_revert_long.json",
+          "_archive_note": "Positions ENTERED before archive_entries_before were sized/selected by the pre-2026-08-12 ruleset (flat Rs1L margin, take-all caps, composite ordering, crash2d enabled). Their settles are appended to the archive ledger, not this one, so the rolling PF measures a single regime. Routing is on ENTRY date, not settle date. Boundary is 2026-08-14 because entry_date is the FILL date (T+1 of the plan): the 2026-08-12 16:08 cron still ran the old code (deploy landed 19:06) and its 15 positions fill on 2026-08-13, so the first genuinely new-regime fills come from the 2026-08-13 16:08 plan.",
+          "archive_entries_before": "2026-08-14",
+          "archive_label": "pre-sizing-2026-08-12",
+          "archive_regime": "pre_sizing"
       }
     },
     "crash2d_revert_long": {
@@ -1082,7 +1098,11 @@
         "window_trades": 30,
         "pf_floor": 1.2,
         "sustained_weeks": 6,
-        "state_file": "state/decay_tripwire_crash2d_revert_long.json"
+        "state_file": "state/decay_tripwire_crash2d_revert_long.json",
+          "_archive_note": "Positions ENTERED before archive_entries_before were sized/selected by the pre-2026-08-12 ruleset (flat Rs1L margin, take-all caps, composite ordering, crash2d enabled). Their settles are appended to the archive ledger, not this one, so the rolling PF measures a single regime. Routing is on ENTRY date, not settle date. Boundary is 2026-08-14 because entry_date is the FILL date (T+1 of the plan): the 2026-08-12 16:08 cron still ran the old code (deploy landed 19:06) and its 15 positions fill on 2026-08-13, so the first genuinely new-regime fills come from the 2026-08-13 16:08 plan.",
+          "archive_entries_before": "2026-08-14",
+          "archive_label": "pre-sizing-2026-08-12",
+          "archive_regime": "pre_sizing"
       },
       "_status_2026_08_12": "DISABLED (paper) 2026-08-12. The ONLY setup in the multi-day book whose confidence interval excludes zero -- and it is negative: mean -0.885%/position, 95% CI [-1.758, -0.012], PF 0.59, t -1.98, n=76. It alone dragged the book from +0.121% to -0.164%; removing it swings the book -Rs 8,923 -> +Rs 70,406 and PF 0.98 -> 1.21. Its 22 sole-owner positions averaged -1.449%. composite_weight set to 0.0 as well so it also stops pulling shared names into the book via consensus scoring (32 shared positions averaged -0.528%). Its decay tripwire had been below floor since 2026-07-23 and would have auto-paused ~2026-09-03; disabling early is a PORTFOLIO decision, not a risk one -- this is a paper book, so there was no bleed to stop, but a setup with a wholly-negative CI does not belong in a book being sized for capital. Re-enable ONLY on a fresh pre-registered test, not on the same sample."
     }

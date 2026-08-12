@@ -476,6 +476,9 @@ def run_entry(
             window_trades=int(tw_cfg["window_trades"]),
             pf_floor=float(tw_cfg["pf_floor"]),
             sustained_weeks=int(tw_cfg["sustained_weeks"]),
+            archive_entries_before=tw_cfg["archive_entries_before"],
+            archive_label=tw_cfg["archive_label"],
+            archive_regime=tw_cfg["archive_regime"],
         )
         if tw.is_paused():
             logger.warning(
@@ -1461,6 +1464,9 @@ def run_verify_exit(
                 window_trades=int(tw_cfg["window_trades"]),
                 pf_floor=float(tw_cfg["pf_floor"]),
                 sustained_weeks=int(tw_cfg["sustained_weeks"]),
+                archive_entries_before=tw_cfg["archive_entries_before"],
+                archive_label=tw_cfg["archive_label"],
+                archive_regime=tw_cfg["archive_regime"],
             )
             # Only attach the cost breakdown when we have a real settled net PnL;
             # otherwise leave fees/gross unset (legacy net-only record) rather than

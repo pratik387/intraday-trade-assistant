@@ -479,7 +479,7 @@ def test_exit_feeds_all_contributors_tripwires(monkeypatch, tmp_path):
     # give both setups a decay tripwire
     for n in ("A2", "C1"):
         cfg["setups"][n]["decay_tripwire"] = {
-            "window_trades": 30, "pf_floor": 1.2, "sustained_weeks": 6,
+            "window_trades": 30, "pf_floor": 1.2, "sustained_weeks": 6, "archive_entries_before": None, "archive_label": None, "archive_regime": None,
             "state_file": str(tmp_path / f"tw_{n}.json")}
     # Seed an owned-by-A2 position that exits today, tagged contributors=[A2,C1].
     a2_store = PositionPersistence(mh._position_state_dir(cfg["setups"]["A2"]))
@@ -498,16 +498,16 @@ def test_exit_feeds_all_contributors_tripwires(monkeypatch, tmp_path):
     # both A2 and C1 tripwires recorded one trade
     for n in ("A2", "C1"):
         tw = DecayTripwire(setup_name=n, state_path=tmp_path / f"tw_{n}.json",
-                           window_trades=30, pf_floor=1.2, sustained_weeks=6)
+                           window_trades=30, pf_floor=1.2, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
         assert len(tw._trades) == 1  # noqa: SLF001
         assert tw._trades[0].net_pnl_inr > 0  # +10% gross, profitable
     # Attribution flag: the position is OWNED by A2's store — A2's row is the
     # real book trade (attributed False), C1's row is a MIRROR (True) so pooled
     # views can exclude it (one position counts once).
     tw_a2 = DecayTripwire(setup_name="A2", state_path=tmp_path / "tw_A2.json",
-                          window_trades=30, pf_floor=1.2, sustained_weeks=6)
+                          window_trades=30, pf_floor=1.2, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
     tw_c1 = DecayTripwire(setup_name="C1", state_path=tmp_path / "tw_C1.json",
-                          window_trades=30, pf_floor=1.2, sustained_weeks=6)
+                          window_trades=30, pf_floor=1.2, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
     assert tw_a2._trades[0].attributed is False  # noqa: SLF001
     assert tw_c1._trades[0].attributed is True   # noqa: SLF001
 

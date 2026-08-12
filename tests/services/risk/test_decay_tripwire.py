@@ -19,7 +19,7 @@ def _trade(pnl: float, days_offset: int = 0, base: str = "2026-01-01T09:30:00"):
 
 def test_init_with_no_state_starts_empty(tmp_path):
     tw = DecayTripwire("test", _pwd(tmp_path),
-                        window_trades=30, pf_floor=1.20, sustained_weeks=6)
+                        window_trades=30, pf_floor=1.20, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
     assert not tw.is_paused()
     s = tw.state_summary()
     assert s["trade_count"] == 0
@@ -28,7 +28,7 @@ def test_init_with_no_state_starts_empty(tmp_path):
 
 def test_records_trades(tmp_path):
     tw = DecayTripwire("test", _pwd(tmp_path),
-                        window_trades=30, pf_floor=1.20, sustained_weeks=6)
+                        window_trades=30, pf_floor=1.20, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
     base = datetime.fromisoformat("2026-01-01T09:30:00")
     for i in range(10):
         tw.record_trade(net_pnl_inr=100.0, ts_iso=(base + timedelta(days=i)).isoformat())
@@ -40,7 +40,7 @@ def test_records_trades(tmp_path):
 
 def test_does_not_pause_when_pf_above_floor(tmp_path):
     tw = DecayTripwire("test", _pwd(tmp_path),
-                        window_trades=10, pf_floor=1.20, sustained_weeks=6)
+                        window_trades=10, pf_floor=1.20, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
     base = datetime.fromisoformat("2026-01-01T09:30:00")
     # 30 trades, mostly winners: 25 wins of 200, 5 losses of 100 → PF = 5000 / 500 = 10
     for i in range(25):
@@ -56,7 +56,7 @@ def test_does_not_pause_when_pf_above_floor(tmp_path):
 def test_pauses_when_pf_below_floor_for_sustained_period(tmp_path):
     """30 losing trades over >6 weeks → tripwire pauses."""
     tw = DecayTripwire("test", _pwd(tmp_path),
-                        window_trades=10, pf_floor=1.20, sustained_weeks=4)
+                        window_trades=10, pf_floor=1.20, sustained_weeks=4, archive_entries_before=None, archive_label=None, archive_regime=None)
     base = datetime.fromisoformat("2026-01-01T09:30:00")
     # First 10 trades: PF = 1.0 (10 wins of 100, 10 losses of 100 spread)
     # Actually: to ensure PF < 1.2, do mostly losses
@@ -85,7 +85,7 @@ def test_pauses_when_pf_below_floor_for_sustained_period(tmp_path):
 def test_unpauses_after_pf_recovers(tmp_path):
     """If PF recovers above floor BEFORE sustained_weeks elapses, breach watch clears."""
     tw = DecayTripwire("test", _pwd(tmp_path),
-                        window_trades=10, pf_floor=1.20, sustained_weeks=6)
+                        window_trades=10, pf_floor=1.20, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
     base = datetime.fromisoformat("2026-01-01T09:30:00")
     # 10 trades at PF = 1.0 (5 wins of 100, 5 losses of 100)
     for i in range(5):
@@ -108,34 +108,34 @@ def test_state_persists_across_instances(tmp_path):
     """Write state in one instance, read in another."""
     path = _pwd(tmp_path)
     tw1 = DecayTripwire("test", path,
-                         window_trades=30, pf_floor=1.20, sustained_weeks=6)
+                         window_trades=30, pf_floor=1.20, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
     tw1.record_trade(100.0, "2026-01-01T09:30:00")
     tw1.record_trade(200.0, "2026-01-02T09:30:00")
     # New instance loads same state
     tw2 = DecayTripwire("test", path,
-                         window_trades=30, pf_floor=1.20, sustained_weeks=6)
+                         window_trades=30, pf_floor=1.20, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
     assert tw2.state_summary()["trade_count"] == 2
 
 
 def test_state_setup_name_mismatch_raises(tmp_path):
     path = _pwd(tmp_path)
-    tw = DecayTripwire("setupA", path, 30, 1.20, 6)
+    tw = DecayTripwire("setupA", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     tw.record_trade(100.0, "2026-01-01T09:30:00")
     with pytest.raises(ValueError, match="state file is for setup"):
-        DecayTripwire("setupB", path, 30, 1.20, 6)
+        DecayTripwire("setupB", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
 
 
 def test_corrupt_state_raises(tmp_path):
     path = _pwd(tmp_path)
     path.write_text("not valid json {{{", encoding="utf-8")
     with pytest.raises(ValueError, match="corrupt"):
-        DecayTripwire("test", path, 30, 1.20, 6)
+        DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
 
 
 def test_reset_clears_pause_state(tmp_path):
     """reset() should clear paused_since AND first_below_floor_ts but keep trade history."""
     tw = DecayTripwire("test", _pwd(tmp_path),
-                        window_trades=10, pf_floor=1.20, sustained_weeks=4)
+                        window_trades=10, pf_floor=1.20, sustained_weeks=4, archive_entries_before=None, archive_label=None, archive_regime=None)
     base = datetime.fromisoformat("2026-01-01T09:30:00")
     # Force a pause
     for i in range(10):
@@ -156,7 +156,7 @@ def test_reset_clears_pause_state(tmp_path):
 def test_records_optional_fees_and_gross(tmp_path):
     """record_trade can carry fees_inr + gross_pnl_inr; persisted and reloaded."""
     path = _pwd(tmp_path)
-    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw = DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     tw.record_trade(net_pnl_inr=850.0, ts_iso="2026-01-01T09:30:00",
                     fees_inr=120.0, gross_pnl_inr=970.0)
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -165,7 +165,7 @@ def test_records_optional_fees_and_gross(tmp_path):
     assert rec["fees_inr"] == 120.0
     assert rec["gross_pnl_inr"] == 970.0
     # Reload preserves the fields
-    tw2 = DecayTripwire("test", path, 30, 1.20, 6)
+    tw2 = DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     assert tw2.state_summary()["trade_count"] == 1
 
 
@@ -176,7 +176,7 @@ def test_legacy_records_without_fees_load(tmp_path):
         "setup_name": "test",
         "trades": [{"net_pnl_inr": 100.0, "ts_iso": "2026-01-01T09:30:00"}],
     }), encoding="utf-8")
-    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw = DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     assert tw.state_summary()["trade_count"] == 1
     # Appending a fee-bearing trade alongside the legacy one round-trips cleanly
     tw.record_trade(net_pnl_inr=50.0, ts_iso="2026-01-02T09:30:00", fees_inr=10.0)
@@ -189,7 +189,7 @@ def test_records_optional_trade_detail(tmp_path):
     """record_trade can carry per-trade detail (symbol/entry/exit/reason/qty) for
     the dashboard trades tab; persisted, reloaded, and ignored by the PF gate."""
     path = _pwd(tmp_path)
-    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw = DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     tw.record_trade(
         net_pnl_inr=850.0, ts_iso="2026-01-01T09:30:00",
         fees_inr=120.0, gross_pnl_inr=970.0,
@@ -209,7 +209,7 @@ def test_records_optional_trade_detail(tmp_path):
 def test_records_idealized_entry_exit(tmp_path):
     """record_trade can carry idealized_entry/idealized_exit; persisted + reloaded."""
     path = _pwd(tmp_path)
-    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw = DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     tw.record_trade(
         net_pnl_inr=850.0, ts_iso="2026-01-01T09:30:00",
         symbol="TATAMOTORS", entry_price=650.5, exit_price=660.0,
@@ -219,14 +219,14 @@ def test_records_idealized_entry_exit(tmp_path):
     assert rec["idealized_entry"] == 649.0
     assert rec["idealized_exit"] == 661.0
     # Reload round-trips
-    tw2 = DecayTripwire("test", path, 30, 1.20, 6)
+    tw2 = DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     assert tw2.state_summary()["trade_count"] == 1
 
 
 def test_idealized_fields_omitted_when_none(tmp_path):
     """A trade without idealized refs persists without the keys (compact)."""
     path = _pwd(tmp_path)
-    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw = DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     tw.record_trade(net_pnl_inr=100.0, ts_iso="2026-01-01T09:30:00")
     rec = json.loads(path.read_text(encoding="utf-8"))["trades"][0]
     assert "idealized_entry" not in rec and "idealized_exit" not in rec
@@ -235,7 +235,7 @@ def test_idealized_fields_omitted_when_none(tmp_path):
 def test_legacy_record_detail_defaults_none(tmp_path):
     """A net-only record persists without any detail keys (compact)."""
     path = _pwd(tmp_path)
-    tw = DecayTripwire("test", path, 30, 1.20, 6)
+    tw = DecayTripwire("test", path, 30, 1.20, 6, archive_entries_before=None, archive_label=None, archive_regime=None)
     tw.record_trade(net_pnl_inr=100.0, ts_iso="2026-01-01T09:30:00")
     rec = json.loads(path.read_text(encoding="utf-8"))["trades"][0]
     assert "symbol" not in rec and "entry_price" not in rec
@@ -244,9 +244,9 @@ def test_legacy_record_detail_defaults_none(tmp_path):
 
 def test_invalid_window_trades_raises(tmp_path):
     with pytest.raises(ValueError, match="window_trades"):
-        DecayTripwire("test", _pwd(tmp_path), window_trades=3, pf_floor=1.2, sustained_weeks=6)
+        DecayTripwire("test", _pwd(tmp_path), window_trades=3, pf_floor=1.2, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)
 
 
 def test_invalid_pf_floor_raises(tmp_path):
     with pytest.raises(ValueError, match="pf_floor"):
-        DecayTripwire("test", _pwd(tmp_path), window_trades=30, pf_floor=0.0, sustained_weeks=6)
+        DecayTripwire("test", _pwd(tmp_path), window_trades=30, pf_floor=0.0, sustained_weeks=6, archive_entries_before=None, archive_label=None, archive_regime=None)

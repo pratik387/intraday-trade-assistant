@@ -436,6 +436,9 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
                 window_trades=int(tw_cfg["window_trades"]),
                 pf_floor=float(tw_cfg["pf_floor"]),
                 sustained_weeks=int(tw_cfg["sustained_weeks"]),
+                archive_entries_before=tw_cfg["archive_entries_before"],
+                archive_label=tw_cfg["archive_label"],
+                archive_regime=tw_cfg["archive_regime"],
             ).record_trade(
                 net_pnl_inr=float(net), ts_iso=now.isoformat(),
                 fees_inr=float(fees_only) + float(interest), gross_pnl_inr=float(gross),
@@ -831,6 +834,9 @@ def _decay_paused(name: str, raw: dict) -> bool:
         window_trades=int(tw_cfg["window_trades"]),
         pf_floor=float(tw_cfg["pf_floor"]),
         sustained_weeks=int(tw_cfg["sustained_weeks"]),
+        archive_entries_before=tw_cfg["archive_entries_before"],
+        archive_label=tw_cfg["archive_label"],
+        archive_regime=tw_cfg["archive_regime"],
     ).is_paused()
 
 

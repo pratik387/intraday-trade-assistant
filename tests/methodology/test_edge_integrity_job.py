@@ -112,7 +112,7 @@ def _base_config(*, dry_run: bool = True, cluster_members=None) -> dict:
             "enabled": False,
             "paper_enabled": True,
             "decay_tripwire": {
-                "window_trades": 30, "pf_floor": 1.2, "sustained_weeks": 6,
+                "window_trades": 30, "pf_floor": 1.2, "sustained_weeks": 6, "archive_entries_before": None, "archive_label": None, "archive_regime": None,
                 "state_file": f"state/decay_tripwire_{m}.json",
             },
         }

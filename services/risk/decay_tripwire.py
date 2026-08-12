@@ -68,6 +68,9 @@ class DecayTripwire:
         window_trades: int,
         pf_floor: float,
         sustained_weeks: int,
+        archive_entries_before: Optional[str],
+        archive_label: Optional[str],
+        archive_regime: Optional[str],
     ):
         if window_trades < 5:
             raise ValueError(f"window_trades must be >= 5, got {window_trades}")
@@ -75,11 +78,36 @@ class DecayTripwire:
             raise ValueError(f"pf_floor must be > 0, got {pf_floor}")
         if sustained_weeks < 1:
             raise ValueError(f"sustained_weeks must be >= 1, got {sustained_weeks}")
+        # Regime boundary: a position ENTERED before `archive_entries_before`
+        # was sized and selected by the previous ruleset, so its settled P&L
+        # must not enter this ledger -- it would pollute the rolling PF with a
+        # regime the gate is no longer measuring. Such rows are appended to the
+        # archive ledger instead (the dashboard's Archive tab reads those).
+        # Routing is on ENTRY date, not settle date: a trade opened before the
+        # boundary belongs to the old regime however late it closes.
+        _arch = (archive_entries_before, archive_label, archive_regime)
+        if any(v is not None for v in _arch) and not all(v is not None for v in _arch):
+            raise ValueError(
+                "DecayTripwire: archive_entries_before, archive_label and "
+                "archive_regime must be set together or all be null; got "
+                f"{_arch!r}"
+            )
+        if archive_entries_before is not None:
+            try:
+                datetime.strptime(str(archive_entries_before), "%Y-%m-%d")
+            except ValueError as e:
+                raise ValueError(
+                    "DecayTripwire: archive_entries_before must be YYYY-MM-DD, "
+                    f"got {archive_entries_before!r}"
+                ) from e
         self._setup_name = setup_name
         self._state_path = Path(state_path)
         self._window_trades = int(window_trades)
         self._pf_floor = float(pf_floor)
         self._sustained_weeks = int(sustained_weeks)
+        self._archive_before = archive_entries_before
+        self._archive_label = archive_label
+        self._archive_regime = archive_regime
         self._trades: List[_TradeRecord] = []
         self._first_below_floor_ts: Optional[str] = None
         self._paused_since: Optional[str] = None
@@ -167,7 +195,7 @@ class DecayTripwire:
         optional metadata for downstream readers (the swing dashboard); they do
         NOT affect the rolling-PF gate (which uses net only).
         """
-        self._trades.append(_TradeRecord(
+        record = _TradeRecord(
             net_pnl_inr=float(net_pnl_inr), ts_iso=str(ts_iso),
             fees_inr=(float(fees_inr) if fees_inr is not None else None),
             gross_pnl_inr=(float(gross_pnl_inr) if gross_pnl_inr is not None else None),
@@ -180,12 +208,70 @@ class DecayTripwire:
             idealized_exit=(float(idealized_exit) if idealized_exit is not None else None),
             attributed=(bool(attributed) if attributed is not None else None),
             entry_date=(str(entry_date) if entry_date is not None else None),
-        ))
+        )
+        if self._belongs_to_previous_regime(record):
+            self._archive_trade(record)
+            return
+        self._trades.append(record)
         # Keep buffer larger than window (we trim to last 200 to bound disk size)
         if len(self._trades) > max(self._window_trades * 5, 200):
             self._trades = self._trades[-(self._window_trades * 5):]
         self._reevaluate(now_iso=ts_iso)
         self._persist()
+
+    def _belongs_to_previous_regime(self, record: _TradeRecord) -> bool:
+        """True when this position was ENTERED before the regime boundary."""
+        if self._archive_before is None:
+            return False
+        if record.entry_date is None:
+            # Cannot attribute it to a regime. Keeping it in the live ledger is
+            # the lesser evil (it stays visible) but it may pollute the PF, so
+            # make the ambiguity loud rather than silent.
+            logger.warning(
+                "%s: settled trade %s has no entry_date; cannot route across the "
+                "%s regime boundary — recording to the LIVE ledger",
+                self._setup_name, record.symbol, self._archive_before,
+            )
+            return False
+        return str(record.entry_date) < str(self._archive_before)
+
+    def _archive_trade(self, record: _TradeRecord) -> None:
+        """Append a previous-regime settle to the archive ledger.
+
+        The archive is read by the dashboard's Archive tab and by research; it
+        is never read back into `self._trades`, so it cannot influence the
+        rolling-PF gate or the paused state.
+        """
+        path = self._state_path.parent / "archive" / (
+            f"{self._state_path.stem}.{self._archive_label}{self._state_path.suffix}"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"DecayTripwire: archive {path} is not valid JSON") from e
+            if data.get("setup_name") != self._setup_name:
+                raise ValueError(
+                    f"DecayTripwire: archive {path} is for setup "
+                    f"{data.get('setup_name')!r}, expected {self._setup_name!r}"
+                )
+        else:
+            data = {"setup_name": self._setup_name, "_regime": self._archive_regime,
+                    "trades": []}
+        data.setdefault("trades", []).append(
+            {k: v for k, v in asdict(record).items() if v is not None}
+        )
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        tmp.replace(path)
+        logger.info(
+            "%s: settle for %s (entry %s) routed to PREVIOUS-REGIME archive %s "
+            "— excluded from rolling PF",
+            self._setup_name, record.symbol, record.entry_date, path.name,
+        )
 
     def _rolling_pf(self) -> Optional[float]:
         """PF over the last `window_trades` trades. Returns None if too few trades."""

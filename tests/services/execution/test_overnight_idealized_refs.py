@@ -25,7 +25,7 @@ def _config(state_path: Path, tripwire_path: Path) -> dict:
         "capital_allocation": {"state_file": str(state_path), "max_concurrent_slots": 2,
                                "margin_per_slot_inr": 100000, "max_new_positions_per_day": 2},
         "decay_tripwire": {"state_file": str(tripwire_path), "window_trades": 30,
-                           "pf_floor": 1.20, "sustained_weeks": 6},
+                           "pf_floor": 1.20, "sustained_weeks": 6, "archive_entries_before": None, "archive_label": None, "archive_regime": None},
         "catastrophe_stop_pct": 5.0, "gtt_limit_buffer_pct": 0.5, "entry_limit_buffer_pct": 1.0,
     }}}
 
