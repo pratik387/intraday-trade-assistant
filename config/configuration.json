@@ -1124,8 +1124,8 @@
     "selection_log_path": "logs/multiday_selection.jsonl",
     "risk_budget": {
       "_comment": "PHASE 1 of specs/2026-08-12-multiday-capital-management-and-selection-plan.md. Until 2026-08-12 this book had NO risk budget at all: take-all caps and a flat Rs1L margin per position, which measured 65-87% ANNUALISED volatility (daily book P&L SD Rs 33,035, worst day -Rs 60,452) against a 10-15% institutional norm. capital_inr and daily_vol_target_pct are OPERATOR CHOICES, not fitted values -- set daily_vol_target_pct from the drawdown you can tolerate, NEVER by maximising backtested P&L. book_position_sd_pct and mean_pairwise_corr are MEASURED (23 entry days, 121 deduped positions) and should be re-measured, not guessed, as the sample grows.",
-      "capital_inr": 500000.0,
-      "_comment_capital": "Matches capital_management.paper_initial_capital so paper and the risk budget share one denominator. At this capital the book must size to ~14% of its pre-2026-08-12 notional to hit a 15% annual vol target -- see the spec's capital table (Rs 34.8 lakh would be needed to run the OLD sizing at that target).",
+      "capital_inr": 1000000.0,
+      "_comment_capital": "Rs 10 lakh, operator-set 2026-08-12 (was Rs 5 lakh). NOT tied to capital_management.paper_initial_capital any more -- this book has its own denominator. At Rs 10L the book sizes to ~29% of its pre-2026-08-12 notional to hold a 15% annual vol target; running the OLD flat sizing at that target would have needed Rs 34.8 lakh.",
       "daily_vol_target_pct": 0.95,
       "_comment_vol_target": "0.95%/day ~= 15% annualised (x sqrt(250)), the institutional systematic norm. CHOSEN, not derived. Raising this scales every position linearly.",
       "max_daily_loss_pct": 3.0,
