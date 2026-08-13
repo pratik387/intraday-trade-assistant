@@ -536,6 +536,8 @@ def test_verify_entries_prices_target_from_fill(monkeypatch, tmp_path):
                                "target_k": 2.0, "target_sigma20_pct": 0.03})
     monkeypatch.setattr(mh, "_eligible_multiday_setups",
                         lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    monkeypatch.setattr(mh, "_managed_multiday_setups",
+                        lambda config: [("A2", cfg["setups"]["A2"])])
     monkeypatch.setattr(mh, "_paper_open_price", lambda b, s, d: 100.0)
     mh.run_verify_entries(cfg, _stub_broker_amo(),
                           now_ist=pd.Timestamp("2026-07-10 09:33:00"), paper_mode=True)
@@ -560,6 +562,8 @@ def test_exit_on_target_touch_before_due_date(monkeypatch, tmp_path):
                                "entry_fill_price": 100.0, "target_px": 106.0})
     monkeypatch.setattr(mh, "_eligible_multiday_setups",
                         lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    monkeypatch.setattr(mh, "_managed_multiday_setups",
+                        lambda config: [("A2", cfg["setups"]["A2"])])
     # today's bars: open 101, high 107 (>= target 106) -> fill at 106
     monkeypatch.setattr(mh, "_today_open_high", lambda b, s, d: (101.0, 107.0))
     summary = mh.run_eod(cfg, _stub_broker_amo(),
@@ -586,6 +590,8 @@ def test_no_target_exit_when_high_below_target_or_disabled(monkeypatch, tmp_path
                                "entry_fill_price": 100.0, "target_px": 106.0})
     monkeypatch.setattr(mh, "_eligible_multiday_setups",
                         lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    monkeypatch.setattr(mh, "_managed_multiday_setups",
+                        lambda config: [("A2", cfg["setups"]["A2"])])
     monkeypatch.setattr(mh, "_today_open_high", lambda b, s, d: (101.0, 104.0))  # high < target
     summary = mh.run_eod(cfg, _stub_broker_amo(),
                          now_ist=pd.Timestamp("2026-07-11 15:28:00"),
@@ -602,6 +608,8 @@ def test_no_target_exit_when_high_below_target_or_disabled(monkeypatch, tmp_path
                                 "entry_fill_price": 100.0})
     monkeypatch.setattr(mh, "_eligible_multiday_setups",
                         lambda config, *, paper_mode: [("C1", cfg["setups"]["C1"])])
+    monkeypatch.setattr(mh, "_managed_multiday_setups",
+                        lambda config: [("C1", cfg["setups"]["C1"])])
     monkeypatch.setattr(mh, "_today_open_high", lambda b, s, d: (101.0, 150.0))
     summary2 = mh.run_eod(cfg, _stub_broker_amo(),
                           now_ist=pd.Timestamp("2026-07-11 15:28:00"),
@@ -623,6 +631,8 @@ def test_mtf_delisted_held_sentinel(monkeypatch, tmp_path):
                                               "leverage": 2.5, "entry_fill_price": 100.0})
     monkeypatch.setattr(mh, "_eligible_multiday_setups",
                         lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    monkeypatch.setattr(mh, "_managed_multiday_setups",
+                        lambda config: [("A2", cfg["setups"]["A2"])])
     # _FakeMtf (autouse fixture) does NOT contain GHOSTNAME -> must be flagged.
     summary = mh.run_eod(cfg, _stub_broker_amo(),
                          now_ist=pd.Timestamp("2026-07-14 15:28:00"),

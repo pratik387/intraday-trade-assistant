@@ -92,6 +92,30 @@ def _eligible_multiday_setups(config: dict, *, paper_mode: bool):
     return out
 
 
+def _managed_multiday_setups(config: dict):
+    """ALL multi-day setups, INCLUDING disabled ones.
+
+    A setup's enabled/paper_enabled flag gates NEW exposure. It must never gate
+    the legs that wind DOWN existing exposure, because positions outlive the
+    flag: on 2026-08-12 crash2d was disabled while it held 10 filled positions
+    and 3 pending AMO entries. Because the exit leg iterated the *eligible*
+    list, those 10 positions had no exit path at all -- NSE:CLSEL was due to be
+    squared off on 08-13 and simply would not have been -- and the 3 pending
+    entries could neither fill nor be cleaned up, so they sat in the book
+    forever showing "pending entry".
+
+    This is the same hazard `_eligible_multiday_setups` already documents for
+    cb_state; the enabled flags had quietly bypassed that reasoning.
+
+    Returns list of (name, raw_cfg) for exits + entry-fill resolution.
+    """
+    return [
+        (name, raw)
+        for name, raw in (config.get("setups") or {}).items()
+        if str(raw.get("horizon")) == "multi_day"
+    ]
+
+
 def _cb_paused_setups(setups) -> list:
     """Names whose cb_state blocks NEW entries.
 
@@ -156,23 +180,35 @@ def run_eod(
         "rejected_count": 0, "events": [],
     }
 
-    setups = _eligible_multiday_setups(config, paper_mode=paper_mode)
-    if not setups:
-        logger.info("mtf_capitulation.run_eod: no eligible multi-day setups (paper=%s); exit", paper_mode)
+    # EXITS run over every multi-day setup that could be holding something;
+    # ENTRIES only over the enabled ones. Disabling a setup must stop new
+    # exposure without stranding what it already holds (see
+    # _managed_multiday_setups).
+    managed = _managed_multiday_setups(config)
+    if not managed:
+        logger.info("mtf_capitulation.run_eod: no multi-day setups configured; exit")
         return summary
+    setups = _eligible_multiday_setups(config, paper_mode=paper_mode)
+    disabled_holding = [n for n, _ in managed if n not in {m for m, _ in setups}]
+    if disabled_holding:
+        logger.info(
+            "mtf_capitulation.run_eod: %s disabled for NEW entries but still "
+            "managed for exits", ",".join(sorted(disabled_holding)),
+        )
 
     # Concurrent daily-cache prewarm at MAX depth, once, before any ranking
     # (perf + deep-lookback correctness — see _prewarm_daily_universe).
+    # Entry-leg only, so it prewarms the ENABLED universe, not the wind-down set.
     if phase in ("both", "entries"):
         _prewarm_daily_universe(setups, broker)
 
     summary["by_setup"] = {}
-    persistences = {name: PositionPersistence(_position_state_dir(raw)) for name, raw in setups}
-    setups_by_name = {n: r for n, r in setups}
-    _warn_mtf_delisted(setups, persistences, summary)
+    persistences = {name: PositionPersistence(_position_state_dir(raw)) for name, raw in managed}
+    setups_by_name = {n: r for n, r in managed}
+    _warn_mtf_delisted(managed, persistences, summary)
     # ---- Phase A: exits due today (per-setup, pre-close) ----
     if phase in ("both", "exits"):
-        for name, raw in setups:
+        for name, raw in managed:
             _run_exits(name, raw, broker, persistences[name], today, now, paper_mode, summary,
                        setups_by_name=setups_by_name)
     # ---- Phase B: rank + AMO BUY across the whole family (post-close) ----
@@ -195,8 +231,9 @@ def run_eod(
             logger.info("mtf_capitulation.run_eod: all multi-day setups paused via cb_state; no entries")
 
     logger.info(
-        "mtf_capitulation.run_eod: complete | setups=%d exited=%d entered=%d skipped=%d rejected=%d",
-        len(setups), summary["exited_count"], summary["entered_count"],
+        "mtf_capitulation.run_eod: complete | managed=%d entry_eligible=%d "
+        "exited=%d entered=%d skipped=%d rejected=%d",
+        len(managed), len(setups), summary["exited_count"], summary["entered_count"],
         summary["skipped_count"], summary["rejected_count"],
     )
     return summary
@@ -222,12 +259,16 @@ def run_verify_entries(
         "filled_count": 0, "unfilled_count": 0, "events": [],
     }
 
-    setups = _eligible_multiday_setups(config, paper_mode=paper_mode)
-    if not setups:
-        logger.info("mtf_capitulation.run_verify_entries: no eligible multi-day setups; exit")
+    # Walk every multi-day setup, not just the enabled ones: a setup disabled
+    # between the AMO placement and the open leaves pending entries behind, and
+    # nothing else will ever resolve them.
+    managed = _managed_multiday_setups(config)
+    if not managed:
+        logger.info("mtf_capitulation.run_verify_entries: no multi-day setups configured; exit")
         return summary
+    eligible = {n for n, _ in _eligible_multiday_setups(config, paper_mode=paper_mode)}
 
-    for name, raw in setups:
+    for name, raw in managed:
         persistence = PositionPersistence(_position_state_dir(raw))
         for symbol, pos in list(persistence.load_snapshot().items()):
             if not pos.state.get("pending_entry_fill"):
@@ -235,6 +276,21 @@ def run_verify_entries(
             entry_date = _parse_iso_date(pos.entry_date)
             if entry_date is None or entry_date > today:
                 continue  # not its entry day yet
+
+            if name not in eligible:
+                # Planned before the setup was disabled. Filling it would open
+                # NEW exposure in a setup we just switched off, so drop the
+                # order instead — the position never existed at the broker.
+                logger.warning(
+                    "mtf_capitulation.run_verify_entries[%s]: setup is DISABLED; "
+                    "dropping unfilled entry for %s (%s) rather than opening new exposure",
+                    name, symbol, entry_date,
+                )
+                persistence.remove_position(symbol)
+                summary["unfilled_count"] += 1
+                summary["events"].append(
+                    {"setup": name, "symbol": symbol, "dropped": "setup_disabled"})
+                continue
 
             qty = int(pos.state.get("qty", 0))
             if paper_mode:
