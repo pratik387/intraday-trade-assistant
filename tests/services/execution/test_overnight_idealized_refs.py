@@ -39,6 +39,8 @@ def patched_registry(monkeypatch, state_path, tripwire_path):
     spec.raw_config = _config(state_path, tripwire_path)["setups"]["close_dn_overnight_long"]
     import services.execution.overnight_handlers as oh
     monkeypatch.setattr(oh, "_select_overnight_setups", lambda config, *, paper_mode: [spec])
+    # exits read the managed set (flag-independent) — inject there too
+    monkeypatch.setattr(oh, "_managed_overnight_setups", lambda config: [spec])
     return spec
 
 

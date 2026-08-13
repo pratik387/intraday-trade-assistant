@@ -387,6 +387,35 @@ def _select_overnight_setups(config: dict, *, paper_mode: bool) -> list:
     return out
 
 
+def _managed_overnight_setups(config: dict) -> list:
+    """SetupSpec list for ALL mode='overnight' setups, flags IGNORED.
+
+    The enabled/paper_enabled flags gate NEW exposure. They must never gate the
+    exit legs, because positions outlive the flag. `_select_overnight_setups`
+    already documents this hazard for cb_state, but the flags themselves
+    bypassed that reasoning — and here the failure is total rather than
+    partial: the exit legs read the shared slot-pool path from setups[0], so
+    disabling the only overnight setup makes the selector return [], the leg
+    logs "no overnight setups active" and returns, and an OPEN REAL-MONEY
+    position is never sold.
+
+    This is not hypothetical: pausing close_dn_overnight_long is on the table
+    for ~Sep-2026, and doing it via the enabled flag while a position is open
+    overnight would strand that position.
+
+    Restricted to setups wired for execution (capital_allocation present), the
+    same way _managed_multiday_setups is; a setup without it has no slot pool
+    and so has nothing to wind down.
+    """
+    from services.dispatch.setup_registry import SetupRegistry
+    registry = SetupRegistry.load_from_config(config)
+    return [
+        spec for spec in registry._specs.values()  # noqa: SLF001
+        if spec.mode == "overnight"
+        and (spec.raw_config.get("capital_allocation") or {}).get("state_file")
+    ]
+
+
 def run_entry(
     config: dict,
     broker,
@@ -1063,7 +1092,7 @@ def run_place_exit(
         summary["skipped_non_trading_day"] = True
         return summary
 
-    setups = _select_overnight_setups(config, paper_mode=paper_mode)
+    setups = _managed_overnight_setups(config)
     if not setups:
         logger.info("run_place_exit: no overnight setups active; exit")
         return summary
@@ -1232,12 +1261,14 @@ def run_verify_exit(
         summary["auth_failed"] = True
         return summary
 
-    paper_enabled_setups = _select_overnight_setups(config, paper_mode=paper_mode)
-    if not paper_enabled_setups:
-        logger.info("run_verify_exit: no overnight setups active; exit")
+    # Exits run for EVERY overnight setup, enabled or not: the flag gates new
+    # exposure, never the wind-down of exposure already taken.
+    managed_setups = _managed_overnight_setups(config)
+    if not managed_setups:
+        logger.info("run_verify_exit: no overnight setups configured; exit")
         return summary
 
-    slot_cfg = paper_enabled_setups[0].raw_config["capital_allocation"]
+    slot_cfg = managed_setups[0].raw_config["capital_allocation"]
     state_path = Path(slot_cfg["state_file"])
     if not state_path.exists():
         logger.info("run_verify_exit: no state file at %s; nothing to verify", state_path)
@@ -1334,7 +1365,7 @@ def run_verify_exit(
                 # a partially-filled one must never be failsafed at full qty
                 # (REGENCERAM 2026-07-24: 286/1388 filled at the floor, the
                 # remainder OPEN above the market).
-                failsafe_buf = float(paper_enabled_setups[0].raw_config["gtt_limit_buffer_pct"])
+                failsafe_buf = float(managed_setups[0].raw_config["gtt_limit_buffer_pct"])
                 try:
                     amo_status = None
                     try:
@@ -1348,7 +1379,7 @@ def run_verify_exit(
                     # Tick-valid AND >= lower circuit (Kite rejects non-tick /
                     # sub-circuit SELL prices). Tick is per-instrument.
                     tick = _instrument_tick(
-                        broker, slot.symbol, paper_enabled_setups[0].raw_config)
+                        broker, slot.symbol, managed_setups[0].raw_config)
                     marketable = clamp_round_limit(
                         ltp * (1.0 - failsafe_buf / 100.0), "SELL",
                         tick_size=tick,
@@ -1455,11 +1486,11 @@ def run_verify_exit(
         # Record settled trade in decay tripwire (Task 7). Re-instantiates per
         # settle; cheap because settles are O(slots) per day and small N. The
         # tripwire's rolling-PF check is what gates next-day dispatch.
-        tw_cfg = paper_enabled_setups[0].raw_config.get("decay_tripwire")
+        tw_cfg = managed_setups[0].raw_config.get("decay_tripwire")
         if tw_cfg is not None:
             from services.risk.decay_tripwire import DecayTripwire
             tw = DecayTripwire(
-                setup_name=paper_enabled_setups[0].name,
+                setup_name=managed_setups[0].name,
                 state_path=Path(tw_cfg["state_file"]),
                 window_trades=int(tw_cfg["window_trades"]),
                 pf_floor=float(tw_cfg["pf_floor"]),

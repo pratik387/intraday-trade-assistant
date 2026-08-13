@@ -43,6 +43,8 @@ def test_verify_exit_cancels_gtt_on_stale_orphan(monkeypatch, state_path):
     spec = MagicMock(); spec.name = "close_dn_overnight_long"; spec.mode = "overnight"; spec.enabled = True
     spec.raw_config = _config(state_path)["setups"]["close_dn_overnight_long"]
     monkeypatch.setattr(oh, "_select_overnight_setups", lambda config, *, paper_mode: [spec])
+    # exits read the managed set (flag-independent) — inject there too
+    monkeypatch.setattr(oh, "_managed_overnight_setups", lambda config: [spec])
     broker = MagicMock(); broker.cancel_gtt.return_value = True
     # now_ist (2026-06-22) is AFTER expected_exit_date (2026-06-19) -> stale branch
     summary = oh.run_verify_exit(_config(state_path), broker,

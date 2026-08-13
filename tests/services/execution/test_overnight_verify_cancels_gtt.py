@@ -39,6 +39,8 @@ def test_verify_exit_cancels_gtt_on_settle(monkeypatch, state_path):
     spec = MagicMock(); spec.name = "close_dn_overnight_long"; spec.mode = "overnight"; spec.enabled = True
     spec.raw_config = _config(state_path)["setups"]["close_dn_overnight_long"]
     monkeypatch.setattr(oh, "_select_overnight_setups", lambda config, *, paper_mode: [spec])
+    # exits read the managed set (flag-independent) — inject there too
+    monkeypatch.setattr(oh, "_managed_overnight_setups", lambda config: [spec])
     monkeypatch.setattr(oh, "_paper_fill_price_exit", lambda b, s, d: 150.0)
     broker = MagicMock(); broker.cancel_gtt.return_value = True
     oh.run_verify_exit(_config(state_path), broker,

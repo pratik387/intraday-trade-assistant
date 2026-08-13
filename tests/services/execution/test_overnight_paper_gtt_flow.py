@@ -46,6 +46,8 @@ def test_paper_place_exit_then_verify_cancels_gtt(monkeypatch, state_path):
     # load; the exit path only needs state + simulated orders/GTT.
     broker = MockBroker(path_json="nse_all.json", slippage_bps=5.0, data_sdk=MagicMock())
     monkeypatch.setattr(oh, "_select_overnight_setups", lambda config, *, paper_mode: [_spec(state_path)])
+    # exits read the managed set (flag-independent) — inject there too
+    monkeypatch.setattr(oh, "_managed_overnight_setups", lambda config: [_spec(state_path)])
 
     # Seed a t0_open slot (post-BUY).
     pool = OvernightSlotPool(state_path, max_slots=2, margin_per_slot=10000, max_new_per_day=2)
