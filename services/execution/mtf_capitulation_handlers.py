@@ -107,13 +107,24 @@ def _managed_multiday_setups(config: dict):
     This is the same hazard `_eligible_multiday_setups` already documents for
     cb_state; the enabled flags had quietly bypassed that reasoning.
 
+    Restricted to setups WIRED FOR EXECUTION -- those carrying
+    capital_allocation.state_file, which is what _position_state_dir resolves.
+    Research-stage multi_day setups (pead_reaction_drift,
+    xsec_momentum_demeaned) have no such block and have never held a position,
+    and including them would raise KeyError while run_eod builds its
+    persistences map, aborting EVERY exit -- strictly worse than the bug this
+    function fixes.
+
     Returns list of (name, raw_cfg) for exits + entry-fill resolution.
     """
-    return [
-        (name, raw)
-        for name, raw in (config.get("setups") or {}).items()
-        if str(raw.get("horizon")) == "multi_day"
-    ]
+    out = []
+    for name, raw in (config.get("setups") or {}).items():
+        if str(raw.get("horizon")) != "multi_day":
+            continue
+        if not (raw.get("capital_allocation") or {}).get("state_file"):
+            continue
+        out.append((name, raw))
+    return out
 
 
 def _cb_paused_setups(setups) -> list:

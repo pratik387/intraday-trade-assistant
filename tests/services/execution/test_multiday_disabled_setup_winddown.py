@@ -21,17 +21,30 @@ MANAGED = H._managed_multiday_setups
 ELIGIBLE = H._eligible_multiday_setups
 
 
+def _alloc(name):
+    return {"capital_allocation": {"state_file": f"state/{name}_slots.json"}}
+
+
 def _cfg(**flags):
-    """Two multi-day setups + one intraday setup that must never be included."""
+    """Two multi-day setups + an intraday one + a research-stage one.
+
+    The research-stage entry has horizon=multi_day but NO capital_allocation,
+    mirroring pead_reaction_drift / xsec_momentum_demeaned in the real config.
+    """
     return {"setups": {
         "zscore_oversold_revert_long": {
-            "horizon": "multi_day", "enabled": True, "paper_enabled": True},
+            "horizon": "multi_day", "enabled": True, "paper_enabled": True,
+            **_alloc("zscore")},
         "crash2d_revert_long": {
             "horizon": "multi_day",
             "enabled": flags.get("crash2d_enabled", False),
-            "paper_enabled": flags.get("crash2d_paper", False)},
+            "paper_enabled": flags.get("crash2d_paper", False),
+            **_alloc("crash2d")},
         "some_intraday_setup": {
-            "horizon": "intraday", "enabled": True, "paper_enabled": True},
+            "horizon": "intraday", "enabled": True, "paper_enabled": True,
+            **_alloc("intraday")},
+        "research_stage_setup": {
+            "horizon": "multi_day", "enabled": False, "paper_enabled": False},
     }}
 
 
@@ -43,6 +56,18 @@ def test_managed_includes_the_disabled_setup():
 
 def test_managed_excludes_non_multiday_setups():
     assert "some_intraday_setup" not in [n for n, _ in MANAGED(_cfg())]
+
+
+def test_managed_excludes_research_stage_setups_without_execution_config():
+    """They can't have held a position, and _position_state_dir would KeyError
+    while run_eod builds persistences — aborting EVERY exit."""
+    assert "research_stage_setup" not in [n for n, _ in MANAGED(_cfg())]
+
+
+def test_every_managed_setup_resolves_a_position_store():
+    """The real invariant: managed must never contain a setup that raises."""
+    for name, raw in MANAGED(_cfg()):
+        H._position_state_dir(raw)  # must not raise
 
 
 def test_eligible_still_excludes_the_disabled_setup():
