@@ -116,6 +116,7 @@ def size_intraday_position(
     stop_risk_budget_inr: Optional[float] = None,
     target_notional_pct: Optional[float] = None,
     total_capital_inr: Optional[float] = None,
+    book_size_multiplier: float = 1.0,
 ) -> IntradaySizingResult:
     """Return the qty for one intraday entry under `sizing_mode`.
 
@@ -132,6 +133,13 @@ def size_intraday_position(
     Passing one where the other belongs mis-sizes by an order of magnitude.
 
     All three are clamped to [min_notional_inr, max_notional_inr].
+
+    `book_size_multiplier` scales EVERY mode by one number, applied before the
+    clamp. It exists so book-level risk is a single knob rather than an edit to
+    each setup's own parameter, and so a paper run at Nx can be rescaled to any
+    other size by dividing — the reason it is one multiplier and not per-setup
+    tweaks. Rescaling is exact ONLY for trades the capital manager did not
+    resize; check CAP_SCALE / CAP_REJECT before dividing.
     """
     if sizing_mode not in VALID_MODES:
         raise SizingConfigError(
@@ -166,6 +174,8 @@ def size_intraday_position(
         if rps <= 0:
             return IntradaySizingResult(0, 0.0, sigma, sizing_mode, "qty_zero")
         notional = (float(stop_risk_budget_inr) / rps) * entry
+
+    notional *= float(book_size_multiplier)
 
     clamped = None
     if notional > max_notional_inr:

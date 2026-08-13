@@ -520,7 +520,8 @@ class PlanOrchestrator:
             raise OrchestratorConfigError(
                 "intraday_sizing missing from configuration.json")
         _pcts = ("vol_risk_budget_pct_of_capital", "stop_risk_budget_pct_of_capital",
-                 "min_notional_pct_of_capital", "max_notional_pct_of_capital")
+                 "min_notional_pct_of_capital", "max_notional_pct_of_capital",
+                 "book_size_multiplier")
         for _k in _pcts:
             if _k not in sizing_cfg:
                 raise OrchestratorConfigError(f"intraday_sizing.{_k} missing")
@@ -543,6 +544,7 @@ class PlanOrchestrator:
                 total_capital_inr=_cap,
                 min_notional_inr=float(sizing_cfg["min_notional_pct_of_capital"]) * _cap,
                 max_notional_inr=float(sizing_cfg["max_notional_pct_of_capital"]) * _cap,
+                book_size_multiplier=float(sizing_cfg["book_size_multiplier"]),
             )
         except SizingConfigError as e:
             raise OrchestratorConfigError(str(e)) from e
@@ -556,9 +558,9 @@ class PlanOrchestrator:
         # line is how that distribution gets collected from a real run instead
         # of guessed. Grep SIZING_OBS to calibrate before enabling vol_target.
         logger.info(
-            "SIZING_OBS | %s | %s | mode=%s sigma=%s rps=%.4f entry=%.2f "
+            "SIZING_OBS | %s | %s | mode=%s mult=%.1f sigma=%s rps=%.4f entry=%.2f "
             "qty=%d notional=%.0f reason=%s clamped=%s",
-            symbol, setup_type, _mode,
+            symbol, setup_type, _mode, float(sizing_cfg["book_size_multiplier"]),
             ("%.3f%%" % _sz.sigma_pct) if _sz.sigma_pct is not None else "na",
             rps, entry, qty, notional, _sz.reason, _sz.clamped or "-",
         )

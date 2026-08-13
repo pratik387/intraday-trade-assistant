@@ -49,7 +49,33 @@ def test_intraday_sizing_block_is_present_and_fractional():
     for k in ("vol_risk_budget_pct_of_capital", "stop_risk_budget_pct_of_capital",
               "min_notional_pct_of_capital", "max_notional_pct_of_capital"):
         assert k in s, f"intraday_sizing.{k} missing"
-        assert 0 < float(s[k]) < 1, f"{k} must be a fraction of capital, got {s[k]}"
+        assert 0 < float(s[k]) <= 1, f"{k} must be a fraction of capital, got {s[k]}"
+    assert float(s["book_size_multiplier"]) > 0, "book_size_multiplier must be positive"
+
+
+def test_book_size_multiplier_is_a_single_knob():
+    """Book risk scales through ONE number so a paper run at Nx can be rescaled
+    to any other size by dividing, rather than un-picking per-setup edits."""
+    import services.plan_orchestrator as po
+    assert "book_size_multiplier" in inspect.getsource(po)
+    from services.risk.intraday_sizing import size_intraday_position
+    kw = dict(setup_name="s", sizing_mode="notional", entry_price=100.0,
+              target_notional_pct=0.06, total_capital_inr=500_000.0,
+              min_notional_inr=1_000.0, max_notional_inr=10_000_000.0)
+    one = size_intraday_position(**kw, book_size_multiplier=1.0)
+    ten = size_intraday_position(**kw, book_size_multiplier=10.0)
+    assert ten.notional_inr == pytest.approx(10 * one.notional_inr, rel=1e-6)
+
+
+def test_multiplier_still_passes_through_the_clamp():
+    """Scaling must not be able to jump the ceiling."""
+    from services.risk.intraday_sizing import size_intraday_position
+    r = size_intraday_position(
+        setup_name="s", sizing_mode="notional", entry_price=100.0,
+        target_notional_pct=0.06, total_capital_inr=500_000.0,
+        min_notional_inr=10_000.0, max_notional_inr=100_000.0,
+        book_size_multiplier=100.0)
+    assert r.notional_inr == 100_000.0 and r.clamped == "max"
 
 
 def test_the_two_risk_budgets_are_distinct_quantities():
@@ -90,11 +116,21 @@ def test_the_notional_clamp_is_ordered():
     assert float(s["min_notional_pct_of_capital"]) < float(s["max_notional_pct_of_capital"])
 
 
-def test_clamp_would_have_caught_the_or_window_accident():
-    """Rs112,822 on the Rs5L paper book must be impossible under the new cap."""
+def test_clamp_bounds_the_accident_geometry_at_the_configured_multiplier():
+    """The Rs1L clamp was deliberately lifted to 100% of capital for the 10x
+    paper run, so Rs112,822 is now ALLOWED — that is the intent. What must
+    still hold is that a tight-stop geometry cannot run away once scaled:
+    or_window's measured Rs112,822 median x the multiplier has to be capped."""
+    s = CFG["intraday_sizing"]
     cap = 500_000.0
-    max_notional = float(CFG["intraday_sizing"]["max_notional_pct_of_capital"]) * cap
-    assert 112_822 > max_notional, "cap is too loose to prevent the measured accident"
+    max_notional = float(s["max_notional_pct_of_capital"]) * cap
+    scaled = 112_822 * float(s["book_size_multiplier"])
+    assert scaled > max_notional, (
+        "clamp no longer bounds the scaled accident geometry — a tight stop "
+        "could mint an unbounded position")
+    assert max_notional <= cap, (
+        "notional cap exceeds capital; the capital manager's margin cap would "
+        "be the only ceiling left")
 
 
 def test_orchestrator_requires_runtime_capital_and_exposes_the_setter():
