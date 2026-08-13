@@ -101,12 +101,20 @@
   "breakout_immediate_execution": true,
   "_comment_immediate": "True = Execute immediately on decision (no entry zone wait). Fixes 8-minute delay issue.",
   "risk_per_trade_rupees": 1000.0,
+  "_intraday_sizing_note": "Sizing for the intraday book, as fractions of capital so one config scales paper (Rs5L) -> live. CALIBRATED, not guessed: 5m ATR(14)/price measured over 8,679 observations across 220 symbols in cache/ohlcv_archive gives median sigma 0.346%% (p25 0.221%%, p90 0.850%%). risk_budget 0.000207 x Rs5L = Rs103.44 is the rupee 1-SD-per-bar that today's median Rs29,938 notional ALREADY carries, so the median name is sized exactly as now and only the DISTRIBUTION changes: calm names get more notional, volatile names less, each contributing equal risk. Gross notional rises ~23%% while per-position risk becomes constant -- that is vol targeting working, not a size-up. min 2%%: a 4%% floor would skip 28.7%% of names, and they are the high-vol illiquid ones the book earns from; 2%% skips 5.7%%. max 20%% clamps the calmest 6.3%% and is the first real NOTIONAL ceiling -- capital_management.max_allocation_per_trade applies 20%% to MARGIN, so at 5x MIS it permits Rs500k of notional and never bound (or_window_failure_fade_short ran a Rs112,822 median).",
+  "intraday_sizing": {
+    "vol_risk_budget_pct_of_capital": 0.000207,
+    "stop_risk_budget_pct_of_capital": 0.002,
+    "min_notional_pct_of_capital": 0.02,
+    "max_notional_pct_of_capital": 0.20
+  },
   "fees_slippage_bps": 5.0,
   "enable_lunch_pause": true,
   "lunch_start": "12:15",
   "lunch_end": "13:15",
   "setups": {
     "gap_fade_short": {
+      "sizing_mode": "risk",
       "enabled": false,
       "_disabled_2026_06_29": "DISABLED in production (was still firing in paper because the prior disable was parked on a research branch, not main). RAW geometry is a net loser on the full 40-month re-sim: pooled PF 0.95, Disc 1.26 / OOS 0.60 / Holdout 0.74. The loss is entirely against-the-index shorts (63% of fires short into a GREEN Nifty, PF 0.76 = 100% of loss). An index-direction veto ('no short when Nifty green at entry') restores pooled PF 1.39 / Disc 1.44 / OOS 1.11 / Holdout 1.57 — but that requires a per-setup HARD directional block in services/gates/directional_bias.py (currently enabled:false + boost-only). Re-enable ONLY after wiring + validating that veto. Evidence: analysis/backtest_findings.md + docs/retired_setups.md (2026-06-25) + branch research/2026-06-25-gap-fade-directional-veto.",
       "mechanism_tags": [
@@ -162,6 +170,7 @@
       "wide_open": false
     },
     "long_panic_gap_down": {
+      "sizing_mode": "vol_target",
       "enabled": true,
       "mechanism_tags": [
         "midcap_correction_active"
@@ -216,6 +225,7 @@
       "wide_open": false
     },
     "below_vwap_volume_revert_long": {
+      "sizing_mode": "risk",
       "_disabled_2026_07_15": "Paper validation FAILED at n=126: PF 0.84 vs spec gate >=1.10 (expected 1.59). Mechanics per design (afternoon cell, exit economics match) but 33% hard-SL rate at -1.16R + 17bps entry slippage + Rs63 fees = ~0.3R/trade unmodeled friction; gross-of-friction PF ~1.1, not 1.59. Spec kill criteria met. Candidate returns to research (SL geometry) - see specs/2026-05-21-below_vwap_volume_revert_long-paper-trade-spec.md.",
       "enabled": false,
       "paper_enabled": false,
@@ -384,6 +394,7 @@
       "wide_open": false
     },
     "or_window_failure_fade_short": {
+      "sizing_mode": "vol_target",
       "enabled": true,
       "mechanism_tags": [
         "rule_orthogonal"
@@ -435,6 +446,7 @@
       "wide_open": false
     },
     "circuit_t1_fade_short": {
+      "sizing_mode": "risk",
       "enabled": false,
       "_status_2026_06_01_RETIRED": "Stage 14 retire in commit 0ae102b — was still flagged enabled=true so the detector kept loading a 6-symbol universe and consuming slots. Setting enabled=false to drop it from the live pipeline.",
       "mechanism_tags": [
@@ -489,6 +501,7 @@
       "wide_open": false
     },
     "delivery_pct_anomaly_short": {
+      "sizing_mode": "risk",
       "enabled": false,
       "_status_2026_05_22_disabled": "DISABLED. Stage 13 OCI confidence card (3.3y, n=542) shows aggregate PF 0.954 CI [0.777, 1.151] — CI crosses 1.0 and lower bound < 0.95. Harvey-Liu adj Sharpe -0.274 (NEGATIVE) on M=6 corpus. Per-regime decay is STRUCTURAL not war-only: pre_election_calm 0.94, post_election_consolidation 0.84, tariff_recovery_rally 0.58, post_tariff_consolidation 0.81 — multiple pre-war regimes ≤1.0. Lesson #4 'war-only kept active for revival' does NOT apply. Lesson #7 fee-drag dynamic: gross PF 1.16 (real signal) wiped by Rs 32K fees on 542 trades — only 'chop' regime would be net-positive after fees. Setup soft-disabled pending researcher decision on Stage 14 full retirement (Lesson #8 7-step protocol) vs chop-regime gate redesign (Stage 5 Discovery cell-lock required, NOT post-hoc).",
       "mechanism_tags": [
@@ -695,6 +708,7 @@
       "_comment_immediate_execution": "TRUE is REQUIRED, not optional. The validated construction fills at the 09:20 signal-bar close; the default trigger-aware path instead parks the plan as PENDING with a 15-minute entry-zone wait. Measured on OCI run 20260730-184652 (Q1-2023): that dropped 16 of 36 trades via EXPIRED, and the drop is ADVERSELY SELECTED — the trades production FILLED had median -0.313% / 45.0% win, the ones it EXPIRED had median +1.224% / 62.5% win. Mechanism: this is a short on a name that just fell >=8%, so the thesis IS that it keeps falling; a pending trigger only fills when price comes back UP, i.e. it systematically fills the names that bounce (which then do not continue) and misses the ones that run. Same failure and same fix as C-03/circuit_release_fade_short, where the entry-zone wait cut sanity PF 2.44 to OCI 1.13 (see services/execution/trigger_validation_engine.py, per-setup flag added 2026-05-18)."
     },
     "close_dn_overnight_long": {
+      "sizing_mode": "risk",
       "enabled": true,
       "paper_enabled": true,
       "_status": "LIVE 2026-06-22 at full Rs2.5L/25-slot caps (user-elected; skipped 1-slot pilot, manual monitoring). 3-cron flow: 15:26 BUY, 16:05 AMO+GTT, 09:30 settle+cancel-GTT. Live requires MODE_FLAGS='' + fresh Kite token. Cell #5: closing_30m_volume_z=extreme x prior_day_return=up_gt_3pct. Pooled PF 2.44 (CI 2.16-2.74), HO 1.52; VM forward-paper PF 3.69 (n=72). See specs/2026-06-22-close_dn_overnight_long-live-activation-design.md + docs/runbooks/close_dn_overnight_live.md.",
@@ -1483,7 +1497,8 @@
       "percentage": 0.01,
       "_comment": "mode=percentage uses capital*percentage, mode=fixed uses fixed_amount in Rs."
     },
-    "min_notional_pct": 0.04,
+    "_min_notional_note": "Kept equal to intraday_sizing.min_notional_pct_of_capital. If this is HIGHER, vol-targeted positions in volatile names get sized correctly and then shadowed into non-existence by the capacity check.",
+  "min_notional_pct": 0.02,
     "capital_utilization": 0.85,
     "max_allocation_per_trade": 0.2,
     "_comment_sizing": "min_notional=4% min position, capital_util=85% safety buffer, max_alloc=20% max per trade",

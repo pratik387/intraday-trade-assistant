@@ -272,6 +272,18 @@ def main() -> int:
     dynamic_risk = capital_manager.get_risk_per_trade(fallback=fallback_risk)
     set_base_config_override('risk_per_trade_rupees', dynamic_risk)
 
+    # Intraday sizing is expressed as fractions of capital (config
+    # `intraday_sizing`), so the orchestrator needs the run's ACTUAL capital —
+    # which differs by mode (paper Rs5L vs live) and by CLI flags. This is the
+    # single seam; set_base_config_override above writes base_config.json, which
+    # the orchestrator does not read.
+    from services.plan_orchestrator import set_runtime_capital
+    set_runtime_capital(capital_manager.total_capital)
+    logger.info(
+        f"[CAPITAL] Sizing capital = Rs{capital_manager.total_capital:,.0f} "
+        f"(capital_mgmt={'on' if capital_enabled else 'off'}, mis={mis_enabled})"
+    )
+
     # Execution mode: in_process only (separated/scan_only/exec_only removed with MDS)
     execution_mode = "in_process"
     oq = OrderQueue()

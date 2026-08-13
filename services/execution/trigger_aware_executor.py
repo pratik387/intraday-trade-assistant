@@ -156,36 +156,14 @@ class TriggerAwareExecutor:
                 price = trade.trigger_price or plan.get("price", 0)
                 cap_segment = plan.get("cap_segment", "unknown")
 
-                # NOTIONAL-BASED SIZING (EOD-hold setups): their wide catastrophe
-                # stop makes risk-based qty tiny (qty = risk_rupees / 9%-stop ~=
-                # Rs11k notional) -> shadowed below min_notional. Size qty by
-                # target_notional_pct * total_capital so it scales with capital
-                # (paper 5L vs live 50k) and clears the min-notional floor; the
-                # catastrophe stop stays a blowup guard. The capital_manager's
-                # per-trade allocation cap (max_allocation_per_trade) still applies
-                # in can_enter_position below, so this can only size UP to a sane
-                # %-of-capital, never past the per-trade risk ceiling.
-                # Read sizing_mode from the SETUP CONFIG (by strategy), NOT trade.plan:
-                # screener_live.py rebuilds item["plan"] as a subset that drops
-                # sizing_mode, so the plan dict can't be trusted to carry it.
-                # Use _load_root_config (config/configuration.json, the setups
-                # source-of-truth + cached) — NOT config_loader.load_base_config,
-                # which reads config/pipelines/base_config.json and does not carry
-                # the per-setup sizing keys.
-                from services.plan_orchestrator import _load_root_config as _load_cfg
-                _scfg = (_load_cfg().get("setups") or {}).get(plan.get("strategy")) or {}
-                if _scfg.get("sizing_mode") == "notional" and price > 0:
-                    _tnp = float(_scfg.get("target_notional_pct") or 0.0)
-                    _tcap = float(getattr(self.capital_manager, "total_capital", 0.0) or 0.0)
-                    if _tnp > 0.0 and _tcap > 0.0:
-                        _sized = int((_tnp * _tcap) / price)
-                        if _sized >= 1 and _sized != qty:
-                            logger.info(
-                                f"NOTIONAL_SIZE | {trade.symbol} | {plan.get('strategy')} | "
-                                f"{_tnp*100:.1f}% x Rs{_tcap:.0f} = Rs{_tnp*_tcap:.0f} -> qty {qty}->{_sized}"
-                            )
-                            qty = _sized
-                            trade.plan["qty"] = qty
+                # SIZING happens ONCE, in plan_orchestrator._build_plan_dict, for
+                # every sizing_mode (vol_target | notional | risk) through a single
+                # [min,max] notional clamp. The notional-mode override that used to
+                # live here was a second sizing path: it re-derived qty from
+                # target_notional_pct * total_capital AFTER the orchestrator had
+                # already sized the plan, so the two disagreed and any setup
+                # declaring neither mode kept accidental stop-distance sizing.
+                # See services/risk/intraday_sizing.py for the measurement.
 
                 # SHADOW TRADE LOGIC: If at capacity, mark as shadow instead of rejecting
                 # Shadow trades go through entire pipeline but don't consume capital

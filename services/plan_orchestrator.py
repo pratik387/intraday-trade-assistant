@@ -135,6 +135,24 @@ def _load_root_config() -> Dict[str, Any]:
     return _ROOT_CFG_CACHE
 
 
+def set_runtime_capital(total_capital_inr: float) -> None:
+    """Inject the run's actual capital into the cached root config.
+
+    Sizing is expressed as fractions of capital so it scales between the paper
+    book (Rs5L) and live (Rs50k) without per-mode constants. main.py owns the
+    capital (it differs by mode and by CLI flags), the orchestrator owns the
+    sizing, and this is the single explicit seam between them.
+
+    NOT routed through set_base_config_override: that writes to
+    config/pipelines/base_config.json, which the orchestrator never reads — the
+    orchestrator reads configuration.json. The existing `risk_per_trade_rupees`
+    override goes to base_config and so has never actually reached sizing; the
+    two files happen to hold the same 1000.0, which hid it.
+    """
+    cfg = _load_root_config()
+    cfg["total_capital_inr"] = float(total_capital_inr)
+
+
 def _get_selection_rules() -> Dict[str, Any]:
     """Return selection-control knobs from configuration.json (or defaults
     geared for the post-Phase-C single-bucket world).
@@ -486,16 +504,59 @@ class PlanOrchestrator:
                             f"min={e.details.get('min_stop_pct')}"],
             }
 
-        qty = int(risk_per_trade_rupees / rps) if rps > 0 else 0
-        # Sanity ceiling: notional ≤ 1Cr per trade. Anything more is a
-        # detector-geometry bug (rps clamped to 1e-6 type), not a strategy choice.
-        if qty * entry > 1e7:
-            logger.warning(
-                f"[ORCH] {symbol} {setup_type}: qty={qty} rps={rps} entry={entry} "
-                f"exceeds 1Cr notional cap — likely detector geometry bug"
+        # ---- Sizing: ONE path for every setup, no fall-through ----
+        # Previously qty was computed here as risk/rps for everyone, and the
+        # executor then silently OVERRODE it for setups declaring
+        # sizing_mode="notional". Two code paths, and any setup that declared
+        # neither inherited stop-distance sizing by accident — which is how
+        # or_window_failure_fade_short reached a Rs112k median notional off a
+        # tight stop while the book's best setup sat pinned at Rs30k.
+        # Now every mode resolves here, through the same [min,max] clamp.
+        from services.risk.intraday_sizing import (
+            resolve_sizing_mode, size_intraday_position, SizingConfigError,
+        )
+        sizing_cfg = root_cfg.get("intraday_sizing")
+        if not sizing_cfg:
+            raise OrchestratorConfigError(
+                "intraday_sizing missing from configuration.json")
+        _pcts = ("vol_risk_budget_pct_of_capital", "stop_risk_budget_pct_of_capital",
+                 "min_notional_pct_of_capital", "max_notional_pct_of_capital")
+        for _k in _pcts:
+            if _k not in sizing_cfg:
+                raise OrchestratorConfigError(f"intraday_sizing.{_k} missing")
+        if "total_capital_inr" not in root_cfg:
+            raise OrchestratorConfigError(
+                "total_capital_inr not set — main.py must call "
+                "plan_orchestrator.set_runtime_capital() before planning")
+        _cap = float(root_cfg["total_capital_inr"])
+        try:
+            _mode = resolve_sizing_mode(setup_cfg, setup_type)
+            _sz = size_intraday_position(
+                setup_name=setup_type,
+                sizing_mode=_mode,
+                entry_price=entry,
+                risk_per_share=rps,
+                atr=atr_for_plan,
+                vol_risk_budget_inr=float(sizing_cfg["vol_risk_budget_pct_of_capital"]) * _cap,
+                stop_risk_budget_inr=float(sizing_cfg["stop_risk_budget_pct_of_capital"]) * _cap,
+                target_notional_pct=setup_cfg.get("target_notional_pct"),
+                total_capital_inr=_cap,
+                min_notional_inr=float(sizing_cfg["min_notional_pct_of_capital"]) * _cap,
+                max_notional_inr=float(sizing_cfg["max_notional_pct_of_capital"]) * _cap,
             )
-            qty = 0
-        notional = round(qty * entry, 2)
+        except SizingConfigError as e:
+            raise OrchestratorConfigError(str(e)) from e
+        qty, notional = _sz.qty, _sz.notional_inr
+        if _sz.reason != "ok":
+            logger.info(
+                f"[ORCH] {symbol} {setup_type}: sized 0 ({_sz.reason}, mode={_mode}"
+                f"{', sigma=%.2f%%' % _sz.sigma_pct if _sz.sigma_pct else ''})"
+            )
+        elif _sz.clamped:
+            logger.info(
+                f"[ORCH] {symbol} {setup_type}: notional clamped to {_sz.clamped} "
+                f"-> Rs{notional:,.0f} (mode={_mode}, rps={rps}, entry={entry})"
+            )
 
         mis_info = get_mis_info(symbol)
         try:
