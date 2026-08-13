@@ -547,6 +547,21 @@ class PlanOrchestrator:
         except SizingConfigError as e:
             raise OrchestratorConfigError(str(e)) from e
         qty, notional = _sz.qty, _sz.notional_inr
+        # SIZING_OBS is logged for EVERY plan, not just anomalies. vol_target is
+        # implemented but parked because calibrating it needs sigma at SIGNAL
+        # time, and the unconditional ATR distribution is the wrong population:
+        # all bars median 0.335%, opening hour 0.652%, yet the first real signal
+        # through this path (NSE:JINDALSAW / long_panic_gap_down) sized on
+        # sigma 3.17% -- these setups fire on panic gaps by construction. This
+        # line is how that distribution gets collected from a real run instead
+        # of guessed. Grep SIZING_OBS to calibrate before enabling vol_target.
+        logger.info(
+            "SIZING_OBS | %s | %s | mode=%s sigma=%s rps=%.4f entry=%.2f "
+            "qty=%d notional=%.0f reason=%s clamped=%s",
+            symbol, setup_type, _mode,
+            ("%.3f%%" % _sz.sigma_pct) if _sz.sigma_pct is not None else "na",
+            rps, entry, qty, notional, _sz.reason, _sz.clamped or "-",
+        )
         if _sz.reason != "ok":
             logger.info(
                 f"[ORCH] {symbol} {setup_type}: sized 0 ({_sz.reason}, mode={_mode}"

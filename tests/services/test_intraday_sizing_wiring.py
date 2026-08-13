@@ -62,16 +62,21 @@ def test_the_two_risk_budgets_are_distinct_quantities():
     assert vol < stop, "a per-bar 1-SD move must be smaller than the loss at the stop"
 
 
-def test_vol_budget_is_calibrated_to_measured_sigma():
-    """Median 5m ATR/price measured at 0.346% over 8,679 obs. The vol budget
-    must size the MEDIAN name near today's Rs29,938, not pin it to the clamp."""
-    s = CFG["intraday_sizing"]
-    cap = 500_000.0
-    notional = (float(s["vol_risk_budget_pct_of_capital"]) * cap) / (0.346 / 100.0)
-    assert 20_000 < notional < 45_000, (
-        f"median name would size to Rs{notional:,.0f}; the earlier uncalibrated "
-        f"budget pinned 94% of names to the max clamp")
-    assert notional < float(s["max_notional_pct_of_capital"]) * cap
+def test_vol_target_is_not_active_until_at_signal_sigma_is_measured():
+    """vol_target is implemented and unit-tested, but no setup may USE it until
+    sigma at SIGNAL time is measured. The unconditional ATR distribution is the
+    wrong population: all bars median 0.335%, opening hour 0.652%, yet the
+    first real signal through the path sized on sigma 3.17%. Enabling it on
+    that basis would be fitting a number to make the mechanism look right."""
+    using = [n for n, r in INTRADAY.items() if r.get("sizing_mode") == "vol_target"]
+    assert not using, (
+        f"{using} use vol_target — calibrate from SIZING_OBS over a real run first")
+
+
+def test_sizing_observations_are_logged_for_calibration():
+    """SIZING_OBS on every plan is how the at-signal distribution gets collected."""
+    import services.plan_orchestrator as po
+    assert "SIZING_OBS" in inspect.getsource(po)
 
 
 def test_min_notional_matches_the_capacity_floor():

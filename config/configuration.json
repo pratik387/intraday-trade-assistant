@@ -101,9 +101,9 @@
   "breakout_immediate_execution": true,
   "_comment_immediate": "True = Execute immediately on decision (no entry zone wait). Fixes 8-minute delay issue.",
   "risk_per_trade_rupees": 1000.0,
-  "_intraday_sizing_note": "Sizing for the intraday book, as fractions of capital so one config scales paper (Rs5L) -> live. CALIBRATED, not guessed: 5m ATR(14)/price measured over 8,679 observations across 220 symbols in cache/ohlcv_archive gives median sigma 0.346%% (p25 0.221%%, p90 0.850%%). risk_budget 0.000207 x Rs5L = Rs103.44 is the rupee 1-SD-per-bar that today's median Rs29,938 notional ALREADY carries, so the median name is sized exactly as now and only the DISTRIBUTION changes: calm names get more notional, volatile names less, each contributing equal risk. Gross notional rises ~23%% while per-position risk becomes constant -- that is vol targeting working, not a size-up. min 2%%: a 4%% floor would skip 28.7%% of names, and they are the high-vol illiquid ones the book earns from; 2%% skips 5.7%%. max 20%% clamps the calmest 6.3%% and is the first real NOTIONAL ceiling -- capital_management.max_allocation_per_trade applies 20%% to MARGIN, so at 5x MIS it permits Rs500k of notional and never bound (or_window_failure_fade_short ran a Rs112,822 median).",
+  "_intraday_sizing_note": "Sizing for the intraday book, as fractions of capital so one config scales paper (Rs5L) -> live. THE CLAMP IS THE SHIPPED FIX: max 20%% is the first real NOTIONAL ceiling (capital_management.max_allocation_per_trade applies 20%% to MARGIN, so at 5x MIS it permits Rs500k of notional and never bound - or_window_failure_fade_short ran a Rs112,822 median). VOL_TARGET IS IMPLEMENTED AND TESTED BUT NOT YET ACTIVE ON ANY SETUP. Reason: it needs sigma measured AT SIGNAL TIME, and the unconditional distribution is the wrong population. Measured 5m ATR(14)/price medians: all bars 0.335%%, opening hour 0.652%%, mover days 0.413%% - but the first real signal observed through the new path (NSE:JINDALSAW, long_panic_gap_down) had sigma 3.17%%, ~5x the opening-hour median, because these setups fire on panic gaps by construction. Calibrating on n=1 would be fitting. vol_risk_budget below is a PLACEHOLDER derived from the opening-hour population and must not be trusted until the at-signal distribution is collected from the ORCH sizing log over a paper run. stop_risk_budget 0.002 x Rs5L = Rs1,000 reproduces the previous risk_per_trade_rupees exactly, so risk-mode setups are unchanged except that they are now CLAMPED.",
   "intraday_sizing": {
-    "vol_risk_budget_pct_of_capital": 0.000207,
+    "vol_risk_budget_pct_of_capital": 0.000390,
     "stop_risk_budget_pct_of_capital": 0.002,
     "min_notional_pct_of_capital": 0.02,
     "max_notional_pct_of_capital": 0.20
@@ -170,7 +170,7 @@
       "wide_open": false
     },
     "long_panic_gap_down": {
-      "sizing_mode": "vol_target",
+      "sizing_mode": "risk",
       "enabled": true,
       "mechanism_tags": [
         "midcap_correction_active"
@@ -394,7 +394,7 @@
       "wide_open": false
     },
     "or_window_failure_fade_short": {
-      "sizing_mode": "vol_target",
+      "sizing_mode": "risk",
       "enabled": true,
       "mechanism_tags": [
         "rule_orthogonal"
