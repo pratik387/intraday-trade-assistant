@@ -1,38 +1,46 @@
 """Position sizing for the intraday book — one path, one clamp, no fall-through.
 
-Measured problem it solves (2026-08-13, 120 trades / 42 paper sessions on the
-ACTIVE intraday setups):
+Justified STRUCTURALLY, not by a P&L backtest. An earlier version of this
+docstring cited an empirical case (corr(notional, return) = -0.136, "the two
+largest setups are the two biggest losers") that was an artifact of a
+measurement bug: P&L had been summed over final exit legs only, discarding
+partial T1 exits, which are disproportionately winners. Corrected on the same
+120 trades / 42 sessions:
 
-    corr(notional, return%)             -0.136
-    or_window_failure_fade_short   Rs 112,822 median  -0.432%/trade
-    long_panic_gap_down            Rs  58,646 median  +0.215%/trade
-    up_spike_fade_short            Rs  29,856 median  +0.841%/trade
+    book net P&L        Rs +10,182  (not -1,643)      PF 1.18 (not 0.97)
+    corr(notional, ret) -0.057      (not -0.136)
+    above-median notional +0.385%/trade  vs below-median +0.200%
 
-The two largest-sized setups were the two biggest rupee losers, and they were
-large BY ACCIDENT: neither declared `sizing_mode`, so both fell through to
-`qty = risk_rupees / risk_per_share`, where a tight stop mints a huge position.
-The best setup was pinned smallest by a flat 6%-of-capital rule. Same trades,
-same total gross exposure, equal-notional instead: Rs +17,629 vs Rs -1,643.
+So size was NOT systematically landing on bad trades. What remains true, and
+what this module exists for, is structural:
 
-Two defects, both fixed here:
+1. **Fall-through.** `sizing_mode` is REQUIRED per setup and validated; missing
+   or unknown raises. or_window_failure_fade_short carried a Rs112,822 median
+   notional — 3.8x the other setups — purely because it declared no mode and
+   inherited `qty = risk / risk_per_share`, where a tight stop mints a huge
+   position. Nobody chose that size, and that setup does lose money
+   (-Rs3,406, -0.432%/trade). Sizing must be a decision (CLAUDE.md rule 1).
 
-1. **Fall-through.** `sizing_mode` is now REQUIRED per setup and validated; an
-   unknown or missing mode raises instead of silently picking one. Sizing is a
-   decision, never a default (CLAUDE.md rule 1).
+2. **One path.** Sizing happened in the orchestrator and was then silently
+   re-done in the executor for notional-mode setups. Two paths, one plan.
 
-2. **Vol-blindness.** `vol_target` sizes inversely to the name's own
-   volatility, so a 2%-ATR name and a 6%-ATR name contribute the same rupee
-   risk instead of 3x different risk at equal notional. Sigma is ex-ante — ATR
-   as of the signal bar, already on the plan — never realised MAE, which is
-   only knowable after the fact.
+3. **No notional ceiling.** capital_management.max_allocation_per_trade applies
+   20% to MARGIN, so at 5x MIS it permits Rs500k of notional per trade and
+   never bound. The largest observed position was Rs182,970 — 37% of capital
+   in one intraday trade. Every mode now passes through the same
+   [min, max] notional clamp; that is the tail control.
 
-Every mode passes through the SAME [min, max] notional clamp. That is what
-makes an accidental Rs 112k position impossible regardless of stop geometry.
+`vol_target` sizes inversely to ex-ante ATR so each position contributes equal
+rupee risk. It is implemented and unit-tested but ACTIVE ON NO SETUP: it needs
+sigma measured at SIGNAL time, and the unconditional ATR distribution is the
+wrong population (all bars median 0.335%, opening hour 0.652%, yet the first
+real signal through this path sized on 3.17%). See SIZING_OBS in
+plan_orchestrator for how that distribution gets collected.
 
 Nothing here is fitted to returns: ATR is an input and the formulae are
-identities. Sizing correctly is justified structurally; it does not manufacture
-an edge, and the active book's edge is not yet distinguishable from zero
-(mean +0.31%/trade, t=0.94, 95% CI [-0.32%, +0.95%], n=120).
+identities. Correct sizing does not manufacture an edge — the book's is
+positive but not yet significant (mean +0.293%/trade, t=0.92, 95% CI
+[-0.329%, +0.926%], n=120).
 """
 from __future__ import annotations
 
