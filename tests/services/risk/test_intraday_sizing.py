@@ -163,3 +163,44 @@ def test_result_carries_the_mode_and_sigma_for_logging():
     r = _size(sizing_mode="vol_target", vol_risk_budget_inr=1000.0, atr=2.5)
     assert isinstance(r, IntradaySizingResult)
     assert r.mode == "vol_target" and r.sigma_pct == pytest.approx(2.5)
+
+
+# --- sizing provenance: a ledger at one size must be normalisable to another --
+
+def test_result_records_the_1x_size_and_effective_multiplier():
+    r = _size(sizing_mode="notional", target_notional_pct=0.06,
+              total_capital_inr=500_000.0, book_size_multiplier=2.0,
+              min_notional_inr=1_000.0, max_notional_inr=10_000_000.0)
+    assert r.base_notional_inr == pytest.approx(30_000)
+    assert r.effective_multiplier == pytest.approx(2.0, rel=1e-3)
+
+
+def test_effective_multiplier_is_LESS_than_configured_when_clamped():
+    """The 2026-08-14 case: configured 10x delivered 5.0x because Rs500k is the
+    hard per-trade ceiling. Dividing rupee P&L by 10 would be wrong."""
+    r = _size(sizing_mode="notional", target_notional_pct=0.2,
+              total_capital_inr=500_000.0, book_size_multiplier=10.0,
+              min_notional_inr=10_000.0, max_notional_inr=500_000.0)
+    assert r.clamped == "max"
+    assert r.base_notional_inr == pytest.approx(100_000)
+    assert r.effective_multiplier == pytest.approx(5.0, rel=1e-2)
+    assert r.effective_multiplier < 10.0
+
+
+def test_effective_multiplier_reconstructs_the_1x_notional():
+    """base x effective == actual, for any multiplier, clamped or not."""
+    for mult in (1.0, 3.0, 10.0, 50.0):
+        r = _size(sizing_mode="risk", stop_risk_budget_inr=1000.0,
+                  risk_per_share=2.0, book_size_multiplier=mult,
+                  min_notional_inr=1_000.0, max_notional_inr=200_000.0)
+        if r.reason != "ok":
+            continue
+        assert r.base_notional_inr * r.effective_multiplier == pytest.approx(
+            r.notional_inr, rel=1e-3)
+
+
+def test_provenance_present_even_when_size_is_rejected():
+    r = _size(sizing_mode="notional", target_notional_pct=0.001,
+              total_capital_inr=500_000.0, book_size_multiplier=1.0)
+    assert r.reason == "below_min_notional"
+    assert r.base_notional_inr > 0, "cannot tell WHY it was rejected without the base size"

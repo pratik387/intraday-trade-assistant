@@ -559,10 +559,11 @@ class PlanOrchestrator:
         # of guessed. Grep SIZING_OBS to calibrate before enabling vol_target.
         logger.info(
             "SIZING_OBS | %s | %s | mode=%s mult=%.1f sigma=%s rps=%.4f entry=%.2f "
-            "qty=%d notional=%.0f reason=%s clamped=%s",
+            "qty=%d notional=%.0f base=%.0f eff=%.2fx reason=%s clamped=%s",
             symbol, setup_type, _mode, float(sizing_cfg["book_size_multiplier"]),
             ("%.3f%%" % _sz.sigma_pct) if _sz.sigma_pct is not None else "na",
-            rps, entry, qty, notional, _sz.reason, _sz.clamped or "-",
+            rps, entry, qty, notional, _sz.base_notional_inr,
+            _sz.effective_multiplier, _sz.reason, _sz.clamped or "-",
         )
         if _sz.reason != "ok":
             logger.info(
@@ -699,6 +700,16 @@ class PlanOrchestrator:
                 "qty": qty,
                 "notional": notional,
                 "risk_rupees": risk_per_trade_rupees,
+                # Sizing provenance — lets a ledger written at one book size be
+                # normalised to another exactly. Do NOT divide rupee P&L by the
+                # configured multiplier; use size_effective_multiplier, which
+                # differs per trade whenever the notional clamp binds.
+                "size_mode": _mode,
+                "size_base_notional": round(_sz.base_notional_inr, 2),
+                "size_book_multiplier": float(sizing_cfg["book_size_multiplier"]),
+                "size_effective_multiplier": round(_sz.effective_multiplier, 4),
+                "size_clamped": _sz.clamped,
+                "size_sigma_pct": _sz.sigma_pct,
                 "risk_per_share": round(rps, 2),
                 "size_mult": round(dir_bias_mult, 2),
                 "base_mult": 1.0,

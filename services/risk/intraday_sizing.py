@@ -65,6 +65,15 @@ class IntradaySizingResult:
     mode: str
     reason: str  # 'ok' | 'atr_missing' | 'below_min_notional' | 'qty_zero'
     clamped: Optional[str] = None  # 'min' | 'max' | None
+    # Sizing PROVENANCE — what the size would have been at multiplier 1.0,
+    # before any clamp. Recorded so a ledger written at one book size can be
+    # normalised to any other EXACTLY. Dividing rupee P&L by the configured
+    # multiplier is WRONG whenever the clamp binds: on 2026-08-14 a configured
+    # 10x delivered an effective 5.0x-10.0x per trade (mean 6.0x), because
+    # Rs500k is the hard per-trade ceiling at Rs5L capital (max_allocation_per
+    # _trade 20% of margin x 5x MIS). base_notional_inr makes that recoverable.
+    base_notional_inr: float = 0.0        # pre-multiplier, pre-clamp
+    effective_multiplier: float = 1.0     # notional_inr / base_notional_inr
 
 
 def sigma_pct_from_atr(*, atr: float, price: float) -> Optional[float]:
@@ -175,6 +184,7 @@ def size_intraday_position(
             return IntradaySizingResult(0, 0.0, sigma, sizing_mode, "qty_zero")
         notional = (float(stop_risk_budget_inr) / rps) * entry
 
+    base_notional = float(notional)
     notional *= float(book_size_multiplier)
 
     clamped = None
@@ -183,9 +193,14 @@ def size_intraday_position(
     elif notional < min_notional_inr:
         # Below the floor the position is not worth its costs. Report it so the
         # caller can shadow/skip; do NOT round it up into a size nobody chose.
-        return IntradaySizingResult(0, 0.0, sigma, sizing_mode, "below_min_notional", "min")
+        return IntradaySizingResult(0, 0.0, sigma, sizing_mode, "below_min_notional",
+                                   "min", base_notional, 0.0)
 
     qty = int(notional // entry)
     if qty < 1:
-        return IntradaySizingResult(0, 0.0, sigma, sizing_mode, "qty_zero", clamped)
-    return IntradaySizingResult(qty, round(qty * entry, 2), sigma, sizing_mode, "ok", clamped)
+        return IntradaySizingResult(0, 0.0, sigma, sizing_mode, "qty_zero", clamped,
+                                   base_notional, 0.0)
+    filled = round(qty * entry, 2)
+    return IntradaySizingResult(
+        qty, filled, sigma, sizing_mode, "ok", clamped, base_notional,
+        (filled / base_notional) if base_notional > 0 else 0.0)
