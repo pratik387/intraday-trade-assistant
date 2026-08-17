@@ -392,6 +392,42 @@ class CapitalManager:
                 f"Max margin Rs.{max_margin_per_trade:,.0f} | SCALED to qty={adjusted_qty}"
             )
 
+        # Check 2b: Per-setup capital budget (capital_budget_pct).
+        # These budgets are RESEARCH-DERIVED, not housekeeping. Example:
+        # earnings_downshock_continuation_short's brief fixes them at
+        # "Rs 1L notional ... 5 slots = Rs 100k = 20%", and states that
+        # max_concurrent_positions: 5 / capital_budget_pct: 20 "truncates
+        # nothing" — i.e. the setup's measured expectancy is only valid while
+        # it stays inside that footprint.
+        #
+        # The budget was wired in (screener_live sets setup_budgets_pct "so it
+        # can block setups that monopolize total capital") and its usage was
+        # tracked on open and release — but nothing ever COMPARED the two, so
+        # it never blocked anything. Measured 2026-08-17: 4 concurrent
+        # earnings_downshock positions held Rs100k margin each = 80% of Rs5L
+        # against its 20% budget, i.e. 5x the sizing its study validated.
+        if setup_type and setup_type in self.setup_budgets_pct:
+            budget_inr = self.total_capital * (self.setup_budgets_pct[setup_type] / 100.0)
+            used_inr = self.setup_budget_used.get(setup_type, 0.0)
+            room_inr = budget_inr - used_inr
+            if margin_required > room_inr:
+                max_notional = max(0.0, room_inr) * leverage
+                adjusted_qty = int(max_notional / price) if price > 0 else 0
+                if adjusted_qty < 1:
+                    self.stats['trades_rejected_capital'] += 1
+                    reason = (f"setup_budget_exhausted_{setup_type}_used_{used_inr:.0f}"
+                              f"_of_{budget_inr:.0f}")
+                    logger.warning(f"CAP_REJECT | {symbol} | {reason}")
+                    return False, 0, reason
+                qty = adjusted_qty
+                notional = adjusted_qty * price
+                margin_required = notional / leverage
+                logger.info(
+                    f"CAP_SETUP_BUDGET | {symbol} | {setup_type} | budget "
+                    f"Rs{budget_inr:,.0f} used Rs{used_inr:,.0f} | SCALED to "
+                    f"qty={adjusted_qty} margin={margin_required:,.0f}"
+                )
+
         # Check 3: Sufficient available capital?
         if self.available_capital < margin_required:
             # Scale down quantity to fit available capital with safety buffer
