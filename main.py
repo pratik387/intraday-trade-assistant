@@ -69,6 +69,26 @@ except ImportError as e:
 logger = get_agent_logger()
 trading_logger = get_trading_logger()
 
+# Startup phase timing for the CRON paths (overnight / multi_day). Those run at
+# MODULE scope and never call main() — "bypass the intraday daemon entirely so
+# cron doesn't pay the startup cost" is literal — which is why main()'s
+# "Session started" never appears in overnight_entry_*.log.
+#
+# Why this exists: the live overnight entry has a 3m19s budget (cron 15:26,
+# entry_placement_cutoff_hhmmss 15:29:20) and forfeited EVERY ranked signal on
+# 2026-08-07, 08-14 and 08-17 (6, 6 and 1 detections placed as 0). run_entry's
+# own PHASE line showed the run took just 71.3s yet reported clock=15:31:02, so
+# it did not start until ~15:29:51 — ~3m50s lost before it. Timed after hours
+# every component is ~1s and VM load is 0.08, so the cost is transient and must
+# be captured in situ.
+_STARTUP_T0 = _perf_counter()
+
+
+def _startup_phase(label: str) -> None:
+    logger.info("STARTUP PHASE | %-26s | +%6.1fs | clock=%s",
+                label, _perf_counter() - _STARTUP_T0,
+                _now_naive_ist().strftime("%H:%M:%S"))
+
 
 
 # PositionStore extracted to services/state/position_store.py
@@ -164,21 +184,6 @@ def main() -> int:
     trading_logger = get_trading_logger()
 
     logger.info(f"Session started | Mode: {'Paper' if args.paper_trading else 'Dry-run' if args.dry_run else 'Live'}")
-
-    # Startup phase timing. The live overnight entry cron has a 3m19s budget
-    # (fires 15:26, entry_placement_cutoff_hhmmss 15:29:20) and has now blown it
-    # four times — 2026-07-31, 08-07, 08-14, 08-17 — forfeiting EVERY ranked
-    # signal each time. run_entry's own PHASE line proved the run itself is
-    # fast (71.3s on 08-17) but did not begin until ~15:29:51, i.e. ~3m50s went
-    # somewhere in startup before it. Every component measures ~2s when timed
-    # after hours, so the cost is transient and cannot be reproduced on demand;
-    # these markers capture it in situ instead. Logging only.
-    _STARTUP_T0 = _perf_counter()
-
-    def _startup_phase(label: str) -> None:
-        logger.info("STARTUP PHASE | %-26s | +%6.1fs | clock=%s",
-                    label, _perf_counter() - _STARTUP_T0,
-                    _now_naive_ist().strftime("%H:%M:%S"))
 
     cfg = load_filters()  # validate early; raises if required keys are missing
 
