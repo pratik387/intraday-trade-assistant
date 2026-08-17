@@ -427,6 +427,7 @@ def run_entry(
 
     Returns a summary dict for logging/testing.
     """
+    from time import perf_counter as _perf
     from utils.time_util import _now_naive_ist
     from services.capital_manager import OvernightSlotPool
     from services.dispatch.setup_registry import _import_path
@@ -434,6 +435,17 @@ def run_entry(
 
     now = pd.Timestamp(now_ist) if now_ist is not None else _now_naive_ist()
     today = now.date()
+    # Phase timing. The live placement guard leaves ~1 minute of slack: the
+    # cron fires 15:26, entry_placement_cutoff_hhmmss is 15:29:20, and a normal
+    # run takes ~2m20s. On 2026-07-31, 08-07 and 08-14 — all Fridays — the run
+    # overran and EVERY ranked signal was dropped (08-14: fired=0 skipped=6, a
+    # 5m13s run). The cron started on time each day, so the overrun is inside
+    # this function, and the cron log carries no timestamps to localise it.
+    _t0 = _perf()
+
+    def _phase(label):
+        logger.info("run_entry PHASE | %-20s | +%6.1fs | clock=%s",
+                    label, _perf() - _t0, _now_naive_ist().strftime("%H:%M:%S"))
 
     summary: dict = {
         "now_ist": str(now), "today": str(today),
@@ -707,6 +719,7 @@ def run_entry(
         # Wall clock is the correct clock here — this is the live cron's
         # exchange-acceptance deadline, not a trading-signal decision; paper/
         # backtest fills are idealized+instant so the guard is skipped there.
+        _phase("detect+rank done")
         for rank_i, (symbol, evt, plan) in enumerate(ranked):
             if _entry_cutoff_reached(spec.raw_config, paper_mode):
                 remaining = len(ranked) - rank_i
