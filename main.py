@@ -31,6 +31,8 @@ from utils.time_util import _now_naive_ist
 
 ROOT = Path(__file__).resolve().parent
 
+from time import perf_counter as _perf_counter
+
 from config.logging_config import get_agent_logger, get_trading_logger
 from config.filters_setup import load_filters
 
@@ -162,6 +164,21 @@ def main() -> int:
     trading_logger = get_trading_logger()
 
     logger.info(f"Session started | Mode: {'Paper' if args.paper_trading else 'Dry-run' if args.dry_run else 'Live'}")
+
+    # Startup phase timing. The live overnight entry cron has a 3m19s budget
+    # (fires 15:26, entry_placement_cutoff_hhmmss 15:29:20) and has now blown it
+    # four times — 2026-07-31, 08-07, 08-14, 08-17 — forfeiting EVERY ranked
+    # signal each time. run_entry's own PHASE line proved the run itself is
+    # fast (71.3s on 08-17) but did not begin until ~15:29:51, i.e. ~3m50s went
+    # somewhere in startup before it. Every component measures ~2s when timed
+    # after hours, so the cost is transient and cannot be reproduced on demand;
+    # these markers capture it in situ instead. Logging only.
+    _STARTUP_T0 = _perf_counter()
+
+    def _startup_phase(label: str) -> None:
+        logger.info("STARTUP PHASE | %-26s | +%6.1fs | clock=%s",
+                    label, _perf_counter() - _STARTUP_T0,
+                    _now_naive_ist().strftime("%H:%M:%S"))
 
     cfg = load_filters()  # validate early; raises if required keys are missing
 
@@ -388,8 +405,10 @@ def main() -> int:
         # Broker ALWAYS stays Zerodha (preserves full MIS universe for orders)
         broker = KiteBroker(dry_run=False, ltp_cache=ltp_cache)
         logger.warning("💰 LIVE TRADING MODE: Real orders will be placed with real money!")
+        _startup_phase("sdk+broker ready")
 
         _refresh_event_feeds()
+        _startup_phase("event feeds refreshed")
 
         # Initialize tick recorder for live trading
         tick_cfg = cfg.get("tick_recording", {})
@@ -761,7 +780,9 @@ if __name__ == "__main__":
         # block — that's why overnight_handlers was reporting
         # "no overnight setups active" and silently exiting.
         from config.filters_setup import load_filters
+        _startup_phase("cron dispatch reached")
         cfg = load_filters()
+        _startup_phase("config loaded")
         if args.dry_run or args.paper_trading:
             # Paper / dry-run: orders simulated on MockBroker. For paper mode
             # we wire a live data SDK (UpstoxDataClient) so daily/5m queries
@@ -791,7 +812,9 @@ if __name__ == "__main__":
                 api_key=os.environ.get("KITE_API_KEY"),
                 access_token=os.environ.get("KITE_ACCESS_TOKEN"),
             )
+            _startup_phase("kite broker ready")
             broker = LiveOvernightBroker(data_sdk=UpstoxDataClient(), kite=kite)
+            _startup_phase("data sdk ready")
             paper_mode = False
         else:
             # Live mode, multi_day: bare KiteBroker. NOTE: LiveOvernightBroker is
@@ -811,6 +834,7 @@ if __name__ == "__main__":
         if args.mode == "overnight":
             from services.execution.overnight_handlers import run_entry, run_verify_exit, run_place_exit
             if args.action == "entry":
+                _startup_phase("calling run_entry")
                 summary = run_entry(cfg, broker, paper_mode=paper_mode)
                 print(
                     f"[overnight entry] fired={summary['fired_count']} "
