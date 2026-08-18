@@ -1565,7 +1565,7 @@ def run_verify_exit(
                 )
                 close_dn_cfg = (
                     next(
-                        (s.raw_config for s in paper_enabled_setups
+                        (s.raw_config for s in managed_setups
                          if s.name == "close_dn_overnight_long"),
                         None,
                     )
@@ -1588,7 +1588,25 @@ def run_verify_exit(
                     "run_verify_exit: broker has no _data_sdk — skipping baseline build"
                 )
         except Exception as e:
-            logger.exception("run_verify_exit: baseline build failed: %s", e)
+            # CRITICAL, not ERROR: this failure is SILENT and DELAYED. The build
+            # is best-effort here (exits already settled above, so the run still
+            # "succeeds"), but candidates_latest.json then goes stale, and the
+            # NEXT session's 15:26 entry cron falls back to the full universe
+            # build — ~232s — which blows the 15:29:20 placement guard and
+            # forfeits EVERY ranked signal that day.
+            #
+            # That is not hypothetical: a NameError here (a stale
+            # `paper_enabled_setups` left by an incomplete rename in bbfd3eb)
+            # failed this block on 2026-08-14, 08-17 and 08-18. Exits kept
+            # working, nothing alerted, and the live overnight book placed
+            # nothing for three sessions — 6, 1 and 3 signals lost — while the
+            # only symptom was a cutoff warning in a different log the next day.
+            logger.critical(
+                "run_verify_exit: baseline build FAILED — candidates_latest.json "
+                "will be STALE and tomorrow's 15:26 entry cron will take the slow "
+                "path and likely miss its placement cutoff: %s", e, exc_info=True,
+            )
+            summary["baseline_build_failed"] = str(e)
 
     return summary
 
