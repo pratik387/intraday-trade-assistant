@@ -261,10 +261,35 @@ Two process points follow, and both are the point of this section:
    track. We are not claiming proven alpha.
 2. **Short record, small capital.** Months, not years; ₹5L paper and ₹50k/slot
    live.
-3. **Capacity is genuinely constrained.** The measured edge concentrates in
-   illiquid names — 78% of trades and 88% of P&L from symbols under 500K average
-   volume. This is a hard AUM ceiling and we treat it as the binding scaling
-   question, not a detail.
+3. **Capacity is genuinely constrained — and we have measured it.** Median
+   daily turnover of the names we actually trade is **₹9.9 crore**; 62% of trades
+   are in names under 500K median share volume. Current per-trade participation
+   is **0.052% of daily turnover** (p95 0.272%), so today's size is not the
+   constraint — but scaling is.
+
+   Holding per-trade notional at its current share of capital, the AUM at which
+   trades begin hitting a participation cap:
+
+   | cap on daily turnover | binding on least-liquid decile | on p25 | on median trade |
+   |---|---|---|---|
+   | 1% of ADV | **₹21 lakh** | ₹33 lakh | ₹96 lakh |
+   | 3% of ADV | **₹64 lakh** | ₹98 lakh | ₹2.9 crore |
+   | 5% of ADV | **₹1.07 crore** | ₹1.63 crore | ₹4.8 crore |
+
+   The least-liquid decile binds, because that is where the edge lives — 88% of
+   P&L comes from the illiquid tail. **Realistic capacity is ₹0.6–1.6 crore**
+   at 3–5% participation. It reaches ~₹5 crore only by dropping the illiquid
+   names, which forfeits most of the measured edge.
+
+   **Strategic implication, stated plainly:** at this capacity the strategy is
+   not a standalone institutional allocation. It is viable as a **proprietary
+   book, a family-office mandate, or a sleeve inside a multi-strategy platform**
+   — and we would rather say so than have it discovered in diligence.
+
+   The capacity constraint is a property of the edge, not of the
+   implementation: our measured slippage (18.7 bp central) against a 46.2 bp
+   break-even leaves real headroom per trade, but the illiquid tail caps
+   aggregate size regardless.
 4. **A measured regime break.** The illiquidity premium we trade **turned
    negative from 2025Q4**. We measured it, and it invalidated several
    2023–24-derived candidates, which were retired. We regard having detected it
@@ -305,6 +330,7 @@ Every figure is reproducible from this repository:
 | Ranker reversal and permutation test | commit `4adcd63` |
 | Incident register | `docs/LIVE_TRADING_INCIDENTS.md` (24 entries, anchors verified) |
 | Rejection rate | `specs/` (148 briefs), `docs/retired_setups.md` (140 entries) |
+| Capacity analysis | traded-symbol turnover from `cache/preaggregate/consolidated_daily.feather`, 60-session median, joined to realised per-trade notionals |
 | Lifecycle and amendments | `docs/setup_lifecycle.md` |
 | Experiment ledger | `docs/experiment_ledger.jsonl` |
 
