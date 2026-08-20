@@ -110,22 +110,59 @@ Execution breaks down further: entry slippage median **+3.8 bp** / mean
 within ±0.25% of idealised. **The damage is a tail of six entries at 92–147 bp**
 — which tells us where to spend effort, and that the median trade is fine.
 
-### 4.2 Slippage is measured, not parameterised
+**Independently re-measured 2026-08-20 on a larger sample (n = 99), the ranking
+matters ~10× more than the fills.** Matching every live trade to its idealised
+twin and comparing at *reference* prices — where execution cannot interfere:
+
+| | n | mean / trade |
+|---|---|---|
+| Trades the book **took** | 99 | **−₹63** |
+| Trades the book **skipped** | 221 | **+₹1,084** |
+| Execution cost on the trades taken | 99 | **−₹115** |
+
+Selection was worth **₹1,147/trade** more than execution cost. This is the same
+defect as §3.4, measured a second way on a different sample, and it is why the
+ranker was replaced rather than tuned. Post-fix (from 2026-08-04) the live book
+is **+₹623 over 27 trades**, against −₹18,182 over the preceding 72 — directionally
+right, but 27 trades is far too few to claim.
+
+### 4.2 Slippage is measured per-trade, per-book — not parameterised
 
 Backtests run at `fees_slippage_bps = 5.0`, and **we state plainly that this is
-optimistic.** Measured slippage for illiquid shorts:
+optimistic.** Slippage is measured separately for each book, because the two
+differ by an order of magnitude and averaging them would mislead.
 
-| | bp/side |
-|---|---|
-| Central | **18.7** |
-| Conservative | **27.5** |
-| Recent worst | **~30** |
-| **Break-even** | **46.2** |
+**Overnight book — measured, not modelled.** Every live trade is matched 1:1
+against an independently reconstructed idealised twin (same symbol, same date,
+reference prices), giving a direct per-trade measurement. n = 99, 2026-07-01 →
+2026-08-20:
 
-We therefore report candidate economics at *both* the measured and the
-conservative figure. Our newest candidate shows true-OOS **+0.525% / PF 1.564 /
-t = +2.41** at 18.7 bp — and **its confidence interval crosses zero at 27.5 bp.**
-We publish the second number alongside the first.
+| leg | mean | median | p90 |
+|---|---|---|---|
+| Entry | **+3.0 bp** | +1.8 bp | +79.7 |
+| Exit | +10.3 bp | **0.0 bp** | 0.0 |
+| **Round-trip** | **+13.2 bp** | **+3.8 bp** | +81.3 |
+
+Against a **46.2 bp/side break-even**, the median trade consumes 8% of the
+available headroom. 32% of trades land within ±10 bp, and the 10th percentile is
+**negative** — we sometimes fill better than the reference.
+
+The mean is a tail, and the tail is identifiable: the two worst exits are the
+`CREATIVEYE` cancel/fill race (+800 bp) and the `REGENCERAM` stuck partial AMO
+(+218 bp) — both in the incident register, both fixed. **Excluding those two,
+round-trip slippage is 6.0 bp mean / 3.0 bp median (₹94/trade).** 97 of 99 exits
+fill at exactly the reference price, because the exit AMO executes at the
+opening print the reference is drawn from.
+
+Post-fix trend is visible in the data: round-trip mean **14.8 bp before
+2026-08-04 → 9.1 bp after**.
+
+**Intraday illiquid shorts** are a different regime and are reported separately:
+central **18.7 bp/side**, conservative **27.5**, recent worst **~30**. We
+therefore report candidate economics at *both* figures. Our newest candidate
+shows true-OOS **+0.525% / PF 1.564 / t = +2.41** at 18.7 bp — and **its
+confidence interval crosses zero at 27.5 bp.** We publish the second number
+alongside the first.
 
 ### 4.3 Entry basis is validated against what was actually reachable
 
@@ -327,6 +364,7 @@ Every figure is reproducible from this repository:
 | Track record, both regimes | `logs/paper_*/analytics.jsonl`, aggregated per-lifecycle over **all** exit legs |
 | Selection / execution decomposition | `docs/SYSTEM_HANDOVER.md` §11 |
 | Slippage and break-even | `docs/SYSTEM_HANDOVER.md` §§222–223, 348–349 |
+| Overnight slippage (n=99) | `state/decay_tripwire_close_dn_overnight_long_live.json` matched 1:1 against the reconstructed idealised ledger `state/decay_tripwire_close_dn_overnight_long.json` on (symbol, settle-date) |
 | Ranker reversal and permutation test | commit `4adcd63` |
 | Incident register | `docs/LIVE_TRADING_INCIDENTS.md` (24 entries, anchors verified) |
 | Rejection rate | `specs/` (148 briefs), `docs/retired_setups.md` (140 entries) |
