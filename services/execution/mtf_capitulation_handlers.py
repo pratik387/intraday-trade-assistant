@@ -414,10 +414,37 @@ def _run_exits(name, raw, broker, persistence, today, now, paper_mode, summary,
             persistence.remove_position(symbol)
             continue
 
+        if target_touched and not paper_mode:
+            # LIVE GUARD. The touch-fill below is a PAPER modelling assumption:
+            # it records a sale at target_px WITHOUT placing any order, because
+            # no resting limit/GTT exists at the target. In paper that mirrors
+            # the study geometry and is correct. In LIVE it would settle the
+            # position in our ledger while the real holding stayed open at the
+            # broker — a phantom fill, the same class as a stranded position but
+            # harder to catch because the books look consistent.
+            #
+            # Faithful degradation is to do NOTHING: with no order resting, the
+            # exchange sold nothing, so the position simply continues to its
+            # scheduled exit date (target_touched is only ever set while
+            # today < exit_on, so skipping cannot strand it). Loud, because the
+            # touch exits carry the whole book's paper profit and their live
+            # path is unimplemented.
+            logger.critical(
+                "mtf_capitulation: %s high touched target_px=%s but LIVE has no "
+                "resting target order — NOT recording a fill; holding to the "
+                "scheduled exit %s. Implement the limit/GTT path before relying "
+                "on touch exits in live.",
+                symbol, pos.state.get("target_px"), pos.exit_on_date,
+            )
+            summary["target_touch_live_unsupported"] = (
+                summary.get("target_touch_live_unsupported", 0) + 1
+            )
+            continue
+
         if target_touched:
             # Vol-scaled target touched today: fill AT target (gap-open above
-            # target fills at the open) — the study's touch geometry. Paper-only
-            # family today; a live path would place a limit/GTT instead.
+            # target fills at the open) — the study's touch geometry. PAPER
+            # ONLY; the live branch above refuses rather than inventing a fill.
             day_open, _dh = _today_open_high(broker, symbol, today)
             tpx = float(pos.state.get("target_px"))
             sell_price = max(day_open, tpx) if day_open is not None else tpx
