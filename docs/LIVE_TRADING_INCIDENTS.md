@@ -233,9 +233,18 @@ test deciding whether to *track*. **Nothing ever compares usage to the budget.**
 Four concurrent `earnings_downshock` positions therefore held ₹100k margin each —
 **80% of ₹5L against a 20% budget**, 5× the footprint its brief validated.
 
-**Status: found, implemented, PARKED** (`99ec1e1`, reverted in `404030c`) —
-enforcing it at the current 10× multiplier converts a 5-position spread into one
-concentrated position, which is a live decision, not a cleanup.
+**Status: found, implemented, PARKED** (`99ec1e1`, reverted in `404030c`).
+
+Enforcing it at the current 10× multiplier converts a 5-position spread into one
+concentrated position — a *different* risk distribution from the one the setup's
+brief validated, introduced into a running experiment. Shipping a guardrail that
+silently changes the thing being measured is the failure mode this register
+exists to document.
+
+**Re-entry condition:** enforce the budget *and* set the book multiplier so the
+budgets can accommodate the researched position count — one deliberate decision,
+not a guardrail bolted onto a live run. Until then the exposure is bounded by the
+notional clamp (§4.2) and the book is paper. See DILIGENCE_PACK §5.2.
 
 ---
 

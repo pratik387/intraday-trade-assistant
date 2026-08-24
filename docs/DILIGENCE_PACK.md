@@ -28,7 +28,7 @@ measured, instrumented path from backtest to live — not a signal library.
 | Market | NSE cash equity — intraday (MIS), overnight (MTF/CNC), 2–3 day multi-day |
 | Style | Short-horizon mean-reversion and event-reaction; no leverage beyond broker MIS/MTF |
 | Instruments | ~1,200–2,400 symbol universe, cap- and liquidity-filtered per setup |
-| Active setups | **9** of **148** researched |
+| Active setups | **9** of **91** researched (74 briefed, 21 formally retired) |
 | Broker | Zerodha (orders) + Upstox (market data) |
 | Capital deployed | Paper ₹5L; live overnight book ₹50k/slot |
 
@@ -44,9 +44,15 @@ refused to ship, and what we killed after shipping.**
 
 ### 3.1 Rejection rate
 
-**148 researched candidates → 9 active.** Every rejected candidate retains its
-brief, its data, and its kill reason in `specs/` and `docs/retired_setups.md`
-(140 documented entries). Nothing is quietly abandoned.
+**91 distinct setups researched → 9 active** (a 90% rejection rate). Of those,
+**74 carry a written brief** in `specs/`, and **21 have a formal retirement
+record** in `docs/retired_setups.md` stating the kill reason and stage. Nothing
+is quietly abandoned.
+
+(Counting note, because these numbers get cross-checked: `specs/` holds 148
+*files*, but half are plans, audits and design docs rather than setup briefs —
+the setup count is 91 distinct names across briefs and retirement records, not
+the file count.)
 
 ### 3.2 Validation is one-shot and pre-registered
 
@@ -174,9 +180,22 @@ price actually available at decision time:
 | 15:25 open (reachable) | **+0.349%** | 1.812 |
 | 15:30 close (assumed) | +0.240% | 1.527 |
 
-Live fills come in ~**18.7 bp** worse than the price available at their own
-entry time — so of a +0.349% achievable edge, roughly 0.19% is given back in
-fill quality. Both numbers are in the record.
+Live fills come in worse than the price available at their own entry time by
+the sum of two independent components:
+
+| component | value | source |
+|---|---|---|
+| live fill vs the 15:30 close | **+3.0 bp** | measured, n = 99, 2026-08-20 |
+| 15:25 open vs 15:30 close | **−11.2 bp** | entry re-anchoring study |
+| **total vs the reachable price** | **≈14.2 bp** | |
+
+**This figure was 18.7 bp when first measured (7.5 + 11.2) and has improved to
+14.2 bp as post-fix trades accumulated** — the fill-quality half fell from
+7.5 bp to 3.0 bp. Note for cross-readers: the earlier 18.7 bp total is
+arithmetically unrelated to the 18.7 bp/side intraday-shorts figure in §4.2
+despite being identical to the decimal. One is a decomposition sum, the other a
+pooled measurement on a different book. The coincidence is why we now quote the
+components, not the total.
 
 ### 4.4 Data-path fidelity is measured
 
@@ -224,6 +243,26 @@ anchor verified.
 - **Cluster-level correlation caps** on the multi-day book (measured pairwise
   ρ = 0.227; volatility-targeted sizing on a stated risk budget).
 - **Kill switches** at setup, cluster and book level.
+
+**One control is deliberately deferred, and we state why.** The per-setup
+capital budget (`capital_budget_pct`) is read, wired and tracked but **not yet
+enforced** — incident 4.3 in the register. It is written and tested
+(commit `99ec1e1`), and it was reverted (`404030c`) rather than shipped.
+
+The reason is interaction, not oversight. The intraday book is mid-run at a 10×
+size multiplier; at that size one `earnings_downshock` position consumes the
+setup's entire 20% budget, so enforcing it converts a 5-position spread into a
+single concentrated position — a *different* risk distribution from the one the
+setup's brief validated, introduced mid-experiment. Shipping a guardrail that
+silently changes the thing being measured is the failure mode this framework
+exists to prevent.
+
+The controlled resolution is to enforce the budget *and* set the multiplier so
+the budgets can accommodate the researched position count — a single decision
+taken deliberately, not a guardrail bolted onto a running experiment. Until
+then the exposure is bounded by the notional clamp (§4.2 of the register) and
+the book is paper. We consider an openly parked control with a stated
+re-entry condition safer than a silent one, and both documents say so.
 
 ---
 
@@ -324,9 +363,10 @@ Two process points follow, and both are the point of this section:
    — and we would rather say so than have it discovered in diligence.
 
    The capacity constraint is a property of the edge, not of the
-   implementation: our measured slippage (18.7 bp central) against a 46.2 bp
-   break-even leaves real headroom per trade, but the illiquid tail caps
-   aggregate size regardless.
+   implementation: even at the intraday book's conservative 18.7 bp/side
+   against a 46.2 bp break-even there is real headroom per trade, and the
+   overnight book runs tighter still (§4.2). The illiquid tail caps aggregate
+   size regardless of how good the fills are.
 4. **A measured regime break.** The illiquidity premium we trade **turned
    negative from 2025Q4**. We measured it, and it invalidated several
    2023–24-derived candidates, which were retired. We regard having detected it
@@ -340,18 +380,70 @@ Two process points follow, and both are the point of this section:
 
 ---
 
-## 8. What we are asking for, and what we would do with it
+## 8. Closing — use the page that matches the audience
 
-The honest ask is not "allocate to a proven strategy." It is:
+This pack has three audiences and they need different last pages. §7.3 states
+the capacity ceiling honestly (₹0.6–1.6cr), which forecloses a conventional
+allocation ask — so do not make one. Send exactly one of the following.
 
-- **Capital sufficient to make the live sample statistically decisive** at the
-  measured capacity ceiling, and
-- **Infrastructure funding** to close the operational gaps in §7.5.
+> **Note on how this is circulated.** In India an unregistered individual
+> cannot solicit discretionary capital from others; that path runs through a
+> PMS / AIF / RIA wrapper, or through being engaged (prop seat, sleeve PM,
+> employment). This document is evidence of process and is clean to circulate
+> as such. Any ask stays verbal, and only in conversations where the legal
+> wrapper is already the premise.
 
-What a partner gets that is unusual: a manager who can hand over the
-implementation-shortfall decomposition, the rejection ledger, the incident
-register, and the list of its own validated ideas it has killed — **before**
-being asked for any of them.
+---
+
+### 8A — Validation / research-infrastructure engagement
+*Use for consulting outreach. Lead with §§3–5; this replaces any capital ask.*
+
+What is on offer is the method, not the book. The artifacts above — a
+falsification pipeline with one-shot OOS and priced multiplicity, an
+implementation-shortfall decomposition measured per basis point, and a 24-entry
+incident register with every anchor resolving — are the deliverable.
+
+Most systematic desks cannot answer *"why does live differ from the backtest,
+and by how much?"* with numbers. We built the apparatus that answers it, and
+the strongest proof is §3.4: we used it to kill our own three-stage-validated
+signal. Engagements we are set up for: backtest-to-live parity audits,
+execution-cost attribution, and building the measurement layer that makes both
+routine.
+
+---
+
+### 8B — Sleeve, prop seat, or platform allocation
+*Use for multi-strategy platforms and prop desks. Keep the capacity table — here it is a spec, not a limitation.*
+
+The capacity ceiling in §7.3 is the honest specification of a sleeve: ₹0.6–1.6cr
+at 3–5% participation, in NSE small/mid-caps, with measured round-trip slippage
+of 3.8 bp median (§4.2) and a maximum drawdown of 1.1% of capital across the
+primary track. It is uncorrelated with index-beta strategies by construction —
+it trades capitulation and event reactions in the illiquid tail.
+
+What a platform is underwriting is not the current t-statistic, which §7.1 says
+plainly is not yet significant. It is a process that has already demonstrated
+it will retire its own validated alpha on forward evidence, decompose its own
+shortfall, and publish its own reporting errors. On a platform's risk
+infrastructure and legal wrapper, that behaviour is the scarce input; capacity
+at this size is a line item, not a constraint.
+
+The ask is a seat and a sleeve, sized to the capacity table — not an allocation
+to a fund.
+
+---
+
+### 8C — Peer and industry conversation
+*Use when there is no transaction on the table. No ask; the document is the point.*
+
+No ask. This is what a single operator can build in a year working alone on NSE
+microstructure: 91 setups researched to 9 active, a live-versus-paper gap
+measured per leg, and an incident register that treats trading failures the way
+an SRE team treats outages. §§3–6 are the interesting parts; §7 is where we say
+what we do not yet know.
+
+If any of it is useful to you, take it. If any of it is wrong, we would rather
+hear it than not — that is the same instinct that produced §3.4.
 
 ---
 
@@ -362,8 +454,8 @@ Every figure is reproducible from this repository:
 | claim | source |
 |---|---|
 | Track record, both regimes | `logs/paper_*/analytics.jsonl`, aggregated per-lifecycle over **all** exit legs |
-| Selection / execution decomposition | `docs/SYSTEM_HANDOVER.md` §11 |
-| Slippage and break-even | `docs/SYSTEM_HANDOVER.md` §§222–223, 348–349 |
+| Selection / execution decomposition | `docs/SYSTEM_HANDOVER.md` §11 (book economics) and §11a-CORRECTION (entry basis) |
+| Slippage and break-even | `docs/SYSTEM_HANDOVER.md` — "Slippage caveat" (fees_slippage_bps) and the earnings_downshock validation table |
 | Overnight slippage (n=99) | `state/decay_tripwire_close_dn_overnight_long_live.json` matched 1:1 against the reconstructed idealised ledger `state/decay_tripwire_close_dn_overnight_long.json` on (symbol, settle-date) |
 | Ranker reversal and permutation test | commit `4adcd63` |
 | Incident register | `docs/LIVE_TRADING_INCIDENTS.md` (24 entries, anchors verified) |
