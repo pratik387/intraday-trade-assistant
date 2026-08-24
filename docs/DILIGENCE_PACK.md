@@ -31,6 +31,7 @@ measured, instrumented path from backtest to live — not a signal library.
 | Active setups | **9** of **91** researched (74 briefed, 21 formally retired) |
 | Broker | Zerodha (orders) + Upstox (market data) |
 | Capital deployed | Paper ₹5L; live overnight book ₹50k/slot |
+| Track | **One year** — trading and building the system since 2025-08 |
 
 Three independent books share one engine, one config, one validation pipeline.
 Each has its own capital pool, decay tripwire, and kill switch.
@@ -547,11 +548,11 @@ to a fund.
 ### 9C — Peer and industry conversation
 *Use when there is no transaction on the table. No ask; the document is the point.*
 
-No ask. This is what a single operator can build in a year working alone on NSE
-microstructure: 91 setups researched to 9 active, a live-versus-paper gap
-measured per leg, and an incident register that treats trading failures the way
-an SRE team treats outages. §§3–6 are the interesting parts; §7 is where we say
-what we do not yet know.
+No ask. This is **one year of trading and building the system** — first commit
+2025-08-27 — working alone on NSE microstructure: 91 setups researched to 9
+active, a live-versus-paper gap measured per leg, and an incident register that
+treats trading failures the way an SRE team treats outages. §§3–6 are the
+interesting parts; §7 is where we say what we do not yet know.
 
 If any of it is useful to you, take it. If any of it is wrong, we would rather
 hear it than not — that is the same instinct that produced §3.4.
