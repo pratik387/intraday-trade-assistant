@@ -49,6 +49,14 @@ refused to ship, and what we killed after shipping.**
 record** in `docs/retired_setups.md` stating the kill reason and stage. Nothing
 is quietly abandoned.
 
+The 82 rejections split by how far each got before it died: **61 killed in
+research**, with the verdict written into the brief itself — every one of the
+74 briefs carries an explicit REJECT / RETIRE / KILLED / PARK / PASS decision,
+100% of them — and **21 retired after reaching validation or production**, which
+additionally get a formal record in `docs/retired_setups.md` naming the stage
+and reason. Two levels of paperwork for two levels of progress; neither is a
+silent drop.
+
 (Counting note, because these numbers get cross-checked: `specs/` holds 148
 *files*, but half are plans, audits and design docs rather than setup briefs —
 the setup count is 91 distinct names across briefs and retirement records, not
@@ -183,11 +191,14 @@ price actually available at decision time:
 Live fills come in worse than the price available at their own entry time by
 the sum of two independent components:
 
-| component | value | source |
+Both components are stated as **cost against the reachable price**, so they add
+without a sign flip:
+
+| component | cost | source |
 |---|---|---|
-| live fill vs the 15:30 close | **+3.0 bp** | measured, n = 99, 2026-08-20 |
-| 15:25 open vs 15:30 close | **−11.2 bp** | entry re-anchoring study |
-| **total vs the reachable price** | **≈14.2 bp** | |
+| fill quality — live fill vs the 15:30 close | **+3.0 bp** | measured, n = 99, 2026-08-20 |
+| entry basis — the 15:30 close is 11.2 bp worse than the 15:25 open we could actually reach | **+11.2 bp** | entry re-anchoring study |
+| **total given up vs the reachable price** | **+14.2 bp** | |
 
 **This figure was 18.7 bp when first measured (7.5 + 11.2) and has improved to
 14.2 bp as post-fix trades accumulated** — the fill-quality half fell from
@@ -459,7 +470,7 @@ Every figure is reproducible from this repository:
 | Overnight slippage (n=99) | `state/decay_tripwire_close_dn_overnight_long_live.json` matched 1:1 against the reconstructed idealised ledger `state/decay_tripwire_close_dn_overnight_long.json` on (symbol, settle-date) |
 | Ranker reversal and permutation test | commit `4adcd63` |
 | Incident register | `docs/LIVE_TRADING_INCIDENTS.md` (24 entries, anchors verified) |
-| Rejection rate | `specs/` (148 briefs), `docs/retired_setups.md` (140 entries) |
+| Rejection rate | 91 distinct setups across `specs/` (74 briefs, every one carrying an explicit verdict) and `docs/retired_setups.md` (21 formal retirement records) |
 | Capacity analysis | traded-symbol turnover from `cache/preaggregate/consolidated_daily.feather`, 60-session median, joined to realised per-trade notionals |
 | Lifecycle and amendments | `docs/setup_lifecycle.md` |
 | Experiment ledger | `docs/experiment_ledger.jsonl` |
