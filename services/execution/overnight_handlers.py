@@ -797,6 +797,44 @@ def run_entry(
                 tick, "live_quote" if ref_px != _plan_px else "plan_fallback",
                 _bid, _ask, _spread_bp, _ask_vs_ref_bp, _bq, _aq, plan.qty,
             )
+            # PARTICIPATION_OBS — observation only, nothing is resized.
+            #
+            # Measured 2026-08-24 on the live book (n=96, point-in-time ADV):
+            # trades above 5% of the name's median daily turnover returned
+            # -2.234%/trade and produced 92% of the book's loss, while trades
+            # below 1% were profitable. corr(participation, return) = -0.69.
+            # The paper mirror shows NO such effect (corr -0.03) and thin names
+            # are NOT worse trades there (thinnest ADV quintile +0.45%), so the
+            # cause is our size in the name, not the name.
+            #
+            # This line records what a cap WOULD have done, so the cap can be
+            # calibrated on live data before it moves a single order. Enforcement
+            # is deliberately absent until a week of this log confirms it binds
+            # where expected.
+            _adv = None
+            try:
+                _cand = prior_returns_by_symbol.get(symbol) or {}
+                _adv = _cand.get("adv_inr")
+            except Exception:
+                pass
+            _notional = float(plan.qty) * float(buy_limit or ref_px or 0.0)
+            if _adv and _adv > 0:
+                _part = _notional / float(_adv)
+                _capped = {p: int((p * float(_adv)) // float(buy_limit or ref_px or 1.0))
+                           for p in (0.01, 0.02, 0.05)}
+                logger.info(
+                    "PARTICIPATION_OBS | %s | notional=%.0f adv=%.0f part=%.3f%% "
+                    "| qty=%d would_be qty@1%%=%d qty@2%%=%d qty@5%%=%d | binds@1%%=%s",
+                    symbol, _notional, float(_adv), 100.0 * _part, int(plan.qty),
+                    _capped[0.01], _capped[0.02], _capped[0.05],
+                    "YES" if _part > 0.01 else "no",
+                )
+            else:
+                logger.info(
+                    "PARTICIPATION_OBS | %s | notional=%.0f adv=UNAVAILABLE "
+                    "— cannot size against turnover", symbol, _notional,
+                )
+
             try:
                 buy_order_id = _place_buy(
                     broker, symbol=symbol, qty=plan.qty,

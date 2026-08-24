@@ -134,6 +134,40 @@ def _prior_return_for_symbol(df_5m: pd.DataFrame) -> Optional[dict]:
     }
 
 
+def _adv_for_symbol(df, n_sessions: int) -> Optional[float]:
+    """Median DAILY rupee turnover over the last `n_sessions` sessions.
+
+    POINT-IN-TIME BY CONSTRUCTION. `df` is the batch fetch spanning
+    session_date-30d .. session_date-1d, so every bar strictly precedes the
+    signal. This is not incidental — measuring participation against a window
+    that includes the trade day (or later) is look-ahead, and these setups fire
+    on volume spikes, so the trade day is systematically atypical. An analysis
+    that made exactly that error overstated the execution component of the
+    2026-08 participation study before it was caught.
+
+    Turnover, not share volume: a 500k-share name at Rs10 and at Rs2,000 are
+    different capacity problems, and the cap is a rupee constraint.
+
+    Returns None when fewer than 10 sessions are available — too few to size
+    against, and the caller records None rather than guessing.
+    """
+    if df is None or df.empty:
+        return None
+    try:
+        d = df.copy()
+        if "close" not in d.columns or "volume" not in d.columns:
+            return None
+        d["_turnover"] = d["close"].astype(float) * d["volume"].astype(float)
+        daily = d.groupby(d.index.date)["_turnover"].sum()
+        daily = daily[daily > 0]
+        if len(daily) < 10:
+            return None
+        return float(daily.tail(int(n_sessions)).median())
+    except Exception as e:  # pragma: no cover - never break the build
+        logger.warning("_adv_for_symbol failed: %s", e)
+        return None
+
+
 def build_baseline_and_candidates(
     sdk,
     session_date: _date,
@@ -143,6 +177,7 @@ def build_baseline_and_candidates(
     concurrency: int = 30,
     cell_min_prior_ret_pct: float = 3.0,
     max_symbols: Optional[int] = None,
+    adv_sessions: int = 20,
 ) -> Dict[str, Any]:
     """Build baseline + candidate snapshots for `session_date`.
 
@@ -208,6 +243,9 @@ def build_baseline_and_candidates(
             "prior_close": None, "prev_prior_close": None,
             "prior_day_return_pct": None,
         }
+        # Median daily rupee turnover of the sessions BEFORE today, for the
+        # participation-aware sizing cap. Free — same bars already fetched.
+        r["adv_inr"] = _adv_for_symbol(df, adv_sessions)
         candidate_entries.append({"symbol": sym, **r})
 
     # Sort by prior_day_return_pct desc for diagnostic readability; the
@@ -235,6 +273,8 @@ def build_baseline_and_candidates(
         "cell_min_prior_ret_pct": cell_min_prior_ret_pct,
         "computed_at": computed_at,
         "n_candidates": len(candidate_entries),
+        "adv_sessions": adv_sessions,
+        "n_with_adv": sum(1 for e in candidate_entries if e.get("adv_inr")),
         "candidates": candidate_entries,
     }
 
