@@ -255,6 +255,27 @@ anchor verified.
   ρ = 0.227; volatility-targeted sizing on a stated risk budget).
 - **Kill switches** at setup, cluster and book level.
 
+### 5.3 Entity-level risk — the two concentrations we cannot diversify
+
+Strategy-level controls above are the strong half. Two entity-level risks are
+structural at this stage and are stated rather than mitigated:
+
+- **Counterparty concentration is total.** One broker (Zerodha) holds every
+  position and executes every order; one data vendor (Upstox) feeds every
+  signal. There is no second execution venue and no failover. A broker outage
+  during market hours means no exits; a broker default means the positions are
+  subject to whatever the exchange's investor-protection process provides.
+  Mitigation today is exposure size, not redundancy.
+- **Key-person risk is total.** One person researches, operates, and monitors.
+  There is no second reviewer, no cover for illness or absence, and no
+  succession. The controls in §5.2 are designed to fail *safe* without
+  intervention — tripwires pause, guards refuse, MIS auto-squares — but nothing
+  substitutes for the operator being reachable.
+
+Both are properties of a solo prop book, not defects in it. Neither is
+resolvable at this scale; both resolve immediately inside a platform's
+infrastructure, which is part of the case in §9B.
+
 **One control is deliberately deferred, and we state why.** The per-setup
 capital budget (`capital_budget_pct`) is read, wired and tracked but **not yet
 enforced** — incident 4.3 in the register. It is written and tested
@@ -391,7 +412,86 @@ Two process points follow, and both are the point of this section:
 
 ---
 
-## 8. Closing — use the page that matches the audience
+## 8. Firm, operations and continuity
+
+A standard diligence questionnaire has modules this operation does not have
+entities for. Silence in those sections reads as evasion, so each is answered
+explicitly — including the ones whose answer is "none".
+
+### 8.1 Firm, governance and ownership
+
+Sole proprietor. No outside capital, no investors, no delegated trading
+authority, no board or investment committee. Every research, sizing and
+execution decision is made by one person and recorded in the repository's
+commit history, which is the closest thing to a governance trail that exists
+here. There is no separation between research, trading and risk functions —
+their independence is enforced by process (pre-registration, one-shot OOS,
+forward validation) rather than by org structure.
+
+### 8.2 Service providers
+
+| role | provider | note |
+|---|---|---|
+| Broker / custody | Zerodha | orders, holdings, margin |
+| Market data | Upstox | signals and reference prices |
+| Administrator | **none** | no external NAV or books |
+| Auditor | **none** | no fund to audit |
+| Prime broker | **none** | cash and broker-margin only |
+
+No administrator, auditor or custodian exists, and none is expected of a
+proprietary book. If a wrapper is ever created, these become real questions;
+today they are not.
+
+### 8.3 Regulatory and compliance
+
+No registrations held. Trading is on personal capital only, with no external
+capital under management and no discretionary authority over anyone else's
+money. The circulation boundary is stated in §9: in India an unregistered
+individual cannot solicit discretionary capital, so this document circulates
+as evidence of process and any ask stays verbal within a conversation whose
+legal wrapper is already the premise.
+
+For the §9B route, this module transfers wholesale to the platform — its
+licence, its compliance function, its supervision. That transfer is a reason
+the sleeve structure fits, not a gap in it.
+
+### 8.4 Failure runbook — what happens if the machine or the operator stops
+
+Infrastructure is a single VM with manually-started processes (§7.5). The
+honest question is what survives that going away mid-position, and the answer
+differs per book because the broker-side backstops differ. Verified against
+live state, not assumed:
+
+| book | what rests AT THE BROKER | if the VM dies mid-position |
+|---|---|---|
+| **Intraday (MIS)** | nothing of ours — but MIS product | Zerodha **auto-squares ~15:20** the same day. Exposure is bounded by the session. |
+| **Overnight** | exit **AMO SELL** placed 16:05 + **GTT** catastrophe stop | position **still exits** next morning on the resting AMO; the GTT backstops a gap. No intervention needed. |
+| **Multi-day** | **nothing** | position is held **indefinitely** until closed manually — exit is an MOC order placed at 15:28, so there is no resting instruction between entry and exit. |
+
+**Multi-day is therefore the exposed book, and it is exposed by design rather
+than by accident.** It is paper-only today, which is why this is a disclosure
+and not an incident. Before it takes real money, a resting exit instruction is
+a precondition — the same GTT work already identified for its target exits
+(register §5.1 and the 2026-08-24 guard).
+
+**Manual flatten procedure.** Every position is visible in the Zerodha console
+and can be closed from the app or web terminal without any system component:
+holdings for CNC/MTF, positions for MIS. The engine's state files
+(`state/overnight_slots.json`, `state/*_slots_positions/`) name every open
+position, its quantity and its intended exit date, and are readable without the
+engine running. Reconciliation after a manual intervention is handled by the
+existing adoption paths — `_find_out_of_band_sell` adopts a manual exit rather
+than double-selling (register §1.5), and `_reconcile_unattached_buys` re-attaches
+fills the engine lost track of (§1.8). Both were built after real incidents.
+
+**What is genuinely missing:** automated alerting on cron failure. Today a
+failed job is discovered by reading logs. The three-session outage in register
+§2.3 is exactly that failure mode, and it is the top infrastructure item — not
+redundancy, not failover, just being told when something did not run.
+
+---
+
+## 9. Closing — use the page that matches the audience
 
 This pack has three audiences and they need different last pages. §7.3 states
 the capacity ceiling honestly (₹0.6–1.6cr), which forecloses a conventional
@@ -406,7 +506,7 @@ allocation ask — so do not make one. Send exactly one of the following.
 
 ---
 
-### 8A — Validation / research-infrastructure engagement
+### 9A — Validation / research-infrastructure engagement
 *Use for consulting outreach. Lead with §§3–5; this replaces any capital ask.*
 
 What is on offer is the method, not the book. The artifacts above — a
@@ -423,7 +523,7 @@ routine.
 
 ---
 
-### 8B — Sleeve, prop seat, or platform allocation
+### 9B — Sleeve, prop seat, or platform allocation
 *Use for multi-strategy platforms and prop desks. Keep the capacity table — here it is a spec, not a limitation.*
 
 The capacity ceiling in §7.3 is the honest specification of a sleeve: ₹0.6–1.6cr
@@ -444,7 +544,7 @@ to a fund.
 
 ---
 
-### 8C — Peer and industry conversation
+### 9C — Peer and industry conversation
 *Use when there is no transaction on the table. No ask; the document is the point.*
 
 No ask. This is what a single operator can build in a year working alone on NSE
