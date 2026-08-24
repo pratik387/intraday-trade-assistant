@@ -203,6 +203,12 @@ class CrossSectionalRanker:
                 # symbol's history); consumers must guard. Used by the optional
                 # vol-scaled target exit.
                 "sigma20_pct": (float(r["sigma20_pct"]) if np.isfinite(r["sigma20_pct"]) else None),
+                # Point-in-time median-free ADV already computed for tshock:
+                # adv_prior is SHIFTED one session, so it never contains the
+                # signal day. Surfaced (not previously emitted) so the executor
+                # can measure order size against name liquidity — see
+                # PARTICIPATION_OBS in mtf_capitulation_handlers.
+                "adv_prior_inr": (float(r["adv_prior"]) if np.isfinite(r["adv_prior"]) else None),
             }
             for _, r in sel.iterrows()
         ]

@@ -828,6 +828,42 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
             symbol, owner, cl_name, cl_rho, n_planned, risk_inr,
             c.get("sigma20_pct"), sized.notional_inr, sized.margin_inr, qty, sized.reason,
         )
+        # PARTICIPATION_OBS — observation only; nothing is resized here.
+        #
+        # The overnight book measured a strong participation penalty in LIVE
+        # (corr(participation, return) = -0.69; trades above 5% of a name's
+        # daily turnover produced 92% of its loss) that is ABSENT from its paper
+        # mirror (corr -0.03). The mechanism is market impact, which idealised
+        # fills cannot contain.
+        #
+        # This book is paper-only, so the same test here can only ask whether
+        # thin names are worse TRADES, and they are not: corr(participation,
+        # return) measures +0.07 to +0.15 across cuts (n=209/95/83), and
+        # corr(log ADV, return) is ~-0.06. Enforcing a cap on that evidence
+        # would be calibrating a control against data that structurally cannot
+        # contain the thing it controls.
+        #
+        # So: log the distribution now, build the baseline, and let the live
+        # leg supply the impact measurement when this book gets one. Median
+        # participation here is ~1.4% vs the intraday book's 0.05%, so the
+        # exposure is real even though the evidence is not yet.
+        _adv = c.get("adv_prior_inr")
+        if _adv and float(_adv) > 0 and qty > 0:
+            _part = sized.notional_inr / float(_adv)
+            logger.info(
+                "PARTICIPATION_OBS | %s | owner=%s notional=Rs%.0f adv=Rs%.0f "
+                "part=%.3f%% qty=%d | would_be qty@1%%=%d qty@2%%=%d qty@5%%=%d "
+                "| binds@2%%=%s",
+                symbol, owner, sized.notional_inr, float(_adv), 100.0 * _part, qty,
+                *[int((p * float(_adv)) // float(c["close"])) for p in (0.01, 0.02, 0.05)],
+                "YES" if _part > 0.02 else "no",
+            )
+        elif qty > 0:
+            logger.info(
+                "PARTICIPATION_OBS | %s | owner=%s notional=Rs%.0f adv=UNAVAILABLE",
+                symbol, owner, sized.notional_inr,
+            )
+
         if qty <= 0:
             summary["rejected_count"] += 1
             continue
