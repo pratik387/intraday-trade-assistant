@@ -364,42 +364,89 @@ Two process points follow, and both are the point of this section:
 
 ---
 
+### 6.4 What the live book's losses actually are — market impact, not signal decay
+
+The overnight book is the only real-money record and it is negative. Rather than
+attribute that to the edge, we measured it. Joining every live trade to the
+60-session median rupee turnover of the name it traded:
+
+| participation (notional / daily turnover) | n | net | mean / trade | win rate |
+|---|---|---|---|---|
+| **below 1% of ADV** | 64 | **+₹3,156** | +0.109% | 45% |
+| 1–5% | 21 | −₹4,269 | −0.465% | 33% |
+| **above 5%** | **11** | **−₹12,216** | **−2.234%** | **9%** |
+
+**11 trades — 11% of the book — account for 92% of its entire loss. Below 5%
+participation the book is profitable.**
+
+The relationship is not marginal: `corr(participation, return) = −0.614`, the
+above-5% group sits at the **0.0th percentile of 20,000 random 11-trade draws**,
+and the win rate falls monotonically 45% → 33% → 9% across the three buckets.
+
+**This also re-explains two entries in the incident register.** The two worst
+executions on record — REGENCERAM (a partially-filled exit that sat above the
+market) and CREATIVEYE (a cancel/fill race that left a position unhedged over a
+weekend) — were traded at **92.8%** and **90.3%** of their names' daily turnover.
+We originally documented both as execution failures and shipped mechanical
+fixes. That was incomplete. A ₹50k order in a name that trades ₹54k a day is not
+an execution accident; it is a sizing decision that made the accident inevitable.
+The register now says so.
+
+It also accounts for the slippage tail in §4.2 — median round-trip 3.8 bp but
+p90 at 81 bp — which had been measured but not explained. It is market impact,
+and it is attributable per trade.
+
+**Cause is sizing, not selection or signal.** The book uses a flat ₹50k per slot
+regardless of the name, which is 0.05% of turnover in a liquid stock and 93% in
+a thin one. The control — size as `min(slot, X% × ADV)` — is the same class as
+the notional clamp already shipped on the intraday book, and is **identified,
+quantified and not yet implemented**; it is the highest-priority item on the
+book. Two honest caveats: the turnover data ends 2026-07-24, so August trades use
+a slightly lagged window (direction is robust — 92.8% does not become safe under
+any plausible revision — but exact thresholds want fresh data); and capping at 5%
+would have improved the book by ₹12,216 **in sample on n=96**, which is a count,
+not a validated edge. What justifies the control is the structural argument, not
+the backtest.
+
+---
+
 ## 7. Limitations — stated before you find them
 
 1. **No statistically significant live edge yet.** t = 0.91 on the primary
    track. We are not claiming proven alpha.
 2. **Short record, small capital.** Months, not years; ₹5L paper and ₹50k/slot
    live.
-3. **Capacity is genuinely constrained — and we have measured it.** Median
-   daily turnover of the names we actually trade is **₹9.9 crore**; 62% of trades
-   are in names under 500K median share volume. Current per-trade participation
-   is **0.052% of daily turnover** (p95 0.272%), so today's size is not the
-   constraint — but scaling is.
+3. **Capacity is constrained, differs sharply per book, and one book is
+   already past its limit.** Measured on the names each book actually traded
+   (60-session median rupee turnover):
 
-   Holding per-trade notional at its current share of capital, the AUM at which
-   trades begin hitting a participation cap:
-
-   | cap on daily turnover | binding on least-liquid decile | on p25 | on median trade |
+   | book | p10 ADV | median ADV | participation today (median / p95) |
    |---|---|---|---|
-   | 1% of ADV | **₹21 lakh** | ₹33 lakh | ₹96 lakh |
-   | 3% of ADV | **₹64 lakh** | ₹98 lakh | ₹2.9 crore |
-   | 5% of ADV | **₹1.07 crore** | ₹1.63 crore | ₹4.8 crore |
+   | Intraday | ₹14.8mn | **₹98.8mn** | **0.052%** / 0.272% |
+   | Multi-day | ₹7.3mn | ₹22.2mn | 1.164% / 3.521% |
+   | **Overnight** | **₹0.49mn** | ₹27.3mn | 0.449% / **18.959%** |
 
-   The least-liquid decile binds, because that is where the edge lives — 88% of
-   P&L comes from the illiquid tail. **Realistic capacity is ₹0.6–1.6 crore**
-   at 3–5% participation. It reaches ~₹5 crore only by dropping the illiquid
-   names, which forfeits most of the measured edge.
+   The intraday book is the **most** liquid of the three by an order of
+   magnitude — so a capacity number taken from it flatters the others. Holding
+   per-trade notional at its current share of capital, the intraday AUM ceiling
+   is **₹21 lakh** (1% of ADV on the least-liquid decile), **₹64 lakh** (3%) and
+   **₹1.07 crore** (5%); the least-liquid decile binds because that is where the
+   edge lives — 88% of P&L comes from the illiquid tail. **Realistic intraday
+   capacity is ₹0.6–1.6 crore.** It reaches ~₹5 crore only by dropping the
+   illiquid names, which forfeits most of the measured edge.
+
+   **The overnight book is the exception and we state it plainly: it is already
+   trading above a defensible participation limit.** Its flat ₹50k/slot sizing
+   is 0.05% of turnover in a liquid name and **93% in a thin one**. 11% of its
+   trades execute above 5% of daily turnover. That is not a scaling question —
+   it is a present-day sizing defect, quantified in §6.4 and now the book's
+   highest-priority control.
 
    **Strategic implication, stated plainly:** at this capacity the strategy is
    not a standalone institutional allocation. It is viable as a **proprietary
    book, a family-office mandate, or a sleeve inside a multi-strategy platform**
    — and we would rather say so than have it discovered in diligence.
 
-   The capacity constraint is a property of the edge, not of the
-   implementation: even at the intraday book's conservative 18.7 bp/side
-   against a 46.2 bp break-even there is real headroom per trade, and the
-   overnight book runs tighter still (§4.2). The illiquid tail caps aggregate
-   size regardless of how good the fills are.
 4. **A measured regime break.** The illiquidity premium we trade **turned
    negative from 2025Q4**. We measured it, and it invalidated several
    2023–24-derived candidates, which were retired. We regard having detected it
@@ -527,11 +574,20 @@ routine.
 ### 9B — Sleeve, prop seat, or platform allocation
 *Use for multi-strategy platforms and prop desks. Keep the capacity table — here it is a spec, not a limitation.*
 
-The capacity ceiling in §7.3 is the honest specification of a sleeve: ₹0.6–1.6cr
-at 3–5% participation, in NSE small/mid-caps, with measured round-trip slippage
-of 3.8 bp median (§4.2) and a maximum drawdown of 1.1% of capital across the
-primary track. It is uncorrelated with index-beta strategies by construction —
-it trades capitulation and event reactions in the illiquid tail.
+The capacity table in §7.3 is the honest specification of a sleeve: **₹0.6–1.6cr
+at 3–5% participation** on the intraday book, which is the most liquid of the
+three and the one that scales; median round-trip slippage 3.8 bp (§4.2); maximum
+drawdown 1.1% of capital across the primary track. It is uncorrelated with
+index-beta strategies by construction — it trades capitulation and event
+reactions in the illiquid tail.
+
+The overnight book is **not** offered at its current sizing, and §6.4 says why:
+11% of its trades run above 5% of name turnover and produce 92% of its loss. The
+control is identified and unimplemented. A desk should read that as the honest
+state of a book mid-diagnosis, not as a track record — and as the clearest
+available demonstration of what the measurement layer in §4 is actually for. It
+found a live sizing defect in our own book, with the fix specified, before
+anyone else looked at it.
 
 What a platform is underwriting is not the current t-statistic, which §7.1 says
 plainly is not yet significant. It is a process that has already demonstrated

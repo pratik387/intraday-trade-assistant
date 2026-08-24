@@ -88,6 +88,11 @@ rejected.
 safe unwind; the failsafe sells **only the unsold remainder**.
 `broker/kite/kite_broker.py:594` · commit `96b4951`
 
+> **Root cause revised 2026-08-24 — see §4.4.** This position was **92.8% of the
+> name's median daily turnover**. The AMO sat above the market because there was
+> no one to sell to. The mechanical fix above is correct and necessary, but the
+> proximate cause was sizing, not order handling.
+
 ### 1.8 Cancel/fill race — the exchange filled after the cancel — 2026-07-24 (CREATIVEYE)
 **Symptom:** **7,520 real shares unhedged across a weekend** (manually exited
 Monday, net −₹1,646).
@@ -100,6 +105,11 @@ engine-tagged BUYs with `filled_quantity > 0` that no slot knows about and
 attaches them — at the end of `run_entry` and the start of `run_place_exit`, so a
 caught fill still gets its exit AMO in the same 16:05 pass.
 commit `2b3c392`
+
+> **Root cause revised 2026-08-24 — see §4.4.** This position was **90.3% of the
+> name's median daily turnover**. A fill that large does not complete cleanly, and
+> the cancel raced a fill precisely because the order was working slowly against
+> thin volume. Sizing was the upstream cause.
 
 ---
 
@@ -245,6 +255,45 @@ exists to document.
 budgets can accommodate the researched position count — one deliberate decision,
 not a guardrail bolted onto a live run. Until then the exposure is bounded by the
 notional clamp (§4.2) and the book is paper. See DILIGENCE_PACK §5.2.
+
+### 4.4 Flat slot sizing ignored name liquidity — 2026-07-01 → 08-20 (live money)
+
+**Symptom:** the live overnight book is net negative, and the loss is almost
+entirely 11 trades.
+
+**Cause:** the book sizes every position at a flat **₹50k per slot** regardless
+of the name. That is 0.05% of daily turnover in a liquid stock and **93% in a
+thin one**. Joining every live trade to its name's 60-session median rupee
+turnover:
+
+| participation | n | net | mean / trade | win rate |
+|---|---|---|---|---|
+| below 1% of ADV | 64 | **+₹3,156** | +0.109% | 45% |
+| 1–5% | 21 | −₹4,269 | −0.465% | 33% |
+| **above 5%** | **11** | **−₹12,216** | **−2.234%** | **9%** |
+
+**11% of trades produced 92% of the loss; below 5% participation the book is
+profitable.** `corr(participation, return) = −0.614`; the above-5% group sits at
+the **0.0th percentile of 20,000 random 11-trade draws**; win rate falls
+monotonically across the buckets.
+
+The two worst trades were **REGENCERAM at 92.8%** and **CREATIVEYE at 90.3%** of
+daily turnover — the same two positions recorded in §1.7 and §1.8 as execution
+failures. Those entries are now cross-referenced: the mechanical fixes were
+right, but the proximate cause was buying a position the size of the name's
+entire daily volume. It also explains the §4.2 slippage tail (median 3.8 bp,
+p90 81 bp), which had been measured but not attributed.
+
+**Status: identified and quantified, NOT yet implemented.** The control is
+`size = min(slot_notional, X% × ADV)` — the same shape as the intraday notional
+clamp — requiring a daily ADV in the overnight universe builder. It is the
+book's highest-priority item.
+
+**Caveats stated with it:** turnover data ends 2026-07-24, so August trades use a
+lagged window (direction is robust; exact thresholds want fresh data), and the
+₹12,216 improvement from a 5% cap is an **in-sample count on n=96**, not a
+validated edge. The structural argument — do not trade 90% of a name's daily
+volume — is what justifies the control.
 
 ---
 
