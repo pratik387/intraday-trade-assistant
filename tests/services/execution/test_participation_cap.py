@@ -72,12 +72,26 @@ def test_tiny_positions_are_skipped_not_traded():
     assert q * px < floor, "the pathological case must fall below the floor"
 
 
-def test_a_name_liquid_enough_to_cap_meaningfully_still_trades():
-    """The floor must not become a blanket liquidity filter — thin names are
-    GOOD trades in paper (thinnest ADV quintile +0.45%, n=302)."""
-    adv, px = 5_000_000.0, 100.0        # Rs50L/day turnover
+def test_the_floor_implies_a_known_liquidity_threshold():
+    """cap+floor together mean a name needs ADV >= floor/cap to trade at all.
+    Measured 2026-08-25: that is Rs25 lakh, which excludes 457 of 2,114
+    candidates (21.6%). Documented rather than accidental — the config note
+    carries the number, and changing either knob moves the threshold."""
+    need = PC["min_notional_after_cap_inr"] / PC["max_participation_pct"]
+    assert need == pytest.approx(2_500_000), "threshold moved; update the config note"
+    # a Rs50L-turnover name is comfortably above it and still trades
+    assert PC["max_participation_pct"] * 5_000_000.0 >= PC["min_notional_after_cap_inr"]
+
+
+def test_the_exclusion_is_justified_by_untradeability_not_by_signal_quality():
+    """A Rs5L/day name is untradeable at ANY size: full slot is 10x its daily
+    volume (impact), capped size loses to fixed MTF fees. That is the reason —
+    NOT 'thin names are bad', which the paper mirror refutes (+0.45%, n=302)."""
+    adv = 500_000.0                      # Rs5 lakh/day
+    full_slot = 50_000.0
+    assert full_slot / adv > 0.05, "full size would be a large share of daily volume"
     capped = PC["max_participation_pct"] * adv
-    assert capped >= PC["min_notional_after_cap_inr"],         "a Rs50L-turnover name must still be tradeable after capping"
+    assert capped < PC["min_notional_after_cap_inr"], "capped size is fee-uneconomic"
 
 
 def test_skipped_trade_releases_the_slot_for_the_next_candidate():
