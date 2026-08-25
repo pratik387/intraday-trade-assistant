@@ -740,6 +740,13 @@
       "_comment_entry_fetch_rps": "20 rps is the PROVEN shared-IP budget, do not raise casually: 2026-07-31 the 30-rps attempt 429-stormed (5,148 retries, only 328/2044 symbols fetched, 409.9s) because the co-located paper process hits the same intraday endpoint from this IP at 15:25-15:27 — the single-consumer '40 rps sustained safe' memo does NOT apply at this hour. 2026-07-30 at 20 rps: zero 429s, 101.5s for 2047 symbols. With fill_poll_timeout_sec=20 and the 15:29:20 placement cutoff, the ~102s fetch still leaves room to place the top 2-3 ranked candidates.",
       "slot_ranking_mode": "unbiased_hash",
       "_comment_slot_ranking_mode": "2026-08-04 change (July live-vs-mirror decomposition): 'conviction' (deepest |svr| first; validated Disc/OOS/HO 2026-07-02) REVERSED forward — July live picks -43.6 bps mean vs +72.0 for skipped fires (12/15 subset days worse, permutation p<0.001, actual at the 0th percentile of 3,000 random draws; ~-11.5k INR of the -17.9k July live net). 'unbiased_hash' = deterministic date-salted sha1 order: no view on fire quality, expected value equals the random-pick line (+9.4k July counterfactual), and the live book becomes a random sample of the paper mirror so live PF ~= mirror PF - fees and the tripwire/monthly three-way stay interpretable. Do NOT switch to an anti-conviction order off one month of evidence (non-stationarity lesson: monster-conditioning park). 'conviction' remains available for research comparisons.",
+      "_comment_participation_cap": "Caps order size at max_participation_pct of the name's median daily rupee turnover (adv_inr, computed point-in-time in the 09:30 baseline build). MEASURED on 96 live trades: positions above 5% of turnover returned -2.234%/trade and produced 92% of this book's loss, while positions below 1% were profitable; corr(participation, return) = -0.69 clean. The paper mirror shows NO such effect (corr -0.03) and thin names are NOT worse trades there (thinnest ADV quintile +0.45% over 302 trades), so the cause is order size, not name selection. Simulated on the live ledger with each capped trade earning its own paper twin's return: a 1% cap turns -Rs13,332 into +Rs829 while keeping 89% of gross exposure. Structural justification stands on its own: a Rs50k order in a name trading Rs54k/day (REGENCERAM, 92.8%) is indefensible regardless of P&L. enabled=false disables the cap entirely and restores flat slot sizing.",
+      "participation_cap": {
+        "enabled": true,
+        "max_participation_pct": 0.01,
+        "skip_when_adv_missing": true,
+        "min_qty_after_cap": 1
+      },
       "entry_placement_cutoff_hhmmss": "15:29:20",
       "_comment_entry_placement_cutoff_hhmmss": "LIVE-only guard: no NEW entry BUY is placed at/after this wall-clock time. NSE closes at 15:30 — orders placed later bounce with 'Markets are closed' (2026-07-30: 4 of 7 fires). Wall clock is correct here (not tick time): this is the live cron's exchange-acceptance deadline, and the check is skipped in paper/backtest where fills are idealized and instant.",
       "cancel_confirm_timeout_sec": 15,
@@ -782,7 +789,7 @@
       "decay_tripwire": {
         "window_trades": 30,
         "pf_floor": 1.2,
-        "sustained_weeks": 6,
+        "sustained_weeks": 3,
         "_state_file_note": "LIVE ledger (real Rs10k fills only). The legacy state/decay_tripwire_close_dn_overnight_long.json is kept as the PAPER ledger (idealized Rs1L), continued by the slippage/reconstruction script.",
         "state_file": "state/decay_tripwire_close_dn_overnight_long_live.json",
           "_archive_note": "No regime boundary for this book — its ledger was never reset.",

@@ -818,6 +818,53 @@ def run_entry(
             except Exception:
                 pass
             _notional = float(plan.qty) * float(buy_limit or ref_px or 0.0)
+
+            # ---- PARTICIPATION CAP (enforced) ----
+            # Flat slot sizing ignored name liquidity: Rs50k is 0.05% of turnover
+            # in a liquid name and 93% in a thin one. See the config note for the
+            # measurement. Cap the order at max_participation_pct of the name's
+            # point-in-time median daily turnover.
+            _pc = spec.raw_config.get("participation_cap") or {}
+            if bool(_pc.get("enabled", False)):
+                _px = float(buy_limit or ref_px or 0.0)
+                if not (_adv and float(_adv) > 0):
+                    # Unknown liquidity => cannot size safely. ADV coverage is
+                    # 100% of candidates in practice, so this is rare and a skip
+                    # is cheaper than an unbounded position in an unknown name.
+                    if bool(_pc.get("skip_when_adv_missing", True)):
+                        logger.warning(
+                            "PARTICIPATION_CAP | %s | SKIP — no ADV; cannot size "
+                            "against turnover", symbol,
+                        )
+                        _rollback_slot_to_free(slot)
+                        pool.persist()
+                        summary["skipped_count"] += 1
+                        continue
+                elif _px > 0:
+                    _max_notional = float(_pc["max_participation_pct"]) * float(_adv)
+                    if _notional > _max_notional:
+                        _capped_qty = int(_max_notional // _px)
+                        if _capped_qty < int(_pc.get("min_qty_after_cap", 1)):
+                            logger.warning(
+                                "PARTICIPATION_CAP | %s | SKIP — capped qty %d < min "
+                                "(notional Rs%.0f vs cap Rs%.0f on ADV Rs%.0f)",
+                                symbol, _capped_qty, _notional, _max_notional, float(_adv),
+                            )
+                            _rollback_slot_to_free(slot)
+                            pool.persist()
+                            summary["skipped_count"] += 1
+                            continue
+                        logger.warning(
+                            "PARTICIPATION_CAP | %s | qty %d -> %d (%.2f%% -> %.2f%% "
+                            "of ADV Rs%.0f); notional Rs%.0f -> Rs%.0f",
+                            symbol, int(plan.qty), _capped_qty,
+                            100.0 * _notional / float(_adv),
+                            100.0 * (_capped_qty * _px) / float(_adv),
+                            float(_adv), _notional, _capped_qty * _px,
+                        )
+                        plan.qty = _capped_qty
+                        _notional = _capped_qty * _px
+                        summary["participation_capped"] = summary.get("participation_capped", 0) + 1
             if _adv and _adv > 0:
                 _part = _notional / float(_adv)
                 _capped = {p: int((p * float(_adv)) // float(buy_limit or ref_px or 1.0))
