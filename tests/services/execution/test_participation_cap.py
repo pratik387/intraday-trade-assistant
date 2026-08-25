@@ -31,7 +31,13 @@ def _cap_qty(notional, adv, px, pct):
 
 
 def test_config_is_present_and_sane():
-    assert PC["enabled"] is True
+    # DISABLED 2026-08-25: the backtest contradicted the live measurement —
+    # +Rs20,309 on the live ledger but -Rs86,235 on paper, because the trades
+    # it removes are profitable when market impact is absent. The arithmetic
+    # below is still pinned so the cap is correct WHEN re-enabled.
+    assert PC["enabled"] is False, (
+        "re-enable only after the impact estimate is established on a larger "
+        "post-ranker-fix sample — see the _DISABLED note in config")
     assert 0 < PC["max_participation_pct"] <= 0.05, "a cap above 5% is not a cap"
     assert PC["skip_when_adv_missing"] is True
 
