@@ -786,17 +786,6 @@ def run_entry(
             # cost-aware skip. Observability only — nothing branches on them yet.
             _spread_bp = (1e4 * (_ask / _bid - 1.0)) if (_bid and _ask and _bid > 0) else float("nan")
             _ask_vs_ref_bp = (1e4 * (_ask / ref_px - 1.0)) if (_ask and ref_px) else float("nan")
-            logger.info(
-                "ENTRY_BASIS | %s | plan_15:25=%.4f ref_15:26=%.4f drift=%+.1fbp "
-                "buffer=%.2f%% limit=%.4f limit_vs_plan=%+.1fbp tick=%s src=%s | "
-                "bid=%s ask=%s spread=%.1fbp ask_vs_ref=%+.1fbp bidqty=%s askqty=%s reqqty=%s",
-                symbol, _plan_px, ref_px,
-                (1e4 * (ref_px / _plan_px - 1.0)) if _plan_px > 0 else float("nan"),
-                entry_buf_pct, float(buy_limit),
-                (1e4 * (float(buy_limit) / _plan_px - 1.0)) if _plan_px > 0 else float("nan"),
-                tick, "live_quote" if ref_px != _plan_px else "plan_fallback",
-                _bid, _ask, _spread_bp, _ask_vs_ref_bp, _bq, _aq, plan.qty,
-            )
             # PARTICIPATION_OBS — observation only, nothing is resized.
             #
             # Measured 2026-08-24 on the live book (n=96, point-in-time ADV):
@@ -840,7 +829,24 @@ def run_entry(
                         pool.persist()
                         summary["skipped_count"] += 1
                         continue
-                elif _px > 0:
+                    logger.warning(
+                        "PARTICIPATION_CAP | %s | ADV unavailable and "
+                        "skip_when_adv_missing=false — order sent UNCAPPED",
+                        symbol,
+                    )
+                elif _px <= 0:
+                    # No usable price => cannot convert a notional cap into a qty.
+                    # Refuse rather than send an uncapped order silently.
+                    logger.warning(
+                        "PARTICIPATION_CAP | %s | SKIP — no usable price "
+                        "(buy_limit=%s ref=%s); cannot apply the cap",
+                        symbol, buy_limit, ref_px,
+                    )
+                    _rollback_slot_to_free(slot)
+                    pool.persist()
+                    summary["skipped_count"] += 1
+                    continue
+                else:
                     _max_notional = float(_pc["max_participation_pct"]) * float(_adv)
                     if _notional > _max_notional:
                         _capped_qty = int(_max_notional // _px)
@@ -876,6 +882,21 @@ def run_entry(
                         plan.qty = _capped_qty
                         _notional = _capped_qty * _px
                         summary["participation_capped"] = summary.get("participation_capped", 0) + 1
+
+            # ENTRY_BASIS is logged AFTER the participation cap so reqqty reports the
+            # size actually sent. It previously logged the pre-cap qty, which made the
+            # observability built for this analysis disagree with the order.
+            logger.info(
+                "ENTRY_BASIS | %s | plan_15:25=%.4f ref_15:26=%.4f drift=%+.1fbp "
+                "buffer=%.2f%% limit=%.4f limit_vs_plan=%+.1fbp tick=%s src=%s | "
+                "bid=%s ask=%s spread=%.1fbp ask_vs_ref=%+.1fbp bidqty=%s askqty=%s reqqty=%s",
+                symbol, _plan_px, ref_px,
+                (1e4 * (ref_px / _plan_px - 1.0)) if _plan_px > 0 else float("nan"),
+                entry_buf_pct, float(buy_limit),
+                (1e4 * (float(buy_limit) / _plan_px - 1.0)) if _plan_px > 0 else float("nan"),
+                tick, "live_quote" if ref_px != _plan_px else "plan_fallback",
+                _bid, _ask, _spread_bp, _ask_vs_ref_bp, _bq, _aq, plan.qty,
+            )
             if _adv and _adv > 0:
                 _part = _notional / float(_adv)
                 _capped = {p: int((p * float(_adv)) // float(buy_limit or ref_px or 1.0))

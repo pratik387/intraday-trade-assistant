@@ -31,13 +31,11 @@ def _cap_qty(notional, adv, px, pct):
 
 
 def test_config_is_present_and_sane():
-    # DISABLED 2026-08-25: the backtest contradicted the live measurement —
-    # +Rs20,309 on the live ledger but -Rs86,235 on paper, because the trades
-    # it removes are profitable when market impact is absent. The arithmetic
-    # below is still pinned so the cap is correct WHEN re-enabled.
-    assert PC["enabled"] is False, (
-        "re-enable only after the impact estimate is established on a larger "
-        "post-ranker-fix sample — see the _DISABLED note in config")
+    # ENABLED after a slot-constrained backtest: -Rs16,496 -> +Rs3,658 on the
+    # live ledger, still positive with conservative replacement pricing. The
+    # earlier paper comparison was invalid — it applied the filter to all 340
+    # fires when live only ever takes 3/day from a ranked list.
+    assert PC["enabled"] is True
     assert 0 < PC["max_participation_pct"] <= 0.05, "a cap above 5% is not a cap"
     assert PC["skip_when_adv_missing"] is True
 
@@ -112,6 +110,24 @@ def test_skipped_trade_releases_the_slot_for_the_next_candidate():
     assert loop < res < nxt, "reserve() must be per-candidate inside the loop"
 
 
+def test_no_silent_uncapped_path():
+    """Every branch either caps, skips loudly, or logs that it is sending
+    uncapped. A silent pass-through defeats the control."""
+    blk = SRC[SRC.index("# ---- PARTICIPATION CAP (enforced) ----"):]
+    blk = blk[:blk.index('summary["participation_capped"]')]
+    assert "no usable price" in blk, "price<=0 must not silently skip the cap"
+    assert "order sent UNCAPPED" in blk, "adv-missing fallback must announce itself"
+
+
+def test_entry_basis_reports_the_size_actually_sent():
+    """ENTRY_BASIS previously logged the PRE-cap qty, so the observability
+    disagreed with the order it was meant to explain."""
+    cap = SRC.index("# ---- PARTICIPATION CAP (enforced) ----")
+    eb = SRC.index("ENTRY_BASIS | %s")
+    place = SRC.index("buy_order_id = _place_buy")
+    assert cap < eb < place, "ENTRY_BASIS must log after the cap, before placement"
+
+
 def test_handler_enforces_and_does_not_merely_log():
     assert "PARTICIPATION_CAP" in SRC
     assert "plan.qty = _capped_qty" in SRC, "the cap must actually resize the order"
@@ -128,11 +144,13 @@ def test_missing_adv_skips_rather_than_trading_blind():
 def test_skip_paths_free_the_slot_and_count_it():
     """A reserved slot left behind is the ghost-slot incident (register 1.2)."""
     n_skip = SRC.count("PARTICIPATION_CAP | %s | SKIP")
-    assert n_skip == 2, "expected the no-ADV and below-min-qty skip paths"
+    assert n_skip == 3, "expected skips for: no ADV, no usable price, below floor"
     blk = SRC[SRC.index("# ---- PARTICIPATION CAP (enforced) ----"):]
     blk = blk[:blk.index('summary["participation_capped"]')]
-    assert blk.count("_rollback_slot_to_free(slot)") == 2
-    assert blk.count('summary["skipped_count"] += 1') == 2
+    # every skip must free the slot and count it, or a reserved slot leaks
+    # (the ghost-slot incident, register 1.2)
+    assert blk.count("_rollback_slot_to_free(slot)") == n_skip
+    assert blk.count('summary["skipped_count"] += 1') == n_skip
 
 
 def test_cap_can_be_disabled_without_code_change():
