@@ -60,6 +60,38 @@ def test_capped_notional_never_exceeds_the_limit(adv):
     assert q * px <= max(PC["max_participation_pct"] * adv, notional) + 1e-6
 
 
+def test_tiny_positions_are_skipped_not_traded():
+    """A capped-to-token position pays fixed MTF costs and burns a slot.
+    Measured round-trip on the MTF path: 7.46% of notional at Rs544, 1.66% at
+    Rs5,000, 0.41% at Rs50,000 — against a ~0.35% gross edge."""
+    floor = PC["min_notional_after_cap_inr"]
+    assert floor >= 20_000, "floor must exceed the size where MTF fees swamp the edge"
+    # REGENCERAM capped to Rs544 must be SKIPPED, not traded
+    adv, px, notional = 54_402.0, 33.85, 50_489.0
+    q = _cap_qty(notional, adv, px, PC["max_participation_pct"])
+    assert q * px < floor, "the pathological case must fall below the floor"
+
+
+def test_a_name_liquid_enough_to_cap_meaningfully_still_trades():
+    """The floor must not become a blanket liquidity filter — thin names are
+    GOOD trades in paper (thinnest ADV quintile +0.45%, n=302)."""
+    adv, px = 5_000_000.0, 100.0        # Rs50L/day turnover
+    capped = PC["max_participation_pct"] * adv
+    assert capped >= PC["min_notional_after_cap_inr"],         "a Rs50L-turnover name must still be tradeable after capping"
+
+
+def test_skipped_trade_releases_the_slot_for_the_next_candidate():
+    i = SRC.index("slot released")
+    seg = SRC[i:i + 500]
+    assert "_rollback_slot_to_free(slot)" in seg
+    assert "continue" in seg
+    # reserve() must sit INSIDE the ranked loop or the freed slot is wasted
+    loop = SRC.index("for rank_i, (symbol, evt, plan) in enumerate(ranked):")
+    res = SRC.index("slot = pool.reserve(", loop)
+    nxt = SRC.index("PARTICIPATION_CAP", loop)
+    assert loop < res < nxt, "reserve() must be per-candidate inside the loop"
+
+
 def test_handler_enforces_and_does_not_merely_log():
     assert "PARTICIPATION_CAP" in SRC
     assert "plan.qty = _capped_qty" in SRC, "the cap must actually resize the order"

@@ -844,11 +844,22 @@ def run_entry(
                     _max_notional = float(_pc["max_participation_pct"]) * float(_adv)
                     if _notional > _max_notional:
                         _capped_qty = int(_max_notional // _px)
-                        if _capped_qty < int(_pc.get("min_qty_after_cap", 1)):
+                        _capped_notional = _capped_qty * _px
+                        _min_notional = float(_pc.get("min_notional_after_cap_inr", 0.0))
+                        if (_capped_qty < int(_pc.get("min_qty_after_cap", 1))
+                                or _capped_notional < _min_notional):
+                            # Capping to a token position is WORSE than skipping: MTF costs
+                            # carry a fixed pledge/unpledge component, so round-trip is 7.46%
+                            # of notional at Rs544 and 1.66% at Rs5,000, against a ~0.35%
+                            # gross edge — a guaranteed loss. It also burns one of six slots.
+                            # reserve() sits inside this loop, so freeing the slot hands it to
+                            # the next ranked candidate, which may take full size.
                             logger.warning(
-                                "PARTICIPATION_CAP | %s | SKIP — capped qty %d < min "
-                                "(notional Rs%.0f vs cap Rs%.0f on ADV Rs%.0f)",
-                                symbol, _capped_qty, _notional, _max_notional, float(_adv),
+                                "PARTICIPATION_CAP | %s | SKIP — capped notional Rs%.0f below "
+                                "floor Rs%.0f (qty %d, %.1f%% of ADV Rs%.0f); slot released "
+                                "to the next candidate",
+                                symbol, _capped_notional, _min_notional, _capped_qty,
+                                100.0 * _notional / float(_adv), float(_adv),
                             )
                             _rollback_slot_to_free(slot)
                             pool.persist()
