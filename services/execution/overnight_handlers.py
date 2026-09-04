@@ -1350,10 +1350,18 @@ def run_verify_exit(
     *,
     now_ist: Optional[pd.Timestamp] = None,
     paper_mode: bool = True,
+    exits_only: bool = False,
 ) -> dict:
-    """At 09:30 IST: verify AMO fills, settle, release.
+    """At 09:16 / 09:30 IST: verify AMO fills, settle, release.
 
     Idempotent — safe to re-run after a missed cron fire.
+
+    `exits_only` skips the ~4-minute close_dn baseline+candidate build at the
+    end. The 09:16 pass exists to get the EXIT done at the open rather than 14
+    minutes into the session (2026-09-04: four AMOs silently dropped, exits sat
+    open until the operator sold by hand). Only the 09:30 pass needs to build
+    the baseline, and running that heavy fetch twice would double the API load
+    for no gain.
     """
     from utils.time_util import _now_naive_ist
     from services.capital_manager import OvernightSlotPool
@@ -1472,6 +1480,24 @@ def run_verify_exit(
         else:
             sell_price = _live_check_amo_fill(broker, slot.amo_sell_order_id)
             if sell_price is None:
+                # Capture WHY before doing anything else. Kite's order_history
+                # only covers the current day, so an AMO placed at 16:05 on T is
+                # only diagnosable on T+1 morning — and the out-of-band branch
+                # below used to return without ever asking (2026-09-04: four
+                # AMOs dropped, root cause unrecoverable the next day).
+                try:
+                    _st = broker.get_order_status(slot.amo_sell_order_id) or {}
+                    logger.warning(
+                        "AMO_UNFILLED | %s | order=%s status=%s filled=%s/%s "
+                        "product=%s variety=%s msg=%s",
+                        slot.symbol, slot.amo_sell_order_id, _st.get("status"),
+                        _st.get("filled_quantity"), _st.get("quantity"),
+                        _st.get("product"), _st.get("variety"),
+                        _st.get("status_message") or _st.get("status_message_raw"),
+                    )
+                except Exception as _e:
+                    logger.warning("AMO_UNFILLED | %s | order=%s status fetch failed: %s",
+                                   slot.symbol, slot.amo_sell_order_id, _e)
                 # An out-of-band exit (manual sell from the app after an AMO
                 # rejection — SABEVENTS 2026-07-20) leaves the slot flat but
                 # unfilled by OUR order id. Adopt it as the exit fill instead of
@@ -1673,7 +1699,10 @@ def run_verify_exit(
     # The 15:25 entry cron reads the resulting candidates_latest.json
     # (~50 symbols on a typical day) instead of building the 1118-symbol
     # universe from scratch — drops cron wall-clock from minutes to seconds.
-    if getattr(broker, "_data_sdk", None) is not None:
+    if exits_only:
+        logger.info("run_verify_exit: exits_only — skipping baseline+candidate build")
+        summary["baseline_skipped"] = True
+    elif getattr(broker, "_data_sdk", None) is not None:
         try:
             data_sdk = broker._data_sdk
             if data_sdk is not None:

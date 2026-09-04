@@ -29,4 +29,9 @@ LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/overnight_verify_$(date +%Y-%m-%d).log"
 
-"$PYTHON_BIN" main.py --mode overnight --action verify-exit $MODE_FLAGS >> "$LOG_FILE" 2>&1
+EXITS_FLAG=""
+if [[ "${EXITS_ONLY:-0}" == "1" ]]; then
+    EXITS_FLAG="--exits-only"
+fi
+
+"$PYTHON_BIN" main.py --mode overnight --action verify-exit $EXITS_FLAG $MODE_FLAGS >> "$LOG_FILE" 2>&1

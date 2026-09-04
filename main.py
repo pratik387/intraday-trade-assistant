@@ -737,6 +737,11 @@ def _parse_args():
                          "'verify-exit' = OVERNIGHT morning settle (run_verify_exit @09:30). "
                          "'verify-entry' = MULTI_DAY morning entry-fill verify (run_verify_entries "
                          "@~09:33; 'verify-exit' is still accepted as a legacy alias for multi_day).")
+    ap.add_argument("--exits-only", action="store_true",
+                    help="OVERNIGHT verify-exit only: settle/failsafe the exits and SKIP the "
+                         "~4-minute close_dn baseline+candidate build. Used by the 09:16 cron, "
+                         "which exists to get the exit done at the open; the 09:30 pass still "
+                         "builds the baseline for that day's 15:25 entry.")
     return ap.parse_args()
 
 
@@ -766,6 +771,11 @@ if __name__ == "__main__":
     if args.mode == "overnight" and args.action == "verify-entry":
         parser_error = ("--action=verify-entry is multi_day-only. "
                         "Overnight uses --action=verify-exit.")
+        print(f"error: {parser_error}", file=sys.stderr)
+        sys.exit(2)
+    if args.exits_only and not (args.mode == "overnight" and args.action == "verify-exit"):
+        parser_error = ("--exits-only is only valid with --mode=overnight --action=verify-exit "
+                        f"(got --mode={args.mode!r} --action={args.action!r}).")
         print(f"error: {parser_error}", file=sys.stderr)
         sys.exit(2)
     if args.mode == "multi_day" and args.action == "place-exit":
@@ -854,7 +864,8 @@ if __name__ == "__main__":
                     file=sys.stderr,
                 )
             else:  # verify-exit
-                summary = run_verify_exit(cfg, broker, paper_mode=paper_mode)
+                summary = run_verify_exit(cfg, broker, paper_mode=paper_mode,
+                                          exits_only=bool(args.exits_only))
                 print(
                     f"[overnight verify-exit] settled={summary['settled_count']} "
                     f"released={summary['released_count']} orphan_t0={summary['orphan_t0_count']}",
