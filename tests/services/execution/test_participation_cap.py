@@ -142,9 +142,15 @@ def test_missing_adv_skips_rather_than_trading_blind():
 
 
 def test_skip_paths_free_the_slot_and_count_it():
-    """A reserved slot left behind is the ghost-slot incident (register 1.2)."""
+    """A reserved slot left behind is the ghost-slot incident (register 1.2).
+
+    The count is pinned so a NEW skip path cannot be added without also adding
+    its rollback — which is the whole point of the assertions below. Fourth
+    path added 2026-09-07: tick cost above max_tick_pct_of_price.
+    """
     n_skip = SRC.count("PARTICIPATION_CAP | %s | SKIP")
-    assert n_skip == 3, "expected skips for: no ADV, no usable price, below floor"
+    assert n_skip == 4, (
+        "expected skips for: no ADV, no usable price, tick too wide, below floor")
     blk = SRC[SRC.index("# ---- PARTICIPATION CAP (enforced) ----"):]
     blk = blk[:blk.index('summary["participation_capped"]')]
     # every skip must free the slot and count it, or a reserved slot leaks

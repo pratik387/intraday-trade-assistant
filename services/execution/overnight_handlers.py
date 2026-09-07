@@ -866,11 +866,39 @@ def run_entry(
                     summary["skipped_count"] += 1
                     continue
                 else:
+                    # A tick that is a large share of price is what actually makes
+                    # a small position unusable, and notional cannot see it.
+                    # NSE:MITTAL 2026-09-07 was Rs0.92/share: one 0.01 tick is
+                    # 1.1%, a 2.2% round trip against a ~0.35% edge. Checked
+                    # before the cap because it is a property of the instrument,
+                    # not of our size — capping to full size would not save it.
+                    _tick_pct = (100.0 * float(tick) / _px) if _px > 0 else float("inf")
+                    _max_tick_pct = float(_pc["max_tick_pct_of_price"])
+                    if _tick_pct > _max_tick_pct:
+                        logger.warning(
+                            "PARTICIPATION_CAP | %s | SKIP — one tick Rs%.2f is %.2f%% of "
+                            "price Rs%.2f, over max %.2f%% (round trip ~%.2f%% vs a ~0.35%% "
+                            "edge); slot released to the next candidate",
+                            symbol, float(tick), _tick_pct, _px, _max_tick_pct,
+                            2.0 * _tick_pct,
+                        )
+                        _rollback_slot_to_free(slot)
+                        pool.persist()
+                        summary["skipped_count"] += 1
+                        continue
                     _max_notional = float(_pc["max_participation_pct"]) * float(_adv)
                     if _notional > _max_notional:
                         _capped_qty = int(_max_notional // _px)
                         _capped_notional = _capped_qty * _px
-                        _min_notional = float(_pc.get("min_notional_after_cap_inr", 0.0))
+                        # Product-aware floor. The Rs25k figure was derived from
+                        # MTF's FIXED pledge/unpledge cost; CNC has none (Zerodha
+                        # delivery brokerage is Rs0, and live CNC measures 0.22%
+                        # of notional flat down to Rs1,465). Applying the MTF
+                        # number to CNC removed 5 of 9 fires on 2026-09-07.
+                        _is_mtf = str(evt.context["product"]).upper() == "MTF"
+                        _min_notional = float(
+                            _pc["min_notional_after_cap_inr"] if _is_mtf
+                            else _pc["min_notional_after_cap_inr_cnc"])
                         if (_capped_qty < int(_pc.get("min_qty_after_cap", 1))
                                 or _capped_notional < _min_notional):
                             # Capping to a token position is WORSE than skipping: MTF costs

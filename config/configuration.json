@@ -747,6 +747,11 @@
         "max_participation_pct": 0.01,
         "skip_when_adv_missing": true,
         "min_notional_after_cap_inr": 25000,
+        "_comment_min_notional_after_cap_inr": "MTF ONLY as of 2026-09-07. The floor exists because MTF round trip carries a FIXED pledge/unpledge component - 7.46% of notional at Rs544, 1.66% at Rs5,000 against a ~0.35% gross edge - so a token MTF position is a guaranteed loss. That does not transfer to CNC: Zerodha delivery brokerage is Rs0 and 128 live fills put CNC at 0.22% of notional FLAT down to Rs1,465 with no fixed component. Applying the MTF number to CNC removed 5 of 9 fires on 2026-09-07, all of them CNC.",
+        "min_notional_after_cap_inr_cnc": 1000,
+        "_comment_min_notional_after_cap_inr_cnc": "CNC backstop only - the tick gate below does the real filtering. Backtest (tools/sub9_research/floor_ablation_close_dn.py, ADV rebuilt from the monthly 5m feathers the way production computes it): the Rs25,000 floor removes names that EARN MORE than the ones it keeps, in all three splits - Disc +0.710% vs +0.518%, OOS +1.047% vs +0.312%, HO +1.166% vs +0.191% - and every level from Rs5,000 to Rs25,000 showed the same sign, so no notional level is supported by the evidence. Kept at Rs1,000 purely to reject degenerate fills.",
+        "max_tick_pct_of_price": 0.2,
+        "_comment_max_tick_pct_of_price": "Skip when ONE TICK exceeds this share of the entry price. Gates the cost that actually makes a small position unusable, which notional cannot see. NSE tick is per-instrument. Set from ECONOMICS, not from the research maximum: gross edge is ~0.35% and one tick is a LOWER BOUND on the spread, so a name whose minimum possible round trip is 0.5% cannot pay for itself. Measured quoted spread on live fires is 0.062% median / 0.161% mean, and across the research names the old floor removed one tick is a median 0.05-0.075% of price with p90 0.16% - so 0.2% keeps essentially everything the backtest validated while leaving the edge intact. 2026-09-07 verdicts: UDAYJEW Rs166.88 (0.03%) and MALUPAPER Rs33.66 (0.15%) pass; MGEL Rs15.70 (0.32%), ASHOKAMET Rs14.61 (0.34%) and MITTAL Rs0.92 (1.09%) blocked because their floor cost meets or exceeds the edge.",
         "min_qty_after_cap": 1
       },
       "entry_placement_cutoff_hhmmss": "15:29:20",
