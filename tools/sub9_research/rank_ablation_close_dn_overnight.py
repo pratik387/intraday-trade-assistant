@@ -22,15 +22,20 @@ paper. For each split it ranks each day's cell-5 fires by a candidate key, takes
 the top K, and reports PF and net P&L. `random` (many seeds) is the chance
 baseline the original claim was measured against; `all` is the no-cap ceiling.
 
-Fees are already inside `exit_0915_open_net_pnl_inr`, computed by
+Fees are already inside `net_pnl_inr`, computed by
 sanity_close_dn_overnight_long.calc_fee_cnc, which carries the post-Jun-2026
 rate card (Rs 0 delivery brokerage, STT both sides, txn 0.00307%). Note the
 cell_lock.json `fee_model` block still records the PRE-audit numbers (Rs 20/side
 brokerage, sell-only STT) — that block is stale metadata and is NOT what
 produced these ledgers.
 
+Ledgers: the 5-bar family only. The multi_exit ledgers include the 15:25 bar,
+which is incomplete when the order is placed at 15:26, so their signal carries
+look-ahead production cannot have. There is deliberately no flag to select them.
+
 Usage:
     python tools/sub9_research/rank_ablation_close_dn_overnight.py [--k 3] [--seeds 200]
+    python tools/sub9_research/rank_ablation_close_dn_overnight.py --sweep
 """
 from __future__ import annotations
 
@@ -45,8 +50,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT))
 
 LEDGER_DIR = _REPO_ROOT / "reports" / "sub9_sanity"
-SPLITS = ("discovery", "oos", "holdout", "recent")
-PNL_COL = "exit_0915_open_net_pnl_inr"      # production exit: sell at T+1 open
+# The 5-bar ledgers are the ONLY source here, and there is no switch to the
+# others. `_close_dn_overnight_long_multi_exit_*` is built from
+# CLOSING_30M_HHMM_LIST, which includes the 15:25 bar — that bar spans
+# 15:25-15:30 wall-clock and is not complete when the entry order goes in at
+# 15:26, so its signal carries look-ahead the live detector deliberately does
+# not have (see close_dn_overnight_long_structure._prior_day_return_pct).
+#
+# An earlier revision of this script defaulted to those ledgers and offered a
+# --realistic opt-out. That is backwards: a flag that lets a caller select
+# look-ahead data will eventually be left off, and every number downstream
+# would be quietly wrong. There is no legitimate use for a look-ahead signal in
+# a sizing or ranking decision, so the option is gone rather than defaulted.
+LEDGER_PATTERN = "_close_dn_overnight_long_5bar_trades_%s.csv"
+SPLITS = ("discovery", "oos", "holdout")
+PNL_COL = "net_pnl_inr"                     # exit = T+1 09:15 open, fees applied
 
 # Locked cell #5 (tools/sub9_research/close_dn_overnight_long_cell_lock.json)
 CELL = {"closing_30m_volume_z_bin": "extreme", "prior_day_return_bin": "up_gt_3pct"}
@@ -61,7 +79,7 @@ def profit_factor(pnl: pd.Series) -> float:
 
 
 def load_cell(split: str) -> pd.DataFrame:
-    path = LEDGER_DIR / f"_close_dn_overnight_long_multi_exit_{split}.csv"
+    path = LEDGER_DIR / (LEDGER_PATTERN % split)
     if not path.exists():
         return pd.DataFrame()
     df = pd.read_csv(path)
@@ -101,10 +119,12 @@ def main() -> int:
     ap.add_argument("--sweep", action="store_true",
                     help="sweep slots/day to size the BREADTH effect vs the RANKING effect")
     args = ap.parse_args()
+    print("ledger: 5-bar (15:00-15:20 only, no 15:25 look-ahead) | pnl: %s" % PNL_COL)
+    print()
 
     if args.sweep:
         ks = [1, 2, 3, 4, 6, 8, 12]
-        print("Breadth sweep: net Rs by slots/day, cell-5, exit_0915_open")
+        print("Breadth sweep: net Rs by slots/day, cell-5, exit at T+1 09:15 open")
         print()
         for split in SPLITS:
             df = load_cell(split)
