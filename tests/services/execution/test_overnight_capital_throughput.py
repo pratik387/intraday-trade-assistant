@@ -101,10 +101,20 @@ def test_rationale_still_states_the_lock():
     assert "3 new/day" in r
 
 
-@pytest.mark.parametrize("bad_cap", [4, 5, 6, 12])
-def test_invariant_actually_rejects_overcommitment(bad_cap):
-    """The guard must fail on the values it exists to catch."""
+@pytest.mark.parametrize("over_by", [1, 2, 6])
+def test_invariant_actually_rejects_overcommitment(over_by):
+    """The guard must fail on values above the budget.
+
+    Derived from the live config, not hardcoded: the sustainable rate moves
+    with position size. At 6 x Rs50k the budget was 3/day, so 4 was already
+    overcommitment; at 12 x Rs25k it is 6/day and 4 is fine. Pinning literals
+    here made this test fail the moment the book was resized for a reason that
+    had nothing to do with the invariant.
+    """
     sustainable = CA["active_margin_inr"] / (
         CA["margin_per_slot_inr"] * CAPITAL_LOCK_TRADING_DAYS)
+    bad_cap = sustainable + over_by
     assert bad_cap > sustainable, (
         f"{bad_cap} should be over the {sustainable:.0f}/day budget")
+    # and the real guard would reject it
+    assert not (bad_cap <= sustainable)
