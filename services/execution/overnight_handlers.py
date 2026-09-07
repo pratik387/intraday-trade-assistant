@@ -98,6 +98,25 @@ def _safe_top_of_book(broker, symbol):
         ask = float(sells[0].get("price") or 0.0) or None if sells else None
         bq = int(buys[0].get("quantity") or 0) if buys else None
         aq = int(sells[0].get("quantity") or 0) if sells else None
+        # A crossed book (bid >= ask) cannot exist on a live exchange: it would
+        # have traded. When it appears, the depth read is wrong, not the market.
+        # Observed 2026-09-03 NSE:RBLBANK (bid 421.35 / ask 396.85) and
+        # 2026-09-04 NSE:SWIGGY (bid 287.75 / ask 271.05) — both liquid names,
+        # both a spread of almost exactly -581bp, which is the signature of
+        # reading the wrong depth level rather than a market event.
+        #
+        # This helper is observability-only today, but the calibration plan in
+        # the docstring is to price the entry LIMIT off the ask. Returning a
+        # crossed quote would seed that with a bad number and, worse, would
+        # silently pollute the ENTRY_BASIS spread distribution the calibration
+        # is supposed to be measured FROM.
+        if bid is not None and ask is not None and bid >= ask:
+            logger.warning(
+                "TOB_CROSSED | %s | bid=%.2f >= ask=%.2f (bidqty=%s askqty=%s) — "
+                "discarding depth; a crossed book means a bad read, not a market",
+                symbol, bid, ask, bq, aq,
+            )
+            return None, None, None, None
         return bid, ask, bq, aq
     except Exception as e:
         logger.debug("overnight: top-of-book unavailable for %s (%s)", symbol, e)
