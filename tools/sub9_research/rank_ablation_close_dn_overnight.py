@@ -124,6 +124,7 @@ def main() -> int:
                     k, len(svr), format(svr.sum(), "+,.0f"), format(vz.sum(), "+,.0f"),
                     format(rnet, "+,.0f"), 100 * svr.sum() / ceiling if ceiling else 0))
             print()
+        fixed_capital_table()
         return 0
 
     print(f"close_dn within-day ranking ablation | k={args.k} slots/day | "
@@ -165,6 +166,43 @@ def main() -> int:
         print()
 
     return 0
+
+
+def fixed_capital_table(capital: float = 300000.0, lock: int = 2) -> None:
+    """Breadth at FIXED CAPITAL, which is the real constraint.
+
+    The sweep above holds POSITION SIZE fixed, so more slots always means more
+    money deployed. On a fixed pool the trade is different: k slots/day over a
+    `lock`-day settlement means 2k concurrent positions, so each one is
+    capital/(lock*k). Doubling k halves every position. Breadth only wins if the
+    extra fires more than compensate — and with ~4 fires/day most days are
+    already fully captured at k=3.
+    """
+    LEDGER_NOTIONAL = 100000.0
+    print("\nFIXED-CAPITAL comparison | pool Rs%s | %d-day settlement lock" % (
+        format(capital, ",.0f"), lock))
+    print("position size = capital / (lock * k)\n")
+    for split in SPLITS:
+        df = load_cell(split)
+        if df.empty:
+            continue
+        print("=== %s ===" % split.upper())
+        print("  %-4s %8s %10s %13s %14s" % ("k", "n", "pos size", "mean ret/trade", "net on pool"))
+        best = None
+        for k in (1, 2, 3, 4, 6, 8, 12):
+            sel = take_top_k(df, "signed_vol_ratio", True, k)[PNL_COL]
+            if not len(sel):
+                continue
+            pos = capital / (lock * k)
+            ret = sel.mean() / LEDGER_NOTIONAL          # mean fractional return
+            net = len(sel) * ret * pos
+            flag = ""
+            if best is None or net > best[1]:
+                best = (k, net); flag = ""
+            print("  %-4d %8d %10s %12.3f%% %14s%s" % (
+                k, len(sel), format(pos, ",.0f"), 100 * ret, format(net, "+,.0f"), flag))
+        if best:
+            print("  -> best k = %d\n" % best[0])
 
 
 if __name__ == "__main__":
