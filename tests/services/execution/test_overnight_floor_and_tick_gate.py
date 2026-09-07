@@ -154,5 +154,20 @@ def test_skip_reason_is_diagnosable():
     """The log must say WHY, so the next session is explainable without a rerun."""
     i = SRC.index("_max_tick_pct = float(_pc[")
     body = SRC[i:i + 1000]
-    for token in ("one tick", "% of ", "round trip"):
+    for token in ("one tick", "% of ", "execution cost"):
         assert token in body, f"tick-skip log should record {token!r}"
+
+
+def test_cost_model_in_the_log_is_the_measured_one():
+    """The skip log must quote the MEASURED cost, not a guessed multiple.
+
+    An earlier version printed `2.0 * tick_pct` as "round trip". Across 120 live
+    fills scored against their idealized entry/exit references, execution cost
+    in bp actually runs 3.9 + 101 x tick% — about ONE tick, because the entry
+    crosses half a spread and the exit is an opening-auction print that crosses
+    nothing. Doubling it overstated the cost of every borderline name.
+    """
+    i = SRC.index("_max_tick_pct = float(_pc[")
+    body = SRC[i:i + 1400]
+    assert "2.0 * _tick_pct" not in body, "the 2x round-trip model was wrong"
+    assert "101.0 * _tick_pct" in body, "should use the measured slope"

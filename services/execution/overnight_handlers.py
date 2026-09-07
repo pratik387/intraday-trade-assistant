@@ -869,7 +869,13 @@ def run_entry(
                     # A tick that is a large share of price is what actually makes
                     # a small position unusable, and notional cannot see it.
                     # NSE:MITTAL 2026-09-07 was Rs0.92/share: one 0.01 tick is
-                    # 1.1%, a 2.2% round trip against a ~0.35% edge. Checked
+                    # 1.09%. Cost is NOT 2x tick — measured across 120 live fills
+                    # with both idealized references, execution cost in bp runs
+                    # 3.9 + 101 x tick%, i.e. about ONE tick, because entry
+                    # crosses half a spread and the exit is an opening-auction
+                    # print that crosses nothing. That puts MITTAL at ~1.14%
+                    # against a +0.19% (Holdout) to +0.52% (Discovery) edge.
+                    # Checked
                     # before the cap because it is a property of the instrument,
                     # not of our size — capping to full size would not save it.
                     _tick_pct = (100.0 * float(tick) / _px) if _px > 0 else float("inf")
@@ -877,10 +883,11 @@ def run_entry(
                     if _tick_pct > _max_tick_pct:
                         logger.warning(
                             "PARTICIPATION_CAP | %s | SKIP — one tick Rs%.2f is %.2f%% of "
-                            "price Rs%.2f, over max %.2f%% (round trip ~%.2f%% vs a ~0.35%% "
-                            "edge); slot released to the next candidate",
+                            "price Rs%.2f, over max %.2f%% (measured execution cost "
+                            "~%.2f%% vs a +0.19%% to +0.52%% edge); slot released to the "
+                            "next candidate",
                             symbol, float(tick), _tick_pct, _px, _max_tick_pct,
-                            2.0 * _tick_pct,
+                            (3.9 + 101.0 * _tick_pct) / 100.0,
                         )
                         _rollback_slot_to_free(slot)
                         pool.persist()
