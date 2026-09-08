@@ -102,6 +102,9 @@ def main() -> int:
         / "d9c67968-368c-45aa-a25e-bd4d1cfb4906/scratchpad/bt_active_trades.jsonl"))
     ap.add_argument("--targets", type=float, nargs="+",
                     default=[1000, 2000, 3000, 5000, 7500, 10000, 15000, 25000, 50000])
+    ap.add_argument("--rule", choices=["target", "loss", "both"], default="target",
+                    help="target: stop for the day at +T. loss: stop at -T (a daily "
+                         "loss cap). both: sweep each separately from the same curves.")
     ap.add_argument("--book-scale", dest="scale", type=float, default=9.92,
                     help="live book size / backtest book size. MEASURED: backtest "
                          "median notional Rs50,123 vs post-2026-08-14 live median "
@@ -176,32 +179,45 @@ def main() -> int:
     print("  baseline realised: Rs%s over %d sessions" % (format(base, "+,.0f"), len(recs)))
     print("  red days: %.0f%%\n" % (100 * sum(1 for r in recs if r["realised"] < 0) / len(recs)))
 
-    print("  book-size scale: %.2fx  (targets quoted in TODAY's rupees)" % args.scale)
-    print()
-    print("  %-14s %-13s %6s %14s %13s %8s" % (
-        "target(today)", "=backtest", "fires", "book", "delta", "red"))
-    for lt in args.targets:
-        t = lt
-        tot = fires = red = 0
-        for r in recs:
-            hit = any(v >= t for v in r["curve"])
-            val = t if hit else r["realised"]
-            fires += hit
-            tot += val
-            red += (val < 0)
-        print("  Rs%-12s %-13s %6d %14s %13s %7.0f%%" % (
-            format(int(lt), ","), "", fires, format(tot, "+,.0f"),
-            format(tot - base, "+,.0f"), 100 * red / len(recs)))
+    print("  book-size scale: %.2fx  (thresholds quoted in TODAY's rupees)" % args.scale)
+    rules = ["target", "loss"] if args.rule == "both" else [args.rule]
+    for rule in rules:
+        sign = 1.0 if rule == "target" else -1.0
+        print("\n  === RULE: %s ===" % (
+            "PROFIT TARGET — stop for the day at +T" if rule == "target"
+            else "LOSS CAP — stop for the day at -T"))
+        print("  %-14s %6s %14s %13s %8s %9s" % (
+            "threshold", "fires", "book", "delta", "red", "worst day"))
+        for lt in args.targets:
+            t = sign * lt
+            tot = fires = red = 0
+            worst = 0.0
+            for r in recs:
+                hit = any((v >= t) if sign > 0 else (v <= t) for v in r["curve"])
+                val = t if hit else r["realised"]
+                fires += hit
+                tot += val
+                red += (val < 0)
+                worst = min(worst, val)
+            print("  Rs%-12s %6d %14s %13s %7.0f%% %9s" % (
+                format(int(lt), ","), fires, format(tot, "+,.0f"),
+                format(tot - base, "+,.0f"), 100 * red / len(recs), format(worst, "+,.0f")))
+        base_worst = min(r["realised"] for r in recs)
+        print("  %-14s %6s %14s %13s %7.0f%% %9s" % (
+            "none", "-", format(base, "+,.0f"), "+0", 100 * sum(1 for r in recs if r["realised"] < 0) / len(recs),
+            format(base_worst, "+,.0f")))
 
-    best = max(args.targets, key=lambda lt: sum(
-        (lt if any(v >= lt for v in r["curve"]) else r["realised"]) for r in recs))
-    print("\n  best target Rs%.0f — yearly stability:" % best)
-    for yr in sorted({r["day"][:4] for r in recs}):
-        sub = [r for r in recs if r["day"][:4] == yr]
-        b = sum(r["realised"] for r in sub)
-        t2 = sum((best if any(v >= best for v in r["curve"]) else r["realised"]) for r in sub)
-        print("    %s  n=%-4d baseline %14s -> target %14s  delta %13s" % (
-            yr, len(sub), format(b, "+,.0f"), format(t2, "+,.0f"), format(t2 - b, "+,.0f")))
+        best = max(args.targets, key=lambda lt: sum(
+            ((sign * lt) if any((v >= sign * lt) if sign > 0 else (v <= sign * lt) for v in r["curve"])
+             else r["realised"]) for r in recs))
+        t = sign * best
+        print("\n  best %s Rs%.0f — yearly stability:" % (rule, best))
+        for yr in sorted({r["day"][:4] for r in recs}):
+            sub = [r for r in recs if r["day"][:4] == yr]
+            b = sum(r["realised"] for r in sub)
+            t2 = sum((t if any((v >= t) if sign > 0 else (v <= t) for v in r["curve"]) else r["realised"]) for r in sub)
+            print("    %s  n=%-4d baseline %14s -> rule %14s  delta %13s" % (
+                yr, len(sub), format(b, "+,.0f"), format(t2, "+,.0f"), format(t2 - b, "+,.0f")))
     return 0
 
 
