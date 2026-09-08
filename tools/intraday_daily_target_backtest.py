@@ -148,7 +148,12 @@ def main() -> int:
                 s = ((r["ep"] - b) * r["qty"]) if r["short"] else ((b - r["ep"]) * r["qty"])
                 s[b.index < r["start"]] = 0.0
                 realised = ((r["ep"] - r["xp"]) if r["short"] else (r["xp"] - r["ep"])) * r["qty"]
-                s[b.index > r["end"]] = realised
+                # Charge each trade's round-trip cost AT ITS EXIT. Charging the
+                # whole day's fees from the first bar (the earlier convention)
+                # understated early-session peaks by ~Rs221/session at backtest
+                # scale (~Rs2,200 at 9.92x), which biases a profit target to
+                # look BETTER than it is — fewer crossings detected than real.
+                s[b.index > r["end"]] = realised - intraday_fees(r["ep"], r["xp"], r["qty"])
                 s = s.rename("p%d" % i)
                 grid = s.to_frame() if grid is None else grid.join(s, how="outer")
                 used.append(r)
@@ -156,8 +161,7 @@ def main() -> int:
                 no_bars += len(rows)
                 continue
             no_bars += len(rows) - len(used)
-            fees = sum(intraday_fees(r["ep"], r["xp"], r["qty"]) for r in used)
-            cur = grid.ffill().fillna(0.0).sum(axis=1) - fees
+            cur = grid.ffill().fillna(0.0).sum(axis=1)
             recs.append(dict(day=day, n=len(rows),
                              peak=float(cur.max()), ptime=cur.idxmax(),
                              realised=sum(
