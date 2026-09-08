@@ -77,7 +77,15 @@ def main() -> int:
         / "E--Codebase-intraday-trade-assistant"
         / "d9c67968-368c-45aa-a25e-bd4d1cfb4906/scratchpad/bt_active_trades.jsonl"))
     ap.add_argument("--targets", type=float, nargs="+",
-                    default=[2000, 3000, 5000, 7500, 10000, 15000])
+                    default=[1000, 2000, 3000, 5000, 7500, 10000, 15000, 25000, 50000])
+    ap.add_argument("--scale", type=float, default=9.92,
+                    help="live book size / backtest book size. MEASURED: backtest "
+                         "median notional Rs50,123 vs post-2026-08-14 live median "
+                         "Rs497,198 = 9.92x. --targets are quoted in TODAY's rupees "
+                         "and divided by this before being applied to the backtest, "
+                         "because a Rs3,000 cap on a 10x book is a Rs300 cap on the "
+                         "book the backtest actually traded. Pass 1.0 to sweep raw "
+                         "backtest rupees instead.")
     args = ap.parse_args()
 
     days = load_trades(Path(args.trades))
@@ -136,8 +144,12 @@ def main() -> int:
     print("  baseline realised: Rs%s over %d sessions" % (format(base, "+,.0f"), len(recs)))
     print("  red days: %.0f%%\n" % (100 * sum(1 for r in recs if r["realised"] < 0) / len(recs)))
 
-    print("  %8s %7s %14s %13s %9s" % ("target", "fires", "book", "delta", "red days"))
-    for t in args.targets:
+    print("  book-size scale: %.2fx  (targets quoted in TODAY's rupees)" % args.scale)
+    print()
+    print("  %-14s %-13s %6s %14s %13s %8s" % (
+        "target(today)", "=backtest", "fires", "book", "delta", "red"))
+    for lt in args.targets:
+        t = lt / args.scale
         tot = fires = red = 0
         for r in recs:
             hit = any(v >= t for v in r["curve"])
@@ -145,12 +157,13 @@ def main() -> int:
             fires += hit
             tot += val
             red += (val < 0)
-        print("  %8.0f %7d %14s %13s %8.0f%%" % (
-            t, fires, format(tot, "+,.0f"), format(tot - base, "+,.0f"),
-            100 * red / len(recs)))
+        print("  Rs%-12s Rs%-11.0f %6d %14s %13s %7.0f%%" % (
+            format(int(lt), ","), t, fires, format(tot, "+,.0f"),
+            format(tot - base, "+,.0f"), 100 * red / len(recs)))
 
-    best = max(args.targets, key=lambda t: sum(
-        (t if any(v >= t for v in r["curve"]) else r["realised"]) for r in recs))
+    best = max(args.targets, key=lambda lt: sum(
+        ((lt / args.scale) if any(v >= lt / args.scale for v in r["curve"])
+         else r["realised"]) for r in recs)) / args.scale
     print("\n  best target Rs%.0f — yearly stability:" % best)
     for yr in sorted({r["day"][:4] for r in recs}):
         sub = [r for r in recs if r["day"][:4] == yr]
