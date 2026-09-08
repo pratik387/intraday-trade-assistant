@@ -46,6 +46,29 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 MONTHLY = _REPO_ROOT / "backtest-cache-download" / "monthly"
 
+# Zerodha intraday equity, post Oct-2024 (services/logging/trading_logger.py)
+BROKERAGE_RATE, BROKERAGE_CAP = 0.0003, 20.0
+STT_RATE = 0.00025            # sell side only
+EXCHANGE_RATE = 0.0000307
+SEBI_RATE = IPFT_RATE = 0.000001
+STAMP_DUTY_RATE = 0.00003     # buy side only
+GST_RATE = 0.18
+
+
+def intraday_fees(entry_px: float, exit_px: float, qty: int) -> float:
+    """Round-trip MIS cost. Brokerage is min(0.03%, Rs20) PER ORDER, which is why
+    a bigger book cannot be modelled by scaling a smaller book's P&L: at Rs50k
+    notional brokerage is Rs15/order, at Rs500k it is capped at Rs20. Fees are
+    strongly sublinear in size, so a 10x book keeps far more than 10x the net."""
+    et, xt = entry_px * qty, exit_px * qty
+    brokerage = min(BROKERAGE_RATE * et, BROKERAGE_CAP) + min(BROKERAGE_RATE * xt, BROKERAGE_CAP)
+    stt = xt * STT_RATE
+    leg = et + xt
+    exch, sebi, ipft = leg * EXCHANGE_RATE, leg * SEBI_RATE, leg * IPFT_RATE
+    stamp = et * STAMP_DUTY_RATE
+    gst = (brokerage + exch + sebi + ipft) * GST_RATE
+    return brokerage + stt + exch + sebi + ipft + stamp + gst
+
 
 def load_trades(path: Path) -> dict:
     days = collections.defaultdict(list)
@@ -61,6 +84,7 @@ def load_trades(path: Path) -> dict:
         net = t.get("net_pnl")
         days[t["session"]].append(dict(
             sym=str(t["symbol"]).replace("NSE:", ""), qty=int(q), ep=float(ep),
+            raw_qty=int(q),
             xp=float(t.get("exit_price") or ep), end=end,
             start=end - pd.Timedelta(minutes=float(t.get("time_in_trade_minutes") or 0)),
             gross=(float(gross) if gross is not None else None),
@@ -78,14 +102,14 @@ def main() -> int:
         / "d9c67968-368c-45aa-a25e-bd4d1cfb4906/scratchpad/bt_active_trades.jsonl"))
     ap.add_argument("--targets", type=float, nargs="+",
                     default=[1000, 2000, 3000, 5000, 7500, 10000, 15000, 25000, 50000])
-    ap.add_argument("--scale", type=float, default=9.92,
+    ap.add_argument("--book-scale", dest="scale", type=float, default=9.92,
                     help="live book size / backtest book size. MEASURED: backtest "
                          "median notional Rs50,123 vs post-2026-08-14 live median "
-                         "Rs497,198 = 9.92x. --targets are quoted in TODAY's rupees "
-                         "and divided by this before being applied to the backtest, "
-                         "because a Rs3,000 cap on a 10x book is a Rs300 cap on the "
-                         "book the backtest actually traded. Pass 1.0 to sweep raw "
-                         "backtest rupees instead.")
+                         "Rs497,198 = 9.92x. QUANTITIES are multiplied by this and "
+                         "fees RECOMPUTED at the larger turnover - dividing the "
+                         "threshold instead would be wrong, because the Rs20/order "
+                         "brokerage cap makes fees strongly sublinear in size. "
+                         "Pass 1.0 to evaluate the book as the backtest traded it.")
     args = ap.parse_args()
 
     days = load_trades(Path(args.trades))
@@ -113,6 +137,8 @@ def main() -> int:
             if sub.empty:
                 no_bars += len(rows)
                 continue
+            for r in rows:
+                r["qty"] = max(1, int(round(r["raw_qty"] * args.scale)))
             grid, used = None, []
             for i, r in enumerate(rows):
                 b = sub[sub["symbol"] == r["sym"]]
@@ -130,12 +156,14 @@ def main() -> int:
                 no_bars += len(rows)
                 continue
             no_bars += len(rows) - len(used)
-            fees = sum((r["gross"] - r["net"]) for r in used
-                       if r["gross"] is not None and r["net"] is not None)
+            fees = sum(intraday_fees(r["ep"], r["xp"], r["qty"]) for r in used)
             cur = grid.ffill().fillna(0.0).sum(axis=1) - fees
             recs.append(dict(day=day, n=len(rows),
                              peak=float(cur.max()), ptime=cur.idxmax(),
-                             realised=sum(r["net"] for r in rows if r["net"] is not None),
+                             realised=sum(
+                                 (((r["ep"] - r["xp"]) if r["short"] else (r["xp"] - r["ep"]))
+                                  * r["qty"]) - intraday_fees(r["ep"], r["xp"], r["qty"])
+                                 for r in rows),
                              curve=[float(v) for v in cur.values]))
         print("  %s: %d sessions done" % (month, len(by_month[month])), flush=True)
 
@@ -149,7 +177,7 @@ def main() -> int:
     print("  %-14s %-13s %6s %14s %13s %8s" % (
         "target(today)", "=backtest", "fires", "book", "delta", "red"))
     for lt in args.targets:
-        t = lt / args.scale
+        t = lt
         tot = fires = red = 0
         for r in recs:
             hit = any(v >= t for v in r["curve"])
@@ -157,13 +185,12 @@ def main() -> int:
             fires += hit
             tot += val
             red += (val < 0)
-        print("  Rs%-12s Rs%-11.0f %6d %14s %13s %7.0f%%" % (
-            format(int(lt), ","), t, fires, format(tot, "+,.0f"),
+        print("  Rs%-12s %-13s %6d %14s %13s %7.0f%%" % (
+            format(int(lt), ","), "", fires, format(tot, "+,.0f"),
             format(tot - base, "+,.0f"), 100 * red / len(recs)))
 
     best = max(args.targets, key=lambda lt: sum(
-        ((lt / args.scale) if any(v >= lt / args.scale for v in r["curve"])
-         else r["realised"]) for r in recs)) / args.scale
+        (lt if any(v >= lt for v in r["curve"]) else r["realised"]) for r in recs))
     print("\n  best target Rs%.0f — yearly stability:" % best)
     for yr in sorted({r["day"][:4] for r in recs}):
         sub = [r for r in recs if r["day"][:4] == yr]
