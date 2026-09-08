@@ -22,8 +22,9 @@ That biases the measured peak DOWN, never up. The per-trade MFE recorded live by
 the engine bounds it from above: summing MFEs assumes every trade peaked at the
 same instant, which is the ceiling.
 
-2026-09-08 is why this matters: the book reached +Rs16,155 at 14:05 and settled
-at -Rs4,209, because up_spike_fade_short is deliberately stop-less (its 9%
+2026-09-08 is why this matters: the book reached +Rs16,155 (gross, bar close
+labelled 14:05 = the 14:10 print) and settled at -Rs4,518 net, because
+up_spike_fade_short is deliberately stop-less (its 9%
 catastrophe stop is a blowup guard, and Phase 5 found 0 of 11 stop/target
 variants improved it in both eras). No per-trade rule would have caught that
 give-back. A book-level daily target is the only mechanism that would.
