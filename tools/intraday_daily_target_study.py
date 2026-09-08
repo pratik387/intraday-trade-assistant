@@ -73,9 +73,16 @@ def _rows_from(fh, active: set) -> list:
         if ep is None or not q or not ts:
             continue
         end = pd.to_datetime(str(ts).replace("Z", ""))
-        net = t.get("total_trade_pnl")
-        net = t.get("net_pnl") if net is None else net
-        gross = t.get("gross_pnl")
+        # analytics.jsonl semantics, verified 2026-09-08 on 167 paper rows:
+        #   total_trade_pnl == pnl  -> GROSS (reconciles with (entry-exit)*qty)
+        #   net_pnl                 -> after Zerodha MIS costs
+        #   gross_pnl               -> absent on these rows
+        # An earlier revision preferred total_trade_pnl and CALLED it net, which
+        # overstated every session by the day's fees (median Rs32.79/trade).
+        net = t.get("net_pnl")
+        gross = t.get("pnl") if t.get("pnl") is not None else t.get("total_trade_pnl")
+        if net is None:
+            net = gross
         out.append(dict(
             day=end.strftime("%Y-%m-%d"), sym=t["symbol"], qty=int(q), ep=float(ep),
             xp=float(t.get("exit_price") or ep), end=end,
