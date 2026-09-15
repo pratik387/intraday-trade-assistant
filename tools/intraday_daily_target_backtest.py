@@ -101,10 +101,19 @@ def load_trades(path: Path) -> dict:
     return days
 
 
-def scale_trade(tr: dict, scale: float) -> None:
-    """Scale quantities, recompute each leg's gross and its fee at the new size."""
+def scale_trade(tr: dict, scale: float, max_notional: float) -> None:
+    """Re-size a 1x backtest trade the way the live book sizes it.
+
+    Live sizing (services/risk/intraday_sizing.py): the 1x notional times
+    `book_size_multiplier`, then clamped to `max_notional_pct_of_capital` x
+    capital. Both sizing modes scale the same way, so qty_live =
+    min(qty_1x * multiplier, max_notional // entry). The clamp matters: at 10x a
+    Rs50k+ 1x trade hits the Rs500k ceiling, so the live book is NOT a uniform
+    10x - measured median is ~4.6-6.4x. An earlier version used a flat 9.92x,
+    which oversized every clamped trade. Each leg's gross and fee are recomputed
+    at the new size."""
     sgn = -1.0 if tr["short"] else 1.0
-    tr["qty"] = max(1, int(round(tr["raw_qty"] * scale)))
+    tr["qty"] = max(1, min(int(round(tr["raw_qty"] * scale)), int(max_notional // tr["ep"])))
     left, legs = tr["qty"], []
     for i, (end, rq, xp) in enumerate(tr["legs"]):
         q = left if i == len(tr["legs"]) - 1 else max(1, int(round(rq * scale)))
@@ -165,14 +174,18 @@ def main() -> int:
     ap.add_argument("--rule", choices=["target", "loss", "both"], default="target",
                     help="target: stop for the day at +T. loss: stop at -T (a daily "
                          "loss cap). both: sweep each separately from the same curves.")
-    ap.add_argument("--book-scale", dest="scale", type=float, default=9.92,
-                    help="live book size / backtest book size. MEASURED: backtest "
-                         "median notional Rs50,123 vs post-2026-08-14 live median "
-                         "Rs497,198 = 9.92x. QUANTITIES are multiplied by this and "
-                         "fees RECOMPUTED at the larger turnover - dividing the "
+    ap.add_argument("--book-scale", dest="scale", type=float, default=None,
+                    help="live/backtest size multiplier. Default: config "
+                         "intraday_sizing.book_size_multiplier (10 = Rs10k stop-risk "
+                         "on Rs5L vs the backtest's Rs1k). QUANTITIES are multiplied "
+                         "and fees RECOMPUTED at the larger turnover - dividing the "
                          "threshold instead would be wrong, because the Rs20/order "
                          "brokerage cap makes fees strongly sublinear in size. "
                          "Pass 1.0 to evaluate the book as the backtest traded it.")
+    ap.add_argument("--max-notional", type=float, default=None,
+                    help="per-trade notional ceiling applied after scaling. Default: "
+                         "config max_notional_pct_of_capital x paper_initial_capital "
+                         "(= Rs500k), the clamp the live sizer applies.")
     ap.add_argument("--dump", default=None,
                     help="write one JSON line per session (day, n, fees, peak, realised, "
                          "curve) so follow-up questions do not need a 10-minute rerun")
@@ -180,6 +193,12 @@ def main() -> int:
                     help="1m = *_1m.feather (engine's family). 5m = *_5m_enriched.feather "
                          "(the earlier method; misses intra-bar spikes, has bad prints)")
     args = ap.parse_args()
+    cfg = json.load(open(_REPO_ROOT / "config" / "configuration.json", encoding="utf-8"))
+    if args.scale is None:
+        args.scale = float(cfg["intraday_sizing"]["book_size_multiplier"])
+    if args.max_notional is None:
+        args.max_notional = (float(cfg["intraday_sizing"]["max_notional_pct_of_capital"])
+                             * float(cfg["capital_management"]["paper_initial_capital"]))
 
     days = load_trades(Path(args.trades))
     print("sessions with trades: %d  (%s .. %s)" % (len(days), min(days), max(days)))
@@ -216,7 +235,7 @@ def main() -> int:
                 no_bars += len(rows)
                 continue
             for r in rows:
-                scale_trade(r, args.scale)
+                scale_trade(r, args.scale, args.max_notional)
             out = day_curves(rows, sub)
             if out is None:
                 no_bars += len(rows)
@@ -240,8 +259,16 @@ def main() -> int:
     print("  baseline realised (net): Rs%s over %d sessions" % (format(base, "+,.0f"), len(recs)))
     print("  red days: %.0f%%\n" % (100 * sum(1 for r in recs if r["realised"] < 0) / len(recs)))
 
-    print("  book-size scale: %.2fx  (thresholds in TODAY's rupees, rule fires on the "
-          "GROSS %s-close curve, a firing day books T minus its fees)" % (args.scale, args.bars))
+    scaled = [r for v in days.values() for r in v if "qty" in r]
+    med1x = sorted(r["raw_qty"] * r["ep"] for r in scaled)[len(scaled) // 2]
+    medlv = sorted(r["qty"] * r["ep"] for r in scaled)[len(scaled) // 2]
+    at_cap = sum(1 for r in scaled if r["raw_qty"] * r["ep"] * args.scale >= args.max_notional)
+    print("  sizing: x%.1f then clamp Rs%s | median notional 1x Rs%s -> live Rs%s (%.1fx) | "
+          "%d of %d trades at the clamp" % (
+              args.scale, format(args.max_notional, ",.0f"), format(med1x, ",.0f"),
+              format(medlv, ",.0f"), medlv / med1x, at_cap, len(scaled)))
+    print("  thresholds in TODAY's rupees; rule fires on the GROSS %s-close curve; a firing "
+          "day books T minus its fees" % args.bars)
     rules = ["target", "loss"] if args.rule == "both" else [args.rule]
 
     def book(r, t, sign):
