@@ -15,6 +15,16 @@ Baseline = the trade as it happened (9% catastrophe stop, 15:10 time stop).
 
 Sized like live: Rs300k notional per trade (0.06 x 5L x 10), fees per leg.
 
+Result 2026-09-15 (slip 20bp, Rs300k/trade): NO variant improves 2026 H1, and
+none improves both 2026 H1 and the paper window. Fixed stops 2-7% cost
+-250k..-630k on 2026 H1 (n=303) and -19k..-113k on paper (n=21); trailing
+give-back stops cost -400k..-1.0M on 2026 H1; time exits 14:00/14:30 cost
+-447k/-270k. The deep dips (median MAE -5.4% on paper) recover often enough
+that cutting them loses more than it saves, TNPETRO 2026-09-11 (-5.4% MAE ->
++7.25%) being the shape. Phase 5's stop-less verdict stands on the harder
+population. The 2026 drift is an edge/decay question for the monitor, not a
+stop question.
+
 Usage:
     python tools/sub9_research/upspike_stop_sweep_2026.py <scratch dir>  [--slip-bp 20]
 """

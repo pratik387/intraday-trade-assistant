@@ -8,6 +8,13 @@ cell-level break can be told from a population-level one.
 Trades come from the July-2026 OCI runs (all exit legs), sized like live
 (x10 then Rs500k clamp, fees recomputed), scanner-flagged symbol-days dropped.
 
+Result 2026-09-15: accumulated PF 1.19 [1.04, 1.37] -> Stage-14 CI rule keeps
+it; decay monitor fired RETIRE on the last two rolling-6mo windows (PF 0.88,
+0.81) after 7 months of monotonic decline (Jan PF 0.90 -> Jul 0.50). 2026:
+PF 0.82, 1/7 winning months, not inverse-edge. Break is entirely in stop-hit
+trades (share 45% -> 54%, PF 0.74 -> 0.39); EOD trades unchanged (PF ~3.9,
+mean +0.6%). The monitor also fired twice in 2024 H2 and recovered.
+
 Usage:
     python tools/sub9_research/or_window_retire_test.py <scratch dir with bt_active_legs.jsonl>
 """
