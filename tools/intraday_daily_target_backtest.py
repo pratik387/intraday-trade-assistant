@@ -73,15 +73,34 @@ def intraday_fees(entry_px: float, exit_px: float, qty: int) -> float:
     return brokerage + stt + exch + sebi + ipft + stamp + gst
 
 
-def load_trades(path: Path) -> dict:
-    """session -> [trade]; trade = sym, short, ep, raw_qty, start, legs=[(end, raw_qty, xp)]"""
-    by_key = {}
+def flagged_symbol_days() -> set:
+    """(symbol, day) pairs the bad-print scanners flagged in either feather family.
+    A trade on one of these days can have filled on a phantom print (RMDRIP
+    Mar-Apr 2026: +35% in one minute, three times) and is dropped."""
+    import csv
+    out = set()
+    for fam in ("5m_enriched", "1m"):
+        p = _REPO_ROOT / "reports" / "data_health" / ("_%s_badprint_suspects.csv" % fam)
+        if p.exists():
+            for r in csv.DictReader(open(p, encoding="utf-8")):
+                out.add((r["symbol"], r["day"]))
+    return out
+
+
+def load_trades(path: Path, exclude_flagged: bool = True) -> tuple:
+    """session -> [trade]; trade = sym, short, ep, raw_qty, start, legs=[(end, raw_qty, xp)].
+    Returns (days, n_dropped)."""
+    bad = flagged_symbol_days() if exclude_flagged else set()
+    by_key, dropped = {}, set()
     for ln in path.read_text(encoding="utf-8").splitlines():
         if not ln.strip():
             continue
         t = json.loads(ln)
         ep, q, ts = t.get("actual_entry_price"), t.get("qty"), t.get("timestamp")
         if ep is None or not q or not ts:
+            continue
+        if (str(t["symbol"]).replace("NSE:", ""), t["session"]) in bad:
+            dropped.add((t["session"], t["symbol"], ep))
             continue
         end = pd.to_datetime(str(ts))
         key = (t["session"], t["symbol"], round(float(ep), 4))
@@ -98,7 +117,7 @@ def load_trades(path: Path) -> dict:
     for tr in by_key.values():
         tr["legs"].sort()
         days[tr["session"]].append(tr)
-    return days
+    return days, len(dropped)
 
 
 def scale_trade(tr: dict, scale: float, max_notional: float) -> None:
@@ -186,6 +205,9 @@ def main() -> int:
                     help="per-trade notional ceiling applied after scaling. Default: "
                          "config max_notional_pct_of_capital x paper_initial_capital "
                          "(= Rs500k), the clamp the live sizer applies.")
+    ap.add_argument("--keep-flagged", action="store_true",
+                    help="keep trades on symbol-days the bad-print scanners flagged "
+                         "(default: drop them; see reports/data_health/)")
     ap.add_argument("--dump", default=None,
                     help="write one JSON line per session (day, n, fees, peak, realised, "
                          "curve) so follow-up questions do not need a 10-minute rerun")
@@ -203,8 +225,9 @@ def main() -> int:
         args.max_notional = (float(cfg["intraday_sizing"]["max_notional_pct_of_capital"])
                              * float(cfg["capital_management"]["paper_initial_capital"]))
 
-    days = load_trades(Path(args.trades))
-    print("sessions with trades: %d  (%s .. %s)" % (len(days), min(days), max(days)))
+    days, n_dropped = load_trades(Path(args.trades), exclude_flagged=not args.keep_flagged)
+    print("sessions with trades: %d  (%s .. %s) | %d trades on flagged symbol-days dropped" % (
+        len(days), min(days), max(days), n_dropped))
     n_tr = sum(len(v) for v in days.values())
     n_multi = sum(1 for v in days.values() for t in v if len(t["legs"]) > 1)
     print("trades: %d  (%d with a partial exit, carried at FULL size until the partial)\n"

@@ -7,13 +7,16 @@ top 5% winners. Then the same on the live post-resize trades.
 """
 import json, sys, glob, collections, statistics as st
 sys.path.insert(0, ".")
-from tools.intraday_daily_target_backtest import intraday_fees
+from tools.intraday_daily_target_backtest import intraday_fees, flagged_symbol_days
 S = sys.argv[1]
+BAD = flagged_symbol_days()   # trades on scanner-flagged symbol-days are dropped
 MULT, CAP = 10.0, 500_000.0
 
 def build(rows, live_size):
     by = collections.defaultdict(list)
     for t in rows:
+        if (str(t["symbol"]).replace("NSE:", ""), str(t["timestamp"])[:10]) in BAD:
+            continue
         by[(str(t["timestamp"])[:10], t["symbol"], t["actual_entry_price"], t.get("setup_type"))].append(t)
     out = []
     for (d, sym, ep, su), legs in by.items():
