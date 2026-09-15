@@ -22,19 +22,26 @@ family is contaminated where the 1m family is not.
 Usage:
     python tools/scan_5m_feather_badprints.py
 """
-import glob, os, sys
+import argparse, glob, os, sys
 from pathlib import Path
 import pandas as pd
 _ROOT = Path(__file__).resolve().parents[1]
+ap = argparse.ArgumentParser()
+ap.add_argument("--family", choices=["5m_enriched", "1m"], default="5m_enriched",
+                help="which monthly feather family to scan. 2026-09-15: the 1m family was "
+                     "assumed clean from one spot check and is NOT (RMDRIP Mar-Apr 2026 is "
+                     "merged in both); scan it.")
+args = ap.parse_args()
 out = []
-files = sorted(glob.glob(r"E:\Codebase\intraday-trade-assistant\backtest-cache-download\monthly\*_5m_enriched.feather"))
+files = sorted(glob.glob(str(_ROOT / "backtest-cache-download" / "monthly" / ("*_%s.feather" % args.family))))
+tcol = "ts" if args.family == "1m" else "date"
 for f in files:
     mon = os.path.basename(f)[:7]
     try:
-        df = pd.read_feather(f, columns=["date", "symbol", "high", "low", "close", "volume"])
+        df = pd.read_feather(f, columns=[tcol, "symbol", "high", "low", "close", "volume"])
     except Exception as e:
         print("  %s unreadable: %s" % (mon, e), flush=True); continue
-    df["d"] = df["date"].dt.date
+    df["d"] = df[tcol].dt.date
     g = df.groupby(["symbol", "d"], observed=True)
     med = g["close"].median().rename("med")
     hi = g["high"].max().rename("hi")
@@ -50,7 +57,7 @@ for f in files:
                         hi_dev=r["hi_dev"], lo_dev=r["lo_dev"], bars=int(r["bars"])))
     print("  %s: %d symbol-days scanned, %d flagged" % (mon, len(s), len(bad)), flush=True)
 res = pd.DataFrame(out)
-outp = r"E:\Codebase\intraday-trade-assistant\reports\data_health\_5m_enriched_badprint_suspects.csv"
+outp = str(_ROOT / "reports" / "data_health" / ("_%s_badprint_suspects.csv" % args.family))
 os.makedirs(os.path.dirname(outp), exist_ok=True)
 res.to_csv(outp, index=False)
 print("\nTOTAL flagged symbol-days: %d -> %s" % (len(res), outp))
