@@ -87,7 +87,7 @@ def load_trades(path: Path) -> dict:
         key = (t["session"], t["symbol"], round(float(ep), 4))
         tr = by_key.setdefault(key, dict(
             session=t["session"], sym=str(t["symbol"]).replace("NSE:", ""), ep=float(ep),
-            raw_qty=0, start=None, legs=[],
+            raw_qty=0, start=None, legs=[], setup=str(t.get("setup_type")),
             short=("short" in str(t.get("bias", "")).lower()
                    or "short" in str(t.get("setup_type", "")).lower())))
         start = end - pd.Timedelta(minutes=float(t.get("time_in_trade_minutes") or 0))
@@ -189,6 +189,9 @@ def main() -> int:
     ap.add_argument("--dump", default=None,
                     help="write one JSON line per session (day, n, fees, peak, realised, "
                          "curve) so follow-up questions do not need a 10-minute rerun")
+    ap.add_argument("--by-setup", action="store_true",
+                    help="also build one curve per (day, setup) and sweep the target per "
+                         "setup: 'stop THIS setup for the day once ITS OWN book is at +T'")
     ap.add_argument("--bars", choices=["1m", "5m"], default="1m",
                     help="1m = *_1m.feather (engine's family). 5m = *_5m_enriched.feather "
                          "(the earlier method; misses intra-bar spikes, has bad prints)")
@@ -212,6 +215,7 @@ def main() -> int:
         by_month[d[:7].replace("-", "_")].append(d)
 
     recs, no_bars = [], 0
+    by_setup = collections.defaultdict(list)
     suffix = "_1m.feather" if args.bars == "1m" else "_5m_enriched.feather"
     for month in sorted(by_month):
         f = MONTHLY / (month + suffix)
@@ -247,6 +251,18 @@ def main() -> int:
                              peak=float(gross.max()), ptime=gross.idxmax(),
                              realised=sum(r["gross"] - r["fees"] for r in rows),
                              curve=[float(v) for v in gross.values]))
+            if args.by_setup:
+                for su in sorted({r["setup"] for r in rows}):
+                    srows = [r for r in rows if r["setup"] == su]
+                    o = day_curves(srows, sub)
+                    if o is None:
+                        continue
+                    g = o[0]
+                    by_setup[su].append(dict(
+                        day=day, n=len(srows), fees=sum(r["fees"] for r in srows),
+                        peak=float(g.max()),
+                        realised=sum(r["gross"] - r["fees"] for r in srows),
+                        curve=[float(v) for v in g.values]))
         print("  %s: %d sessions done" % (month, len(by_month[month])), flush=True)
 
     print("\nreconstructed %d sessions | %d trades without bars\n" % (len(recs), no_bars))
@@ -310,6 +326,34 @@ def main() -> int:
             t2 = sum(book(r, t, sign)[0] for r in sub)
             print("    %s  n=%-4d baseline %14s -> rule %14s  delta %13s" % (
                 yr, len(sub), format(b, "+,.0f"), format(t2, "+,.0f"), format(t2 - b, "+,.0f")))
+
+    if args.by_setup:
+        print("\n  === PER-SETUP daily target: stop THIS setup once its own day is at +T ===")
+        print("  (days = sessions where the setup traded; 'firing end' = mean net close of "
+              "days that reached +T without the rule)")
+        for su, srecs in sorted(by_setup.items()):
+            b = sum(r["realised"] for r in srecs)
+            print("\n  %s  | %d days | baseline %s | red %.0f%%" % (
+                su, len(srecs), format(b, "+,.0f"),
+                100 * sum(1 for r in srecs if r["realised"] < 0) / len(srecs)))
+            print("    %-10s %6s %6s %13s %12s %12s %8s" % (
+                "target", "fires", "fire%", "delta", "firing end", "firing med", "fire red"))
+            for lt in args.targets:
+                f = [r for r in srecs if any(v >= lt for v in r["curve"])]
+                if not f:
+                    continue
+                d = sum((lt - r["fees"]) for r in f) - sum(r["realised"] for r in f)
+                print("    Rs%-8s %6d %5.0f%% %13s %12s %12s %7.0f%%" % (
+                    format(int(lt), ","), len(f), 100 * len(f) / len(srecs),
+                    format(d, "+,.0f"),
+                    format(sum(r["realised"] for r in f) / len(f), "+,.0f"),
+                    format(sorted(r["realised"] for r in f)[len(f) // 2], "+,.0f"),
+                    100 * sum(1 for r in f if r["realised"] < 0) / len(f)))
+        if args.dump:
+            with open(args.dump.replace(".jsonl", "") + "_by_setup.jsonl", "w", encoding="utf-8") as fh:
+                for su, srecs in by_setup.items():
+                    for r in srecs:
+                        fh.write(json.dumps(dict(r, setup=su)) + "\n")
     return 0
 
 

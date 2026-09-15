@@ -56,7 +56,8 @@ def load_session(d: str) -> dict:
         if t == "ENTRY":
             en = e["entry"]
             trades[tid] = dict(sym=e["symbol"], side=en["side"], qty=int(en["qty"]),
-                               ep=float(en["price"]), start=pd.Timestamp(e["ts"]), legs=[])
+                               ep=float(en["price"]), start=pd.Timestamp(e["ts"]), legs=[],
+                               setup=_setup_of(d, tid))
         elif t == "EXIT" and tid in trades:
             x = e["exit"]
             trades[tid]["legs"].append(dict(ts=pd.Timestamp(e["ts"]), qty=int(x["qty"]),
@@ -105,7 +106,8 @@ def load_analytics(path: str, active: set | None) -> dict:
         short = ("short" in str(a.get("bias", "")).lower()
                  or "short" in str(a.get("setup_type", "")).lower())
         tr = legs.setdefault(key, dict(sym=a["symbol"], side="SELL" if short else "BUY",
-                                       qty=0, ep=float(ep), start=None, legs=[]))
+                                       qty=0, ep=float(ep), start=None, legs=[],
+                                       setup=str(a.get("setup_type"))))
         start = end - pd.Timedelta(minutes=float(a.get("time_in_trade_minutes") or 0))
         tr["start"] = start if tr["start"] is None else min(tr["start"], start)
         tr["qty"] += int(q)
@@ -176,6 +178,8 @@ def main() -> int:
                     help="daily profit targets to sweep (stop for the day at +T)")
     ap.add_argument("--all-setups", action="store_true",
                     help="keep retired setups too (default: active intraday only)")
+    ap.add_argument("--by-setup", action="store_true",
+                    help="also sweep the target per setup on that setup's own daily curve")
     ap.add_argument("--since", default=None,
                     help="sweep only sessions on/after this date (YYYY-MM-DD). The book "
                          "was resized ~10x on 2026-08-14; a rupee target is not "
@@ -204,7 +208,7 @@ def main() -> int:
     for kind, d in sources:
         trades = load_session(d) if kind == "events" else load_analytics(d, active)
         if kind == "events" and active is not None:
-            trades = {k: v for k, v in trades.items() if _setup_of(d, k) in active}
+            trades = {k: v for k, v in trades.items() if v["setup"] in active}
         if not trades:
             continue
         day0 = min(tr["start"] for tr in trades.values()).date()
@@ -224,7 +228,19 @@ def main() -> int:
                  realised_gross=float(c["gross_close"].iloc[-1]),
                  realised_net=float(c["net_close"].iloc[-1]),
                  fees=sum(l["fee"] for tr in trades.values() for l in tr["legs"]),
-                 curve_gross_close=[float(v) for v in c["gross_close"].values])
+                 curve_gross_close=[float(v) for v in c["gross_close"].values],
+                 per_setup={})
+        if args.by_setup:
+            for su in sorted({tr["setup"] for tr in trades.values()}):
+                sub = {k: v for k, v in trades.items() if v["setup"] == su}
+                cs = curves(sub, bars)
+                if cs is None:
+                    continue
+                r["per_setup"][su] = dict(
+                    n=len(sub), fees=sum(l["fee"] for tr in sub.values() for l in tr["legs"]),
+                    peak=float(cs["gross_close"].max()),
+                    realised=float(cs["net_close"].iloc[-1]),
+                    curve=[float(v) for v in cs["gross_close"].values])
         for k in ("gross_close", "gross_ceiling", "net_close", "gross_close5m"):
             s = c[k]
             r["peak_" + k] = float(s.max())
@@ -278,6 +294,25 @@ def main() -> int:
     print("  %8s %6s %13s %11s %8.0f%%" % (
         "none", "-", format(base, "+,.0f"), "+0",
         100 * sum(1 for r in closed if r["realised_net"] < 0) / len(closed)))
+
+    if args.by_setup:
+        print("\n=== PER-SETUP: stop THIS setup once its own day is at +T (gross 1m close) ===")
+        setups = sorted({su for r in closed for su in r["per_setup"]})
+        for su in setups:
+            srecs = [r["per_setup"][su] for r in closed if su in r["per_setup"]]
+            days = [r["day"] for r in closed if su in r["per_setup"]]
+            b = sum(x["realised"] for x in srecs)
+            print("\n  %s | %d days | baseline %s | red %d/%d" % (
+                su, len(srecs), format(b, "+,.0f"),
+                sum(1 for x in srecs if x["realised"] < 0), len(srecs)))
+            for t in args.targets:
+                f = [(d, x) for d, x in zip(days, srecs) if any(v >= t for v in x["curve"])]
+                if not f:
+                    continue
+                d_ = sum((t - x["fees"]) for _, x in f) - sum(x["realised"] for _, x in f)
+                print("    Rs%-7s fires %2d  delta %10s  firing days end: %s" % (
+                    format(int(t), ","), len(f), format(d_, "+,.0f"),
+                    ", ".join("%s %s" % (d[5:], format(x["realised"], "+,.0f")) for d, x in f)))
     return 0
 
 
