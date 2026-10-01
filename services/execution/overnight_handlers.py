@@ -241,6 +241,40 @@ def _find_out_of_band_sell(broker, symbol: str, qty: int, exclude_order_id=None)
     return None
 
 
+def floor_verdict(is_mtf: bool, capped_qty: int, capped_notional: float, pc: dict,
+                  cash_reserved_inr: float) -> str:
+    """What to do with a position the participation cap has shrunk.
+
+    Returns one of:
+      "take"         - at or above the product's floor; place as-is
+      "fallback_cnc" - MTF, under the MTF floor but at or above the CNC floor,
+                       the config allows it, and the CNC position (full cash,
+                       no leverage) fits the cash the slot reserved: place the
+                       same shares as CNC
+      "skip"         - under the floor with no usable fallback; release the slot
+
+    The MTF floor is a COST statement (fixed pledge/unpledge makes a token MTF
+    position a guaranteed loss), not a judgement on the signal. CNC has no fixed
+    component, so the identical position as CNC is a normal trade. The cash
+    bound is explicit rather than assumed: today the MTF floor and the slot
+    margin are both Rs25k, but the fallback must stay correct if either moves.
+    Every key is read without a default: a missing key is a startup error.
+    """
+    min_qty = int(pc["min_qty_after_cap"])
+    mtf_floor = float(pc["min_notional_after_cap_inr"])
+    cnc_floor = float(pc["min_notional_after_cap_inr_cnc"])
+    fallback = bool(pc["fallback_to_cnc_below_mtf_floor"])
+    if capped_qty < min_qty:
+        return "skip"
+    if is_mtf:
+        if capped_notional >= mtf_floor:
+            return "take"
+        if fallback and cnc_floor <= capped_notional <= float(cash_reserved_inr):
+            return "fallback_cnc"
+        return "skip"
+    return "take" if capped_notional >= cnc_floor else "skip"
+
+
 def _entry_cutoff_reached(raw_config: dict, paper_mode: bool) -> bool:
     """LIVE-only placement deadline check for the entry ranked loop.
 
@@ -711,22 +745,28 @@ def run_entry(
         # The Rs1L paper ledger only materializes these NEXT morning (09:45
         # reconstruction), so this file is the dashboard's only view of paper
         # positions while they are open overnight. Overwritten each entry day.
-        try:
-            snap = {
-                "session_date": today.isoformat(),
-                "written_at": now.isoformat(),
-                "fires": [
-                    {"symbol": sym, "product": e.context["product"],
-                     "leverage": float(e.context["leverage"]),
-                     "entry_price": float(p.entry_price)}
-                    for sym, e, p in detections
-                ],
-            }
-            snap_path = Path(spec.raw_config["capital_allocation"]["state_file"]).parent \
-                / "overnight_paper_open.json"
-            snap_path.write_text(json.dumps(snap, indent=2), encoding="utf-8")
-        except Exception as e:
-            logger.warning("run_entry: paper-open snapshot write failed: %s", e)
+        # Written BEFORE the ranked loop so it exists even if placement aborts,
+        # and AGAIN after it, because the participation-cap fallback can change
+        # a fire's product (MTF -> CNC) and the dashboard must show what was
+        # actually placed.
+        def _write_paper_open_snapshot() -> None:
+            try:
+                snap = {
+                    "session_date": today.isoformat(),
+                    "written_at": now.isoformat(),
+                    "fires": [
+                        {"symbol": sym, "product": e.context["product"],
+                         "leverage": float(e.context["leverage"]),
+                         "entry_price": float(p.entry_price)}
+                        for sym, e, p in detections
+                    ],
+                }
+                snap_path = Path(spec.raw_config["capital_allocation"]["state_file"]).parent \
+                    / "overnight_paper_open.json"
+                snap_path.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+            except Exception as e:
+                logger.warning("run_entry: paper-open snapshot write failed: %s", e)
+        _write_paper_open_snapshot()
 
         ranked = _rank_detections(
             detections,
@@ -906,8 +946,28 @@ def run_entry(
                         _min_notional = float(
                             _pc["min_notional_after_cap_inr"] if _is_mtf
                             else _pc["min_notional_after_cap_inr_cnc"])
-                        if (_capped_qty < int(_pc.get("min_qty_after_cap", 1))
-                                or _capped_notional < _min_notional):
+                        _verdict = floor_verdict(_is_mtf, _capped_qty, _capped_notional, _pc,
+                                                 float(slot.margin_inr))
+                        if _verdict == "fallback_cnc":
+                            # An MTF name whose capped size is under the MTF floor is
+                            # not a bad trade, it is a bad PRODUCT for that size: the
+                            # fixed pledge cost is what makes it a loss. As CNC the
+                            # same shares cost 0.22% flat. Live Sep-2026: the 14
+                            # names this branch used to skip returned +2.53% gross
+                            # in the paper mirror vs +0.54% for what was placed.
+                            logger.warning(
+                                "PARTICIPATION_CAP | %s | MTF->CNC — capped notional Rs%.0f "
+                                "below MTF floor Rs%.0f; taking it as CNC (qty %d, %.1f%% of "
+                                "ADV Rs%.0f)",
+                                symbol, _capped_notional, _min_notional, _capped_qty,
+                                100.0 * _notional / float(_adv), float(_adv),
+                            )
+                            evt.context["product"] = "CNC"
+                            evt.context["leverage"] = 1.0
+                            slot.product = "CNC"
+                            slot.leverage = 1.0
+                            summary["mtf_to_cnc_fallback"] = summary.get("mtf_to_cnc_fallback", 0) + 1
+                        elif _verdict == "skip":
                             # Capping to a token position is WORSE than skipping: MTF costs
                             # carry a fixed pledge/unpledge component, so round-trip is 7.46%
                             # of notional at Rs544 and 1.66% at Rs5,000, against a ~0.35%
@@ -935,6 +995,12 @@ def run_entry(
                         )
                         plan.qty = _capped_qty
                         _notional = _capped_qty * _px
+                        # reserve() recorded notional as margin x leverage BEFORE the
+                        # cap; keep the slot honest with the size actually sent
+                        # (exit_qty() prefers the real fill, this is its fallback).
+                        slot.notional_inr = float(_notional)
+                        # A fallback_cnc trade counts here AND in mtf_to_cnc_fallback:
+                        # it was capped, and it changed product. Both are true.
                         summary["participation_capped"] = summary.get("participation_capped", 0) + 1
 
             # ENTRY_BASIS is logged AFTER the participation cap so reqqty reports the
@@ -1211,6 +1277,7 @@ def run_entry(
         # account-wide and starves lower-ranked picks (2026-07-09 AMIRCHAND).
         # The cancel's confirm-poll still catches a racing late fill
         # (2026-07-02 DBSTOCKBRO case) and attaches it normally.
+        _write_paper_open_snapshot()   # products are final only after the loop
 
     # Persist
     pool.persist()

@@ -171,3 +171,89 @@ def test_cost_model_in_the_log_is_the_measured_one():
     body = SRC[i:i + 1400]
     assert "2.0 * _tick_pct" not in body, "the 2x round-trip model was wrong"
     assert "101.0 * _tick_pct" in body, "should use the measured slope"
+
+
+# ------------------------------------------------- MTF -> CNC fallback ---
+#
+# 2026-10-01. Live Sep-2026 at Rs25k slots: 14 of 118 paper signals were skipped
+# because they were MTF names whose 1%-of-ADV size fell under the Rs25k MTF
+# floor. In the paper mirror those 14 returned +2.53% gross with an 86% hit rate,
+# against +0.54% for the 81 that were placed. The floor is a statement about
+# MTF's fixed pledge cost, not about the signal; the same shares as CNC cost
+# 0.22% flat. So a sub-floor MTF name now falls back to CNC at the capped size
+# instead of being thrown away. The CNC floor and the tick gate still apply.
+
+from services.execution.overnight_handlers import floor_verdict  # noqa: E402
+
+
+def _pc(**over):
+    base = {"min_qty_after_cap": 1, "min_notional_after_cap_inr": 25000.0,
+            "min_notional_after_cap_inr_cnc": 1000.0, "fallback_to_cnc_below_mtf_floor": True}
+    base.update(over)
+    return base
+
+
+def test_fallback_flag_is_configured_and_on():
+    assert PC["fallback_to_cnc_below_mtf_floor"] is True
+
+
+def test_fallback_flag_is_required_not_defaulted():
+    i = SRC.index("def floor_verdict(")
+    body = SRC[i:i + 1600]
+    assert 'pc["fallback_to_cnc_below_mtf_floor"]' in body
+    assert '.get("fallback_to_cnc_below_mtf_floor"' not in body
+
+
+@pytest.mark.parametrize("is_mtf, qty, notional, expect", [
+    (True, 100, 30000.0, "take"),           # MTF above its floor: unchanged
+    (True, 100, 12000.0, "fallback_cnc"),   # MTF under Rs25k, above Rs1k: take as CNC
+    (True, 3, 800.0, "skip"),               # MTF under the CNC floor too: still skipped
+    (False, 100, 12000.0, "take"),          # CNC above its own floor
+    (False, 3, 800.0, "skip"),              # CNC under its floor
+    (True, 0, 0.0, "skip"),                 # zero shares is never a trade
+])
+def test_floor_verdict(is_mtf, qty, notional, expect):
+    assert floor_verdict(is_mtf, qty, notional, _pc(), cash_reserved_inr=25000.0) == expect
+
+
+def test_fallback_can_be_switched_off_to_restore_the_skip():
+    assert floor_verdict(True, 100, 12000.0, _pc(fallback_to_cnc_below_mtf_floor=False), 25000.0) == "skip"
+
+
+def test_fallback_is_bounded_by_the_cash_the_slot_reserved():
+    """CNC needs the full notional in cash. If the slot reserved less than the
+    capped notional (possible if the MTF floor and the slot margin ever diverge),
+    the fallback must not place a position the pool cannot fund."""
+    assert floor_verdict(True, 100, 12000.0, _pc(), cash_reserved_inr=12000.0) == "fallback_cnc"
+    assert floor_verdict(True, 100, 12000.0, _pc(), cash_reserved_inr=11999.0) == "skip"
+
+
+def test_fallback_call_site_passes_the_slot_cash():
+    i = SRC.index("_verdict = floor_verdict(")
+    assert "float(slot.margin_inr)" in SRC[i:i + 200]
+
+
+def test_paper_open_snapshot_is_rewritten_after_placement():
+    """The dashboard reads product from this file; a fallback changes product."""
+    assert SRC.count("_write_paper_open_snapshot()") >= 3, "define + before loop + after loop"
+    i_loop = SRC.index("for rank_i, (symbol, evt, plan) in enumerate(ranked):")
+    assert SRC.rindex("_write_paper_open_snapshot()") > i_loop
+
+
+def test_fallback_rewrites_product_on_both_event_and_slot():
+    """The order, the ledger and the EXIT all read product; all three must agree."""
+    i = SRC.index('if _verdict == "fallback_cnc":')
+    body = SRC[i:i + 1400]
+    for token in ('evt.context["product"] = "CNC"', 'evt.context["leverage"] = 1.0',
+                  'slot.product = "CNC"', 'slot.leverage = 1.0'):
+        assert token in body, f"fallback must set {token}"
+    assert "MTF->CNC" in body, "the log must say the product changed"
+    assert body.index('evt.context["product"] = "CNC"') < body.index('elif _verdict == "skip":')
+
+
+def test_fallback_happens_before_the_cap_is_applied():
+    """The capped qty is then used for the order, same path as any capped trade."""
+    i = SRC.index('if _verdict == "fallback_cnc":')
+    j = SRC.index("plan.qty = _capped_qty", i)
+    assert j > i
+    assert "continue" not in SRC[SRC.index('summary["mtf_to_cnc_fallback"]', i):j].split("elif")[0]
