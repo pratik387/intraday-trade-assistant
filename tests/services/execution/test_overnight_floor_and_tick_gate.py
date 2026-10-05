@@ -56,8 +56,26 @@ SRC = (REPO / "services" / "execution" / "overnight_handlers.py").read_text(enco
 def test_floor_is_product_aware():
     assert "min_notional_after_cap_inr" in PC, "MTF floor must remain"
     assert "min_notional_after_cap_inr_cnc" in PC, "CNC needs its own floor"
-    assert PC["min_notional_after_cap_inr_cnc"] < PC["min_notional_after_cap_inr"], (
-        "CNC has no fixed cost component, so its floor must be lower than MTF's")
+
+
+def test_fixed_size_rule_2026_10_05():
+    """FIXED SIZE: a position is the full slot or nothing. Never shrunk.
+
+    Live ledger since 2026-09-08: 13 positions under Rs5k (the 1%-of-ADV shrink
+    rule at work) earned Rs-1 in total while occupying slots that bind on 10 of
+    16 days; full Rs25k CNC slots earned Rs285 each. Paper had said the shrunk
+    names earn +2.5% - the fill gap on tiny illiquid positions ate all of it.
+    Fill cost measured on 139 live trades paired to paper: up to 10% of ADV
+    ~0.25pp, above 10% ~3.7pp. So the rule is: full size if that is <= 10% of
+    the day's turnover, else skip. With the CNC floor EQUAL to the slot, any
+    name the cap would shrink is under the floor and skips - the shrink path
+    is dead by construction.
+    """
+    slot = float(CFG["setups"]["close_dn_overnight_long"]["capital_allocation"]["margin_per_slot_inr"])
+    assert PC["max_participation_pct"] == 0.1
+    assert float(PC["min_notional_after_cap_inr_cnc"]) == slot, "CNC floor must equal the slot so nothing is shrunk"
+    assert float(PC["min_notional_after_cap_inr"]) >= slot
+    assert PC["fallback_to_cnc_below_mtf_floor"] is False, "the fallback only ever produced tiny positions"
 
 
 def test_tick_gate_configured_and_calibrated():
@@ -94,19 +112,22 @@ def test_gate_verdict_on_the_real_names(price, tick, blocked):
         f"expected blocked={blocked} at threshold {thr}%")
 
 
-def test_cnc_floor_no_longer_does_the_filtering():
-    """The notional floor must stop being the gate; the tick gate is.
+def test_the_2026_09_07_names_under_the_fixed_size_rule():
+    """Under the fixed-size rule a name is full size or skipped, never shrunk.
+    The 2026-09-07 version of this test asserted the five names be taken at
+    Rs2k-9k. Live then showed such positions earn nothing and burn a slot.
 
-    All five of the 2026-09-07 names clear the CNC notional floor now. Three are
-    then blocked on tick cost, which is the property that actually matters.
-    """
-    floor = PC["min_notional_after_cap_inr_cnc"]
-    capped = {"ASHOKAMET": 1943, "UDAYJEW": 4172, "MALUPAPER": 2457,
-              "MGEL": 9263, "MITTAL": 5698}
-    removed = {s for s, n in capped.items() if n < floor}
-    assert not removed, (
-        f"CNC floor Rs{floor} still removes {removed} — notional should no "
-        "longer be the deciding variable")
+    Rs25k vs 20-day ADV: ASHOKAMET 12.8% and MALUPAPER 10.2% are over the 10%
+    ceiling -> skipped. UDAYJEW 5.9%, MITTAL 4.4%, MGEL 2.7% are within it ->
+    full size as far as the cap is concerned (MITTAL and MGEL are then blocked
+    by the tick gate, which runs first)."""
+    cap = PC["max_participation_pct"]
+    floor = float(PC["min_notional_after_cap_inr_cnc"])
+    adv = {"ASHOKAMET": 195_451, "UDAYJEW": 421_347, "MALUPAPER": 245_826,
+           "MGEL": 927_282, "MITTAL": 569_932}
+    verdict = {n: ("skip" if cap * a < floor else "full") for n, a in adv.items()}
+    assert verdict == {"ASHOKAMET": "skip", "MALUPAPER": "skip",
+                       "UDAYJEW": "full", "MGEL": "full", "MITTAL": "full"}
 
 
 # ------------------------------------------------------------------ code ---
@@ -193,8 +214,9 @@ def _pc(**over):
     return base
 
 
-def test_fallback_flag_is_configured_and_on():
-    assert PC["fallback_to_cnc_below_mtf_floor"] is True
+def test_fallback_flag_is_configured_and_off():
+    """Built 2026-10-01, switched off 2026-10-05: see test_fixed_size_rule_2026_10_05."""
+    assert PC["fallback_to_cnc_below_mtf_floor"] is False
 
 
 def test_fallback_flag_is_required_not_defaulted():

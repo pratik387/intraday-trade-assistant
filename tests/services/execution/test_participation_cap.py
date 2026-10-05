@@ -36,17 +36,22 @@ def test_config_is_present_and_sane():
     # earlier paper comparison was invalid — it applied the filter to all 340
     # fires when live only ever takes 3/day from a ranked list.
     assert PC["enabled"] is True
-    assert 0 < PC["max_participation_pct"] <= 0.05, "a cap above 5% is not a cap"
+    # 2026-10-05: 10%, the level above which the only two live fills lost 3.7pp
+    # to execution; below it 13 fills cost ~0.25pp. See
+    # test_overnight_floor_and_tick_gate.test_fixed_size_rule_2026_10_05.
+    assert 0 < PC["max_participation_pct"] <= 0.10, "a cap above 10% is not a cap"
     assert PC["skip_when_adv_missing"] is True
 
 
-def test_the_regenceram_order_would_be_cut_by_98_percent():
-    """Rs50,489 into a name trading Rs54,402/day — 92.8% participation."""
+def test_the_regenceram_order_is_skipped_not_cut():
+    """Rs50,489 into a name trading Rs54,402/day — 92.8% participation.
+    2026-08-25 cut it to Rs1k; 2026-10-05 fixed-size rule skips it: the capped
+    size is under the floor, and a Rs1k position earns nothing live anyway."""
     adv, px, notional = 54_402.0, 33.85, 50_489.0
     q = _cap_qty(notional, adv, px, PC["max_participation_pct"])
     capped_notional = q * px
     assert capped_notional <= PC["max_participation_pct"] * adv * 1.001
-    assert capped_notional < notional * 0.02, "must be a drastic cut, not a trim"
+    assert capped_notional < PC["min_notional_after_cap_inr_cnc"], "must be skipped, never traded as a token"
 
 
 def test_a_liquid_name_is_untouched():
@@ -81,21 +86,25 @@ def test_the_floor_implies_a_known_liquidity_threshold():
     Measured 2026-08-25: that is Rs25 lakh, which excludes 457 of 2,114
     candidates (21.6%). Documented rather than accidental — the config note
     carries the number, and changing either knob moves the threshold."""
+    # 2026-10-05: cap 10%, floor = the Rs25k slot -> a name needs ADV >= Rs2.5L.
+    # (2026-08-25 it was Rs25L at the 1% cap; the fixed-size rule widened it.)
     need = PC["min_notional_after_cap_inr"] / PC["max_participation_pct"]
-    assert need == pytest.approx(2_500_000), "threshold moved; update the config note"
-    # a Rs50L-turnover name is comfortably above it and still trades
-    assert PC["max_participation_pct"] * 5_000_000.0 >= PC["min_notional_after_cap_inr"]
+    assert need == pytest.approx(250_000), "threshold moved; update the config note"
+    # a Rs5L-turnover name is above it and trades at FULL size
+    assert PC["max_participation_pct"] * 500_000.0 >= PC["min_notional_after_cap_inr"]
 
 
 def test_the_exclusion_is_justified_by_untradeability_not_by_signal_quality():
     """A Rs5L/day name is untradeable at ANY size: full slot is 10x its daily
     volume (impact), capped size loses to fixed MTF fees. That is the reason —
     NOT 'thin names are bad', which the paper mirror refutes (+0.45%, n=302)."""
-    adv = 500_000.0                      # Rs5 lakh/day
-    full_slot = 50_000.0
-    assert full_slot / adv > 0.05, "full size would be a large share of daily volume"
-    capped = PC["max_participation_pct"] * adv
-    assert capped < PC["min_notional_after_cap_inr"], "capped size is fee-uneconomic"
+    # 2026-10-05: the untradeable line is 10% of ADV, measured on live fills
+    # (two fills above it lost 3.7pp to execution; 13 below it ~0.25pp).
+    # A Rs2L/day name: Rs25k is 12.5% of its day -> skipped.
+    # A Rs5L/day name: Rs25k is 5% -> full size. Not shrunk, not skipped.
+    slot = 25_000.0
+    assert PC["max_participation_pct"] * 200_000.0 < PC["min_notional_after_cap_inr"], "Rs2L name must skip"
+    assert PC["max_participation_pct"] * 500_000.0 >= slot, "Rs5L name trades at full size"
 
 
 def test_skipped_trade_releases_the_slot_for_the_next_candidate():
