@@ -9,7 +9,8 @@ from services.daily_panel_provider import (
 )
 
 CFG = {"selection_mode": "trailing_loser_decile", "lookback_days": 5,
-       "shock_lookback_days": 20, "data_source": "x.feather"}
+       "shock_lookback_days": 20, "data_source": "x.feather",
+       "news_gate": {"sma_days": 50}}
 
 
 def _mk_df(symbols, days, start=date(2025, 1, 1)):

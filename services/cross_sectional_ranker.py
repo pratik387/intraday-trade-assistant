@@ -59,6 +59,9 @@ class CrossSectionalRanker:
         self.min_universe = int(config["min_universe_symbols_per_day"])
         self.hold_days = int(config["hold_days"])
         self.exclude_ca_in_hold_window = bool(config["exclude_ca_in_hold_window"])
+        # Distance from the N-day SMA at the signal close, for the news gate
+        # (results-day skip applies only to SHALLOW drops). Window from config.
+        self.sma_days = int(config["news_gate"]["sma_days"])
 
     def rank(
         self,
@@ -115,6 +118,11 @@ class CrossSectionalRanker:
         df["sigma20_pct"] = (
             g20.transform(lambda s: s.rolling(20, min_periods=_mp20).std()) / df["close"]
         )
+        # % distance of the signal close from its trailing SMA (news gate input).
+        # NaN while the symbol has fewer than sma_days rows; the gate fails OPEN
+        # on NaN, so an under-fetched panel can only ever under-skip.
+        _sma = g20.transform(lambda s: s.rolling(self.sma_days, min_periods=self.sma_days).mean())
+        df["dist_sma_pct"] = (df["close"] / _sma - 1.0) * 100.0
         # Mode-specific signal. `signal` is the value the selection thresholds on;
         # both modes keep the same output schema (trail_ret carries the signal).
         if self.selection_mode == "trailing_loser_decile":
@@ -209,6 +217,9 @@ class CrossSectionalRanker:
                 # can measure order size against name liquidity — see
                 # PARTICIPATION_OBS in mtf_capitulation_handlers.
                 "adv_prior_inr": (float(r["adv_prior"]) if np.isfinite(r["adv_prior"]) else None),
+                # Signal close vs trailing SMA (news_gate.sma_days), %. None when
+                # the symbol lacks history; the news gate treats None as "take".
+                "dist_sma_pct": (float(r["dist_sma_pct"]) if np.isfinite(r["dist_sma_pct"]) else None),
             }
             for _, r in sel.iterrows()
         ]

@@ -22,6 +22,22 @@ SD = date(2025, 6, 16)  # Monday (signal day T)
 
 # ---- composite-selection helpers ------------------------------------------
 
+_NEWS_GATE = {  # observe-only news gate block the ranker/provider/handler now require
+    "enabled": False, "results_days_before": 1, "results_days_after": 0, "shallow_drop_sma50_pct": -20.0,
+    "bulk_overrides_skip": True, "bulk_deal_window_bdays": 1, "filing_cutoff_hhmm": "15:30",
+    "results_cluster_categories": ["results", "investor/analyst", "board meeting"],
+    "scheduled_purpose_regex": "financial result",
+    "category_patterns": [["results", "financial result|results"], ["board meeting", "board meeting"]],
+    "bulk_deal_risk_multiplier": 1.0, "sma_days": 50,
+    "feeds": {"announcements": {"path": "data/news/does_not_exist.parquet", "date_column": "an_dt", "max_staleness_days": 4},
+              "event_calendar": {"path": "data/news/does_not_exist.parquet", "date_column": "fetched_at", "max_staleness_days": 4},
+              "bulk_deals": {"path": "data/bulk_deals/does_not_exist.parquet", "date_column": "date", "max_staleness_days": 6}},
+    "refresh": {"news_module": "tools.news_feed.fetch_nse_news", "news_lookback_days": 21, "news_forward_days": 10,
+                "news_sleep_secs": 1, "news_timeout_sec": 900, "bulk_module": "tools.block_deal_calendar.fetch_block_deals",
+                "bulk_lookback_days": 21, "bulk_sleep_secs": 2, "bulk_timeout_sec": 900},
+}
+
+
 def _two_setup_config(tmp_path):
     def _block(state_name, weight=1.0):
         return {
@@ -31,6 +47,7 @@ def _two_setup_config(tmp_path):
             "shock_lookback_days": 20, "adv_floor_inr": 2_000_000, "min_price": 5.0,
             "min_universe_symbols_per_day": 20, "hold_days": 2,
             "exclude_ca_in_hold_window": False, "ca_events_path": "",
+            "news_gate": _NEWS_GATE,
             "composite_weight": weight, "cap_score_clip": 3.0,
             "mtf": {"approved_list_snapshot_path": "data/mtf_universe/approved_mtf_securities_2026-05-21.json",
                     "interest_pct_per_day": 0.0004, "exclude_etf": True,
@@ -168,6 +185,7 @@ def _cfg(tmp_path):
                 "min_universe_symbols_per_day": 20, "hold_days": 2,
                 "exclude_ca_in_hold_window": True,
                 "ca_events_path": "data/corporate_actions/does_not_exist.parquet",
+                "news_gate": _NEWS_GATE,
                 "composite_weight": 1.0, "cap_score_clip": 3.0,
                 "capital_allocation": {
                     "state_file": str(tmp_path / "state" / "mtf_capitulation_slots.json"),

@@ -37,6 +37,33 @@ Sources:
 
 Adapts the politeness / retry pattern from
 ``tools/earnings_calendar/fetch_earnings.py``.
+
+BULK deals (``--deal-type bulk``, added 2026-10-06 for the multiday bulk-deal
+size tilt, design ``specs/2026-10-06-multiday-news-skip-and-bulk-tilt-design.md``):
+
+    python tools/block_deal_calendar/fetch_block_deals.py --deal-type bulk \\
+        --start 2026-10-05 --end 2026-10-06 --sleep-secs 5
+    python tools/block_deal_calendar/fetch_block_deals.py --deal-type bulk \\
+        --import-legacy data/bulk_deals_cache/nse_bulk_deals_2023_2026.parquet
+
+Output: ``data/bulk_deals/nse_bulk_deals.parquet`` (NSE only), schema =
+normalised form of the legacy cache ``nse_bulk_deals_2023_2026.parquet``:
+
+    date           (IST-naive pandas Timestamp, midnight — the deal session)
+    symbol         (bare NSE ticker as published, e.g. "AJOONI")
+    security_name  (raw NSE security name)
+    client_name    (raw)
+    side           ('BUY' | 'SELL')
+    qty            (int — "4,50,000" -> 450000)
+    price          (float — trade price / weighted-average price)
+    remarks        (raw, '-' when NSE publishes none)
+    source         ('nse_bulk_deals' | 'legacy_cache')
+
+Same scraper class and Akamai cookies as block deals, ``optionType=bulk_deals``
+PLUS ``csv=true``: the JSON form of this endpoint hard-caps at 70 rows per
+response even for a single day (31-Oct-2023 has 103 bulk deals; Oct 5-6 2026
+has 387), so the CSV form is the only complete one. Its header is exactly the
+legacy cache's columns. Chunked weekly like block deals.
 """
 from __future__ import annotations
 
@@ -66,6 +93,7 @@ except ImportError:  # pragma: no cover
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _OUT_PATH = _REPO_ROOT / "data" / "block_deals" / "block_deals_events.parquet"
+_BULK_OUT_PATH = _REPO_ROOT / "data" / "bulk_deals" / "nse_bulk_deals.parquet"
 _FNO_UNIVERSE_PATH = _REPO_ROOT / "assets" / "fno_liquid_200.csv"
 
 _NSE_BASE = "https://www.nseindia.com"
@@ -271,6 +299,83 @@ class NSEBlockDealClient:
             f"[block_deals/nse] exhausted retries window {start}->{end}",
             file=sys.stderr,
         )
+        return None
+
+    def get_window_csv(
+        self, start: date, end: date, *, option_type: str, max_retries: int = 5,
+    ) -> Optional[str]:
+        """GET the CSV form of the deals endpoint for [start, end] inclusive.
+
+        Returns the decoded CSV text (BOM stripped), '' when NSE returned an
+        empty body, None after exhausting retries. An HTML body is the Akamai
+        challenge: re-bootstrap and retry.
+        """
+        params = {
+            "optionType": option_type,
+            "from": _fmt_nse(start),
+            "to": _fmt_nse(end),
+            "csv": "true",
+        }
+        backoff = self.sleep_secs
+        label = f"[block_deals/nse:{option_type}]"
+        for attempt in range(1, max_retries + 1):
+            try:
+                r = self.session.get(
+                    _NSE_API,
+                    params=params,
+                    headers={"Referer": _NSE_DETAIL},
+                    timeout=self.timeout_secs,
+                )
+                if r.status_code == 200:
+                    text = (r.content or b"").decode("utf-8-sig", errors="replace")
+                    if text.lstrip().startswith("<"):
+                        print(
+                            f"{label} HTML body attempt {attempt} window "
+                            f"{start}->{end}; re-bootstrapping",
+                            file=sys.stderr,
+                        )
+                        self._bootstrap()
+                        time.sleep(backoff)
+                        backoff = min(backoff * 1.5, self.max_backoff_secs)
+                        continue
+                    return text
+                if r.status_code in (401, 403, 503):
+                    print(
+                        f"{label} {r.status_code} attempt {attempt} window "
+                        f"{start}->{end}; re-bootstrapping",
+                        file=sys.stderr,
+                    )
+                    self._bootstrap()
+                    time.sleep(backoff)
+                    backoff = min(backoff * 1.5, self.max_backoff_secs)
+                    continue
+                if r.status_code == 429 or 500 <= r.status_code < 600:
+                    retry_after = r.headers.get("Retry-After")
+                    sleep_for = (
+                        float(retry_after) if retry_after and retry_after.isdigit()
+                        else backoff
+                    )
+                    print(
+                        f"{label} {r.status_code} attempt {attempt}; "
+                        f"sleeping {sleep_for:.1f}s",
+                        file=sys.stderr,
+                    )
+                    time.sleep(sleep_for)
+                    backoff = min(backoff * 1.5, self.max_backoff_secs)
+                    continue
+                print(
+                    f"{label} HTTP {r.status_code} window {start}->{end}; giving up",
+                    file=sys.stderr,
+                )
+                return None
+            except Exception as e:
+                print(
+                    f"{label} transport error attempt {attempt}: {e}",
+                    file=sys.stderr,
+                )
+                time.sleep(backoff)
+                backoff = min(backoff * 1.5, self.max_backoff_secs)
+        print(f"{label} exhausted retries window {start}->{end}", file=sys.stderr)
         return None
 
 
@@ -655,6 +760,308 @@ def fetch_bse_range(
 
 
 # ---------------------------------------------------------------------------
+# NSE BULK deals: CSV parse, legacy import, fetch, persistence.
+# ---------------------------------------------------------------------------
+
+_BULK_SOURCE = "nse_bulk_deals"
+_BULK_LEGACY_SOURCE = "legacy_cache"
+_BULK_OPTION_TYPE = "bulk_deals"
+
+BULK_COLUMNS = [
+    "date", "symbol", "security_name", "client_name", "side", "qty", "price",
+    "remarks", "source",
+]
+BULK_DEDUPE_KEYS = ["date", "symbol", "client_name", "side", "qty", "price"]
+
+# Legacy cache (data/bulk_deals_cache/nse_bulk_deals_2023_2026.parquet) column
+# names -> normalised names. The NSE CSV header carries the same words with
+# spaces/trailing blanks ("Buy / Sell ", "Quantity Traded "), so matching is
+# done on a squashed key (lowercase, no spaces, no punctuation).
+_BULK_LEGACY_MAP = {
+    "date": "date",
+    "symbol": "symbol",
+    "securityname": "security_name",
+    "clientname": "client_name",
+    "buysell": "side",
+    "quantitytraded": "qty",
+    "tradepricewghtavgprice": "price",
+    "remarks": "remarks",
+}
+
+
+def _squash_header(h: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (h or "").lower())
+
+
+def parse_indian_int(s) -> Optional[int]:
+    """'4,50,000' / '28,90,953' / 5 / '5' -> int. None when not a number."""
+    if s is None or isinstance(s, bool):
+        return None
+    if isinstance(s, int):
+        return s
+    try:
+        v = float(str(s).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    if v != v:  # NaN
+        return None
+    return int(v)
+
+
+def normalize_side(s) -> Optional[str]:
+    """'BUY'/'buy'/'B'/'P'(purchase) -> 'BUY'; 'SELL'/'S' -> 'SELL'; else None."""
+    raw = (str(s) if s is not None else "").strip().upper()
+    if raw in {"BUY", "B", "P", "PURCHASE"}:
+        return "BUY"
+    if raw in {"SELL", "S", "SALE"}:
+        return "SELL"
+    return None
+
+
+def _bulk_row(
+    *, date_s, symbol, security_name, client_name, side_s, qty_s, price_s,
+    remarks, source: str,
+) -> Optional[dict]:
+    d = _parse_nse_date(str(date_s) if date_s is not None else "")
+    if d is None:
+        return None
+    sym = (str(symbol) if symbol is not None else "").strip().upper()
+    if not sym:
+        return None
+    side = normalize_side(side_s)
+    if side is None:
+        return None
+    qty = parse_indian_int(qty_s)
+    if qty is None or qty <= 0:
+        return None
+    try:
+        price = float(str(price_s).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    if price <= 0.0:
+        return None
+    return {
+        "date": pd.Timestamp(d),
+        "symbol": sym,
+        "security_name": (str(security_name) if security_name is not None else "").strip(),
+        "client_name": (str(client_name) if client_name is not None else "").strip(),
+        "side": side,
+        "qty": qty,
+        "price": price,
+        "remarks": (str(remarks) if remarks is not None else "").strip(),
+        "source": source,
+    }
+
+
+def parse_nse_bulk_csv(text: str, *, source: str = _BULK_SOURCE) -> list[dict]:
+    """Parse the NSE bulk-deals CSV (``csv=true`` form of the deals endpoint).
+
+    Header (as published, trailing blanks included):
+        Date, Symbol, Security Name, Client Name, Buy / Sell, Quantity Traded,
+        Trade Price / Wght. Avg. Price, Remarks
+    """
+    out: list[dict] = []
+    if not text or not text.strip():
+        return out
+    reader = csv.reader(io.StringIO(text))
+    header: Optional[list[str]] = None
+    for row in reader:
+        if not row or not any(c.strip() for c in row):
+            continue
+        if header is None:
+            header = [_BULK_LEGACY_MAP.get(_squash_header(c), _squash_header(c)) for c in row]
+            missing = [k for k in ("date", "symbol", "side", "qty", "price") if k not in header]
+            if missing:
+                print(
+                    f"[block_deals/nse:bulk] unexpected CSV header {row}; "
+                    f"missing {missing}",
+                    file=sys.stderr,
+                )
+                return out
+            continue
+        rec = dict(zip(header, row))
+        r = _bulk_row(
+            date_s=rec.get("date"),
+            symbol=rec.get("symbol"),
+            security_name=rec.get("security_name"),
+            client_name=rec.get("client_name"),
+            side_s=rec.get("side"),
+            qty_s=rec.get("qty"),
+            price_s=rec.get("price"),
+            remarks=rec.get("remarks"),
+            source=source,
+        )
+        if r is not None:
+            out.append(r)
+    return out
+
+
+def import_legacy_bulk(path: Path) -> list[dict]:
+    """Convert the legacy cache parquet (Date '03-JAN-2023', Symbol, SecurityName,
+    ClientName, Buy/Sell, QuantityTraded '4,50,000', TradePrice/Wght.Avg.Price,
+    Remarks) into BULK_COLUMNS rows."""
+    df = pd.read_parquet(path)
+    cols = {_squash_header(c): c for c in df.columns}
+    needed = {k: cols.get(k) for k in _BULK_LEGACY_MAP}
+    missing = [k for k in ("date", "symbol", "buysell", "quantitytraded",
+                           "tradepricewghtavgprice") if needed[k] is None]
+    if missing:
+        raise ValueError(
+            f"legacy bulk cache {path} is missing columns {missing}; "
+            f"has {list(df.columns)}"
+        )
+
+    def col(k):
+        c = needed[k]
+        return df[c] if c is not None else pd.Series([None] * len(df), index=df.index)
+
+    out: list[dict] = []
+    for date_s, sym, sec, cli, side_s, qty_s, price_s, rem in zip(
+        col("date"), col("symbol"), col("securityname"), col("clientname"),
+        col("buysell"), col("quantitytraded"), col("tradepricewghtavgprice"),
+        col("remarks"),
+    ):
+        r = _bulk_row(
+            date_s=date_s, symbol=sym, security_name=sec, client_name=cli,
+            side_s=side_s, qty_s=qty_s, price_s=price_s, remarks=rem,
+            source=_BULK_LEGACY_SOURCE,
+        )
+        if r is not None:
+            out.append(r)
+    print(
+        f"[block_deals/nse:bulk] legacy import {path}: raw={len(df)} kept={len(out)}",
+        file=sys.stderr,
+    )
+    return out
+
+
+def fetch_nse_bulk_range(
+    start: date, end: date, *, sleep_secs: float,
+) -> tuple[list[dict], dict]:
+    """Scrape NSE bulk deals (CSV form) across [start, end] in weekly chunks."""
+    client = NSEBlockDealClient(sleep_secs=sleep_secs)
+    chunks = _week_chunks(start, end, _NSE_CHUNK_DAYS)
+    stats = {
+        "chunks_attempted": 0,
+        "chunks_ok": 0,
+        "chunks_failed": 0,
+        "raw_records": 0,
+    }
+    all_rows: list[dict] = []
+    for i, (cs, ce) in enumerate(chunks, start=1):
+        stats["chunks_attempted"] += 1
+        print(
+            f"[block_deals/nse:bulk] [{i}/{len(chunks)}] {cs} -> {ce} ...",
+            file=sys.stderr,
+        )
+        text = client.get_window_csv(cs, ce, option_type=_BULK_OPTION_TYPE)
+        if text is None:
+            stats["chunks_failed"] += 1
+            time.sleep(sleep_secs)
+            continue
+        rows = parse_nse_bulk_csv(text)
+        raw = max(0, len([ln for ln in text.splitlines() if ln.strip()]) - 1)
+        stats["raw_records"] += raw
+        stats["chunks_ok"] += 1
+        all_rows.extend(rows)
+        print(
+            f"[block_deals/nse:bulk]   raw={raw} kept={len(rows)} "
+            f"running_total={len(all_rows)}",
+            file=sys.stderr,
+        )
+        time.sleep(sleep_secs)
+    return all_rows, stats
+
+
+def _coerce_bulk(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.reindex(columns=BULK_COLUMNS)
+    df["date"] = pd.to_datetime(df["date"])
+    df["qty"] = pd.to_numeric(df["qty"], errors="coerce").astype("Int64")
+    df["price"] = pd.to_numeric(df["price"], errors="coerce").astype(float)
+    for c in ("symbol", "security_name", "client_name", "side", "remarks", "source"):
+        df[c] = df[c].astype("string").fillna("").astype(object)
+    return df
+
+
+def write_bulk_events(
+    rows: list[dict],
+    out_path: Path = _BULK_OUT_PATH,
+    *,
+    merge_existing: bool = True,
+) -> pd.DataFrame:
+    """Dedupe on BULK_DEDUPE_KEYS + (optionally) merge with the existing parquet.
+
+    New rows are appended after the stored ones and keep='last', so a
+    re-scraped deal replaces its legacy-import twin (source upgrades) without
+    duplicating it. Stored rows outside the fetched window are never dropped.
+    """
+    df_new = _coerce_bulk(pd.DataFrame(rows, columns=BULK_COLUMNS))
+    if merge_existing and out_path.exists():
+        try:
+            df_old = _coerce_bulk(pd.read_parquet(out_path))
+        except (OSError, ValueError) as e:
+            print(
+                f"[block_deals/nse:bulk] could not read existing {out_path}: {e}; "
+                f"overwriting",
+                file=sys.stderr,
+            )
+            df_old = _coerce_bulk(pd.DataFrame(columns=BULK_COLUMNS))
+    else:
+        df_old = _coerce_bulk(pd.DataFrame(columns=BULK_COLUMNS))
+
+    parts = [p for p in (df_old, df_new) if not p.empty]
+    df_all = pd.concat(parts, ignore_index=True) if parts else df_new
+    if not df_all.empty:
+        df_all = (
+            df_all.drop_duplicates(subset=BULK_DEDUPE_KEYS, keep="last")
+            .sort_values(["date", "symbol", "side", "client_name"])
+            .reset_index(drop=True)
+        )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df_all.to_parquet(out_path, index=False)
+    return df_all
+
+
+def run_bulk(args, parser) -> int:
+    """--deal-type bulk entry point: optional legacy import, then NSE scrape."""
+    out_path: Path = args.out_path if args.out_path is not None else _BULK_OUT_PATH
+    sleep_secs = args.sleep_secs if args.sleep_secs is not None else args.nse_sleep_secs
+    if args.import_legacy is None and (args.start is None or args.end is None):
+        parser.error("--start and --end are required unless --import-legacy is given")
+
+    all_rows: list[dict] = []
+    stats: dict = {}
+
+    if args.import_legacy is not None:
+        all_rows.extend(import_legacy_bulk(args.import_legacy))
+
+    fetched = 0
+    if args.start is not None and args.end is not None and not args.skip_nse:
+        rows, stats = fetch_nse_bulk_range(args.start, args.end, sleep_secs=sleep_secs)
+        fetched = len(rows)
+        all_rows.extend(rows)
+
+    df = write_bulk_events(all_rows, out_path, merge_existing=not args.no_merge_existing)
+    span = (
+        f"min={df['date'].min().date()} max={df['date'].max().date()}"
+        if not df.empty else "min=None max=None"
+    )
+    print(
+        f"[block_deals/nse:bulk] DONE\n"
+        f"  range:        {args.start} -> {args.end}\n"
+        f"  legacy:       {args.import_legacy}\n"
+        f"  nse_stats:    {stats}\n"
+        f"  fetched rows: {fetched}\n"
+        f"  total rows:   {len(df)} {span}\n"
+        f"  out:          {out_path}"
+    )
+    attempted = stats.get("chunks_attempted", 0)
+    failed = stats.get("chunks_failed", 0)
+    # Non-zero only on total failure: every chunk failed.
+    return 4 if (attempted > 0 and failed == attempted) else 0
+
+
+# ---------------------------------------------------------------------------
 # Persistence.
 # ---------------------------------------------------------------------------
 
@@ -733,16 +1140,35 @@ def main(argv: Optional[list] = None) -> int:
         )
     )
     parser.add_argument(
-        "--start", type=_parse_date_arg, required=True,
-        help="range start (YYYY-MM-DD)",
+        "--deal-type", choices=("block", "bulk"), default="block",
+        help="block (NSE+BSE block deals, default) or bulk (NSE bulk deals -> "
+             f"{_BULK_OUT_PATH})",
     )
     parser.add_argument(
-        "--end", type=_parse_date_arg, required=True,
-        help="range end inclusive (YYYY-MM-DD)",
+        "--start", type=_parse_date_arg, default=None,
+        help="range start (YYYY-MM-DD); required unless --deal-type bulk "
+             "--import-legacy",
     )
     parser.add_argument(
-        "--out-path", type=Path, default=_OUT_PATH,
-        help=f"parquet output path (default: {_OUT_PATH})",
+        "--end", type=_parse_date_arg, default=None,
+        help="range end inclusive (YYYY-MM-DD); required unless --deal-type bulk "
+             "--import-legacy",
+    )
+    parser.add_argument(
+        "--out-path", type=Path, default=None,
+        help=f"parquet output path (default: {_OUT_PATH} for block, "
+             f"{_BULK_OUT_PATH} for bulk)",
+    )
+    parser.add_argument(
+        "--sleep-secs", type=float, default=None,
+        help="sleep between NSE requests; the services/event_feeds.py refresh "
+             "contract passes this. Overrides --nse-sleep-secs when given.",
+    )
+    parser.add_argument(
+        "--import-legacy", type=Path, default=None,
+        help="bulk only: convert the legacy cache parquet (Date/Symbol/"
+             "SecurityName/ClientName/Buy/Sell/QuantityTraded/...) into the "
+             "normalised bulk parquet before fetching",
     )
     parser.add_argument(
         "--fno-universe", type=Path, default=_FNO_UNIVERSE_PATH,
@@ -768,8 +1194,20 @@ def main(argv: Optional[list] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.start > args.end:
+    if args.start is not None and args.end is not None and args.start > args.end:
         parser.error("--start must be <= --end")
+
+    if args.deal_type == "bulk":
+        return run_bulk(args, parser)
+
+    if args.import_legacy is not None:
+        parser.error("--import-legacy is only valid with --deal-type bulk")
+    if args.start is None or args.end is None:
+        parser.error("--start and --end are required")
+    if args.out_path is None:
+        args.out_path = _OUT_PATH
+    if args.sleep_secs is not None:
+        args.nse_sleep_secs = args.sleep_secs
 
     fno = load_fno_universe(args.fno_universe)
     print(

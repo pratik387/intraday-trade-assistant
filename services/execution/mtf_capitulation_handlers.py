@@ -32,6 +32,7 @@ Spec: specs/2026-06-14-brief-mtf_capitulation_revert_long.md
 from __future__ import annotations
 
 from datetime import date, time
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -66,6 +67,141 @@ def _add_trading_days(d: date, n: int) -> date:
     for _ in range(int(n)):
         cur = _next_trading_day(cur)
     return cur
+
+
+# ---------------------------------------------------------------------------
+# News gate + tilt (design: specs/2026-10-06-multiday-news-skip-and-bulk-tilt-design.md)
+# ---------------------------------------------------------------------------
+
+def _refresh_news_feeds(active, *, repo_root, now) -> None:
+    """Refresh the three news feeds declared under news_gate.refresh.
+
+    Same contract as services.event_feeds.refresh_event_feed (module run with
+    --start/--end/--sleep-secs); never raises - a scrape failure degrades to a
+    stale feed, which _apply_news_gate treats as "gate off, trade as today".
+    Runs once per entry pass using the FIRST active setup's news_gate block
+    (all multiday setups declare identical feed paths by design).
+    """
+    import subprocess
+    if not active:
+        return
+    gate = active[0][1]["news_gate"]
+    rf = gate["refresh"]
+    root = Path(repo_root) if repo_root else Path(".")
+    end = pd.Timestamp(now).strftime("%Y-%m-%d")
+    jobs = [
+        ("news", [sys.executable, "-m", rf["news_module"],
+                  "--start", (pd.Timestamp(now) - pd.Timedelta(days=int(rf["news_lookback_days"]))).strftime("%Y-%m-%d"),
+                  "--end", end, "--sleep-secs", str(rf["news_sleep_secs"]),
+                  "--forward-days", str(rf["news_forward_days"])], int(rf["news_timeout_sec"])),
+        ("bulk", [sys.executable, "-m", rf["bulk_module"],
+                  "--start", (pd.Timestamp(now) - pd.Timedelta(days=int(rf["bulk_lookback_days"]))).strftime("%Y-%m-%d"),
+                  "--end", end, "--sleep-secs", str(rf["bulk_sleep_secs"]),
+                  "--deal-type", "bulk"], int(rf["bulk_timeout_sec"])),
+    ]
+    for label, cmd, timeout in jobs:
+        try:
+            done = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=timeout)
+            if done.returncode != 0:
+                logger.error("NEWS_FEED | %s | refresh FAILED rc=%d: %s", label, done.returncode, (done.stderr or "")[-300:])
+            else:
+                logger.info("NEWS_FEED | %s | refresh ok", label)
+        except subprocess.TimeoutExpired:
+            logger.error("NEWS_FEED | %s | refresh TIMED OUT after %ds", label, timeout)
+        except Exception as e:  # pragma: no cover - must never kill the entry pass
+            logger.error("NEWS_FEED | %s | refresh raised %s: %s", label, type(e).__name__, e)
+
+
+def _load_news_feeds(gate: dict, *, repo_root, now):
+    """Load + staleness-check the three feeds. Returns (frames | None, reason)."""
+    from services.event_feeds import validate_event_feed
+    root = Path(repo_root) if repo_root else Path(".")
+    frames = {}
+    for key, spec in gate["feeds"].items():
+        path = root / spec["path"]
+        status = validate_event_feed(path, date_column=spec["date_column"],
+                                     max_staleness_days=int(spec["max_staleness_days"]),
+                                     now=pd.Timestamp(now))
+        if not status.ok:
+            return None, "%s: %s" % (key, status.message)
+        frames[key] = pd.read_parquet(path)
+    return frames, "ok"
+
+
+def _gate_trading_days(today, forward_days: int) -> pd.DatetimeIndex:
+    """Weekday calendar around `today` for the tagger. Holidays are not modelled,
+    the same convention as _add_trading_days / _next_trading_day in this module."""
+    t = pd.Timestamp(today).normalize()
+    return pd.bdate_range(t - pd.Timedelta(days=400), t + pd.Timedelta(days=int(forward_days) * 2 + 7))
+
+
+def _apply_news_gate(baskets: dict, active, *, today, now, repo_root, summary: dict) -> dict:
+    """Tag every basket candidate with news context and apply rule R3 in place.
+
+    enabled=true : R3 skips are REMOVED from the basket (slot passes to the next
+                   composite name). Log NEWS_GATE | SKIP.
+    enabled=false: nothing removed; log NEWS_GATE | WOULD_SKIP (observe-only).
+    Feeds missing/stale, or SMA unavailable: gate off for that pass, logged once.
+    Every surviving candidate carries `news_tilt` (1.0 or the bulk multiplier)
+    and `news_log` (audit dict for the selection jsonl). Returns
+    {bare_symbol: {"tilt": float, "log": dict}} because the composite selector
+    emits NEW dicts, so the sizing loop cannot read the basket rows directly.
+    """
+    from services import news_tags
+    if not active:
+        return
+    by_name = dict(active)
+    gate0 = active[0][1]["news_gate"]
+    frames, reason = _load_news_feeds(gate0, repo_root=repo_root, now=now)
+    if frames is None:
+        logger.warning("NEWS_GATE | feeds unavailable (%s) | gate OFF for this pass; entries proceed untouched", reason)
+        off = {}
+        for cands in baskets.values():
+            for c in cands:
+                c["news_tilt"] = 1.0
+                c["news_log"] = {"gate": "off", "reason": reason}
+                off[str(c["symbol"]).replace("NSE:", "").upper()] = {"tilt": 1.0, "log": c["news_log"]}
+        summary["news_gate_off"] = reason
+        return off
+    news_by_bare: dict = {}
+    tdays = _gate_trading_days(today, int(gate0["refresh"]["news_forward_days"]))
+    t = pd.Timestamp(today).normalize()
+    skipped = would = 0
+    for name, cands in baskets.items():
+        gate = by_name[name]["news_gate"]
+        keep = []
+        for c in cands:
+            tags = news_tags.tag_symbol_day(
+                str(c["symbol"]), t,
+                announcements=frames["announcements"], event_calendar=frames["event_calendar"],
+                bulk_deals=frames["bulk_deals"], trading_days=tdays, cfg=gate)
+            # Evaluate the rule as if enabled so observe-only mode still logs
+            # WOULD_SKIP; whether the name is actually removed is decided below.
+            verdict, why = news_tags.gate_verdict(tags, c["dist_sma_pct"], dict(gate, enabled=True))
+            tilt = news_tags.tilt_multiplier(tags, gate)
+            c["news_tilt"] = float(tilt)
+            c["news_log"] = {
+                "results_reaction": bool(tags.results_reaction), "results_scheduled": bool(tags.results_scheduled),
+                "bulk_deal": bool(tags.bulk_deal), "bulk_side": tags.bulk_side,
+                "categories": sorted(tags.categories), "dist_sma_pct": c["dist_sma_pct"],
+                "verdict": verdict, "reason": why, "enabled": bool(gate["enabled"]), "tilt": float(tilt),
+            }
+            news_by_bare[str(c["symbol"]).replace("NSE:", "").upper()] = {"tilt": float(tilt), "log": c["news_log"]}
+            if verdict == "skip":
+                if bool(gate["enabled"]):
+                    logger.warning("NEWS_GATE | SKIP | %s | %s | dist_sma=%s | setup=%s",
+                                   c["symbol"], why, c["dist_sma_pct"], name)
+                    skipped += 1
+                    continue
+                logger.info("NEWS_GATE | WOULD_SKIP | %s | %s | dist_sma=%s | setup=%s (gate disabled, observe only)",
+                            c["symbol"], why, c["dist_sma_pct"], name)
+                would += 1
+            keep.append(c)
+        baskets[name] = keep
+    summary["news_gate_skipped"] = skipped
+    summary["news_gate_would_skip"] = would
+    logger.info("NEWS_GATE | pass complete | skipped=%d would_skip=%d", skipped, would)
+    return news_by_bare
 
 
 def _eligible_multiday_setups(config: dict, *, paper_mode: bool):
@@ -718,6 +854,9 @@ def _log_selection_diagnostics(baskets, chosen, today, log_path_str):
                         "composite": (float(ch["composite"]) if ch else None),
                         "owner": (ch["owner"] if ch else None),
                         "contributors": (ch["contributors"] if ch else None),
+                        # news gate audit (see _apply_news_gate); None when the
+                        # gate did not run for this basket (feeds unavailable).
+                        "news": c.get("news_log"),
                     }) + "\n")
     except Exception as e:  # pragma: no cover - diagnostics must not break the cron
         logger.warning("mtf_capitulation: selection diagnostics log failed: %s", e)
@@ -740,6 +879,19 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
         baskets[name] = _rank_basket_for_setup(name, raw, broker, today, ca_ex_dates, repo_root)
     if not any(baskets.values()):
         logger.info("mtf_capitulation: all baskets empty for %s; no entries", today)
+        return
+
+    # --- NEWS GATE (design: specs/2026-10-06-multiday-news-skip-and-bulk-tilt-design.md)
+    # Runs BEFORE composite selection so a skipped name's cluster slot goes to
+    # the next composite candidate. With news_gate.enabled=false it only tags
+    # and logs WOULD_SKIP (observe-only rollout stage). Feeds are refreshed here
+    # because the multi_day cron does not go through the daemon's startup
+    # refresh; a failed or stale feed never blocks entries (gate fails open).
+    if not _is_dry_run(broker):
+        _refresh_news_feeds(active, repo_root=repo_root, now=now)
+    news_by_bare = _apply_news_gate(baskets, active, today=today, now=now, repo_root=repo_root, summary=summary)
+    if not any(baskets.values()):
+        logger.info("mtf_capitulation: news gate removed every candidate for %s; no entries", today)
         return
 
     fam = config["multi_day_portfolio"]
@@ -812,6 +964,17 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
             n_planned=n_planned,
             mean_pairwise_corr=cl_rho,
         )
+        # NEWS TILT: a bulk-deal capitulation gets news_gate.bulk_deal_risk_multiplier
+        # x the risk budget (1.0 = off). Still capped by max_notional_inr below.
+        _news = news_by_bare.get(bare)
+        if _news is None:  # data-flow guard: every chosen name came from a basket the gate saw
+            logger.warning("NEWS_TILT | %s | no news record for a chosen name; tilt 1.0", symbol)
+        _tilt = float(_news["tilt"]) if _news else 1.0
+        if _tilt != 1.0:
+            logger.info("NEWS_TILT | %s | owner=%s bulk_deal x%.2f | risk Rs%.0f -> Rs%.0f",
+                        symbol, owner, _tilt, risk_inr, risk_inr * _tilt)
+            risk_inr *= _tilt
+            summary["news_tilted"] = summary.get("news_tilted", 0) + 1
         sized = size_position(
             risk_budget_inr=risk_inr,
             sigma_pct=c.get("sigma20_pct"),

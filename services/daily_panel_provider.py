@@ -54,6 +54,10 @@ def _window_calendar_days(config: Dict[str, Any]) -> int:
     else:
         sig_lookback = int(config["lookback_days"])
     need_trading = int(config["shock_lookback_days"]) * 2 + sig_lookback + 10
+    # The news gate's SMA distance needs sma_days rows per symbol; short-lookback
+    # setups (mtf_capitulation: 5d) would otherwise fetch ~55 rows and leave the
+    # SMA NaN on any thin history. Never fetch less than the SMA window + buffer.
+    need_trading = max(need_trading, int(config["news_gate"]["sma_days"]) + 10)
     # ~5 trading days per 7 calendar days, plus a holiday buffer.
     return math.ceil(need_trading * 7 / 5) + 10
 

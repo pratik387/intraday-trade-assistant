@@ -1,6 +1,6 @@
 # Multiday capitulation longs: results-day skip + bulk-deal size tilt — design
 
-**Status:** design, not built. User asked for research before any filter (2026-10-06) and then for a design of both findings. Nothing here is deployed.
+**Status:** BUILT 2026-10-06 (observe-only, `news_gate.enabled=false`, tilt 1.0); see §9 for what shipped and the parity result. Originally: design, not built. User asked for research before any filter (2026-10-06) and then for a design of both findings. Nothing here is deployed.
 
 **The multiday book is PAPER ONLY.** It runs under `--paper-trading` from the `multiday_cnc` checkout; there is no live multiday capital and none is proposed here. Every reference to 'live' below means the paper book running forward in real time, as opposed to the research replay.
 
@@ -91,3 +91,10 @@ Kill switch: `news_gate.enabled=false` restores today's behaviour exactly.
 - **curl_cffi: present** (0.15.0 in the shared venv the multiday crons use).
 - **Filing-time cutoff: resolved without a refetch.** The research rule R3's timing leg (`rel` = days from the reaction day) was computed from the earnings calendar's `trade_date`, which already applies the 15:30 cutoff. Only the cluster-membership tag used filing DATE, and that affects the +/-1-day union, not the reaction-day test. Production uses the cutoff for both; expected drift is nil.
 - **NEW: the multiday checkout on the VM is stale.** `~/multiday_cnc/intraday-trade-assistant` is at 07f0684 (2026-08-24), many commits behind main. Any build must start with a pull there, and the diff between 07f0684 and main must be reviewed for multiday-affecting changes before the cron picks them up.
+
+## 9. Build record (2026-10-06)
+Shipped: `tools/news_feed/fetch_nse_news.py` (announcements whole-market per day + event calendar; 15 tests), `tools/block_deal_calendar/fetch_block_deals.py --deal-type bulk` (CSV form of the NSE endpoint - the JSON form hard-caps at 70 rows/day; `--import-legacy` brought 71,971 rows of 2023-2026 history; 15 tests), `services/news_tags.py` (74 tests), ranker `dist_sma_pct` + provider depth floor, handler `_refresh_news_feeds` / `_load_news_feeds` / `_apply_news_gate` / tilt in PHASE 2 / `news` field in the selection jsonl (10 gate tests), config `news_gate` on all four multiday setups. 248 tests green across the touched files.
+
+**Parity (2025 research trades, n=1,970, `scratchpad/parity.py`):** results-day flag: research 8.9%, module 15.3%, agreement 94%; every research-flagged trade is module-flagged. The module's extra 6.4% are names the earnings CALENDAR never covered (74% symbol coverage) but whose filings say results; they lose harder than the research set (mean -6.6k, win 31%). So production will skip ~14% of signals, not 7%, for the same reason. R3 skip agreement 94%. Bulk flag 1.2% vs research 1.5%.
+
+**Regex note:** the research "results" regex (bare `results`) also matched voting/postal-ballot results; production uses the tightened pattern in config (`financial result | (un)audited ... result | results for the quarter/year | outcome of board meeting ... result | statement of standalone/consolidated`) with a general-meeting exclusion bucket evaluated first.

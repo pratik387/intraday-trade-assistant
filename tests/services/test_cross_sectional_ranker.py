@@ -11,6 +11,22 @@ import pytest
 from services.cross_sectional_ranker import CrossSectionalRanker
 
 
+_NEWS_GATE = {  # observe-only news gate block the ranker/provider/handler now require
+    "enabled": False, "results_days_before": 1, "results_days_after": 0, "shallow_drop_sma50_pct": -20.0,
+    "bulk_overrides_skip": True, "bulk_deal_window_bdays": 1, "filing_cutoff_hhmm": "15:30",
+    "results_cluster_categories": ["results", "investor/analyst", "board meeting"],
+    "scheduled_purpose_regex": "financial result",
+    "category_patterns": [["results", "financial result|results"], ["board meeting", "board meeting"]],
+    "bulk_deal_risk_multiplier": 1.0, "sma_days": 50,
+    "feeds": {"announcements": {"path": "data/news/does_not_exist.parquet", "date_column": "an_dt", "max_staleness_days": 4},
+              "event_calendar": {"path": "data/news/does_not_exist.parquet", "date_column": "fetched_at", "max_staleness_days": 4},
+              "bulk_deals": {"path": "data/bulk_deals/does_not_exist.parquet", "date_column": "date", "max_staleness_days": 6}},
+    "refresh": {"news_module": "tools.news_feed.fetch_nse_news", "news_lookback_days": 21, "news_forward_days": 10,
+                "news_sleep_secs": 1, "news_timeout_sec": 900, "bulk_module": "tools.block_deal_calendar.fetch_block_deals",
+                "bulk_lookback_days": 21, "bulk_sleep_secs": 2, "bulk_timeout_sec": 900},
+}
+
+
 def _cfg(**over):
     base = {
         "selection_mode": "trailing_loser_decile",
@@ -18,6 +34,7 @@ def _cfg(**over):
         "turnover_shock_min": 2.0, "shock_lookback_days": 20, "adv_floor_inr": 2_000_000,
         "min_price": 5.0, "min_universe_symbols_per_day": 20, "hold_days": 2,
         "exclude_ca_in_hold_window": True,
+        "news_gate": _NEWS_GATE,
     }
     base.update(over)
     return base
@@ -32,6 +49,7 @@ def _cfg_low(**over):
         "turnover_shock_min": 2.0, "shock_lookback_days": 20, "adv_floor_inr": 2_000_000,
         "min_price": 5.0, "min_universe_symbols_per_day": 20, "hold_days": 2,
         "exclude_ca_in_hold_window": True,
+        "news_gate": _NEWS_GATE,
     }
     base.update(over)
     return base
@@ -208,6 +226,7 @@ def _cfg_z(**over):
         "turnover_shock_min": 2.0, "shock_lookback_days": 20, "adv_floor_inr": 2_000_000,
         "min_price": 5.0, "min_universe_symbols_per_day": 20, "hold_days": 2,
         "exclude_ca_in_hold_window": True,
+        "news_gate": _NEWS_GATE,
     }
     base.update(over)
     return base

@@ -850,6 +850,95 @@
       "data_source": "cache/preaggregate/clean_daily_from5m.feather",
       "lookback_days": 5,
       "hold_days": 2,
+      "news_gate": {
+        "enabled": false,
+        "_comment": "2026-10-06 design specs/2026-10-06-multiday-news-skip-and-bulk-tilt-design.md. R3: skip a capitulation BUY when the signal day is a results reaction day (or the day before a scheduled results meeting) AND the drop is still shallower than shallow_drop_sma50_pct vs the 50-day SMA, unless a bulk deal is in the window. Research (9,012 trades 2023-01..2026-04): removes 7% of signals, +169k/+648k/+723k/+3k by year, no year worse, positive in all 4 setups; removed trades median -2.8k..-4.4k, win 33-35%. enabled=false = OBSERVE ONLY: every entry logs its tags and what the gate WOULD do (NEWS_GATE | WOULD_SKIP). Missing feed or SMA -> take (fail open). Stage 1 of the rollout runs this way for 10 sessions.",
+        "results_days_before": 1,
+        "results_days_after": 0,
+        "shallow_drop_sma50_pct": -20.0,
+        "bulk_overrides_skip": true,
+        "bulk_deal_window_bdays": 1,
+        "filing_cutoff_hhmm": "15:30",
+        "results_cluster_categories": [
+          "results",
+          "investor/analyst",
+          "board meeting"
+        ],
+        "scheduled_purpose_regex": "financial result",
+        "category_patterns": [["general meeting/admin", "voting result|scrutini|postal ballot|e-voting|general meeting|annual general|extraordinary general"], ["results", "financial result|(un)?audited .{0,40}result|results? (for|of) the (quarter|half|year|period)|outcome of (the )?board meeting.{0,80}(financial|result)|statement of (standalone|consolidated)"],
+          [
+            "pledge/SAST",
+            "pledge|encumbr|sast|substantial acquisition|invocation|release of"
+          ],
+          [
+            "price/volume clarification",
+            "clarification|price movement|volume movement|spurt"
+          ],
+          [
+            "resignation/auditor",
+            "resign|auditor|cessation|change in auditor"
+          ],
+          [
+            "order/contract win",
+            "order|contract|bagged|award|letter of intent"
+          ],
+          [
+            "fund raise/pref/rights/QIP",
+            "preferential|rights issue|qip|fund rais|allotment|warrant|conversion"
+          ],
+          [
+            "rating",
+            "credit rating|rating action|downgrade|upgrade"
+          ],
+          [
+            "insolvency/default/legal",
+            "insolvency|nclt|default|litigation|legal|sebi order|penalty|fraud|investigation|show cause"
+          ],
+          [
+            "bonus/split/dividend",
+            "bonus|split|sub-division|dividend|buyback|buy back"
+          ],
+          [
+            "investor/analyst",
+            "investor presentation|analyst|conference call|earnings call|press release|media"
+          ],
+          [
+            "board meeting",
+            "board meeting"
+          ]
+        ],
+        "bulk_deal_risk_multiplier": 1.0,
+        "_comment_bulk_deal_risk_multiplier": "Stage 3 of the rollout raises this to 2.0 (research: bulk-deal capitulations +12.1k/+2.3k/+4.7k/+18.4k vs quiet by year, positive in every setup). 1.0 = no tilt. Capped by risk_budget.max_notional_inr and the cluster caps regardless.",
+        "feeds": {
+          "announcements": {
+            "path": "data/news/nse_announcements.parquet",
+            "date_column": "an_dt",
+            "max_staleness_days": 4
+          },
+          "event_calendar": {
+            "path": "data/news/nse_event_calendar.parquet",
+            "date_column": "fetched_at",
+            "max_staleness_days": 4
+          },
+          "bulk_deals": {
+            "path": "data/bulk_deals/nse_bulk_deals.parquet",
+            "date_column": "date",
+            "max_staleness_days": 6
+          }
+        },
+        "refresh": {
+          "news_module": "tools.news_feed.fetch_nse_news",
+          "news_lookback_days": 21,
+          "news_forward_days": 10,
+          "news_sleep_secs": 1,
+          "news_timeout_sec": 900,
+          "bulk_module": "tools.block_deal_calendar.fetch_block_deals",
+          "bulk_lookback_days": 21,
+          "bulk_sleep_secs": 2,
+          "bulk_timeout_sec": 900
+        },
+        "sma_days": 50
+      },
       "target_exit": {
         "enabled": true,
         "mode": "vol_scaled_k",
@@ -928,6 +1017,95 @@
       "low_lookback_days": 252,
       "dist_low_max": 0.05,
       "hold_days": 2,
+      "news_gate": {
+        "enabled": false,
+        "_comment": "2026-10-06 design specs/2026-10-06-multiday-news-skip-and-bulk-tilt-design.md. R3: skip a capitulation BUY when the signal day is a results reaction day (or the day before a scheduled results meeting) AND the drop is still shallower than shallow_drop_sma50_pct vs the 50-day SMA, unless a bulk deal is in the window. Research (9,012 trades 2023-01..2026-04): removes 7% of signals, +169k/+648k/+723k/+3k by year, no year worse, positive in all 4 setups; removed trades median -2.8k..-4.4k, win 33-35%. enabled=false = OBSERVE ONLY: every entry logs its tags and what the gate WOULD do (NEWS_GATE | WOULD_SKIP). Missing feed or SMA -> take (fail open). Stage 1 of the rollout runs this way for 10 sessions.",
+        "results_days_before": 1,
+        "results_days_after": 0,
+        "shallow_drop_sma50_pct": -20.0,
+        "bulk_overrides_skip": true,
+        "bulk_deal_window_bdays": 1,
+        "filing_cutoff_hhmm": "15:30",
+        "results_cluster_categories": [
+          "results",
+          "investor/analyst",
+          "board meeting"
+        ],
+        "scheduled_purpose_regex": "financial result",
+        "category_patterns": [["general meeting/admin", "voting result|scrutini|postal ballot|e-voting|general meeting|annual general|extraordinary general"], ["results", "financial result|(un)?audited .{0,40}result|results? (for|of) the (quarter|half|year|period)|outcome of (the )?board meeting.{0,80}(financial|result)|statement of (standalone|consolidated)"],
+          [
+            "pledge/SAST",
+            "pledge|encumbr|sast|substantial acquisition|invocation|release of"
+          ],
+          [
+            "price/volume clarification",
+            "clarification|price movement|volume movement|spurt"
+          ],
+          [
+            "resignation/auditor",
+            "resign|auditor|cessation|change in auditor"
+          ],
+          [
+            "order/contract win",
+            "order|contract|bagged|award|letter of intent"
+          ],
+          [
+            "fund raise/pref/rights/QIP",
+            "preferential|rights issue|qip|fund rais|allotment|warrant|conversion"
+          ],
+          [
+            "rating",
+            "credit rating|rating action|downgrade|upgrade"
+          ],
+          [
+            "insolvency/default/legal",
+            "insolvency|nclt|default|litigation|legal|sebi order|penalty|fraud|investigation|show cause"
+          ],
+          [
+            "bonus/split/dividend",
+            "bonus|split|sub-division|dividend|buyback|buy back"
+          ],
+          [
+            "investor/analyst",
+            "investor presentation|analyst|conference call|earnings call|press release|media"
+          ],
+          [
+            "board meeting",
+            "board meeting"
+          ]
+        ],
+        "bulk_deal_risk_multiplier": 1.0,
+        "_comment_bulk_deal_risk_multiplier": "Stage 3 of the rollout raises this to 2.0 (research: bulk-deal capitulations +12.1k/+2.3k/+4.7k/+18.4k vs quiet by year, positive in every setup). 1.0 = no tilt. Capped by risk_budget.max_notional_inr and the cluster caps regardless.",
+        "feeds": {
+          "announcements": {
+            "path": "data/news/nse_announcements.parquet",
+            "date_column": "an_dt",
+            "max_staleness_days": 4
+          },
+          "event_calendar": {
+            "path": "data/news/nse_event_calendar.parquet",
+            "date_column": "fetched_at",
+            "max_staleness_days": 4
+          },
+          "bulk_deals": {
+            "path": "data/bulk_deals/nse_bulk_deals.parquet",
+            "date_column": "date",
+            "max_staleness_days": 6
+          }
+        },
+        "refresh": {
+          "news_module": "tools.news_feed.fetch_nse_news",
+          "news_lookback_days": 21,
+          "news_forward_days": 10,
+          "news_sleep_secs": 1,
+          "news_timeout_sec": 900,
+          "bulk_module": "tools.block_deal_calendar.fetch_block_deals",
+          "bulk_lookback_days": 21,
+          "bulk_sleep_secs": 2,
+          "bulk_timeout_sec": 900
+        },
+        "sma_days": 50
+      },
       "target_exit": {
         "enabled": true,
         "mode": "vol_scaled_k",
@@ -1005,6 +1183,95 @@
       "zscore_lookback_days": 20,
       "zscore_max": -1.5,
       "hold_days": 2,
+      "news_gate": {
+        "enabled": false,
+        "_comment": "2026-10-06 design specs/2026-10-06-multiday-news-skip-and-bulk-tilt-design.md. R3: skip a capitulation BUY when the signal day is a results reaction day (or the day before a scheduled results meeting) AND the drop is still shallower than shallow_drop_sma50_pct vs the 50-day SMA, unless a bulk deal is in the window. Research (9,012 trades 2023-01..2026-04): removes 7% of signals, +169k/+648k/+723k/+3k by year, no year worse, positive in all 4 setups; removed trades median -2.8k..-4.4k, win 33-35%. enabled=false = OBSERVE ONLY: every entry logs its tags and what the gate WOULD do (NEWS_GATE | WOULD_SKIP). Missing feed or SMA -> take (fail open). Stage 1 of the rollout runs this way for 10 sessions.",
+        "results_days_before": 1,
+        "results_days_after": 0,
+        "shallow_drop_sma50_pct": -20.0,
+        "bulk_overrides_skip": true,
+        "bulk_deal_window_bdays": 1,
+        "filing_cutoff_hhmm": "15:30",
+        "results_cluster_categories": [
+          "results",
+          "investor/analyst",
+          "board meeting"
+        ],
+        "scheduled_purpose_regex": "financial result",
+        "category_patterns": [["general meeting/admin", "voting result|scrutini|postal ballot|e-voting|general meeting|annual general|extraordinary general"], ["results", "financial result|(un)?audited .{0,40}result|results? (for|of) the (quarter|half|year|period)|outcome of (the )?board meeting.{0,80}(financial|result)|statement of (standalone|consolidated)"],
+          [
+            "pledge/SAST",
+            "pledge|encumbr|sast|substantial acquisition|invocation|release of"
+          ],
+          [
+            "price/volume clarification",
+            "clarification|price movement|volume movement|spurt"
+          ],
+          [
+            "resignation/auditor",
+            "resign|auditor|cessation|change in auditor"
+          ],
+          [
+            "order/contract win",
+            "order|contract|bagged|award|letter of intent"
+          ],
+          [
+            "fund raise/pref/rights/QIP",
+            "preferential|rights issue|qip|fund rais|allotment|warrant|conversion"
+          ],
+          [
+            "rating",
+            "credit rating|rating action|downgrade|upgrade"
+          ],
+          [
+            "insolvency/default/legal",
+            "insolvency|nclt|default|litigation|legal|sebi order|penalty|fraud|investigation|show cause"
+          ],
+          [
+            "bonus/split/dividend",
+            "bonus|split|sub-division|dividend|buyback|buy back"
+          ],
+          [
+            "investor/analyst",
+            "investor presentation|analyst|conference call|earnings call|press release|media"
+          ],
+          [
+            "board meeting",
+            "board meeting"
+          ]
+        ],
+        "bulk_deal_risk_multiplier": 1.0,
+        "_comment_bulk_deal_risk_multiplier": "Stage 3 of the rollout raises this to 2.0 (research: bulk-deal capitulations +12.1k/+2.3k/+4.7k/+18.4k vs quiet by year, positive in every setup). 1.0 = no tilt. Capped by risk_budget.max_notional_inr and the cluster caps regardless.",
+        "feeds": {
+          "announcements": {
+            "path": "data/news/nse_announcements.parquet",
+            "date_column": "an_dt",
+            "max_staleness_days": 4
+          },
+          "event_calendar": {
+            "path": "data/news/nse_event_calendar.parquet",
+            "date_column": "fetched_at",
+            "max_staleness_days": 4
+          },
+          "bulk_deals": {
+            "path": "data/bulk_deals/nse_bulk_deals.parquet",
+            "date_column": "date",
+            "max_staleness_days": 6
+          }
+        },
+        "refresh": {
+          "news_module": "tools.news_feed.fetch_nse_news",
+          "news_lookback_days": 21,
+          "news_forward_days": 10,
+          "news_sleep_secs": 1,
+          "news_timeout_sec": 900,
+          "bulk_module": "tools.block_deal_calendar.fetch_block_deals",
+          "bulk_lookback_days": 21,
+          "bulk_sleep_secs": 2,
+          "bulk_timeout_sec": 900
+        },
+        "sma_days": 50
+      },
       "target_exit": {
         "enabled": true,
         "mode": "vol_scaled_k",
@@ -1082,6 +1349,95 @@
       "lookback_days": 2,
       "loser_pct": 0.1,
       "hold_days": 3,
+      "news_gate": {
+        "enabled": false,
+        "_comment": "2026-10-06 design specs/2026-10-06-multiday-news-skip-and-bulk-tilt-design.md. R3: skip a capitulation BUY when the signal day is a results reaction day (or the day before a scheduled results meeting) AND the drop is still shallower than shallow_drop_sma50_pct vs the 50-day SMA, unless a bulk deal is in the window. Research (9,012 trades 2023-01..2026-04): removes 7% of signals, +169k/+648k/+723k/+3k by year, no year worse, positive in all 4 setups; removed trades median -2.8k..-4.4k, win 33-35%. enabled=false = OBSERVE ONLY: every entry logs its tags and what the gate WOULD do (NEWS_GATE | WOULD_SKIP). Missing feed or SMA -> take (fail open). Stage 1 of the rollout runs this way for 10 sessions.",
+        "results_days_before": 1,
+        "results_days_after": 0,
+        "shallow_drop_sma50_pct": -20.0,
+        "bulk_overrides_skip": true,
+        "bulk_deal_window_bdays": 1,
+        "filing_cutoff_hhmm": "15:30",
+        "results_cluster_categories": [
+          "results",
+          "investor/analyst",
+          "board meeting"
+        ],
+        "scheduled_purpose_regex": "financial result",
+        "category_patterns": [["general meeting/admin", "voting result|scrutini|postal ballot|e-voting|general meeting|annual general|extraordinary general"], ["results", "financial result|(un)?audited .{0,40}result|results? (for|of) the (quarter|half|year|period)|outcome of (the )?board meeting.{0,80}(financial|result)|statement of (standalone|consolidated)"],
+          [
+            "pledge/SAST",
+            "pledge|encumbr|sast|substantial acquisition|invocation|release of"
+          ],
+          [
+            "price/volume clarification",
+            "clarification|price movement|volume movement|spurt"
+          ],
+          [
+            "resignation/auditor",
+            "resign|auditor|cessation|change in auditor"
+          ],
+          [
+            "order/contract win",
+            "order|contract|bagged|award|letter of intent"
+          ],
+          [
+            "fund raise/pref/rights/QIP",
+            "preferential|rights issue|qip|fund rais|allotment|warrant|conversion"
+          ],
+          [
+            "rating",
+            "credit rating|rating action|downgrade|upgrade"
+          ],
+          [
+            "insolvency/default/legal",
+            "insolvency|nclt|default|litigation|legal|sebi order|penalty|fraud|investigation|show cause"
+          ],
+          [
+            "bonus/split/dividend",
+            "bonus|split|sub-division|dividend|buyback|buy back"
+          ],
+          [
+            "investor/analyst",
+            "investor presentation|analyst|conference call|earnings call|press release|media"
+          ],
+          [
+            "board meeting",
+            "board meeting"
+          ]
+        ],
+        "bulk_deal_risk_multiplier": 1.0,
+        "_comment_bulk_deal_risk_multiplier": "Stage 3 of the rollout raises this to 2.0 (research: bulk-deal capitulations +12.1k/+2.3k/+4.7k/+18.4k vs quiet by year, positive in every setup). 1.0 = no tilt. Capped by risk_budget.max_notional_inr and the cluster caps regardless.",
+        "feeds": {
+          "announcements": {
+            "path": "data/news/nse_announcements.parquet",
+            "date_column": "an_dt",
+            "max_staleness_days": 4
+          },
+          "event_calendar": {
+            "path": "data/news/nse_event_calendar.parquet",
+            "date_column": "fetched_at",
+            "max_staleness_days": 4
+          },
+          "bulk_deals": {
+            "path": "data/bulk_deals/nse_bulk_deals.parquet",
+            "date_column": "date",
+            "max_staleness_days": 6
+          }
+        },
+        "refresh": {
+          "news_module": "tools.news_feed.fetch_nse_news",
+          "news_lookback_days": 21,
+          "news_forward_days": 10,
+          "news_sleep_secs": 1,
+          "news_timeout_sec": 900,
+          "bulk_module": "tools.block_deal_calendar.fetch_block_deals",
+          "bulk_lookback_days": 21,
+          "bulk_sleep_secs": 2,
+          "bulk_timeout_sec": 900
+        },
+        "sma_days": 50
+      },
       "target_exit": {
         "enabled": true,
         "mode": "vol_scaled_k",
