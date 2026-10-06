@@ -2,6 +2,8 @@
 
 **Status:** design, not built. User asked for research before any filter (2026-10-06) and then for a design of both findings. Nothing here is deployed.
 
+**The multiday book is PAPER ONLY.** It runs under `--paper-trading` from the `multiday_cnc` checkout; there is no live multiday capital and none is proposed here. Every reference to 'live' below means the paper book running forward in real time, as opposed to the research replay.
+
 ## 1. What the evidence says (research baselines, 9,012 trades 2023-01..2026-04, net Rs at research size)
 
 Source scripts: scratchpad `md_news_direction.py`, data `news/announcements.parquet` (NSE corporate announcements, 675 ledger symbols, 166,421 filings), `data/earnings_calendar/earnings_events.parquet`, `data/bulk_deals_cache/nse_bulk_deals_2023_2026.parquet`. Memory: `project_multiday_news_direction`.
@@ -43,7 +45,7 @@ When S is bulk-deal tagged (NSE bulk deals, buy or sell side, in [T-1, T+1]), mu
 "bulk_deal_risk_multiplier": 2.0,
 "bulk_deal_window_bdays": 1
 ```
-No change to selection order: evidence is on size, and the cluster caps (3+2 new/day) already bind on the composite score.
+No change to selection order: evidence is on size, and the cluster caps (3+2 new/day) already bind on the composite score in the paper book.
 
 ## 3. Data feeds (three; all reuse `services/event_feeds.py` contract: `refresh_module --start --end --sleep-secs`, parquet with a date column, staleness check)
 
@@ -73,14 +75,14 @@ NewsTags = {results_reaction: bool, results_scheduled_tomorrow: bool, bulk_deal:
 
 ## 6. Tests
 - `tests/services/test_news_tags.py`: truth table for R3 (reaction day / day before / day after / deep drop / bulk override / scheduled tomorrow), after-15:30 filing rolls to next day, stale-feed fail-open.
-- Handler tests: gated name is absent from baskets and the slot is taken by the next composite name; bulk name sized x2 but capped at max_notional; config keys read with `[]`, missing key raises.
+- Handler tests (paper path, the only path): gated name is absent from baskets and the slot is taken by the next composite name; bulk name sized x2 but capped at max_notional; config keys read with `[]`, missing key raises.
 - Replay gate (per `docs/setup_lifecycle.md`): run the dry-run replay harness over 2026-01..2026-09 with the gate on and off; the on-minus-off delta must match the research script's R3 delta for the overlapping window within tolerance (parity of the tagging, not of the P&L).
 
 ## 7. Rollout
 1. Feeds + tagging module + tests, deployed to the multiday checkout; gate `enabled: false`, tilt multiplier 1.0 -> **observe only** for 10 sessions: every entry logs its tags and what the gate WOULD have done.
 2. Compare the observed would-skip set with the research rate (7% of signals; 33-35% win on the skipped).
 3. Enable the skip in paper. Tilt stays 1.0 until the skip has 20 sessions.
-4. Enable the tilt in paper. Live only after both have a full results season (Jan-Feb 2027) behind them.
+4. Enable the tilt in paper. The multiday book has no live leg; whether it ever gets one is a separate decision and not part of this design.
 Kill switch: `news_gate.enabled=false` restores today's behaviour exactly.
 
 ## 8. Open items before build
