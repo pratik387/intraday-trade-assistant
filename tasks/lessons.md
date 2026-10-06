@@ -1025,3 +1025,8 @@ This is also the SAME failure mode I'd documented in the post-SEBI research brie
 2. **In any async web server, grep for `async def` routes with no `await`** as the first check for latency complaints. One blocking read stalls every client. Keep the AST lint (`tests/test_api_event_loop.py`) green.
 3. **A repeat complaint after a "fix" means the fix was a guess.** Do not offer a second story (stale tab) for the same symptom; go back to Phase 1.
 4. **When asking the user which of N readings they mean, ask before the hour of measurement, not after.** One question would have saved the network, MTU and daemon-scan investigations.
+
+## Multiday is PAPER ONLY — do not write "live" for it (2026-10-06)
+**Pattern:** The design spec and my summary for the multiday news gate said "live book", "live only after a results season", "live multiday capital". The multiday book runs `--paper-trading` from `multiday_cnc`; there is no live leg. The crontab comment says PAPER, my own memory notes say PAPER, and the user had said "forget multiday" for live weeks earlier. The user called it out.
+**Why:** I was carrying the overnight book's live/paper vocabulary into the multiday book without checking which books actually have money. Each book's mode is a fact to look up, not a default to assume.
+**Rule:** Before writing about any book, state its mode from the crontab / start command (intraday `fixed` = paper; overnight close_dn = live + paper mirror; multiday = paper only). "Live" means real money and nothing else.
