@@ -617,7 +617,8 @@
         "date_column": "announce_date",
         "refresh_on_start": true,
         "refresh_module": "tools.earnings_calendar.fetch_earnings",
-        "refresh_lookback_days": 7,
+        "refresh_lookback_days": 21,
+        "_comment_refresh_lookback_days": "21, was 7 (2026-10-06). A window the scrape returns empty once is otherwise never revisited: Aug 10-16 2026, the SEBI-deadline week, sat at 0 events for seven weeks while the daily 7-day top-up kept passing. 21 days covers two missed weeks and a holiday. Full history is restored by the one-off `python -m tools.earnings_calendar.fetch_earnings --start <date> --end <date>`.",
         "refresh_sleep_secs": 5,
         "refresh_timeout_sec": 1800,
         "max_staleness_days": 4
