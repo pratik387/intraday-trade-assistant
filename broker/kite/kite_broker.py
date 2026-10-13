@@ -175,6 +175,41 @@ class KiteBroker:
             # Don't cache errors - might be temporary
             return False, f"MIS check error: {str(e)}"
 
+    # ------------------------------ Account funds ------------------------
+    def get_free_balance(self) -> float:
+        """Free equity balance right now (Kite `available.live_balance`).
+
+        The same figure tools/funds_snapshot.py records. Reads the REAL account
+        in paper mode too (the credentials are the same); callers decide whether
+        a paper run should act on it. Raises on any API/shape failure - the
+        funds gate treats that as 'no figure, no order'.
+        """
+        eq = (self.kc.margins() or {}).get("equity") or {}
+        av = eq.get("available") or {}
+        if "live_balance" not in av:
+            raise RuntimeError("Kite margins response has no equity.available.live_balance")
+        return float(av["live_balance"])
+
+    def get_order_margin(self, symbol: str, side: str, qty: int, product: str = "MIS") -> float:
+        """Margin Kite would block for a MARKET order of this size (order_margins `total`)."""
+        exch, tsym = _split_symbol(symbol)
+        txn = self.kc.TRANSACTION_TYPE_BUY if side.upper() == "BUY" else self.kc.TRANSACTION_TYPE_SELL
+        res = self.kc.order_margins([{
+            "exchange": exch,
+            "tradingsymbol": tsym,
+            "transaction_type": txn,
+            "variety": "regular",
+            "product": product.upper(),
+            "order_type": "MARKET",
+            "quantity": int(qty),
+        }])
+        if not res:
+            raise RuntimeError(f"order_margins returned nothing for {symbol}")
+        node = res[0]
+        if node.get("status") == "error":
+            raise RuntimeError(f"order_margins error for {symbol}: {node.get('message')}")
+        return float(node.get("total") or 0.0)
+
     # ------------------------------ Orders ------------------------------
     def place_order(
         self,

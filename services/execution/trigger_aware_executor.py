@@ -232,6 +232,32 @@ class TriggerAwareExecutor:
                             f"SHADOW_TRADE | {trade.symbol} | Scaled notional {scaled_notional:.0f} < min {min_notional:.0f}"
                         )
 
+            # Shared-account funds gate. Only wired for
+            # paper/live; None in backtest. A blocked entry continues as a
+            # shadow trade so what the guard cost stays measurable. In paper
+            # check_entry never blocks and makes no broker call.
+            if self.live_guards is not None and not trade.plan.get("shadow", False):
+                g_side = trade.plan.get("side")
+                if not g_side:
+                    g_side = "SELL" if str(trade.plan.get("bias", "long")).lower() == "short" else "BUY"
+                try:
+                    g_ok, g_reason = self.live_guards.check_entry(
+                        trade.symbol,
+                        g_side,
+                        int(trade.plan.get("qty", 0)),
+                        float(trade.trigger_price or trade.plan.get("price", 0) or 0),
+                    )
+                except Exception as g_err:
+                    # Live: no verdict means no real order (shadow, so the miss is
+                    # still measured). Paper: the guard only observes, so carry on.
+                    g_ok = not self.live_guards.live
+                    g_reason = f"guard_error:{g_err}"
+                    logger.exception(f"LIVE_GUARDS | check_entry raised for {trade.symbol}: {g_err}")
+                if not g_ok:
+                    trade.plan["shadow"] = True
+                    trade.plan["shadow_reason"] = g_reason
+                    logger.info(f"SHADOW_TRADE | {trade.symbol} | Live guard: {g_reason}")
+
             return True
 
         except Exception as e:
@@ -284,6 +310,8 @@ class TriggerAwareExecutor:
                     "trade_id": trade.trade_id,  # For order tagging (ITDA_xxx)
                 }
                 order_id = self.broker.place_order(**order_args)
+                if self.live_guards is not None:
+                    self.live_guards.note_entry()  # balance changed; drop the cached read
 
                 # Reconcile with broker - verify position actually exists
                 if order_id and hasattr(self.broker, 'reconcile_position'):
@@ -574,8 +602,10 @@ class TriggerAwareExecutor:
         trading_logger=None,  # Enhanced logging service
         capital_manager=None,  # Capital & MIS management
         persistence=None,  # Position persistence for crash recovery
-        api_server=None  # For checking pause state
+        api_server=None,  # For checking pause state
+        live_guards=None,  # services.execution.intraday_live_guards.IntradayLiveGuards (paper/live only)
     ):
+        self.live_guards = live_guards
         self.broker = broker
         self.oq = order_queue
         self.trading_logger = trading_logger

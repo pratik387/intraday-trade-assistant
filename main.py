@@ -496,7 +496,16 @@ def main() -> int:
         trading_logger_instance=trading_logger  # For phantom exit logging in paper mode
     )
 
+    # Shared-account funds gate. Constructed for paper and live only (it acts in live only):
+    # the backtest broker has no account. Missing config
+    # block = startup error.
+    live_guards = None
+    if not args.dry_run:
+        from services.execution.intraday_live_guards import IntradayLiveGuards, CONFIG_KEY as _LG_KEY
+        live_guards = IntradayLiveGuards(cfg.get(_LG_KEY), broker)
+
     trader = TriggerAwareExecutor(
+        live_guards=live_guards,
         broker=broker,
         order_queue=oq,
         risk_state=risk,

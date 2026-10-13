@@ -102,6 +102,15 @@
   "_comment_immediate": "True = Execute immediately on decision (no entry zone wait). Fixes 8-minute delay issue.",
   "risk_per_trade_rupees": 1000.0,
   "_intraday_sizing_note": "Sizing for the intraday book, as fractions of capital so one config scales paper (Rs5L) -> live. THE CLAMP IS THE SHIPPED FIX: max 20%% is the first real NOTIONAL ceiling (capital_management.max_allocation_per_trade applies 20%% to MARGIN, so at 5x MIS it permits Rs500k of notional and never bound - or_window_failure_fade_short ran a Rs112,822 median). VOL_TARGET IS IMPLEMENTED AND TESTED BUT NOT YET ACTIVE ON ANY SETUP. Reason: it needs sigma measured AT SIGNAL TIME, and the unconditional distribution is the wrong population. Measured 5m ATR(14)/price medians: all bars 0.335%%, opening hour 0.652%%, mover days 0.413%% - but the first real signal observed through the new path (NSE:JINDALSAW, long_panic_gap_down) had sigma 3.17%%, ~5x the opening-hour median, because these setups fire on panic gaps by construction. Calibrating on n=1 would be fitting. vol_risk_budget below is a PLACEHOLDER derived from the opening-hour population and must not be trusted until the at-signal distribution is collected from the ORCH sizing log over a paper run. stop_risk_budget 0.002 x Rs5L = Rs1,000 reproduces the previous risk_per_trade_rupees exactly, so risk-mode setups are unchanged except that they are now CLAMPED.",
+  "intraday_live_guards": {
+    "_comment": "Funds gate for the intraday book when it shares the real Zerodha account with the overnight book (services/execution/intraday_live_guards.py). LIVE only: an entry is taken only if free_balance - margin_for_the_order >= overnight_reserve_inr; a blocked entry continues as a shadow trade; fails closed. PAPER: not evaluated, no broker call. No circuit rule here by decision (2026-10-13): circuit treatment is per setup and backtested.",
+    "funds_gate": {
+      "enabled": true,
+      "overnight_reserve_inr": 100000,
+      "_comment_reserve": "Operator-set 2026-10-13: Rs1 lakh. The cash the 15:26 overnight entry is left with, give or take losses on intraday positions already open. Intraday can only use what the account holds ABOVE this.",
+      "balance_cache_secs": 20
+    }
+  },
   "intraday_sizing": {
     "_book_size_multiplier_note": "Scales EVERY sizing mode by one number. Set to 10.0 on 2026-08-13 for a paper run at ~10x, i.e. an effective stop-risk of Rs10,000/trade on Rs5L instead of Rs1,000. Paper only: no real money is at risk, and P&L rescales linearly, so the same ledger answers what 5x or 2x would have made by dividing. TWO CAVEATS on that division: (1) at 10x, peak within-day margin reaches ~236%% of Rs5L on tail days, so the capital manager resizes or rejects - exclude trades logged CAP_SCALE/CAP_REJECT before rescaling; (2) paper assumes perfect fills, and at 10x notional in sub-Rs5L-turnover names (78%% of trades) real fills would be materially worse, so the ledger reads BETTER than reality at this size.",
     "_book_size_changed_on_note": "Date the intraday book changed size. Sessions BEFORE this ran at 1x (stop-risk Rs1,000); from this date the multiplier above applies. Rupee P&L is not comparable across it — one 2026-08-14 session at ~5-10x moved the cumulative by Rs8,535 more than the same trades at 1x, which made a +Rs12,515 record read as +Rs1,436. The dashboard segments History (current era) from Archive (previous era) on this date, the same way the multi-day book is segmented at its capital-management boundary. Set this whenever book_size_multiplier changes.",
@@ -1867,7 +1876,8 @@
   "_comment_capital_management": "=== CAPITAL MANAGEMENT & MIS ===",
   "capital_management": {
     "enabled": false,
-    "initial_capital": 50000,
+    "initial_capital": 100000,
+    "_comment_initial_capital": "LIVE intraday capital (paper uses paper_initial_capital). Operator-set 2026-10-13 for '4-5 trades of Rs20k each' on the overnight account's idle cash; was 50000. With max_allocation_per_trade 0.2 this caps margin at Rs20k a trade (Rs100k notional at 5x) and capital_utilization 0.85 allows 4 at that size. Through intraday_sizing x book_size_multiplier 10: risk-mode setups Rs2,000 risk, up_spike/panic_crash Rs60k notional (~Rs12k margin), earnings_downshock clamped at Rs100k. The --risk-value start flag does NOT size the book since 2026-08-13.",
     "paper_initial_capital": 500000,
     "max_concurrent_positions": 50,
     "risk": {
