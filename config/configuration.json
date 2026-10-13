@@ -106,8 +106,8 @@
     "_comment": "Funds gate for the intraday book when it shares the real Zerodha account with the overnight book (services/execution/intraday_live_guards.py). LIVE only: an entry is taken only if free_balance - margin_for_the_order >= overnight_reserve_inr; a blocked entry continues as a shadow trade; fails closed. PAPER: not evaluated, no broker call. No circuit rule here by decision (2026-10-13): circuit treatment is per setup and backtested.",
     "funds_gate": {
       "enabled": true,
-      "overnight_reserve_inr": 100000,
-      "_comment_reserve": "Operator-set 2026-10-13: Rs1 lakh. The cash the 15:26 overnight entry is left with, give or take losses on intraday positions already open. Intraday can only use what the account holds ABOVE this.",
+      "overnight_reserve_inr": 0,
+      "_comment_reserve": "0 = no cash held back: the gate only requires that the real free balance covers the order's margin. The intraday budget is capital_management.initial_capital (Rs1 lakh, operator-set 2026-10-13), which the capital manager enforces. Raise this to hold cash back for the 15:26 overnight entry; intraday then only uses what the account holds ABOVE it. (Set to Rs1 lakh for one commit on 2026-10-13 by misreading 'use 1 lakh capital'.)",
       "balance_cache_secs": 20
     }
   },
