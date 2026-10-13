@@ -730,6 +730,9 @@ def _parse_args():
     # Shared market data (subscribe to standalone Market Data Service)
     ap.add_argument("--shared-market-data", action="store_true",
                     help="Deprecated (MDS removed). Ignored.")
+    ap.add_argument("--execution-mode", default=None,
+                    help="Deprecated (MDS removed; the daemon is always single-process). Ignored. "
+                         "Accepted so the saved live start command still launches.")
     ap.add_argument("--data-source", choices=["zerodha", "upstox"], default="zerodha",
                     help="Market data source: zerodha (default) or upstox (hybrid mode: Upstox data + Zerodha orders)")
     ap.add_argument("--mode", choices=["intraday", "overnight", "multi_day"], default="intraday",
