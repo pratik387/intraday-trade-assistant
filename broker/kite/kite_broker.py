@@ -75,6 +75,15 @@ class KiteBroker:
         self.kc = KiteConnect(api_key=self.api_key)
         self.kc.set_access_token(self.access_token)
 
+        # Zerodha rejects API MARKET orders without market_protection. Fail fast
+        # on a missing/invalid key: a live MARKET exit that cannot be placed
+        # leaves a position open.
+        from config.filters_setup import load_filters
+        self._market_protection = load_filters()["kite_orders"]["market_protection"]
+        mp = self._market_protection
+        if isinstance(mp, bool) or not isinstance(mp, (int, float)) or not (mp == -1 or 0 < mp <= 100):
+            raise RuntimeError(f"kite_orders.market_protection must be -1 or in (0, 100], got {mp!r}")
+
         # MIS availability cache (symbol -> is_mis_available)
         self._mis_cache: Dict[str, bool] = {}
 
@@ -306,6 +315,8 @@ class KiteBroker:
             if price is None:
                 raise ValueError("price is required for LIMIT orders")
             params["price"] = float(price)
+        else:
+            params["market_protection"] = self._market_protection
 
         # Map variety lowercase string to KC constant
         variety_l = variety.lower()
@@ -320,7 +331,7 @@ class KiteBroker:
         try:
             # kite.place_order() returns order_id string directly (not a dict)
             # See: https://kite.trade/docs/pykiteconnect/v4/
-            order_id = self.kc.place_order(variety=kc_variety, **params)
+            order_id = self._kc_place(kc_variety, params)
             logger.info(
                 f"Order placed: {symbol} | {side} {qty} @ {product} variety={variety_l} | Order ID: {order_id}"
             )
@@ -349,7 +360,7 @@ class KiteBroker:
                     )
                     params["price"] = new_price
                     try:
-                        order_id = self.kc.place_order(variety=kc_variety, **params)
+                        order_id = self._kc_place(kc_variety, params)
                         logger.info(
                             f"Order placed (tick-retry): {symbol} | {side} {qty} @ {product} "
                             f"variety={variety_l} px={new_price} | Order ID: {order_id}"
@@ -361,6 +372,15 @@ class KiteBroker:
 
             logger.error(f"Order placement failed for {symbol}: {e}")
             raise RuntimeError(f"Order placement failed: {e}")
+
+    def _kc_place(self, kc_variety: str, params: Dict[str, Any]) -> str:
+        """POST order.place with `params` as given.
+
+        Same request KiteConnect.place_order builds, but the installed
+        kiteconnect's place_order has no market_protection argument, so it
+        cannot send the field Zerodha now requires on MARKET orders.
+        """
+        return str(self.kc._post("order.place", url_args={"variety": kc_variety}, params=params)["order_id"])
 
     # ------------------------------ Rate limiting -------------------------
     def _rate_limit_ltp(self) -> None:
