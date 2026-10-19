@@ -1570,6 +1570,16 @@ def run_verify_exit(
                 "orphan, requires manual settlement at correct historical price",
                 slot.slot_id, expected_exit, today,
             )
+            if slot.failsafe_sell_order_id and not paper_mode:
+                # The exit day ended with a failsafe SELL still unconfirmed:
+                # shares may well still be held, so the GTT is their only stop.
+                logger.critical(
+                    "run_verify_exit: STALE slot %d %s still has unconfirmed failsafe "
+                    "SELL %s from %s — shares may be held; GTT %s KEPT. Check holdings "
+                    "and sell manually.", slot.slot_id, slot.symbol,
+                    slot.failsafe_sell_order_id, expected_exit, slot.gtt_id)
+                summary["orphan_t0_count"] += 1
+                continue
             # Cancel any live GTT on this stale slot — the AMO almost certainly
             # already filled at the correct open, so a surviving GTT could trigger
             # on a now-flat position and open a NAKED SHORT.
@@ -1597,6 +1607,18 @@ def run_verify_exit(
                     "run_verify_exit: paper fill unavailable for %s on %s",
                     slot.symbol, expected_exit,
                 )
+                continue
+        elif slot.failsafe_sell_order_id:
+            # A failsafe SELL from an earlier pass that had not filled when that
+            # pass ended. Settle only once it is COMPLETE (ATL 2026-10-19).
+            try:
+                sell_price = _resume_failsafe_exit(broker, slot, managed_setups[0].raw_config,
+                                                   persist=pool.persist)
+            except Exception as e:
+                logger.error("run_verify_exit: failsafe follow-up failed for slot %d: %s",
+                             slot.slot_id, e)
+                continue
+            if sell_price is None:
                 continue
         else:
             sell_price = _live_check_amo_fill(broker, slot.amo_sell_order_id)
@@ -1642,7 +1664,7 @@ def run_verify_exit(
                 # a partially-filled one must never be failsafed at full qty
                 # (REGENCERAM 2026-07-24: 286/1388 filled at the floor, the
                 # remainder OPEN above the market).
-                failsafe_buf = float(managed_setups[0].raw_config["gtt_limit_buffer_pct"])
+                raw_cfg = managed_setups[0].raw_config
                 try:
                     amo_status = None
                     try:
@@ -1651,17 +1673,7 @@ def run_verify_exit(
                         logger.warning("run_verify_exit: status fetch failed for AMO %s: %s",
                                        slot.amo_sell_order_id, e)
                     partial = _partial_fill_from_status(amo_status)
-                    ltp_q, _uc, lower_circuit = _safe_quote(broker, slot.symbol)
-                    ltp = ltp_q if (ltp_q is not None and ltp_q > 0) else float(broker.get_ltp(slot.symbol))
-                    # Tick-valid AND >= lower circuit (Kite rejects non-tick /
-                    # sub-circuit SELL prices). Tick is per-instrument.
-                    tick = _instrument_tick(
-                        broker, slot.symbol, managed_setups[0].raw_config)
-                    marketable = clamp_round_limit(
-                        ltp * (1.0 - failsafe_buf / 100.0), "SELL",
-                        tick_size=tick,
-                        lower_circuit=lower_circuit,
-                    )
+                    marketable, tick = _marketable_sell_limit(broker, slot.symbol, raw_cfg)
                     if (amo_status or {}).get("status") == "OPEN":
                         # Re-price the existing order to marketable — placing a
                         # second SELL against locked holdings would be rejected.
@@ -1680,25 +1692,27 @@ def run_verify_exit(
                                 slot.amo_sell_order_id, slot.slot_id)
                         continue
                     # Dead order (REJECTED/CANCELLED/unknown): failsafe only the
-                    # UNSOLD remainder; settle at the blended price.
+                    # UNSOLD remainder. Settle only on the failsafe's real fill:
+                    # settling at LTP right after placing it dropped an unfilled
+                    # remainder out of tracking (ATL 2026-10-19: 350/892 filled
+                    # when the pass settled; GTT already cancelled).
                     filled_qty, filled_avg = partial if partial else (0, 0.0)
+                    slot.exit_sold_qty = int(filled_qty)
+                    slot.exit_sold_value = float(filled_qty) * float(filled_avg)
                     remainder = slot.exit_qty() - filled_qty
                     if remainder > 0:
                         logger.warning(
                             "run_verify_exit: live AMO %s did not fill "
                             "(partial %d/%d); placing failsafe SELL for remainder",
                             slot.amo_sell_order_id, filled_qty, slot.exit_qty())
-                        _place_failsafe_sell(
-                            broker,
-                            symbol=slot.symbol, qty=remainder,
-                            product=slot.product or "CNC",
-                            limit_price=marketable,
-                            tick_size=tick,
-                        )
-                    sell_price = (
-                        (filled_qty * filled_avg + remainder * ltp) / slot.exit_qty()
-                        if filled_qty > 0 else ltp
-                    )
+                        sell_price = _failsafe_exit_and_confirm(
+                            broker, slot, remainder=remainder,
+                            limit_price=marketable, tick=tick, raw_cfg=raw_cfg,
+                            persist=pool.persist)
+                        if sell_price is None:
+                            continue
+                    else:
+                        sell_price = filled_avg
                 except Exception as e:
                     logger.error(
                         "run_verify_exit: failsafe SELL failed for slot %d: %s",
@@ -1744,11 +1758,19 @@ def run_verify_exit(
         # Cancel the dangling catastrophe GTT now that the AMO has filled and
         # the slot is flat — a later GTT trigger would open a NAKED SHORT.
         if slot.gtt_id and hasattr(broker, "cancel_gtt"):
-            ok = broker.cancel_gtt(slot.gtt_id)
+            try:
+                ok = broker.cancel_gtt(slot.gtt_id)
+            except Exception as e:
+                logger.error("run_verify_exit: GTT %s cancel raised for slot %d: %s",
+                             slot.gtt_id, slot.slot_id, e)
+                ok = False
             if not ok:
                 logger.warning("run_verify_exit: GTT %s cancel returned False for slot %d "
                                "(verify manually — risk of naked short)", slot.gtt_id, slot.slot_id)
             slot.gtt_id = None
+        # Persist each settle on its own: a later slot's failure (e.g. the
+        # tripwire write below) must not lose settled slots or failsafe ids.
+        pool.persist()
 
         summary["settled_count"] += 1
         settled = pool._get_slot(slot.slot_id)  # noqa: SLF001
@@ -2103,6 +2125,117 @@ def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str,
         check_margins=False,
     )
     return str(order_id)
+
+
+def _marketable_sell_limit(broker, symbol: str, raw_cfg: dict) -> tuple:
+    """(limit, tick): a SELL limit just under live LTP that should fill now.
+
+    LTP * (1 - gtt_limit_buffer_pct/100), tick-valid AND >= lower circuit
+    (Kite rejects non-tick / sub-circuit SELL prices). Tick is per-instrument.
+    """
+    ltp_q, _uc, lower_circuit = _safe_quote(broker, symbol)
+    ltp = ltp_q if (ltp_q is not None and ltp_q > 0) else float(broker.get_ltp(symbol))
+    tick = _instrument_tick(broker, symbol, raw_cfg)
+    limit = clamp_round_limit(
+        ltp * (1.0 - float(raw_cfg["gtt_limit_buffer_pct"]) / 100.0), "SELL",
+        tick_size=tick, lower_circuit=lower_circuit,
+    )
+    return limit, tick
+
+
+def _exit_price_with(slot, qty: int, avg: float) -> float:
+    """Qty-weighted exit price: shares already sold on the slot plus `qty` @ `avg`."""
+    sold_qty = int(slot.exit_sold_qty or 0) + int(qty)
+    sold_value = float(slot.exit_sold_value or 0.0) + int(qty) * float(avg)
+    return sold_value / sold_qty
+
+
+def _failsafe_exit_and_confirm(broker, slot, *, remainder: int, limit_price: float,
+                               tick: float, raw_cfg: dict, persist) -> Optional[float]:
+    """Place a failsafe SELL for `remainder` and wait for it to fill.
+
+    Returns the slot's blended exit price when the failsafe is COMPLETE within
+    failsafe_fill_confirm_sec, else None. The order id is recorded on the slot
+    and persisted BEFORE polling, so a later verify pass picks it up
+    (_resume_failsafe_exit) even if this run dies afterwards — never a second
+    SELL against holdings the first one locks.
+    """
+    fs_id = _place_failsafe_sell(
+        broker, symbol=slot.symbol, qty=remainder,
+        product=slot.product or "CNC", limit_price=limit_price, tick_size=tick,
+    )
+    slot.failsafe_sell_order_id = fs_id
+    persist()
+    fill, status = _live_poll_fill_ex(
+        broker, fs_id, timeout_sec=int(raw_cfg["failsafe_fill_confirm_sec"]))
+    if fill is not None and fill > 0:
+        return _exit_price_with(slot, int((status or {}).get("filled_quantity") or remainder), fill)
+    logger.warning(
+        "run_verify_exit: failsafe SELL %s for %s not COMPLETE yet (status=%s filled=%s/%d); "
+        "slot stays open, next verify pass re-prices or settles it",
+        fs_id, slot.symbol, (status or {}).get("status"),
+        (status or {}).get("filled_quantity"), remainder)
+    return None
+
+
+def _resume_failsafe_exit(broker, slot, raw_cfg: dict, *, persist) -> Optional[float]:
+    """Drive an earlier pass's failsafe SELL to completion.
+
+    COMPLETE -> blended exit price. Still working -> re-price it to marketable
+    (a second SELL would be rejected: the open order locks the holdings) and
+    return None. Dead -> bank any partial, adopt a manual sell of the rest if
+    there is one, else place a new failsafe for the rest.
+    """
+    fs_id = slot.failsafe_sell_order_id
+    try:
+        status = broker.get_order_status(fs_id) or {}
+    except Exception as e:
+        logger.warning("run_verify_exit: status fetch failed for failsafe %s: %s", fs_id, e)
+        return None
+    st = str(status.get("status") or "").upper()
+    fq = int(status.get("filled_quantity") or 0)
+    favg = float(status.get("average_price") or 0.0)
+    if st == "COMPLETE":
+        if fq <= 0 or favg <= 0:
+            logger.warning("run_verify_exit: failsafe %s for %s COMPLETE without fill "
+                           "qty/price (%s/%s); retry next pass", fs_id, slot.symbol, fq, favg)
+            return None
+        return _exit_price_with(slot, fq, favg)
+    if not st:
+        logger.warning("run_verify_exit: failsafe %s for %s has no status; retry next pass",
+                       fs_id, slot.symbol)
+        return None
+    marketable, tick = _marketable_sell_limit(broker, slot.symbol, raw_cfg)
+    if st not in ("REJECTED", "CANCELLED"):
+        if hasattr(broker, "modify_order") and broker.modify_order(fs_id, marketable):
+            logger.warning(
+                "run_verify_exit: failsafe %s for %s still %s (filled %d) — re-priced to %.2f",
+                fs_id, slot.symbol, st, fq, marketable)
+        else:
+            logger.error(
+                "run_verify_exit: failsafe %s for %s still %s and re-price failed — "
+                "manual action needed", fs_id, slot.symbol, st)
+        return None
+    # Bank a dead order's partial exactly once: if the replacement below fails
+    # to place, the next pass reads this same dead order again.
+    if fq > 0 and favg > 0 and slot.exit_banked_order_id != fs_id:
+        slot.exit_sold_qty = int(slot.exit_sold_qty or 0) + fq
+        slot.exit_sold_value = float(slot.exit_sold_value or 0.0) + fq * favg
+        slot.exit_banked_order_id = fs_id
+        persist()
+    remainder = slot.exit_qty() - int(slot.exit_sold_qty or 0)
+    if remainder <= 0:
+        return float(slot.exit_sold_value) / int(slot.exit_sold_qty)
+    oob = _find_out_of_band_sell(broker, slot.symbol, remainder, exclude_order_id=fs_id)
+    if oob is not None:
+        logger.warning("run_verify_exit: failsafe %s %s; adopting out-of-band SELL %s @ %.2f for %s",
+                       fs_id, st, oob[0], oob[1], slot.symbol)
+        return _exit_price_with(slot, remainder, oob[1])
+    logger.warning("run_verify_exit: failsafe %s for %s is %s (%s); new failsafe for %d",
+                   fs_id, slot.symbol, st, status.get("status_message"), remainder)
+    return _failsafe_exit_and_confirm(broker, slot, remainder=remainder,
+                                      limit_price=marketable, tick=tick, raw_cfg=raw_cfg,
+                                      persist=persist)
 
 
 def _today_5m(broker, symbol: str) -> Optional[pd.DataFrame]:

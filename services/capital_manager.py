@@ -694,6 +694,10 @@ class OvernightSlot:
     reserved_today: Optional[str] = None     # ISO date when reserve() was called
     gtt_id: Optional[str] = None             # broker GTT trigger id for the catastrophe stop
     idealized_entry_price: Optional[float] = None  # 15:25 bar CLOSE captured at place-exit time (for exact slippage)
+    failsafe_sell_order_id: Optional[str] = None   # verify-exit failsafe SELL still to confirm (ATL 2026-10-19)
+    exit_sold_qty: int = 0                         # shares already sold by dead exit orders (partials)
+    exit_sold_value: float = 0.0                   # sum(qty * price) of those partials, for the blended exit price
+    exit_banked_order_id: Optional[str] = None     # last dead failsafe whose partial is in exit_sold_* (bank once)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -902,6 +906,10 @@ class OvernightSlotPool:
         slot.reserved_today = None
         slot.gtt_id = None
         slot.idealized_entry_price = None
+        slot.failsafe_sell_order_id = None
+        slot.exit_sold_qty = 0
+        slot.exit_sold_value = 0.0
+        slot.exit_banked_order_id = None
 
     # ---------- Queries ----------
 

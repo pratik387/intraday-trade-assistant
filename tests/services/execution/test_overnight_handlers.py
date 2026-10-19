@@ -75,6 +75,7 @@ def _minimal_config(state_path: Path) -> dict:
                 "universe_max_symbols": 1500,
                 "catastrophe_stop_pct": 5.0,
                 "gtt_limit_buffer_pct": 0.5,
+                "failsafe_fill_confirm_sec": 0,
                 "entry_limit_buffer_pct": 1.0,
                 "tick_size_fallback_inr": 0.05,
                 "insufficient_funds_retry_haircut": 0.95,
@@ -778,8 +779,10 @@ def test_verify_exit_dead_partial_amo_failsafes_remainder_blended(tmp_path):
     broker = MagicMock()
     broker._data_sdk = None
     broker.check_auth.return_value = True
-    broker.get_order_status.return_value = {
-        "status": "CANCELLED", "filled_quantity": 286, "average_price": 34.6}
+    broker.get_order_status.side_effect = _statuses({
+        "AMO-001": {"status": "CANCELLED", "filled_quantity": 286, "average_price": 34.6},
+        "FAILSAFE-1": {"status": "COMPLETE", "filled_quantity": 1102, "average_price": 33.9},
+    })
     broker.get_orders.return_value = []
     broker.get_quote.return_value = {
         "last_price": 34.0, "upper_circuit_limit": 41.56,
@@ -792,10 +795,179 @@ def test_verify_exit_dead_partial_amo_failsafes_remainder_blended(tmp_path):
     _, po_kwargs = broker.place_order.call_args
     assert po_kwargs["qty"] == 1388 - 286  # remainder only
     assert po_kwargs["side"] == "SELL"
-    slot1 = next(s for s in json.loads(state_path.read_text())["slots"]
-                 if s["slot_id"] == 1)
-    expected = (286 * 34.6 + (1388 - 286) * 34.0) / 1388
+    slot1 = _slot1(state_path)
+    # blended on the failsafe's REAL fill, not LTP
+    expected = (286 * 34.6 + (1388 - 286) * 33.9) / 1388
     assert slot1["sell_fill_price"] == pytest.approx(expected, abs=1e-6)
+
+
+def _statuses(by_id):
+    return lambda oid: by_id.get(oid)
+
+
+def _slot1(state_path):
+    return next(s for s in json.loads(state_path.read_text())["slots"] if s["slot_id"] == 1)
+
+
+def _failsafe_broker(statuses):
+    broker = MagicMock()
+    broker._data_sdk = None
+    broker.check_auth.return_value = True
+    broker.get_order_status.side_effect = _statuses(statuses)
+    broker.get_orders.return_value = []
+    broker.get_quote.return_value = {
+        "last_price": 28.4, "upper_circuit_limit": 33.74, "lower_circuit_limit": 22.5}
+    broker.modify_order.return_value = True
+    return broker
+
+
+def test_verify_exit_unfilled_failsafe_keeps_slot_open(tmp_path):
+    """ATL 2026-10-19: AMO rejected, failsafe only partly filled when the pass
+    ended -> the slot must NOT settle (and its GTT must stay), the failsafe id
+    is recorded for the next pass."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    broker = _failsafe_broker({
+        "AMO-001": {"status": "REJECTED", "status_message": "16418 : Order with Invalid attributes"},
+        "FS-1": {"status": "OPEN", "filled_quantity": 350, "average_price": 28.26},
+    })
+    broker.place_order.return_value = "FS-1"
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:16:30"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 0
+    s = _slot1(state_path)
+    assert s["status"] == "t0_open"
+    assert s["failsafe_sell_order_id"] == "FS-1"
+    broker.cancel_gtt.assert_not_called()
+
+
+def test_verify_exit_next_pass_settles_completed_failsafe(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(failsafe_sell_order_id="FS-1", exit_sold_qty=0, exit_sold_value=0.0)
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({
+        "AMO-001": {"status": "REJECTED"},
+        "FS-1": {"status": "COMPLETE", "filled_quantity": 1388, "average_price": 28.26},
+    })
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:30:30"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 1
+    s = _slot1(state_path)
+    assert s["status"] == "t1_settling"
+    assert s["sell_fill_price"] == pytest.approx(28.26)
+    broker.place_order.assert_not_called()
+
+
+def test_verify_exit_next_pass_reprices_working_failsafe(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(failsafe_sell_order_id="FS-1")
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({"FS-1": {"status": "OPEN", "filled_quantity": 350,
+                                        "average_price": 28.26}})
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:30:30"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 0
+    args, _ = broker.modify_order.call_args
+    assert args[0] == "FS-1" and args[1] <= 28.4
+    broker.place_order.assert_not_called()
+
+
+def test_verify_exit_dead_failsafe_banks_partial_and_refails_remainder(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(failsafe_sell_order_id="FS-1")
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({
+        "FS-1": {"status": "CANCELLED", "filled_quantity": 350, "average_price": 28.26},
+        "FS-2": {"status": "COMPLETE", "filled_quantity": 1038, "average_price": 28.0},
+    })
+    broker.place_order.return_value = "FS-2"
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:30:30"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 1
+    assert broker.place_order.call_args.kwargs["qty"] == 1388 - 350
+    s = _slot1(state_path)
+    assert s["sell_fill_price"] == pytest.approx((350 * 28.26 + 1038 * 28.0) / 1388)
+    assert s["exit_banked_order_id"] == "FS-1"
+    # released slot later clears the new fields
+    from services.capital_manager import OvernightSlotPool
+    pool = OvernightSlotPool(state_path, max_slots=4, margin_per_slot=100000, max_new_per_day=2)
+    pool.release(1, date(2026, 7, 21))
+    slot = pool._get_slot(1)  # noqa: SLF001
+    assert (slot.failsafe_sell_order_id, slot.exit_sold_qty, slot.exit_sold_value,
+            slot.exit_banked_order_id) == (None, 0, 0.0, None)
+
+
+def test_verify_exit_dead_failsafe_partial_banked_once_when_replacement_fails(tmp_path):
+    """Replacement failsafe fails to place twice -> the dead order's 350 is
+    banked ONCE, the slot never settles while shares are held."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(failsafe_sell_order_id="FS-1")
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({
+        "FS-1": {"status": "REJECTED", "filled_quantity": 350, "average_price": 28.26}})
+    broker.place_order.side_effect = RuntimeError("16418 : Order with Invalid attributes")
+    for ts in ("2026-07-20 09:30:30", "2026-07-20 10:30:30"):
+        summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp(ts), paper_mode=False)
+        assert summary["settled_count"] == 0
+    s = _slot1(state_path)
+    assert s["status"] == "t0_open"
+    assert s["exit_sold_qty"] == 350
+    assert broker.place_order.call_args.kwargs["qty"] == 1388 - 350
+
+
+def test_verify_exit_stale_slot_with_pending_failsafe_keeps_gtt(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(failsafe_sell_order_id="FS-1", gtt_id="GTT-1")
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({})
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-21 09:16:30"),
+                              paper_mode=False)
+    assert summary["orphan_t0_count"] == 1
+    broker.cancel_gtt.assert_not_called()
+    assert _slot1(state_path)["gtt_id"] == "GTT-1"
+
+
+def test_verify_exit_failsafe_id_persisted_before_poll(tmp_path):
+    """The failsafe id must be on disk before the fill poll, so a run that dies
+    mid-poll cannot lead the next pass to place a second SELL."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    broker = _failsafe_broker({"AMO-001": {"status": "REJECTED"}})
+    broker.place_order.return_value = "FS-1"
+
+    def die_on_failsafe_poll(oid):
+        if oid == "FS-1":
+            raise SystemExit("killed mid-poll")
+        return {"status": "REJECTED"}
+    broker.get_order_status.side_effect = die_on_failsafe_poll
+    with pytest.raises(SystemExit):
+        run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:16:30"),
+                        paper_mode=False)
+    assert _slot1(state_path)["failsafe_sell_order_id"] == "FS-1"
 
 
 # ---------------------------------------------------------------------------
