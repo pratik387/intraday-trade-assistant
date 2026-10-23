@@ -230,6 +230,8 @@ def test_idempotent_append(tmp_path, monkeypatch):
         live_ledger_path=tmp_path / "state" / "does_not_exist_live.json",
         reports_dir=reports_dir,
         fetch_fn=_fake_fetch_factory(),
+        fetch_retry_rounds=0,
+        fetch_retry_wait_sec=0.0,
     )
 
     res1 = reconstruct_for_date(**common)
@@ -282,6 +284,8 @@ def test_slippage_report_with_live_match(tmp_path):
         live_ledger_path=live_path,
         reports_dir=reports_dir,
         fetch_fn=_fake_fetch_factory(),
+        fetch_retry_rounds=0,
+        fetch_retry_wait_sec=0.0,
     )
     assert res["n_fired"] == 2
     assert res["n_traded_live"] == 1
@@ -335,6 +339,8 @@ def test_slippage_prefers_persisted_idealized_refs(tmp_path):
         live_ledger_path=live_path,
         reports_dir=reports_dir,
         fetch_fn=_fake_fetch_factory(),
+        fetch_retry_rounds=0,
+        fetch_retry_wait_sec=0.0,
     )
     assert res["n_traded_live"] == 1
 
@@ -375,6 +381,8 @@ def test_slippage_falls_back_to_fetched_refs_when_absent(tmp_path):
         live_ledger_path=live_path,
         reports_dir=reports_dir,
         fetch_fn=_fake_fetch_factory(),
+        fetch_retry_rounds=0,
+        fetch_retry_wait_sec=0.0,
     )
     report = json.loads((reports_dir / "overnight_slippage_2026-06-16.json").read_text())
     row = next(r for r in report["per_trade"] if r["real_entry"] is not None)
@@ -417,6 +425,8 @@ def test_exit_today_uses_intraday_fetch(tmp_path, monkeypatch):
         live_ledger_path=tmp_path / "state" / "no_live.json",
         reports_dir=reports_dir,
         fetch_fn=fake_hist,
+        fetch_retry_rounds=0,
+        fetch_retry_wait_sec=0.0,
         intraday_fetch_fn=fake_intraday,
     )
 
@@ -472,6 +482,8 @@ def test_exit_past_uses_historical_fetch(tmp_path, monkeypatch):
         live_ledger_path=tmp_path / "state" / "no_live.json",
         reports_dir=reports_dir,
         fetch_fn=fake_hist,
+        fetch_retry_rounds=0,
+        fetch_retry_wait_sec=0.0,
         intraday_fetch_fn=fake_intraday,
     )
 
@@ -490,3 +502,172 @@ def test_exit_past_uses_historical_fetch(tmp_path, monkeypatch):
     for t in recon:
         assert t["entry_price"] == 103.2
         assert t["exit_price"] == 110.0
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit resilience: the 09:45 run lands on a 5m bar close, when both
+# intraday daemons fetch their whole universe from the same IP. Upstox then
+# 429s every request past the client's ~6s backoff and the day was silently
+# dropped (10-16, 10-22, 10-23). Missing symbols are re-fetched in rounds.
+# ---------------------------------------------------------------------------
+
+def _empty_paper_ledger(tmp_path: Path) -> Path:
+    paper_path = tmp_path / "state" / "decay_tripwire_close_dn_overnight_long.json"
+    paper_path.parent.mkdir(parents=True, exist_ok=True)
+    paper_path.write_text(json.dumps({"trades": []}), encoding="utf-8")
+    return paper_path
+
+
+def test_fetch_retries_symbols_the_first_call_missed(tmp_path, monkeypatch):
+    import tools.overnight_paper_slippage as mod
+    monkeypatch.setattr(mod, "_today_ist", lambda: date(2026, 6, 22))
+
+    calls = []
+
+    def flaky_hist(symbols, from_date_iso, to_date_iso):
+        calls.append((tuple(symbols), from_date_iso))
+        if len([c for c in calls if c[1] == from_date_iso]) == 1:
+            return {}  # first call per day: everything rate-limited
+        df = _mock_df_entry_day() if from_date_iso == "2026-06-16" else _mock_df_exit_day()
+        return {s: df for s in symbols}
+
+    sleeps = []
+    res = reconstruct_for_date(
+        entry_date=date(2026, 6, 16),
+        log_path=_write_log(tmp_path, SAMPLE_LOG),
+        paper_ledger_path=_empty_paper_ledger(tmp_path),
+        live_ledger_path=tmp_path / "state" / "no_live.json",
+        reports_dir=tmp_path / "reports",
+        fetch_fn=flaky_hist,
+        fetch_retry_rounds=3,
+        fetch_retry_wait_sec=30.0,
+        sleep_fn=sleeps.append,
+    )
+
+    assert res["n_reconstructed"] == 2
+    assert res["n_missing_price"] == 0
+    assert sleeps == [30.0, 30.0]          # one retry round per day
+    # retries ask only for what was missing
+    assert all(set(s) == {"NSE:PACEDIGITK", "NSE:SAMPANN"} for s, _ in calls)
+
+
+def test_fetch_retry_gives_up_after_configured_rounds(tmp_path, monkeypatch):
+    import tools.overnight_paper_slippage as mod
+    monkeypatch.setattr(mod, "_today_ist", lambda: date(2026, 6, 22))
+
+    sleeps = []
+    res = reconstruct_for_date(
+        entry_date=date(2026, 6, 16),
+        log_path=_write_log(tmp_path, SAMPLE_LOG),
+        paper_ledger_path=_empty_paper_ledger(tmp_path),
+        live_ledger_path=tmp_path / "state" / "no_live.json",
+        reports_dir=tmp_path / "reports",
+        fetch_fn=lambda symbols, f, t: {},
+        fetch_retry_rounds=2,
+        fetch_retry_wait_sec=5.0,
+        sleep_fn=sleeps.append,
+    )
+
+    assert res["n_reconstructed"] == 0
+    assert res["n_missing_price"] == 2
+    assert len(sleeps) == 4                # 2 rounds x (entry day, exit day)
+
+
+def test_dates_needing_reconstruction_flags_short_days(tmp_path):
+    from tools.overnight_paper_slippage import dates_needing_reconstruction
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    # Rows are keyed by EXIT date (the next trading day after entry).
+    # entry 06-16 (exit 06-17): 2 fired, ledger has both -> complete.
+    (log_dir / "overnight_entry_2026-06-16.log").write_text(SAMPLE_LOG, encoding="utf-8")
+    # entry 06-17 (exit 06-18): PACEDIGITK has only a non-reconstructed row -> needs it.
+    (log_dir / "overnight_entry_2026-06-17.log").write_text(SAMPLE_LOG, encoding="utf-8")
+    # entry 06-18: no entry log at all -> nothing to do.
+    paper_path = tmp_path / "paper.json"
+    paper_path.write_text(json.dumps({"trades": [
+        {"source": "reconstructed", "ts_iso": "2026-06-17T09:30:00", "symbol": "NSE:PACEDIGITK"},
+        {"source": "reconstructed", "ts_iso": "2026-06-17T09:30:00", "symbol": "NSE:SAMPANN"},
+        {"source": "reconstructed", "ts_iso": "2026-06-18T09:30:00", "symbol": "NSE:SAMPANN"},
+        {"source": "paper_run", "ts_iso": "2026-06-18T09:30:00", "symbol": "NSE:PACEDIGITK"},  # not counted
+    ]}), encoding="utf-8")
+
+    entry_dates = [date(2026, 6, 16), date(2026, 6, 17), date(2026, 6, 18)]
+    out = dates_needing_reconstruction(entry_dates, log_dir, paper_path)
+    assert out == [date(2026, 6, 17)]
+
+
+def test_auto_catches_up_an_earlier_short_day(tmp_path, monkeypatch):
+    # Today 2026-06-18 -> latest entry 06-17. Entry 06-16 (exit 06-17) was
+    # left with zero rows by a rate-limited morning; --auto must redo it too.
+    import tools.overnight_paper_slippage as mod
+    monkeypatch.setattr(mod, "_today_ist", lambda: date(2026, 6, 18))
+    monkeypatch.setattr(mod, "_load_reconstruction_config", lambda: {
+        "fetch_retry_rounds": 0, "fetch_retry_wait_sec": 0.0,
+        "catchup_lookback_trading_days": 3,
+    })
+    fetched_days = []
+
+    def fake_hist(symbols, from_date_iso, to_date_iso):
+        fetched_days.append(from_date_iso)
+        idx = pd.to_datetime([f"{from_date_iso} 09:15", f"{from_date_iso} 15:25"])
+        df = pd.DataFrame({"open": [110.0, 100.0], "high": [111.0, 101.0],
+                           "low": [109.0, 99.0], "close": [110.5, 103.2],
+                           "volume": [1, 1]}, index=idx)
+        return {s: df for s in symbols}
+    monkeypatch.setattr(mod, "_default_fetch_fn", fake_hist)
+    # latest exit (06-18) is today -> intraday endpoint
+    monkeypatch.setattr(mod, "_default_intraday_fetch_fn",
+                        lambda syms: fake_hist(syms, "2026-06-18", "2026-06-18"))
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    for d in ("2026-06-16", "2026-06-17"):
+        (log_dir / f"overnight_entry_{d}.log").write_text(SAMPLE_LOG, encoding="utf-8")
+    paper_path = _empty_paper_ledger(tmp_path)
+
+    rc = mod.main([
+        "--auto", "--log-dir", str(log_dir), "--paper-ledger", str(paper_path),
+        "--live-ledger", str(tmp_path / "no_live.json"),
+        "--reports-dir", str(tmp_path / "reports"),
+    ])
+
+    assert rc == 0
+    assert "2026-06-16" in fetched_days    # the catch-up day was fetched
+    recon = [t for t in json.loads(paper_path.read_text())["trades"]
+             if t.get("source") == "reconstructed"]
+    assert sorted({t["ts_iso"][:10] for t in recon}) == ["2026-06-17", "2026-06-18"]
+    assert len(recon) == 4
+
+
+def test_worse_rerun_keeps_rows_and_original_backup(tmp_path, monkeypatch):
+    # Run 1 prices both symbols. Run 2 (catch-up under a worse 429 burst) only
+    # prices SAMPANN: PACEDIGITK's row from run 1 must survive, and the backup
+    # must still be the pre-run-1 ledger.
+    import tools.overnight_paper_slippage as mod
+    monkeypatch.setattr(mod, "_today_ist", lambda: date(2026, 6, 22))
+    paper_path = _empty_paper_ledger(tmp_path)
+
+    def hist_for(only=None):
+        def f(symbols, from_date_iso, to_date_iso):
+            df = _mock_df_entry_day() if from_date_iso == "2026-06-16" else _mock_df_exit_day()
+            return {s: df for s in symbols if only is None or s == only}
+        return f
+
+    common = dict(
+        entry_date=date(2026, 6, 16),
+        log_path=_write_log(tmp_path, SAMPLE_LOG),
+        paper_ledger_path=paper_path,
+        live_ledger_path=tmp_path / "state" / "no_live.json",
+        reports_dir=tmp_path / "reports",
+        fetch_retry_rounds=0,
+        fetch_retry_wait_sec=0.0,
+    )
+    reconstruct_for_date(fetch_fn=hist_for(), **common)
+    reconstruct_for_date(fetch_fn=hist_for(only="NSE:SAMPANN"), **common)
+
+    recon = [t for t in json.loads(paper_path.read_text())["trades"]
+             if t.get("source") == "reconstructed"]
+    assert sorted(t["symbol"] for t in recon) == ["NSE:PACEDIGITK", "NSE:SAMPANN"]
+    backup = paper_path.parent / (paper_path.name + ".bak-2026-06-16")
+    assert json.loads(backup.read_text()) == {"trades": []}

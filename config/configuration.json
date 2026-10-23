@@ -813,6 +813,12 @@
         "fallback_to_cnc_if_not_mtf": true,
         "stale_snapshot_warn_days": 7
       },
+      "paper_reconstruction": {
+        "_note": "tools/overnight_paper_slippage.py (09:45 cron). 09:45 is a 5m bar close: both intraday daemons fetch their universe from the same IP and Upstox 429s past the SDK's ~6s backoff (lost 10-16, 10-22, 10-23 paper days). Symbols missing bars are re-fetched in rounds; --auto also re-runs any entry date in the lookback whose fired signals are not all in the paper ledger.",
+        "fetch_retry_rounds": 4,
+        "fetch_retry_wait_sec": 30,
+        "catchup_lookback_trading_days": 5
+      },
       "decay_tripwire": {
         "window_trades": 30,
         "pf_floor": 1.2,

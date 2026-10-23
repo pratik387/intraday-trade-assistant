@@ -30,6 +30,7 @@ import json
 import logging
 import re
 import shutil
+import time as _time
 from datetime import date, time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -324,6 +325,43 @@ def _today_ist() -> date:
         return datetime.now().date()
 
 
+def _has_bars(df: Optional[pd.DataFrame]) -> bool:
+    return df is not None and not df.empty
+
+
+def _fetch_with_retry(
+    fetch: Callable[[List[str]], Dict[str, pd.DataFrame]],
+    symbols: List[str],
+    *,
+    rounds: int,
+    wait_sec: float,
+    sleep_fn: Callable[[float], None],
+    label: str,
+) -> Dict[str, pd.DataFrame]:
+    """Fetch, then re-fetch only the symbols that came back without bars.
+
+    The SDK's own 429 backoff gives up after ~6s. The 09:45 cron lands on a 5m
+    bar close, when the intraday daemons pull their whole universe from the
+    same IP, and that burst outlasts the SDK backoff. Waiting `wait_sec`
+    between rounds gets past it.
+    """
+    bars = dict(fetch(symbols) or {})
+    for rnd in range(1, rounds + 1):
+        missing = [s for s in symbols if not _has_bars(bars.get(s))]
+        if not missing:
+            break
+        logger.warning(
+            "reconstruct_for_date: %s bars missing for %d/%d symbols; "
+            "retry %d/%d in %.0fs",
+            label, len(missing), len(symbols), rnd, rounds, wait_sec,
+        )
+        sleep_fn(wait_sec)
+        for sym, df in (fetch(missing) or {}).items():
+            if _has_bars(df):
+                bars[sym] = df
+    return bars
+
+
 def reconstruct_for_date(
     *,
     entry_date: date,
@@ -332,7 +370,10 @@ def reconstruct_for_date(
     live_ledger_path: Path,
     reports_dir: Path,
     fetch_fn: Callable[[List[str], str, str], Dict[str, pd.DataFrame]],
+    fetch_retry_rounds: int,
+    fetch_retry_wait_sec: float,
     intraday_fetch_fn: Optional[Callable[[List[str]], Dict[str, pd.DataFrame]]] = None,
+    sleep_fn: Callable[[float], None] = _time.sleep,
 ) -> Dict:
     """End-to-end reconstruction + slippage for one entry date.
 
@@ -347,7 +388,8 @@ def reconstruct_for_date(
       - exit price (09:15 open on the exit date): if the exit date is today,
         `intraday_fetch_fn` (today's intraday bars); else `fetch_fn`.
     `intraday_fetch_fn` defaults to the real SDK intraday wrapper; tests inject
-    a fake.
+    a fake. Symbols a fetch returns without bars are re-fetched up to
+    `fetch_retry_rounds` times, `fetch_retry_wait_sec` apart.
     """
     if intraday_fetch_fn is None:
         intraday_fetch_fn = _default_intraday_fetch_fn
@@ -367,18 +409,25 @@ def reconstruct_for_date(
     # historical endpoint lacks today's bars -> use the intraday endpoint.
     exit_bars: Dict[str, pd.DataFrame] = {}
     exit_is_today = exit_date == _today_ist()
+    retry = dict(rounds=fetch_retry_rounds, wait_sec=fetch_retry_wait_sec, sleep_fn=sleep_fn)
     if symbols:
         entry_iso = entry_date.isoformat()
-        entry_bars = fetch_fn(symbols, entry_iso, entry_iso) or {}
+        entry_bars = _fetch_with_retry(
+            lambda syms: fetch_fn(syms, entry_iso, entry_iso),
+            symbols, label="entry-day", **retry,
+        )
         if exit_is_today:
             logger.info(
                 "reconstruct_for_date: exit_date %s == today -> intraday endpoint for exit price",
                 exit_date,
             )
-            exit_bars = intraday_fetch_fn(symbols) or {}
+            exit_bars = _fetch_with_retry(intraday_fetch_fn, symbols, label="exit-day", **retry)
         else:
             exit_iso = exit_date.isoformat()
-            exit_bars = fetch_fn(symbols, exit_iso, exit_iso) or {}
+            exit_bars = _fetch_with_retry(
+                lambda syms: fetch_fn(syms, exit_iso, exit_iso),
+                symbols, label="exit-day", **retry,
+            )
 
     # hold_days: trading days between entry and exit (normally 1).
     hold_days = max(1, (exit_date - entry_date).days)
@@ -525,28 +574,32 @@ def _append_reconstructed(
 ) -> None:
     """Idempotently replace this exit-date's reconstructed entries in the PAPER ledger.
 
-    Backs up the file first, then removes any existing entries with
-    source=="reconstructed" whose ts_iso date == exit_date, and appends the new
-    set. Non-reconstructed (real paper-run) trades are never touched.
+    Backs up the file first, then removes existing source=="reconstructed"
+    entries whose ts_iso date == exit_date AND whose symbol this run rebuilt,
+    and appends the new set. Rows for symbols this run could not price are
+    kept, so a re-run under a worse rate-limit never shrinks the day.
+    Non-reconstructed (real paper-run) trades are never touched.
     """
     ledger = _load_ledger(paper_ledger_path)
     trades = ledger.get("trades", [])
     exit_iso = exit_date.isoformat()
+    rebuilt = {t.get("symbol") for t in reconstructed}
 
-    # Back up before any mutation (only if the file already exists).
+    # Back up before the FIRST mutation for this date only: a re-run (the
+    # --auto catch-up) must not overwrite the pre-mutation copy.
     paper_ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    if paper_ledger_path.exists():
-        backup = paper_ledger_path.with_name(paper_ledger_path.name + f".bak-{entry_date.isoformat()}")
+    backup = paper_ledger_path.with_name(paper_ledger_path.name + f".bak-{entry_date.isoformat()}")
+    if paper_ledger_path.exists() and not backup.exists():
         shutil.copy2(paper_ledger_path, backup)
         logger.info("_append_reconstructed: backed up paper ledger -> %s", backup)
 
-    # Drop prior reconstructed entries for THIS exit date only.
     kept = [
         t for t in trades
         if not (
             isinstance(t, dict)
             and t.get("source") == "reconstructed"
             and _ts_date(t.get("ts_iso")) == exit_iso
+            and t.get("symbol") in rebuilt
         )
     ]
     n_removed = len(trades) - len(kept)
@@ -565,6 +618,45 @@ def _append_reconstructed(
 # CLI
 # ---------------------------------------------------------------------------
 
+def dates_needing_reconstruction(
+    entry_dates: List[date], log_dir: Path, paper_ledger_path: Path,
+) -> List[date]:
+    """Entry dates whose fired signals are not all in the paper ledger.
+
+    Reconstructed rows are keyed by EXIT date (`ts_iso`), so an entry date is
+    complete when every symbol its entry log fired has a reconstructed row on
+    its exit date.
+    """
+    per_exit: Dict[str, set] = {}
+    for t in _load_ledger(paper_ledger_path).get("trades", []):
+        if isinstance(t, dict) and t.get("source") == "reconstructed":
+            per_exit.setdefault(_ts_date(t.get("ts_iso")), set()).add(t.get("symbol"))
+
+    out: List[date] = []
+    for entry_date in entry_dates:
+        log_path = log_dir / f"overnight_entry_{entry_date.isoformat()}.log"
+        if not log_path.exists():
+            continue
+        fired = {s for s, _, _ in load_fired_signals(log_path)}
+        if not fired:
+            continue
+        exit_iso = _next_trading_day(entry_date).isoformat()
+        if fired - per_exit.get(exit_iso, set()):
+            out.append(entry_date)
+    return out
+
+
+def _load_reconstruction_config() -> Dict:
+    """`setups.close_dn_overnight_long.paper_reconstruction` (fail fast if absent)."""
+    from config.filters_setup import load_filters
+    cfg = load_filters()["setups"]["close_dn_overnight_long"]["paper_reconstruction"]
+    return {
+        "fetch_retry_rounds": int(cfg["fetch_retry_rounds"]),
+        "fetch_retry_wait_sec": float(cfg["fetch_retry_wait_sec"]),
+        "catchup_lookback_trading_days": int(cfg["catchup_lookback_trading_days"]),
+    }
+
+
 def _prev_trading_day(d: date) -> date:
     """Most recent NSE trading day strictly before `d` (weekend/holiday-aware)."""
     from datetime import timedelta
@@ -581,9 +673,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument(
         "--auto", action="store_true",
         help="Reconstruct the most recent completed cycle: entry = previous "
-             "trading day (its exit = today's open). No-op on non-trading days. "
-             "Used by the morning cron so the Rs1L paper ledger tracks the live "
-             "book automatically.",
+             "trading day (its exit = today's open), plus any earlier entry date "
+             "within the configured lookback whose fired signals are missing "
+             "from the paper ledger. No-op on non-trading days. Used by the "
+             "morning cron so the Rs1L paper ledger tracks the live book "
+             "automatically.",
     )
     p.add_argument(
         "--log-dir", default=str(ROOT / "logs"),
@@ -600,27 +694,49 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--reports-dir", default=str(ROOT / "reports"))
     args = p.parse_args(argv)
 
+    cfg = _load_reconstruction_config()
+    log_dir = Path(args.log_dir)
+    paper_ledger_path = Path(args.paper_ledger)
+
     if args.auto:
         from services.execution.overnight_handlers import _is_trading_day
         today = _today_ist()
         if not _is_trading_day(today):
             print(f"--auto: {today} is not an NSE trading day; nothing to reconstruct.")
             return 0
-        args.date = _prev_trading_day(today).isoformat()
-        print(f"--auto: reconstructing entry date {args.date} (exited this morning)")
-    elif not args.date:
+        latest = _prev_trading_day(today)
+        # Catch-up: earlier entry dates a past run left short (e.g. rate-limited).
+        earlier: List[date] = []
+        cur = latest
+        for _ in range(cfg["catchup_lookback_trading_days"]):
+            cur = _prev_trading_day(cur)
+            earlier.append(cur)
+        catchup = sorted(dates_needing_reconstruction(earlier, log_dir, paper_ledger_path))
+        if catchup:
+            print(f"--auto: catching up incomplete entry dates {[d.isoformat() for d in catchup]}")
+        print(f"--auto: reconstructing entry date {latest.isoformat()} (exited this morning)")
+        entry_dates = catchup + [latest]
+    elif args.date:
+        entry_dates = [date.fromisoformat(args.date)]
+    else:
         p.error("either --date or --auto is required")
 
-    entry_date = date.fromisoformat(args.date)
-    log_path = Path(args.log_dir) / f"overnight_entry_{args.date}.log"
+    rc = 0
+    for entry_date in entry_dates:
+        rc = max(rc, _run_one(entry_date, args, cfg, log_dir, paper_ledger_path))
+    return rc
 
+
+def _run_one(entry_date: date, args, cfg: Dict, log_dir: Path, paper_ledger_path: Path) -> int:
     summary = reconstruct_for_date(
         entry_date=entry_date,
-        log_path=log_path,
-        paper_ledger_path=Path(args.paper_ledger),
+        log_path=log_dir / f"overnight_entry_{entry_date.isoformat()}.log",
+        paper_ledger_path=paper_ledger_path,
         live_ledger_path=Path(args.live_ledger),
         reports_dir=Path(args.reports_dir),
         fetch_fn=_default_fetch_fn,
+        fetch_retry_rounds=cfg["fetch_retry_rounds"],
+        fetch_retry_wait_sec=cfg["fetch_retry_wait_sec"],
     )
 
     agg = summary["aggregate"]
@@ -635,6 +751,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  total slip bps (mean): {agg['total_slip_bps_mean']}")
     print(f"  total slip INR(live) : {agg['total_slip_inr_on_live']}")
     print(f"  report               : {summary['report_path']}")
+    if summary["n_missing_price"]:
+        # Non-zero exit so the cron log shows the day is short; the next
+        # morning's --auto catch-up retries it.
+        logger.error(
+            "reconstruct_for_date: %s left %d fired signals unreconstructed",
+            summary["date"], summary["n_missing_price"],
+        )
+        return 1
     return 0
 
 
