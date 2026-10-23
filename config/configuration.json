@@ -814,7 +814,7 @@
         "stale_snapshot_warn_days": 7
       },
       "paper_reconstruction": {
-        "_note": "tools/overnight_paper_slippage.py (09:45 cron). 09:45 is a 5m bar close: both intraday daemons fetch their universe from the same IP and Upstox 429s past the SDK's ~6s backoff (lost 10-16, 10-22, 10-23 paper days). Symbols missing bars are re-fetched in rounds; --auto also re-runs any entry date in the lookback whose fired signals are not all in the paper ledger.",
+        "_note": "tools/overnight_paper_slippage.py (09:45 cron). Lost paper days 10-16, 10-22, 10-23: the run fell inside the intraday daemons' daily-candle 429 storms on the shared VM IP (see daily_data_fetch), past the SDK's ~6s backoff. Symbols missing bars are re-fetched in rounds; --auto also re-runs any entry date in the lookback whose fired signals are not all in the paper ledger (covers storms longer than the retry window).",
         "fetch_retry_rounds": 4,
         "fetch_retry_wait_sec": 30,
         "catchup_lookback_trading_days": 5
@@ -2016,6 +2016,14 @@
     "concurrency": 30,
     "fetch_all_symbols": true,
     "_note": "Fetch V3 intraday 5m bars for ALL core_symbols BEFORE Stage-0. Uses Historical API pipeline â€” guarantees backtest-live parity for both energy scoring and structure detection. Only active in live/paper mode (not backtest). 1500 symbols at 40 RPS = ~37s. Set fetch_all_symbols=false to revert to old behavior (fetch shortlisted only, after Stage-0)."
+  },
+  "daily_data_fetch": {
+    "_note": "Upstox daily candles (public endpoint, rate-limited PER IP: 50/s, 500/min, 2000/30min). Both intraday daemons share the VM IP. 2026-10-16..23: each refetched ~1540 symbols at the 09:21 first scan -> 2000/30min blown -> 10-50 min scan stalls and 130-250 symbols silently left with no daily data. One prewarm per morning under a cross-process lock; the second daemon loads the first one's snapshot.",
+    "hist_rps": 8,
+    "window_extra_calendar_days": 15,
+    "prewarm_retry_rounds": 3,
+    "prewarm_retry_wait_sec": 60,
+    "prewarm_lock_timeout_sec": 600
   },
   "early_mis_universe_filter": {
     "enabled": true,

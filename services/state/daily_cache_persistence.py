@@ -9,12 +9,23 @@ Similar pattern to PositionPersistence - atomic writes, thread-safe, auto-cleanu
 """
 from __future__ import annotations
 
+import os
 import pickle
 import threading
 import time
-from datetime import datetime
+from collections import Counter
+from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from utils.time_util import _now_naive_ist
+
+_IS_WINDOWS = os.name == "nt"
+if _IS_WINDOWS:
+    import msvcrt
+else:
+    import fcntl
 
 import pandas as pd
 
@@ -33,16 +44,14 @@ class DailyCachePersistence:
     """
     Handles daily OHLCV cache persistence to survive restarts.
 
-    Usage:
-        persistence = DailyCachePersistence()
-
-        # On startup - try to load from disk
-        cached_data = persistence.load_today()
-        if cached_data:
-            sdk.set_daily_cache(cached_data)
-        else:
-            sdk.prewarm_daily_cache(days=210)
-            persistence.save(sdk.get_daily_cache())
+    Usage (see main._prewarm_daily_cache):
+        p = DailyCachePersistence()
+        with p.prewarm_lock(timeout_sec=...):
+            cache = p.load_current(today=..., prev_trading_day=..., days=210)
+            if cache:
+                sdk.set_daily_cache(cache, days=210)
+            sdk.prewarm_daily_cache(days=210)       # fetches only the gaps
+            p.save(sdk.get_daily_cache(min_days=210), days=210, today=...)
     """
 
     def __init__(self, cache_dir: Optional[Path] = None) -> None:
@@ -66,63 +75,73 @@ class DailyCachePersistence:
             date = datetime.now().date().isoformat()
         return self.cache_dir / f"daily_cache_{date}.pkl"
 
-    def load_today(self) -> Optional[Dict[str, pd.DataFrame]]:
+    def load_current(
+        self, *, today: date, prev_trading_day: date, days: int,
+    ) -> Optional[Dict[str, pd.DataFrame]]:
+        """Newest snapshot that is CURRENT for `today`, else None (API fetch).
+
+        A snapshot is only written right after a morning API fetch, so the file
+        for day D holds bars up to D-1. Current therefore means, by content:
+          - fetched at depth >= `days` (pre-fix snapshots carry no depth: rejected),
+          - its most common last-bar date == `prev_trading_day`.
+        The filename date is NOT trusted: yesterday's morning snapshot ends two
+        sessions back and used to be loaded as current (2026-10 bug). Empty
+        frames (failed fetches) are dropped so prewarm refetches them.
         """
-        Load today's daily cache from disk if it exists.
+        files = sorted(self.cache_dir.glob("daily_cache_*.pkl"), key=lambda p: p.stem, reverse=True)
+        for cache_file in files:
+            try:
+                with self._lock:
+                    with open(cache_file, "rb") as f:
+                        data = pickle.load(f)
+            except Exception as e:
+                logger.warning(f"DAILY_CACHE | Failed to load {cache_file.name}: {e}")
+                continue
 
-        Returns:
-            Dict mapping symbol to DataFrame, or None if not found/corrupted
-        """
-        cache_file = self._get_cache_file_path()
-        if not cache_file.exists():
-            logger.info("DAILY_CACHE | No disk cache found for today")
-            return None
-
-        try:
-            start_time = time.perf_counter()
-
-            with self._lock:
-                with open(cache_file, "rb") as f:
-                    data = pickle.load(f)
-
-            cache = data.get("cache", {})
-            cached_date = data.get("date")
-            today = datetime.now().date().isoformat()
-
-            # Verify cache is for today
-            if cached_date != today:
-                logger.warning(f"DAILY_CACHE | Cache date mismatch: {cached_date} != {today}")
-                return None
-
-            elapsed = time.perf_counter() - start_time
-            logger.info(f"DAILY_CACHE | Loaded {len(cache)} symbols from disk in {elapsed:.2f}s")
+            snap_days = data.get("days")
+            cache = {k: v for k, v in (data.get("cache") or {}).items()
+                     if v is not None and not v.empty}
+            if not cache:
+                continue
+            if snap_days is None or int(snap_days) < days:
+                logger.info(
+                    "DAILY_CACHE | %s fetched at depth %s < %d -> not usable",
+                    cache_file.name, snap_days, days,
+                )
+                continue
+            last_bars = Counter(pd.Timestamp(v.index[-1]).date() for v in cache.values())
+            last_bar = last_bars.most_common(1)[0][0]
+            if last_bar != prev_trading_day:
+                logger.info(
+                    "DAILY_CACHE | %s ends %s, need %s for %s -> stale",
+                    cache_file.name, last_bar, prev_trading_day, today,
+                )
+                continue
+            # Illiquid names with no trade on the last session end earlier;
+            # counted, not refetched (the snapshot itself was fetched this morning).
+            n_lagging = sum(n for d, n in last_bars.items() if d < last_bar)
+            logger.info(
+                "DAILY_CACHE | Loaded %d symbols from %s (ends %s, depth %s, %d end earlier)",
+                len(cache), cache_file.name, last_bar, snap_days, n_lagging,
+            )
             return cache
 
-        except Exception as e:
-            logger.warning(f"DAILY_CACHE | Failed to load from disk: {e}")
-            return None
+        logger.info("DAILY_CACHE | No current snapshot for %s -> API fetch required", today)
+        return None
 
-    def save(self, cache: Dict[str, pd.DataFrame]) -> bool:
-        """
-        Save daily cache to disk for persistence across restarts.
-
-        Args:
-            cache: Dict mapping symbol to DataFrame
-
-        Returns:
-            True if saved successfully, False otherwise
-        """
-        today = datetime.now().date().isoformat()
-        cache_file = self._get_cache_file_path(today)
+    def save(self, cache: Dict[str, pd.DataFrame], *, days: int, today: date) -> bool:
+        """Save the daily cache, recording the depth it was fetched at."""
+        cache_file = self._get_cache_file_path(today.isoformat())
         temp_file = cache_file.with_suffix(".tmp")
 
         try:
             start_time = time.perf_counter()
 
             data = {
-                "date": today,
+                "date": today.isoformat(),
+                "days": int(days),
                 "cache": cache,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": _now_naive_ist().isoformat(),
                 "symbol_count": len(cache)
             }
 
@@ -137,7 +156,7 @@ class DailyCachePersistence:
             logger.info(f"DAILY_CACHE | Saved {len(cache)} symbols to disk ({size_mb:.1f} MB) in {elapsed:.2f}s")
 
             # Cleanup old cache files (keep only last 3 days)
-            self._cleanup_old_files()
+            self._cleanup_old_files(today)
 
             return True
 
@@ -150,10 +169,9 @@ class DailyCachePersistence:
                     pass
             return False
 
-    def _cleanup_old_files(self, keep_days: int = 3) -> None:
+    def _cleanup_old_files(self, today: date, keep_days: int = 3) -> None:
         """Remove cache files older than keep_days."""
         try:
-            today = datetime.now().date()
             for cache_file in self.cache_dir.glob("daily_cache_*.pkl"):
                 try:
                     # Extract date from filename: daily_cache_2025-12-19.pkl
@@ -168,88 +186,56 @@ class DailyCachePersistence:
         except Exception as e:
             logger.debug(f"DAILY_CACHE | Cleanup error: {e}")
 
-    def load_latest(self) -> Optional[Dict[str, pd.DataFrame]]:
-        """
-        Load the rolling daily cache only if it covers the most recent
-        trading day.
+    # --- cross-process prewarm lock ------------------------------------------
+    # Both intraday daemons share one IP-limited Upstox budget (and, on the VM,
+    # one cache dir via symlink). The first daemon fetches and saves; the second
+    # blocks here, then loads that snapshot instead of fetching again.
 
-        Rolling cache design: MDS (or paper/live session) builds today's
-        daily bar from 1m data at EOD and saves it. The next morning, that
-        file is loaded — cache has 210 days ending at the previous session's
-        close, which is current.
-
-        Trading-day awareness: if we missed a session (didn't run on that
-        day, no snapshot saved), the most recent cache file on disk may be
-        N>0 trading days STALE. We must NOT silently use it — that would
-        leave the system blind to the missed day's bars. In that case
-        return None so `prewarm_daily_cache()` does a real API fetch.
-
-        Returns:
-            Dict mapping symbol to DataFrame, or None if no current cache
-        """
-        # Warm restart on the same trading day
-        today_cache = self.load_today()
-        if today_cache is not None:
-            return today_cache
-
-        # Compute the most recent NSE trading day strictly before today.
-        # If that exact snapshot exists on disk, it's current; otherwise the
-        # cache is missing >=1 trading day and we must force an API fetch.
+    def try_prewarm_lock(self) -> bool:
+        """Non-blocking attempt to take the prewarm lock."""
+        fh = open(self.cache_dir / ".prewarm.lock", "a+b")
         try:
-            from utils.util import is_trading_day
-            today = datetime.now().date()
-            from datetime import timedelta as _td
-            prev_trading_day = today - _td(days=1)
-            for _ in range(10):
-                if is_trading_day(prev_trading_day):
-                    break
-                prev_trading_day -= _td(days=1)
+            if _IS_WINDOWS:
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
             else:
-                logger.warning(
-                    "DAILY_CACHE | Could not find a trading day in the last 10 days "
-                    "from %s — forcing API fetch", today
-                )
-                return None
-        except Exception as e:
-            logger.warning(f"DAILY_CACHE | Trading-day lookup failed ({e}); forcing API fetch")
-            return None
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            return False
+        self._lock_fh = fh
+        return True
 
-        expected_file = self._get_cache_file_path(prev_trading_day.isoformat())
-        if not expected_file.exists():
-            # Identify what we have on disk (for diagnostics) and bail.
-            cache_files = sorted(
-                self.cache_dir.glob("daily_cache_*.pkl"),
-                key=lambda p: p.stem,
-                reverse=True,
-            )
-            newest = cache_files[0].name if cache_files else "<none>"
-            logger.info(
-                "DAILY_CACHE | No snapshot for last trading day %s (newest on disk=%s) "
-                "→ API fetch required",
-                prev_trading_day.isoformat(), newest,
-            )
-            return None
-
+    def release_prewarm_lock(self) -> None:
+        fh = getattr(self, "_lock_fh", None)
+        if fh is None:
+            return
         try:
-            start_time = time.perf_counter()
-            with self._lock:
-                with open(expected_file, "rb") as f:
-                    data = pickle.load(f)
-            cache = data.get("cache", {})
-            if not cache:
-                logger.warning(
-                    f"DAILY_CACHE | Snapshot {expected_file.name} is empty → API fetch required"
-                )
-                return None
-            elapsed = time.perf_counter() - start_time
-            logger.info(
-                f"DAILY_CACHE | Rolling load: {len(cache)} symbols from "
-                f"{expected_file.name} (last trading day, current) in {elapsed:.2f}s"
-            )
-            return cache
-        except Exception as e:
-            logger.warning(f"DAILY_CACHE | Failed to load {expected_file.name}: {e}")
-            return None
+            if _IS_WINDOWS:
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
+            self._lock_fh = None
+
+    @contextmanager
+    def prewarm_lock(self, *, timeout_sec: float):
+        """Hold the prewarm lock; waits up to `timeout_sec`, then raises."""
+        deadline = time.monotonic() + timeout_sec
+        waited = False
+        while not self.try_prewarm_lock():
+            if not waited:
+                logger.info("DAILY_CACHE | Another process is prewarming; waiting for its snapshot")
+                waited = True
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"DAILY_CACHE | prewarm lock not acquired in {timeout_sec:.0f}s")
+            time.sleep(1.0)
+        try:
+            yield
+        finally:
+            self.release_prewarm_lock()
 
     def exists_today(self) -> bool:
         """Check if today's cache file exists."""

@@ -323,15 +323,19 @@ def main() -> int:
         )
 
     def _prewarm_daily_cache(sdk, mis_fetcher=None):
-        """Pre-warm daily cache: disk (2-5s) -> API (15min)."""
-        cache_persistence = DailyCachePersistence()
-        loaded_from = None
+        """Pre-warm daily cache: current disk snapshot -> API for the gaps.
 
-        # Step 1: Try rolling disk cache (today's or yesterday's)
-        cached_data = cache_persistence.load_latest()
-        if cached_data:
-            sdk.set_daily_cache(cached_data)
-            loaded_from = "disk"
+        Runs under a cross-process lock: both intraday daemons share one
+        IP-limited Upstox budget, so the first one fetches and saves and the
+        second loads that snapshot (2026-10 rate-limit storms).
+        """
+        from utils.util import is_trading_day
+        days = 210
+        dcfg = cfg["daily_data_fetch"]
+        today = _now_naive_ist().date()
+        prev_trading_day = today - timedelta(days=1)
+        while not is_trading_day(prev_trading_day):
+            prev_trading_day -= timedelta(days=1)
 
         # Compute MIS-filtered symbol list for prewarm (when early filter enabled)
         mis_filter_cfg = cfg.get("early_mis_universe_filter", {})
@@ -341,11 +345,32 @@ def main() -> int:
             prewarm_symbols = [s for s in all_eq if mis_fetcher.is_mis_allowed(s)]
             logger.info(f"MIS_UNIVERSE | Prewarm: {len(all_eq)} -> {len(prewarm_symbols)} symbols")
 
-        # Step 2: API fallback (90% threshold skips if rolling cache loaded)
-        result = sdk.prewarm_daily_cache(symbols=prewarm_symbols, days=210)
-        if result.get("source") == "api":
-            loaded_from = "api"
-            cache_persistence.save(sdk.get_daily_cache())
+        cache_persistence = DailyCachePersistence()
+
+        def _load_and_fill():
+            loaded_from = None
+            cached_data = cache_persistence.load_current(
+                today=today, prev_trading_day=prev_trading_day, days=days,
+            )
+            if cached_data:
+                sdk.set_daily_cache(cached_data, days=days)
+                loaded_from = "disk"
+
+            # Fetches only symbols the snapshot does not cover at `days`.
+            result = sdk.prewarm_daily_cache(symbols=prewarm_symbols, days=days)
+            if result.get("source") == "api":
+                loaded_from = "api" if loaded_from is None else "disk+api"
+                cache_persistence.save(sdk.get_daily_cache(min_days=days), days=days, today=today)
+            return loaded_from
+
+        try:
+            with cache_persistence.prewarm_lock(timeout_sec=float(dcfg["prewarm_lock_timeout_sec"])):
+                loaded_from = _load_and_fill()
+        except TimeoutError as e:
+            # Never let a slow/hung peer stop this daemon from trading: go
+            # ahead unlocked (still snapshot-first, gaps only).
+            logger.error("%s | proceeding without the lock", e)
+            loaded_from = _load_and_fill()
 
         logger.info(f"DAILY_CACHE | Prewarm complete, source={loaded_from}")
 

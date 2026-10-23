@@ -38,6 +38,7 @@ import requests
 from config.env_setup import env
 from config.logging_config import get_agent_logger
 from utils.time_util import _now_naive_ist
+from utils.util import is_trading_day
 
 logger = get_agent_logger()
 
@@ -103,11 +104,21 @@ class UpstoxDataClient:
         self._daily_cache_days: Dict[str, int] = {}
         self._daily_cache_lock = threading.RLock()
 
-        # Rate limiter for REST API (Upstox official limit: 50 RPS, 500/min, 2000/30min)
-        self._rps = 50.0
+        # Rate limiter for REST API (Upstox official limit: 50 RPS, 500/min,
+        # 2000/30min — per IP on the public endpoint, shared by every process
+        # on the VM). Pacing and prewarm retries: config `daily_data_fetch`.
+        from config.filters_setup import load_filters
+        dcfg = load_filters()["daily_data_fetch"]
+        self._rps = float(dcfg["hist_rps"])
         self._rl_min_dt = 1.0 / self._rps
         self._rl_last = 0.0
         self._rl_lock = threading.Lock()
+        self._window_extra_calendar_days = int(dcfg["window_extra_calendar_days"])
+        self._window_start_memo: Dict[tuple, "date"] = {}
+        self._window_start_lock = threading.Lock()
+        self._prewarm_retry_rounds = int(dcfg["prewarm_retry_rounds"])
+        self._prewarm_retry_wait_sec = float(dcfg["prewarm_retry_wait_sec"])
+        self._sleep = time.sleep
 
         self._load_instruments()
 
@@ -347,18 +358,27 @@ class UpstoxDataClient:
                 self._daily_cache_days.clear()
                 self._daily_cache_day = today
 
-    def get_daily_cache(self) -> Dict[str, pd.DataFrame]:
-        """Get current daily cache (for persistence layer)."""
-        with self._daily_cache_lock:
-            return dict(self._daily_cache)
+    def get_daily_cache(self, min_days: int) -> Dict[str, pd.DataFrame]:
+        """Cached frames fetched at depth >= `min_days` (for the persistence layer).
 
-    def set_daily_cache(self, cache: Dict[str, pd.DataFrame]) -> None:
-        """Inject daily cache from external source (Redis/disk)."""
+        A snapshot is stamped with one depth on reload, so a shallower entry
+        (e.g. a days=2 prevday fetch) must not be saved under the deeper stamp.
+        """
+        with self._daily_cache_lock:
+            return {k: v for k, v in self._daily_cache.items()
+                    if self._daily_cache_days.get(k, 0) >= min_days}
+
+    def set_daily_cache(self, cache: Dict[str, pd.DataFrame], days: int) -> None:
+        """Inject daily cache from external source (disk snapshot).
+
+        `days` is the depth the snapshot was fetched at. Stamping len(df) instead
+        made every symbol with < `days` bars look unsatisfied, so the first scan
+        refetched the whole universe (2026-10 rate-limit storms).
+        """
         today = _now_naive_ist().date().isoformat()
         with self._daily_cache_lock:
-            self._daily_cache = cache
-            # Injected entries: trust their bar count as the satisfied request size.
-            self._daily_cache_days = {k: len(v) for k, v in cache.items()}
+            self._daily_cache = dict(cache)
+            self._daily_cache_days = {k: int(days) for k in cache}
             self._daily_cache_day = today
         logger.info(f"DAILY_CACHE | Injected {len(cache)} symbols from external source")
 
@@ -369,14 +389,36 @@ class UpstoxDataClient:
             raise KeyError(f"UpstoxDataClient: unknown symbol {symbol}")
         return inst.instrument_key
 
+    def _daily_window_start(self, end_date, days: int):
+        """Start date covering `days` TRADING days before `end_date`.
+
+        The window used to be `days + 10` CALENDAR days (~150 bars for
+        days=210) while backtest's get_daily serves 210 bars. The extra
+        calendar buffer covers holidays the holiday file does not know about.
+        """
+        key = (end_date, days)
+        # Locked: concurrent prewarm threads would otherwise each redo the
+        # ~300-call holiday walk on the first miss.
+        with self._window_start_lock:
+            memo = self._window_start_memo.get(key)
+            if memo is not None:
+                return memo
+            d, n = end_date, 0
+            while n < days:
+                d -= timedelta(days=1)
+                if is_trading_day(d):
+                    n += 1
+            start = d - timedelta(days=self._window_extra_calendar_days)
+            self._window_start_memo[key] = start
+            return start
+
     def _fetch_daily_candles(self, instrument_key: str, days: int) -> pd.DataFrame:
         """
         Fetch daily candles from Upstox public REST API (no auth).
         Returns tz-naive daily DataFrame with columns: [open, high, low, close, volume].
         """
-        now_ist = _now_naive_ist()
-        end_date = now_ist.date()
-        start_date = (now_ist - timedelta(days=max(days + 10, 30))).date()
+        end_date = _now_naive_ist().date()
+        start_date = self._daily_window_start(end_date, days)
 
         url = (
             f"{UPSTOX_HIST_BASE}/"
@@ -448,9 +490,27 @@ class UpstoxDataClient:
             if cached is not None and cached_days >= days:
                 return cached.tail(days).copy()
 
+        return self._refetch_daily(symbol, days)
+
+    def _refetch_daily(self, symbol: str, days: int) -> pd.DataFrame:
+        """Fetch and cache, bypassing the cache check.
+
+        An empty result (rate-limited past retries, or no history) never
+        replaces bars already cached: the old bars are served instead.
+        """
         ikey = self._instrument_key_for(symbol)
         df = self._fetch_daily_candles(ikey, days)
         with self._daily_cache_lock:
+            prior = self._daily_cache.get(symbol)
+            if (df is None or df.empty) and prior is not None and not prior.empty:
+                # Stamp the request depth so later calls do not hit the API
+                # again on every call (that would restart the storm in-session).
+                self._daily_cache_days[symbol] = days
+                logger.warning(
+                    "UPSTOX_DAILY | %s refetch at %d days came back empty; keeping %d cached bars",
+                    symbol, days, len(prior),
+                )
+                return prior.tail(days).copy()
             self._daily_cache[symbol] = df
             self._daily_cache_days[symbol] = days
         return df
@@ -475,54 +535,62 @@ class UpstoxDataClient:
 
         total = len(symbols)
 
-        # Check if cache already populated
-        if len(self._daily_cache) >= total * 0.9:
-            logger.info(f"PREWARM_DAILY | Cache already has {len(self._daily_cache)} symbols, skipping API fetch")
-            return {
-                "success": len(self._daily_cache),
-                "failed": 0,
-                "total": total,
-                "elapsed_seconds": 0.0,
-                "source": "cache"
-            }
+        def _satisfied(sym: str) -> bool:
+            with self._daily_cache_lock:
+                df = self._daily_cache.get(sym)
+                return (df is not None and not df.empty
+                        and self._daily_cache_days.get(sym, 0) >= days)
 
-        logger.info(f"PREWARM_DAILY | Starting pre-warm for {total} symbols ({days} days each)")
-        logger.info(f"PREWARM_DAILY | Estimated time: {total / self._rps / 60:.1f} minutes at {self._rps} RPS")
+        # Fetch only the gaps (an injected current snapshot usually covers all).
+        todo = [s for s in symbols if not _satisfied(s)]
+        if not todo:
+            logger.info(f"PREWARM_DAILY | Cache covers all {total} symbols at {days} days, skipping API fetch")
+            return {"success": total, "failed": 0, "missing": [], "total": total,
+                    "elapsed_seconds": 0.0, "source": "cache"}
 
+        logger.info(
+            f"PREWARM_DAILY | Fetching {len(todo)}/{total} symbols ({days} days each) | "
+            f"est {len(todo) / self._rps / 60:.1f} min at {self._rps} RPS"
+        )
         start_time = time_module.perf_counter()
-        success_count = 0
-        fail_count = 0
 
-        for i, symbol in enumerate(symbols):
-            try:
-                df = self.get_daily(symbol, days=days)
-                if df is not None and not df.empty:
-                    success_count += 1
-                else:
-                    fail_count += 1
-            except Exception as e:
-                fail_count += 1
-                if fail_count <= 5:
+        def _fetch_round(batch: List[str]) -> None:
+            for i, symbol in enumerate(batch):
+                try:
+                    self._refetch_daily(symbol, days)
+                except Exception as e:
                     logger.warning(f"PREWARM_DAILY | Failed for {symbol}: {e}")
+                if (i + 1) % 500 == 0:
+                    logger.info(
+                        f"PREWARM_DAILY | Progress: {i+1}/{len(batch)} | "
+                        f"Elapsed: {time_module.perf_counter() - start_time:.0f}s"
+                    )
 
-            if (i + 1) % 500 == 0:
-                elapsed = time_module.perf_counter() - start_time
-                rate = (i + 1) / elapsed
-                remaining = (total - i - 1) / rate if rate > 0 else 0
-                logger.info(
-                    f"PREWARM_DAILY | Progress: {i+1}/{total} ({success_count} ok, {fail_count} fail) | "
-                    f"Elapsed: {elapsed:.0f}s | Remaining: {remaining:.0f}s"
-                )
+        _fetch_round(todo)
+        missing = [s for s in todo if not _satisfied(s)]
+        for rnd in range(1, self._prewarm_retry_rounds + 1):
+            if not missing:
+                break
+            logger.warning(
+                f"PREWARM_DAILY | {len(missing)} symbols without daily data; "
+                f"retry {rnd}/{self._prewarm_retry_rounds} in {self._prewarm_retry_wait_sec:.0f}s"
+            )
+            self._sleep(self._prewarm_retry_wait_sec)
+            _fetch_round(missing)
+            missing = [s for s in missing if not _satisfied(s)]
 
         elapsed = time_module.perf_counter() - start_time
-        logger.info(
-            f"PREWARM_DAILY | Complete: {success_count}/{total} symbols cached | "
-            f"Failed: {fail_count} | Time: {elapsed:.1f}s ({elapsed/60:.1f} min)"
-        )
+        msg = (f"PREWARM_DAILY | Complete: {total - len(missing)}/{total} symbols cached | "
+               f"Missing: {len(missing)} | Time: {elapsed:.1f}s ({elapsed/60:.1f} min)")
+        if missing:
+            logger.error(msg + f" | first missing: {missing[:10]}")
+        else:
+            logger.info(msg)
 
         return {
-            "success": success_count,
-            "failed": fail_count,
+            "success": total - len(missing),
+            "failed": len(missing),
+            "missing": missing,
             "total": total,
             "elapsed_seconds": elapsed,
             "source": "api"

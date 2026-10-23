@@ -200,13 +200,21 @@ class KiteClient:
 
     # ---- Daily cache getter/setter for external persistence ----
 
-    def get_daily_cache(self) -> Dict[str, pd.DataFrame]:
-        """Get the current daily cache (for persistence layer to save)."""
+    def get_daily_cache(self, min_days: int) -> Dict[str, pd.DataFrame]:
+        """Get the current daily cache (for persistence layer to save).
+
+        `min_days` matches UpstoxDataClient's interface; this client does not
+        track per-symbol depth, so every entry is returned.
+        """
         with self._daily_cache_lock:
             return dict(self._daily_cache)
 
-    def set_daily_cache(self, cache: Dict[str, pd.DataFrame]) -> None:
-        """Set the daily cache from external source (persistence layer load)."""
+    def set_daily_cache(self, cache: Dict[str, pd.DataFrame], days: int) -> None:
+        """Set the daily cache from external source (persistence layer load).
+
+        `days` (snapshot fetch depth) matches UpstoxDataClient's interface; this
+        client's cache check does not track per-symbol depth.
+        """
         today = datetime.now().date().isoformat()
         with self._daily_cache_lock:
             self._daily_cache = cache
