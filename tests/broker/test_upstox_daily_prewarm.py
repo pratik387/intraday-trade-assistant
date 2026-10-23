@@ -142,3 +142,23 @@ def test_empty_refetch_over_prior_stamps_to_stop_repeat_calls():
     c.get_daily("A", days=210)       # empty -> keeps prior, stamps 210
     c.get_daily("A", days=210)       # must NOT hit the API again
     assert calls == [2, 210]
+
+
+def test_api_prewarm_survives_first_get_daily(monkeypatch):
+    # Live 2026-10-23 restart: an API prewarm (no snapshot) left the cache's
+    # day unset, so the first scan's get_daily "reset for a new day", cleared
+    # the cache and refetched all 1541 symbols. Uses the REAL day-reset.
+    calls = []
+
+    def fetch(ikey, days):
+        calls.append(ikey)
+        return _bars(210)
+
+    c = _client(fetch)
+    del c._reset_daily_cache_if_new_day          # use the class method
+    c._daily_cache_day = None                     # fresh process
+    monkeypatch.setattr(mod, "_now_naive_ist", lambda: pd.Timestamp("2026-10-23 14:00"))
+    c.prewarm_daily_cache(symbols=["A", "B"], days=210)
+    c.get_daily("A", days=210)
+    c.get_daily("B", days=210)
+    assert calls == ["A", "B"]                    # no refetch after prewarm

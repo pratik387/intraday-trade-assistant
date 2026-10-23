@@ -534,6 +534,10 @@ class UpstoxDataClient:
             symbols = self._equity_instruments
 
         total = len(symbols)
+        # Pin the cache to today BEFORE filling it via _refetch_daily: otherwise
+        # the first get_daily sees an unset day, "resets for a new day" and
+        # refetches everything (live restart 2026-10-23: 1541 symbols, 198s).
+        self._reset_daily_cache_if_new_day()
 
         def _satisfied(sym: str) -> bool:
             with self._daily_cache_lock:
