@@ -2,7 +2,7 @@
 
 This document is the **single source of truth** for setups that were prototyped, (believed-)validated, then retired. It exists so we don't burn weeks re-implementing dead theses.
 
-**Inventory:** 23 retired setups across 6 retire batches:
+**Inventory:** 24 retired setups across 7 retire batches:
 
 - **Sub-5 ICT/SMC batch** (2026-04-25) — 3 setups: cargo-culted US/forex literature
 - **Sub-7 generic-pattern batch** (2026-04-25) — 5 setups: Indian-published but universal mechanics
@@ -10,6 +10,7 @@ This document is the **single source of truth** for setups that were prototyped,
 - **Sub-9 narrow-cell batch** (2026-05-07 to 2026-05-14) — 4 setups: each killed by a specific bug or threshold failure (look-ahead bias, regime non-reproducibility, never sanity-validated, Holdout n below floor)
 - **Sub-9 regulatory-regime batch** (2026-05-19) — 3 setups + 2 revival fails: `mis_unwind_vwap_revert_short`, `round_number_sweep_short`, `circuit_release_fade_short` (each shipped to production then collapsed in Holdout post-SEBI-Oct-2025); `capitulation_long_v2` (Phase 1-5 revival of earlier `capitulation_long_morning` — failed at Holdout ship gate); `pre_results_t1_fade` (Phase 1-5 candidate — failed v2 conservative re-run after data-classification correction; regime-conditioned edge with FII-positioning dependency)
 - **Active-trio retirement batch** (2026-05-22 → 2026-07-27) — the 3 production intraday setups themselves: `delivery_pct_anomaly_short` (Stage 13 soft-disable 2026-05-22), `circuit_t1_fade_short` (Stage 14 2026-05-23), `gap_fade_short` (disabled 2026-06-25/29, retirement confirmed after paper validation 2026-07-27). All three cleared the historical gauntlet, shipped, and died on forward/OCI-canonical data — the empirical basis for the 2026-07-27 lifecycle amendments (forward-only validation + experiment ledger, see `docs/setup_lifecycle.md`)
+- **Forward-paper retirement** (2026-10-29) — `earnings_downshock_continuation_short`: passed every historical gate (fresh-pool one-shot by 1.4bp), then lost on forward paper to post-results upside squeezes into the upper circuit that the research ledger never contained
 
 **Hard rule: do NOT re-implement any setup listed here without:**
 
@@ -45,6 +46,54 @@ These patterns killed multiple setups. Watch for them when designing or validati
 7. **MIS-leveraged fee math.** Fees scale with `qty × mis_leverage` (5× for MIS-eligible names), not base qty. Discovery PFs that were computed on base-qty fees are over-stated by Rs.650K+ on 2yr aggregates. See commit 271a149.
 
 8. **Target-anchor stripping in plan dict.** Detector emits `target_anchor_type="r_multiple"` on the TradePlan, but the dict re-builder in `services/screener_live.py` strips the field — executor sees a missing key and defaults to `"structural"`, which keeps detect-time T1/T2 instead of recomputing from actual entry. Always verify `R_MULT_RECALCULATED` log lines fire for r-multiple detectors. See commits ee7e0a3 + 2c32a03.
+
+---
+
+## `earnings_downshock_continuation_short` — RETIRED 2026-10-29 (forward paper, before the pre-registered n>=40 one-shot)
+
+**Retired:** 2026-10-29, operator decision after a forward review (paper since 2026-08-12, V2 construction).
+**Predecessor specs:** `specs/2026-07-29-brief-earnings_downshock_continuation_short.md`; cell lock `tools/sub9_research/earnings_downshock_continuation_short_cell_lock.json`; V2 pre-registration in `docs/experiment_ledger.jsonl` (2026-07-31) and config `_status_2026_07_31`.
+**Config status:** `enabled: false`, `paper_enabled: false`, `live_enabled: false`, with `_retired_2026_10_29` evidence string. Detector `structures/earnings_downshock_continuation_short_structure.py`, universe builder and the earnings-calendar event feed retained.
+
+### Original thesis
+
+An analyst-uncovered, retail-held NSE small-cap that reports earnings the market punishes with a >= 8% down day is not done selling at that close; the holder base digests the news over T+1, so the stock keeps bleeding intraday. SHORT at the T+1 09:20 print, cover at 15:10-15:15. MIS cash short, no F&O leg.
+
+### Universe + filters (V2, pre-registered 2026-07-31)
+
+- Reaction-day move in [-12%, -8%] (band added in V2), small_cap only (nse_all taxonomy), low+mid ADV tercile, MIS-shortable, surveillance-clean, circuit-clean open.
+- Geometry none/none in research (no stop, no target); production carries a 15% catastrophe stop it cannot do without, sized above the Discovery max MAE (12.97%).
+- Rs 1L notional per trade in research; paper ran at Rs 5L under the book-wide 10x paper multiplier (does not change %-returns).
+
+### Claimed validation (pre-retire)
+
+- Screen: sole survivor of a 10-class event screen; era_A +0.481% / era_B +0.516% abnormal, net of 0.31%.
+- Stage-4 real-P&L (Discovery n=220): +0.552% PF 1.55 at measured central slippage 18.7bp/side; +0.377% PF 1.35 conservative.
+- Phase-5 sweep: 324 combos, no stop/target beat none/none; demoted window CONSERVATIVE +0.229% PF 1.21.
+- Fresh-pool one-shot (2026-05-01..07-24, n=77): CONSERVATIVE +0.164% PF 1.15 t +0.49, a PASS by 1.4bp against the +0.15% floor. Flagged at the time: one month (2026-05, n=53, +0.98%) carried all of it; ex-May -1.647% on n=24; forward expectation "near zero".
+- V2 in-sample: n=210 +0.629% PF 1.77 t 3.10, but the filters were mined from the same data (Bonferroni bar ~t 3.0).
+
+### Why retired (the actual failure)
+
+1. **Forward paper lost, and the loss is tail-shaped.** 2026-08-12..10-29: 15 priced signals (17 approved; 2 symbols missing from the Upstox instrument map), priced research-style (short 09:20 close, cover 15:10 close): mean **-1.75%** gross, median +0.18%, 9/15 winners. The 12 traded: -2.24% gross; paper ledger PF **0.13**, -Rs1.64L. Execution was not the problem: paper fills tracked the research-style pricing, and the 5 entries that expired (entry-zone trigger) would have added ~+0.2% each.
+2. **The short-side circuit tail was not in the evidence.** ASIANENE 2026-08-17 -11.2%; HUHTAMAKI 2026-10-28 **-18.9%**, locked at its +20% upper circuit from 13:40 to the close with no sellers, so the catastrophe-stop BUY was REJECTED. Research V2 (n=251) had **zero** trades with a >= 12% adverse excursion and a worst trade of -8.8%. Two in fifteen forward is outside that distribution. Neither move had a clear news catalyst; both names had been strong before results (ASIANENE near its 52-week high).
+3. **Decay continued through every window after May 2026:** 2026-05 +0.98% (n=53), 06 -1.49% (17), 07 -2.03% (7), Aug-Oct -2.24% gross (12). The 2026 Jan-Apr holdout was already net-negative at conservative cost.
+4. **Operational:** on 2026-10-28 it also traded LIVE (HUHTAMAKI -Rs18.6k booked, CENTENKA -Rs0.7k) because the intraday path gated only on `enabled`; fixed by the `live_enabled` gate (commit `4f3c112`). The rejected stop exposed an exit-executor bug that booked unfilled exits as filled (fixed `5c3e00c`).
+
+### Root-cause pattern
+
+A thin edge (fresh-pool PASS by 1.4bp) with an asymmetric short tail: a post-results dip in a stock with buyers waiting can reverse into the upper circuit, where a short cannot be covered at any price, so a stop does not bound the loss. The research ledger sampled a period with no such squeeze and so priced the tail at zero.
+
+### Conditions for revival
+
+1. A new pre-registered thesis tested on data that did not generate it. Do not add a "skip stocks strong before results" filter: that idea comes from the two losing trades and would be fitted to them.
+2. Any revival must model the upper-circuit tail explicitly: per-trade max loss to the circuit band, not to a stop.
+3. Per the 2026-07-31 registration, V1 is NOT resurrected because V2 failed.
+
+### Files/code status
+
+- `config/configuration.json` `setups.earnings_downshock_continuation_short`: disabled, block retained with evidence strings.
+- Detector, universe builder (`services.setup_universe.earnings_downshock_continuation_short_universe`), `services/earnings_reaction_enrichment.py`, the earnings-calendar refresh (`tools/earnings_calendar/fetch_earnings`) and the research scripts under `tools/sub9_research/*earnings_downshock*`: retained.
 
 ---
 
