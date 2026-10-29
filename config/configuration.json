@@ -754,8 +754,9 @@
     },
     "close_dn_overnight_long": {
       "sizing_mode": "risk",
-      "enabled": true,
+      "enabled": false,
       "paper_enabled": true,
+      "_live_paused_2026_10_29": "LIVE PAUSED (operator). Live 08-24..10-29: 178 trades net -Rs17.6k, PF 0.70; bug-touched exits (8) were +Rs1.6k, so not a bug story. Cost hurdle on paper 06-10..10-29 (642 trades, paper fees + DP Rs15.34 + live shortfall by liquidity): >Rs2cr MTF bulk (n=196) gross +0.35% t4.5 -> net at live ~0.00%; Rs25L-2cr net negative; ADV <Rs25L CNC (n=65) net +0.44%/trade, sd 2.4%, t1.5. Paper mirror keeps running (paper_enabled). Exits of held positions are unaffected (_managed_overnight_setups ignores the flags). RESTART: (1) canary live = ADV<Rs25L CNC only at Rs10-15k/trade once fixed: failed-16:05-AMO failsafe, stale-slot GTT holdings check, F&O/CAS exclusion, DP in the ledger; stop on -Rs3k/month or SPRT(H0 mu=0 vs H1 mu=+0.44%, sd 2.4%, alpha .1 beta .2) accepting H0; (2) full Rs25k only on SPRT accepting H1 on live fills (~90-120 trades, ~May-Jun 2027); (3) re-validate the 15:26 entry before NSE's 2026-12-07 close change (continuous to 15:30, CAS 15:30-15:40).",
       "_status": "LIVE 2026-06-22 at full Rs2.5L/25-slot caps (user-elected; skipped 1-slot pilot, manual monitoring). 3-cron flow: 15:26 BUY, 16:05 AMO+GTT, 09:30 settle+cancel-GTT. Live requires MODE_FLAGS='' + fresh Kite token. Cell #5: closing_30m_volume_z=extreme x prior_day_return=up_gt_3pct. Pooled PF 2.44 (CI 2.16-2.74), HO 1.52; VM forward-paper PF 3.69 (n=72). See specs/2026-06-22-close_dn_overnight_long-live-activation-design.md + docs/runbooks/close_dn_overnight_live.md.",
       "detector_class": "structures.close_dn_overnight_long_structure.CloseDnOvernightLongStructure",
       "universe_builder": "services.setup_universe.close_dn_overnight_long_universe",
