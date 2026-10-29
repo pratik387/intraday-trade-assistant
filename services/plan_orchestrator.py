@@ -188,13 +188,13 @@ def set_runtime_trading_mode(mode: str) -> List[str]:
 
 
 def validate_price_bands(session_date) -> List[str]:
-    """Startup check: every enabled intraday setup that sizes by circuit risk needs
-    the session's NSE price-band list. Missing or stale data raises here, at
-    startup, instead of mid-session. Returns the setups that use it."""
+    """Startup check: any intraday run needs the session's NSE price-band list (the
+    screener's series filter reads it for every setup; circuit-risk setups size by
+    it). Missing or stale data raises here, at startup, instead of mid-session.
+    Returns the enabled intraday setups."""
     from services.price_bands import get_price_band_store, PriceBandDataError
     cfg = _load_root_config()
-    users = [name for name, raw in (cfg.get("setups") or {}).items()
-             if _is_enabled_intraday(raw) and "circuit_risk_budget_pct_of_capital" in raw]
+    users = [name for name, raw in (cfg.get("setups") or {}).items() if _is_enabled_intraday(raw)]
     if users:
         if "circuit_risk_auction_premium_pct" not in cfg["intraday_sizing"]:
             raise OrchestratorConfigError("intraday_sizing.circuit_risk_auction_premium_pct missing")

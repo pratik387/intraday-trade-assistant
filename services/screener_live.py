@@ -2075,6 +2075,23 @@ class ScreenerLive:
             if etf_count > 0:
                 logger.info(f"ETF_FILTER | Excluded {etf_count} ETF symbols from trading universe")
 
+            # Series filter, point-in-time and in EVERY mode: intraday (MIS) trades only
+            # names NSE lists in an intraday series for this session (EQ). BE/BZ are
+            # trade-for-trade (LT-ASM 4, GSM 2+, ESM, IBC move names there): no
+            # same-day square-off, so not tradeable intraday. The backtest used to
+            # trade them (20 of 1,241 up_spike trades, booked at +1.45% mean) because
+            # the MIS flag it reads is today's snapshot, not the session's.
+            from services.price_bands import get_price_band_store
+            from utils.time_util import _now_naive_ist
+            _sd = getattr(self.sdk, "_dry_session_date", None) if env.DRY_RUN else None
+            _sd = pd.to_datetime(_sd).date() if _sd else _now_naive_ist().date()
+            _allowed = self.raw_cfg["price_bands"]["intraday_series"]
+            _store = get_price_band_store(self.raw_cfg)
+            _before = len(self.core_symbols)
+            self.core_symbols = [s for s in self.core_symbols if _store.tradeable(s, _sd, _allowed)]
+            logger.info(f"SERIES_FILTER | session {_sd} (sec_list {_store.session(_sd).file_date}): "
+                        f"core_symbols {_before} -> {len(self.core_symbols)} (kept series {_allowed})")
+
             # Early MIS filter — reduces WS subscriptions, Stage-0, daily cache, ORB.
             # SKIPPED in backtest mode: the live Zerodha MIS sheet reflects today's
             # eligibility, not the historical session date's. Applying it to a

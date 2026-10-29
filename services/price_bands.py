@@ -47,6 +47,7 @@ class InconsistentReferenceClose(PriceBandDataError):
 class SessionBands:
     file_date: date
     bands: Dict[str, float]          # symbol -> band pct (NaN = "No Band")
+    series: Dict[str, frozenset]     # symbol -> every series it trades in (EQ, BE, BZ, SM, ...)
 
 
 def load_nse_holidays(path: str) -> frozenset:
@@ -116,11 +117,21 @@ class PriceBandStore:
                     f"session {session_date} needs the sec_list of {need} (previous trading "
                     f"day); newest available is {fd} (run tools/fetch_nse_price_bands.py)")
             day = df[df["file_date"] == fd].copy()
+            ser = {sym: frozenset(g) for sym, g in day.groupby("symbol")["series"]}
             day["_rank"] = day["series"].map(self.series_rank).fillna(len(self.series_rank))
             day = day.sort_values(["symbol", "_rank"]).drop_duplicates("symbol")
-            got = SessionBands(fd, dict(zip(day["symbol"], day["band_pct"].astype(float))))
+            got = SessionBands(fd, dict(zip(day["symbol"], day["band_pct"].astype(float))), ser)
             self._sessions[session_date] = got
             return got
+
+    def tradeable(self, symbol: str, session_date: date, allowed_series) -> bool:
+        """False only when NSE LISTS the symbol for the session and none of its series
+        is in allowed_series (BE/BZ trade-for-trade: no same-day square-off, so no
+        MIS). A symbol absent from the list is not judged here: historical lists use
+        the old names of renamed stocks (ADOR was ADORWELD until 2025), so absence is
+        not evidence; the MIS layers decide those."""
+        ser = self.session(session_date).series.get(symbol.split(":", 1)[-1])
+        return True if ser is None else bool(ser & frozenset(allowed_series))
 
     def band_pct(self, symbol: str, session_date: date) -> Optional[float]:
         """Band in percent, or None for "No Band". Raises if the symbol is absent."""

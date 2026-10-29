@@ -139,7 +139,9 @@
     "holidays_path": "assets/nse_holidays.json",
     "consistency_tolerance_pct": 1.0,
     "_comment_consistency": "Entry more than this pct outside [PDC x (1-band), PDC x (1+band)] means PDC is not the band's base (unadjusted ex-date split/bonus, bad print): the circuit distance is unknown and the trade is not sized (reason circuit_ref_inconsistent). 1 pct covers tick rounding of the circuit price.",
-    "series_preference": ["EQ", "BE", "SM", "ST", "BZ"]
+    "series_preference": ["EQ", "BE", "SM", "ST", "BZ"],
+    "intraday_series": ["EQ"],
+    "_comment_intraday_series": "2026-10-29. Intraday universe keeps only names listed in these series for the session (point-in-time, all modes). BE/BZ = trade-for-trade: no MIS / no same-day square-off. SME series (SM/ST) are excluded too: not MIS-eligible at Zerodha."
   },
   "fees_slippage_bps": 5.0,
   "enable_lunch_pause": true,

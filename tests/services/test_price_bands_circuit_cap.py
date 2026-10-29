@@ -318,3 +318,31 @@ def test_entry_at_the_circuit_is_not_a_trade_for_cover_setups():
     src = inspect.getsource(po)
     i = src.index('_circ_skip = "circuit_at_entry"')
     assert 'trigger_offset_pct' in src[i - 400:i]
+
+
+# --- point-in-time series filter (intraday universe) --------------------------
+
+def test_trade_for_trade_series_is_not_intraday_tradeable(tmp_path):
+    """PLATIND 2024-03-07 was BE (T2T): the old backtest shorted it intraday."""
+    s = _store(tmp_path, [("2026-10-28", "PLATIND", "BE", 5.0), ("2026-10-28", "RELIANCE", "EQ", float("nan")),
+                          ("2026-10-28", "SMEX", "SM", 5.0), ("2026-10-28", "BOTH", "BE", 5.0),
+                          ("2026-10-28", "BOTH", "EQ", 5.0)])
+    d = date(2026, 10, 29)
+    assert s.tradeable("NSE:PLATIND", d, ["EQ"]) is False
+    assert s.tradeable("NSE:SMEX", d, ["EQ"]) is False
+    assert s.tradeable("NSE:RELIANCE", d, ["EQ"]) is True
+    assert s.tradeable("NSE:BOTH", d, ["EQ"]) is True
+
+
+def test_unlisted_name_is_not_judged_by_the_series_filter(tmp_path):
+    """Historical lists carry old names of renamed stocks (ADOR was ADORWELD)."""
+    s = _store(tmp_path, [("2026-10-28", "ADORWELD", "EQ", 20.0)])
+    assert s.tradeable("NSE:ADOR", date(2026, 10, 29), ["EQ"]) is True
+
+
+def test_screener_applies_the_series_filter_in_every_mode():
+    src = (ROOT / "services" / "screener_live.py").read_text(encoding="utf-8")
+    i = src.index("SERIES_FILTER")
+    block = src[src.rindex("from services.price_bands import get_price_band_store", 0, i):i]
+    assert "intraday_series" in block and "DRY_RUN" in block      # backtest uses its session date
+    assert CFG["price_bands"]["intraday_series"] == ["EQ"]
