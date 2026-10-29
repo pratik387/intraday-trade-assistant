@@ -74,6 +74,16 @@ def startup_recovery(
 
     if not persisted:
         logger.info("[RECOVERY] No persisted positions found")
+        if is_live_mode:
+            # Nothing on file, but the broker may still hold app positions (a crash
+            # before the save, a lost snapshot): those are unmanaged and must be seen.
+            try:
+                _r = BrokerReconciliation(broker).reconcile({})
+                from services.execution.symbol_blocks import block
+                for _s in _r.untracked_app:
+                    block(_s, "restart: app position at the broker with no record")
+            except Exception as e:
+                logger.critical(f"[RECOVERY] broker position check failed: {e}; CHECK POSITIONS AT THE BROKER")
         return persistence
 
     logger.info(f"[RECOVERY] Found {len(persisted)} persisted positions")
@@ -91,6 +101,15 @@ def startup_recovery(
                 logger.info(f"[RECOVERY] Manual trades detected (not managed): {list(result.manual_trades.keys())}")
             if result.qty_mismatch:
                 logger.warning(f"[RECOVERY] QTY MISMATCH - adjusting to broker state: {list(result.qty_mismatch.keys())}")
+            from services.execution.symbol_blocks import block
+            if result.side_mismatch:
+                logger.critical(f"[RECOVERY] SIDE MISMATCH, not restored, kept on file: {list(result.side_mismatch.keys())}")
+                for _s in result.side_mismatch:
+                    block(_s, "restart: broker holds the opposite side")
+            if result.untracked_app:
+                logger.critical(f"[RECOVERY] UNTRACKED app positions at the broker: {list(result.untracked_app.keys())}")
+                for _s in result.untracked_app:
+                    block(_s, "restart: app position at the broker with no record")
 
             # Restore matched positions
             for sym, pers_pos in result.matched.items():

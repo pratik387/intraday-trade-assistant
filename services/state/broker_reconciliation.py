@@ -37,6 +37,7 @@ class BrokerPosition:
     avg_price: float
     pnl: float = 0.0
     product: str = "MIS"  # MIS or CNC
+    side: str = ""        # BUY (long) / SELL (short), from the signed broker qty
 
 
 @dataclass
@@ -54,6 +55,12 @@ class ReconciliationResult:
     # Manual trades in broker (no ITDA_ tag)
     manual_trades: Dict[str, BrokerPosition] = field(default_factory=dict)
 
+    # App position at the broker on the OPPOSITE side to what we persisted
+    side_mismatch: Dict[str, Tuple[Any, BrokerPosition]] = field(default_factory=dict)
+
+    # App-tagged MIS position at the broker that we have no record of
+    untracked_app: Dict[str, BrokerPosition] = field(default_factory=dict)
+
     def summary(self) -> str:
         """Generate summary string."""
         parts = []
@@ -65,6 +72,10 @@ class ReconciliationResult:
             parts.append(f"qty_mismatch={len(self.qty_mismatch)}")
         if self.manual_trades:
             parts.append(f"manual_trades={len(self.manual_trades)}")
+        if self.side_mismatch:
+            parts.append(f"side_mismatch={len(self.side_mismatch)}")
+        if self.untracked_app:
+            parts.append(f"untracked_app={len(self.untracked_app)}")
         return ", ".join(parts) if parts else "no_positions"
 
 
@@ -127,6 +138,12 @@ class BrokerReconciliation:
             broker_pos = broker_positions.get(sym)
 
             if broker_pos:
+                persisted_side = str(getattr(persisted_pos, "side", "")).upper()
+                if persisted_side and broker_pos.side and persisted_side != broker_pos.side:
+                    result.side_mismatch[sym] = (persisted_pos, broker_pos)
+                    logger.critical(f"SIDE MISMATCH: {sym} app={persisted_side} broker={broker_pos.side} "
+                                    f"{broker_pos.qty}; not restored. CHECK THE POSITION AT THE BROKER")
+                    continue
                 # Position exists in both - verify qty matches
                 persisted_qty = int(getattr(persisted_pos, "qty", 0))
                 if broker_pos.qty == persisted_qty:
@@ -149,6 +166,10 @@ class BrokerReconciliation:
                 if sym not in app_order_symbols:
                     result.manual_trades[sym] = broker_pos
                     logger.info(f"Manual trade detected (not managed): {sym}")
+                else:
+                    result.untracked_app[sym] = broker_pos
+                    logger.critical(f"UNTRACKED APP POSITION: {sym} {broker_pos.side} {broker_pos.qty} at the "
+                                    f"broker with no persisted record; it is NOT managed. CHECK IT")
 
         logger.info(f"Reconciliation complete: {result.summary()}")
         return result
@@ -161,7 +182,9 @@ class BrokerReconciliation:
             Dict mapping symbol to BrokerPosition, or None on error
         """
         try:
-            positions = self.broker.get_positions()
+            # strict: a failed fetch must raise (-> None -> trust persisted), never
+            # look like an empty book that "closes" every position.
+            positions = self.broker.get_positions(strict=True)
             day_positions = positions.get("day", [])
 
             result: Dict[str, BrokerPosition] = {}
@@ -169,6 +192,8 @@ class BrokerReconciliation:
                 qty = int(p.get("quantity", 0))
                 if qty == 0:
                     continue  # Skip closed positions
+                if str(p.get("product", "MIS")).upper() != "MIS":
+                    continue  # overnight CNC/MTF lines in the same account are not intraday positions
 
                 # Build symbol in EXCH:TSYM format
                 exchange = p.get("exchange", "NSE")
@@ -181,6 +206,7 @@ class BrokerReconciliation:
                     avg_price=float(p.get("average_price", 0)),
                     pnl=float(p.get("pnl", 0)),
                     product=p.get("product", "MIS"),
+                    side="SELL" if qty < 0 else "BUY",
                 )
 
             return result
@@ -198,6 +224,8 @@ class BrokerReconciliation:
         """
         try:
             app_orders = self.broker.get_app_orders()
+            if app_orders is None:
+                raise RuntimeError("no order book")
             symbols = set()
             for order in app_orders:
                 exchange = order.get("exchange", "NSE")

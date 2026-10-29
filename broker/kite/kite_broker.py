@@ -42,6 +42,20 @@ from config.env_setup import env
 APP_ORDER_TAG_PREFIX = "ITDA_"  # Intraday Trade Assistant
 
 from kiteconnect import KiteConnect
+from kiteconnect.exceptions import DataException, GeneralException, NetworkException
+
+
+class OrderPlacementUncertain(RuntimeError):
+    """place_order failed in a way that does not prove the order never reached the
+    exchange (network error, timeout, bad/5xx response). Callers must look for the
+    order in the book before treating it as not placed."""
+
+
+def _uncertain(e: Exception) -> bool:
+    if isinstance(e, (NetworkException, DataException, GeneralException)):
+        return True
+    import requests
+    return isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ConnectionError))
 
 try:
     from config.logging_config import get_agent_logger
@@ -375,9 +389,13 @@ class KiteBroker:
                         return str(order_id)
                     except Exception as e2:
                         logger.error(f"Order placement failed for {symbol} after tick-retry: {e2}")
+                        if _uncertain(e2):
+                            raise OrderPlacementUncertain(f"Order placement uncertain: {e2}")
                         raise RuntimeError(f"Order placement failed: {e2}")
 
             logger.error(f"Order placement failed for {symbol}: {e}")
+            if _uncertain(e):
+                raise OrderPlacementUncertain(f"Order placement uncertain: {e}")
             raise RuntimeError(f"Order placement failed: {e}")
 
     def _kc_place(self, kc_variety: str, params: Dict[str, Any]) -> str:
@@ -500,14 +518,20 @@ class KiteBroker:
         return {}
 
     # ------------------------------ Position & Order Queries ----------------
-    def get_positions(self) -> Dict:
-        """Get all intraday positions from broker."""
+    def get_positions(self, strict: bool = False) -> Dict:
+        """Get all intraday positions from broker.
+
+        strict=True raises when the fetch fails. Without it a failure returns an
+        empty book, which reads as FLAT: callers that decide whether a position
+        still exists (recovery, exit verification) must pass strict=True."""
         if self.dry_run:
             return {"day": [], "net": []}  # Paper trading has no real positions
         try:
             return self.kc.positions()
         except Exception as e:
             logger.error(f"Failed to fetch broker positions: {e}")
+            if strict:
+                raise
             return {"day": [], "net": []}
 
     def get_orders(self) -> List[Dict]:
@@ -1030,7 +1054,7 @@ class KiteBroker:
                     return None
 
     def reconcile_exit(self, symbol: str, order_id: str, expected_qty: int, position_qty_before: int,
-                       timeout: float = 1.0) -> Optional[Dict]:
+                       timeout: float = 1.0, position_side: Optional[str] = None) -> Optional[Dict]:
         """
         Reconcile an exit order with broker - verify exit filled and position reduced.
 
@@ -1091,26 +1115,27 @@ class KiteBroker:
             logger.warning(f"RECONCILE_EXIT | {symbol} | Order {order_id} not filled - exit failed")
             return None
 
-        # Fetch positions to verify reduction
+        # Fetch positions to verify reduction. The ORDER status above is the fill;
+        # this is a cross-check, and a failed fetch must not read as flat.
         try:
-            positions = self.get_positions()
+            positions = self.get_positions(strict=True)
             _, tsym = _split_symbol(symbol)
 
-            # Find current position qty at broker (day positions take priority for intraday)
-            broker_qty = 0
-            found_in_day = False
+            # The MIS day line for this symbol, signed (Zerodha: short < 0). Other
+            # products (an overnight CNC/MTF line in the same stock) are not ours.
+            signed = None
             for pos in positions.get("day", []):
-                if pos.get("tradingsymbol") == tsym:
-                    broker_qty = abs(pos.get("quantity", 0))
-                    found_in_day = True
+                if pos.get("tradingsymbol") == tsym and str(pos.get("product", "MIS")).upper() == "MIS":
+                    signed = int(pos.get("quantity", 0))
                     break
-
-            # If not found in day positions, check net (for CNC or carried positions)
-            if not found_in_day:
-                for pos in positions.get("net", []):
-                    if pos.get("tradingsymbol") == tsym:
-                        broker_qty = abs(pos.get("quantity", 0))
-                        break
+            broker_qty = abs(signed or 0)
+            want_sign = -1 if str(position_side or "").upper() == "SELL" else 1
+            if position_side and signed and (signed > 0) != (want_sign > 0):
+                logger.critical(f"RECONCILE_EXIT | {symbol} | position FLIPPED: was {position_side} "
+                                f"{position_qty_before}, broker MIS qty now {signed} after order {order_id}. "
+                                f"CHECK THE POSITION AT THE BROKER")
+                return {"avg_price": fill_price, "qty_exited": expected_qty, "remaining_qty": 0,
+                        "verified": False, "flipped": True, "broker_qty": signed}
 
             expected_remaining = max(0, position_qty_before - expected_qty)
 

@@ -217,11 +217,16 @@ class ExitExecutor:
         self.orb_max_hold_minutes = float(cfg.get("orb_max_hold_minutes", 60))
 
         # execution params
-        self.exec_product = str(cfg.get("exec_product", "MIS")).upper()
-        self.exec_variety = str(cfg.get("exec_variety", "regular")).lower()
-        self.exec_mode    = str(cfg.get("exec_order_mode", "MARKET")).upper()
+        self.exec_product = str(cfg["exec_product"]).upper()
+        self.exec_variety = str(cfg["exec_variety"]).lower()
+        self.exec_mode    = str(cfg["exec_order_mode"]).upper()
         # Seconds between exit attempts when an exit order does not fill (e.g. rejected at the circuit).
         self.exit_retry_cooldown_sec = float(cfg["exit_retry_cooldown_sec"])
+        if self.exec_product != "MIS":
+            raise ValueError(f"intraday ExitExecutor exits MIS only (exec_product={self.exec_product}); "
+                             f"exit verification reads the MIS position line")
+        self.eod_flatten_max_wait_sec = float(cfg["eod_flatten_max_wait_sec"])
+        self.eod_flatten_poll_sec = float(cfg["eod_flatten_poll_sec"])
         cc = cfg["circuit_cover"]
         self.cc_near_frac = float(cc["near_circuit_pct"]) / 100.0
         self.cc_poll_sec = float(cc["status_poll_sec"])
@@ -786,7 +791,10 @@ class ExitExecutor:
 
         # Update persistence with new qty and state
         if self.persistence:
-            self.persistence.update_position(sym, new_qty=new_qty, state_updates={"manual_partial_profit": st["manual_partial_profit"]})
+            self.persistence.update_position(sym, new_qty=new_qty, state_updates={
+                "manual_partial_profit": st["manual_partial_profit"],
+                "manual_partial_qty": st["manual_partial_qty"],
+                "manual_partial_price": st["manual_partial_price"]})
 
         # Manual partial profit is tracked in _state (like T1 partial), NOT as a
         # separate dashboard row. The final _exit() call will include manual_partial_profit
@@ -1393,9 +1401,9 @@ class ExitExecutor:
             return "unknown", None
         status, filled = o["status"], int(o.get("filled_quantity", 0))
         if status in ("REJECTED", "CANCELLED") and filled > 0:
-            logger.error(f"EXIT_PARTIAL_FILL | {sym} | order {prev} {status} after filling {filled} of "
-                         f"{st.get('_exit_last_qty')} - not sending; CHECK THE POSITION AT THE BROKER")
-            return "partial", None
+            logger.warning(f"EXIT_PARTIAL_FILL | {sym} | order {prev} {status} after filling {filled} of "
+                           f"{st.get('_exit_last_qty')}: booking the filled part, retrying the rest")
+            return "partial", (filled, float(o.get("average_price") or 0.0))
         if status in ("REJECTED", "CANCELLED"):
             return "dead", None
         if status == "COMPLETE" and o["average_price"] > 0:
@@ -1828,6 +1836,24 @@ class ExitExecutor:
                 st.pop("exit_pending", None)  # let the next tick/bar retry
                 return None
             verdict, prev_px = self._previous_exit_outcome(sym, st, qty_exit)
+            if verdict == "partial":
+                p_qty, p_px = prev_px
+                if p_px <= 0 or p_qty >= cur_qty:
+                    logger.critical(f"EXIT_PARTIAL_FILL | {sym} | {p_qty} filled @ {p_px} vs position {cur_qty}: "
+                                    f"cannot book safely. CHECK THE POSITION AT THE BROKER")
+                    st["_exit_retry_at"] = time.monotonic() + self.exit_retry_cooldown_sec
+                    st.pop("exit_pending", None)
+                    return None
+                self._record_manual_partial(sym, pos, p_qty, p_px, ts, label="EXIT_PARTIAL_FILL")
+                for _k in ("_exit_retry_at", "_exit_last_order_id", "_exit_last_qty", "_exit_last_side",
+                           "_exit_last_tag"):
+                    st.pop(_k, None)
+                if st.get("_circ_order_id"):
+                    # The cover is sized for the old quantity: it could now over-buy.
+                    self._cancel_cover_on_close(sym, st)
+                cur_qty -= p_qty
+                qty_exit = min(int(qty_exit), cur_qty)
+                verdict = "dead"
             if verdict == "filled":
                 actual_exit_px, late_fill = prev_px, True
             elif verdict != "dead":
@@ -1879,7 +1905,8 @@ class ExitExecutor:
                             order_id=order_id,
                             expected_qty=rest_qty,
                             position_qty_before=cur_qty - covered_qty,
-                            timeout=0.5
+                            timeout=0.5,
+                            position_side=pos.side,
                         )
 
                         if reconciled is None:
@@ -1887,6 +1914,14 @@ class ExitExecutor:
                         if reconciled is None:
                             # Exit order not filled - position unchanged at broker
                             raise _ExitNotFilled(f"Exit order {order_id} not filled - position still open at broker")
+                        if reconciled.get("flipped"):
+                            # The exit DID fill (booking it is correct; raising would retry and
+                            # buy again), but the account now holds the opposite side, which
+                            # nothing manages. Stop trading the name and say so loudly.
+                            from services.execution.symbol_blocks import block
+                            block(sym, f"exit {order_id} left the broker at {reconciled.get('broker_qty')}")
+                            logger.critical(f"POSITION_FLIPPED | {sym} | broker MIS qty {reconciled.get('broker_qty')} "
+                                            f"after exit {order_id}; UNMANAGED, symbol blocked. CLOSE IT AT THE BROKER")
 
                         # Use actual fill price from broker
                         broker_fill = reconciled.get("avg_price", exit_px)
@@ -2072,9 +2107,13 @@ class ExitExecutor:
         # _place_and_log_exit() handles both diag_event_log + trading_logger logging
 
         # Capture actual broker fill price for API server logging
+        _mp_before = int((pos.plan.get("_state") or {}).get("manual_partial_qty", 0) or 0)
         actual_exit_px = self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
         if actual_exit_px is None:
             return  # not filled: still open at the broker, keep tracking and retry
+        # A partial fill of an earlier attempt was booked inside the placement as a
+        # manual partial; this exit closed only the rest.
+        qty_now -= int((pos.plan.get("_state") or {}).get("manual_partial_qty", 0) or 0) - _mp_before
         self.positions.close(_pos_tid(pos))
 
         # Remove from persistence (crash recovery)
@@ -2536,13 +2575,18 @@ class ExitExecutor:
             return pd.Timestamp(f"{d} {hh:02d}:{mm:02d}:00")
         return _now_naive_ist()
 
-    def square_off_all_open_positions(self, reason_prefix: Optional[str] = None) -> None:
+    def square_off_all_open_positions(self, reason_prefix: Optional[str] = None, eod: bool = False) -> None:
         reason = reason_prefix or f"eod_squareoff_{self.eod_hhmm}"
         try:
             open_pos = self.positions.list_open()  # {trade_id: Position}
         except Exception:
             open_pos = {}
 
+        live = not getattr(self.broker, "dry_run", True)
+        if live and open_pos:
+            # The long wait is for the real end of day; a mid-session stop gets one round.
+            self._square_off_live(open_pos, reason, self.eod_flatten_max_wait_sec if eod else 0.0)
+            return
         for _tid, pos in list(open_pos.items()):
             sym = pos.symbol
             try:
@@ -2558,6 +2602,81 @@ class ExitExecutor:
                 self._flatten_to_closed(sym, pos, use_px, ts_obj, use_reason)
             except Exception as e:
                 logger.warning("square_off_all_open_positions: sym=%s err=%s", sym, e)
+
+    def _square_off_live(self, open_pos: dict, reason: str, max_wait_sec: float) -> None:
+        """Live EOD: keep cycling over every open position until all are flat or
+        eod_flatten_max_wait_sec has passed (elapsed time, not a clock time). One
+        position stuck at a circuit no longer blocks the others, and nobody gives
+        up after 12 instant retries against a 30s cooldown."""
+        deadline = time.monotonic() + max_wait_sec
+        attempt = 0
+        while True:
+            still = {tid: p for tid, p in open_pos.items() if self._is_open_tid(tid)}
+            if not still:
+                return
+            if True:
+                # Every round, including the first (a restart after 15:25 sweeps a book
+                # the broker may already have flattened). Zerodha squares off MIS at 15:25 on its own: a position the broker has
+                # already flattened must not get another order (that would open the
+                # opposite side). Read strictly: a failed read is not "flat".
+                try:
+                    net = {}
+                    for r in self.broker.get_positions(strict=True).get("day", []):
+                        if str(r.get("product", "")).upper() == "MIS":
+                            net[r.get("tradingsymbol")] = net.get(r.get("tradingsymbol"), 0) + int(r.get("quantity") or 0)
+                    for tid, pos in list(still.items()):
+                        if net.get(pos.symbol.split(":", 1)[-1], 0) == 0:
+                            self._close_externally_flattened(pos, reason)
+                            still.pop(tid)
+                except Exception as e:
+                    logger.error(f"square_off_live: broker positions unreadable ({e}); not resending this round")
+                    still = {}
+            if not still and not any(self._is_open_tid(t) for t in open_pos):
+                return
+            for tid, pos in still.items():
+                sym = pos.symbol
+                try:
+                    pos = self.positions.get_by_trade_id(tid) or pos
+                    ltp, ts = (self.get_ltp_ts(sym) if callable(self.get_ltp_ts) else (None, None))
+                    if ltp is None:
+                        try:
+                            ltp = float(self.broker.get_ltp(sym))
+                        except Exception:
+                            ltp = None
+                    use_px = float(ltp) if ltp is not None else float(pos.avg_price)
+                    use_reason = reason if attempt == 0 else f"{reason}_retry{attempt}"
+                    ts_obj = pd.Timestamp(ts) if ts is not None else self._fabricate_eod_ts(pos)
+                    self._exit(sym, pos, use_px, ts_obj, use_reason)
+                except Exception as e:
+                    logger.warning("square_off_live: sym=%s err=%s", sym, e)
+            attempt += 1
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(self.eod_flatten_poll_sec)
+        for tid, pos in open_pos.items():
+            if self._is_open_tid(tid):
+                logger.critical(f"EXIT_NOT_FILLED | {pos.symbol} | still open after {self.eod_flatten_max_wait_sec:.0f}s "
+                                f"of EOD retries; broker auto square-off / short-delivery rules now apply. CHECK IT")
+
+    def _close_externally_flattened(self, pos, reason: str) -> None:
+        """The broker shows this MIS position flat although our exit did not fill
+        (Zerodha's own auto square-off). Stop tracking it; its real price is on the
+        contract note, so it is booked at the last price and flagged."""
+        sym, tid = pos.symbol, _pos_tid(pos)
+        st = pos.plan.setdefault("_state", {})
+        if st.get("_circ_order_id"):
+            self._cancel_cover_on_close(sym, st)
+        try:
+            px = float(self.broker.get_ltp(sym))
+        except Exception:
+            px = float(pos.avg_price)
+        logger.critical(f"BROKER_SQUARED_OFF | {sym} | flat at the broker after our exit failed ({reason}); "
+                        f"booked at last price {px:.2f}, CORRECT FROM THE CONTRACT NOTE")
+        self.positions.close(tid)
+        if self.persistence:
+            self.persistence.remove_position(sym)
+        if self.capital_manager:
+            self.capital_manager.exit_position(sym, shadow=pos.plan.get("shadow", False))
 
     def _is_open_tid(self, trade_id: str) -> bool:
         """Check if a specific trade_id is still in the open positions store."""

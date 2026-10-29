@@ -110,6 +110,13 @@ class TriggerAwareExecutor:
                     trade.state = TradeState.EXPIRED  # Mark as expired to avoid repeated checks
                     return False
 
+            from services.execution.symbol_blocks import blocked_reason
+            _blk = blocked_reason(trade.symbol)
+            if _blk:
+                logger.error(f"SYMBOL_BLOCKED | {trade.symbol} | no new entries today: {_blk}")
+                trade.state = TradeState.EXPIRED
+                return False
+
             # Block duplicate — position may have been opened by another plan
             # between _add_pending_trade and now.
             # Per-setup wide_open: research setups bypass duplicate-guard so
@@ -309,12 +316,53 @@ class TriggerAwareExecutor:
                     "variety": "regular",
                     "trade_id": trade.trade_id,  # For order tagging (ITDA_xxx)
                 }
-                order_id = self.broker.place_order(**order_args)
+                live = not getattr(self.broker, "dry_run", True)
+                from broker.kite.kite_broker import OrderPlacementUncertain
+                try:
+                    order_id = self.broker.place_order(**order_args)
+                except OrderPlacementUncertain as e:
+                    if not live:
+                        raise
+                    # A timeout can still have reached the exchange: look before forgetting.
+                    try:
+                        order_id = self._find_unacknowledged_entry(symbol, side, trade.trade_id)
+                    except Exception:
+                        from services.execution.symbol_blocks import block
+                        block(symbol, f"entry placement uncertain and order book unreadable ({e})")
+                        raise
+                    if not order_id:
+                        # Not in the book (yet): the order may still appear. Don't trade
+                        # this name again today on top of a possible unmanaged fill.
+                        from services.execution.symbol_blocks import block
+                        block(symbol, f"entry placement uncertain, no order found ({e})")
+                        logger.critical(f"ENTRY_UNKNOWN | {symbol} | placement uncertain ({e}) and no order in the "
+                                        f"book; symbol blocked. CHECK THE BROKER")
+                        raise
+                    logger.warning(f"ENTRY_RECONCILE | {symbol} | order {order_id} reached the broker "
+                                   f"despite the placement error ({e})")
                 if self.live_guards is not None:
                     self.live_guards.note_entry()  # balance changed; drop the cached read
 
-                # Reconcile with broker - verify position actually exists
-                if order_id and hasattr(self.broker, 'reconcile_position'):
+                if live and order_id:
+                    # The order's own status is the fill: OPEN is cancelled, a partial
+                    # fill becomes the position, nothing filled is a rejection.
+                    settled = self._settle_live_entry(symbol, order_id, qty)
+                    if settled is None:
+                        raise RuntimeError(f"Entry order {order_id} filled nothing")
+                    filled_qty, broker_fill = settled
+                    if broker_fill is None:
+                        broker_fill = price
+                    if filled_qty != qty:
+                        logger.warning(f"ENTRY_PARTIAL | {symbol} | order {order_id} filled {filled_qty}/{qty}")
+                    slippage = broker_fill - price
+                    slippage_bps = (slippage / price) * 10000 if price > 0 else 0
+                    logger.info(f"ENTRY_FILL | {symbol} | Broker: {broker_fill:.2f} | Assumed: {price:.2f} | "
+                                f"Slippage: {slippage:+.2f} ({slippage_bps:+.1f} bps)")
+                    price, qty = round_to_tick(broker_fill), int(filled_qty)
+                    plan["qty"] = qty
+
+                # Paper: reconcile against the simulated book (and live-fill mirroring)
+                elif order_id and hasattr(self.broker, 'reconcile_position'):
                     try:
                         reconciled = self.broker.reconcile_position(
                             symbol=symbol,
@@ -475,6 +523,59 @@ class TriggerAwareExecutor:
             logger.exception(f"Order placement failed for {trade.symbol}: {e}")
             return False
 
+    _ENTRY_WORKING = ("OPEN", "TRIGGER PENDING", "OPEN PENDING", "VALIDATION PENDING",
+                      "PUT ORDER REQ RECEIVED", "MODIFY PENDING", "MODIFIED", "UNKNOWN")
+
+    def _settle_live_entry(self, symbol: str, order_id: str, qty: int):
+        """(filled_qty, avg_price) of a live entry from Kite's order status, or None
+        when nothing filled. A still-working order is cancelled (a cancel can race a
+        fill, so the status is read again). Raises when the outcome cannot be known."""
+        o = None
+        for i in range(self.entry_settle_retries):
+            o = self.broker.get_order_status(order_id)
+            if o["status"] not in self._ENTRY_WORKING:
+                break
+            if i < self.entry_settle_retries - 1:
+                time.sleep(self.entry_settle_delay_sec)
+        if o["status"] in self._ENTRY_WORKING:
+            self.broker.cancel_order(order_id)
+            o = self.broker.get_order_status(order_id)
+        status, filled = o["status"], int(o.get("filled_quantity") or 0)
+        if status == "COMPLETE":
+            filled = filled or int(qty)
+        elif status not in ("CANCELLED", "REJECTED"):
+            from services.execution.symbol_blocks import block
+            block(symbol, f"entry order {order_id} outcome unknown ({status})")
+            logger.critical(f"ENTRY_UNKNOWN | {symbol} | order {order_id} is {status} after a cancel; it may "
+                            f"still fill and would be UNMANAGED. Symbol blocked for new entries. CHECK THE BROKER")
+            raise RuntimeError(f"Entry order {order_id} outcome unknown ({status})")
+        if filled <= 0:
+            logger.warning(f"ENTRY_NOT_FILLED | {symbol} | order {order_id} {status}: {o.get('status_message', '')}")
+            return None
+        avg = float(o.get("average_price") or 0.0)
+        if avg <= 0:
+            # A real fill without a reported price: track it (managed, at the planned
+            # price) rather than leave a live position unmanaged.
+            logger.critical(f"ENTRY_NO_AVG | {symbol} | order {order_id} filled {filled} with no average "
+                            f"price; tracked at the planned price, correct it from the contract note")
+            return filled, None
+        return filled, avg
+
+    def _find_unacknowledged_entry(self, symbol: str, side: str, trade_id: str):
+        """After place_order raised: our entry order in today's book anyway (same
+        symbol, side and app tag). Reads Kite's raw book so a failed read raises."""
+        tsym, sfx = symbol.split(":", 1)[-1], str(trade_id)[-12:]
+        try:
+            orders = self.broker.kc.orders()
+        except Exception as e:
+            logger.critical(f"ENTRY_UNKNOWN | {symbol} | placement failed and the order book is unreadable "
+                            f"({e}); an entry may exist UNMANAGED. CHECK THE BROKER")
+            raise
+        hits = [o for o in orders if o.get("tradingsymbol") == tsym
+                and str(o.get("transaction_type", "")).upper() == side.upper()
+                and (o.get("tag") or "").endswith(sfx)]
+        return str(hits[-1]["order_id"]) if hits else None
+
     def _recalculate_targets_for_actual_entry(
         self, plan: Dict[str, Any], actual_entry: float, side: str
     ) -> Dict[str, Any]:
@@ -634,6 +735,10 @@ class TriggerAwareExecutor:
         # No hardcoded defaults (project Rule #1): missing key = startup error.
         self.entry_cutoff_md = _parse_hhmm_to_md(self.cfg["entry_cutoff_hhmm"])
         self.eod_md = _parse_hhmm_to_md(self.cfg["eod_squareoff_hhmm"])
+        self.entry_settle_retries = int(self.cfg["entry_settle_retries"])
+        if self.entry_settle_retries < 1:
+            raise ValueError("entry_settle_retries must be >= 1")
+        self.entry_settle_delay_sec = float(self.cfg["entry_settle_delay_sec"])
 
         # Staleness check configuration
         trigger_cfg = self.cfg["trigger_system"]

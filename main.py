@@ -691,7 +691,7 @@ def _run_until_eod(
             logger.warning("Failed to cancel pending trades: %s", e)
 
         try:
-            exit_exec.square_off_all_open_positions()
+            exit_exec.square_off_all_open_positions(eod=bool(getattr(screener, "_eod_done", False)))
         except Exception as e:
             logger.warning("final EOD sweep failed: %s", e)
 

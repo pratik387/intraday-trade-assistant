@@ -1690,6 +1690,12 @@
   "exit_trail_atr_mult_late": 1.5,
   "_comment_trail_late": "PHASE 3: Tighter 1.5Ã— ATR trail after 14:30",
   "exit_retry_cooldown_sec": 30,
+  "eod_flatten_max_wait_sec": 840,
+  "eod_flatten_poll_sec": 5,
+  "_comment_eod_flatten": "2026-10-29. Live EOD square-off keeps cycling over every open position (honouring exit_retry_cooldown_sec) for up to eod_flatten_max_wait_sec of elapsed time (840s: 15:15 -> 15:29), sleeping eod_flatten_poll_sec between rounds. Before: 12 instant retries against the 30s cooldown, then the daemon exited with the position open.",
+  "entry_settle_retries": 6,
+  "entry_settle_delay_sec": 0.5,
+  "_comment_entry_settle": "2026-10-29. A live entry is settled from Kite's order status (up to entry_settle_retries reads, entry_settle_delay_sec apart): COMPLETE -> the fill; still working -> cancelled and re-read; a partial fill becomes the position; nothing filled -> not a trade. Before: 1.4s of polling, then 'likely rejected' with no cancel (an OPEN order could fill later, unmanaged).",
   "circuit_cover": {
     "_comment": "2026-10-29. Setups with circuit_cover_order rest a STOP-LIMIT order (limit at the price-band circuit against the position) from entry (live), and cover there in paper/backtest. A MARKET exit is rejected when the stock is locked at its circuit (HUHTAMAKI 10-28 -> short delivery); sellers still trade at the circuit (research: median 444x our live qty after the first touch), filled by time priority. near_circuit_pct: within this distance of the circuit the resting order is never cancelled/resent (that would lose queue priority) and its status is polled every status_poll_sec. place_retry_sec: wait before retrying a failed placement. quote_mismatch_warn_pct: warn when Kite's circuit differs from the band file by more than this (the exchange's price is used).",
     "near_circuit_pct": 1.0,
