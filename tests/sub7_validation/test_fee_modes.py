@@ -13,10 +13,11 @@ def test_calc_fee_cnc_baseline_matches_sanity():
       - STT: 0.1% on BOTH sides (was sell-only)
       - Txn: 0.00307%/side (was 0.00345%)
     Net per-side breakdown: stt(200.50) + stamp(15.00) + txn(6.155) + sebi(0.20) + gst(1.108)
+    + DP charge Rs15.34 per sell (2026-10-29) = ~238.30
     """
     fee = calc_fee_cnc(100000.0, 100500.0)
     # Allow Rs 1 tolerance for rounding
-    assert 222 <= fee <= 224, f"expected ~222.96, got {fee:.4f}"
+    assert 237.3 <= fee <= 239.3, f"expected ~238.30, got {fee:.4f}"
 
 
 def test_calc_fee_cnc_zero_for_zero_values():

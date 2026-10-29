@@ -73,6 +73,7 @@ def _minimal_config(state_path: Path) -> dict:
                 "min_daily_avg_volume": 50000,
                 "min_trading_days_required": 30,
                 "universe_max_symbols": 1500,
+                "exclude_no_band_names": False,
                 "catastrophe_stop_pct": 5.0,
                 "gtt_limit_buffer_pct": 0.5,
                 "failsafe_fill_confirm_sec": 0,
@@ -368,7 +369,8 @@ def test_run_verify_exit_uses_cnc_fees_when_product_is_cnc(tmp_path):
 
 
 def test_run_verify_exit_orphan_t0_without_expected_exit_date(tmp_path):
-    """A t0_open slot lacking expected_exit_date is reported as orphan."""
+    """A t0_open slot lacking expected_exit_date AND its entry day is an orphan
+    (with the entry day known, the exit is derived: see the no-AMO tests)."""
     state_path = tmp_path / "overnight_slots.json"
     cfg = _minimal_config(state_path)
     _seed_state(state_path, [
@@ -382,7 +384,7 @@ def test_run_verify_exit_orphan_t0_without_expected_exit_date(tmp_path):
             "expected_exit_date": None,  # orphan
             "sell_fill_price": None, "sell_fill_ts": None,
             "realized_pnl_inr": None, "fees_inr": None, "interest_inr": None,
-            "reserved_today": "2026-05-21",
+            "reserved_today": None,
         },
         _empty_free_slot(2),
         _empty_free_slot(3),
@@ -941,12 +943,235 @@ def test_verify_exit_stale_slot_with_pending_failsafe_keeps_gtt(tmp_path):
     st = json.loads(state_path.read_text())
     st["slots"][0].update(failsafe_sell_order_id="FS-1", gtt_id="GTT-1")
     state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({})        # yesterday's FS-1: no status today
+    broker.get_holdings.return_value = [
+        {"tradingsymbol": "REGENCERAM", "quantity": 1388, "t1_quantity": 0, "used_quantity": 0}]
+    broker.place_order.return_value = "FS-2"
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-21 09:16:30"),
+                              paper_mode=False)
+    # Shares still held: sold now; the GTT stays until that sell fills.
+    assert summary["orphan_t0_count"] == 1
+    assert broker.place_order.call_args.kwargs["qty"] == 1388
+    broker.cancel_gtt.assert_not_called()
+    assert _slot1(state_path)["gtt_id"] == "GTT-1"
+    assert _slot1(state_path)["failsafe_sell_order_id"] == "FS-2"
+
+
+def test_verify_exit_stale_slot_still_held_sells_and_settles(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(gtt_id="GTT-1")
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({"FS-2": {"status": "COMPLETE", "filled_quantity": 1388,
+                                        "average_price": 28.3}})
+    broker.get_holdings.return_value = [
+        {"tradingsymbol": "REGENCERAM", "quantity": 0, "t1_quantity": 1388, "used_quantity": 0}]
+    broker.place_order.return_value = "FS-2"
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-21 09:16:30"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 1
+    s1 = _slot1(state_path)
+    # Settled at the real fill; the exit day is past, so the same pass releases it.
+    assert summary["released_count"] == 1 and abs(summary["events"][0]["sell_price"] - 28.3) < 1e-9
+    broker.cancel_gtt.assert_called_once_with("GTT-1")
+
+
+def test_verify_exit_stale_slot_flat_cancels_gtt(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(gtt_id="GTT-1")
+    state_path.write_text(json.dumps(st))
     broker = _failsafe_broker({})
+    broker.get_holdings.return_value = []
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-21 09:16:30"),
+                              paper_mode=False)
+    # Flat reading -> manual settlement; the GTT is kept (a false 'flat' must not
+    # strip real shares of their stop).
+    assert summary["orphan_t0_count"] == 1
+    broker.place_order.assert_not_called()
+    broker.cancel_gtt.assert_not_called()
+    assert _slot1(state_path)["gtt_id"] == "GTT-1"
+
+
+def test_verify_exit_stale_slot_holdings_unreadable_keeps_gtt(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(gtt_id="GTT-1")
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({})
+    broker.get_holdings.side_effect = RuntimeError("timeout")
     summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-21 09:16:30"),
                               paper_mode=False)
     assert summary["orphan_t0_count"] == 1
+    broker.place_order.assert_not_called()
     broker.cancel_gtt.assert_not_called()
     assert _slot1(state_path)["gtt_id"] == "GTT-1"
+
+
+def test_verify_exit_stale_slot_other_slot_same_symbol_not_counted(tmp_path):
+    """Holdings that belong to another open slot in the same symbol do not make
+    the stale slot look held."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(gtt_id="GTT-1")
+    st["slots"][1].update(slot_id=2, status="t0_open", symbol="NSE:REGENCERAM", product="CNC",
+                          notional_inr=20000.0, buy_fill_price=28.0, buy_qty=700,
+                          amo_sell_order_id="AMO-2", expected_exit_date="2026-07-22",
+                          reserved_today="2026-07-21")
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({})
+    broker.get_holdings.return_value = [
+        {"tradingsymbol": "REGENCERAM", "quantity": 0, "t1_quantity": 700, "used_quantity": 0}]
+    run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-21 09:16:30"), paper_mode=False)
+    broker.place_order.assert_not_called()
+
+
+def test_verify_exit_stale_slot_resumes_todays_failsafe_by_tag(tmp_path):
+    """A failsafe placed by an earlier pass today is found by its tag and driven
+    to completion, never a second SELL."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(failsafe_sell_order_id="FS-OLD", gtt_id="GTT-1")
+    state_path.write_text(json.dumps(st))
+    broker = _failsafe_broker({"FS-9": {"status": "COMPLETE", "filled_quantity": 1388,
+                                        "average_price": 28.1}})
+    broker.get_orders.return_value = [
+        {"order_id": "FS-9", "tag": "ITDA_S_26-07-17F1", "tradingsymbol": "REGENCERAM",
+         "transaction_type": "SELL", "status": "COMPLETE"}]
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-21 10:30:00"),
+                              paper_mode=False)
+    broker.place_order.assert_not_called()
+    assert summary["settled_count"] == 1
+
+
+def test_failsafe_carries_deterministic_tag(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _live_slot_state(state_path)
+    broker = _failsafe_broker({"AMO-001": {"status": "REJECTED"}})
+    broker.place_order.return_value = "FS-1"
+    run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:16:30"), paper_mode=False)
+    assert broker.place_order.call_args.kwargs["trade_id"][-12:] == "S_26-07-17F1"
+
+
+def test_verify_exit_no_amo_unreadable_orderbook_places_nothing(tmp_path):
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _no_amo_state(state_path)
+    broker = _failsafe_broker({})
+    broker.get_orders.side_effect = RuntimeError("429")
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:16:30"),
+                              paper_mode=False)
+    broker.place_order.assert_not_called()
+    assert summary["settled_count"] == 0
+
+
+def _no_amo_state(state_path):
+    _live_slot_state(state_path, amo_id=None)
+    st = json.loads(state_path.read_text())
+    st["slots"][0].update(expected_exit_date=None)
+    state_path.write_text(json.dumps(st))
+
+
+def test_verify_exit_failed_place_exit_sells_at_open(tmp_path):
+    """16:05 place-exit failed (no AMO, no exit date): the next morning's verify
+    sells the position with a failsafe and settles on its fill."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _no_amo_state(state_path)
+    broker = _failsafe_broker({"FS-1": {"status": "COMPLETE", "filled_quantity": 1388,
+                                        "average_price": 37.1}})
+    broker.place_order.return_value = "FS-1"
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:16:30"),
+                              paper_mode=False)
+    assert summary["settled_count"] == 1 and summary["orphan_t0_count"] == 0
+    assert broker.place_order.call_args.kwargs["qty"] == 1388
+    s1 = _slot1(state_path)
+    assert s1["expected_exit_date"] == "2026-07-20" and abs(s1["sell_fill_price"] - 37.1) < 1e-9
+
+
+def test_verify_exit_failed_place_exit_adopts_unrecorded_amo(tmp_path):
+    """The AMO reached the broker but the placement raised: adopt it, never a
+    second SELL."""
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["enabled"] = True
+    _no_amo_state(state_path)
+    broker = _failsafe_broker({"AMO-X": {"status": "COMPLETE", "average_price": 37.4,
+                                         "filled_quantity": 1388}})
+    broker.get_orders.return_value = [
+        {"order_id": "AMO-X", "tag": "ITDA_2026-07-17_1", "tradingsymbol": "REGENCERAM",
+         "transaction_type": "SELL", "status": "COMPLETE"}]
+    summary = run_verify_exit(cfg, broker, now_ist=pd.Timestamp("2026-07-20 09:16:30"),
+                              paper_mode=False)
+    broker.place_order.assert_not_called()
+    assert summary["settled_count"] == 1
+    assert _slot1(state_path)["amo_sell_order_id"] == "AMO-X"
+
+
+def test_run_entry_excludes_no_band_names(tmp_path, monkeypatch, caplog):
+    """F&O / CAS names (NSE 'No Band') are dropped from the entry universe;
+    names absent from the list are kept."""
+    import logging
+    import services.price_bands as pbm
+    import services.setup_universe as su
+
+    class _Sess:
+        bands = {"RELIANCE": float("nan"), "SMALLCO": 20.0}
+    class _Store:
+        def session(self, d):
+            return _Sess()
+    monkeypatch.setattr(pbm, "get_price_band_store", lambda cfg: _Store())
+    monkeypatch.setattr(su, "close_dn_overnight_long_universe",
+                        lambda dd, d, c: {"NSE:RELIANCE", "NSE:SMALLCO", "NSE:RENAMED"})
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["exclude_no_band_names"] = True
+    broker = MagicMock()
+    broker.list_symbols.return_value = []
+    broker._data_sdk = None
+    with caplog.at_level(logging.INFO):
+        run_entry(cfg, broker, now_ist=pd.Timestamp("2026-05-21 15:25:00"))
+    assert any("F&O/No-Band filter" in r.getMessage() and "3 -> 2" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_run_entry_no_band_list_means_no_entries(tmp_path, monkeypatch):
+    import services.price_bands as pbm
+    import services.setup_universe as su
+
+    class _Store:
+        def session(self, d):
+            raise pbm.PriceBandDataError("missing")
+    monkeypatch.setattr(pbm, "get_price_band_store", lambda cfg: _Store())
+    monkeypatch.setattr(su, "close_dn_overnight_long_universe", lambda dd, d, c: {"NSE:SMALLCO"})
+    state_path = tmp_path / "overnight_slots.json"
+    cfg = _minimal_config(state_path)
+    cfg["setups"]["close_dn_overnight_long"]["exclude_no_band_names"] = True
+    broker = MagicMock()
+    broker.list_symbols.return_value = []
+    broker._data_sdk = None
+    summary = run_entry(cfg, broker, now_ist=pd.Timestamp("2026-05-21 15:25:00"))
+    assert summary["fired_count"] == 0
+    broker.place_order.assert_not_called()
 
 
 def test_verify_exit_failsafe_id_persisted_before_poll(tmp_path):
@@ -1131,7 +1356,7 @@ def test_place_amo_sell_and_failsafe_round_to_instrument_tick():
                     tick_size=0.10)
     assert broker.place_order.call_args.kwargs["price"] == pytest.approx(241.6)
     _place_failsafe_sell(broker, symbol="NSE:NPST", qty=10, product="MTF",
-                         limit_price=239.95, tick_size=0.10)
+                         limit_price=239.95, tick_size=0.10, trade_id="OVERNIGHT_FS_26-07-17F1")
     sent = broker.place_order.call_args.kwargs["price"]
     assert sent == pytest.approx(239.9)  # float repr of 239.95/0.10 rounds down
     assert round(sent / 0.10) * 0.10 == pytest.approx(sent)

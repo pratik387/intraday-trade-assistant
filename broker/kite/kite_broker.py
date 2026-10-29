@@ -534,14 +534,30 @@ class KiteBroker:
                 raise
             return {"day": [], "net": []}
 
-    def get_orders(self) -> List[Dict]:
-        """Get all orders for today."""
+    def get_holdings(self, strict: bool = False) -> List[Dict]:
+        """Demat + T1 holdings (each row may carry an `mtf` block). strict=True raises
+        on a failed fetch: an empty list reads as 'nothing held'."""
+        if self.dry_run:
+            return []
+        try:
+            return self.kc.holdings()
+        except Exception as e:
+            logger.error(f"Failed to fetch holdings: {e}")
+            if strict:
+                raise
+            return []
+
+    def get_orders(self, strict: bool = False) -> List[Dict]:
+        """Get all orders for today. strict=True raises on a failed fetch (an empty
+        list reads as 'no such order')."""
         if self.dry_run:
             return self._paper_orders  # Return simulated orders in paper mode
         try:
             return self.kc.orders()
         except Exception as e:
             logger.error(f"Failed to fetch orders: {e}")
+            if strict:
+                raise
             return []
 
     def get_app_orders(self) -> List[Dict]:

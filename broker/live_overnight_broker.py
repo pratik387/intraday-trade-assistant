@@ -51,10 +51,14 @@ class LiveOvernightBroker:
     def get_order_status(self, order_id: str) -> Dict[str, Any]:
         return self._kite.get_order_status(order_id)
 
-    def get_orders(self) -> List[Dict]:
+    def get_orders(self, strict: bool = False) -> List[Dict]:
         # Full orderbook — verify-exit scans it for out-of-band (manual) exits
         # so it can adopt them instead of double-selling (SABEVENTS 2026-07-20).
-        return self._kite.get_orders()
+        return self._kite.get_orders(strict=strict)
+
+    def get_holdings(self, strict: bool = False) -> List[Dict]:
+        # Stale-slot exits check what is still held before touching its GTT.
+        return self._kite.get_holdings(strict=strict)
 
     def modify_order(self, order_id: str, price: float, variety: str = "regular") -> bool:
         # Re-price a still-OPEN exit AMO remainder (REGENCERAM 2026-07-24).

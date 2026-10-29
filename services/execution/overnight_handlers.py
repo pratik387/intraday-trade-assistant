@@ -213,7 +213,7 @@ def _est_next_day_lower_circuit(last_price, upper_circuit, lower_circuit):
     return float(last_price) * (1.0 - band_frac)
 
 
-def _find_out_of_band_sell(broker, symbol: str, qty: int, exclude_order_id=None):
+def _find_out_of_band_sell(broker, symbol: str, qty: int, exclude_order_id=None, orders=None):
     """(order_id, avg_price) of a COMPLETE SELL matching symbol+qty that this
     engine did not place — e.g. the user flattening manually from the app after
     an AMO rejection (SABEVENTS 2026-07-20). None when absent or the broker
@@ -221,11 +221,11 @@ def _find_out_of_band_sell(broker, symbol: str, qty: int, exclude_order_id=None)
     slot's own AMO id so a filled engine order is never double-adopted.
     """
     get_orders = getattr(broker, "get_orders", None)
-    if get_orders is None:
+    if orders is None and get_orders is None:
         return None
     tsym = str(symbol).split(":", 1)[-1]
     try:
-        for o in get_orders():
+        for o in (orders if orders is not None else get_orders()):
             if str(o.get("order_id")) == str(exclude_order_id):
                 continue
             if str(o.get("tag") or "").startswith("ITDA"):
@@ -645,6 +645,25 @@ def run_entry(
                 logger.exception("run_entry: universe builder failed for %s: %s", spec.name, e)
                 continue
         logger.info("run_entry: universe size for %s = %d", spec.name, len(universe))
+
+        # F&O exclusion, point-in-time: NSE gives F&O stocks (and ETFs) "No Band"
+        # in the session's sec_list. F&O names close in the closing auction (CAS,
+        # live since 2026-08-03), so their 15:25 bar no longer leads into the close
+        # the way the research sample did. A symbol absent from the list is kept
+        # (renames make absence no evidence). No list = no new entries.
+        if spec.raw_config["exclude_no_band_names"]:
+            from services.price_bands import get_price_band_store, PriceBandDataError
+            try:
+                _bands = get_price_band_store(config).session(today).bands
+            except PriceBandDataError as e:
+                logger.critical("run_entry: no NSE price-band list for %s (%s); "
+                                "no new %s entries today", today, e, spec.name)
+                continue
+            _before = len(universe)
+            universe = {u for u in universe
+                        if not pd.isna(_bands.get(u.split(":", 1)[-1], 0.0))}
+            logger.info("run_entry: F&O/No-Band filter for %s: %d -> %d",
+                        spec.name, _before, len(universe))
 
         # Batch-fetch today's 5m bars for the (now small) candidate universe.
         # rps/concurrency from config (entry_fetch_rps / entry_fetch_concurrency):
@@ -1426,7 +1445,7 @@ def run_place_exit(
             amo_id = _place_amo_sell(
                 broker, symbol=slot.symbol, qty=qty,
                 product=slot.product or "CNC", paper_mode=paper_mode,
-                trade_id=f"OVERNIGHT_AMO_{slot.reserved_today}_{slot.slot_id}",
+                trade_id=_amo_trade_id(slot),
                 limit_price=amo_limit,
                 tick_size=tick,
             )
@@ -1450,8 +1469,8 @@ def run_place_exit(
                                       "amo_sell_order_id": str(amo_id), "gtt_id": slot.gtt_id,
                                       "expected_exit_date": next_day.isoformat()})
         except Exception as e:
-            logger.error("run_place_exit: exit placement FAILED for slot %d %s: %s "
-                         "(continuing; 09:30 verify-exit will place a failsafe SELL)",
+            logger.critical("run_place_exit: exit placement FAILED for slot %d %s: %s "
+                            "(continuing; the 09:16 verify-exit sells it at the open)",
                          slot.slot_id, slot.symbol, e)
             summary["exit_failed_count"] = summary.get("exit_failed_count", 0) + 1
         finally:
@@ -1540,17 +1559,33 @@ def run_verify_exit(
         max_new_per_day=int(slot_cfg["max_new_positions_per_day"]),
     )
 
-    # Phase 1: settle T0 slots whose AMO has executed (expected_exit_date <= today)
-    for slot in list(pool.active()):
+    # Phase 1: settle T0 slots whose AMO has executed (expected_exit_date <= today).
+    # Stale slots (exit day already past) go last: a due slot in the same symbol
+    # settles first, so the stale slot's holdings check does not count its shares.
+    for slot in sorted(pool.active(), key=lambda sl: bool(
+            sl.expected_exit_date and date.fromisoformat(sl.expected_exit_date) < today)):
         if slot.status != "t0_open":
             continue
         if slot.expected_exit_date is None:
-            logger.warning(
-                "run_verify_exit: slot %d in t0_open without expected_exit_date -- orphan",
-                slot.slot_id,
-            )
-            summary["orphan_t0_count"] += 1
-            continue
+            if (slot.amo_sell_order_id is None and slot.reserved_today
+                    and slot.buy_fill_price and slot.buy_fill_price > 0):
+                # The 16:05 place-exit failed for this slot: the shares are held
+                # with no exit order and no GTT. Exit at the open like any slot.
+                derived = _next_trading_day(date.fromisoformat(slot.reserved_today))
+                if today < derived:
+                    continue
+                slot.expected_exit_date = derived.isoformat()
+                pool.persist()
+                logger.critical(
+                    "run_verify_exit: slot %d %s has NO exit AMO (16:05 place-exit failed); "
+                    "exiting now (expected_exit=%s)", slot.slot_id, slot.symbol, derived)
+            else:
+                logger.warning(
+                    "run_verify_exit: slot %d in t0_open without expected_exit_date -- orphan",
+                    slot.slot_id,
+                )
+                summary["orphan_t0_count"] += 1
+                continue
         expected_exit = date.fromisoformat(slot.expected_exit_date)
         if today < expected_exit:
             logger.info(
@@ -1558,39 +1593,32 @@ def run_verify_exit(
                 slot.slot_id, expected_exit, today,
             )
             continue
+        stale_px = None
         if today > expected_exit:
             # Stale slot: expected_exit was a PRIOR session that this cron
-            # missed (e.g. paper-mode bug, holiday gap, cron-skip). Settling
-            # here would use TODAY's 09:15 fill price instead of the actual
-            # exit day's 09:15 — silently mis-prices the trade. Flag as orphan
-            # and skip so it's surfaced for manual resolution / historical-
-            # fetch rebuild (see Task #73).
+            # missed (e.g. paper-mode bug, holiday gap, cron-skip). Paper: settling
+            # here would use TODAY's 09:15 price instead of the exit day's, so it
+            # is flagged for manual resolution. Live: the broker says whether the
+            # shares are still held; held shares are sold now (a real fill, so a
+            # real price) and their GTT stays until they are.
             logger.warning(
-                "run_verify_exit: slot %d STALE (expected_exit=%s < today=%s) -- "
-                "orphan, requires manual settlement at correct historical price",
+                "run_verify_exit: slot %d STALE (expected_exit=%s < today=%s)",
                 slot.slot_id, expected_exit, today,
             )
-            if slot.failsafe_sell_order_id and not paper_mode:
-                # The exit day ended with a failsafe SELL still unconfirmed:
-                # shares may well still be held, so the GTT is their only stop.
-                logger.critical(
-                    "run_verify_exit: STALE slot %d %s still has unconfirmed failsafe "
-                    "SELL %s from %s — shares may be held; GTT %s KEPT. Check holdings "
-                    "and sell manually.", slot.slot_id, slot.symbol,
-                    slot.failsafe_sell_order_id, expected_exit, slot.gtt_id)
+            if not paper_mode:
+                try:
+                    stale_px = _stale_live_exit(broker, slot, pool, managed_setups[0].raw_config)
+                except Exception as e:
+                    logger.critical("run_verify_exit: STALE slot %d %s exit failed: %s; GTT %s KEPT",
+                                    slot.slot_id, slot.symbol, e, slot.gtt_id)
+                    stale_px = None
+            elif slot.gtt_id and hasattr(broker, "cancel_gtt"):
+                broker.cancel_gtt(slot.gtt_id)
+                slot.gtt_id = None
+            if stale_px is None:
+                pool.persist()
                 summary["orphan_t0_count"] += 1
                 continue
-            # Cancel any live GTT on this stale slot — the AMO almost certainly
-            # already filled at the correct open, so a surviving GTT could trigger
-            # on a now-flat position and open a NAKED SHORT.
-            if slot.gtt_id and hasattr(broker, "cancel_gtt"):
-                if not broker.cancel_gtt(slot.gtt_id):
-                    logger.warning("run_verify_exit: stale-slot GTT %s cancel returned False "
-                                   "for slot %d — verify manually (naked-short risk)",
-                                   slot.gtt_id, slot.slot_id)
-                slot.gtt_id = None
-            summary["orphan_t0_count"] += 1
-            continue
         if slot.buy_fill_price is None or slot.notional_inr <= 0:
             logger.warning(
                 "run_verify_exit: slot %d missing buy_fill_price/notional -- orphan",
@@ -1600,7 +1628,9 @@ def run_verify_exit(
             continue
 
         # Determine sell fill price
-        if paper_mode:
+        if stale_px is not None:
+            sell_price = stale_px
+        elif paper_mode:
             sell_price = _paper_fill_price_exit(broker, slot.symbol, expected_exit)
             if sell_price is None:
                 logger.warning(
@@ -1617,6 +1647,16 @@ def run_verify_exit(
             except Exception as e:
                 logger.error("run_verify_exit: failsafe follow-up failed for slot %d: %s",
                              slot.slot_id, e)
+                continue
+            if sell_price is None:
+                continue
+        elif slot.amo_sell_order_id is None:
+            try:
+                sell_price = _exit_without_amo(broker, slot, managed_setups[0].raw_config,
+                                               persist=pool.persist)
+            except Exception as e:
+                logger.critical("run_verify_exit: slot %d %s has no exit AMO and the failsafe "
+                                "failed: %s — SELL MANUALLY", slot.slot_id, slot.symbol, e)
                 continue
             if sell_price is None:
                 continue
@@ -2094,6 +2134,142 @@ def _place_buy(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
     return str(order_id)
 
 
+def _amo_trade_id(slot) -> str:
+    """trade_id of a slot's exit AMO; the broker tags the order with its tail."""
+    return f"OVERNIGHT_AMO_{slot.reserved_today}_{slot.slot_id}"
+
+
+def _fs_trade_id(slot) -> str:
+    """trade_id of a slot's failsafe SELLs. Its 12-char tail (the broker tag) differs
+    from the AMO's, so a failsafe the state lost (crash after placement) is found."""
+    return f"OVERNIGHT_FS_{str(slot.reserved_today)[2:]}F{slot.slot_id}"
+
+
+def _engine_orders(orders, slot, trade_id: str) -> list:
+    """Today's engine SELLs for this slot carrying trade_id's tag, newest last."""
+    tail = trade_id[-12:]
+    tsym = str(slot.symbol).split(":", 1)[-1]
+    return [o for o in orders or []
+            if str(o.get("tag") or "").startswith("ITDA") and str(o.get("tag")).endswith(tail)
+            and o.get("tradingsymbol") == tsym and o.get("transaction_type") == "SELL"]
+
+
+def _live_failsafe_today(orders, slot) -> Optional[str]:
+    """Id of a failsafe for this slot placed today that is not dead."""
+    alive = [o for o in _engine_orders(orders, slot, _fs_trade_id(slot))
+             if str(o.get("status") or "").upper() not in ("REJECTED", "CANCELLED")]
+    return str(alive[-1].get("order_id")) if alive else None
+
+
+def _held_unsold_qty(broker, slot, pool) -> Optional[int]:
+    """Shares of this slot still held at the broker: demat + T1 + MTF holdings,
+    less what is already used by sells, less what other open slots in the same
+    symbol hold. None when holdings cannot be read."""
+    get_holdings = getattr(broker, "get_holdings", None)
+    if get_holdings is None:
+        return None
+    try:
+        rows = get_holdings(strict=True)
+    except Exception as e:
+        logger.error("_held_unsold_qty: holdings fetch failed for %s: %s", slot.symbol, e)
+        return None
+    tsym = str(slot.symbol).split(":", 1)[-1]
+    held = 0
+    for r in rows or []:
+        if r.get("tradingsymbol") != tsym or str(r.get("exchange") or "NSE") != "NSE":
+            continue
+        mtf = r.get("mtf") or {}
+        held += (int(r.get("quantity") or 0) + int(r.get("t1_quantity") or 0)
+                 - int(r.get("used_quantity") or 0)
+                 + int(mtf.get("quantity") or 0) - int(mtf.get("used_quantity") or 0))
+    others = sum(o.exit_qty() - int(o.exit_sold_qty or 0) for o in pool.active()
+                 if o.slot_id != slot.slot_id and o.status == "t0_open" and o.symbol == slot.symbol)
+    return max(0, held - others)
+
+
+def _stale_live_exit(broker, slot, pool, raw_cfg: dict) -> Optional[float]:
+    """Live stale slot (its exit day passed without a settle). Returns the exit
+    price to settle at, or None (slot stays an orphan).
+
+    A failsafe placed earlier TODAY (found by its tag in today's orderbook) is
+    driven to completion first. An older failsafe id is dropped (Kite's orderbook
+    is today's only). Then holdings decide: shares held -> sell them now; none
+    held -> manual settlement. The GTT is never cancelled here: one firing on
+    shares no longer held is rejected, while a wrong 'none held' reading that
+    cancelled it would leave real shares without a stop."""
+    try:
+        orders = broker.get_orders(strict=True)
+    except Exception as e:
+        logger.critical("run_verify_exit: STALE slot %d %s — orderbook unreadable (%s); GTT %s "
+                        "KEPT, retry next pass", slot.slot_id, slot.symbol, e, slot.gtt_id)
+        return None
+    fs = _live_failsafe_today(orders, slot)
+    if fs is not None:
+        if slot.failsafe_sell_order_id != fs:
+            slot.failsafe_sell_order_id = fs
+            pool.persist()
+        return _resume_failsafe_exit(broker, slot, raw_cfg, persist=pool.persist)
+    if slot.failsafe_sell_order_id:
+        logger.warning("run_verify_exit: STALE slot %d %s: failsafe %s is from an earlier day; "
+                       "holdings decide", slot.slot_id, slot.symbol, slot.failsafe_sell_order_id)
+        slot.failsafe_sell_order_id = None
+        pool.persist()
+    held = _held_unsold_qty(broker, slot, pool)
+    if held is None:
+        logger.critical("run_verify_exit: STALE slot %d %s — holdings unreadable; GTT %s KEPT. "
+                        "Check the position manually.", slot.slot_id, slot.symbol, slot.gtt_id)
+        return None
+    remainder = slot.exit_qty() - int(slot.exit_sold_qty or 0)
+    if held <= 0:
+        logger.critical("run_verify_exit: STALE slot %d %s reads flat at the broker; GTT %s KEPT. "
+                        "Confirm in Console, settle manually at the exit day's price and delete "
+                        "the GTT.", slot.slot_id, slot.symbol, slot.gtt_id)
+        return None
+    qty = min(held, remainder)
+    logger.critical("run_verify_exit: STALE slot %d %s still holds %d shares (exit was due %s); "
+                    "selling now, GTT %s kept", slot.slot_id, slot.symbol, held,
+                    slot.expected_exit_date, slot.gtt_id)
+    marketable, tick = _marketable_sell_limit(broker, slot.symbol, raw_cfg)
+    px = _failsafe_exit_and_confirm(broker, slot, remainder=qty, limit_price=marketable,
+                                    tick=tick, raw_cfg=raw_cfg, persist=pool.persist,
+                                    orders=orders)
+    if px is not None and qty < remainder:
+        logger.critical("run_verify_exit: STALE slot %d %s: sold the %d held of %d; the rest left "
+                        "unseen — settle manually (GTT %s kept)", slot.slot_id, slot.symbol,
+                        qty, remainder, slot.gtt_id)
+        return None
+    return px
+
+
+def _exit_without_amo(broker, slot, raw_cfg: dict, *, persist) -> Optional[float]:
+    """Live exit of a slot whose 16:05 AMO was never recorded. An AMO the broker
+    does have (placement raised after it went through) is adopted; so is a manual
+    sell; else a failsafe SELL for the unsold remainder. An unreadable orderbook
+    places nothing (retry next pass): read as empty it would mean a blind SELL."""
+    try:
+        orders = broker.get_orders(strict=True)
+    except Exception as e:
+        logger.critical("run_verify_exit: slot %d %s has no exit AMO and the orderbook is "
+                        "unreadable (%s); retry next pass", slot.slot_id, slot.symbol, e)
+        return None
+    amo = _engine_orders(orders, slot, _amo_trade_id(slot))
+    if amo:
+        slot.amo_sell_order_id = str(amo[-1].get("order_id"))
+        persist()
+        logger.warning("run_verify_exit: adopted unrecorded exit AMO %s for slot %d %s",
+                       slot.amo_sell_order_id, slot.slot_id, slot.symbol)
+        return _live_check_amo_fill(broker, slot.amo_sell_order_id)
+    remainder = slot.exit_qty() - int(slot.exit_sold_qty or 0)
+    oob = _find_out_of_band_sell(broker, slot.symbol, remainder, orders=orders)
+    if oob is not None:
+        logger.warning("run_verify_exit: slot %d %s had no AMO; adopting out-of-band SELL %s @ %.2f",
+                       slot.slot_id, slot.symbol, oob[0], oob[1])
+        return _exit_price_with(slot, remainder, oob[1])
+    marketable, tick = _marketable_sell_limit(broker, slot.symbol, raw_cfg)
+    return _failsafe_exit_and_confirm(broker, slot, remainder=remainder, limit_price=marketable,
+                                      tick=tick, raw_cfg=raw_cfg, persist=persist, orders=orders)
+
+
 def _place_amo_sell(broker, *, symbol: str, qty: int, product: str, paper_mode: bool,
                     trade_id: str, limit_price: float, tick_size: float) -> str:
     """Place an AMO LIMIT SELL for next-day pre-open execution.
@@ -2113,7 +2289,7 @@ def _place_amo_sell(broker, *, symbol: str, qty: int, product: str, paper_mode: 
 
 
 def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str,
-                         limit_price: float, tick_size: float) -> str:
+                         limit_price: float, tick_size: float, trade_id: str) -> str:
     """Failsafe regular LIMIT SELL (marketable, below live LTP) when AMO did not execute.
 
     tick_size is the INSTRUMENT's tick (see _instrument_tick).
@@ -2122,7 +2298,7 @@ def _place_failsafe_sell(broker, *, symbol: str, qty: int, product: str,
         symbol=symbol, side="SELL", qty=qty,
         order_type="LIMIT", price=round_to_tick(float(limit_price), tick_size),
         product=product, variety="regular",
-        check_margins=False,
+        trade_id=trade_id, check_margins=False,
     )
     return str(order_id)
 
@@ -2151,18 +2327,35 @@ def _exit_price_with(slot, qty: int, avg: float) -> float:
 
 
 def _failsafe_exit_and_confirm(broker, slot, *, remainder: int, limit_price: float,
-                               tick: float, raw_cfg: dict, persist) -> Optional[float]:
+                               tick: float, raw_cfg: dict, persist, orders=None) -> Optional[float]:
     """Place a failsafe SELL for `remainder` and wait for it to fill.
 
     Returns the slot's blended exit price when the failsafe is COMPLETE within
     failsafe_fill_confirm_sec, else None. The order id is recorded on the slot
     and persisted BEFORE polling, so a later verify pass picks it up
     (_resume_failsafe_exit) even if this run dies afterwards — never a second
-    SELL against holdings the first one locks.
+    SELL against holdings the first one locks. A failsafe the state lost (the run
+    died between placement and persist) is found by its tag and adopted instead;
+    an unreadable orderbook places nothing.
     """
+    if orders is None:
+        try:
+            orders = broker.get_orders(strict=True)
+        except Exception as e:
+            logger.critical("run_verify_exit: orderbook unreadable before failsafe for %s (%s); "
+                            "retry next pass", slot.symbol, e)
+            return None
+    lost = _live_failsafe_today(orders, slot)
+    if lost is not None and lost != slot.failsafe_sell_order_id:
+        logger.warning("run_verify_exit: failsafe %s for %s found in the orderbook but not in "
+                       "state; adopting it (next pass settles it)", lost, slot.symbol)
+        slot.failsafe_sell_order_id = lost
+        persist()
+        return None
     fs_id = _place_failsafe_sell(
         broker, symbol=slot.symbol, qty=remainder,
         product=slot.product or "CNC", limit_price=limit_price, tick_size=tick,
+        trade_id=_fs_trade_id(slot),
     )
     slot.failsafe_sell_order_id = fs_id
     persist()

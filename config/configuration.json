@@ -776,6 +776,8 @@
       "min_trading_days_required": 16,
       "_comment_liquidity_floor_2026_06_09": "Matches backtest sanity (tools/sub9_research/sanity_close_dn_overnight_long.py): MIN_DAILY_AVG_VOLUME=50_000, MIN_TRADING_DAYS_COVERAGE=0.80 over 20-day rolling = 16 sessions. Pre-2026-06-09 these were 0 which made production permissive vs the universe PF 2.44 was measured on.",
       "universe_max_symbols": 1500,
+      "exclude_no_band_names": true,
+      "_comment_exclude_no_band_names": "2026-10-29 (risk charter item 5). Entry skips names NSE lists with 'No Band' for the session (F&O stocks + ETFs; point-in-time from data/price_bands). F&O names close in the closing auction (CAS, from 2026-08-03), so the 15:25 signal no longer leads into the close the way it did in the research sample. Needs the day's price-band file (07:30 cron); without it, no new entries.",
       "catastrophe_stop_pct": 5.0,
       "fill_poll_timeout_sec": 20,
       "_comment_fill_poll_timeout_sec": "2026-07-30 incident: the old 60s serial poll per candidate blew the 15:26-15:30 window — 7 fires produced 2 dust partials (BANG 461/1655, SAYAJIHOTL 5/172) and 4 'Markets are closed' rejections placed after 15:30. At 20s/candidate three ranked picks fit the window even with the batch fetch ahead of them. The reconcile sweep still catches any cancel-fill race.",

@@ -39,6 +39,7 @@ CNC_STAMP_RATE_BUY = 0.00015     # 0.015% on buy value (delivery)
 CNC_TXN_RATE_PER_SIDE = 0.0000307
 CNC_SEBI_RATE_PER_SIDE = 0.000001
 CNC_GST_RATE = 0.18              # 18% on (brokerage + txn)
+CNC_DP_CHARGE_INR = 13.0         # Zerodha DP charge per scrip per sell day (+18% GST = Rs15.34); also on BTST/T1 sells
 
 # MTF additional costs on top of base equity fee model (Zerodha rate card, 2026-05-21)
 MTF_INTEREST_RATE_PER_DAY = 0.0004   # 0.04% per day on borrowed amount; from T+1
@@ -120,6 +121,9 @@ def calc_fee_cnc(buy_value_inr: float, sell_value_inr: float) -> float:
       - Txn charges: 0.00307% per side (NSE)
       - SEBI: 0.0001% per side
       - GST: 18% on (brokerage + txn) per side
+      - DP charge: Rs13 + GST = Rs15.34 per sell (added 2026-10-29; Zerodha
+        levies it on T1/BTST sells too). Per scrip per day: two lots of one
+        scrip sold the same day are charged once, this counts it per trade.
 
     Pre-Jun-2026 audit corrected three errors:
       1. Brokerage was Rs 20 flat per side; reality is Rs 0 (Zerodha delivery free).
@@ -130,7 +134,9 @@ def calc_fee_cnc(buy_value_inr: float, sell_value_inr: float) -> float:
     with this corrected helper to refresh the locked PF.
 
     Mirrors `tools/sub9_research/sanity_close_dn_overnight_long.py:calc_fee_cnc`
-    so research / production reconcile. Pure function; returns Rs as float.
+    so research / production reconcile — except the DP charge (2026-10-29), which
+    the research copy does not have: research PFs are slightly optimistic by it.
+    Pure function; returns Rs as float.
     """
     if buy_value_inr is None or sell_value_inr is None:
         return 0.0
@@ -150,9 +156,10 @@ def calc_fee_cnc(buy_value_inr: float, sell_value_inr: float) -> float:
     sebi_sell = sell_value_inr * CNC_SEBI_RATE_PER_SIDE
     gst_buy = (brokerage_buy + txn_buy) * CNC_GST_RATE
     gst_sell = (brokerage_sell + txn_sell) * CNC_GST_RATE
+    dp = CNC_DP_CHARGE_INR * (1.0 + CNC_GST_RATE)
     return (
         brokerage_buy + brokerage_sell + stt_buy + stt_sell + stamp_buy +
-        txn_buy + txn_sell + sebi_buy + sebi_sell + gst_buy + gst_sell
+        txn_buy + txn_sell + sebi_buy + sebi_sell + gst_buy + gst_sell + dp
     )
 
 
