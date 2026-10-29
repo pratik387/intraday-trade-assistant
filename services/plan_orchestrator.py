@@ -153,6 +153,54 @@ def set_runtime_capital(total_capital_inr: float) -> None:
     cfg["total_capital_inr"] = float(total_capital_inr)
 
 
+_TRADING_MODES = ("live", "paper", "backtest")
+
+
+def _is_enabled_intraday(raw: Any) -> bool:
+    return (isinstance(raw, dict) and str(raw.get("horizon")) != "multi_day"
+            and raw.get("mode", "intraday") == "intraday" and bool(raw.get("enabled")))
+
+
+def set_runtime_trading_mode(mode: str) -> List[str]:
+    """Inject the run's trading mode; same seam as set_runtime_capital.
+
+    `enabled` is read by paper, backtest and live alike, so a setup enabled for
+    its paper forward-run also trades real money. In live mode an intraday
+    setup additionally needs `live_enabled: true`. Every enabled intraday setup
+    must declare the flag, checked here so a missing one stops the live daemon
+    at startup rather than silently trading or silently not trading.
+
+    Returns the intraday setups that will trade (all enabled ones off-live).
+    """
+    if mode not in _TRADING_MODES:
+        raise ValueError(f"trading mode must be one of {_TRADING_MODES}, got {mode!r}")
+    cfg = _load_root_config()
+    cfg["runtime_trading_mode"] = mode
+    setups = cfg.get("setups") or {}
+    names = [n for n, raw in setups.items() if _is_enabled_intraday(raw)]
+    if mode != "live":
+        return names
+    bad = [n for n in names if not isinstance(setups[n].get("live_enabled"), bool)]
+    if bad:
+        raise OrchestratorConfigError(
+            f"setups.<name>.live_enabled must be true/false on every enabled intraday setup: {bad}")
+    return [n for n in names if setups[n]["live_enabled"]]
+
+
+def _live_gate_blocks(setup_type: str, setup_cfg: dict) -> bool:
+    """True when this is a live run and the setup is not live-enabled."""
+    cfg = _load_root_config()
+    if "runtime_trading_mode" not in cfg:
+        raise OrchestratorConfigError(
+            "runtime_trading_mode not set — main.py must call "
+            "plan_orchestrator.set_runtime_trading_mode() before planning")
+    if cfg["runtime_trading_mode"] != "live" or setup_cfg.get("mode", "intraday") != "intraday":
+        return False
+    if not isinstance(setup_cfg.get("live_enabled"), bool):
+        raise OrchestratorConfigError(f"setups.{setup_type}.live_enabled must be true/false")
+    return not setup_cfg["live_enabled"]
+
+
 def _get_selection_rules() -> Dict[str, Any]:
     """Return selection-control knobs from configuration.json (or defaults
     geared for the post-Phase-C single-bucket world).
@@ -260,6 +308,13 @@ class PlanOrchestrator:
             cls = None
         if cls is None:
             logger.warning(f"[ORCH] Unknown setup_type={setup_type!r}")
+            return None
+
+        # Outside the try below: a missing live_enabled must fail fast, not be
+        # logged and swallowed as an instantiation error.
+        setup_cfg = (_load_root_config().get("setups") or {}).get(setup_type) or {}
+        if _live_gate_blocks(setup_type, setup_cfg):
+            logger.debug(f"[ORCH] {setup_type} not live_enabled — paper only, skipping")
             return None
 
         try:

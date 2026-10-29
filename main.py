@@ -299,8 +299,11 @@ def main() -> int:
     # which differs by mode (paper Rs5L vs live) and by CLI flags. This is the
     # single seam; set_base_config_override above writes base_config.json, which
     # the orchestrator does not read.
-    from services.plan_orchestrator import set_runtime_capital
+    from services.plan_orchestrator import set_runtime_capital, set_runtime_trading_mode
     set_runtime_capital(capital_manager.total_capital)
+    _trading_mode = "backtest" if args.dry_run else "paper" if args.paper_trading else "live"
+    _trading_setups = set_runtime_trading_mode(_trading_mode)
+    logger.info(f"[SETUPS] mode={_trading_mode} | intraday setups that can trade: {_trading_setups}")
     logger.info(
         f"[CAPITAL] Sizing capital = Rs{capital_manager.total_capital:,.0f} "
         f"(capital_mgmt={'on' if capital_enabled else 'off'}, mis={mis_enabled})"
