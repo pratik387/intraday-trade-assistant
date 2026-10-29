@@ -1667,6 +1667,8 @@
   "_comment_trail_time": "PHASE 3: Tighten trail after 2:30 PM when NSE liquidity drops",
   "exit_trail_atr_mult_late": 1.5,
   "_comment_trail_late": "PHASE 3: Tighter 1.5Ã— ATR trail after 14:30",
+  "exit_retry_cooldown_sec": 30,
+  "_comment_exit_retry_cooldown_sec": "2026-10-29. When an exit order does not fill (HUHTAMAKI 10-28: SL BUY REJECTED with the stock locked at its upper circuit) the position stays open and tracked and the exit is retried at most once per this many seconds. Before, the rejection was swallowed and the exit booked as filled.",
   "exit_t1_min_partial_r": 0.3,
   "_comment_t1_min_r": "Skip T1 partial if profit < 0.3R â€” charges eat 87%+ of gross at <0.3R on NSE",
   "or_kill_enabled": false,

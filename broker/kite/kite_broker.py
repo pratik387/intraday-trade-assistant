@@ -580,20 +580,22 @@ class KiteBroker:
                     return {"order_id": str(order_id),
                             "status": str(o.get("status", "COMPLETE")).upper(),
                             "average_price": float(o.get("average_price") or 0.0),
+                            "filled_quantity": int(o.get("filled_quantity") or o.get("quantity") or 0),
                             "status_message": str(o.get("status_message") or "")}
             return {"order_id": str(order_id), "status": "UNKNOWN",
-                    "average_price": 0.0, "status_message": ""}
+                    "average_price": 0.0, "filled_quantity": 0, "status_message": ""}
         try:
             for o in self.kc.orders():
                 if str(o.get("order_id")) == str(order_id):
                     return {"order_id": str(order_id),
                             "status": str(o.get("status") or "").upper(),
                             "average_price": float(o.get("average_price") or 0.0),
+                            "filled_quantity": int(o.get("filled_quantity") or 0),
                             "status_message": str(o.get("status_message") or "")}
         except Exception as e:
             logger.warning(f"get_order_status failed for {order_id}: {e}")
         return {"order_id": str(order_id), "status": "UNKNOWN",
-                "average_price": 0.0, "status_message": ""}
+                "average_price": 0.0, "filled_quantity": 0, "status_message": ""}
 
     def cancel_order(self, order_id: str, variety: str = "regular") -> bool:
         """Cancel a pending (OPEN) order. Returns True on success, False on failure.

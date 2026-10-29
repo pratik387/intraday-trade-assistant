@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from typing import Dict, Any, Callable, Optional, Tuple, List
+import copy
+import threading
 import math
 import time
 import pandas as pd  # for Timestamp typing only
@@ -21,6 +23,10 @@ logger, trade_logger = get_execution_loggers()
 
 
 # ---------- Helpers ----------
+
+
+class _ExitNotFilled(Exception):
+    """The exit order did not fill; the position is still open at the broker."""
 
 
 def _pos_tid(pos: Position) -> str:
@@ -212,6 +218,10 @@ class ExitExecutor:
         self.exec_product = str(cfg.get("exec_product", "MIS")).upper()
         self.exec_variety = str(cfg.get("exec_variety", "regular")).lower()
         self.exec_mode    = str(cfg.get("exec_order_mode", "MARKET")).upper()
+        # Seconds between exit attempts when an exit order does not fill (e.g. rejected at the circuit).
+        self.exit_retry_cooldown_sec = float(cfg["exit_retry_cooldown_sec"])
+        self._exit_locks: Dict[str, threading.Lock] = {}
+        self._exit_locks_guard = threading.Lock()
 
         logger.info(
             f"exit_executor: init eod={self.eod_hhmm} "
@@ -698,6 +708,8 @@ class ExitExecutor:
 
         # Place exit order and get actual fill price
         actual_exit_px = self._place_and_log_exit(sym, pos, px, qty_exit, ts, reason)
+        if actual_exit_px is None:
+            return
 
         # Calculate profit for this partial exit
         entry_price = float(pos.avg_price)
@@ -1195,8 +1207,7 @@ class ExitExecutor:
 
                     # Execute partial exit
                     try:
-                        self._place_and_log_exit(symbol, pos, px, partial_qty, None, "OR_KILL_PARTIAL")
-                        exit_result = True
+                        exit_result = self._place_and_log_exit(symbol, pos, px, partial_qty, None, "OR_KILL_PARTIAL") is not None
                     except Exception as e:
                         logger.warning(f"OR_KILL: {symbol} partial exit failed: {e}")
                         exit_result = False
@@ -1269,7 +1280,143 @@ class ExitExecutor:
 
     # ---------- Place exits + logging ----------
 
-    def _place_and_log_exit(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> float:
+    def _settle_unfilled_exit(self, sym: str, order_id: str, expected_qty: int) -> Optional[Dict[str, Any]]:
+        """An exit order reported not filled: if it is still working, cancel it, then
+        re-read it. Returns fill info if it completed after all (a cancel can race a
+        fill), None if it is dead (REJECTED / CANCELLED / unknown)."""
+        if not hasattr(self.broker, "get_order_status"):
+            return None
+        try:
+            o = self.broker.get_order_status(order_id)
+            if o["status"] not in ("REJECTED", "CANCELLED", "COMPLETE") and hasattr(self.broker, "cancel_order"):
+                self.broker.cancel_order(order_id)
+                o = self.broker.get_order_status(order_id)
+        except Exception as e:
+            logger.error(f"EXIT_RECONCILE | {sym} | Order {order_id} status/cancel failed: {e}")
+            return None
+        if o["status"] == "COMPLETE" and o["average_price"] > 0 and o.get("filled_quantity", 0) in (0, expected_qty):
+            logger.warning(f"EXIT_RECONCILE | {sym} | Order {order_id} completed on re-check @ {o['average_price']:.2f}")
+            return {"avg_price": o["average_price"], "remaining_qty": "unknown"}
+        logger.error(f"EXIT_RECONCILE | {sym} | Order {order_id} {o['status']}: {o.get('status_message') or '-'}")
+        return None
+
+    _MISSING = object()
+
+    @classmethod
+    def _snapshot_exit_state(cls, pos: Position, st: dict, keys: Tuple[str, ...]) -> tuple:
+        """Values of the keys a partial exit is about to change, restored IN PLACE so
+        concurrent updates to other keys (mae/mfe, retry markers) survive."""
+        return ({k: st.get(k, cls._MISSING) for k in keys},
+                copy.deepcopy(pos.plan.get("stop", cls._MISSING)), pos.plan.get("hard_sl", cls._MISSING))
+
+    @classmethod
+    def _restore_exit_state(cls, pos: Position, undo: tuple) -> None:
+        vals, stop, hard_sl = undo
+        st = pos.plan.setdefault("_state", {})
+        for k, v in vals.items():
+            if v is cls._MISSING:
+                st.pop(k, None)
+            else:
+                st[k] = v
+        st.pop("_t1_processing", None)
+        st.pop("_t2_processing", None)
+        for key, v in (("stop", stop), ("hard_sl", hard_sl)):
+            if v is cls._MISSING:
+                pos.plan.pop(key, None)
+            else:
+                pos.plan[key] = v
+
+    def _previous_exit_outcome(self, sym: str, st: dict, qty_exit: int) -> Tuple[str, Optional[float]]:
+        """Fate of the last exit order that did not fill, read before any retry:
+        'dead' (REJECTED/CANCELLED, or never accepted) -> safe to send another;
+        'filled' (completed late, same qty) -> book that fill, send nothing;
+        anything else -> send nothing and re-cancel. Deliberately never reads the
+        positions API: Kite returns an empty book on failure, which looks flat."""
+        if not hasattr(self.broker, "get_order_status"):
+            return "dead", None
+        prev = st.get("_exit_last_order_id")
+        if not prev:
+            # place_order raised: it may still have reached the exchange (timeout).
+            found, prev = self._find_unacknowledged_exit(sym, st)
+            if found != "found":
+                return found, None
+            st["_exit_last_order_id"] = prev
+        try:
+            o = self.broker.get_order_status(prev)
+        except Exception as e:
+            logger.error(f"EXIT_RETRY_HOLD | {sym} | status of {prev} unavailable: {e}")
+            return "unknown", None
+        status, filled = o["status"], int(o.get("filled_quantity", 0))
+        if status in ("REJECTED", "CANCELLED") and filled > 0:
+            logger.error(f"EXIT_PARTIAL_FILL | {sym} | order {prev} {status} after filling {filled} of "
+                         f"{st.get('_exit_last_qty')} - not sending; CHECK THE POSITION AT THE BROKER")
+            return "partial", None
+        if status in ("REJECTED", "CANCELLED"):
+            return "dead", None
+        if status == "COMPLETE" and o["average_price"] > 0:
+            if st.get("_exit_last_qty") == int(qty_exit) and filled in (0, int(qty_exit)):
+                logger.warning(f"EXIT_FILLED_LATE | {sym} | order {prev} completed @ {o['average_price']:.2f}")
+                return "filled", float(o["average_price"])
+            logger.error(f"EXIT_QTY_MISMATCH | {sym} | order {prev} for {st.get('_exit_last_qty')} filled late, "
+                         f"this exit is {qty_exit} - not sending; CHECK THE POSITION AT THE BROKER")
+            return "mismatch", None
+        try:
+            self.broker.cancel_order(prev)
+        except Exception as e:
+            logger.error(f"EXIT_RETRY_HOLD | {sym} | cancel of {prev} failed: {e}")
+        logger.error(f"EXIT_RETRY_HOLD | {sym} | order {prev} is {status}; not sending another until it is dead")
+        return "working", None
+
+    def _find_unacknowledged_exit(self, sym: str, st: dict) -> Tuple[str, Optional[str]]:
+        """After place_order raised: an exit order for this position that reached the
+        broker anyway (same tradingsymbol + side + app tag, not one we already know).
+        Reads Kite's raw order book so a failed fetch raises instead of looking empty."""
+        side, tag = st.get("_exit_last_side"), st.get("_exit_last_tag")
+        if not side or not tag:
+            return "dead", None
+        try:
+            orders = self.broker.kc.orders() if hasattr(self.broker, "kc") else self.broker.get_orders()
+        except Exception as e:
+            logger.error(f"EXIT_RETRY_HOLD | {sym} | order book unavailable after a failed exit placement: {e}")
+            return "unknown", None
+        known = set(st.get("_exit_known_order_ids") or [])
+        tsym = sym.split(":", 1)[-1]
+        ghosts = [o for o in orders
+                  if o.get("tradingsymbol") == tsym and str(o.get("transaction_type", "")).upper() == side
+                  and (o.get("tag") or "").endswith(tag) and str(o.get("order_id")) not in known]
+        if not ghosts:
+            return "dead", None
+        oid = str(ghosts[-1]["order_id"])
+        logger.warning(f"EXIT_RECONCILE | {sym} | exit order {oid} reached the broker despite the placement error")
+        return "found", oid
+
+    def _exit_lock(self, trade_id: str) -> threading.Lock:
+        with self._exit_locks_guard:
+            return self._exit_locks.setdefault(str(trade_id), threading.Lock())
+
+    def _place_and_log_exit(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> Optional[float]:
+        """Place the exit and log it. Returns the fill price, or None when the exit did
+        not fill: the position is then still open at the broker and the caller must
+        leave it untouched (no close, no qty reduce, no margin release).
+
+        Live only: one exit per position at a time (the tick thread and the bar loop
+        both exit), and a position the other one already closed is not exited again."""
+        if getattr(self.broker, "dry_run", True) or pos.plan.get("shadow", False):
+            return self._place_and_log_exit_unlocked(sym, pos, exit_px, qty_exit, ts, reason)
+        tid = _pos_tid(pos)
+        lock = self._exit_lock(tid)
+        if not lock.acquire(blocking=False):
+            logger.info(f"EXIT_SKIP | {sym} | another exit for this position is in flight")
+            return None
+        try:
+            if self.positions.get_by_trade_id(tid) is None:
+                logger.info(f"EXIT_SKIP | {sym} | position already closed")
+                return None
+            return self._place_and_log_exit_unlocked(sym, pos, exit_px, qty_exit, ts, reason)
+        finally:
+            lock.release()
+
+    def _place_and_log_exit_unlocked(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> Optional[float]:
         try:
             cur = self.positions.get_by_trade_id(_pos_tid(pos))
             if cur is not None:
@@ -1293,13 +1440,30 @@ class ExitExecutor:
             return exit_px  # No exit, return assumed price
 
         actual_exit_px = exit_px  # Default to assumed price
+        # Check if this is a shadow trade (simulated, no real orders)
+        is_shadow = pos.plan.get("shadow", False) if pos.plan else False
+        st = pos.plan.setdefault("_state", {})
+        late_fill = False
+        if not is_shadow and st.get("_exit_retry_at") is not None:
+            # A previous exit order for this position did not fill. Wait out the
+            # cooldown (broker throttle, not a trading decision -> monotonic clock),
+            # then send another order ONLY if the previous one is confirmed dead.
+            if time.monotonic() < st["_exit_retry_at"]:
+                st.pop("exit_pending", None)  # let the next tick/bar retry
+                return None
+            verdict, prev_px = self._previous_exit_outcome(sym, st, qty_exit)
+            if verdict == "filled":
+                actual_exit_px, late_fill = prev_px, True
+            elif verdict != "dead":
+                st["_exit_retry_at"] = time.monotonic() + self.exit_retry_cooldown_sec
+                st.pop("exit_pending", None)
+                return None
         try:
-            # Check if this is a shadow trade (simulated, no real orders)
-            is_shadow = pos.plan.get("shadow", False) if pos.plan else False
-
             if is_shadow:
                 # SHADOW TRADE: Don't place real exit order, just simulate
                 logger.info(f"SHADOW_EXIT_ORDER | {sym} | Simulated exit (no broker call) | qty={qty_exit} reason={reason}")
+            elif late_fill:
+                pass
             else:
                 exit_side = "SELL" if pos.side.upper() == "BUY" else "BUY"
                 # Get trade_id from plan if available (for tagging exit orders)
@@ -1312,8 +1476,18 @@ class ExitExecutor:
                     "product": self.exec_product,
                     "variety": self.exec_variety,
                     "trade_id": trade_id,  # For order tagging (ITDA_xxx) - identifies app orders
+                    # An exit never needs new margin; a failed MIS lookup must not block it.
+                    "check_margins": False,
                 }
+                st["_exit_last_order_id"], st["_exit_last_qty"] = None, int(qty_exit)
+                st["_exit_last_side"] = exit_side
+                st["_exit_last_tag"] = str(trade_id)[-12:] if trade_id else None  # order tag = ITDA_<last 12>
                 order_id = self.broker.place_order(**args)
+                st["_exit_last_order_id"] = order_id
+                if order_id:
+                    st.setdefault("_exit_known_order_ids", []).append(str(order_id))
+                if not order_id:
+                    raise _ExitNotFilled("broker returned no order id")
 
                 # Reconcile exit with broker - verify order filled and get actual price
                 if order_id and hasattr(self.broker, 'reconcile_exit'):
@@ -1327,9 +1501,10 @@ class ExitExecutor:
                         )
 
                         if reconciled is None:
+                            reconciled = self._settle_unfilled_exit(sym, order_id, int(qty_exit))
+                        if reconciled is None:
                             # Exit order not filled - position unchanged at broker
-                            logger.error(f"EXIT_RECONCILE | {sym} | Order {order_id} not filled - exit failed, position still open at broker")
-                            raise RuntimeError(f"Exit order {order_id} not filled - position still open at broker")
+                            raise _ExitNotFilled(f"Exit order {order_id} not filled - position still open at broker")
 
                         # Use actual fill price from broker
                         broker_fill = reconciled.get("avg_price", exit_px)
@@ -1340,12 +1515,28 @@ class ExitExecutor:
                             actual_exit_px = broker_fill
 
                         logger.info(f"EXIT_RECONCILE | {sym} | Exit verified | Order: {order_id} | Remaining: {reconciled.get('remaining_qty', 'unknown')}")
-                    except RuntimeError:
-                        raise  # Re-raise exit failed
+                    except _ExitNotFilled:
+                        raise
                     except Exception as e:
+                        # Verification itself failed: settle from the order book (cancel if
+                        # still working); unconfirmed is NOT a fill.
                         logger.warning(f"Failed to reconcile exit for {sym}: {e}")
+                        settled = self._settle_unfilled_exit(sym, order_id, int(qty_exit))
+                        if settled is None:
+                            raise _ExitNotFilled(f"Exit order {order_id} unverified ({e})")
+                        actual_exit_px = float(settled["avg_price"])
         except Exception as e:
-            logger.warning("exit.place_order failed sym=%s qty=%s reason=%s err=%s", sym, qty_exit, reason, e)
+            # No fill: rejected (e.g. stock locked at its circuit), never accepted, or
+            # still open and cancelled. The position is still open at the broker, so it
+            # must stay tracked, keep its margin and be retried - never booked as filled.
+            live = not getattr(self.broker, "dry_run", True)
+            st["_exit_retry_at"] = time.monotonic() + (self.exit_retry_cooldown_sec if live else 0.0)
+            st.pop("exit_pending", None)  # let the next tick/bar retry
+            logger.error(f"EXIT_NOT_FILLED | {sym} | qty={qty_exit} reason={reason} | {e} | position kept open, "
+                         f"retrying in {self.exit_retry_cooldown_sec:.0f}s")
+            return None
+        for _k in ("_exit_retry_at", "_exit_last_order_id", "_exit_last_qty", "_exit_last_side", "_exit_last_tag"):
+            st.pop(_k, None)
 
         entry_price = float(pos.avg_price)
         pnl = ((actual_exit_px - entry_price) if pos.side.upper() == "BUY" else (entry_price - actual_exit_px)) * int(qty_exit)
@@ -1492,6 +1683,8 @@ class ExitExecutor:
 
         # Capture actual broker fill price for API server logging
         actual_exit_px = self._place_and_log_exit(sym, pos, float(exit_px), qty_now, ts, reason)
+        if actual_exit_px is None:
+            return  # not filled: still open at the broker, keep tracking and retry
         self.positions.close(_pos_tid(pos))
 
         # Remove from persistence (crash recovery)
@@ -1725,6 +1918,10 @@ class ExitExecutor:
         # Calculate new qty for capital manager
         new_qty = current_qty - int(qty_exit)
 
+        # Restored if the order does not fill, so T1 is not marked booked.
+        _undo = self._snapshot_exit_state(pos, st, ("t1_done", "t1_booked_qty", "t1_booked_price", "t1_profit",
+                                                    "t1_exit_time", "sl_moved_to_be", "be_price"))
+
         # UPDATE STATE BEFORE reduce() - so WebSocket broadcast has correct t1_profit/t1_done
         # (positions.reduce triggers _broadcast_positions which reads from pos.plan["_state"])
         # Set t1_done and t1_profit ATOMICALLY so HTTP polls never see t1_done=True with booked=0
@@ -1758,6 +1955,9 @@ class ExitExecutor:
 
         # Place exit order AFTER state update
         actual_t1_fill = self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t1_partial")
+        if actual_t1_fill is None:
+            self._restore_exit_state(pos, _undo)
+            return
 
         # Update state with actual broker fill price (initial state used signal price for fast WebSocket)
         if actual_t1_fill != px:
@@ -1888,6 +2088,9 @@ class ExitExecutor:
         trail_pct = 100.0 - adjusted_t1 - adjusted_t2
         logger.info(f"exit_executor: {sym} T2_PARTIAL booking {qty_exit}/{original_entry_qty} orig ({t2_pct_of_original:.1f}%) → profit Rs.{profit_booked:.2f} [CONFIG: {adjusted_t1:.0f}%-{adjusted_t2:.0f}%-{trail_pct:.0f}%, leaving {remaining_qty} for trail]")
 
+        # Restored if the order does not fill, so T2 is not marked booked.
+        _undo = self._snapshot_exit_state(pos, st, ("t2_done", "t2_booked_qty", "t2_booked_price", "t2_profit"))
+
         # UPDATE STATE BEFORE reduce() - so WebSocket broadcast has correct t2_profit/t2_done
         # (positions.reduce triggers _broadcast_positions which reads from pos.plan["_state"])
         # Set t2_done and t2_profit ATOMICALLY (same pattern as T1)
@@ -1900,6 +2103,9 @@ class ExitExecutor:
 
         # Place exit order AFTER state update
         actual_t2_fill = self._place_and_log_exit(sym, pos, float(px), int(qty_exit), ts, "t2_partial")
+        if actual_t2_fill is None:
+            self._restore_exit_state(pos, _undo)
+            return
 
         # Update state with actual broker fill price (initial state used signal price for fast WebSocket)
         if actual_t2_fill != px:
@@ -1986,6 +2192,9 @@ class ExitExecutor:
                 pos = self.positions.get_by_trade_id(tid) or pos
             except Exception:
                 pass
+        if self._is_open_tid(tid):
+            logger.error(f"EXIT_NOT_FILLED | {sym} | could not flatten ({reason}) - position still open at the "
+                         f"broker and still tracked; broker auto square-off applies - CHECK IT")
         self._closing_state[sym] = {"state": "closed", "intent_id": intent_id, "reason": reason}
         
     def _bars_since_entry(self, pos: Position, now_ts: pd.Timestamp) -> int:
@@ -2053,7 +2262,8 @@ class ExitExecutor:
 
             if qty_exit > 0:
                 logger.info(f"BREAKOUT_SHORT_RISK: {sym} partial exit at {rr:.2f}R - booking {qty_exit}/{qty}")
-                self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"breakout_short_partial_{rr:.2f}R")
+                if self._place_and_log_exit(sym, pos, px, qty_exit, ts, f"breakout_short_partial_{rr:.2f}R") is None:
+                    return
                 self.positions.reduce(_pos_tid(pos), qty_exit)
 
                 # Move stop to -0.1R
