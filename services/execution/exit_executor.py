@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from typing import Dict, Any, Callable, Optional, Tuple, List
 import copy
+import json
 import threading
+from pathlib import Path
 import math
 import time
 import pandas as pd  # for Timestamp typing only
@@ -220,6 +222,17 @@ class ExitExecutor:
         self.exec_mode    = str(cfg.get("exec_order_mode", "MARKET")).upper()
         # Seconds between exit attempts when an exit order does not fill (e.g. rejected at the circuit).
         self.exit_retry_cooldown_sec = float(cfg["exit_retry_cooldown_sec"])
+        cc = cfg["circuit_cover"]
+        self.cc_near_frac = float(cc["near_circuit_pct"]) / 100.0
+        self.cc_poll_sec = float(cc["status_poll_sec"])
+        self.cc_place_retry_sec = float(cc["place_retry_sec"])
+        self.cc_mismatch_frac = float(cc["quote_mismatch_warn_pct"]) / 100.0
+        self.cc_trigger_frac = float(cc["trigger_offset_pct"]) / 100.0
+        self.cc_sweep_sec = float(cc["orphan_sweep_sec"])
+        _lp = Path(cc["ledger_path"])
+        self.cc_ledger_path = _lp if _lp.is_absolute() else Path(__file__).resolve().parents[2] / _lp
+        self._circ_ledger_lock = threading.Lock()
+        self._circ_next_sweep = 0.0
         self._exit_locks: Dict[str, threading.Lock] = {}
         self._exit_locks_guard = threading.Lock()
 
@@ -302,6 +315,9 @@ class ExitExecutor:
                     logger.debug(f"EXIT_SKIP | {symbol} | Exit already pending, skipping tick check")
                     continue
 
+                if self._circuit_cover_check(symbol, pos, tick_price, ts_pd):
+                    continue
+
                 # Check SL using tick price directly
                 plan_sl = self._get_plan_sl(pos.plan)
                 if not math.isnan(plan_sl):
@@ -342,6 +358,13 @@ class ExitExecutor:
             logger.exception(f"Tick exit check failed for {symbol}: {e}")
 
     def run_once(self) -> None:
+        if not getattr(self.broker, "dry_run", True) and time.monotonic() >= self._circ_next_sweep:
+            self._circ_next_sweep = time.monotonic() + self.cc_sweep_sec
+            try:
+                self.sweep_orphan_circuit_orders()
+            except Exception as e:
+                logger.error(f"CIRCUIT_COVER | orphan-order sweep failed: {e}; CHECK OPEN ITDA ORDERS")
+
         # Process any pending API exit requests first
         self._process_api_exits()
 
@@ -367,6 +390,22 @@ class ExitExecutor:
                 if st.get("exit_pending", False):
                     logger.info(f"EXIT_SKIP | {sym} | Exit already pending, skipping bar check")
                     continue
+
+                self._ensure_circuit_order(sym, pos)
+                cc_px = self._circuit_cover_px(pos)
+                if cc_px is not None and getattr(self.broker, "dry_run", True):
+                    # Backtest: get_ltp_with_level returns the level when the bar touched it.
+                    # A stop inside the circuit is reached first, so the SL path takes it.
+                    _trig = self._circuit_trigger(pos, cc_px)
+                    _sl = self._get_plan_sl(pos.plan)
+                    _sl_inside = (not math.isnan(_sl)) and (
+                        _sl < _trig if pos.side.upper() == "SELL" else _sl > _trig)
+                    _sl_hit = _sl_inside and self._breach_sl(
+                        pos.side, self.broker.get_ltp_with_level(sym, check_level=_sl), _sl)
+                    if not _sl_hit:
+                        lvl = self.broker.get_ltp_with_level(sym, check_level=_trig)
+                        if lvl is not None and self._circuit_cover_check(sym, pos, float(lvl), ts):
+                            continue
 
                 entry_price = pos.avg_price
                 side = pos.side.upper()
@@ -710,7 +749,13 @@ class ExitExecutor:
         actual_exit_px = self._place_and_log_exit(sym, pos, px, qty_exit, ts, reason)
         if actual_exit_px is None:
             return
+        self._record_manual_partial(sym, pos, qty_exit, actual_exit_px, ts, label="[API_EXIT]")
 
+    def _record_manual_partial(self, sym: str, pos, qty_exit: int, actual_exit_px: float, ts,
+                               label: str) -> None:
+        """Book qty_exit already filled at the broker as a partial: profit into _state,
+        position qty reduced, margin and persistence updated."""
+        current_qty = int(pos.qty)
         # Calculate profit for this partial exit
         entry_price = float(pos.avg_price)
         if pos.side.upper() == "BUY":
@@ -729,7 +774,7 @@ class ExitExecutor:
         st["manual_partial_time"] = ts.isoformat() if ts else None
         pos.plan["_state"] = st
 
-        logger.info(f"[API_EXIT] Partial profit stored: {sym} qty={qty_exit} profit=Rs.{partial_profit:.2f} (cumulative: Rs.{st['manual_partial_profit']:.2f})")
+        logger.info(f"{label} Partial profit stored: {sym} qty={qty_exit} profit=Rs.{partial_profit:.2f} (cumulative: Rs.{st['manual_partial_profit']:.2f})")
 
         # Reduce position qty
         self.positions.reduce(_pos_tid(pos), qty_exit)
@@ -1390,6 +1435,336 @@ class ExitExecutor:
         logger.warning(f"EXIT_RECONCILE | {sym} | exit order {oid} reached the broker despite the placement error")
         return "found", oid
 
+    # ---------- Circuit cover ----------
+    # A position locked at its price-band circuit cannot be closed with a MARKET order
+    # (rejected: HUHTAMAKI 10-28, and Zerodha's 15:20 auto square-off too, so the short
+    # went to the short-delivery auction). Sellers still trade AT the circuit (research:
+    # median 444x our live qty after the first touch), filled by time priority.
+    # So from entry live rests a STOP-LIMIT (SL) order: trigger just inside the circuit,
+    # limit AT the circuit. It is inert during a normal fade; when price reaches the
+    # trigger it becomes a limit at the circuit, filling against any seller up to the
+    # circuit or joining the circuit queue at that moment. (A plain LIMIT at the circuit
+    # would be marketable and cover at once.) Paper and backtest simulate the same
+    # order: price reaches the trigger -> covered at the circuit price.
+
+    _CIRC_WORKING = ("OPEN", "TRIGGER PENDING", "OPEN PENDING", "VALIDATION PENDING",
+                     "PUT ORDER REQ RECEIVED", "MODIFY PENDING", "MODIFIED")
+
+    def _circuit_cover_px(self, pos: Position) -> Optional[float]:
+        px = (pos.plan.get("exits") or {}).get("circuit_cover_px")
+        if not px:
+            return None
+        st = pos.plan.get("_state") or {}
+        return float(st.get("_circ_px") or px)   # live: the exchange's exact limit once known
+
+    def _circuit_trigger(self, pos: Position, cc_px: float) -> float:
+        if pos.side.upper() == "SELL":
+            return cc_px * (1 - self.cc_trigger_frac)
+        return cc_px * (1 + self.cc_trigger_frac)
+
+    def _circuit_reached(self, pos: Position, px: float, level: float) -> bool:
+        return px >= level if pos.side.upper() == "SELL" else px <= level
+
+    def _persist_circ(self, sym: str, st: dict) -> None:
+        if not self.persistence:
+            return
+        try:
+            self.persistence.update_position(sym, state_updates={
+                k: st.get(k) for k in ("_circ_order_id", "_circ_px", "_exit_known_order_ids")})
+        except Exception as e:
+            logger.error(f"CIRCUIT_COVER | {sym} | could not persist the cover order state: {e}")
+
+    def _circuit_cover_check(self, sym: str, pos: Position, px: float, ts) -> bool:
+        """True when this position was exited (or an exit was attempted) at the circuit."""
+        cc_px = self._circuit_cover_px(pos)
+        if cc_px is None or pos.plan.get("shadow", False) or px is None:
+            return False
+        st = pos.plan.setdefault("_state", {})
+        if getattr(self.broker, "dry_run", True):
+            if not self._circuit_reached(pos, px, self._circuit_trigger(pos, cc_px)):
+                return False
+            st["exit_pending"] = True
+            logger.info(f"CIRCUIT_COVER | {sym} {pos.side} price={px:.2f} reached circuit {cc_px:.2f}")
+            self._exit(sym, pos, cc_px, ts, "circuit_cover")
+            return True
+        # Live: the resting order does the work. Near the circuit, poll it (throttled)
+        # and book it once complete.
+        oid = st.get("_circ_order_id")
+        near = cc_px * (1 - self.cc_near_frac) if pos.side.upper() == "SELL" else cc_px * (1 + self.cc_near_frac)
+        if not oid or not self._circuit_reached(pos, px, near):
+            return False
+        if time.monotonic() < st.get("_circ_next_poll", 0.0):
+            return False
+        st["_circ_next_poll"] = time.monotonic() + self.cc_poll_sec
+        o = self.broker.get_order_status(oid)
+        if o["status"] in ("REJECTED", "CANCELLED") and not int(o.get("filled_quantity", 0)):
+            self._circuit_order_dead(sym, st, oid, o)
+            return False
+        if o["status"] != "COMPLETE":
+            if int(o.get("filled_quantity", 0)):
+                logger.warning(f"CIRCUIT_COVER_QUEUE | {sym} | order {oid} filled "
+                               f"{o.get('filled_quantity')}/{pos.qty} at the circuit, rest queued")
+            return False
+        st["exit_pending"] = True
+        self._exit(sym, pos, float(o["average_price"] or cc_px), ts, "circuit_cover")
+        return True
+
+    def _ensure_circuit_order(self, sym: str, pos: Position) -> None:
+        """Live only: rest the stop-limit cover for the full position. Adopts an order
+        already in the book (daemon restart) instead of adding one. Runs under the
+        position's exit lock so it never races an exit."""
+        if getattr(self.broker, "dry_run", True) or pos.plan.get("shadow", False):
+            return
+        cc_px = self._circuit_cover_px(pos)
+        st = pos.plan.setdefault("_state", {})
+        if cc_px is None or st.get("_circ_order_id") or st.get("exit_pending"):
+            return
+        if (st.get("_exit_retry_at") is not None or st.get("_exit_last_order_id")) and                 time.monotonic() < (st.get("_exit_retry_at") or 0.0):
+            return
+        if time.monotonic() < st.get("_circ_retry_at", 0.0):
+            return
+        tid = _pos_tid(pos)
+        lock = self._exit_lock(tid)
+        if not lock.acquire(blocking=False):
+            return
+        try:
+            cur = self.positions.get_by_trade_id(tid)
+            if cur is None or int(cur.qty) <= 0 or st.get("_circ_order_id") or st.get("exit_pending"):
+                return
+            if st.get("_exit_retry_at") is not None or st.get("_exit_last_order_id"):
+                # An earlier exit attempt is unsettled: it may have filled, so a cover
+                # now could buy a second time. Only a confirmed-dead attempt (or one
+                # that never sent an order, e.g. a refused partial) frees the position.
+                if time.monotonic() < (st.get("_exit_retry_at") or 0.0):
+                    return
+                verdict, _ = self._previous_exit_outcome(sym, st, int(cur.qty))
+                if verdict != "dead":
+                    return
+                for _k in ("_exit_retry_at", "_exit_last_order_id", "_exit_last_qty",
+                           "_exit_last_side", "_exit_last_tag"):
+                    st.pop(_k, None)
+            self._place_circuit_order(sym, pos, st, int(cur.qty), cc_px)
+        finally:
+            lock.release()
+
+    def _place_circuit_order(self, sym: str, pos: Position, st: dict, qty: int, cc_px: float) -> None:
+        side = "BUY" if pos.side.upper() == "SELL" else "SELL"
+        trade_id = pos.plan.get("trade_id") or ""
+        tag_sfx, tsym = str(trade_id)[-12:], sym.split(":", 1)[-1]
+        try:
+            q = self.broker.get_quote(sym)
+            limit_key = "upper_circuit_limit" if side == "BUY" else "lower_circuit_limit"
+            exch_px = float(q.get(limit_key) or 0.0)
+            if exch_px <= 0:
+                raise RuntimeError(f"quote has no {limit_key}")
+            if abs(exch_px / cc_px - 1) > self.cc_mismatch_frac:
+                logger.warning(f"CIRCUIT_COVER | {sym} | exchange {limit_key} {exch_px} vs band "
+                               f"file {cc_px:.2f}: using the exchange's")
+            cc_px = exch_px
+            tick = self.broker.get_tick_size(sym)
+            if not tick:
+                raise RuntimeError("no tick size for the instrument")
+            ticks = math.ceil(cc_px * self.cc_trigger_frac / tick - 1e-9)
+            trigger = round(cc_px - ticks * tick if side == "BUY" else cc_px + ticks * tick, 2)
+            ltp = float(q.get("last_price") or 0.0)
+            for o in self.broker.kc.orders():          # raw: a failed read raises
+                if (o.get("tradingsymbol") == tsym and str(o.get("transaction_type", "")).upper() == side
+                        and (o.get("tag") or "").endswith(tag_sfx)
+                        and str(o.get("order_type", "")).upper() in ("SL", "LIMIT")
+                        and str(o.get("status", "")).upper() in self._CIRC_WORKING + ("COMPLETE",)
+                        and str(o.get("order_id")) not in set(st.get("_exit_known_order_ids") or [])):
+                    if int(o.get("quantity") or 0) != int(qty) or str(o.get("status", "")).upper() == "COMPLETE":
+                        # Not a cover for this position as it stands: never adopt a
+                        # wrong-size order; a COMPLETE one is booked by the exit path.
+                        logger.critical(f"CIRCUIT_COVER | {sym} | order {o.get('order_id')} at the broker "
+                                        f"({o.get('status')}, qty {o.get('quantity')}) does not match position "
+                                        f"qty {qty}; not placing a cover. CHECK THE POSITION AT THE BROKER")
+                        raise RuntimeError("unmatched cover-like order at the broker")
+                    oid = str(o["order_id"])
+                    logger.warning(f"CIRCUIT_COVER | {sym} | adopted cover order {oid} already at the broker")
+                    break
+            else:
+                if ltp and self._circuit_reached(pos, ltp, trigger):
+                    # Already at the trigger: a limit at the circuit, which takes what is
+                    # offered up to the circuit and queues there (= backtest: covered).
+                    oid = self.broker.place_order(symbol=sym, side=side, qty=qty, order_type="LIMIT",
+                                                  price=cc_px, product=self.exec_product,
+                                                  variety=self.exec_variety, trade_id=trade_id,
+                                                  check_margins=False)
+                else:
+                    oid = self.broker.place_order(symbol=sym, side=side, qty=qty, order_type="SL",
+                                                  price=cc_px, trigger_price=trigger,
+                                                  product=self.exec_product, variety=self.exec_variety,
+                                                  trade_id=trade_id, check_margins=False)
+                if not oid:
+                    raise RuntimeError("broker returned no order id")
+                logger.info(f"CIRCUIT_COVER | {sym} | {side} {qty} SL trigger {trigger} limit {cc_px} "
+                            f"(ltp {ltp}) | order {oid}")
+        except Exception as e:
+            st["_circ_retry_at"] = time.monotonic() + self.cc_place_retry_sec
+            logger.error(f"CIRCUIT_COVER_NOT_PLACED | {sym} | {e} | retrying in {self.cc_place_retry_sec:.0f}s; "
+                         f"until then a lock at the circuit is NOT covered")
+            return
+        oid = str(oid)
+        st["_circ_order_id"], st["_circ_px"] = oid, cc_px
+        # Never mistake it for a ghost of a failed exit (_find_unacknowledged_exit).
+        st.setdefault("_exit_known_order_ids", []).append(oid)
+        pos.plan["_state"] = st
+        self._ledger_put(oid, {"trade_id": str(trade_id), "symbol": sym})
+        self._persist_circ(sym, st)
+        o = self.broker.get_order_status(oid)
+        if o["status"] in ("REJECTED", "CANCELLED") and not int(o.get("filled_quantity", 0)):
+            self._circuit_order_dead(sym, st, oid, o)
+
+    def _circuit_order_dead(self, sym: str, st: dict, oid: str, o: dict) -> None:
+        st.pop("_circ_order_id", None)
+        self._ledger_pop(oid)
+        st["_circ_retry_at"] = time.monotonic() + self.cc_place_retry_sec
+        self._persist_circ(sym, st)
+        logger.error(f"CIRCUIT_COVER_NOT_PLACED | {sym} | order {oid} {o['status']}: "
+                     f"{o.get('status_message', '')} | re-placing in {self.cc_place_retry_sec:.0f}s")
+
+    def _settle_circuit_order(self, sym: str, pos: Position, st: dict, qty_exit: int,
+                              cur_qty: int) -> Tuple[int, Optional[float]]:
+        """Before any live exit order: settle the cover order.
+        Returns (qty it covered, its average price). Raises _ExitNotFilled to keep the
+        position untouched:
+          - the order is triggered and working AT the circuit: our place in its queue is
+            the best exit there is, never cancelled and resent there;
+          - its status is unknown, or a cancel is not confirmed;
+          - a partial exit was asked for (the cover is sized to the whole position)."""
+        oid = st.get("_circ_order_id")
+        if not oid:
+            return 0, None
+        if int(qty_exit) < int(cur_qty):
+            logger.error(f"CIRCUIT_COVER | {sym} | partial exit of {qty_exit}/{cur_qty} refused while the "
+                         f"cover order {oid} rests; exit the whole position")
+            raise _ExitNotFilled("partial exit while the circuit cover order rests")
+        o = self.broker.get_order_status(oid)
+        status = o["status"]
+        if status == "UNKNOWN":
+            raise _ExitNotFilled(f"circuit cover order {oid} status unknown")
+        if status == "OPEN":
+            # Triggered: a limit at the circuit, i.e. price is (or was) there.
+            logger.critical(f"CIRCUIT_COVER_QUEUED | {sym} | locked at the circuit; cover {oid} waiting in its "
+                            f"queue, filled {o.get('filled_quantity', 0)}/{cur_qty}. Not resending (queue priority)")
+            raise _ExitNotFilled(f"at the circuit: waiting in its queue (order {oid}, "
+                                 f"filled {o.get('filled_quantity', 0)}/{cur_qty})")
+        if status in self._CIRC_WORKING:
+            self.broker.cancel_order(oid)
+            o = self.broker.get_order_status(oid)       # a cancel can race a fill
+            status = o["status"]
+        filled = int(o.get("filled_quantity", 0))
+        if status == "COMPLETE":
+            filled = filled or int(cur_qty)
+        elif status not in ("CANCELLED", "REJECTED"):
+            raise _ExitNotFilled(f"circuit cover order {oid} cancel not confirmed ({status})")
+        st.pop("_circ_order_id", None)
+        self._ledger_pop(oid)
+        self._persist_circ(sym, st)
+        if filled > int(cur_qty):
+            logger.critical(f"CIRCUIT_COVER | {sym} | order {oid} covered {filled} > position {cur_qty}; "
+                            f"CHECK THE POSITION AT THE BROKER")
+        return min(filled, int(cur_qty)), ((float(o.get("average_price") or 0.0) or None) if filled else None)
+
+    def _ledger_read(self) -> dict:
+        try:
+            return json.loads(self.cc_ledger_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except ValueError as e:
+            bad = self.cc_ledger_path.with_suffix(f".corrupt-{int(time.time())}")
+            self.cc_ledger_path.replace(bad)
+            logger.critical(f"CIRCUIT_COVER | ledger {self.cc_ledger_path} unreadable ({e}); moved to {bad}. "
+                            f"Cover orders recorded there are no longer swept: CHECK OPEN ITDA SL ORDERS")
+            return {}
+
+    def _ledger_write(self, d: dict) -> None:
+        self.cc_ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.cc_ledger_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d, indent=1), encoding="utf-8")
+        tmp.replace(self.cc_ledger_path)
+
+    def _ledger_put(self, oid: str, entry: dict) -> None:
+        """Durable record of every cover order we place (survives a restart)."""
+        try:
+            with self._circ_ledger_lock:
+                d = self._ledger_read(); d[str(oid)] = entry; self._ledger_write(d)
+        except Exception as e:
+            logger.error(f"CIRCUIT_COVER | ledger write failed for {oid}: {e}")
+
+    def _ledger_pop(self, oid: str) -> None:
+        try:
+            with self._circ_ledger_lock:
+                d = self._ledger_read()
+                if d.pop(str(oid), None) is not None:
+                    self._ledger_write(d)
+        except Exception as e:
+            logger.error(f"CIRCUIT_COVER | ledger update failed for {oid}: {e}")
+
+    def _cancel_cover_on_close(self, sym: str, st: dict) -> None:
+        """The position was closed by an exit order: its cover must not stay working."""
+        oid = st.get("_circ_order_id")
+        if not oid:
+            return
+        o = self.broker.get_order_status(oid)
+        if o["status"] in self._CIRC_WORKING:
+            self.broker.cancel_order(oid)
+            o = self.broker.get_order_status(oid)
+        if int(o.get("filled_quantity", 0)):
+            logger.critical(f"CIRCUIT_COVER | {sym} | cover {oid} filled {o.get('filled_quantity')} AND the exit "
+                            f"filled: the account may be net LONG. CHECK THE POSITION AT THE BROKER")
+        if o["status"] in self._CIRC_WORKING or o["status"] == "UNKNOWN":
+            logger.critical(f"CIRCUIT_COVER | {sym} | cover {oid} still {o['status']} after the close; "
+                            f"the orphan sweep will retry. CHECK OPEN ORDERS")
+            return
+        st.pop("_circ_order_id", None)
+        self._ledger_pop(oid)
+
+    def sweep_orphan_circuit_orders(self) -> int:
+        """Live, periodic: cover orders WE placed (ledger) whose position is no longer
+        tracked. Cancelled only when Zerodha shows the symbol flat; a cover of an
+        untracked but still-open position is left in place and alarmed (cancelling
+        it would leave that position naked)."""
+        if getattr(self.broker, "dry_run", True):
+            return 0
+        with self._circ_ledger_lock:
+            ledger = self._ledger_read()
+        if not ledger:
+            return 0
+        tracked = {str(p.plan.get("trade_id") or tid) for tid, p in self.positions.list_open().items()}
+        net = None
+        n = 0
+        for oid, e in list(ledger.items()):
+            if e.get("trade_id") in tracked:
+                continue
+            o = self.broker.get_order_status(oid)
+            if o["status"] == "UNKNOWN":
+                continue                                   # not in today's book or a read failure
+            if o["status"] not in self._CIRC_WORKING:
+                if int(o.get("filled_quantity", 0)):
+                    logger.critical(f"CIRCUIT_COVER | {e.get('symbol')} | cover {oid} of a closed position "
+                                    f"filled {o.get('filled_quantity')}: CHECK THE POSITION AT THE BROKER")
+                self._ledger_pop(oid)
+                continue
+            if net is None:
+                net = {}
+                for r in self.broker.kc.positions().get("net", []):   # raw: a failed read raises
+                    if str(r.get("product", "")).upper() == self.exec_product:
+                        net[r.get("tradingsymbol")] = net.get(r.get("tradingsymbol"), 0) + int(r.get("quantity") or 0)
+            tsym = str(e.get("symbol", "")).split(":", 1)[-1]
+            if net.get(tsym, 0) != 0:
+                logger.critical(f"CIRCUIT_COVER | {e.get('symbol')} | untracked {self.exec_product} position "
+                                f"{net[tsym]} at the broker; its cover {oid} is left working. CHECK IT")
+                continue
+            self.broker.cancel_order(oid)
+            o = self.broker.get_order_status(oid)
+            if o["status"] not in self._CIRC_WORKING:
+                self._ledger_pop(oid)
+                n += 1
+                logger.warning(f"CIRCUIT_COVER | cancelled orphan cover {oid} {e.get('symbol')} (position closed)")
+        return n
+
     def _exit_lock(self, trade_id: str) -> threading.Lock:
         with self._exit_locks_guard:
             return self._exit_locks.setdefault(str(trade_id), threading.Lock())
@@ -1440,6 +1815,7 @@ class ExitExecutor:
             return exit_px  # No exit, return assumed price
 
         actual_exit_px = exit_px  # Default to assumed price
+        covered_qty, covered_px = 0, None   # filled by the resting circuit order (live)
         # Check if this is a shadow trade (simulated, no real orders)
         is_shadow = pos.plan.get("shadow", False) if pos.plan else False
         st = pos.plan.setdefault("_state", {})
@@ -1463,15 +1839,21 @@ class ExitExecutor:
                 # SHADOW TRADE: Don't place real exit order, just simulate
                 logger.info(f"SHADOW_EXIT_ORDER | {sym} | Simulated exit (no broker call) | qty={qty_exit} reason={reason}")
             elif late_fill:
-                pass
+                self._cancel_cover_on_close(sym, st)
             else:
+                covered_qty, covered_px = self._settle_circuit_order(sym, pos, st, qty_exit, cur_qty)
+            if not is_shadow and not late_fill and covered_qty >= qty_exit:
+                actual_exit_px = covered_px
+                logger.info(f"CIRCUIT_COVER_FILLED | {sym} | {qty_exit} @ {covered_px:.2f} by the resting circuit order")
+            elif not is_shadow and not late_fill:
+                rest_qty = int(qty_exit) - covered_qty
                 exit_side = "SELL" if pos.side.upper() == "BUY" else "BUY"
                 # Get trade_id from plan if available (for tagging exit orders)
                 trade_id = pos.plan.get("trade_id") if pos.plan else None
                 args = {
                     "symbol": sym,
                     "side": exit_side,
-                    "qty": int(qty_exit),
+                    "qty": int(rest_qty),
                     "order_type": self.exec_mode,
                     "product": self.exec_product,
                     "variety": self.exec_variety,
@@ -1479,7 +1861,7 @@ class ExitExecutor:
                     # An exit never needs new margin; a failed MIS lookup must not block it.
                     "check_margins": False,
                 }
-                st["_exit_last_order_id"], st["_exit_last_qty"] = None, int(qty_exit)
+                st["_exit_last_order_id"], st["_exit_last_qty"] = None, int(rest_qty)
                 st["_exit_last_side"] = exit_side
                 st["_exit_last_tag"] = str(trade_id)[-12:] if trade_id else None  # order tag = ITDA_<last 12>
                 order_id = self.broker.place_order(**args)
@@ -1495,13 +1877,13 @@ class ExitExecutor:
                         reconciled = self.broker.reconcile_exit(
                             symbol=sym,
                             order_id=order_id,
-                            expected_qty=qty_exit,
-                            position_qty_before=cur_qty,
+                            expected_qty=rest_qty,
+                            position_qty_before=cur_qty - covered_qty,
                             timeout=0.5
                         )
 
                         if reconciled is None:
-                            reconciled = self._settle_unfilled_exit(sym, order_id, int(qty_exit))
+                            reconciled = self._settle_unfilled_exit(sym, order_id, int(rest_qty))
                         if reconciled is None:
                             # Exit order not filled - position unchanged at broker
                             raise _ExitNotFilled(f"Exit order {order_id} not filled - position still open at broker")
@@ -1521,14 +1903,22 @@ class ExitExecutor:
                         # Verification itself failed: settle from the order book (cancel if
                         # still working); unconfirmed is NOT a fill.
                         logger.warning(f"Failed to reconcile exit for {sym}: {e}")
-                        settled = self._settle_unfilled_exit(sym, order_id, int(qty_exit))
+                        settled = self._settle_unfilled_exit(sym, order_id, int(rest_qty))
                         if settled is None:
                             raise _ExitNotFilled(f"Exit order {order_id} unverified ({e})")
                         actual_exit_px = float(settled["avg_price"])
+                if covered_qty:
+                    # Part of the position was covered by the resting circuit order.
+                    actual_exit_px = (covered_qty * covered_px + rest_qty * actual_exit_px) / int(qty_exit)
+                    logger.info(f"CIRCUIT_COVER_PARTIAL | {sym} | {covered_qty} @ {covered_px:.2f} by the "
+                                f"circuit order + {rest_qty} by the exit -> avg {actual_exit_px:.2f}")
         except Exception as e:
             # No fill: rejected (e.g. stock locked at its circuit), never accepted, or
             # still open and cancelled. The position is still open at the broker, so it
             # must stay tracked, keep its margin and be retried - never booked as filled.
+            if covered_qty:
+                self._record_manual_partial(sym, pos, covered_qty, covered_px, ts,
+                                            label="CIRCUIT_COVER_PARTIAL")
             live = not getattr(self.broker, "dry_run", True)
             st["_exit_retry_at"] = time.monotonic() + (self.exit_retry_cooldown_sec if live else 0.0)
             st.pop("exit_pending", None)  # let the next tick/bar retry

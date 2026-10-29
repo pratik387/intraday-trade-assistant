@@ -2987,6 +2987,7 @@ class ScreenerLive:
             pdh = level_dict.get("PDH", float("nan"))
             pdl = level_dict.get("PDL", float("nan"))
             pdc = level_dict.get("PDC", float("nan"))
+            pdc_estimated = float(level_dict.get("PDC_estimated", 0.0))
 
         except Exception as e:
             # CRITICAL FIX: Log previous day level computation failures
@@ -2994,6 +2995,7 @@ class ScreenerLive:
             logger.error(f"LEVELS: Failed to compute PDH/PDL/PDC for {symbol}: {e}")
             logger.error(f"LEVELS: Traceback: {traceback.format_exc()}")
             pdh = pdl = pdc = float("nan")
+            pdc_estimated = 0.0
 
         try:
             logger.debug(f"LEVELS: Computing opening range for {symbol}, df5 shape: {df5.shape if df5 is not None else None}")
@@ -3014,7 +3016,8 @@ class ScreenerLive:
                 orl = float(opening_bars['low'].min())
                 logger.info(f"LEVELS: Using fallback ORH/ORL for {symbol}: ORH={orh:.2f}, ORL={orl:.2f}")
 
-        out = {"PDH": pdh, "PDL": pdl, "PDC": pdc, "ORH": orh, "ORL": orl}
+        out = {"PDH": pdh, "PDL": pdl, "PDC": pdc, "ORH": orh, "ORL": orl,
+               "PDC_estimated": pdc_estimated}
 
         # Log levels to screener structured logging for analysis
         valid_levels = {k: v for k, v in out.items() if not pd.isna(v)}

@@ -132,7 +132,9 @@ def _estimate_levels_from_fallback(fallback_df: pd.DataFrame) -> Dict[str, float
 
         logger.info(f"_estimate_levels_from_fallback: Using estimated levels - PDH={pdh_est:.2f}, PDL={pdl_est:.2f}, PDC={pdc_est:.2f}")
 
-        return {"PDH": pdh_est, "PDL": pdl_est, "PDC": pdc_est}
+        # PDC_estimated flags that PDC is NOT the previous close (it is a 09:15-10:05
+        # price): circuit-band sizing must not anchor on it.
+        return {"PDH": pdh_est, "PDL": pdl_est, "PDC": pdc_est, "PDC_estimated": 1.0}
 
     except Exception as e:
         logger.error(f"_estimate_levels_from_fallback: Error estimating levels: {e}", exc_info=True)

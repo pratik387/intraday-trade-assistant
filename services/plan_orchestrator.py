@@ -187,6 +187,26 @@ def set_runtime_trading_mode(mode: str) -> List[str]:
     return [n for n in names if setups[n]["live_enabled"]]
 
 
+def validate_price_bands(session_date) -> List[str]:
+    """Startup check: every enabled intraday setup that sizes by circuit risk needs
+    the session's NSE price-band list. Missing or stale data raises here, at
+    startup, instead of mid-session. Returns the setups that use it."""
+    from services.price_bands import get_price_band_store, PriceBandDataError
+    cfg = _load_root_config()
+    users = [name for name, raw in (cfg.get("setups") or {}).items()
+             if _is_enabled_intraday(raw) and "circuit_risk_budget_pct_of_capital" in raw]
+    if users:
+        if "circuit_risk_auction_premium_pct" not in cfg["intraday_sizing"]:
+            raise OrchestratorConfigError("intraday_sizing.circuit_risk_auction_premium_pct missing")
+        try:
+            sb = get_price_band_store(cfg).session(session_date)
+        except PriceBandDataError as e:
+            raise OrchestratorConfigError(f"price bands for {session_date} ({users}): {e}") from e
+        logger.info(f"[PRICE_BANDS] session {session_date} uses sec_list {sb.file_date} "
+                    f"({len(sb.bands)} symbols) for {users}")
+    return users
+
+
 def _live_gate_blocks(setup_type: str, setup_cfg: dict) -> bool:
     """True when this is a live run and the setup is not live-enabled."""
     cfg = _load_root_config()
@@ -475,6 +495,7 @@ class PlanOrchestrator:
             vol_z_val=vol_z_val,
             levels=levels,
             quality_score=quality_score,
+            session_date=bar_timestamp.date(),
         )
 
     def _assemble_plan_dict(
@@ -492,6 +513,7 @@ class PlanOrchestrator:
         vol_z_val: float,
         levels: Dict[str, float],
         quality_score: float = 0.0,
+        session_date: Any = None,
     ) -> Dict[str, Any]:
         """Convert a detector TradePlan into the dict shape downstream code
         (gates, execution, analytics) expects. Encapsulates: entry-zone
@@ -585,6 +607,53 @@ class PlanOrchestrator:
                 "total_capital_inr not set — main.py must call "
                 "plan_orchestrator.set_runtime_capital() before planning")
         _cap = float(root_cfg["total_capital_inr"])
+        # Circuit-risk cap (opt-in per setup): see intraday_sizing._circuit_risk_note.
+        _circ_budget = _circ_dist = _circ_prem = None
+        _circ_skip = None
+        _circ_cover_px = None
+        if setup_cfg.get("circuit_cover_order") and "circuit_risk_budget_pct_of_capital" not in setup_cfg:
+            raise OrchestratorConfigError(
+                f"{setup_type}: circuit_cover_order needs circuit_risk_budget_pct_of_capital "
+                f"(the cover order and the size cap read the same band)")
+        if "circuit_risk_budget_pct_of_capital" in setup_cfg:
+            from services.price_bands import (
+                get_price_band_store, SymbolNotInBandList, PriceBandDataError,
+                InconsistentReferenceClose)
+            if "circuit_risk_auction_premium_pct" not in sizing_cfg:
+                raise OrchestratorConfigError(
+                    "intraday_sizing.circuit_risk_auction_premium_pct missing")
+            _circ_budget = (float(setup_cfg["circuit_risk_budget_pct_of_capital"]) * _cap
+                            * float(sizing_cfg["book_size_multiplier"]))
+            _circ_prem = float(sizing_cfg["circuit_risk_auction_premium_pct"]) / 100.0
+            if session_date is None:
+                raise OrchestratorConfigError(f"{setup_type}: circuit cap needs session_date")
+            if levels.get("PDC_estimated"):
+                # PDC came from today's early bars (no daily data): not the band's base.
+                _circ_skip = "circuit_pdc_estimated"
+            else:
+                try:
+                    _store = get_price_band_store(root_cfg)
+                    _circ_dist = _store.circuit_distance_frac(
+                        symbol, session_date, levels.get("PDC"), entry, bias)
+                    if setup_cfg.get("circuit_cover_order") and _circ_dist is not None:
+                        # Resting order at the circuit (see exit_executor circuit cover).
+                        if any(float(t.get("qty_pct", 1.0)) < 1.0 for t in raw_targets):
+                            raise OrchestratorConfigError(
+                                f"{setup_type}: circuit_cover_order supports full exits only "
+                                f"(a partial target would have to resize the resting order)")
+                        _circ_cover_px = _store.circuit_price(
+                            symbol, session_date, levels.get("PDC"), bias)
+                        if _circ_dist <= float(root_cfg["circuit_cover"]["trigger_offset_pct"]) / 100.0:
+                            # Entry at the circuit: the cover would close it on the spot
+                            # (a fees-only round trip). Not a trade.
+                            _circ_skip = "circuit_at_entry"
+                except SymbolNotInBandList as e:
+                    _circ_skip = f"circuit_band_missing ({e})"
+                except InconsistentReferenceClose as e:
+                    _circ_skip = f"circuit_ref_inconsistent ({e})"
+                except PriceBandDataError as e:
+                    # No band file for this session: never read as "no circuit".
+                    raise OrchestratorConfigError(f"{setup_type}: {e}") from e
         try:
             _mode = resolve_sizing_mode(setup_cfg, setup_type)
             _sz = size_intraday_position(
@@ -600,7 +669,14 @@ class PlanOrchestrator:
                 min_notional_inr=float(sizing_cfg["min_notional_pct_of_capital"]) * _cap,
                 max_notional_inr=float(sizing_cfg["max_notional_pct_of_capital"]) * _cap,
                 book_size_multiplier=float(sizing_cfg["book_size_multiplier"]),
+                circuit_risk_budget_inr=_circ_budget,
+                circuit_distance_frac=_circ_dist,
+                circuit_premium_frac=_circ_prem,
             )
+            if _circ_skip:
+                # Without the band the circuit risk is unknown: do not trade it.
+                from services.risk.intraday_sizing import IntradaySizingResult
+                _sz = IntradaySizingResult(0, 0.0, _sz.sigma_pct, _mode, _circ_skip)
         except SizingConfigError as e:
             raise OrchestratorConfigError(str(e)) from e
         qty, notional = _sz.qty, _sz.notional_inr
@@ -614,11 +690,12 @@ class PlanOrchestrator:
         # of guessed. Grep SIZING_OBS to calibrate before enabling vol_target.
         logger.info(
             "SIZING_OBS | %s | %s | mode=%s mult=%.1f sigma=%s rps=%.4f entry=%.2f "
-            "qty=%d notional=%.0f base=%.0f eff=%.2fx reason=%s clamped=%s",
+            "qty=%d notional=%.0f base=%.0f eff=%.2fx reason=%s clamped=%s circuit_dist=%s",
             symbol, setup_type, _mode, float(sizing_cfg["book_size_multiplier"]),
             ("%.3f%%" % _sz.sigma_pct) if _sz.sigma_pct is not None else "na",
             rps, entry, qty, notional, _sz.base_notional_inr,
             _sz.effective_multiplier, _sz.reason, _sz.clamped or "-",
+            ("%.2f%%" % (100 * _circ_dist)) if _circ_dist is not None else "-",
         )
         if _sz.reason != "ok":
             logger.info(
@@ -734,6 +811,10 @@ class PlanOrchestrator:
                     or setup_cfg.get("time_stop_at")
                     or setup_cfg.get("time_stop_hhmm")
                 ),
+                # Price-band circuit against the position; set only for setups with
+                # circuit_cover_order. Live rests a stop-limit cover with its limit here
+                # from entry; paper and backtest cover here when price reaches it.
+                "circuit_cover_px": (round(_circ_cover_px, 4) if _circ_cover_px else None),
             },
 
             "quality": {

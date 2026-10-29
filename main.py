@@ -22,7 +22,7 @@ import signal
 import argparse
 import threading
 import subprocess
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 import pandas as pd
@@ -299,11 +299,16 @@ def main() -> int:
     # which differs by mode (paper Rs5L vs live) and by CLI flags. This is the
     # single seam; set_base_config_override above writes base_config.json, which
     # the orchestrator does not read.
-    from services.plan_orchestrator import set_runtime_capital, set_runtime_trading_mode
+    from services.plan_orchestrator import (
+        set_runtime_capital, set_runtime_trading_mode, validate_price_bands)
     set_runtime_capital(capital_manager.total_capital)
     _trading_mode = "backtest" if args.dry_run else "paper" if args.paper_trading else "live"
     _trading_setups = set_runtime_trading_mode(_trading_mode)
     logger.info(f"[SETUPS] mode={_trading_mode} | intraday setups that can trade: {_trading_setups}")
+    if not args.dry_run or args.session_date:
+        _band_day = (date.fromisoformat(args.session_date) if args.dry_run
+                     else _now_naive_ist().date())
+        validate_price_bands(_band_day)
     logger.info(
         f"[CAPITAL] Sizing capital = Rs{capital_manager.total_capital:,.0f} "
         f"(capital_mgmt={'on' if capital_enabled else 'off'}, mis={mis_enabled})"

@@ -228,6 +228,7 @@ class KiteBroker:
         qty: int,
         order_type: str = "MARKET",
         price: Optional[float] = None,
+        trigger_price: Optional[float] = None,
         product: str = "MIS",
         variety: str = "regular",
         validity: str = "DAY",
@@ -259,8 +260,10 @@ class KiteBroker:
         side_u = side.upper()
         if side_u not in ("BUY", "SELL"):
             raise ValueError(f"side must be BUY/SELL, got {side}")
-        if order_type.upper() not in ("MARKET", "LIMIT"):
-            raise ValueError(f"order_type must be MARKET/LIMIT, got {order_type}")
+        if order_type.upper() not in ("MARKET", "LIMIT", "SL"):
+            raise ValueError(f"order_type must be MARKET/LIMIT/SL, got {order_type}")
+        if order_type.upper() == "SL" and (price is None or trigger_price is None):
+            raise ValueError("SL (stop-limit) orders need price and trigger_price")
         if product.upper() not in ("MIS", "CNC", "MTF"):
             raise ValueError(f"product must be MIS/CNC/MTF, got {product!r}")
         if variety.lower() not in ("regular", "amo"):
@@ -287,7 +290,8 @@ class KiteBroker:
 
         exch, tsym = _split_symbol(symbol)
         txn = self.kc.TRANSACTION_TYPE_BUY if side_u == "BUY" else self.kc.TRANSACTION_TYPE_SELL
-        ot = self.kc.ORDER_TYPE_LIMIT if order_type.upper() == "LIMIT" else self.kc.ORDER_TYPE_MARKET
+        ot = {"LIMIT": self.kc.ORDER_TYPE_LIMIT, "SL": self.kc.ORDER_TYPE_SL}.get(
+            order_type.upper(), self.kc.ORDER_TYPE_MARKET)
 
         # Map product to KiteConnect constant
         if actual_product == "MIS":
@@ -315,6 +319,9 @@ class KiteBroker:
             if price is None:
                 raise ValueError("price is required for LIMIT orders")
             params["price"] = float(price)
+        elif ot == self.kc.ORDER_TYPE_SL:
+            params["price"] = float(price)
+            params["trigger_price"] = float(trigger_price)
         else:
             params["market_protection"] = self._market_protection
 

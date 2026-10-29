@@ -64,7 +64,7 @@ class IntradaySizingResult:
     sigma_pct: Optional[float]
     mode: str
     reason: str  # 'ok' | 'atr_missing' | 'below_min_notional' | 'qty_zero'
-    clamped: Optional[str] = None  # 'min' | 'max' | None
+    clamped: Optional[str] = None  # 'min' | 'max' | 'circuit' | None
     # Sizing PROVENANCE — what the size would have been at multiplier 1.0,
     # before any clamp. Recorded so a ledger written at one book size can be
     # normalised to any other EXACTLY. Dividing rupee P&L by the configured
@@ -126,6 +126,9 @@ def size_intraday_position(
     target_notional_pct: Optional[float] = None,
     total_capital_inr: Optional[float] = None,
     book_size_multiplier: float = 1.0,
+    circuit_risk_budget_inr: Optional[float] = None,
+    circuit_distance_frac: Optional[float] = None,
+    circuit_premium_frac: Optional[float] = None,
 ) -> IntradaySizingResult:
     """Return the qty for one intraday entry under `sizing_mode`.
 
@@ -142,6 +145,14 @@ def size_intraday_position(
     Passing one where the other belongs mis-sizes by an order of magnitude.
 
     All three are clamped to [min_notional_inr, max_notional_inr].
+
+    Circuit cap (opt-in, after the multiplier, before the clamp): when
+    `circuit_risk_budget_inr` is given, notional <= budget / (circuit_distance_frac
+    + circuit_premium_frac). A position locked at the price-band circuit against it
+    cannot be closed by anyone, so its loss is the distance to the circuit plus
+    the auction / next-day premium, whatever the stop says. The budget is already
+    scaled by the caller (capital x book multiplier). circuit_distance_frac None
+    means the symbol has no fixed band ("No Band"), so there is no cap.
 
     `book_size_multiplier` scales EVERY mode by one number, applied before the
     clamp. It exists so book-level risk is a single knob rather than an edit to
@@ -188,6 +199,15 @@ def size_intraday_position(
     notional *= float(book_size_multiplier)
 
     clamped = None
+    if circuit_risk_budget_inr is not None:
+        if circuit_premium_frac is None or float(circuit_premium_frac) <= 0:
+            raise SizingConfigError(
+                f"{setup_name}: circuit cap needs circuit_premium_frac > 0")
+        if circuit_distance_frac is not None:
+            cap = float(circuit_risk_budget_inr) / (
+                max(0.0, float(circuit_distance_frac)) + float(circuit_premium_frac))
+            if cap < notional:
+                notional, clamped = cap, "circuit"
     if notional > max_notional_inr:
         notional, clamped = float(max_notional_inr), "max"
     elif notional < min_notional_inr:
