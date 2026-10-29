@@ -226,6 +226,19 @@ class ExitExecutor:
             raise ValueError(f"intraday ExitExecutor exits MIS only (exec_product={self.exec_product}); "
                              f"exit verification reads the MIS position line")
         self.eod_flatten_max_wait_sec = float(cfg["eod_flatten_max_wait_sec"])
+        ds = cfg["intraday_daily_stop"]
+        self.ds_hard_frac = float(ds["hard_pct_of_book"]) / 100.0
+        self.ds_soft_frac = float(ds["soft_pct_of_book"]) / 100.0
+        self.broker_check_sec = float(ds["broker_check_sec"])
+        self.broker_check_strikes = int(ds["broker_check_strikes"])
+        _sp = Path(ds["state_path"])
+        self.ds_state_path = _sp if _sp.is_absolute() else Path(__file__).resolve().parents[2] / _sp
+        self._ds_hard_inr = self._ds_soft_inr = None      # resolved on first use (capital is set at startup)
+        self._day_realized = 0.0
+        self._ds_state = None                               # None | "soft" | "hard"
+        self._ds_loaded = False
+        self._bc_next = 0.0
+        self._bc_strikes: Dict[str, int] = {}
         self.eod_flatten_poll_sec = float(cfg["eod_flatten_poll_sec"])
         cc = cfg["circuit_cover"]
         self.cc_near_frac = float(cc["near_circuit_pct"]) / 100.0
@@ -372,6 +385,14 @@ class ExitExecutor:
 
         # Process any pending API exit requests first
         self._process_api_exits()
+        try:
+            self._broker_book_check()
+        except Exception as e:
+            logger.error(f"BROKER_CHECK | failed: {e}")
+        try:
+            self._daily_stop_check()
+        except Exception as e:
+            logger.error(f"DAILY_STOP | check failed: {e}")
 
         # list_open() now returns {trade_id: Position}. We iterate by trade_id so
         # multiple concurrent positions on the same symbol (wide_open_mode) each
@@ -411,6 +432,12 @@ class ExitExecutor:
                         lvl = self.broker.get_ltp_with_level(sym, check_level=_trig)
                         if lvl is not None and self._circuit_cover_check(sym, pos, float(lvl), ts):
                             continue
+
+                if self._ds_state == "hard":
+                    # Daily stop: flatten everything (retried each loop under the exit cooldown;
+                    # live exits settle any resting circuit cover first).
+                    self._exit(sym, pos, float(px), ts, "daily_stop")
+                    continue
 
                 entry_price = pos.avg_price
                 side = pos.side.upper()
@@ -2126,6 +2153,12 @@ class ExitExecutor:
             is_shadow = pos.plan.get("shadow", False)
             self.capital_manager.exit_position(sym, shadow=is_shadow)
 
+        if not pos.plan.get("shadow", False):
+            self._day_realized += self._booked_partials(pos) + (
+                qty_now * ((actual_exit_px - pos.avg_price) if pos.side.upper() == "BUY"
+                           else (pos.avg_price - actual_exit_px)))
+            self._ds_save()
+
         # Log closed trade to API server for dashboard display
         if self.api_server:
             # Extract SL and targets from plan
@@ -2677,6 +2710,123 @@ class ExitExecutor:
             self.persistence.remove_position(sym)
         if self.capital_manager:
             self.capital_manager.exit_position(sym, shadow=pos.plan.get("shadow", False))
+
+    # ---------- Daily stop and broker check ----------
+
+    @staticmethod
+    def _booked_partials(pos) -> float:
+        st = pos.plan.get("_state") or {}
+        return float(sum((st.get(k, 0) or 0) for k in
+                         ("t1_profit", "t2_profit", "manual_partial_profit", "eod_partial_profit")))
+
+    def _day_pnl(self) -> float:
+        """Realized P&L of closed trades + partials booked and mark-to-market of open ones."""
+        pnl = self._day_realized
+        for _tid, pos in self.positions.list_open().items():
+            if pos.plan.get("shadow", False):
+                continue
+            pnl += self._booked_partials(pos)
+            px, _ = self._get_px_ts(pos.symbol)
+            if px is None:
+                continue                                    # no price: its MTM is unknown, partials still count
+            side = 1 if pos.side.upper() == "BUY" else -1
+            pnl += side * (float(px) - float(pos.avg_price)) * int(pos.qty)
+        return pnl
+
+    def _daily_stop_check(self) -> None:
+        """Soft stop: no new entries. Hard stop: flatten everything and no new entries.
+        Both in rupees of the book (capital x book multiplier), so paper and live scale
+        the same way. Calibrated 2026-10-29 on the capped up_spike backtest: a -Rs7.5k
+        hard stop (live) fired 3 times in 3.5 years, never on a day that recovered."""
+        if not self._ds_loaded:
+            self._ds_loaded = True
+            self._ds_restore()
+        if self._ds_state == "hard":
+            return
+        if self._ds_hard_inr is None:
+            from services.plan_orchestrator import _load_root_config
+            rc = _load_root_config()
+            book = float(rc["total_capital_inr"]) * float(rc["intraday_sizing"]["book_size_multiplier"])
+            self._ds_hard_inr, self._ds_soft_inr = book * self.ds_hard_frac, book * self.ds_soft_frac
+        pnl = self._day_pnl()
+        from services.execution.symbol_blocks import block_all
+        if pnl <= -self._ds_hard_inr:
+            self._ds_state = "hard"
+            self._ds_save()
+            block_all(f"daily hard stop: day P&L Rs{pnl:,.0f} <= -Rs{self._ds_hard_inr:,.0f}")
+            logger.critical(f"DAILY_STOP_HARD | day P&L Rs{pnl:,.0f} <= -Rs{self._ds_hard_inr:,.0f}: "
+                            f"flattening everything, no new entries today")
+        elif pnl <= -self._ds_soft_inr and self._ds_state is None:
+            self._ds_state = "soft"
+            self._ds_save()
+            block_all(f"daily soft stop: day P&L Rs{pnl:,.0f} <= -Rs{self._ds_soft_inr:,.0f}")
+            logger.critical(f"DAILY_STOP_SOFT | day P&L Rs{pnl:,.0f} <= -Rs{self._ds_soft_inr:,.0f}: "
+                            f"no new entries; open positions run to their exits")
+
+    def _ds_today(self) -> str:
+        # Which trading day the saved state belongs to (bookkeeping, not a trading decision).
+        return _now_naive_ist().date().isoformat()
+
+    def _ds_save(self) -> None:
+        """Live/paper only (a persistence store exists): the day's realized P&L and stop
+        state survive a mid-day restart. Backtests run one process per day."""
+        if not self.persistence:
+            return
+        try:
+            self.ds_state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.ds_state_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"date": self._ds_today(), "realized": self._day_realized,
+                                       "state": self._ds_state}), encoding="utf-8")
+            tmp.replace(self.ds_state_path)
+        except Exception as e:
+            logger.error(f"DAILY_STOP | could not save state: {e}")
+
+    def _ds_restore(self) -> None:
+        if not self.persistence or not self.ds_state_path.exists():
+            return
+        try:
+            d = json.loads(self.ds_state_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.critical(f"DAILY_STOP | saved state unreadable ({e}); today's earlier P&L is NOT counted")
+            return
+        if d.get("date") != self._ds_today():
+            return
+        self._day_realized = float(d.get("realized") or 0.0)
+        self._ds_state = d.get("state")
+        if self._ds_state:
+            from services.execution.symbol_blocks import block_all
+            block_all(f"daily {self._ds_state} stop already hit today (restored after restart)")
+        logger.warning(f"DAILY_STOP | restored today's realized Rs{self._day_realized:,.0f}, state={self._ds_state}")
+
+    def _broker_book_check(self) -> None:
+        """Live: every broker_check_sec compare Zerodha's MIS positions with ours, per
+        symbol, signed. A difference seen on broker_check_strikes consecutive checks
+        (one can be an order in flight) blocks the symbol and is logged CRITICAL."""
+        if getattr(self.broker, "dry_run", True) or time.monotonic() < self._bc_next:
+            return
+        self._bc_next = time.monotonic() + self.broker_check_sec
+        broker = {}
+        for r in self.broker.get_positions(strict=True).get("day", []):
+            if str(r.get("product", "")).upper() == self.exec_product:
+                t = r.get("tradingsymbol")
+                broker[t] = broker.get(t, 0) + int(r.get("quantity") or 0)
+        ours = {}
+        for _tid, pos in self.positions.list_open().items():
+            if pos.plan.get("shadow", False):
+                continue
+            t = pos.symbol.split(":", 1)[-1]
+            ours[t] = ours.get(t, 0) + (int(pos.qty) if pos.side.upper() == "BUY" else -int(pos.qty))
+        from services.execution.symbol_blocks import block
+        for t in set(broker) | set(ours):
+            b, o = broker.get(t, 0), ours.get(t, 0)
+            if b == o:
+                self._bc_strikes.pop(t, None)
+                continue
+            n = self._bc_strikes[t] = self._bc_strikes.get(t, 0) + 1
+            if n == self.broker_check_strikes:
+                block(f"NSE:{t}", f"broker MIS qty {b} vs ours {o}")
+                logger.critical(f"BROKER_MISMATCH | NSE:{t} | Zerodha MIS qty {b} vs tracked {o} on {n} checks; "
+                                f"symbol blocked for new entries. CHECK THE POSITION AT THE BROKER")
 
     def _is_open_tid(self, trade_id: str) -> bool:
         """Check if a specific trade_id is still in the open positions store."""

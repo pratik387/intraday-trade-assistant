@@ -1690,6 +1690,15 @@
   "exit_trail_atr_mult_late": 1.5,
   "_comment_trail_late": "PHASE 3: Tighter 1.5Ã— ATR trail after 14:30",
   "exit_retry_cooldown_sec": 30,
+  "intraday_daily_stop": {
+    "_comment": "2026-10-29 (operator approved, risk charter). Day P&L = realized + booked partials + mark-to-market of open positions, intraday book only. Limits are % of the book (total_capital_inr x intraday_sizing.book_size_multiplier) so paper and live scale alike: live Rs1L x 10 -> hard -Rs7.5k, soft -Rs5k. Hard: flatten everything (retried each loop) + no new entries. Soft: no new entries; open positions run to their exits. Calibrated on the circuit-capped up_spike backtest 2023-26: -Rs7.5k fired 0.9x/yr, 0 of 3 on days that would have recovered, net +Rs5.2k; -Rs5k as a hard stop cut 8 of 18 recovering days. broker_check_sec / broker_check_strikes: live check of Zerodha MIS positions vs tracked (a mismatch on consecutive checks blocks the symbol, logged CRITICAL; alerting deferred).",
+    "hard_pct_of_book": 0.75,
+    "soft_pct_of_book": 0.5,
+    "broker_check_sec": 120,
+    "broker_check_strikes": 2,
+    "state_path": "state/intraday_daily_stop.json",
+    "_comment_state": "Live/paper: the day's realized P&L and stop state are saved here so a mid-day restart neither forgets losses nor un-fires a stop. P&L is gross (fees excluded: a few hundred rupees a day at 10x, so the stop fires slightly late)."
+  },
   "eod_flatten_max_wait_sec": 840,
   "eod_flatten_poll_sec": 5,
   "_comment_eod_flatten": "2026-10-29. Live EOD square-off keeps cycling over every open position (honouring exit_retry_cooldown_sec) for up to eod_flatten_max_wait_sec of elapsed time (840s: 15:15 -> 15:29), sleeping eod_flatten_poll_sec between rounds. Before: 12 instant retries against the 30s cooldown, then the daemon exited with the position open.",

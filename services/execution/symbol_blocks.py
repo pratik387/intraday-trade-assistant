@@ -11,6 +11,7 @@ import threading
 from typing import Dict, Optional
 
 _blocked: Dict[str, str] = {}
+_all: Optional[str] = None
 _lock = threading.Lock()
 
 
@@ -19,12 +20,22 @@ def block(symbol: str, reason: str) -> None:
         _blocked.setdefault(symbol, reason)
 
 
+def block_all(reason: str) -> None:
+    """No new entries in ANY symbol for the rest of the day (daily loss stop)."""
+    global _all
+    with _lock:
+        if _all is None:
+            _all = reason
+
+
 def blocked_reason(symbol: str) -> Optional[str]:
     with _lock:
-        return _blocked.get(symbol)
+        return _all or _blocked.get(symbol)
 
 
 def clear_all() -> None:
     """Tests only."""
+    global _all
     with _lock:
         _blocked.clear()
+        _all = None

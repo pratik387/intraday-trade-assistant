@@ -330,3 +330,132 @@ def test_network_failure_is_uncertain_not_rejected():
     with pytest.raises(RuntimeError) as ei:
         kb.place_order(symbol="NSE:A", side="SELL", qty=1, check_margins=False)
     assert not isinstance(ei.value, OrderPlacementUncertain)
+
+
+
+# --- daily stop and broker check ---------------------------------------------
+
+@pytest.fixture
+def cap100k():
+    from services.plan_orchestrator import set_runtime_capital, _load_root_config
+    from services.execution import symbol_blocks
+    set_runtime_capital(100_000.0)
+    symbol_blocks.clear_all()
+    mult = float(_load_root_config()["intraday_sizing"]["book_size_multiplier"])
+    yield 100_000.0 * mult
+    symbol_blocks.clear_all()
+
+
+def _px_ex(broker, prices):
+    store, cap = PositionStore(), MagicMock()
+    midday = pd.Timestamp("2026-10-29 11:00:00")                # not EOD: only the stop may exit
+    ex = ExitExecutor(broker=broker, positions=store, get_ltp_ts=lambda s: (prices[s], midday), capital_manager=cap)
+    return ex, store
+
+
+def test_daily_stop_levels_scale_with_the_book(cap100k):
+    ex, store = _px_ex(ExitBroker(), {})
+    ex._daily_stop_check()
+    assert ex._ds_hard_inr == pytest.approx(cap100k * ex.ds_hard_frac)
+    assert ex._ds_hard_inr == pytest.approx(7_500.0) and ex._ds_soft_inr == pytest.approx(5_000.0)
+
+
+def test_soft_stop_blocks_entries_but_does_not_flatten(cap100k, clock):
+    from services.execution import symbol_blocks
+    b = ExitBroker()
+    prices = {"NSE:A": 211.0}                                   # short 500 @200 -> -Rs5,500 MTM
+    ex, store = _px_ex(b, prices)
+    store.upsert(_short("T1", "NSE:A"))
+    ex._daily_stop_check()
+    assert ex._ds_state == "soft" and symbol_blocks.blocked_reason("NSE:ZZZ")
+    ex.run_once()
+    assert b.placed == [] and store.get_by_trade_id("T1") is not None
+
+
+def test_hard_stop_flattens_everything(cap100k, clock):
+    b = ExitBroker()
+    prices = {"NSE:A": 216.0, "NSE:B": 201.0}                    # -8,000 and -100
+    ex, store = _px_ex(b, prices)
+    store.upsert(_short("T1", "NSE:A")); store.upsert(_short("T2", "NSE:B", 100))
+    ex.run_once()
+    assert ex._ds_state == "hard"
+    assert store.get_by_trade_id("T1") is None and store.get_by_trade_id("T2") is None
+
+
+def test_realized_losses_count_toward_the_stop(cap100k, clock):
+    b = ExitBroker()
+    b.script = [_o("COMPLETE", 500, 215.0)]                      # closed at -7,500
+    ex, store = _px_ex(b, {"NSE:A": 215.0})
+    pos = _short("T1", "NSE:A"); store.upsert(pos)
+    ex._exit("NSE:A", pos, 215.0, TS, "time_stop")
+    assert ex._day_realized == pytest.approx(-7_500.0)
+    ex._daily_stop_check()
+    assert ex._ds_state == "hard"
+
+
+def test_no_stop_on_a_normal_day(cap100k):
+    ex, store = _px_ex(ExitBroker(), {"NSE:A": 199.0})
+    store.upsert(_short("T1", "NSE:A"))
+    ex._daily_stop_check()
+    assert ex._ds_state is None
+
+
+def test_broker_mismatch_on_two_checks_blocks_the_symbol(cap100k, clock):
+    from services.execution import symbol_blocks
+    b = ExitBroker()
+    b.open_at_broker = {"A": -500, "HUHTAMAKI": -514}              # we track only A
+    ex, store = _px_ex(b, {"NSE:A": 200.0})
+    store.upsert(_short("T1", "NSE:A"))
+    ex._broker_book_check()
+    assert symbol_blocks.blocked_reason("NSE:HUHTAMAKI") is None    # one strike: maybe in flight
+    clock["now"] += ex.broker_check_sec
+    ex._broker_book_check()
+    assert "514" in symbol_blocks.blocked_reason("NSE:HUHTAMAKI")
+    assert symbol_blocks.blocked_reason("NSE:A") is None
+
+
+def test_broker_check_is_throttled_and_live_only(cap100k, clock):
+    b = ExitBroker()
+    calls = []
+    b.get_positions = lambda strict=False: calls.append(1) or {"day": []}
+    ex, store = _px_ex(b, {})
+    ex._broker_book_check(); ex._broker_book_check()
+    assert len(calls) == 1
+    b.dry_run = True
+    clock["now"] += ex.broker_check_sec
+    ex._broker_book_check()
+    assert len(calls) == 1
+
+
+
+def test_restart_restores_todays_losses_and_the_fired_stop(cap100k, clock, tmp_path):
+    from services.execution import symbol_blocks
+    b = ExitBroker()
+    ex, store = _px_ex(b, {"NSE:A": 216.0})
+    ex.persistence, ex.ds_state_path = MagicMock(), tmp_path / "ds.json"
+    ex._day_realized = -8_000.0
+    ex._daily_stop_check()
+    assert ex._ds_state == "hard"
+    symbol_blocks.clear_all()
+    ex2, _ = _px_ex(b, {})                                       # the daemon restarts
+    ex2.persistence, ex2.ds_state_path = MagicMock(), tmp_path / "ds.json"
+    ex2._daily_stop_check()
+    assert ex2._ds_state == "hard" and ex2._day_realized == -8_000.0
+    assert symbol_blocks.blocked_reason("NSE:ANY")
+
+
+def test_booked_partials_count_without_a_price(cap100k):
+    ex, store = _px_ex(ExitBroker(), {})
+    ex._get_px_ts = lambda s: (None, None)
+    pos = _short("T1", "NSE:A")
+    pos.plan["_state"]["t1_profit"] = -3_000.0
+    store.upsert(pos)
+    assert ex._day_pnl() == pytest.approx(-3_000.0)
+
+
+def test_a_failing_stop_check_does_not_stop_exits(cap100k, clock):
+    b = ExitBroker()
+    ex, store = _px_ex(b, {"NSE:A": 200.0})
+    ex._daily_stop_check = lambda: (_ for _ in ()).throw(KeyError("total_capital_inr"))
+    store.upsert(_short("T1", "NSE:A"))
+    ex.run_once()                                                # no exception escapes

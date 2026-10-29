@@ -98,3 +98,5 @@ models/gauntlet/*.parquet
 data/earnings_calendar/bse_scrip_master.json
 state/circuit_cover_orders.json
 state/circuit_cover_orders.tmp
+state/intraday_daily_stop.json
+state/intraday_daily_stop.tmp

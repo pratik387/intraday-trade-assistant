@@ -385,6 +385,12 @@ class DryBroker:
         return check_level if check_level in self.touched else 200.0
 
 
+@pytest.fixture(autouse=True)
+def _runtime_capital():
+    from services.plan_orchestrator import set_runtime_capital
+    set_runtime_capital(100_000.0)       # main.py does this at startup; the daily stop reads it
+
+
 def _dry(clock, touched=(), hard_sl=240.0):
     store, cap = PositionStore(), MagicMock()
     broker = DryBroker(set(touched))
