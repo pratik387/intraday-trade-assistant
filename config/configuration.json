@@ -758,8 +758,11 @@
     },
     "close_dn_overnight_long": {
       "sizing_mode": "risk",
-      "enabled": false,
+      "enabled": true,
       "paper_enabled": true,
+      "_live_resumed_2026_10_30": "LIVE RESUMED CNC-ONLY (operator, 2026-10-30), full Rs25k slot, trial of a few sessions before any re-pause. Paper 06-10..10-29 by product: CNC n=259 +0.55% net/trade PF 1.96; MTF n=295 net Rs0 (PF 1.00). Of paper trades since live began, the 181 live took netted +0.11% on paper (107 MTF) and the 136 it did not take +0.59%. Live -0.09%/trade = paper +0.11% minus 0.15pp fill shortfall and 0.05pp extra fees. The canary is OFF (full size); the decay tripwire still runs on the live ledger (first below floor 2026-10-19, pauses ~2026-11-09 if live PF over the last 30 stays under 1.2).",
+      "live_products_allowed": ["CNC"],
+      "_comment_live_products_allowed": "LIVE only: fires whose product (from the MTF list) is not listed are logged for the paper mirror but not placed. Checked after the canary, which forces CNC. Missing/invalid = no live entries. Paper takes every product.",
       "_live_paused_2026_10_29": "LIVE PAUSED (operator). Live 08-24..10-29: 178 trades net -Rs17.6k, PF 0.70; bug-touched exits (8) were +Rs1.6k, so not a bug story. Cost hurdle on paper 06-10..10-29 (642 trades, paper fees + DP Rs15.34 + live shortfall by liquidity): >Rs2cr MTF bulk (n=196) gross +0.35% t4.5 -> net at live ~0.00%; Rs25L-2cr net negative; ADV <Rs25L CNC (n=65) net +0.44%/trade, sd 2.4%, t1.5. Paper mirror keeps running (paper_enabled). Exits of held positions are unaffected (_managed_overnight_setups ignores the flags). RESTART: (1) canary live = ADV<Rs25L CNC only at Rs10-15k/trade once fixed: failed-16:05-AMO failsafe, stale-slot GTT holdings check, F&O/CAS exclusion, DP in the ledger; stop on -Rs3k/month or SPRT(H0 mu=0 vs H1 mu=+0.44%, sd 2.4%, alpha .1 beta .2) accepting H0; (2) full Rs25k only on SPRT accepting H1 on live fills (~90-120 trades, ~May-Jun 2027); (3) re-validate the 15:26 entry before NSE's 2026-12-07 close change (continuous to 15:30, CAS 15:30-15:40).",
       "_status": "LIVE 2026-06-22 at full Rs2.5L/25-slot caps (user-elected; skipped 1-slot pilot, manual monitoring). 3-cron flow: 15:26 BUY, 16:05 AMO+GTT, 09:30 settle+cancel-GTT. Live requires MODE_FLAGS='' + fresh Kite token. Cell #5: closing_30m_volume_z=extreme x prior_day_return=up_gt_3pct. Pooled PF 2.44 (CI 2.16-2.74), HO 1.52; VM forward-paper PF 3.69 (n=72). See specs/2026-06-22-close_dn_overnight_long-live-activation-design.md + docs/runbooks/close_dn_overnight_live.md.",
       "detector_class": "structures.close_dn_overnight_long_structure.CloseDnOvernightLongStructure",
@@ -806,8 +809,9 @@
         "min_qty_after_cap": 1
       },
       "live_canary": {
+        "_comment_disabled_2026_10_30": "Off: operator chose a full-size CNC-only restart (see _live_resumed_2026_10_30). To use it: set start_date, archive + empty the live tripwire ledger, enabled=true.",
         "_comment": "2026-10-30 (Risk Charter, overnight restart rules). When live is re-enabled with the canary on, live orders go only to names with point-in-time ADV under max_adv_inr, as CNC, at notional_inr per trade (paper mirror unchanged). Stops: month-to-date live net <= monthly_stop_inr, or the SPRT accepting 'no edge' (H0 mean 0 vs H1 mu1_pct, sd_pct, alpha, beta) on per-trade net % of trades settled after start_date. SPRT accepting 'edge' only logs: full Rs25k is a manual decision. start_date must be set (YYYY-MM-DD, the day before the first canary entry) when enabling; also reset the live decay tripwire then (archive the file and write it back with an empty trades list; a MISSING ledger blocks live entries), since it holds the pre-canary PF 0.70 run.",
-        "enabled": true,
+        "enabled": false,
         "start_date": null,
         "max_adv_inr": 2500000,
         "notional_inr": 15000,

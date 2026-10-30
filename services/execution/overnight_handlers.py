@@ -696,6 +696,28 @@ def run_entry(
             canaries[spec.name] = canary
         else:
             live_names.discard(spec.name)
+
+    # Live product allowlist. Paper 06-10..10-29 made its money on CNC (+0.55% net
+    # per trade, n=259) while MTF netted Rs0 (n=295). An unusable key stops live
+    # orders only; the mirror keeps detecting.
+    live_products: Dict[str, set] = {}
+    for spec in paper_enabled_setups:
+        if paper_mode or spec.name not in live_names:
+            continue
+        try:
+            _raw = spec.raw_config["live_products_allowed"]
+            if not isinstance(_raw, list):
+                raise TypeError(f"expected a list, got {type(_raw).__name__}")
+            allowed = {str(x).upper() for x in _raw}
+            if not allowed or not allowed <= {"CNC", "MTF"}:
+                raise ValueError(f"need a non-empty subset of CNC/MTF, got {sorted(allowed)}")
+        except (KeyError, TypeError, ValueError) as e:
+            logger.critical("run_entry: %s live_products_allowed unusable (%s: %s); no live entries",
+                            spec.name, type(e).__name__, e)
+            live_names.discard(spec.name)
+            continue
+        live_products[spec.name] = allowed
+        logger.info("run_entry: %s live products %s", spec.name, sorted(allowed))
     if not paper_mode:
         logger.info("run_entry: live order placement for %s", sorted(live_names) or "none (mirror only)")
     if not paper_enabled_setups:
@@ -942,6 +964,12 @@ def run_entry(
                     continue
                 evt.context["product"] = "CNC"
                 evt.context["leverage"] = 1.0
+            if not paper_mode and str(evt.context["product"]).upper() not in live_products[spec.name]:
+                # Before the slot is reserved, so the next-ranked allowed fire gets it.
+                logger.info("LIVE_PRODUCT | %s | skip — %s not in live_products_allowed %s",
+                            symbol, evt.context["product"], sorted(live_products[spec.name]))
+                summary["product_skipped"] = summary.get("product_skipped", 0) + 1
+                continue
             # Reserve slot (fails if capacity or per-day cap hit)
             slot = pool.reserve(
                 symbol=symbol,

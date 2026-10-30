@@ -83,6 +83,7 @@ def env(tmp_path, monkeypatch):
     sc["capital_allocation"]["max_new_positions_per_day"] = 4
     sc["entry_reconcile_delay_sec"] = 0
     sc["live_canary"] = dict(CANARY)
+    sc["live_products_allowed"] = ["CNC", "MTF"]
     ledger = tmp_path / "tripwire_live.json"
     sc["decay_tripwire"] = {"window_trades": 30, "pf_floor": 1.2, "sustained_weeks": 3,
                             "state_file": str(ledger), "archive_entries_before": None,
@@ -271,11 +272,68 @@ def test_gate_sprt_thresholds():
     assert ok and "accepts 'edge'" in why
 
 
-def test_real_config_has_the_canary_off_until_a_start_date_is_set():
+def test_real_config_is_live_cnc_only_at_full_size():
     cfg = json.loads((_REPO_ROOT / "config" / "configuration.json").read_text(encoding="utf-8"))
     sc = cfg["setups"][SETUP]
     c = sc["live_canary"]
-    assert c["enabled"] is True and c["start_date"] is None
-    assert sc["enabled"] is False                 # live stays paused: enabling needs a start_date
+    assert sc["enabled"] is True and sc["live_products_allowed"] == ["CNC"]
+    assert c["enabled"] is False and c["start_date"] is None
     assert c["max_adv_inr"] == 2_500_000 and 10_000 <= c["min_notional_inr"] <= c["notional_inr"] <= 15_000
     assert c["sprt"] == SPRT and c["monthly_stop_inr"] == -3000
+
+
+# ---- live product allowlist ---------------------------------------------------------
+
+class _MixedDetector(_Detector):
+    """THIN is not on the MTF list (CNC); THICK and NOADV are MTF names."""
+    def detect(self, ctx):
+        prod = "CNC" if ctx == "NSE:THIN" else "MTF"
+        oh.logger.info("close_dn_overnight_long fired | symbol=%s product=%s", ctx, prod)
+        evt = SimpleNamespace(context={"product": prod, "leverage": 1.0 if prod == "CNC" else 3.0})
+        return SimpleNamespace(structure_detected=True, events=[evt])
+
+
+def test_cnc_only_live_skips_mtf_fires_and_keeps_full_size(env, monkeypatch):
+    monkeypatch.setattr(sr, "_import_path", lambda p: _MixedDetector)
+    env.sc["enabled"] = True
+    env.sc["live_canary"]["enabled"] = False
+    env.sc["live_products_allowed"] = ["CNC"]
+    env.write_ledger([])
+    s = env.run()
+    assert [(p["symbol"], p["product"]) for p in env.placed] == [("NSE:THIN", "CNC")]
+    assert env.placed[0]["qty"] == 750                  # the plan's full size, not the canary's
+    assert s["product_skipped"] == 2
+    slots = json.loads(Path(env.sc["capital_allocation"]["state_file"]).read_text())["slots"]
+    assert [x["symbol"] for x in slots if x["status"] != "free"] == ["NSE:THIN"]
+
+
+def test_skipped_mtf_fire_does_not_use_up_the_daily_cap(env, monkeypatch):
+    monkeypatch.setattr(sr, "_import_path", lambda p: _MixedDetector)
+    env.sc["enabled"] = True
+    env.sc["live_canary"]["enabled"] = False
+    env.sc["live_products_allowed"] = ["CNC"]
+    env.sc["capital_allocation"]["max_new_positions_per_day"] = 1
+    env.write_ledger([])
+    env.run()
+    assert [p["symbol"] for p in env.placed] == ["NSE:THIN"]
+
+
+@pytest.mark.parametrize("bad", [None, "CNC", [], ["MIS"]])
+def test_unusable_live_products_blocks_live_but_keeps_the_mirror(env, bad):
+    env.sc["enabled"] = True
+    env.sc["live_canary"]["enabled"] = False
+    if bad is None:
+        del env.sc["live_products_allowed"]
+    else:
+        env.sc["live_products_allowed"] = bad
+    env.write_ledger([])
+    s = env.run()
+    assert env.placed == [] and s["mirror_only_count"] == 3
+
+
+def test_paper_mode_ignores_the_product_allowlist(env, monkeypatch):
+    monkeypatch.setattr(sr, "_import_path", lambda p: _MixedDetector)
+    monkeypatch.setattr(oh, "_paper_fill_price_entry", lambda broker, sym, d: 100.0)
+    env.sc["live_products_allowed"] = ["CNC"]
+    oh.run_entry(env.cfg, MagicMock(_data_sdk=None), now_ist=NOW, paper_mode=True)
+    assert len(env.placed) == 3
