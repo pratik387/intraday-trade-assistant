@@ -805,6 +805,17 @@
         "_comment_max_tick_pct_of_price": "Skip when ONE TICK exceeds this share of the entry price. Gates the cost that actually makes a small position unusable, which notional cannot see. NSE tick is per-instrument. Set from ECONOMICS, not from the research maximum: gross edge is ~0.35% and one tick is a LOWER BOUND on the spread, so a name whose minimum possible round trip is 0.5% cannot pay for itself. Measured quoted spread on live fires is 0.062% median / 0.161% mean, and across the research names the old floor removed one tick is a median 0.05-0.075% of price with p90 0.16% - so 0.2% keeps essentially everything the backtest validated while leaving the edge intact. 2026-09-07 verdicts: UDAYJEW Rs166.88 (0.03%) and MALUPAPER Rs33.66 (0.15%) pass; MGEL Rs15.70 (0.32%), ASHOKAMET Rs14.61 (0.34%) and MITTAL Rs0.92 (1.09%) blocked because their floor cost meets or exceeds the edge.",
         "min_qty_after_cap": 1
       },
+      "live_canary": {
+        "_comment": "2026-10-30 (Risk Charter, overnight restart rules). When live is re-enabled with the canary on, live orders go only to names with point-in-time ADV under max_adv_inr, as CNC, at notional_inr per trade (paper mirror unchanged). Stops: month-to-date live net <= monthly_stop_inr, or the SPRT accepting 'no edge' (H0 mean 0 vs H1 mu1_pct, sd_pct, alpha, beta) on per-trade net % of trades settled after start_date. SPRT accepting 'edge' only logs: full Rs25k is a manual decision. start_date must be set (YYYY-MM-DD, the day before the first canary entry) when enabling; also reset the live decay tripwire then (archive the file and write it back with an empty trades list; a MISSING ledger blocks live entries), since it holds the pre-canary PF 0.70 run.",
+        "enabled": true,
+        "start_date": null,
+        "max_adv_inr": 2500000,
+        "notional_inr": 15000,
+        "min_notional_inr": 10000,
+        "_comment_notional_inr": "Top of the charter's Rs10-15k: the Rs15.34 DP charge per sell is 0.10% at Rs15k vs 0.15% at Rs10k. The participation cap (10% of ADV) still applies; capped trades under min_notional_inr are skipped.",
+        "monthly_stop_inr": -3000,
+        "sprt": {"mu1_pct": 0.44, "sd_pct": 2.4, "alpha": 0.10, "beta": 0.20}
+      },
       "entry_placement_cutoff_hhmmss": "15:29:20",
       "_comment_entry_placement_cutoff_hhmmss": "LIVE-only guard: no NEW entry BUY is placed at/after this wall-clock time. NSE closes at 15:30 — orders placed later bounce with 'Markets are closed' (2026-07-30: 4 of 7 fires). Wall clock is correct here (not tick time): this is the live cron's exchange-acceptance deadline, and the check is skipped in paper/backtest where fills are idealized and instant.",
       "cancel_confirm_timeout_sec": 15,

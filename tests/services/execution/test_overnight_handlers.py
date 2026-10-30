@@ -999,6 +999,26 @@ def test_verify_exit_stale_slot_flat_cancels_gtt(tmp_path):
     assert _slot1(state_path)["gtt_id"] == "GTT-1"
 
 
+@pytest.mark.parametrize("row, held", [
+    # real Kite rows 2026-10-30 after the open sale: fields are already net of it
+    ({"tradingsymbol": "MKEXIM", "quantity": 0, "t1_quantity": 0, "used_quantity": 426}, 0),
+    ({"tradingsymbol": "MKEXIM", "quantity": 0, "t1_quantity": 0, "used_quantity": 0,
+      "mtf": {"quantity": 0, "used_quantity": 72}}, 0),
+    # partly sold: 400 of 1388 gone -> 988 still held (used_quantity not taken off again)
+    ({"tradingsymbol": "MKEXIM", "quantity": 0, "t1_quantity": 988, "used_quantity": 400}, 988),
+    ({"tradingsymbol": "MKEXIM", "quantity": 0, "t1_quantity": 0, "used_quantity": 400,
+      "mtf": {"quantity": 988, "used_quantity": 400}}, 988),
+])
+def test_held_unsold_qty_reads_kite_quantities_as_net(row, held):
+    from services.execution.overnight_handlers import _held_unsold_qty
+    broker = MagicMock()
+    broker.get_holdings.return_value = [row]
+    slot = MagicMock(symbol="NSE:MKEXIM", slot_id=1)
+    pool = MagicMock()
+    pool.active.return_value = []
+    assert _held_unsold_qty(broker, slot, pool) == held
+
+
 def test_verify_exit_stale_slot_holdings_unreadable_keeps_gtt(tmp_path):
     state_path = tmp_path / "overnight_slots.json"
     cfg = _minimal_config(state_path)

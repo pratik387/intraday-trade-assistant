@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import time as _time_mod
 from datetime import date, datetime, time, timedelta
@@ -440,6 +441,69 @@ def _select_overnight_setups(config: dict, *, paper_mode: bool) -> list:
     return out
 
 
+def canary_sprt_llr(returns_pct: List[float], sprt: dict) -> float:
+    """Log-likelihood ratio of H1 (mean = mu1_pct) vs H0 (mean 0) for per-trade
+    net returns in %, normal with known sd_pct (Wald SPRT)."""
+    mu1, sd = float(sprt["mu1_pct"]), float(sprt["sd_pct"])
+    return sum((x * mu1 - mu1 * mu1 / 2.0) / (sd * sd) for x in returns_pct)
+
+
+def canary_gate(canary: dict, trades: List[dict], today: date) -> tuple:
+    """Live overnight canary stop rules (Risk Charter, overnight restart rules).
+
+    `trades` are the live ledger rows (decay-tripwire state file); only trades
+    settled after canary.start_date count. Returns (allowed, reason):
+      - month-to-date net P&L <= monthly_stop_inr  -> blocked for the month
+      - SPRT accepts H0 "no edge"                   -> blocked until reviewed
+      - SPRT accepts H1 "edge"                      -> allowed; full size is a manual step
+    """
+    start = date.fromisoformat(str(canary["start_date"]))
+    rows = [t for t in trades if date.fromisoformat(str(t["ts_iso"])[:10]) > start]
+    mtd = sum(float(t["net_pnl_inr"]) for t in rows
+              if str(t["ts_iso"])[:7] == today.isoformat()[:7])
+    if mtd <= float(canary["monthly_stop_inr"]):
+        return False, (f"monthly stop: month-to-date net Rs{mtd:.0f} <= "
+                       f"Rs{float(canary['monthly_stop_inr']):.0f}")
+    sprt = canary["sprt"]
+    # Net-only rows (settled without a price, recorded as Rs0) count toward the
+    # monthly stop but carry no return for the SPRT.
+    rets = [100.0 * float(t["net_pnl_inr"]) / (float(t["entry_price"]) * float(t["qty"]))
+            for t in rows
+            if (t.get("entry_price") or 0) > 0 and (t.get("qty") or 0) > 0]
+    llr = canary_sprt_llr(rets, sprt)
+    lo = math.log(float(sprt["beta"]) / (1.0 - float(sprt["alpha"])))
+    hi = math.log((1.0 - float(sprt["beta"])) / float(sprt["alpha"]))
+    if llr <= lo:
+        return False, (f"SPRT accepts 'no edge' after {len(rets)} canary trades "
+                       f"(LLR {llr:.2f} <= {lo:.2f})")
+    if llr >= hi:
+        return True, (f"SPRT accepts 'edge' after {len(rets)} canary trades "
+                      f"(LLR {llr:.2f} >= {hi:.2f}); full size is now a manual decision")
+    return True, (f"canary running: {len(rets)} trades, month-to-date Rs{mtd:.0f}, "
+                  f"LLR {llr:.2f} in ({lo:.2f}, {hi:.2f})")
+
+
+def _live_canary_cfg(spec) -> Optional[dict]:
+    """The setup's live canary block when enabled, else None (full-size live)."""
+    c = spec.raw_config["live_canary"]
+    if not bool(c["enabled"]):
+        return None
+    for k in ("start_date", "max_adv_inr", "notional_inr", "min_notional_inr",
+              "monthly_stop_inr", "sprt"):
+        if c.get(k) is None:
+            raise ValueError(f"setups.{spec.name}.live_canary.{k} is required when the canary is enabled")
+    date.fromisoformat(str(c["start_date"]))
+    sp = c["sprt"]
+    if not (float(sp["sd_pct"]) > 0 and float(sp["mu1_pct"]) > 0
+            and 0 < float(sp["alpha"]) < 1 and 0 < float(sp["beta"]) < 1):
+        raise ValueError(f"setups.{spec.name}.live_canary.sprt needs sd_pct, mu1_pct > 0 and alpha, beta in (0, 1)")
+    if not (0 < float(c["min_notional_inr"]) <= float(c["notional_inr"])
+            and float(c["max_adv_inr"]) > 0 and float(c["monthly_stop_inr"]) < 0):
+        raise ValueError(f"setups.{spec.name}.live_canary: need 0 < min_notional_inr <= notional_inr, "
+                         f"max_adv_inr > 0, monthly_stop_inr < 0")
+    return c
+
+
 def _managed_overnight_setups(config: dict) -> list:
     """SetupSpec list for ALL mode='overnight' setups, flags IGNORED.
 
@@ -516,6 +580,15 @@ def run_entry(
         return summary
 
     paper_enabled_setups = _select_overnight_setups(config, paper_mode=paper_mode)
+    # LIVE: `enabled` gates real orders only. Signals are still detected and
+    # logged for paper_enabled setups, because the paper mirror is rebuilt from
+    # this cron's "fired" lines (tools/overnight_paper_slippage.py); pausing live
+    # by the flag must not stop the mirror. `live_names` = setups allowed to place.
+    live_names = {s.name for s in paper_enabled_setups} if not paper_mode else set()
+    if not paper_mode:
+        _have = set(live_names)
+        paper_enabled_setups = paper_enabled_setups + [
+            s for s in _select_overnight_setups(config, paper_mode=True) if s.name not in _have]
     if not paper_enabled_setups:
         logger.info("run_entry: no overnight setups active (paper_mode=%s); exit", paper_mode)
         return summary
@@ -548,7 +621,10 @@ def run_entry(
         )
     if cb_paused:
         summary["cb_paused_setups"] = cb_paused
-        paper_enabled_setups = [s for s in paper_enabled_setups if s.name not in set(cb_paused)]
+        if paper_mode:
+            paper_enabled_setups = [s for s in paper_enabled_setups if s.name not in set(cb_paused)]
+        else:
+            live_names -= set(cb_paused)      # live orders stop; the mirror keeps detecting
     if not paper_enabled_setups:
         pool.persist()
         logger.info("run_entry: all overnight setups paused via cb_state; exit")
@@ -564,16 +640,25 @@ def run_entry(
         tw_cfg = spec.raw_config.get("decay_tripwire")
         if tw_cfg is None:
             continue
-        tw = DecayTripwire(
-            setup_name=spec.name,
-            state_path=Path(tw_cfg["state_file"]),
-            window_trades=int(tw_cfg["window_trades"]),
-            pf_floor=float(tw_cfg["pf_floor"]),
-            sustained_weeks=int(tw_cfg["sustained_weeks"]),
-            archive_entries_before=tw_cfg["archive_entries_before"],
-            archive_label=tw_cfg["archive_label"],
-            archive_regime=tw_cfg["archive_regime"],
-        )
+        try:
+            tw = DecayTripwire(
+                setup_name=spec.name,
+                state_path=Path(tw_cfg["state_file"]),
+                window_trades=int(tw_cfg["window_trades"]),
+                pf_floor=float(tw_cfg["pf_floor"]),
+                sustained_weeks=int(tw_cfg["sustained_weeks"]),
+                archive_entries_before=tw_cfg["archive_entries_before"],
+                archive_label=tw_cfg["archive_label"],
+                archive_regime=tw_cfg["archive_regime"],
+            )
+        except ValueError as e:
+            if paper_mode:
+                raise
+            # Orders fail closed, the mirror fails open.
+            logger.critical("run_entry: %s decay tripwire unreadable (%s); no live entries, "
+                            "signals still logged for the paper mirror", spec.name, e)
+            paused_names.append(spec.name)
+            continue
         if tw.is_paused():
             logger.warning(
                 "run_entry: setup %s is PAUSED by decay tripwire (since %s); skipping dispatch",
@@ -582,7 +667,37 @@ def run_entry(
             paused_names.append(spec.name)
     if paused_names:
         summary["paused_setups"] = paused_names
-    paper_enabled_setups = [s for s in paper_enabled_setups if s.name not in set(paused_names)]
+    if paper_mode:
+        paper_enabled_setups = [s for s in paper_enabled_setups if s.name not in set(paused_names)]
+    else:
+        live_names -= set(paused_names)
+
+    # Live canary stop rules (monthly stop, SPRT) — a blocked canary stops live
+    # orders only. Read from the live tripwire ledger (settled live trades).
+    canaries: Dict[str, dict] = {}
+    for spec in paper_enabled_setups:
+        if paper_mode or spec.name not in live_names:
+            continue
+        try:
+            canary = _live_canary_cfg(spec)
+            if canary is None:
+                continue
+            # A missing ledger is not "no losses": the stops would silently turn off.
+            # When starting the canary the ledger is reset (written empty), not deleted.
+            led = Path(spec.raw_config["decay_tripwire"]["state_file"])
+            trades = json.loads(led.read_text(encoding="utf-8"))["trades"]
+            ok, why = canary_gate(canary, trades, today)
+        except (ValueError, KeyError, TypeError, OSError) as e:
+            ok, why = False, f"canary cannot be evaluated ({type(e).__name__}: {e})"
+        (logger.info if ok else logger.critical)("CANARY | %s | %s%s", spec.name, why,
+                                                 "" if ok else "; no live entries")
+        summary.setdefault("canary", {})[spec.name] = why
+        if ok:
+            canaries[spec.name] = canary
+        else:
+            live_names.discard(spec.name)
+    if not paper_mode:
+        logger.info("run_entry: live order placement for %s", sorted(live_names) or "none (mirror only)")
     if not paper_enabled_setups:
         pool.persist()
         logger.info("run_entry: all overnight setups paused by decay tripwire; exit")
@@ -798,6 +913,12 @@ def run_entry(
         # exchange-acceptance deadline, not a trading-signal decision; paper/
         # backtest fills are idealized+instant so the guard is skipped there.
         _phase("detect+rank done")
+        if not paper_mode and spec.name not in live_names:
+            logger.info("run_entry: %s: %d signal(s) logged for the paper mirror; live entries off",
+                        spec.name, len(ranked))
+            summary["mirror_only_count"] = summary.get("mirror_only_count", 0) + len(ranked)
+            continue
+        canary = canaries.get(spec.name)
         for rank_i, (symbol, evt, plan) in enumerate(ranked):
             if _entry_cutoff_reached(spec.raw_config, paper_mode):
                 remaining = len(ranked) - rank_i
@@ -809,6 +930,18 @@ def run_entry(
                 summary["skipped_count"] += remaining
                 summary["cutoff_skipped"] = remaining
                 break
+            if canary is not None:
+                # Canary: only names under max_adv_inr of daily turnover, as CNC.
+                # The cost hurdle clears only there (+0.44% net/trade on paper).
+                _cadv = (prior_returns_by_symbol.get(symbol) or {}).get("adv_inr")
+                if not (_cadv and 0 < float(_cadv) < float(canary["max_adv_inr"])):
+                    logger.info("CANARY | %s | skip — ADV Rs%s not under Rs%.0f",
+                                symbol, "unknown" if not _cadv else f"{float(_cadv):.0f}",
+                                float(canary["max_adv_inr"]))
+                    summary["canary_adv_skipped"] = summary.get("canary_adv_skipped", 0) + 1
+                    continue
+                evt.context["product"] = "CNC"
+                evt.context["leverage"] = 1.0
             # Reserve slot (fails if capacity or per-day cap hit)
             slot = pool.reserve(
                 symbol=symbol,
@@ -884,6 +1017,19 @@ def run_entry(
                 _adv = _cand.get("adv_inr")
             except Exception:
                 pass
+            if canary is not None:
+                _cpx = float(buy_limit or ref_px or 0.0)
+                _cqty = int(float(canary["notional_inr"]) // _cpx) if _cpx > 0 else 0
+                if _cqty * _cpx < float(canary["min_notional_inr"]):
+                    logger.warning("CANARY | %s | skip — Rs%.0f at price Rs%.2f is under the "
+                                   "Rs%.0f floor", symbol, _cqty * _cpx, _cpx,
+                                   float(canary["min_notional_inr"]))
+                    _rollback_slot_to_free(slot)
+                    pool.persist()
+                    summary["skipped_count"] += 1
+                    continue
+                plan.qty = _cqty
+                slot.margin_inr = slot.notional_inr = float(_cqty * _cpx)   # CNC: full cash
             _notional = float(plan.qty) * float(buy_limit or ref_px or 0.0)
 
             # ---- PARTICIPATION CAP (enforced) ----
@@ -892,6 +1038,9 @@ def run_entry(
             # measurement. Cap the order at max_participation_pct of the name's
             # point-in-time median daily turnover.
             _pc = spec.raw_config.get("participation_cap") or {}
+            if canary is not None:
+                # the canary's own size floor replaces the full-size CNC floor
+                _pc = {**_pc, "min_notional_after_cap_inr_cnc": float(canary["min_notional_inr"])}
             if bool(_pc.get("enabled", False)):
                 _px = float(buy_limit or ref_px or 0.0)
                 if not (_adv and float(_adv) > 0):
@@ -1317,7 +1466,7 @@ def run_entry(
     # Cancel-fill race sweep (2026-07-24 CREATIVEYE): re-scan the orderbook a
     # beat after the loop — fills that beat a cancel but lagged in the status
     # snapshot are visible here and get their slot back.
-    if not paper_mode:
+    if not paper_mode and live_names:
         try:
             delay = int(paper_enabled_setups[0].raw_config["entry_reconcile_delay_sec"])
             _time_mod.sleep(delay)
@@ -2163,8 +2312,13 @@ def _live_failsafe_today(orders, slot) -> Optional[str]:
 
 def _held_unsold_qty(broker, slot, pool) -> Optional[int]:
     """Shares of this slot still held at the broker: demat + T1 + MTF holdings,
-    less what is already used by sells, less what other open slots in the same
-    symbol hold. None when holdings cannot be read."""
+    less what other open slots in the same symbol hold. None when holdings cannot
+    be read.
+
+    Kite's quantity / t1_quantity / mtf.quantity are already net of today's sells;
+    used_quantity reports those sells again (live 2026-10-30, after the open sale:
+    MKEXIM opening 426, quantity 0, used 426; HOMEFIRST mtf quantity 0, used 72).
+    Subtracting it double-counts, so a partly sold slot read as flat."""
     get_holdings = getattr(broker, "get_holdings", None)
     if get_holdings is None:
         return None
@@ -2180,8 +2334,7 @@ def _held_unsold_qty(broker, slot, pool) -> Optional[int]:
             continue
         mtf = r.get("mtf") or {}
         held += (int(r.get("quantity") or 0) + int(r.get("t1_quantity") or 0)
-                 - int(r.get("used_quantity") or 0)
-                 + int(mtf.get("quantity") or 0) - int(mtf.get("used_quantity") or 0))
+                 + int(mtf.get("quantity") or 0))
     others = sum(o.exit_qty() - int(o.exit_sold_qty or 0) for o in pool.active()
                  if o.slot_id != slot.slot_id and o.status == "t0_open" and o.symbol == slot.symbol)
     return max(0, held - others)
