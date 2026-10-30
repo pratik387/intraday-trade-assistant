@@ -23,14 +23,15 @@ ENABLED_INTRADAY = {
 
 
 @pytest.fixture
-def cfg(monkeypatch):
+def cfg(monkeypatch, tmp_path):
     root = {"setups": {
-        "live_one": {"enabled": True, "mode": "intraday", "live_enabled": True},
+        "live_one": {"enabled": True, "mode": "intraday", "live_enabled": True, "backtest_edge_bps": 50},
         "paper_one": {"enabled": True, "mode": "intraday", "live_enabled": False},
         "unflagged": {"enabled": True, "mode": "intraday"},
         "off": {"enabled": False, "mode": "intraday"},
         "night": {"enabled": True, "mode": "overnight"},
-    }}
+    }, "shortfall_log": {"ledger_path": str(tmp_path / "sf.jsonl"), "rolling_trades": 20, "alarm_frac_of_backtest_edge": 0.3,
+                                          "per_trade_cap_bps": 100}}
     monkeypatch.setattr(po, "_ROOT_CFG_CACHE", root)
     return root
 

@@ -7,6 +7,7 @@ import json
 import threading
 from pathlib import Path
 import math
+import re
 import time
 import pandas as pd  # for Timestamp typing only
 
@@ -1826,6 +1827,20 @@ class ExitExecutor:
         finally:
             lock.release()
 
+    def _sf_record(self, sym: str, pos: Position, st: dict, qty: int, fill_px: float, reason: str) -> None:
+        """Live: one exit fill into the shortfall ledger (services/execution/shortfall_log).
+        The ledger never blocks or changes an exit."""
+        if pos.plan.get("shadow", False) or getattr(self.broker, "dry_run", True):
+            return
+        try:
+            from services.execution import shortfall_log
+            shortfall_log.record_exit(
+                trade_id=pos.plan.get("trade_id"), setup=pos.plan.get("setup_type"), symbol=sym,
+                side="SELL" if pos.side.upper() == "BUY" else "BUY", qty=int(qty),
+                decision_px=float(st["_sf_decision"][1]), fill_px=float(fill_px), reason=reason)
+        except Exception as e:
+            logger.error(f"SHORTFALL | {sym} | exit fill not recorded: {e}")
+
     def _place_and_log_exit_unlocked(self, sym: str, pos: Position, exit_px: float, qty_exit: int, ts: Optional[pd.Timestamp], reason: str) -> Optional[float]:
         try:
             cur = self.positions.get_by_trade_id(_pos_tid(pos))
@@ -1855,6 +1870,12 @@ class ExitExecutor:
         is_shadow = pos.plan.get("shadow", False) if pos.plan else False
         st = pos.plan.setdefault("_state", {})
         late_fill = False
+        # Shortfall reference: the price when this exit was first decided, kept across
+        # retries of the SAME exit (reason without its _retryN suffix); a different exit
+        # (target failed, then the stop) starts from its own price.
+        _sf_reason = re.sub(r"_retry\d+$", "", str(reason))
+        if (st.get("_sf_decision") or [None])[0] != _sf_reason:
+            st["_sf_decision"] = [_sf_reason, float(exit_px)]
         if not is_shadow and st.get("_exit_retry_at") is not None:
             # A previous exit order for this position did not fill. Wait out the
             # cooldown (broker throttle, not a trading decision -> monotonic clock),
@@ -1872,6 +1893,7 @@ class ExitExecutor:
                     st.pop("exit_pending", None)
                     return None
                 self._record_manual_partial(sym, pos, p_qty, p_px, ts, label="EXIT_PARTIAL_FILL")
+                self._sf_record(sym, pos, st, p_qty, p_px, reason)
                 for _k in ("_exit_retry_at", "_exit_last_order_id", "_exit_last_qty", "_exit_last_side",
                            "_exit_last_tag"):
                     st.pop(_k, None)
@@ -1981,6 +2003,7 @@ class ExitExecutor:
             if covered_qty:
                 self._record_manual_partial(sym, pos, covered_qty, covered_px, ts,
                                             label="CIRCUIT_COVER_PARTIAL")
+                self._sf_record(sym, pos, st, covered_qty, covered_px, reason)
             live = not getattr(self.broker, "dry_run", True)
             st["_exit_retry_at"] = time.monotonic() + (self.exit_retry_cooldown_sec if live else 0.0)
             st.pop("exit_pending", None)  # let the next tick/bar retry
@@ -1989,6 +2012,8 @@ class ExitExecutor:
             return None
         for _k in ("_exit_retry_at", "_exit_last_order_id", "_exit_last_qty", "_exit_last_side", "_exit_last_tag"):
             st.pop(_k, None)
+        self._sf_record(sym, pos, st, int(qty_exit), float(actual_exit_px), reason)
+        st.pop("_sf_decision", None)
 
         entry_price = float(pos.avg_price)
         pnl = ((actual_exit_px - entry_price) if pos.side.upper() == "BUY" else (entry_price - actual_exit_px)) * int(qty_exit)

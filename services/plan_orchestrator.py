@@ -184,7 +184,13 @@ def set_runtime_trading_mode(mode: str) -> List[str]:
     if bad:
         raise OrchestratorConfigError(
             f"setups.<name>.live_enabled must be true/false on every enabled intraday setup: {bad}")
-    return [n for n in names if setups[n]["live_enabled"]]
+    live = [n for n in names if setups[n]["live_enabled"]]
+    from services.execution.shortfall_log import validate
+    try:
+        validate(cfg, live)
+    except ValueError as e:
+        raise OrchestratorConfigError(str(e)) from e
+    return live
 
 
 def validate_price_bands(session_date) -> List[str]:

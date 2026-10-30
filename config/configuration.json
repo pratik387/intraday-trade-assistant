@@ -374,6 +374,8 @@
       "enabled": true,
       "paper_enabled": true,
       "live_enabled": true,
+      "backtest_edge_bps": 53,
+      "_comment_backtest_edge_bps": "2026-10-30. Mean net return per trade, unweighted, of the 1,225 capped-size up_spike backtest trades (2023-01..2026-07, uc_guard_eval set): +0.533%. The live shortfall alarm (shortfall_log) compares execution cost with it.",
       "_comment_live_enabled": "2026-10-29 (operator: only up_spike in live, the rest paper). enabled is read by paper, backtest AND live; on a live run an intraday setup also needs live_enabled true (services/plan_orchestrator.set_runtime_trading_mode, required on every enabled intraday setup, fail-fast at live startup). Before this gate every paper-validated intraday setup traded real money: earnings_downshock_continuation_short shorted HUHTAMAKI live on 2026-10-28.",
       "_status": "PAPER-TRADE VALIDATION started 2026-06-04. OCI Stage-9 PASSED (gold-standard): PF 1.37 CI[1.14,1.63] on 880 trades, net +Rs44,216 (2023-2026), positive in 6/7 regimes incl the two largest, adj Sharpe +2.13. Production PF compressed from sanity HO 1.98 (expected, Lesson #13) but held with CI lower bound >1.0. PRODUCTION-FAITHFUL: 875/880 (99%) trades are MIS-allowed (PF 1.37 unchanged after applying the live MIS filter) — unlike panic, up_spike's universe aligns with the MIS list. enabled+paper_enabled=true for paper validation; do NOT enable in LIVE until >=30-session paper A/B + upper-circuit guard pass. Cell lock: tools/sub9_research/up_spike_fade_short_cell_selection_locked.json. Brief: specs/2026-06-03-brief-up_spike_fade_short.md.",
       "mechanism_tags": [
@@ -1709,6 +1711,14 @@
   "entry_settle_retries": 6,
   "entry_settle_delay_sec": 0.5,
   "_comment_entry_settle": "2026-10-29. A live entry is settled from Kite's order status (up to entry_settle_retries reads, entry_settle_delay_sec apart): COMPLETE -> the fill; still working -> cancelled and re-read; a partial fill becomes the position; nothing filled -> not a trade. Before: 1.4s of polling, then 'likely rejected' with no cancel (an OPEN order could fill later, unmanaged).",
+  "shortfall_log": {
+    "_comment": "2026-10-30 (Risk Charter, execution). Live only: every entry fill vs its trigger price and every exit leg vs the price the exit was first decided at, one JSON line per fill in ledger_path (survives restarts, spans sessions). Positive bps = worse than the decision. After each exit leg, the mean (entry + qty-weighted exit) bps of the setup's last rolling_trades trades is compared with alarm_frac_of_backtest_edge x setups.<name>.backtest_edge_bps; above it SHORTFALL_ALARM is logged CRITICAL (report only, no automatic action). Oct 2026 live baseline: entry 7.2 bps, exit 2.9 bps.",
+    "ledger_path": "state/shortfall_ledger.jsonl",
+    "rolling_trades": 20,
+    "alarm_frac_of_backtest_edge": 0.30,
+    "per_trade_cap_bps": 100,
+    "_comment_per_trade_cap_bps": "Each trade counts at most this much in the rolling mean: one short covered at a locked circuit (+8% = 800 bps) is circuit risk, sized by the circuit cap, not execution-cost drift; alone it would trip the alarm for 20 trades. Capped trades are counted in the alarm line."
+  },
   "circuit_cover": {
     "_comment": "2026-10-29. Setups with circuit_cover_order rest a STOP-LIMIT order (limit at the price-band circuit against the position) from entry (live), and cover there in paper/backtest. A MARKET exit is rejected when the stock is locked at its circuit (HUHTAMAKI 10-28 -> short delivery); sellers still trade at the circuit (research: median 444x our live qty after the first touch), filled by time priority. near_circuit_pct: within this distance of the circuit the resting order is never cancelled/resent (that would lose queue priority) and its status is polled every status_poll_sec. place_retry_sec: wait before retrying a failed placement. quote_mismatch_warn_pct: warn when Kite's circuit differs from the band file by more than this (the exchange's price is used).",
     "near_circuit_pct": 1.0,

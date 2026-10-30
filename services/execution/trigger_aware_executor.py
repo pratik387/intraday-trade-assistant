@@ -350,6 +350,7 @@ class TriggerAwareExecutor:
                     if settled is None:
                         raise RuntimeError(f"Entry order {order_id} filled nothing")
                     filled_qty, broker_fill = settled
+                    _sf_fill = broker_fill            # None: Kite reported no price (not a measurement)
                     if broker_fill is None:
                         broker_fill = price
                     if filled_qty != qty:
@@ -358,6 +359,16 @@ class TriggerAwareExecutor:
                     slippage_bps = (slippage / price) * 10000 if price > 0 else 0
                     logger.info(f"ENTRY_FILL | {symbol} | Broker: {broker_fill:.2f} | Assumed: {price:.2f} | "
                                 f"Slippage: {slippage:+.2f} ({slippage_bps:+.1f} bps)")
+                    try:
+                        from services.execution import shortfall_log
+                        if _sf_fill is None:
+                            raise ValueError("no broker fill price")
+                        shortfall_log.record_entry(
+                            trade_id=trade.trade_id, setup=plan.get("setup_type"), symbol=symbol,
+                            side=side, qty=int(filled_qty), decision_px=float(price),
+                            fill_px=float(_sf_fill))
+                    except Exception as e:      # the ledger never blocks a trade
+                        logger.error(f"SHORTFALL | {symbol} | entry fill not recorded: {e}")
                     price, qty = round_to_tick(broker_fill), int(filled_qty)
                     plan["qty"] = qty
 
