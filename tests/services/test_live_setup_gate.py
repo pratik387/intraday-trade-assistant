@@ -25,7 +25,8 @@ ENABLED_INTRADAY = {
 @pytest.fixture
 def cfg(monkeypatch, tmp_path):
     root = {"setups": {
-        "live_one": {"enabled": True, "mode": "intraday", "live_enabled": True, "backtest_edge_bps": 50},
+        "live_one": {"enabled": True, "mode": "intraday", "live_enabled": True, "backtest_edge_bps": 50,
+                     "circuit_cover_order": True, "circuit_risk_budget_pct_of_capital": 0.008},
         "paper_one": {"enabled": True, "mode": "intraday", "live_enabled": False},
         "unflagged": {"enabled": True, "mode": "intraday"},
         "off": {"enabled": False, "mode": "intraday"},
@@ -116,3 +117,29 @@ def test_real_config_only_up_spike_trades_live():
 def test_main_sets_the_trading_mode():
     src = (ROOT / "main.py").read_text(encoding="utf-8")
     assert "set_runtime_trading_mode(" in src
+
+
+@pytest.mark.parametrize("bad", [{"circuit_cover_order": False}, {"circuit_cover_order": None},
+                                 {"circuit_risk_budget_pct_of_capital": None},
+                                 {"circuit_risk_budget_pct_of_capital": 0},
+                                 {"circuit_risk_budget_pct_of_capital": True}])
+def test_live_startup_refuses_a_live_setup_without_circuit_protection(cfg, bad):
+    del cfg["setups"]["unflagged"]
+    for k, v in bad.items():
+        if v is None:
+            del cfg["setups"]["live_one"][k]
+        else:
+            cfg["setups"]["live_one"][k] = v
+    with pytest.raises(po.OrchestratorConfigError, match="circuit protection.*live_one"):
+        po.set_runtime_trading_mode("live")
+
+
+def test_paper_does_not_need_circuit_protection(cfg):
+    cfg["setups"]["live_one"]["circuit_cover_order"] = False
+    assert "live_one" in po.set_runtime_trading_mode("paper")
+
+
+def test_real_config_live_setups_carry_circuit_protection():
+    for n, r in ENABLED_INTRADAY.items():
+        if r.get("live_enabled"):
+            assert r["circuit_cover_order"] is True and r["circuit_risk_budget_pct_of_capital"] > 0, n

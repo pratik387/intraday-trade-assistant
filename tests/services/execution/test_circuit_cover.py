@@ -441,7 +441,7 @@ def test_up_spike_rests_the_cover_and_config_is_complete():
     assert cfg["setups"]["up_spike_fade_short"]["circuit_cover_order"] is True
     assert "circuit_risk_budget_pct_of_capital" in cfg["setups"]["up_spike_fade_short"]
     for k in ("near_circuit_pct", "status_poll_sec", "place_retry_sec",
-              "quote_mismatch_warn_pct", "trigger_offset_pct"):
+              "quote_mismatch_warn_pct", "trigger_offset_pct", "cancel_confirm_sec", "cancel_poll_sec"):
         assert k in cfg["circuit_cover"]
 
 
@@ -492,3 +492,112 @@ def test_corrupt_ledger_is_quarantined_not_fatal(live):
     ex._ensure_circuit_order(SYM, pos)
     assert json.loads(ex.cc_ledger_path.read_text())["O1"]["trade_id"] == TID
     assert list(ex.cc_ledger_path.parent.glob("*.corrupt-*"))
+
+
+# --- confirming the cancel before an exit (2026-11-02) ----------------------------
+
+def _pending_cancels(broker, reads_pending):
+    """cancel_order leaves the cover CANCEL PENDING for `reads_pending` status reads."""
+    left = {"n": reads_pending}
+    real_status = broker.get_order_status
+
+    def cancel(order_id, variety="regular"):
+        broker.cancelled.append(order_id)
+        broker.statuses[order_id]["status"] = "CANCEL PENDING"
+        return True
+
+    def status(order_id):
+        o = real_status(order_id)
+        if o["status"] == "CANCEL PENDING":
+            if left["n"] <= 0:
+                broker.statuses[order_id]["status"] = o["status"] = "CANCELLED"
+            left["n"] -= 1
+        return o
+    broker.cancel_order, broker.get_order_status = cancel, status
+
+
+def test_cancel_pending_cover_is_polled_then_the_position_exits_at_once(live, clock, monkeypatch):
+    ex, broker, store, cap, pos = live
+    slept = []
+    monkeypatch.setattr(ee.time, "sleep", lambda s: slept.append(s))
+    ex._ensure_circuit_order(SYM, pos)
+    _pending_cancels(broker, reads_pending=3)
+    ex._exit(SYM, pos, 200.0, TS, "hard_sl")
+    assert broker.cancelled == ["O1"] and broker.placed[1]["qty"] == 514
+    assert store.get_by_trade_id(TID) is None                       # exited in the same call
+    assert slept == [ex.cc_cancel_poll_sec] * 3
+
+
+def test_cancel_never_confirmed_keeps_the_position_after_a_bounded_wait(live, clock, monkeypatch):
+    ex, broker, store, cap, pos = live
+    slept = []
+    monkeypatch.setattr(ee.time, "sleep", lambda s: slept.append(s))
+    ex._ensure_circuit_order(SYM, pos)
+    _pending_cancels(broker, reads_pending=10_000)
+    ex._exit(SYM, pos, 200.0, TS, "hard_sl")
+    assert len(broker.placed) == 1                                   # no exit sent on an unconfirmed cancel
+    assert store.get_by_trade_id(TID) is not None
+    assert len(slept) == math.ceil(ex.cc_cancel_confirm_sec / ex.cc_cancel_poll_sec)
+    assert pos.plan["_state"]["_exit_retry_at"] > clock["now"]      # falls back to the retry cooldown
+
+
+def test_slow_status_reads_end_the_wait_at_the_deadline(live, clock, monkeypatch):
+    """Each read is a full order-book fetch; when Kite is slow the wait ends on wall
+    time, not after every poll, so other positions' stops are not held up."""
+    ex, broker, store, cap, pos = live
+    slept = []
+    monkeypatch.setattr(ee.time, "sleep", lambda s: slept.append(s))
+    ex._ensure_circuit_order(SYM, pos)
+    _pending_cancels(broker, reads_pending=10_000)
+    slow = broker.get_order_status
+
+    def two_seconds_a_read(order_id):
+        clock["now"] += 2.0
+        return slow(order_id)
+    broker.get_order_status = two_seconds_a_read
+    ex._exit(SYM, pos, 200.0, TS, "hard_sl")
+    assert len(slept) < math.ceil(ex.cc_cancel_confirm_sec / ex.cc_cancel_poll_sec)
+    assert len(slept) == 1 and len(broker.placed) == 1        # gave up, exit retried later
+
+
+def test_a_cancel_that_is_not_accepted_is_sent_again(live, clock):
+    ex, broker, store, cap, pos = live
+    ex._ensure_circuit_order(SYM, pos)
+    real = broker.cancel_order
+    calls = {"n": 0}
+
+    def first_fails(order_id, variety="regular"):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return False                                        # KiteBroker: exception -> False
+        return real(order_id, variety)
+    broker.cancel_order = first_fails
+    ex._exit(SYM, pos, 200.0, TS, "hard_sl")
+    assert calls["n"] == 2 and broker.placed[1]["qty"] == 514
+    assert store.get_by_trade_id(TID) is None
+
+
+def test_close_path_cancel_waits_for_the_confirmation(live, clock, monkeypatch, caplog):
+    ex, broker, store, cap, pos = live
+    monkeypatch.setattr(ee.time, "sleep", lambda s: None)
+    ex._ensure_circuit_order(SYM, pos)
+    _pending_cancels(broker, reads_pending=2)
+    st = pos.plan["_state"]
+    with caplog.at_level(logging.CRITICAL, logger=ee.logger.name):
+        ex._cancel_cover_on_close(SYM, st)
+    assert "_circ_order_id" not in st and "still" not in caplog.text
+
+
+def test_confirm_window_must_be_shorter_than_the_retry_cooldown(monkeypatch):
+    import copy
+    real = ee.load_filters
+
+    def cfg_with(**cc):
+        c = copy.deepcopy(real())
+        c["circuit_cover"].update(cc)
+        return c
+    for bad in ({"cancel_confirm_sec": 30}, {"cancel_poll_sec": 0}, {"cancel_poll_sec": 5}):
+        monkeypatch.setattr(ee, "load_filters", lambda b=bad: cfg_with(**b))
+        with pytest.raises(ValueError, match="cancel_poll_sec"):
+            ExitExecutor(broker=FakeKite(), positions=PositionStore(), get_ltp_ts=lambda s: (200.0, TS),
+                         capital_manager=MagicMock())

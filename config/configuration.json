@@ -763,6 +763,14 @@
       "_live_resumed_2026_10_30": "LIVE RESUMED CNC-ONLY (operator, 2026-10-30), full Rs25k slot, trial of a few sessions before any re-pause. Paper 06-10..10-29 by product: CNC n=259 +0.55% net/trade PF 1.96; MTF n=295 net Rs0 (PF 1.00). Of paper trades since live began, the 181 live took netted +0.11% on paper (107 MTF) and the 136 it did not take +0.59%. Live -0.09%/trade = paper +0.11% minus 0.15pp fill shortfall and 0.05pp extra fees. The canary is OFF (full size); the decay tripwire still runs on the live ledger (first below floor 2026-10-19, pauses ~2026-11-09 if live PF over the last 30 stays under 1.2).",
       "live_products_allowed": ["CNC"],
       "_comment_live_products_allowed": "LIVE only: fires whose product (from the MTF list) is not listed are logged for the paper mirror but not placed. Checked after the canary, which forces CNC. Missing/invalid = no live entries. Paper takes every product.",
+      "live_test": {
+        "_comment": "2026-11-02, operator-approved FROZEN test of the CNC-only full-size book (audit GOV-2/OPS-5: the 10-30 restart ran with no monthly stop and no SPRT). Same stops as live_canary, evaluated on live trades SETTLED after start_date (decay_tripwire ledger): month-to-date live net <= monthly_stop_inr blocks new live entries for the rest of the month; a Wald SPRT on per-trade net % (H0 mean 0 vs H1 mu1_pct, known sd_pct) run in settle order decides at the FIRST boundary crossing. 'no edge' blocks live entries until the operator reviews; 'edge' only logs. Pre-registered: mu1 0.35% (between paper CNC at measured live costs, +0.27%, and the canary's 0.44%), sd 2.2% (paper CNC per-trade sd), alpha 0.10, beta 0.20 -> about 108 trades on average if the edge is real, about 90 if it is zero (6-8 weeks at ~3 CNC fires/day). NO other overnight config change until the SPRT decides. A live overnight setup needs exactly one of live_canary / live_test enabled, else it places no live orders. start_date must equal decay_tripwire.archive_entries_before (enforced): entries before it are archived AND settle too early to count. The SPRT state (n, LLR, decision, last settle counted) lives in state_file, written once with the registered parameters when the test starts (a later config that differs stops live entries) and advanced over new settles, so it survives the tripwire ledger's trim and a decision is final. A settled trade that could not be written to the ledger leaves <ledger>.WRITE_FAILED, which stops live entries until the row is booked and the marker deleted.",
+        "enabled": true,
+        "start_date": "2026-11-03",
+        "monthly_stop_inr": -5000,
+        "sprt": {"mu1_pct": 0.35, "sd_pct": 2.2, "alpha": 0.10, "beta": 0.20},
+        "state_file": "state/live_test_close_dn_overnight_long.json"
+      },
       "_live_paused_2026_10_29": "LIVE PAUSED (operator). Live 08-24..10-29: 178 trades net -Rs17.6k, PF 0.70; bug-touched exits (8) were +Rs1.6k, so not a bug story. Cost hurdle on paper 06-10..10-29 (642 trades, paper fees + DP Rs15.34 + live shortfall by liquidity): >Rs2cr MTF bulk (n=196) gross +0.35% t4.5 -> net at live ~0.00%; Rs25L-2cr net negative; ADV <Rs25L CNC (n=65) net +0.44%/trade, sd 2.4%, t1.5. Paper mirror keeps running (paper_enabled). Exits of held positions are unaffected (_managed_overnight_setups ignores the flags). RESTART: (1) canary live = ADV<Rs25L CNC only at Rs10-15k/trade once fixed: failed-16:05-AMO failsafe, stale-slot GTT holdings check, F&O/CAS exclusion, DP in the ledger; stop on -Rs3k/month or SPRT(H0 mu=0 vs H1 mu=+0.44%, sd 2.4%, alpha .1 beta .2) accepting H0; (2) full Rs25k only on SPRT accepting H1 on live fills (~90-120 trades, ~May-Jun 2027); (3) re-validate the 15:26 entry before NSE's 2026-12-07 close change (continuous to 15:30, CAS 15:30-15:40).",
       "_status": "LIVE 2026-06-22 at full Rs2.5L/25-slot caps (user-elected; skipped 1-slot pilot, manual monitoring). 3-cron flow: 15:26 BUY, 16:05 AMO+GTT, 09:30 settle+cancel-GTT. Live requires MODE_FLAGS='' + fresh Kite token. Cell #5: closing_30m_volume_z=extreme x prior_day_return=up_gt_3pct. Pooled PF 2.44 (CI 2.16-2.74), HO 1.52; VM forward-paper PF 3.69 (n=72). See specs/2026-06-22-close_dn_overnight_long-live-activation-design.md + docs/runbooks/close_dn_overnight_live.md.",
       "detector_class": "structures.close_dn_overnight_long_structure.CloseDnOvernightLongStructure",
@@ -871,13 +879,14 @@
       "decay_tripwire": {
         "window_trades": 30,
         "pf_floor": 1.2,
-        "sustained_weeks": 3,
+        "sustained_weeks": 6,
+        "_comment_sustained_weeks_2026_11_02": "3 -> 6 for the live_test: the SPRT and the monthly stop are the decision rules; this is the backstop. At 3 weeks the rule pauses a true PF-1.26 edge about 1 time in 3 within 3 months (audit P5), which would end the test early on noise.",
         "_state_file_note": "LIVE ledger (real Rs10k fills only). The legacy state/decay_tripwire_close_dn_overnight_long.json is kept as the PAPER ledger (idealized Rs1L), continued by the slippage/reconstruction script.",
         "state_file": "state/decay_tripwire_close_dn_overnight_long_live.json",
-          "_archive_note": "No regime boundary for this book — its ledger was never reset.",
-          "archive_entries_before": null,
-          "archive_label": null,
-          "archive_regime": null
+          "_archive_note": "Regime boundary 2026-11-03 (live_test start): the 181-trade MTF+CNC ledger (last-30 PF 0.27, all pre-test) was archived and the live ledger written back empty; positions ENTERED before the boundary settle to state/archive/decay_tripwire_close_dn_overnight_long_live.pre_cnc_live_test.json. Needs entry_date on every settle (run_verify_exit passes slot.reserved_today since 2026-11-02).",
+          "archive_entries_before": "2026-11-03",
+          "archive_label": "pre_cnc_live_test",
+          "archive_regime": "MTF+CNC live book 2026-06-30..2026-11-02, before the CNC-only frozen live test"
       }
     },
     "pead_reaction_drift": {
@@ -1742,6 +1751,9 @@
     "quote_mismatch_warn_pct": 0.5,
     "trigger_offset_pct": 0.1,
     "orphan_sweep_sec": 60,
+    "cancel_confirm_sec": 3,
+    "cancel_poll_sec": 0.2,
+    "_comment_cancel_confirm": "2026-11-02. Before an exit, a resting cover is cancelled and its status polled every cancel_poll_sec for up to cancel_confirm_sec until Kite reports CANCELLED/REJECTED/COMPLETE. One read returned CANCEL PENDING / TRIGGER PENDING on both live stops of 2026-10-30 (MENONBE, DHANUKA), so each exit waited exit_retry_cooldown_sec (31 s) with neither the cover nor an exit order working. Still unconfirmed after the window = the old behaviour (position kept, retried after the cooldown).",
     "ledger_path": "state/circuit_cover_orders.json",
     "_comment_ledger": "Every cover order placed is recorded in ledger_path (survives a restart). Every orphan_sweep_sec, live cancels ledger covers whose position is no longer tracked AND whose symbol is flat at Zerodha (MIS); an untracked open position keeps its cover and is alarmed.",
     "_comment_adopt": "On restart a working ITDA-tagged SL/LIMIT cover order for the position (same symbol, side, tag, qty) is adopted, never duplicated; a mismatching one blocks placement and alarms.",
@@ -2034,6 +2046,8 @@
   "tick_recording": {
     "enabled": true,
     "buffer_size": 50000,
+    "flush_interval_sec": 300,
+    "_comment_flush_2026_11_02": "Buffered ticks are also written every flush_interval_sec, so a crash loses minutes, not the session. Until 2026-11-02 the recorder was never finalized (main.py looked it up with locals() inside _run_until_eod, where it does not exist): only full 50k-tick part files reached disk and the rest of every session was lost (live 10-30: no ticks at all; the HUHTAMAKI 10-28 tape after 13:24 is gone).",
     "_comment": "Records ticks to data/sidecar/ticks/ for backtesting. Can also run standalone: python -m market_data.tick_recorder"
   },
   "_comment_reconciliation": "=== POSITION RECONCILIATION ===",

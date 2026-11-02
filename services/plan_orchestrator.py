@@ -190,6 +190,20 @@ def set_runtime_trading_mode(mode: str) -> List[str]:
         validate(cfg, live)
     except ValueError as e:
         raise OrchestratorConfigError(str(e)) from e
+    # A live setup trades illiquid names that lock at their circuits. Without a
+    # resting cover and the circuit-distance size cap, a locked circuit rejects the
+    # stop and the position goes to short-delivery auction (HUHTAMAKI 2026-10-28,
+    # -Rs28.65k), so live startup refuses the setup instead.
+    unprotected = []
+    for n in live:
+        budget = setups[n].get("circuit_risk_budget_pct_of_capital")
+        if not (setups[n].get("circuit_cover_order") is True
+                and isinstance(budget, (int, float)) and not isinstance(budget, bool) and budget > 0):
+            unprotected.append(n)
+    if unprotected:
+        raise OrchestratorConfigError(
+            "live intraday setups need circuit protection (circuit_cover_order: true and "
+            f"circuit_risk_budget_pct_of_capital > 0): {unprotected}")
     return live
 
 

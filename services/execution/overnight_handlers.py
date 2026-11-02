@@ -448,39 +448,157 @@ def canary_sprt_llr(returns_pct: List[float], sprt: dict) -> float:
     return sum((x * mu1 - mu1 * mu1 / 2.0) / (sd * sd) for x in returns_pct)
 
 
+def sprt_decision(returns_pct: List[float], sprt: dict) -> tuple:
+    """Wald SPRT run in settle order: (decision, n, llr, lo, hi).
+
+    decision is "no edge" or "edge" at the FIRST boundary crossing, else None.
+    The test stops there: later settles (positions still open when live entries
+    were blocked) cannot reopen a decided test.
+    """
+    lo, hi = _sprt_bounds(sprt)
+    llr = 0.0
+    for i, x in enumerate(returns_pct, 1):
+        llr += canary_sprt_llr([x], sprt)
+        if llr <= lo:
+            return "no edge", i, llr, lo, hi
+        if llr >= hi:
+            return "edge", i, llr, lo, hi
+    return None, len(returns_pct), llr, lo, hi
+
+
+def _post_start_rows(trades: List[dict], start: date) -> List[dict]:
+    """Live ledger rows settled after `start`; a non-finite P&L would disable both
+    stops (NaN compares False), so it raises instead."""
+    rows = [t for t in trades if date.fromisoformat(str(t["ts_iso"])[:10]) > start]
+    for t in rows:
+        if not math.isfinite(float(t["net_pnl_inr"])):
+            raise ValueError(f"non-finite net_pnl_inr in the live ledger ({t.get('symbol')} {t['ts_iso']})")
+    return rows
+
+
+def _trade_return_pct(t: dict) -> Optional[float]:
+    """Per-trade net return in %. None for net-only rows (settled without a price,
+    recorded as Rs0): they count toward the monthly stop but not the SPRT."""
+    if (t.get("entry_price") or 0) > 0 and (t.get("qty") or 0) > 0:
+        return 100.0 * float(t["net_pnl_inr"]) / (float(t["entry_price"]) * float(t["qty"]))
+    return None
+
+
+def _month_to_date(rows: List[dict], today: date) -> float:
+    return sum(float(t["net_pnl_inr"]) for t in rows if str(t["ts_iso"])[:7] == today.isoformat()[:7])
+
+
+def _sprt_bounds(sprt: dict) -> tuple:
+    return (math.log(float(sprt["beta"]) / (1.0 - float(sprt["alpha"]))),
+            math.log((1.0 - float(sprt["beta"])) / float(sprt["alpha"])))
+
+
 def canary_gate(canary: dict, trades: List[dict], today: date) -> tuple:
     """Live overnight canary stop rules (Risk Charter, overnight restart rules).
 
-    `trades` are the live ledger rows (decay-tripwire state file); only trades
-    settled after canary.start_date count. Returns (allowed, reason):
+    `trades` are the live ledger rows (decay-tripwire state file, settle order);
+    only trades settled after start_date count. Returns (allowed, reason):
       - month-to-date net P&L <= monthly_stop_inr  -> blocked for the month
       - SPRT accepts H0 "no edge"                   -> blocked until reviewed
-      - SPRT accepts H1 "edge"                      -> allowed; full size is a manual step
+      - SPRT accepts H1 "edge"                      -> allowed; size changes are manual
     """
     start = date.fromisoformat(str(canary["start_date"]))
-    rows = [t for t in trades if date.fromisoformat(str(t["ts_iso"])[:10]) > start]
-    mtd = sum(float(t["net_pnl_inr"]) for t in rows
-              if str(t["ts_iso"])[:7] == today.isoformat()[:7])
-    if mtd <= float(canary["monthly_stop_inr"]):
+    rows = _post_start_rows(trades, start)
+    mtd = _month_to_date(rows, today)
+    if not mtd > float(canary["monthly_stop_inr"]):
         return False, (f"monthly stop: month-to-date net Rs{mtd:.0f} <= "
                        f"Rs{float(canary['monthly_stop_inr']):.0f}")
-    sprt = canary["sprt"]
-    # Net-only rows (settled without a price, recorded as Rs0) count toward the
-    # monthly stop but carry no return for the SPRT.
-    rets = [100.0 * float(t["net_pnl_inr"]) / (float(t["entry_price"]) * float(t["qty"]))
-            for t in rows
-            if (t.get("entry_price") or 0) > 0 and (t.get("qty") or 0) > 0]
-    llr = canary_sprt_llr(rets, sprt)
-    lo = math.log(float(sprt["beta"]) / (1.0 - float(sprt["alpha"])))
-    hi = math.log((1.0 - float(sprt["beta"])) / float(sprt["alpha"]))
-    if llr <= lo:
-        return False, (f"SPRT accepts 'no edge' after {len(rets)} canary trades "
+    rets = [r for r in map(_trade_return_pct, rows) if r is not None]
+    decision, n, llr, lo, hi = sprt_decision(rets, canary["sprt"])
+    if decision == "no edge":
+        return False, (f"SPRT accepted 'no edge' at live trade {n} of {len(rets)} "
                        f"(LLR {llr:.2f} <= {lo:.2f})")
-    if llr >= hi:
-        return True, (f"SPRT accepts 'edge' after {len(rets)} canary trades "
-                      f"(LLR {llr:.2f} >= {hi:.2f}); full size is now a manual decision")
-    return True, (f"canary running: {len(rets)} trades, month-to-date Rs{mtd:.0f}, "
+    if decision == "edge":
+        return True, (f"SPRT accepted 'edge' at live trade {n} of {len(rets)} "
+                      f"(LLR {llr:.2f} >= {hi:.2f}); size changes are a manual decision")
+    return True, (f"running: {len(rets)} live trades, month-to-date Rs{mtd:.0f}, "
                   f"LLR {llr:.2f} in ({lo:.2f}, {hi:.2f})")
+
+
+def new_live_test_state(setup_name: str, live_test: dict) -> dict:
+    """The state a live test starts from; written once, when the test is registered."""
+    return {"setup_name": setup_name, "start_date": str(live_test["start_date"]),
+            "sprt": dict(live_test["sprt"]), "monthly_stop_inr": float(live_test["monthly_stop_inr"]),
+            "n": 0, "llr": 0.0, "decision": None, "decided_at": None, "last_settle_ts": None}
+
+
+def live_test_gate(setup_name: str, live_test: dict, trades: List[dict], today: date) -> tuple:
+    """Stops of the full-size live test. Returns (allowed, reason, decision).
+
+    The SPRT lives in live_test.state_file and advances over settles newer than its
+    last_settle_ts, so it survives the tripwire ledger's trim (the last 150 rows are
+    kept once it passes 200) and a decision is final. The file also carries the
+    registered parameters: a config that no longer matches them stops live entries
+    (a mid-test edit of mu1/sd would silently re-decide the past).
+      - month-to-date net P&L <= monthly_stop_inr  -> blocked for the month
+      - SPRT accepted "no edge"                     -> blocked until reviewed
+      - SPRT accepted "edge"                        -> allowed; size changes are manual
+    """
+    start = date.fromisoformat(str(live_test["start_date"]))
+    if start > today:
+        return False, f"start_date {start} is after today {today}", None
+    path = Path(live_test["state_file"])
+    st = json.loads(path.read_text(encoding="utf-8"))
+    registered = new_live_test_state(setup_name, live_test)
+    for k in ("setup_name", "start_date", "sprt", "monthly_stop_inr"):
+        if st.get(k) != registered[k]:
+            return False, (f"{k} in {path.name} is {st.get(k)!r}, config has {registered[k]!r}: the "
+                           f"test's registered parameters changed"), None
+    rows = _post_start_rows(trades, start)
+    lo, hi = _sprt_bounds(live_test["sprt"])
+    last = pd.Timestamp(st["last_settle_ts"]) if st["last_settle_ts"] else None
+    new = [t for t in rows if last is None or pd.Timestamp(t["ts_iso"]) > last]
+    for t in new:
+        r = _trade_return_pct(t)
+        if r is not None and st["decision"] is None:
+            st["n"] += 1
+            st["llr"] += canary_sprt_llr([r], live_test["sprt"])
+            if st["llr"] <= lo or st["llr"] >= hi:
+                st["decision"] = "no edge" if st["llr"] <= lo else "edge"
+                st["decided_at"] = str(t["ts_iso"])
+        st["last_settle_ts"] = str(t["ts_iso"])
+    if new:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(st, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    if st["decision"] == "no edge":
+        return False, (f"SPRT accepted 'no edge' at live trade {st['n']} on {st['decided_at']} "
+                       f"(LLR {st['llr']:.2f} <= {lo:.2f})"), "no edge"
+    mtd = _month_to_date(rows, today)
+    if not mtd > float(live_test["monthly_stop_inr"]):
+        return False, (f"monthly stop: month-to-date net Rs{mtd:.0f} <= "
+                       f"Rs{float(live_test['monthly_stop_inr']):.0f}"), st["decision"]
+    if st["decision"] == "edge":
+        return True, (f"SPRT accepted 'edge' at live trade {st['n']} on {st['decided_at']} "
+                      f"(LLR {st['llr']:.2f} >= {hi:.2f}); size changes are a manual decision"), "edge"
+    return True, (f"running: {st['n']} live trades, month-to-date Rs{mtd:.0f}, "
+                  f"LLR {st['llr']:.2f} in ({lo:.2f}, {hi:.2f})"), None
+
+
+def _ledger_failure_marker(tw_cfg: dict) -> Path:
+    """Written by run_verify_exit when a settled live trade could not be recorded
+    in the tripwire ledger; while it exists the live stops cannot see every trade."""
+    return Path(str(tw_cfg["state_file"]) + ".WRITE_FAILED")
+
+
+def _check_ledger_complete(spec) -> None:
+    marker = _ledger_failure_marker(spec.raw_config["decay_tripwire"])
+    if marker.exists():
+        raise ValueError(f"a settled live trade is missing from the ledger ({marker.name}); add the row "
+                         f"to the ledger (or its archive), then delete the marker")
+
+
+def _validate_sprt_cfg(sp: dict, where: str) -> None:
+    if not (float(sp["sd_pct"]) > 0 and float(sp["mu1_pct"]) > 0
+            and 0 < float(sp["alpha"]) < 1 and 0 < float(sp["beta"]) < 1
+            and float(sp["alpha"]) + float(sp["beta"]) < 1):
+        raise ValueError(f"{where}.sprt needs sd_pct, mu1_pct > 0, alpha and beta in (0, 1) and "
+                         f"alpha + beta < 1")
 
 
 def _live_canary_cfg(spec) -> Optional[dict]:
@@ -493,14 +611,36 @@ def _live_canary_cfg(spec) -> Optional[dict]:
         if c.get(k) is None:
             raise ValueError(f"setups.{spec.name}.live_canary.{k} is required when the canary is enabled")
     date.fromisoformat(str(c["start_date"]))
-    sp = c["sprt"]
-    if not (float(sp["sd_pct"]) > 0 and float(sp["mu1_pct"]) > 0
-            and 0 < float(sp["alpha"]) < 1 and 0 < float(sp["beta"]) < 1):
-        raise ValueError(f"setups.{spec.name}.live_canary.sprt needs sd_pct, mu1_pct > 0 and alpha, beta in (0, 1)")
+    _validate_sprt_cfg(c["sprt"], f"setups.{spec.name}.live_canary")
     if not (0 < float(c["min_notional_inr"]) <= float(c["notional_inr"])
             and float(c["max_adv_inr"]) > 0 and float(c["monthly_stop_inr"]) < 0):
         raise ValueError(f"setups.{spec.name}.live_canary: need 0 < min_notional_inr <= notional_inr, "
                          f"max_adv_inr > 0, monthly_stop_inr < 0")
+    return c
+
+
+def _live_test_cfg(spec) -> Optional[dict]:
+    """The setup's full-size live test block when enabled, else None.
+
+    Same stops as the canary (monthly stop, SPRT on live trades settled after
+    start_date) without the canary's ADV filter, forced CNC or canary size. When
+    the tripwire ledger has a regime boundary, start_date must be that boundary,
+    so entries before it are kept out twice (archived, and settled too early).
+    """
+    c = spec.raw_config["live_test"]
+    if not bool(c["enabled"]):
+        return None
+    for k in ("start_date", "monthly_stop_inr", "sprt", "state_file"):
+        if c.get(k) is None:
+            raise ValueError(f"setups.{spec.name}.live_test.{k} is required when the live test is enabled")
+    date.fromisoformat(str(c["start_date"]))
+    _validate_sprt_cfg(c["sprt"], f"setups.{spec.name}.live_test")
+    if not float(c["monthly_stop_inr"]) < 0:
+        raise ValueError(f"setups.{spec.name}.live_test.monthly_stop_inr must be < 0")
+    boundary = spec.raw_config["decay_tripwire"]["archive_entries_before"]
+    if boundary is not None and str(c["start_date"]) != str(boundary):
+        raise ValueError(f"setups.{spec.name}.live_test.start_date {c['start_date']} must equal "
+                         f"decay_tripwire.archive_entries_before {boundary}")
     return c
 
 
@@ -684,6 +824,7 @@ def run_entry(
                 continue
             # A missing ledger is not "no losses": the stops would silently turn off.
             # When starting the canary the ledger is reset (written empty), not deleted.
+            _check_ledger_complete(spec)
             led = Path(spec.raw_config["decay_tripwire"]["state_file"])
             trades = json.loads(led.read_text(encoding="utf-8"))["trades"]
             ok, why = canary_gate(canary, trades, today)
@@ -695,6 +836,32 @@ def run_entry(
         if ok:
             canaries[spec.name] = canary
         else:
+            live_names.discard(spec.name)
+
+    # Full-size live runs only under the live test (monthly stop + SPRT). With
+    # neither the canary nor the live test on, or both, a setup places no live
+    # orders: full size with no stop is how Jul-Oct 2026 lost Rs41k unchecked.
+    for spec in paper_enabled_setups:
+        if paper_mode or spec.name not in live_names:
+            continue
+        try:
+            live_test = _live_test_cfg(spec)
+            if spec.name in canaries:
+                if live_test is not None:
+                    raise ValueError("live_canary and live_test are both enabled; enable one")
+                continue
+            if live_test is None:
+                raise ValueError("neither live_canary nor live_test is enabled")
+            _check_ledger_complete(spec)
+            led = Path(spec.raw_config["decay_tripwire"]["state_file"])
+            trades = json.loads(led.read_text(encoding="utf-8"))["trades"]
+            ok, why, decision = live_test_gate(spec.name, live_test, trades, today)
+        except (ValueError, KeyError, TypeError, OSError) as e:
+            ok, why, decision = False, f"live test cannot be evaluated ({type(e).__name__}: {e})", None
+        _log = logger.critical if not ok else logger.warning if decision == "edge" else logger.info
+        _log("LIVE_TEST | %s | %s%s", spec.name, why, "" if ok else "; no live entries")
+        summary.setdefault("live_test", {})[spec.name] = why
+        if not ok:
             live_names.discard(spec.name)
 
     # Live product allowlist. Paper 06-10..10-29 made its money on CNC (+0.55% net
@@ -2004,33 +2171,54 @@ def run_verify_exit(
         # tripwire's rolling-PF check is what gates next-day dispatch.
         tw_cfg = managed_setups[0].raw_config.get("decay_tripwire")
         if tw_cfg is not None:
-            from services.risk.decay_tripwire import DecayTripwire
-            tw = DecayTripwire(
-                setup_name=managed_setups[0].name,
-                state_path=Path(tw_cfg["state_file"]),
-                window_trades=int(tw_cfg["window_trades"]),
-                pf_floor=float(tw_cfg["pf_floor"]),
-                sustained_weeks=int(tw_cfg["sustained_weeks"]),
-                archive_entries_before=tw_cfg["archive_entries_before"],
-                archive_label=tw_cfg["archive_label"],
-                archive_regime=tw_cfg["archive_regime"],
-            )
-            # Only attach the cost breakdown when we have a real settled net PnL;
-            # otherwise leave fees/gross unset (legacy net-only record) rather than
-            # fabricate a gross == fees row.
-            if settled.realized_pnl_inr is not None:
-                net_pnl = float(settled.realized_pnl_inr)
-                total_cost = float(fees_only) + float(interest)
-                tw.record_trade(
-                    net_pnl_inr=net_pnl, ts_iso=now.isoformat(),
-                    fees_inr=total_cost, gross_pnl_inr=net_pnl + total_cost,
-                    symbol=slot.symbol, entry_price=slot.buy_fill_price,
-                    exit_price=float(sell_price), exit_reason="t1_settle", qty=qty,
-                    idealized_entry=slot.idealized_entry_price,
-                    idealized_exit=(float(idealized_exit) if idealized_exit is not None else None),
+            # The slot is settled and its GTT handled above; only its ledger row is
+            # written here. A failed write must not stop the other slots settling
+            # (their GTTs would stay live) or skip Phase 2 and the baseline build.
+            # It stops live entries instead: the monthly stop and the SPRT read this
+            # ledger and would silently under-count (see _check_ledger_complete).
+            try:
+                from services.risk.decay_tripwire import DecayTripwire
+                tw = DecayTripwire(
+                    setup_name=managed_setups[0].name,
+                    state_path=Path(tw_cfg["state_file"]),
+                    window_trades=int(tw_cfg["window_trades"]),
+                    pf_floor=float(tw_cfg["pf_floor"]),
+                    sustained_weeks=int(tw_cfg["sustained_weeks"]),
+                    archive_entries_before=tw_cfg["archive_entries_before"],
+                    archive_label=tw_cfg["archive_label"],
+                    archive_regime=tw_cfg["archive_regime"],
                 )
-            else:
-                tw.record_trade(net_pnl_inr=0.0, ts_iso=now.isoformat())
+                # Only attach the cost breakdown when we have a real settled net PnL;
+                # otherwise leave fees/gross unset (legacy net-only record) rather than
+                # fabricate a gross == fees row.
+                if settled.realized_pnl_inr is not None:
+                    net_pnl = float(settled.realized_pnl_inr)
+                    total_cost = float(fees_only) + float(interest)
+                    # entry_date routes positions entered before
+                    # decay_tripwire.archive_entries_before to the archive ledger.
+                    tw.record_trade(
+                        net_pnl_inr=net_pnl, ts_iso=now.isoformat(),
+                        fees_inr=total_cost, gross_pnl_inr=net_pnl + total_cost,
+                        symbol=slot.symbol, entry_price=slot.buy_fill_price,
+                        exit_price=float(sell_price), exit_reason="t1_settle", qty=qty,
+                        idealized_entry=slot.idealized_entry_price,
+                        idealized_exit=(float(idealized_exit) if idealized_exit is not None else None),
+                        entry_date=slot.reserved_today,
+                    )
+                else:
+                    tw.record_trade(net_pnl_inr=0.0, ts_iso=now.isoformat(),
+                                    symbol=slot.symbol, entry_date=slot.reserved_today)
+            except Exception as e:
+                marker = _ledger_failure_marker(tw_cfg)
+                with open(marker, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"ts_iso": now.isoformat(), "symbol": slot.symbol,
+                                        "entry_date": slot.reserved_today,
+                                        "net_pnl_inr": settled.realized_pnl_inr,
+                                        "error": f"{type(e).__name__}: {e}"}) + "\n")
+                logger.critical("run_verify_exit: ledger write failed for %s (%s: %s); the trade is "
+                                "settled but missing from %s. Live entries stop until it is booked "
+                                "and %s is deleted", slot.symbol, type(e).__name__, e,
+                                tw_cfg["state_file"], marker.name)
 
     # Phase 2: release T1 slots whose T+2 cash settle date has arrived
     for slot in list(pool.active()):

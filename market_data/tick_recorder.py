@@ -75,9 +75,11 @@ class TickRecorder:
 
         # File tracking
         self._today = datetime.now().strftime("%Y%m%d")
-        self._part_num = 0
         self._tick_count = 0
         self._file_path = self._output_dir / f"ticks_{self._today}.parquet"
+        # A restart the same day (crash, mid-session deploy) continues the part
+        # numbering, so it cannot overwrite the parts the earlier process flushed.
+        self._part_num = max((n for _, n in self._parts()), default=-1) + 1
 
         logger.info(f"TICK_RECORDER | Initialized, output: {self._file_path}")
 
@@ -138,6 +140,10 @@ class TickRecorder:
             self._cumvols.clear()
             self._timestamps.clear()
 
+    def flush(self) -> None:
+        """Write buffered ticks to a part file now (periodic, crash-safety)."""
+        self._flush()
+
     def finalize(self) -> Optional[Path]:
         """
         Flush remaining buffer and merge part files into final parquet.
@@ -157,9 +163,21 @@ class TickRecorder:
             return self._file_path
         return None
 
+    def _parts(self) -> List[tuple]:
+        """(path, part number) of today's part files, in numeric order (part10 after part9)."""
+        out = []
+        for p in self._output_dir.glob(f"ticks_{self._today}.part*.parquet"):
+            num = p.name[len(f"ticks_{self._today}.part"):-len(".parquet")]
+            if num.isdigit():
+                out.append((p, int(num)))
+        return sorted(out, key=lambda x: x[1])
+
     def _merge_parts(self) -> None:
         """Merge all part files into single parquet file."""
-        part_files = sorted(self._output_dir.glob(f"ticks_{self._today}.part*.parquet"))
+        part_files = [p for p, _ in self._parts()]
+        if part_files and self._file_path.exists():
+            # A session already finalized today (restart after EOD): keep its ticks.
+            part_files = [self._file_path] + part_files
 
         if not part_files:
             # No data - create empty file for consistency
@@ -170,7 +188,7 @@ class TickRecorder:
 
         if len(part_files) == 1:
             # Single part - just rename
-            part_files[0].rename(self._file_path)
+            part_files[0].replace(self._file_path)
             return
 
         # Merge all parts
@@ -180,7 +198,8 @@ class TickRecorder:
 
         # Clean up part files
         for p in part_files:
-            p.unlink()
+            if p != self._file_path:
+                p.unlink()
 
     @property
     def tick_count(self) -> int:

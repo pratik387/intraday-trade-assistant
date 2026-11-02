@@ -128,7 +128,8 @@ def _sf_cfg(tmp_path, **kw):
 
 
 def test_live_startup_needs_the_edge_on_every_live_setup(monkeypatch, tmp_path):
-    root = {"setups": {"a": {"enabled": True, "mode": "intraday", "live_enabled": True}},
+    root = {"setups": {"a": {"enabled": True, "mode": "intraday", "live_enabled": True,
+                             "circuit_cover_order": True, "circuit_risk_budget_pct_of_capital": 0.008}},
             "shortfall_log": _sf_cfg(tmp_path)}
     monkeypatch.setattr(po, "_ROOT_CFG_CACHE", root)
     with pytest.raises(po.OrchestratorConfigError, match="backtest_edge_bps"):

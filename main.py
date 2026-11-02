@@ -303,6 +303,8 @@ def main() -> int:
         set_runtime_capital, set_runtime_trading_mode, validate_price_bands)
     set_runtime_capital(capital_manager.total_capital)
     _trading_mode = "backtest" if args.dry_run else "paper" if args.paper_trading else "live"
+    if not args.dry_run:
+        logger.info(f"CODE_VERSION | {_code_version()}")
     _trading_setups = set_runtime_trading_mode(_trading_mode)
     logger.info(f"[SETUPS] mode={_trading_mode} | intraday setups that can trade: {_trading_setups}")
     if not args.dry_run or args.session_date:
@@ -383,7 +385,7 @@ def main() -> int:
         logger.info(f"DAILY_CACHE | Prewarm complete, source={loaded_from}")
 
     # Tick recorder for paper/live trading (records to parquet for upload)
-    tick_recorder = None
+    tick_recorder, tick_flush_sec = None, None
 
     # Pick mode
     if args.paper_trading:
@@ -403,14 +405,7 @@ def main() -> int:
         logger.warning("🧪 PAPER TRADING MODE: Live data, simulated orders (no real trades)")
 
         # Initialize tick recorder for paper trading
-        tick_cfg = cfg.get("tick_recording", {})
-        if tick_cfg.get("enabled", True):
-            try:
-                from market_data.tick_recorder import TickRecorder
-                tick_recorder = TickRecorder(buffer_size=tick_cfg.get("buffer_size", 50000))
-                logger.info("TICK_RECORDER | Initialized for paper trading session")
-            except Exception as e:
-                logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
+        tick_recorder, tick_flush_sec = _make_tick_recorder(cfg["tick_recording"], "paper")
 
         _refresh_event_feeds()
 
@@ -449,14 +444,7 @@ def main() -> int:
         _startup_phase("event feeds refreshed")
 
         # Initialize tick recorder for live trading
-        tick_cfg = cfg.get("tick_recording", {})
-        if tick_cfg.get("enabled", True):
-            try:
-                from market_data.tick_recorder import TickRecorder
-                tick_recorder = TickRecorder(buffer_size=tick_cfg.get("buffer_size", 50000))
-                logger.info("TICK_RECORDER | Initialized for live trading session")
-            except Exception as e:
-                logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
+        tick_recorder, tick_flush_sec = _make_tick_recorder(cfg["tick_recording"], "live")
 
         if not args.skip_prewarm:
             _prewarm_daily_cache(sdk, mis_fetcher=mis_fetcher)
@@ -598,7 +586,8 @@ def main() -> int:
     api.set_state(SessionState.TRADING)
 
     # Lifecycle: start screener and block until EOD / request_exit
-    _run_until_eod(screener, exit_exec, trader, api, capital_manager, positions)
+    _run_until_eod(screener, exit_exec, trader, api, capital_manager, positions,
+                   tick_recorder=tick_recorder, tick_flush_sec=tick_flush_sec)
 
     return 0
 
@@ -610,8 +599,12 @@ def _run_until_eod(
     api_server = None,
     capital_manager = None,
     positions = None,
-    poll_sec: float = 0.2
+    poll_sec: float = 0.2,
+    tick_recorder = None,
+    tick_flush_sec: Optional[float] = None,
 ) -> None:
+    if tick_recorder is not None and not (tick_flush_sec and tick_flush_sec > 0):
+        raise ValueError(f"tick_flush_sec must be > 0 with a tick recorder, got {tick_flush_sec!r}")
     logger.info("session start")
     stop = threading.Event()
 
@@ -667,8 +660,15 @@ def _run_until_eod(
 
         logger.info("MAIN_LOOP | Entering poll loop | _request_exit=%s stop=%s",
                    getattr(screener, "_request_exit", "?"), stop.is_set())
+        _next_tick_flush = time.monotonic() + (tick_flush_sec or 0.0)
         while not getattr(screener, "_request_exit", False) and not stop.is_set():
             time.sleep(poll_sec)
+            if tick_recorder is not None and time.monotonic() >= _next_tick_flush:
+                _next_tick_flush = time.monotonic() + tick_flush_sec
+                try:
+                    tick_recorder.flush()
+                except Exception as e:
+                    logger.warning(f"TICK_RECORDER | periodic flush failed: {e}")
         logger.info("MAIN_LOOP | Exited poll loop | _request_exit=%s stop=%s",
                    getattr(screener, "_request_exit", "?"), stop.is_set())
     except KeyboardInterrupt:
@@ -705,6 +705,15 @@ def _run_until_eod(
         except Exception as e:
             logger.warning("trader.stop failed: %s", e)
 
+        # Finalize tick recorder (flush buffers and merge part files) before the
+        # API teardown below, which is not guarded and can hang.
+        if tick_recorder is not None:
+            try:
+                tick_recorder.finalize()
+                logger.info(f"TICK_RECORDER | Finalized: {tick_recorder.tick_count:,} ticks recorded")
+            except Exception as e:
+                logger.warning(f"TICK_RECORDER | Finalization failed: {e}")
+
         # Save capital report for analytics
         if capital_manager:
             try:
@@ -720,16 +729,48 @@ def _run_until_eod(
             api_server.set_state(SessionState.STOPPED)
             api_server.stop()
 
-        # Finalize tick recorder (flush buffers and merge part files)
-        _tick_rec = locals().get('tick_recorder')
-        if _tick_rec is not None:
-            try:
-                _tick_rec.finalize()
-                logger.info(f"TICK_RECORDER | Finalized: {_tick_rec.tick_count:,} ticks recorded")
-            except Exception as e:
-                logger.warning(f"TICK_RECORDER | Finalization failed: {e}")
-
     logger.info("session end (EOD)")
+
+
+def _code_version() -> str:
+    """Commit, uncommitted-change flag and config hash of the running checkout, so a
+    session's log says exactly which code and config traded (not read for trading)."""
+    import hashlib
+    root = Path(__file__).resolve().parent
+    def _git(*a):
+        # check=True: a failing git (dubious ownership, index.lock) must read as
+        # unknown, never as a clean checkout. --no-optional-locks: never contends
+        # with an operator's git pull.
+        return subprocess.run(["git", "--no-optional-locks", *a], cwd=root, capture_output=True,
+                              text=True, timeout=10, check=True).stdout.strip()
+    try:
+        sha, dirty = _git("rev-parse", "--short=12", "HEAD"), bool(_git("status", "--porcelain", "-uno"))
+    except Exception as e:
+        sha, dirty = f"unknown ({type(e).__name__})", None
+    try:
+        cfg_sha = hashlib.sha256((root / "config" / "configuration.json").read_bytes()).hexdigest()[:12]
+    except OSError as e:
+        cfg_sha = f"unknown ({type(e).__name__})"
+    return f"sha={sha or 'unknown'} dirty={dirty} config_sha256={cfg_sha}"
+
+
+def _make_tick_recorder(tick_cfg: dict, label: str):
+    """The paper/live tick recorder and its flush interval, validated at startup
+    (before any thread or position exists) so a bad value cannot stop a session later.
+    A recorder that fails to build is logged and skipped: ticks are research data."""
+    if not tick_cfg["enabled"]:
+        return None, None
+    flush_sec = float(tick_cfg["flush_interval_sec"])
+    if not flush_sec > 0:
+        raise ValueError(f"tick_recording.flush_interval_sec must be > 0, got {flush_sec}")
+    try:
+        from market_data.tick_recorder import TickRecorder
+        rec = TickRecorder(buffer_size=int(tick_cfg["buffer_size"]))
+        logger.info(f"TICK_RECORDER | Initialized for {label} trading session")
+        return rec, flush_sec
+    except Exception as e:
+        logger.warning(f"TICK_RECORDER | Failed to initialize: {e}")
+        return None, None
 
 
 def _hhmm_on(day_str: str, hhmm: str) -> str:

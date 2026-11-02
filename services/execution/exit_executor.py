@@ -248,6 +248,11 @@ class ExitExecutor:
         self.cc_mismatch_frac = float(cc["quote_mismatch_warn_pct"]) / 100.0
         self.cc_trigger_frac = float(cc["trigger_offset_pct"]) / 100.0
         self.cc_sweep_sec = float(cc["orphan_sweep_sec"])
+        self.cc_cancel_confirm_sec = float(cc["cancel_confirm_sec"])
+        self.cc_cancel_poll_sec = float(cc["cancel_poll_sec"])
+        if not (self.cc_cancel_poll_sec > 0
+                and self.cc_cancel_poll_sec <= self.cc_cancel_confirm_sec < self.exit_retry_cooldown_sec):
+            raise ValueError("circuit_cover: need 0 < cancel_poll_sec <= cancel_confirm_sec < exit_retry_cooldown_sec")
         _lp = Path(cc["ledger_path"])
         self.cc_ledger_path = _lp if _lp.is_absolute() else Path(__file__).resolve().parents[2] / _lp
         self._circ_ledger_lock = threading.Lock()
@@ -638,12 +643,15 @@ class ExitExecutor:
                         st["exit_pending"] = True
                         pos.plan["_state"] = st
 
-                        logger.info(
-                            f"SL_BREACH | {sym} | {pos.side} | "
-                            f"Exit_Price: {sl_ltp:.2f} | Final_SL: {plan_sl:.2f} | "
-                            f"Original_SL: {original_sl:.2f} | Slippage: {slippage:.2f} | "
-                            f"Entry: {pos.avg_price:.2f} | T1_Done: {t1_done} | T2_Done: {t2_done}"
-                        )
+                        # Not re-logged on every tick while a failed exit waits out its retry cooldown.
+                        _retry_at = st.get("_exit_retry_at")
+                        if _retry_at is None or time.monotonic() >= _retry_at:
+                            logger.info(
+                                f"SL_BREACH | {sym} | {pos.side} | "
+                                f"Exit_Price: {sl_ltp:.2f} | Final_SL: {plan_sl:.2f} | "
+                                f"Original_SL: {original_sl:.2f} | Slippage: {slippage:.2f} | "
+                                f"Entry: {pos.avg_price:.2f} | T1_Done: {t1_done} | T2_Done: {t2_done}"
+                            )
                         self._exit(sym, pos, sl_ltp, ts, exit_reason)
                         continue
 
@@ -1687,8 +1695,8 @@ class ExitExecutor:
             raise _ExitNotFilled(f"at the circuit: waiting in its queue (order {oid}, "
                                  f"filled {o.get('filled_quantity', 0)}/{cur_qty})")
         if status in self._CIRC_WORKING:
-            self.broker.cancel_order(oid)
-            o = self.broker.get_order_status(oid)       # a cancel can race a fill
+            self._send_cover_cancel(sym, oid)
+            o = self._await_cover_cancel(sym, oid)      # a cancel can race a fill
             status = o["status"]
         filled = int(o.get("filled_quantity", 0))
         if status == "COMPLETE":
@@ -1702,6 +1710,33 @@ class ExitExecutor:
             logger.critical(f"CIRCUIT_COVER | {sym} | order {oid} covered {filled} > position {cur_qty}; "
                             f"CHECK THE POSITION AT THE BROKER")
         return min(filled, int(cur_qty)), ((float(o.get("average_price") or 0.0) or None) if filled else None)
+
+    def _send_cover_cancel(self, sym: str, oid: str) -> None:
+        """KiteBroker.cancel_order returns False on any exception: then nothing was
+        cancelled and polling would only burn the confirm window, so send it once more."""
+        if not self.broker.cancel_order(oid):
+            logger.warning(f"CIRCUIT_COVER | {sym} | cancel of {oid} not accepted; sending it again")
+            self.broker.cancel_order(oid)
+
+    def _await_cover_cancel(self, sym: str, oid: str) -> dict:
+        """Status of a cover just cancelled, polled until it is terminal or the
+        confirm window ends. Kite shows CANCEL PENDING / TRIGGER PENDING for a moment
+        after a cancel; a single read made each covered exit wait out the retry
+        cooldown with nothing working (live 2026-10-30: 31 s on both stops).
+        Bounded twice: by wall time (each read is a full order-book fetch that can
+        take seconds when Kite is slow, and the other positions' stops wait on this
+        thread) and by a poll count, so a stalled clock cannot spin here."""
+        t0 = time.monotonic()                       # broker round trips, not a trading decision
+        deadline = t0 + self.cc_cancel_confirm_sec
+        o, reads = self.broker.get_order_status(oid), 1
+        for _ in range(max(1, math.ceil(self.cc_cancel_confirm_sec / self.cc_cancel_poll_sec))):
+            if o["status"] in ("CANCELLED", "REJECTED", "COMPLETE") or time.monotonic() >= deadline:
+                break
+            time.sleep(self.cc_cancel_poll_sec)
+            o, reads = self.broker.get_order_status(oid), reads + 1
+        logger.info(f"CIRCUIT_COVER_CANCEL | {sym} | {oid} {o['status']} after {reads} read(s), "
+                    f"{time.monotonic() - t0:.1f}s")
+        return o
 
     def _ledger_read(self) -> dict:
         try:
@@ -1745,8 +1780,8 @@ class ExitExecutor:
             return
         o = self.broker.get_order_status(oid)
         if o["status"] in self._CIRC_WORKING:
-            self.broker.cancel_order(oid)
-            o = self.broker.get_order_status(oid)
+            self._send_cover_cancel(sym, oid)
+            o = self._await_cover_cancel(sym, oid)
         if int(o.get("filled_quantity", 0)):
             logger.critical(f"CIRCUIT_COVER | {sym} | cover {oid} filled {o.get('filled_quantity')} AND the exit "
                             f"filled: the account may be net LONG. CHECK THE POSITION AT THE BROKER")

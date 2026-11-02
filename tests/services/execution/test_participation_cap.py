@@ -173,9 +173,11 @@ def test_cap_can_be_disabled_without_code_change():
 
 
 def test_tripwire_window_matches_the_stated_review_horizon():
-    """Un-pausing reset the 6-week clock; the horizon was shortened to match
-    'a few more weeks' rather than silently running to October."""
+    """2026-08-25 shortened the hold to 3 weeks; 2026-11-02 set it back to 6 for
+    the CNC-only live_test, where the SPRT and the monthly stop decide and the
+    tripwire is only the backstop."""
     tw = CFG["setups"]["close_dn_overnight_long"]["decay_tripwire"]
-    assert tw["sustained_weeks"] == 3
+    assert tw["sustained_weeks"] == 6
+    assert CFG["setups"]["close_dn_overnight_long"]["live_test"]["enabled"] is True
     # other books must be untouched
     assert CFG["setups"]["zscore_oversold_revert_long"]["decay_tripwire"]["sustained_weeks"] == 6
