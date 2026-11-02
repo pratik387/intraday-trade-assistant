@@ -129,6 +129,26 @@ def is_wide_open_for_setup(setup_type: Optional[str]) -> bool:
     return global_flag
 
 
+def entry_zone_skipped_for_setup(setup_type: Optional[str]) -> bool:
+    """True when a setup's plans trigger on the first price after PENDING, with no
+    entry-zone wait: wide_open research capture, or `setups.<s>.immediate_execution`
+    (an opt-in flag; absent = zone entry, as in trigger_validation_engine).
+
+    Only the zone check reads this; wide_open's other bypasses (duplicate guard,
+    min_bars) stay wide_open-only. Until 2026-11-02 immediate_execution was read
+    only by trigger_validation_engine, so the executor still parked such plans in
+    the zone for 15 minutes (earnings_downshock's 2231b04 "fix" never ran).
+    """
+    if is_wide_open_for_setup(setup_type):
+        return True
+    try:
+        from config.filters_setup import load_filters
+        cfg = load_filters() or {}
+    except Exception:
+        cfg = {}
+    return bool(((cfg.get("setups") or {}).get(setup_type or "") or {}).get("immediate_execution", False))
+
+
 def require_config(config: Dict[str, Any], *keys: str) -> Any:
     """Navigate nested config and raise ConfigurationError on missing keys.
 

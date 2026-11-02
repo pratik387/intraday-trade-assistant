@@ -2116,6 +2116,8 @@
   "api_5m_bars": {
     "enabled": true,
     "min_delay_after_bar_close_sec": 60,
+    "drop_in_progress_bar": false,
+    "_comment_drop_in_progress_bar": "2026-11-02 (audit EXP-1/SDF-1, verified). The Upstox V3 intraday response includes the still-forming candle after the scanned bar; it reaches the detectors untrimmed, so paper/live score ~93% of symbols on 1-2 minutes of the NEXT bar (which one depends on alphabetical fetch order) while the backtest scores the closed bar: live takes about a third of the backtest's up_spike signals, a ~20% overlap. true = drop rows newer than the scanned bar before enrichment (backtest parity). OFF until a paper A/B / replay shows the closed-bar variant is at least as good: all forward evidence (paper n=124, live n=17) comes from the in-progress variant. With it on, the fetch log counts symbols whose last bar is not the scanned bar (not yet published). The shared Redis 5m cache (unused: market_data_bus standalone) is keyed by bar only, so an A/B with different flag values must not share it.",
     "rps": 15,
     "concurrency": 30,
     "fetch_all_symbols": true,

@@ -863,11 +863,11 @@ class TriggerAwareExecutor:
 
                 entry_min, entry_max = sorted(entry_zone)
 
-                # Per-setup wide_open: research setups fire on the first available
-                # price without zone-membership check. Prod-ready setups keep zone
+                # wide_open research setups and immediate_execution setups fire on the
+                # first available price without zone-membership check. Others keep zone
                 # discipline (price must enter entry_zone to trigger).
-                from services.config_loader import is_wide_open_for_setup
-                if is_wide_open_for_setup(trade.plan.get("strategy")):
+                from services.config_loader import entry_zone_skipped_for_setup
+                if entry_zone_skipped_for_setup(trade.plan.get("strategy")):
                     self._try_trigger_on_tick(trade, price, current_ts)
                     continue
 
@@ -945,12 +945,12 @@ class TriggerAwareExecutor:
             bias = trade.plan.get("bias", "long")
             strategy = trade.plan.get("strategy", "unknown")
 
-            # Per-setup wide_open: research setups fire on the first tick without
+            # wide_open / immediate_execution: fire on the first tick without
             # zone-membership check. Mirror of the poll-path bypass above.
-            from services.config_loader import is_wide_open_for_setup
-            if is_wide_open_for_setup(strategy):
+            from services.config_loader import entry_zone_skipped_for_setup
+            if entry_zone_skipped_for_setup(strategy):
                 logger.info(
-                    f"WIDE_OPEN_TICK_TRIGGER: {symbol} {strategy} {bias} "
+                    f"ZONE_FREE_TICK_TRIGGER: {symbol} {strategy} {bias} "
                     f"price={price:.2f} ts={ts.strftime('%H:%M:%S')} trade_id={trade.trade_id}"
                 )
                 self._try_trigger_on_tick(trade, price, ts)
@@ -1177,9 +1177,9 @@ class TriggerAwareExecutor:
             # No entry zone defined - allow trigger (fallback behavior)
             return True
 
-        # Per-setup wide_open: research setups bypass zone check.
-        from services.config_loader import is_wide_open_for_setup
-        if is_wide_open_for_setup(setup_type):
+        # wide_open research setups and immediate_execution setups bypass the zone.
+        from services.config_loader import entry_zone_skipped_for_setup
+        if entry_zone_skipped_for_setup(setup_type):
             return True
 
         min_price, max_price = sorted(entry_zone)  # Ensure min < max

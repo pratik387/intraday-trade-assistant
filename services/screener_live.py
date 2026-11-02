@@ -79,6 +79,12 @@ from services.scan.energy_scanner import EnergyScanner
 from diagnostics.diag_event_log import diag_event_log, mint_trade_id
 from utils.perf_timer import perf, mark
 from services.state.orb_cache_persistence import ORBCachePersistence
+
+
+def drop_in_progress_bars(df: pd.DataFrame, bar_label) -> pd.DataFrame:
+    """Rows up to the scanned 5m bar. The Upstox V3 intraday response also carries
+    the still-forming candle after it, which the backtest never sees."""
+    return df[df.index <= bar_label]
 import uuid
 
 # 2026-05-12 architectural refactor — Phase 7
@@ -1446,11 +1452,15 @@ class ScreenerLive:
                 if self._shared_5m_cache and self._shared_5m_cache.enabled:
                     cached = self._shared_5m_cache.get_cached_bars(bar_ts)
 
+                _drop_forming = bool(api_5m_cfg["drop_in_progress_bar"])
                 if cached is not None:
                     api_ok = 0
                     for sym in fetch_symbols:
-                        if sym in cached and len(cached[sym]) >= min_bars_for_processing:
-                            api_df5_cache[sym] = cached[sym]
+                        _c = cached.get(sym)
+                        if _c is not None and _drop_forming:
+                            _c = drop_in_progress_bars(_c, now)
+                        if _c is not None and len(_c) >= min_bars_for_processing:
+                            api_df5_cache[sym] = _c
                             api_ok += 1
                     _t_api_elapsed = time.perf_counter() - _t_api_start
                     logger.info(
@@ -1500,7 +1510,16 @@ class ScreenerLive:
                         len(raw_api), len(fetch_symbols), _shape_counts, _sample_short,
                     )
 
+                    _dropped = _stale = 0
                     for sym, df_api in raw_api.items():
+                        if df_api is not None and _drop_forming:
+                            _n0 = len(df_api)
+                            df_api = drop_in_progress_bars(df_api, now)
+                            _dropped += _n0 - len(df_api)
+                            # Upstox may not have published the just-closed bar yet: the
+                            # frame then ends one bar early and detectors would score it.
+                            if len(df_api) and df_api.index[-1] != now:
+                                _stale += 1
                         if df_api is not None and len(df_api) >= min_bars_for_processing:
                             warmup = self._api_warmup_cache.get(sym)
                             if warmup is not None and not warmup.empty:
@@ -1548,6 +1567,9 @@ class ScreenerLive:
                         api_ok, api_fail, len(fetch_symbols), _t_api_elapsed,
                         rps, warmup_used, api_ok, throttle_info, diag_info,
                     )
+                    if _drop_forming:
+                        logger.info("API_5M_FETCH | dropped %d in-progress bar row(s) after %s; %d symbol(s) "
+                                    "end before the scanned bar", _dropped, now, _stale)
 
                 # Capture the regime index df out of the batch result. Pop so the
                 # dispatcher doesn't waste cycles running detectors on the index.
