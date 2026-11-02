@@ -206,7 +206,8 @@
     },
     "long_panic_gap_down": {
       "sizing_mode": "risk",
-      "enabled": true,
+      "enabled": false,
+      "_retired_2026_11_02": "RETIRED 2026-11-02 (audit EH-4, verified): on MIS-tradeable EQ-series names the OCI backtest is n=1,092, -0.065%/trade net, PF 0.91, t -1.32, EQ quarters <= 0 in 11 of 15; the research holdout on EQ names is PF 1.01 (n=457). 60-80% of the research cell's P&L came from BE/BZ/SM (trade-for-trade) names that cannot be squared off intraday (non-EQ n=202, PF 6.99). The Disc 1.45 / OOS 1.40 / HO 1.72 in _status are contaminated. Forward paper (n=44, PF 1.47, t 1.10) ran on a different population (28/44 nse_all large caps). docs/retired_setups.md.",
       "live_enabled": false,
       "mechanism_tags": [
         "midcap_correction_active"
@@ -311,8 +312,9 @@
       "wide_open": false
     },
     "panic_crash_revert_long": {
-      "enabled": true,
-      "paper_enabled": true,
+      "enabled": false,
+      "_retired_2026_11_02": "RETIRED 2026-11-02 (audit TRD-4/EH-8, verified): 52% of the booked OCI edge was RMDRIP merged-instrument days and 11% three T2T/BE trades; 7 trades sat locked at the lower circuit through the booked 15:10 exit. The clean, EQ, whitelisted subset is PF 1.35 after exiting locked trades at the next open, by year 2.02/3.03/0.47/0.80 (2025-26 negative). Forward paper n=20 -0.66% net, consistent with clean era B. Paper records ran on the in-progress 5m candle. docs/retired_setups.md.",
+      "paper_enabled": false,
       "live_enabled": false,
       "_status": "PAPER-TRADE VALIDATION started 2026-06-04. OCI Stage-9 headline PF 2.78 was INFLATED — the backtest skipped the live MIS filter, so 14 of 88 trades were on non-MIS-tradeable names (DONEAR/KOPRAN/RMDRIP/UFO...) contributing +Rs13,912 = 57% of net at fantasy PF 13. PRODUCTION-FAITHFUL (MIS-allowed only): PF 1.83 on 74 trades, net +Rs10,384 — still positive but half the edge, thin n, weak per-regime (post_tariff_consolidation PF 0.24). MARGINAL. OBSERVATION-ONLY: do NOT size. enabled+paper_enabled=true (paper applies the MIS filter -> trades the honest 74-name universe); do NOT enable in LIVE. Brief: specs/2026-06-03-brief-panic_crash_revert_long.md.",
       "mechanism_tags": [
@@ -440,7 +442,8 @@
     },
     "or_window_failure_fade_short": {
       "sizing_mode": "risk",
-      "enabled": true,
+      "enabled": false,
+      "_retired_2026_11_02": "RETIRED 2026-11-02 (audit EH-9/P3, verified): EQ OCI n=1,043 +0.05%/trade (t 1.0), era B 0.00%, 2026Q1-Q3 -0.03/-0.13/-0.30%, fresh pool May-Jul 2026 -0.21% (n=93, PF 0.68); at the measured ~10 bps live friction it nets about -1 bps. Decay monitor fired RETIRE twice (2026-09-15). Forward paper ran on a disjoint universe (0/23 nse_all small caps) and on the in-progress 5m candle, so it never tested the cell. docs/retired_setups.md.",
       "live_enabled": false,
       "mechanism_tags": [
         "rule_orthogonal"

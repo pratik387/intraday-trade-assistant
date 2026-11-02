@@ -10,6 +10,7 @@ This document is the **single source of truth** for setups that were prototyped,
 - **Sub-9 narrow-cell batch** (2026-05-07 to 2026-05-14) — 4 setups: each killed by a specific bug or threshold failure (look-ahead bias, regime non-reproducibility, never sanity-validated, Holdout n below floor)
 - **Sub-9 regulatory-regime batch** (2026-05-19) — 3 setups + 2 revival fails: `mis_unwind_vwap_revert_short`, `round_number_sweep_short`, `circuit_release_fade_short` (each shipped to production then collapsed in Holdout post-SEBI-Oct-2025); `capitulation_long_v2` (Phase 1-5 revival of earlier `capitulation_long_morning` — failed at Holdout ship gate); `pre_results_t1_fade` (Phase 1-5 candidate — failed v2 conservative re-run after data-classification correction; regime-conditioned edge with FII-positioning dependency)
 - **Active-trio retirement batch** (2026-05-22 → 2026-07-27) — the 3 production intraday setups themselves: `delivery_pct_anomaly_short` (Stage 13 soft-disable 2026-05-22), `circuit_t1_fade_short` (Stage 14 2026-05-23), `gap_fade_short` (disabled 2026-06-25/29, retirement confirmed after paper validation 2026-07-27). All three cleared the historical gauntlet, shipped, and died on forward/OCI-canonical data — the empirical basis for the 2026-07-27 lifecycle amendments (forward-only validation + experiment ledger, see `docs/setup_lifecycle.md`)
+- **Audit retirement batch** (2026-11-02) — `long_panic_gap_down`, `panic_crash_revert_long`, `or_window_failure_fade_short`: the 2026-11-01 nine-dimension audit (independently verified) showed each edge was untradeable names, data artefacts or decayed to zero
 - **Forward-paper retirement** (2026-10-29) — `earnings_downshock_continuation_short`: passed every historical gate (fresh-pool one-shot by 1.4bp), then lost on forward paper to post-results upside squeezes into the upper circuit that the research ledger never contained
 
 **Hard rule: do NOT re-implement any setup listed here without:**
@@ -49,6 +50,17 @@ These patterns killed multiple setups. Watch for them when designing or validati
 
 ---
 
+## Audit retirement batch — RETIRED 2026-11-02 (`long_panic_gap_down`, `panic_crash_revert_long`, `or_window_failure_fade_short`)
+
+**Retired:** 2026-11-02, operator decision after the 2026-11-01 audit (each figure below re-run by an independent verifier). Paper-only since the 2026-10-29 live gate; config `enabled: false` with a `_retired_2026_11_02` evidence string. Detectors retained.
+
+- **`long_panic_gap_down`** — the edge was trade-for-trade names. Point-in-time NSE series on the 1,294 OCI trades: EQ n=1,092, -0.065%/trade, PF 0.91, t -1.32 (EQ quarters <= 0 in 11 of 15); BE/BZ/SM n=202, PF 6.99, which cannot be squared off intraday. Research holdout on EQ names PF 1.01 (n=457). Forward paper (n=44) ran on large caps the backtest never traded.
+- **`panic_crash_revert_long`** — the edge was data artefacts. RMDRIP merged-instrument days = 52% of booked P&L, three T2T trades = 11%, seven trades locked at the lower circuit through the booked exit. Clean tradable subset PF by year 2.02/3.03/0.47/0.80: negative in 2025-26. Forward paper n=20, -0.66%.
+- **`or_window_failure_fade_short`** — decayed to zero. EQ OCI era B 0.00%/trade, 2026 quarters negative, fresh pool May-Jul 2026 PF 0.68; below the ~10 bps measured live friction. Decay monitor fired RETIRE twice (2026-09-15).
+
+**Caveat for any revival:** paper/live evaluated the Upstox in-progress 5m candle for panic_crash and or_window (audit SDF-1/SDF-V1), so their forward records did not test the validated cells either. A revival needs the completed-bar fix and a fresh-pool forward test, per the hard rule above.
+
+---
 ## `earnings_downshock_continuation_short` — RETIRED 2026-10-29 (forward paper, before the pre-registered n>=40 one-shot)
 
 **Retired:** 2026-10-29, operator decision after a forward review (paper since 2026-08-12, V2 construction).
