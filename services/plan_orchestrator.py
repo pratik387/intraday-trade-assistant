@@ -912,6 +912,16 @@ class PlanOrchestrator:
             f"[ORCH] {symbol} {setup_type} APPROVED: entry={entry:.2f} sl={hard_sl:.2f} "
             f"rr={structural_rr:.2f} qty={qty}"
         )
+        if setup_cfg.get("log_results_context") is True:
+            # Logging only: tests forward whether the edge sits on results days
+            # (services/results_context.py); nothing branches on it.
+            try:
+                from services.results_context import results_context
+                plan["results_context"] = results_context(symbol, session_date)
+            except Exception as e:      # logging only: must never cost the entry
+                logger.warning(f"RESULTS_CONTEXT | {symbol} | tagging failed ({type(e).__name__}: {e})")
+                plan["results_context"] = "unknown"
+            logger.info(f"RESULTS_CONTEXT | {symbol} | {setup_type} | {plan['results_context']}")
         return plan
 
     # ---- Public entry points -------------------------------------------
