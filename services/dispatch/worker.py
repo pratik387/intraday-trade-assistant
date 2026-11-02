@@ -100,6 +100,7 @@ def _build_market_context(
             regime=regime,
             cap_segment=cap_segment,
             indicators=indicators,
+            scan_bar_ts=_scan_bar_ts(bar_ts),
         )
     except Exception:
         # Fallback: pass df5 through as-is — detectors that don't need computed
@@ -122,7 +123,16 @@ def _build_market_context(
             regime=regime,
             cap_segment=cap_segment,
             indicators={},
+            scan_bar_ts=_scan_bar_ts(bar_ts),
         )
+
+
+def _scan_bar_ts(bar_ts) -> Optional[pd.Timestamp]:
+    """The scanned bar's start label (the screener's `now`), IST-naive, or None."""
+    if bar_ts is None:
+        return None
+    from utils.time_util import _to_naive_ist
+    return _to_naive_ist(pd.Timestamp(bar_ts))
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +227,9 @@ _STRUCTURE_TO_SETUP_TYPE: dict[str, str] = {
     # Sub-9 illiquid over-extension -> reversion family
     "panic_crash_revert_long": "panic_crash_revert_long",
     "up_spike_fade_short": "up_spike_fade_short",
+    # Results-day breadth cells (paper): same fade, completed candles, results-tagged days
+    "results_breadth_day_fade_short": "results_breadth_day_fade_short",
+    "results_breadth_late_fade_short": "results_breadth_late_fade_short",
 }
 
 

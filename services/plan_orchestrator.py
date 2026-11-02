@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -178,6 +179,10 @@ def set_runtime_trading_mode(mode: str) -> List[str]:
     cfg["runtime_trading_mode"] = mode
     setups = cfg.get("setups") or {}
     names = [n for n, raw in setups.items() if _is_enabled_intraday(raw)]
+    # Every mode, at startup: a bad group block or an unreadable results calendar
+    # would otherwise surface per symbol all day (the screener logs and continues).
+    _get_setup_groups()
+    _check_results_gated_calendars(setups)
     if mode != "live":
         return names
     bad = [n for n in names if not isinstance(setups[n].get("live_enabled"), bool)]
@@ -239,6 +244,49 @@ def _live_gate_blocks(setup_type: str, setup_cfg: dict) -> bool:
     if not isinstance(setup_cfg.get("live_enabled"), bool):
         raise OrchestratorConfigError(f"setups.{setup_type}.live_enabled must be true/false")
     return not setup_cfg["live_enabled"]
+
+
+def paper_only_intraday_setups_in_live(setups: dict) -> List[str]:
+    """Enabled intraday setups a LIVE run must not run at all (live_enabled false).
+    Empty off-live and before the trading mode is set. The screener drops them so a
+    live daemon detects, fetches and schedules exactly what can trade."""
+    if _load_root_config().get("runtime_trading_mode") != "live":
+        return []
+    return [n for n, raw in setups.items() if _is_enabled_intraday(raw) and raw.get("live_enabled") is False]
+
+
+def _repo_path(rel: str) -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), rel)
+
+
+def _check_results_gated_calendars(setups: dict) -> None:
+    """Every enabled setup gated on a results tag must read its calendar at startup;
+    unreadable, it would silently never fire all day."""
+    from services.results_context import check_calendar
+    for name, raw in setups.items():
+        if isinstance(raw, dict) and raw.get("enabled") and raw.get("required_results_context"):
+            path = _repo_path(raw["event_feed"]["path"])
+            err = check_calendar(path)
+            if err:
+                raise OrchestratorConfigError(f"setups.{name}: results calendar {path} unreadable: {err}")
+
+
+def _get_setup_groups() -> Dict[str, Tuple[Dict[str, int], bool]]:
+    """config setup_groups -> {group: ({member: priority rank}, one_trade_per_symbol_day)}.
+
+    Required block (fail fast). Members must be configured setups."""
+    cfg = _load_root_config()
+    known = set(cfg["setups"])
+    out: Dict[str, Tuple[Dict[str, int], bool]] = {}
+    for name, g in cfg["setup_groups"].items():
+        if name.startswith("_"):
+            continue
+        members = list(g["members_in_priority_order"])
+        unknown = [m for m in members if m not in known]
+        if unknown or len(set(members)) != len(members):
+            raise OrchestratorConfigError(f"setup_groups.{name}: unknown or repeated members {members}")
+        out[name] = ({m: i for i, m in enumerate(members)}, bool(g["one_trade_per_symbol_day"]))
+    return out
 
 
 def _get_selection_rules() -> Dict[str, Any]:
@@ -325,7 +373,77 @@ class PlanOrchestrator:
 
     def __init__(self) -> None:
         self._detectors: Dict[str, Any] = {}
+        self._setup_groups = _get_setup_groups()
+        # (group, session date) -> symbols a member plan was selected for.
+        self._group_claims: Dict[Tuple[str, Any], set] = {}
+        self._group_lock = threading.Lock()
         logger.debug("PlanOrchestrator initialized (sub7/sub8 fast path only)")
+
+    # ---- Setup groups (competing setups on one symbol-day) ---------------
+
+    @staticmethod
+    def _tradeable(plan: Dict[str, Any]) -> bool:
+        """Eligible plans can still carry qty 0 (circuit at entry, band missing,
+        below min notional...); those never trade, so they neither win a group
+        tie nor claim a symbol-day (the validated replay skipped them first)."""
+        try:
+            return float((plan.get("sizing") or {}).get("qty") or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def _filter_setup_groups(self, symbol: str, now, eligible: list) -> list:
+        """Drop tradeable group-member plans that lose to a higher-priority member in
+        this scan, or whose symbol-day the group already claimed. eligible:
+        [(plan, score)]. Plans outside every group, and qty-0 plans, pass untouched."""
+        session = pd.Timestamp(now).date()
+        out = eligible
+        for group, (rank, one_per_day) in self._setup_groups.items():
+            members = [p for p, _s in out if p.get("strategy") in rank and self._tradeable(p)]
+            if not members:
+                continue
+            with self._group_lock:
+                claimed = one_per_day and symbol in self._group_claims.get((group, session), ())
+            if claimed:
+                keep, reason = None, "setup_group_claimed"
+            else:
+                keep = min(members, key=lambda p: rank[p["strategy"]])
+                reason = "setup_group_lower_priority"
+            dropped = [p for p in members if p is not keep]
+            for p in dropped:
+                self._log_group_drop(symbol, now, group, p, keep, reason)
+            out = [(p, s) for p, s in out if not any(p is d for d in dropped)]
+        return out
+
+    def _claim_setup_groups(self, symbol: str, now, plans: list) -> None:
+        """The first selected tradeable member plan claims the symbol-day for its group."""
+        session = pd.Timestamp(now).date()
+        for group, (rank, one_per_day) in self._setup_groups.items():
+            if one_per_day and any(p.get("strategy") in rank and self._tradeable(p) for p in plans):
+                with self._group_lock:
+                    for key in [k for k in self._group_claims if k[1] != session]:
+                        del self._group_claims[key]
+                    self._group_claims.setdefault((group, session), set()).add(symbol)
+
+    def _log_group_drop(self, symbol, now, group, plan, kept, reason) -> None:
+        """Persist the dropped plan (planning log -> analytics), so the losing
+        setup's would-be trade can be reconstructed when judging its record."""
+        kept_name = kept["strategy"] if kept else None
+        logger.info("SETUP_GROUP | %s | %s | %s dropped: %s%s", group, symbol, plan["strategy"], reason,
+                    f" (kept {kept_name})" if kept_name else "")
+        plog = _planning_logger()
+        if plog:
+            plog.log_reject(
+                symbol,
+                reason=reason,
+                timestamp=now.isoformat() if hasattr(now, "isoformat") else str(now),
+                strategy_type=plan["strategy"],
+                category="setup_group",
+                setup_group=group,
+                kept_strategy=kept_name,
+                entry=plan.get("entry"),
+                qty=(plan.get("sizing") or {}).get("qty"),
+                trade_id=plan.get("trade_id"),
+            )
 
     # ---- Detector lookup ------------------------------------------------
 
@@ -1045,15 +1163,19 @@ class PlanOrchestrator:
                 score = plan.get("ranking", {}).get("score", 0.0)
                 eligible.append((plan, score))
 
+        eligible = self._filter_setup_groups(symbol, now, eligible)
         if not eligible:
             return [] if return_all_eligible else None
 
         if return_all_eligible:
-            return [p for p, _s in eligible]
+            plans = [p for p, _s in eligible]
+            self._claim_setup_groups(symbol, now, plans)
+            return plans
 
         # Single-best mode: highest structural_rr wins.
         eligible.sort(key=lambda x: x[1], reverse=True)
         best_plan, best_score = eligible[0]
+        self._claim_setup_groups(symbol, now, [best_plan])
         self._log_accept(best_plan, regime, now, competing=len(eligible))
         return best_plan
 
@@ -1082,6 +1204,7 @@ class PlanOrchestrator:
             candidates = data.get("candidates") or []
             daily_df = data.get("daily_df")
 
+            sym_plans: List[Tuple[Dict[str, Any], float]] = []
             for cand in candidates:
                 setup_type = (
                     str(cand.setup_type) if hasattr(cand, "setup_type") else str(cand)
@@ -1111,7 +1234,9 @@ class PlanOrchestrator:
                 if plan and plan.get("eligible", False):
                     score = plan.get("ranking", {}).get("score", 0.0)
                     if score >= min_score:
-                        all_plans.append((plan, score, symbol))
+                        sym_plans.append((plan, score))
+            for plan, score in self._filter_setup_groups(symbol, now, sym_plans):
+                all_plans.append((plan, score, symbol))
 
         if not all_plans:
             logger.info("[ORCH] No eligible plans across symbols")
@@ -1130,6 +1255,7 @@ class PlanOrchestrator:
                 continue
             selected.append(plan)
             seen_symbols.add(symbol)
+            self._claim_setup_groups(symbol, now, [plan])
 
         logger.info(
             f"[ORCH] Selected {len(selected)}/{max_positions} plans for "

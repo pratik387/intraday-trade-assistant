@@ -31,8 +31,8 @@ def cfg(monkeypatch, tmp_path):
         "unflagged": {"enabled": True, "mode": "intraday"},
         "off": {"enabled": False, "mode": "intraday"},
         "night": {"enabled": True, "mode": "overnight"},
-    }, "shortfall_log": {"ledger_path": str(tmp_path / "sf.jsonl"), "rolling_trades": 20, "alarm_frac_of_backtest_edge": 0.3,
-                                          "per_trade_cap_bps": 100}}
+    }, "setup_groups": {}, "shortfall_log": {"ledger_path": str(tmp_path / "sf.jsonl"), "rolling_trades": 20,
+                                                   "alarm_frac_of_backtest_edge": 0.3, "per_trade_cap_bps": 100}}
     monkeypatch.setattr(po, "_ROOT_CFG_CACHE", root)
     return root
 

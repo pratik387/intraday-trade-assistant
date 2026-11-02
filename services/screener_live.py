@@ -554,6 +554,15 @@ class ScreenerLive:
         self._mis_fetcher = mis_fetcher
 
         raw = load_filters()
+        # A live run detects, fetches and schedules only what can trade there:
+        # paper-only intraday setups (live_enabled false) are off for this
+        # screener (the orchestrator's live gate would refuse their plans anyway).
+        from services.plan_orchestrator import paper_only_intraday_setups_in_live
+        _paper_only = paper_only_intraday_setups_in_live(raw.get("setups") or {})
+        if _paper_only:
+            raw = dict(raw, setups={n: (dict(r, enabled=False) if n in _paper_only else r)
+                                    for n, r in raw["setups"].items()})
+            logger.info("LIVE | paper-only intraday setups not run in this daemon: %s", sorted(_paper_only))
         self.raw_cfg = raw  # Store raw config for other methods
         try:
             self.cfg = ScreenerConfig(

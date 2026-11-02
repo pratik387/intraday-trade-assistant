@@ -42,11 +42,13 @@ def test_1m_zone_check_lets_an_immediate_plan_through_far_from_the_zone():
         assert ex._is_price_in_entry_zone(98.0, zone, "short", setup_type="s") is False
 
 
-def test_only_up_spike_uses_immediate_execution():
+def test_only_the_up_spike_family_uses_immediate_execution():
     import io, json
     from pathlib import Path
     cfg = json.load(io.open(Path(__file__).resolve().parents[3] / "config" / "configuration.json",
                             encoding="utf-8"))
     on = [n for n, r in cfg["setups"].items()
           if isinstance(r, dict) and r.get("enabled") and r.get("immediate_execution")]
-    assert on == ["up_spike_fade_short"]     # on 2026-11-02 after the unified replay
+    # up_spike since 2026-11-02 (unified replay); its results-day cells (paper,
+    # 2026-11-03) were validated with the same market-at-decision execution.
+    assert on == ["up_spike_fade_short", "results_breadth_day_fade_short", "results_breadth_late_fade_short"]

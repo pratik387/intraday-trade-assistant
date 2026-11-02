@@ -523,6 +523,21 @@ def up_spike_fade_short_universe(
     )
 
 
+def results_breadth_fade_short_universe(
+    daily_dict: Dict[str, pd.DataFrame],
+    session_date: date,
+    config: Dict[str, Any],
+) -> Set[str]:
+    """Static universe for the results-day breadth cells
+    (results_breadth_day_fade_short / _late): the up_spike_fade_short cohort
+    (small/micro/unknown caps + MIS-eligible). The results-day gate lives in the
+    detector because it changes by session; this cohort does not.
+    """
+    return _illiquid_cap_mis_universe(
+        daily_dict, session_date, config, str(config["event_setup_type"]),
+    )
+
+
 # ---------------------------------------------------------------------------
 # close_dn_overnight_long — overnight CNC/MTF setup, cell-locked
 # ---------------------------------------------------------------------------
@@ -737,6 +752,12 @@ def compute_static_universes(
     cfg = (setups_cfg.get("up_spike_fade_short") or {})
     if cfg.get("enabled"):
         out["up_spike_fade_short"] = up_spike_fade_short_universe(daily_dict, session_date, cfg)
+
+    # results-day breadth cells of up_spike (same cohort; results gate in the detector)
+    for name in ("results_breadth_day_fade_short", "results_breadth_late_fade_short"):
+        cfg = (setups_cfg.get(name) or {})
+        if cfg.get("enabled"):
+            out[name] = results_breadth_fade_short_universe(daily_dict, session_date, cfg)
 
     # mis_unwind_vwap_revert_short: RETIRED 2026-05-19 (see docs/retired_setups.md)
     # circuit_release_fade_short: RETIRED 2026-05-19 (see docs/retired_setups.md)

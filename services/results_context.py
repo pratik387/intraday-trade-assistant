@@ -31,6 +31,17 @@ logger = logging.getLogger(__name__)
 
 _PARQUET = Path(__file__).resolve().parents[1] / "data" / "earnings_calendar" / "earnings_events.parquet"
 _OPEN = time(9, 15)
+_COLUMNS = ["symbol", "announce_time", "trade_date", "bm_date", "announce_time_class", "announce_date"]
+EVENT_TAGS = frozenset({"results_preopen", "board_meeting_today"})
+
+
+def check_calendar(path) -> Optional[str]:
+    """None when the calendar reads with every column the tagger needs, else the error."""
+    try:
+        pd.read_parquet(path, columns=_COLUMNS)
+        return None
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
 
 
 def _bare(sym: str) -> str:
@@ -39,8 +50,7 @@ def _bare(sym: str) -> str:
 
 @lru_cache(maxsize=4)
 def _tags_cached(session_iso: str, path: str) -> Dict[str, str]:
-    ev = pd.read_parquet(path, columns=["symbol", "announce_time", "trade_date", "bm_date",
-                                        "announce_time_class", "announce_date"])
+    ev = pd.read_parquet(path, columns=_COLUMNS)
     sess = date.fromisoformat(session_iso)
     open_ts = datetime.combine(sess, _OPEN)
     sym = ev["symbol"].map(_bare)

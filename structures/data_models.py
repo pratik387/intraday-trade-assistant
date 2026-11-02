@@ -99,6 +99,12 @@ class MarketContext:
     # Technical indicators
     indicators: Optional[Dict[str, float]] = None
 
+    # Start label of the 5m bar this scan processes. Live, df_5m can also hold
+    # the still-forming candle after it (Upstox V3 intraday); a detector that
+    # must see completed candles only trims rows newer than this. None when the
+    # caller does not know it.
+    scan_bar_ts: Optional[pd.Timestamp] = None
+
 
 @dataclass
 class RiskParams:

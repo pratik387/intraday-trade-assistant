@@ -128,7 +128,7 @@ def _sf_cfg(tmp_path, **kw):
 
 
 def test_live_startup_needs_the_edge_on_every_live_setup(monkeypatch, tmp_path):
-    root = {"setups": {"a": {"enabled": True, "mode": "intraday", "live_enabled": True,
+    root = {"setup_groups": {}, "setups": {"a": {"enabled": True, "mode": "intraday", "live_enabled": True,
                              "circuit_cover_order": True, "circuit_risk_budget_pct_of_capital": 0.008}},
             "shortfall_log": _sf_cfg(tmp_path)}
     monkeypatch.setattr(po, "_ROOT_CFG_CACHE", root)
@@ -146,7 +146,7 @@ def test_live_startup_needs_the_edge_on_every_live_setup(monkeypatch, tmp_path):
 @pytest.mark.parametrize("bad", [{"rolling_trades": 0}, {"rolling_trades": 2.5},
                                  {"alarm_frac_of_backtest_edge": 0}, {"per_trade_cap_bps": -1}])
 def test_live_startup_rejects_unusable_values(monkeypatch, tmp_path, bad):
-    root = {"setups": {"a": {"enabled": True, "mode": "intraday", "live_enabled": True,
+    root = {"setup_groups": {}, "setups": {"a": {"enabled": True, "mode": "intraday", "live_enabled": True,
                              "backtest_edge_bps": 53}}, "shortfall_log": _sf_cfg(tmp_path, **bad)}
     monkeypatch.setattr(po, "_ROOT_CFG_CACHE", root)
     with pytest.raises(po.OrchestratorConfigError, match=next(iter(bad))):
@@ -155,7 +155,7 @@ def test_live_startup_rejects_unusable_values(monkeypatch, tmp_path, bad):
 
 def test_live_startup_fails_when_the_ledger_is_not_writable(monkeypatch, tmp_path):
     (tmp_path / "f").write_text("a file, not a directory")
-    root = {"setups": {"a": {"enabled": True, "mode": "intraday", "live_enabled": True,
+    root = {"setup_groups": {}, "setups": {"a": {"enabled": True, "mode": "intraday", "live_enabled": True,
                              "backtest_edge_bps": 53}},
             "shortfall_log": _sf_cfg(tmp_path, ledger_path=str(tmp_path / "f" / "sf.jsonl"))}
     monkeypatch.setattr(po, "_ROOT_CFG_CACHE", root)
