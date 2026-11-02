@@ -11,6 +11,7 @@ from config.logging_config import get_agent_logger
 logger = get_agent_logger()
 
 HOLIDAY_FILE = Path(__file__).resolve().parents[1] / "assets" / "nse_holidays.json"
+_UNCOVERED_YEARS_LOGGED = set()
 
 
 def is_trading_day(date):
@@ -35,6 +36,18 @@ def is_trading_day(date):
                 for item in items
             ]
             holidays = [d for d in holidays if not pd.isna(d)]
+
+        # Past the last listed year every weekday counts as a trading day (NSE
+        # publishes each year's list in December; nothing refreshes the file).
+        if holidays and dt.year not in _UNCOVERED_YEARS_LOGGED:
+            last = max(h.year for h in holidays)
+            if dt.year > last:
+                _UNCOVERED_YEARS_LOGGED.add(dt.year)
+                logger.error(
+                    "NSE holiday calendar has no %d entries (last listed year %d): every %d weekday "
+                    "counts as a trading day. Add NSE's %d cash-market holidays to %s.",
+                    dt.year, last, dt.year, dt.year, HOLIDAY_FILE,
+                )
 
         return dt not in holidays
 

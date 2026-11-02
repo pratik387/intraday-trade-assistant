@@ -386,6 +386,25 @@ def _nse_holidays() -> set:
     return _NSE_HOLIDAYS
 
 
+_UNCOVERED_YEARS_LOGGED = set()
+
+
+def _warn_if_past_calendar(d: date, hols: set) -> None:
+    """Log once per year when `d` lies past the calendar's last listed year: every
+    weekday of an unlisted year counts as a trading day. NSE publishes each year's
+    list in December and nothing refreshes assets/nse_holidays.json on a schedule."""
+    if not hols or d.year in _UNCOVERED_YEARS_LOGGED:
+        return
+    last = max(h.year for h in hols)
+    if d.year > last:
+        _UNCOVERED_YEARS_LOGGED.add(d.year)
+        logger.error(
+            "NSE holiday calendar has no %d entries (last listed year %d): every %d weekday "
+            "counts as a trading day. Add NSE's %d cash-market holidays to assets/nse_holidays.json.",
+            d.year, last, d.year, d.year,
+        )
+
+
 def _is_trading_day(d: date) -> bool:
     """True iff d is an NSE trading day (not a weekend or exchange holiday).
 
@@ -393,7 +412,9 @@ def _is_trading_day(d: date) -> bool:
     handlers must self-guard: running a LIVE entry on a holiday would compute
     signals on stale/closed-market data and could place real orders. Fail safe.
     """
-    return d.weekday() < 5 and d not in _nse_holidays()
+    hols = _nse_holidays()
+    _warn_if_past_calendar(d, hols)
+    return d.weekday() < 5 and d not in hols
 
 
 def _next_trading_day(d: date) -> date:
@@ -407,6 +428,7 @@ def _next_trading_day(d: date) -> date:
     cur = d + timedelta(days=1)
     while cur.weekday() >= 5 or cur in hols:
         cur += timedelta(days=1)
+    _warn_if_past_calendar(cur, hols)
     return cur
 
 

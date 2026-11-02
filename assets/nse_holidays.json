@@ -1,5 +1,109 @@
 [
   {
+    "tradingDate": "26-Jan-2022",
+    "weekDay": "Wednesday",
+    "description": "Republic Day",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "01-Mar-2022",
+    "weekDay": "Tuesday",
+    "description": "Mahashivratri",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "18-Mar-2022",
+    "weekDay": "Friday",
+    "description": "Holi",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "14-Apr-2022",
+    "weekDay": "Thursday",
+    "description": "Dr. Baba Saheb Ambedkar Jayanti/",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "15-Apr-2022",
+    "weekDay": "Friday",
+    "description": "Good Friday",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "03-May-2022",
+    "weekDay": "Tuesday",
+    "description": "Id-Ul-Fitr (Ramzan ID)",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "09-Aug-2022",
+    "weekDay": "Tuesday",
+    "description": "Moharram",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "15-Aug-2022",
+    "weekDay": "Monday",
+    "description": "Independence Day",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "31-Aug-2022",
+    "weekDay": "Wednesday",
+    "description": "Ganesh Chaturthi",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "05-Oct-2022",
+    "weekDay": "Wednesday",
+    "description": "Dussehra",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "24-Oct-2022",
+    "weekDay": "Monday",
+    "description": "Diwali-Laxmi Pujan*",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "26-Oct-2022",
+    "weekDay": "Wednesday",
+    "description": "Diwali-Balipratipada",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "08-Nov-2022",
+    "weekDay": "Tuesday",
+    "description": "Gurunanak Jayanti",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
+  },
+  {
     "tradingDate": "26-Jan-2023",
     "weekDay": "Thursday",
     "description": "Republic Day",
@@ -42,7 +146,7 @@
   {
     "tradingDate": "14-Apr-2023",
     "weekDay": "Friday",
-    "description": "Dr. Ambedkar Jayanti",
+    "description": "Dr. Baba Saheb Ambedkar Jayanti",
     "morning_session": null,
     "evening_session": null,
     "Sr_no": 0
@@ -58,7 +162,7 @@
   {
     "tradingDate": "29-Jun-2023",
     "weekDay": "Thursday",
-    "description": "Bakri Id",
+    "description": "Bakri Id (moved from 28-Jun-2023)",
     "morning_session": null,
     "evening_session": null,
     "Sr_no": 0
@@ -69,7 +173,7 @@
     "description": "Independence Day",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 1
+    "Sr_no": 0
   },
   {
     "tradingDate": "19-Sep-2023",
@@ -77,7 +181,7 @@
     "description": "Ganesh Chaturthi",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 2
+    "Sr_no": 0
   },
   {
     "tradingDate": "02-Oct-2023",
@@ -85,23 +189,23 @@
     "description": "Mahatma Gandhi Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 3
+    "Sr_no": 0
   },
   {
     "tradingDate": "24-Oct-2023",
     "weekDay": "Tuesday",
-    "description": "Diwali Laxmi Pujan",
+    "description": "Dussehra",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 4
+    "Sr_no": 0
   },
   {
     "tradingDate": "14-Nov-2023",
     "weekDay": "Tuesday",
-    "description": "Diwali Balipratipada / Gujarati New Year",
+    "description": "Diwali-Balipratipada",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 5
+    "Sr_no": 0
   },
   {
     "tradingDate": "27-Nov-2023",
@@ -109,7 +213,7 @@
     "description": "Gurunanak Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 6
+    "Sr_no": 0
   },
   {
     "tradingDate": "25-Dec-2023",
@@ -117,7 +221,15 @@
     "description": "Christmas",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 7
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "22-Jan-2024",
+    "weekDay": "Monday",
+    "description": "Special holiday (Ayodhya Pran Pratishtha)",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
   },
   {
     "tradingDate": "26-Jan-2024",
@@ -125,7 +237,7 @@
     "description": "Republic Day",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 8
+    "Sr_no": 0
   },
   {
     "tradingDate": "08-Mar-2024",
@@ -133,7 +245,7 @@
     "description": "Mahashivratri",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 9
+    "Sr_no": 0
   },
   {
     "tradingDate": "25-Mar-2024",
@@ -141,7 +253,7 @@
     "description": "Holi",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 10
+    "Sr_no": 0
   },
   {
     "tradingDate": "29-Mar-2024",
@@ -149,31 +261,23 @@
     "description": "Good Friday",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 11
+    "Sr_no": 0
   },
   {
     "tradingDate": "11-Apr-2024",
     "weekDay": "Thursday",
-    "description": "Id-Ul-Fitr",
+    "description": "Id-Ul-Fitr (Ramadan Eid)",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 12
+    "Sr_no": 0
   },
   {
     "tradingDate": "17-Apr-2024",
     "weekDay": "Wednesday",
-    "description": "Shri Ram Navami",
+    "description": "Shri Ram Navmi",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 13
-  },
-  {
-    "tradingDate": "21-Apr-2024",
-    "weekDay": "Sunday",
-    "description": "Shri Mahavir Jayanti",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 14
+    "Sr_no": 0
   },
   {
     "tradingDate": "01-May-2024",
@@ -181,7 +285,15 @@
     "description": "Maharashtra Day",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 15
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "20-May-2024",
+    "weekDay": "Monday",
+    "description": "General Parliamentary Elections (Mumbai)",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
   },
   {
     "tradingDate": "17-Jun-2024",
@@ -189,23 +301,23 @@
     "description": "Bakri Id",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 16
+    "Sr_no": 0
   },
   {
     "tradingDate": "17-Jul-2024",
     "weekDay": "Wednesday",
-    "description": "Muharram",
+    "description": "Moharram",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 17
+    "Sr_no": 0
   },
   {
     "tradingDate": "15-Aug-2024",
     "weekDay": "Thursday",
-    "description": "Independence Day",
+    "description": "Independence Day/Parsi New Year",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 18
+    "Sr_no": 0
   },
   {
     "tradingDate": "02-Oct-2024",
@@ -213,15 +325,15 @@
     "description": "Mahatma Gandhi Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 19
+    "Sr_no": 0
   },
   {
     "tradingDate": "01-Nov-2024",
     "weekDay": "Friday",
-    "description": "Diwali Laxmi Pujan",
+    "description": "Diwali Laxmi Pujan*",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 20
+    "Sr_no": 0
   },
   {
     "tradingDate": "15-Nov-2024",
@@ -229,7 +341,15 @@
     "description": "Gurunanak Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 21
+    "Sr_no": 0
+  },
+  {
+    "tradingDate": "20-Nov-2024",
+    "weekDay": "Wednesday",
+    "description": "Maharashtra Legislative Assembly Elections",
+    "morning_session": null,
+    "evening_session": null,
+    "Sr_no": 0
   },
   {
     "tradingDate": "25-Dec-2024",
@@ -237,31 +357,7 @@
     "description": "Christmas",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 22
-  },
-  {
-    "tradingDate": "01-Jan-2025",
-    "weekDay": "Wednesday",
-    "description": "New year",
-    "morning_session": "Open",
-    "evening_session": "Closed",
-    "Sr_no": 1
-  },
-  {
-    "tradingDate": "26-Jan-2025",
-    "weekDay": "Sunday",
-    "description": "Republic Day",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 1
-  },
-  {
-    "tradingDate": "19-Feb-2025",
-    "weekDay": "Wednesday",
-    "description": "Chhatrapati Shivaji Maharaj Jayanti",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 2
+    "Sr_no": 0
   },
   {
     "tradingDate": "26-Feb-2025",
@@ -269,7 +365,7 @@
     "description": "Mahashivratri",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 3
+    "Sr_no": 0
   },
   {
     "tradingDate": "14-Mar-2025",
@@ -277,15 +373,7 @@
     "description": "Holi",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 4
-  },
-  {
-    "tradingDate": "30-Mar-2025",
-    "weekDay": "Sunday",
-    "description": "Gudi Padwa",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 5
+    "Sr_no": 0
   },
   {
     "tradingDate": "31-Mar-2025",
@@ -293,23 +381,7 @@
     "description": "Id-Ul-Fitr (Ramadan Eid)",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 6
-  },
-  {
-    "tradingDate": "01-Apr-2025",
-    "weekDay": "Tuesday",
-    "description": "Annual Bank Closing",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 7
-  },
-  {
-    "tradingDate": "06-Apr-2025",
-    "weekDay": "Sunday",
-    "description": "Shri Ram Navami",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 8
+    "Sr_no": 0
   },
   {
     "tradingDate": "10-Apr-2025",
@@ -317,7 +389,7 @@
     "description": "Shri Mahavir Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 9
+    "Sr_no": 0
   },
   {
     "tradingDate": "14-Apr-2025",
@@ -325,7 +397,7 @@
     "description": "Dr. Baba Saheb Ambedkar Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 10
+    "Sr_no": 0
   },
   {
     "tradingDate": "18-Apr-2025",
@@ -333,7 +405,7 @@
     "description": "Good Friday",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 11
+    "Sr_no": 0
   },
   {
     "tradingDate": "01-May-2025",
@@ -341,55 +413,23 @@
     "description": "Maharashtra Day",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 12
-  },
-  {
-    "tradingDate": "12-May-2025",
-    "weekDay": "Monday",
-    "description": "Buddha Pournima",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 13
-  },
-  {
-    "tradingDate": "07-Jun-2025",
-    "weekDay": "Saturday",
-    "description": "Bakri Id",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 14
-  },
-  {
-    "tradingDate": "06-Jul-2025",
-    "weekDay": "Sunday",
-    "description": "Muharram",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 15
+    "Sr_no": 0
   },
   {
     "tradingDate": "15-Aug-2025",
     "weekDay": "Friday",
-    "description": "Independence Day / Parsi New Year",
+    "description": "Independence Day",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 16
+    "Sr_no": 0
   },
   {
     "tradingDate": "27-Aug-2025",
     "weekDay": "Wednesday",
-    "description": "Shri Ganesh Chaturthi",
+    "description": "Ganesh Chaturthi",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 17
-  },
-  {
-    "tradingDate": "05-Sep-2025",
-    "weekDay": "Friday",
-    "description": "Id-E-Milad",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 18
+    "Sr_no": 0
   },
   {
     "tradingDate": "02-Oct-2025",
@@ -397,23 +437,23 @@
     "description": "Mahatma Gandhi Jayanti/Dussehra",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 19
+    "Sr_no": 0
   },
   {
     "tradingDate": "21-Oct-2025",
     "weekDay": "Tuesday",
-    "description": "Diwali Laxmi Pujan",
+    "description": "Diwali Laxmi Pujan*",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 20
+    "Sr_no": 0
   },
   {
     "tradingDate": "22-Oct-2025",
     "weekDay": "Wednesday",
-    "description": "Balipratipada",
+    "description": "Diwali-Balipratipada",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 21
+    "Sr_no": 0
   },
   {
     "tradingDate": "05-Nov-2025",
@@ -421,7 +461,7 @@
     "description": "Prakash Gurpurb Sri Guru Nanak Dev",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 22
+    "Sr_no": 0
   },
   {
     "tradingDate": "25-Dec-2025",
@@ -429,15 +469,7 @@
     "description": "Christmas",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 23
-  },
-  {
-    "tradingDate": "01-Jan-2026",
-    "weekDay": "Thursday",
-    "description": "New year",
-    "morning_session": "Open",
-    "evening_session": "Closed",
-    "Sr_no": 1
+    "Sr_no": 0
   },
   {
     "tradingDate": "15-Jan-2026",
@@ -445,7 +477,7 @@
     "description": "Municipal Corporation Election - Maharashtra",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 1
+    "Sr_no": 0
   },
   {
     "tradingDate": "26-Jan-2026",
@@ -453,23 +485,7 @@
     "description": "Republic Day",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 2
-  },
-  {
-    "tradingDate": "15-Feb-2026",
-    "weekDay": "Sunday",
-    "description": "Mahashivratri",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 3
-  },
-  {
-    "tradingDate": "19-Feb-2026",
-    "weekDay": "Thursday",
-    "description": "Chatrapati Shivaji Maharaj Jayanti",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 4
+    "Sr_no": 0
   },
   {
     "tradingDate": "03-Mar-2026",
@@ -477,23 +493,7 @@
     "description": "Holi",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 5
-  },
-  {
-    "tradingDate": "19-Mar-2026",
-    "weekDay": "Thursday",
-    "description": "Gudi Padwa",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 6
-  },
-  {
-    "tradingDate": "21-Mar-2026",
-    "weekDay": "Saturday",
-    "description": "Id-Ul-Fitr (Ramadan Eid)",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 7
+    "Sr_no": 0
   },
   {
     "tradingDate": "26-Mar-2026",
@@ -501,7 +501,7 @@
     "description": "Shri Ram Navami",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 8
+    "Sr_no": 0
   },
   {
     "tradingDate": "31-Mar-2026",
@@ -509,15 +509,7 @@
     "description": "Shri Mahavir Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 9
-  },
-  {
-    "tradingDate": "01-Apr-2026",
-    "weekDay": "Wednesday",
-    "description": "Annual Bank Closing",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 10
+    "Sr_no": 0
   },
   {
     "tradingDate": "03-Apr-2026",
@@ -525,7 +517,7 @@
     "description": "Good Friday",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 11
+    "Sr_no": 0
   },
   {
     "tradingDate": "14-Apr-2026",
@@ -533,7 +525,7 @@
     "description": "Dr. Baba Saheb Ambedkar Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 12
+    "Sr_no": 0
   },
   {
     "tradingDate": "01-May-2026",
@@ -541,7 +533,7 @@
     "description": "Maharashtra Day",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 13
+    "Sr_no": 0
   },
   {
     "tradingDate": "28-May-2026",
@@ -549,7 +541,7 @@
     "description": "Bakri Id",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 14
+    "Sr_no": 0
   },
   {
     "tradingDate": "26-Jun-2026",
@@ -557,23 +549,7 @@
     "description": "Muharram",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 15
-  },
-  {
-    "tradingDate": "15-Aug-2026",
-    "weekDay": "Saturday",
-    "description": "Independence Day",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 16
-  },
-  {
-    "tradingDate": "26-Aug-2026",
-    "weekDay": "Wednesday",
-    "description": "Id-E-Milad",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 17
+    "Sr_no": 0
   },
   {
     "tradingDate": "14-Sep-2026",
@@ -581,7 +557,7 @@
     "description": "Ganesh Chaturthi",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 18
+    "Sr_no": 0
   },
   {
     "tradingDate": "02-Oct-2026",
@@ -589,7 +565,7 @@
     "description": "Mahatma Gandhi Jayanti",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 19
+    "Sr_no": 0
   },
   {
     "tradingDate": "20-Oct-2026",
@@ -597,15 +573,7 @@
     "description": "Dussehra",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 20
-  },
-  {
-    "tradingDate": "08-Nov-2026",
-    "weekDay": "Sunday",
-    "description": "Diwali Laxmi Pujan*",
-    "morning_session": null,
-    "evening_session": null,
-    "Sr_no": 21
+    "Sr_no": 0
   },
   {
     "tradingDate": "10-Nov-2026",
@@ -613,7 +581,7 @@
     "description": "Diwali-Balipratipada",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 22
+    "Sr_no": 0
   },
   {
     "tradingDate": "24-Nov-2026",
@@ -621,7 +589,7 @@
     "description": "Prakash Gurpurb Sri Guru Nanak Dev",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 23
+    "Sr_no": 0
   },
   {
     "tradingDate": "25-Dec-2026",
@@ -629,6 +597,6 @@
     "description": "Christmas",
     "morning_session": null,
     "evening_session": null,
-    "Sr_no": 24
+    "Sr_no": 0
   }
 ]
