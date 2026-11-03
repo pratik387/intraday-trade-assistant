@@ -68,3 +68,10 @@ def test_weights_scale_contribution():
     baskets = {"A2": [_cand("ABC", 1.0)], "C1": [_cand("XYZ", 1.0)]}
     chosen = _sel().select(baskets, set(), {"A2": 2.0, "C1": 1.0}, limit=10)
     assert chosen[0]["bare"] == "ABC" and chosen[0]["composite"] == 2.0
+
+
+def test_owner_adv_is_carried_to_the_chosen_row():
+    a = dict(_cand("ABC", 0.5), adv_prior_inr=1.0e6)
+    c = dict(_cand("ABC", 2.0), adv_prior_inr=9.0e6)
+    chosen = _sel().select({"A2": [a], "C1": [c]}, set(), {"A2": 1.0, "C1": 1.0}, limit=10)
+    assert chosen[0]["owner"] == "C1" and chosen[0]["adv_prior_inr"] == 9.0e6

@@ -656,3 +656,53 @@ def test_mtf_delisted_held_sentinel(monkeypatch, tmp_path):
                          now_ist=pd.Timestamp("2026-07-14 15:28:00"),
                          paper_mode=True, phase="exits")
     assert summary.get("mtf_delisted_held") == ["A2:NSE:GHOSTNAME"]
+
+
+def test_selection_log_records_what_the_book_did_with_each_chosen_name(monkeypatch, tmp_path):
+    # 2026-11-03: "chosen" is the composite's pick; the cluster caps act after
+    # it. Each chosen row now says whether an AMO went out or which cap stopped it.
+    import json as _json
+    import services.execution.mtf_capitulation_handlers as mh
+    cfg = _two_setup_config(tmp_path)
+    cfg["multi_day_portfolio"]["clusters"] = {
+        "cap": {"setups": ["A2", "C1"], "max_concurrent": 10, "max_new_per_day": 1,
+                "mean_pairwise_corr": 0.2}}
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    monkeypatch.setattr(mh, "_decay_paused", lambda name, raw: False)
+    monkeypatch.setattr(mh, "_prewarm_daily_universe", lambda setups, broker: None)
+    monkeypatch.setattr(mh, "_rank_basket_for_setup",
+                        lambda name, raw, broker, today, ca_ex_dates, repo_root:
+                        [{"symbol": "FIRST", "cap_score": 2.0, "tshock": 3.0, "close": 100.0,
+                          "trail_ret": -0.12, "adv_tier": 1, "rank_pct": 0.01},
+                         {"symbol": "SECOND", "cap_score": 1.0, "tshock": 2.5, "close": 50.0,
+                          "trail_ret": -0.10, "adv_tier": 1, "rank_pct": 0.04}])
+    summary = mh.run_eod(cfg, _stub_broker_amo(), now_ist=pd.Timestamp("2026-06-22 15:35:00"),
+                         paper_mode=True, phase="entries")
+    assert summary["entered_count"] == 1
+    rows = {r["symbol"]: r for r in (_json.loads(l) for l in (tmp_path / "sel.jsonl").read_text().splitlines())}
+    assert rows["FIRST"]["chosen"] and rows["FIRST"]["book_outcome"] == "amo_placed"
+    assert rows["SECOND"]["chosen"] and rows["SECOND"]["book_outcome"] == "cluster_max_new_per_day"
+
+
+def test_participation_obs_sees_the_owner_adv(monkeypatch, tmp_path, caplog):
+    # 2026-11-03: the composite selector dropped adv_prior_inr, so every
+    # PARTICIPATION_OBS line read adv=UNAVAILABLE.
+    import logging
+    import services.execution.mtf_capitulation_handlers as mh
+    cfg = _two_setup_config(tmp_path)
+    monkeypatch.setattr(mh, "_eligible_multiday_setups",
+                        lambda config, *, paper_mode: [("A2", cfg["setups"]["A2"])])
+    monkeypatch.setattr(mh, "_decay_paused", lambda name, raw: False)
+    monkeypatch.setattr(mh, "_prewarm_daily_universe", lambda setups, broker: None)
+    monkeypatch.setattr(mh, "_rank_basket_for_setup",
+                        lambda name, raw, broker, today, ca_ex_dates, repo_root:
+                        [{"symbol": "ADVCO", "cap_score": 2.0, "tshock": 3.0, "close": 100.0,
+                          "trail_ret": -0.12, "adv_tier": 1, "rank_pct": 0.01,
+                          "adv_prior_inr": 5_000_000.0}])
+    seen = []
+    monkeypatch.setattr(mh.logger, "info", lambda msg, *a, **k: seen.append(msg % a if a else msg))
+    mh.run_eod(cfg, _stub_broker_amo(), now_ist=pd.Timestamp("2026-06-22 15:35:00"),
+               paper_mode=True, phase="entries")
+    obs = [s for s in seen if s.startswith("PARTICIPATION_OBS")]
+    assert obs and "adv=Rs5000000" in obs[0] and "UNAVAILABLE" not in obs[0]

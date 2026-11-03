@@ -105,7 +105,8 @@ class MultiDayCompositeSelector:
             limit: max names to return (caller computes from combined caps).
 
         Returns: [{symbol(NSE:), bare, composite, tshock, owner, contributors,
-            per_setup_cap_score, close, trail_ret}], composite-desc.
+            per_setup_cap_score, close, trail_ret, sigma20_pct, adv_prior_inr}],
+            composite-desc.
         """
         held = {_bare(s) for s in held_symbols}
         agg: Dict[str, Dict[str, Any]] = {}
@@ -125,6 +126,10 @@ class MultiDayCompositeSelector:
                         "close": float(cand["close"]),
                         "trail_ret": float(cand["trail_ret"]),
                         "sigma20_pct": cand.get("sigma20_pct"),
+                        # Owner's point-in-time ADV, for PARTICIPATION_OBS in the
+                        # executor (dropped here before 2026-11-03: every line
+                        # logged adv=UNAVAILABLE).
+                        "adv_prior_inr": cand.get("adv_prior_inr"),
                     }
                     agg[bare] = a
                 a["composite"] += contrib
@@ -137,6 +142,7 @@ class MultiDayCompositeSelector:
                     a["close"] = float(cand["close"])
                     a["trail_ret"] = float(cand["trail_ret"])
                     a["sigma20_pct"] = cand.get("sigma20_pct")
+                    a["adv_prior_inr"] = cand.get("adv_prior_inr")
 
         if self.slot_ranking_mode == "unbiased_hash" and session_date is None:
             raise ValueError("select(session_date=...) is required for unbiased_hash ordering")

@@ -821,12 +821,21 @@ def _held_snapshots(setups, persistences):
     return held, total_held
 
 
-def _log_selection_diagnostics(baskets, chosen, today, log_path_str):
+def _log_selection_diagnostics(baskets, chosen, today, log_path_str, outcomes=None):
     """One jsonl row per (setup, symbol, day): cap_score + composite/owner/
     contributors/consensus + chosen flag. Feeds the section 6.1 IC analysis.
     Logs EVERY flagged name (not only chosen), so forward-return IC can be
     computed for picks that were capped out. Never breaks the cron.
+
+    `chosen` means picked by the composite selector; the cluster caps, the MTF
+    check and sizing act AFTER it, so a chosen name may never be bought.
+    `book_outcome` ({bare: outcome}) records what the book did with each chosen
+    name: amo_placed | cluster_max_concurrent | cluster_max_new_per_day |
+    not_mtf | qty_zero | amo_failed. None for names not chosen. (Before
+    2026-11-03 the log had no outcome: 470 rows read "chosen" against 132
+    positions opened.)
     """
+    outcomes = outcomes or {}
     import json as _json
     try:
         # consensus + composite views keyed by bare symbol
@@ -851,6 +860,7 @@ def _log_selection_diagnostics(baskets, chosen, today, log_path_str):
                         "trail_ret": float(c["trail_ret"]), "rank_pct": float(c["rank_pct"]),
                         "consensus_count": int(consensus[b]),
                         "chosen": ch is not None,
+                        "book_outcome": (outcomes.get(b) if ch else None),
                         "composite": (float(ch["composite"]) if ch else None),
                         "owner": (ch["owner"] if ch else None),
                         "contributors": (ch["contributors"] if ch else None),
@@ -902,10 +912,22 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
                 max(0, int(fam["max_concurrent"]) - total_held))
     chosen = selector.select(baskets, held_symbols=held, weights=weights, limit=limit,
                              session_date=today)
-    _log_selection_diagnostics(baskets, chosen, today, fam["selection_log_path"])
+    outcomes: dict = {}
+    try:
+        _enter_chosen(chosen, active, fam, broker, persistences, today, paper_mode,
+                      summary, news_by_bare, outcomes)
+    finally:
+        # Written after the book acts so each chosen row carries its outcome;
+        # in finally so a failed entry pass still leaves the diagnostics.
+        _log_selection_diagnostics(baskets, chosen, today, fam["selection_log_path"], outcomes)
+
+
+def _enter_chosen(chosen, active, fam, broker, persistences, today, paper_mode,
+                  summary, news_by_bare, outcomes) -> None:
+    """Cluster caps, sizing and AMO buys for the composite's chosen names.
+    Records each name's fate in `outcomes` ({bare: outcome})."""
     if not chosen:
         return
-
     active_by_name = dict(active)
     entry_date = _next_trading_day(today)
     # Per-setup open counts, for the cluster cap. Same snapshot source as
@@ -925,6 +947,7 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
             product, leverage = "CNC", 1.0
         else:
             summary["rejected_count"] += 1
+            outcomes[bare] = "not_mtf"
             continue
         # --- PHASE 3: cluster cap -------------------------------------------
         # Per-setup slot pools would let the book hold the same capitulation bet
@@ -940,11 +963,13 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
                 logger.info("mtf_capitulation: cluster %s at max_concurrent=%d; skipping %s",
                             cl_name, int(cl_cfg["max_concurrent"]), symbol)
                 summary["skipped_count"] += 1
+                outcomes[bare] = "cluster_max_concurrent"
                 continue
             if new_in_cl >= int(cl_cfg["max_new_per_day"]):
                 logger.info("mtf_capitulation: cluster %s at max_new_per_day=%d; skipping %s",
                             cl_name, int(cl_cfg["max_new_per_day"]), symbol)
                 summary["skipped_count"] += 1
+                outcomes[bare] = "cluster_max_new_per_day"
                 continue
 
         # --- PHASE 2: volatility-targeted, correlation-aware sizing ---------
@@ -1029,6 +1054,7 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
 
         if qty <= 0:
             summary["rejected_count"] += 1
+            outcomes[bare] = "qty_zero"
             continue
         if cl_cfg is not None:
             cluster_new_today[cl_name] = cluster_new_today.get(cl_name, 0) + 1
@@ -1038,6 +1064,7 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
         except Exception as e:
             logger.error("mtf_capitulation[%s]: AMO BUY failed for %s: %s", owner, symbol, e)
             summary["skipped_count"] += 1
+            outcomes[bare] = "amo_failed"
             continue
         persistences[owner].save_position(
             symbol=symbol, side="BUY", qty=qty, avg_price=0.0, trade_id=trade_id,
@@ -1055,6 +1082,7 @@ def _run_entries_composite(setups, broker, persistences, today, now, paper_mode,
                    **_target_exit_state(raw, c.get("sigma20_pct"))},
             entry_date=entry_date.isoformat(), exit_on_date=exit_on_date.isoformat(),
             product=product)
+        outcomes[bare] = "amo_placed"
         summary["entered_count"] += 1
         summary.setdefault("by_setup", {}).setdefault(owner, {"entered": 0})
         summary["by_setup"][owner]["entered"] = summary["by_setup"][owner].get("entered", 0) + 1

@@ -1749,6 +1749,8 @@
     "cap_score_clip": 3.0,
     "tiebreaker": "tshock",
     "selection_log_path": "logs/multiday_selection.jsonl",
+    "events_log_dir": "logs/multiday_events",
+    "_comment_events_log_dir": "Directory of the family's events.jsonl (ENTRY / EXIT rows from diag_event_log). ONE file across all cron runs so an ENTRY at the 09:33 verify pairs with its EXIT at a later 15:28 pass; each row carries its run's run_id. Paper/live crons only (dry-run replays never write it). Before 2026-11-03 the cron never configured the writer and every event write failed.",
     "risk_budget": {
       "_comment": "PHASE 1 of specs/2026-08-12-multiday-capital-management-and-selection-plan.md. Until 2026-08-12 this book had NO risk budget at all: take-all caps and a flat Rs1L margin per position, which measured 65-87% ANNUALISED volatility (daily book P&L SD Rs 33,035, worst day -Rs 60,452) against a 10-15% institutional norm. capital_inr and daily_vol_target_pct are OPERATOR CHOICES, not fitted values -- set daily_vol_target_pct from the drawdown you can tolerate, NEVER by maximising backtested P&L. book_position_sd_pct and mean_pairwise_corr are MEASURED (23 entry days, 121 deduped positions) and should be re-measured, not guessed, as the sample grows.",
       "capital_inr": 1000000.0,

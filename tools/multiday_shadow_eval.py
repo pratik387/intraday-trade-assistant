@@ -28,7 +28,9 @@ METHOD
 ------
 For every candidate in the selection log:
   entry = OPEN of the next trading session after session_date  (AMO fill)
-  exit  = CLOSE `hold_days` trading sessions later             (per-setup config)
+  exit  = CLOSE `hold_days` trading sessions AFTER the entry session
+          (per-setup config; production's exit_on_date = entry_date +
+          hold_days trading days, the cell-lock's "T+1+K close")
 Returns are gross of fees — fees are ~proportional across policies, so they
 cancel in a policy-vs-policy comparison. Sizing is deliberately ignored: this
 measures WHICH names a policy picks, not how big they are (that is Phase 2).
@@ -98,7 +100,11 @@ def build_return_fn(symbols, lo: date, hi: date):
         if not len(after):
             return None
         e = after[0]
-        x = e + max(1, int(hold)) - 1
+        # Exit at the close hold_days sessions after the entry session, as
+        # production does. Before 2026-11-03 this was e + hold - 1, one session
+        # early (rebuilt kday exits then matched realised at corr ~0.75; with
+        # the production day, 0.97).
+        x = e + max(1, int(hold))
         if x >= len(df):
             return None
         try:
@@ -180,7 +186,8 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = json.loads((ROOT / "config" / "configuration.json").read_text(encoding="utf-8"))
-    holds = {k: int(v.get("hold_days", 2)) for k, v in cfg["setups"].items()
+    # No fallback hold: a multi_day setup without hold_days is a config error.
+    holds = {k: int(v["hold_days"]) for k, v in cfg["setups"].items()
              if isinstance(v, dict) and str(v.get("horizon")) == "multi_day"}
 
     rows = [json.loads(l) for l in Path(args.log).read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -207,9 +214,16 @@ def main() -> int:
     fwd = build_return_fn({c["symbol"] for c in cands},
                           date.fromisoformat(sessions[0]), date.fromisoformat(sessions[-1]))
     resolved = 0
+    unknown = sorted({str(c.get("setup")) for c in cands if c.get("setup") not in holds})
+    if unknown:
+        # A row from a setup no longer in config has no known hold: skip it
+        # rather than guess one.
+        print(f"skipping rows from setups not in config: {unknown}")
     for c in cands:
-        hold = holds.get(c.get("setup"), 2)
-        c["fwd"] = fwd(c["symbol"], date.fromisoformat(c["session_date"]), hold)
+        if c.get("setup") not in holds:
+            c["fwd"] = None
+            continue
+        c["fwd"] = fwd(c["symbol"], date.fromisoformat(c["session_date"]), holds[c["setup"]])
         resolved += c["fwd"] is not None
     print(f"forward returns resolved: {resolved}/{len(cands)} ({100*resolved/len(cands):.0f}%)")
     cands = [c for c in cands if c["fwd"] is not None]

@@ -960,6 +960,23 @@ if __name__ == "__main__":
             sys.exit(0)
         else:  # multi_day
             from services.execution.mtf_capitulation_handlers import run_eod, run_verify_entries
+            if not args.dry_run:
+                # The cron bypasses setup_logging, which is what configures the
+                # events.jsonl writer for the daemon; without this every ENTRY /
+                # EXIT event write fails. One family file across runs (config).
+                # A writer failure (disk, permissions) must never stop the run:
+                # the exit pass squares off positions due today. The config key
+                # is read outside the try, so a missing key still fails fast.
+                from diagnostics.diag_event_log import diag_event_log
+                _events_dir = str(cfg["multi_day_portfolio"]["events_log_dir"])
+                try:
+                    diag_event_log.set_output(
+                        out_dir=_events_dir,
+                        run_id=f"multiday_{args.action}_{args.session_date or 'today'}",
+                    )
+                except OSError as _ev_err:
+                    print(f"[multi_day] events.jsonl writer not configured ({_ev_err}); "
+                          f"continuing without ENTRY/EXIT events", file=sys.stderr)
             if args.action == "exit":
                 # PRE-close (~15:28): square off positions due today at the close.
                 summary = run_eod(cfg, broker, paper_mode=paper_mode, phase="exits")
