@@ -182,7 +182,7 @@ def _reconcile_unattached_buys(broker, pool, now, summary: dict) -> int:
             summary.setdefault("reconcile_unhedged", []).append(symbol)
             continue
         pool.attach_buy_fill(slot.slot_id, fill_price=avg,
-                             fill_ts_iso=now.isoformat(), order_id=oid, qty=fq)
+                             fill_ts_iso=_fill_ts_iso(o, now), order_id=oid, qty=fq)
         pool.persist()
         n_attached += 1
         logger.warning(
@@ -1437,7 +1437,8 @@ def run_entry(
                 summary["skipped_count"] += 1
                 continue
 
-            # Determine fill price
+            # Determine fill price (fill_status: the broker status it came from, for the fill time)
+            fill_status = None
             if paper_mode:
                 fill_price = _paper_fill_price_entry(broker, symbol, today)
                 if fill_price is None:
@@ -1451,6 +1452,7 @@ def run_entry(
                 fill_price, last_status = _live_poll_fill_ex(
                     broker, buy_order_id, timeout_sec=poll_timeout,
                 )
+                fill_status = last_status
                 if fill_price is None:
                     st = str((last_status or {}).get("status") or "").upper()
                     if st in ("REJECTED", "CANCELLED"):
@@ -1499,7 +1501,7 @@ def run_entry(
                                     pool.attach_buy_fill(
                                         slot.slot_id,
                                         fill_price=float(rfill),
-                                        fill_ts_iso=now.isoformat(),
+                                        fill_ts_iso=_fill_ts_iso(rstatus, now),
                                         order_id=str(retry_order_id),
                                         qty=int(retry_qty),
                                     )
@@ -1527,7 +1529,7 @@ def run_entry(
                                         pq, pa = rpartial
                                         pool.attach_buy_fill(
                                             slot.slot_id, fill_price=float(pa),
-                                            fill_ts_iso=now.isoformat(),
+                                            fill_ts_iso=_fill_ts_iso(_cstatus, now),
                                             order_id=str(retry_order_id), qty=int(pq),
                                         )
                                         summary["fired_count"] += 1
@@ -1542,7 +1544,7 @@ def run_entry(
                                     if cfill is not None:
                                         pool.attach_buy_fill(
                                             slot.slot_id, fill_price=float(cfill),
-                                            fill_ts_iso=now.isoformat(),
+                                            fill_ts_iso=_fill_ts_iso(_cstatus, now),
                                             order_id=str(retry_order_id),
                                             qty=int(retry_qty),
                                         )
@@ -1574,7 +1576,7 @@ def run_entry(
                                 symbol, buy_order_id, st, pqty, pavg,
                             )
                             pool.attach_buy_fill(slot.slot_id, fill_price=float(pavg),
-                                                 fill_ts_iso=now.isoformat(),
+                                                 fill_ts_iso=_fill_ts_iso(last_status, now),
                                                  order_id=str(buy_order_id), qty=int(pqty))
                             summary["fired_count"] += 1
                             summary["events"].append({
@@ -1610,6 +1612,7 @@ def run_entry(
                     partial = _partial_fill_from_status(cstatus) if cfill is None else None
                     if cfill is not None:
                         fill_price = cfill  # late FULL fill won the race — attach below
+                        fill_status = cstatus
                     elif partial is not None:
                         # Cancel killed only the REMAINDER — the filled part is a
                         # real position and MUST get its exit (2026-07-15 AJOONI).
@@ -1620,7 +1623,7 @@ def run_entry(
                             symbol, buy_order_id, pqty, pavg,
                         )
                         pool.attach_buy_fill(slot.slot_id, fill_price=float(pavg),
-                                             fill_ts_iso=now.isoformat(),
+                                             fill_ts_iso=_fill_ts_iso(cstatus, now),
                                              order_id=str(buy_order_id), qty=int(pqty))
                         summary["fired_count"] += 1
                         summary["events"].append({
@@ -1644,7 +1647,7 @@ def run_entry(
             pool.attach_buy_fill(
                 slot.slot_id,
                 fill_price=float(fill_price),
-                fill_ts_iso=now.isoformat(),
+                fill_ts_iso=_fill_ts_iso(fill_status, now),
                 order_id=str(buy_order_id),
                 qty=int(plan.qty),
             )
@@ -1993,7 +1996,10 @@ def run_verify_exit(
             summary["orphan_t0_count"] += 1
             continue
 
-        # Determine sell fill price
+        # Determine sell fill price. sell_status is set only on the normal AMO
+        # fill; the other paths fill during this pass (failsafe) or at an
+        # unknown time (out-of-band, stale), so they keep the pass's time.
+        sell_status = None
         if stale_px is not None:
             sell_price = stale_px
         elif paper_mode:
@@ -2027,7 +2033,7 @@ def run_verify_exit(
             if sell_price is None:
                 continue
         else:
-            sell_price = _live_check_amo_fill(broker, slot.amo_sell_order_id)
+            sell_price, sell_status = _live_check_amo_fill_ex(broker, slot.amo_sell_order_id)
             if sell_price is None:
                 # Capture WHY before doing anything else. Kite's order_history
                 # only covers the current day, so an AMO placed at 16:05 on T is
@@ -2147,7 +2153,7 @@ def run_verify_exit(
         pool.settle(
             slot_id=slot.slot_id,
             sell_fill_price=float(sell_price),
-            sell_fill_ts_iso=now.isoformat(),
+            sell_fill_ts_iso=_fill_ts_iso(sell_status, now),
             fees_inr=float(fees_only),
             interest_inr=float(interest),
         )
@@ -3094,14 +3100,40 @@ def _live_poll_fill(broker, order_id: str, timeout_sec: int = 60) -> Optional[fl
     return _live_poll_fill_ex(broker, order_id, timeout_sec=timeout_sec)[0]
 
 
-def _live_check_amo_fill(broker, amo_order_id: str) -> Optional[float]:
-    """Check whether an AMO order has filled. Returns avg fill price or None."""
+def _live_check_amo_fill_ex(broker, amo_order_id: str) -> tuple:
+    """Check whether an AMO order has filled. Returns (avg fill price, status) or (None, None)."""
     if not hasattr(broker, "get_order_status"):
-        return None
+        return None, None
     try:
         status = broker.get_order_status(amo_order_id)
         if status and status.get("status") == "COMPLETE":
-            return float(status.get("average_price", 0.0))
+            return float(status.get("average_price", 0.0)), status
     except Exception as e:
         logger.warning("_live_check_amo_fill failed: %s", e)
-    return None
+    return None, None
+
+
+def _live_check_amo_fill(broker, amo_order_id: str) -> Optional[float]:
+    """Check whether an AMO order has filled. Returns avg fill price or None."""
+    return _live_check_amo_fill_ex(broker, amo_order_id)[0]
+
+
+def _fill_ts_iso(status, fallback) -> str:
+    """The order's exchange time as an IST-naive ISO string, else fallback's.
+
+    Slot buy/sell fill times used to be the pass's start (every 2026-11-03 buy
+    read 15:26:03 though the orders went out ~15:28; every exit read the 09:16
+    verify run). exchange_timestamp is the exchange's last update to the order:
+    the fill time for a COMPLETE order, the cancel time for a partly filled one
+    that was cancelled. Paper has none and keeps the pass's time. Only the slot
+    fields use this; the ledger's ts_iso stays the settlement time that the
+    SPRT and the tripwire count from.
+    """
+    ts = (status or {}).get("exchange_timestamp")
+    if ts:
+        try:
+            from utils.time_util import _to_naive_ist
+            return _to_naive_ist(pd.Timestamp(ts)).isoformat()
+        except (TypeError, ValueError):
+            pass
+    return pd.Timestamp(fallback).isoformat()

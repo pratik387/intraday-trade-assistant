@@ -80,6 +80,18 @@ def _split_symbol(symbol: str) -> Tuple[str, str]:
     return exch, tsym
 
 
+def _iso_naive_ist(ts) -> Optional[str]:
+    """Kite timestamp (datetime or string, tz-aware or IST wall time) -> IST-naive ISO, or None."""
+    if ts is None or ts == "":
+        return None
+    try:
+        import pandas as pd
+        from utils.time_util import _to_naive_ist
+        return _to_naive_ist(pd.Timestamp(ts)).isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
 class KiteBroker:
     def __init__(self, api_key: Optional[str] = None, access_token: Optional[str] = None, dry_run: bool = False, ltp_cache=None) -> None:
         self.api_key = env.KITE_API_KEY
@@ -620,6 +632,9 @@ class KiteBroker:
         status_message carries Kite's rejection reason (e.g. the async
         "Insufficient funds. Margin required: ..." of 2026-07-06) so callers
         can fast-fail REJECTED orders and size a reduced-qty retry.
+        exchange_timestamp is the exchange's last update to the order as an
+        IST-naive ISO string (the fill time once COMPLETE), or None; the
+        overnight slots record it as the real fill time.
         """
         if self.dry_run:
             for o in self._paper_orders:
@@ -628,9 +643,11 @@ class KiteBroker:
                             "status": str(o.get("status", "COMPLETE")).upper(),
                             "average_price": float(o.get("average_price") or 0.0),
                             "filled_quantity": int(o.get("filled_quantity") or o.get("quantity") or 0),
-                            "status_message": str(o.get("status_message") or "")}
+                            "status_message": str(o.get("status_message") or ""),
+                            "exchange_timestamp": None}
             return {"order_id": str(order_id), "status": "UNKNOWN",
-                    "average_price": 0.0, "filled_quantity": 0, "status_message": ""}
+                    "average_price": 0.0, "filled_quantity": 0, "status_message": "",
+                    "exchange_timestamp": None}
         try:
             for o in self.kc.orders():
                 if str(o.get("order_id")) == str(order_id):
@@ -638,11 +655,13 @@ class KiteBroker:
                             "status": str(o.get("status") or "").upper(),
                             "average_price": float(o.get("average_price") or 0.0),
                             "filled_quantity": int(o.get("filled_quantity") or 0),
-                            "status_message": str(o.get("status_message") or "")}
+                            "status_message": str(o.get("status_message") or ""),
+                            "exchange_timestamp": _iso_naive_ist(o.get("exchange_timestamp"))}
         except Exception as e:
             logger.warning(f"get_order_status failed for {order_id}: {e}")
         return {"order_id": str(order_id), "status": "UNKNOWN",
-                "average_price": 0.0, "filled_quantity": 0, "status_message": ""}
+                "average_price": 0.0, "filled_quantity": 0, "status_message": "",
+                "exchange_timestamp": None}
 
     def cancel_order(self, order_id: str, variety: str = "regular") -> bool:
         """Cancel a pending (OPEN) order. Returns True on success, False on failure.

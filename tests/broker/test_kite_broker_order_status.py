@@ -59,3 +59,17 @@ def test_get_order_status_dry_run_unknown(dry_broker):
     out = dry_broker.get_order_status("NOPE")
     assert out["status"] == "UNKNOWN"
     assert out["average_price"] == 0.0
+
+
+def test_get_order_status_carries_the_exchange_fill_time(live_broker):
+    """Overnight slots record the exchange's fill time (2026-11-04: they recorded the pass's start)."""
+    import datetime as dt
+    b, inst = live_broker
+    inst.orders.return_value = [
+        {"order_id": "111", "status": "COMPLETE", "average_price": 145.8,
+         "exchange_timestamp": dt.datetime(2026, 11, 3, 15, 28, 11)},
+        {"order_id": "222", "status": "OPEN", "average_price": 0, "exchange_timestamp": None},
+    ]
+    assert b.get_order_status("111")["exchange_timestamp"] == "2026-11-03T15:28:11"
+    assert b.get_order_status("222")["exchange_timestamp"] is None
+    assert b.get_order_status("999")["exchange_timestamp"] is None

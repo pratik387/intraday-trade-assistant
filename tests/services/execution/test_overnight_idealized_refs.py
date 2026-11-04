@@ -72,7 +72,7 @@ def test_verify_exit_records_idealized_refs_live(state_path, tripwire_path, patc
 
     broker = MagicMock()
     # Real live AMO fill = 101.0 (distinct from idealized 100.5).
-    monkeypatch.setattr(oh, "_live_check_amo_fill", lambda b, oid: 101.0)
+    monkeypatch.setattr(oh, "_live_check_amo_fill_ex", lambda b, oid: (101.0, {"status": "COMPLETE"}))
     # Idealized exit (09:15 open) = 100.5.
     monkeypatch.setattr(oh, "_paper_fill_price_exit", lambda b, sym, d: 100.5)
 
@@ -93,7 +93,7 @@ def test_verify_exit_idealized_exit_failure_records_none(state_path, tripwire_pa
     _seed_settleable_slot(state_path, idealized_entry=99.5)
 
     broker = MagicMock()
-    monkeypatch.setattr(oh, "_live_check_amo_fill", lambda b, oid: 101.0)
+    monkeypatch.setattr(oh, "_live_check_amo_fill_ex", lambda b, oid: (101.0, {"status": "COMPLETE"}))
 
     def _boom(b, sym, d):
         raise RuntimeError("data unavailable")

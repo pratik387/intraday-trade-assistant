@@ -97,7 +97,7 @@ def test_unfilled_amo_status_is_captured_before_out_of_band_adoption():
     diagnostic placed after it never runs on the very days it is needed.
     """
     src = inspect.getsource(oh.run_verify_exit)
-    i_check = src.index("sell_price = _live_check_amo_fill(")
+    i_check = src.index("sell_price, sell_status = _live_check_amo_fill_ex(")
     i_diag = src.index("AMO_UNFILLED")
     i_oob = src.index("oob = _find_out_of_band_sell(")
     assert i_check < i_diag < i_oob, (
