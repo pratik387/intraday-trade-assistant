@@ -283,7 +283,9 @@ def test_real_config_is_live_cnc_only_at_full_size_under_the_live_test():
     cfg = json.loads((_REPO_ROOT / "config" / "configuration.json").read_text(encoding="utf-8"))
     sc = cfg["setups"][SETUP]
     c = sc["live_canary"]
-    assert sc["enabled"] is True and sc["live_products_allowed"] == ["CNC"]
+    # live stopped by the operator 2026-11-04; the paper mirror keeps running
+    assert sc["enabled"] is False and sc["paper_enabled"] is True
+    assert sc["live_products_allowed"] == ["CNC"]
     assert c["enabled"] is False and c["start_date"] is None
     lt, tw = sc["live_test"], sc["decay_tripwire"]
     assert lt["enabled"] is True and lt["monthly_stop_inr"] == -5000 and lt["sprt"] == LIVE_TEST_SPRT
