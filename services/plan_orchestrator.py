@@ -183,6 +183,7 @@ def set_runtime_trading_mode(mode: str) -> List[str]:
     # would otherwise surface per symbol all day (the screener logs and continues).
     _get_setup_groups()
     _check_results_gated_calendars(setups)
+    _check_results_size_tilts(setups)
     if mode != "live":
         return names
     bad = [n for n in names if not isinstance(setups[n].get("live_enabled"), bool)]
@@ -269,6 +270,37 @@ def _check_results_gated_calendars(setups: dict) -> None:
             err = check_calendar(path)
             if err:
                 raise OrchestratorConfigError(f"setups.{name}: results calendar {path} unreadable: {err}")
+
+
+def _check_results_size_tilts(setups: dict) -> None:
+    """Every results_size_tilt block must be well formed, and an enabled one on an
+    enabled setup needs a readable calendar: unread, every trade would size at the
+    'unknown' multiplier all day."""
+    from services.results_context import CALENDAR_PATH, check_calendar
+    from services.risk.results_size_tilt import ResultsSizeTiltConfigError, validate_results_size_tilt
+    for name, raw in setups.items():
+        block = raw.get("results_size_tilt") if isinstance(raw, dict) else None
+        if block is None:
+            continue
+        try:
+            validate_results_size_tilt(block, name)
+        except ResultsSizeTiltConfigError as e:
+            raise OrchestratorConfigError(str(e)) from e
+        if _is_enabled_intraday(raw) and block["enabled"]:
+            err = check_calendar(CALENDAR_PATH)
+            if err:
+                raise OrchestratorConfigError(
+                    f"setups.{name}: results_size_tilt is on but the calendar {CALENDAR_PATH} is unreadable: {err}")
+
+
+def _results_context_tag(symbol: str, session_date) -> str:
+    """results_context() for one plan; 'unknown' when tagging itself fails."""
+    try:
+        from services.results_context import results_context
+        return results_context(symbol, session_date)
+    except Exception as e:      # a sizing/logging input: must never cost the entry
+        logger.warning(f"RESULTS_CONTEXT | {symbol} | tagging failed ({type(e).__name__}: {e})")
+        return "unknown"
 
 
 def _get_setup_groups() -> Dict[str, Tuple[Dict[str, int], bool]]:
@@ -745,6 +777,20 @@ class PlanOrchestrator:
                 "total_capital_inr not set — main.py must call "
                 "plan_orchestrator.set_runtime_capital() before planning")
         _cap = float(root_cfg["total_capital_inr"])
+        # Results-day size tilt (opt-in per setup, services/risk/results_size_tilt.py):
+        # one multiplier on the notional AND on the circuit-loss budget below. The tag
+        # is read here, before sizing; the RESULTS_CONTEXT line at the end logs it.
+        from services.risk.results_size_tilt import (
+            ResultsSizeTiltConfigError, results_size_multiplier)
+        _tilt_cfg = setup_cfg.get("results_size_tilt")
+        _results_tag = None
+        if setup_cfg.get("log_results_context") is True or (
+                isinstance(_tilt_cfg, dict) and _tilt_cfg.get("enabled") is True):
+            _results_tag = _results_context_tag(symbol, session_date)
+        try:
+            _tilt = results_size_multiplier(_tilt_cfg, _results_tag, setup_type)
+        except ResultsSizeTiltConfigError as e:
+            raise OrchestratorConfigError(str(e)) from e
         # Circuit-risk cap (opt-in per setup): see intraday_sizing._circuit_risk_note.
         _circ_budget = _circ_dist = _circ_prem = None
         _circ_skip = None
@@ -761,7 +807,7 @@ class PlanOrchestrator:
                 raise OrchestratorConfigError(
                     "intraday_sizing.circuit_risk_auction_premium_pct missing")
             _circ_budget = (float(setup_cfg["circuit_risk_budget_pct_of_capital"]) * _cap
-                            * float(sizing_cfg["book_size_multiplier"]))
+                            * float(sizing_cfg["book_size_multiplier"]) * _tilt)
             _circ_prem = float(sizing_cfg["circuit_risk_auction_premium_pct"]) / 100.0
             if session_date is None:
                 raise OrchestratorConfigError(f"{setup_type}: circuit cap needs session_date")
@@ -806,7 +852,7 @@ class PlanOrchestrator:
                 total_capital_inr=_cap,
                 min_notional_inr=float(sizing_cfg["min_notional_pct_of_capital"]) * _cap,
                 max_notional_inr=float(sizing_cfg["max_notional_pct_of_capital"]) * _cap,
-                book_size_multiplier=float(sizing_cfg["book_size_multiplier"]),
+                book_size_multiplier=float(sizing_cfg["book_size_multiplier"]) * _tilt,
                 circuit_risk_budget_inr=_circ_budget,
                 circuit_distance_frac=_circ_dist,
                 circuit_premium_frac=_circ_prem,
@@ -828,12 +874,13 @@ class PlanOrchestrator:
         # of guessed. Grep SIZING_OBS to calibrate before enabling vol_target.
         logger.info(
             "SIZING_OBS | %s | %s | mode=%s mult=%.1f sigma=%s rps=%.4f entry=%.2f "
-            "qty=%d notional=%.0f base=%.0f eff=%.2fx reason=%s clamped=%s circuit_dist=%s",
+            "qty=%d notional=%.0f base=%.0f eff=%.2fx reason=%s clamped=%s circuit_dist=%s tilt=%.2f",
             symbol, setup_type, _mode, float(sizing_cfg["book_size_multiplier"]),
             ("%.3f%%" % _sz.sigma_pct) if _sz.sigma_pct is not None else "na",
             rps, entry, qty, notional, _sz.base_notional_inr,
             _sz.effective_multiplier, _sz.reason, _sz.clamped or "-",
             ("%.2f%%" % (100 * _circ_dist)) if _circ_dist is not None else "-",
+            _tilt,
         )
         if _sz.reason != "ok":
             logger.info(
@@ -977,10 +1024,12 @@ class PlanOrchestrator:
                 # Sizing provenance — lets a ledger written at one book size be
                 # normalised to another exactly. Do NOT divide rupee P&L by the
                 # configured multiplier; use size_effective_multiplier, which
-                # differs per trade whenever the notional clamp binds.
+                # differs per trade whenever the notional clamp binds and
+                # includes size_results_tilt.
                 "size_mode": _mode,
                 "size_base_notional": round(_sz.base_notional_inr, 2),
                 "size_book_multiplier": float(sizing_cfg["book_size_multiplier"]),
+                "size_results_tilt": _tilt,
                 "size_effective_multiplier": round(_sz.effective_multiplier, 4),
                 "size_clamped": _sz.clamped,
                 "size_sigma_pct": _sz.sigma_pct,
@@ -1030,15 +1079,10 @@ class PlanOrchestrator:
             f"[ORCH] {symbol} {setup_type} APPROVED: entry={entry:.2f} sl={hard_sl:.2f} "
             f"rr={structural_rr:.2f} qty={qty}"
         )
-        if setup_cfg.get("log_results_context") is True:
-            # Logging only: tests forward whether the edge sits on results days
-            # (services/results_context.py); nothing branches on it.
-            try:
-                from services.results_context import results_context
-                plan["results_context"] = results_context(symbol, session_date)
-            except Exception as e:      # logging only: must never cost the entry
-                logger.warning(f"RESULTS_CONTEXT | {symbol} | tagging failed ({type(e).__name__}: {e})")
-                plan["results_context"] = "unknown"
+        if _results_tag is not None:
+            # Forward record of whether the edge sits on results days
+            # (services/results_context.py); only the results tilt sizes on it.
+            plan["results_context"] = _results_tag
             logger.info(f"RESULTS_CONTEXT | {symbol} | {setup_type} | {plan['results_context']}")
         return plan
 

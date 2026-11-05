@@ -30,9 +30,11 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 _PARQUET = Path(__file__).resolve().parents[1] / "data" / "earnings_calendar" / "earnings_events.parquet"
+CALENDAR_PATH = _PARQUET
 _OPEN = time(9, 15)
 _COLUMNS = ["symbol", "announce_time", "trade_date", "bm_date", "announce_time_class", "announce_date"]
 EVENT_TAGS = frozenset({"results_preopen", "board_meeting_today"})
+ALL_TAGS = EVENT_TAGS | frozenset({"none", "unknown"})   # every value results_context() can return
 
 
 def check_calendar(path) -> Optional[str]:
