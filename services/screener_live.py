@@ -653,11 +653,8 @@ class ScreenerLive:
         _risk_pct = float(_cap_cfg.get("risk_percentage", 0) or 0)
         self.capital_manager = CapitalManager(
             enabled=bool(_cap_cfg.get("enabled", False)),
-            initial_capital=float(
-                _cap_cfg.get("paper_initial_capital", 0)
-                if env.DRY_RUN
-                else _cap_cfg.get("initial_capital", 0)
-            ),
+            # Same capital in every mode (main.py, 2026-11-11). Required key.
+            initial_capital=float(_cap_cfg["initial_capital"]),
             max_positions=int(_cap_cfg.get("max_concurrent_positions") or raw.get("max_concurrent_positions") or 1),
             min_notional_pct=float(_cap_cfg.get("min_notional_pct", 0) or 0),
             capital_utilization=float(_cap_cfg.get("capital_utilization", 0.85) or 0.85),

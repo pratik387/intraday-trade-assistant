@@ -275,7 +275,11 @@ def main() -> int:
 
     capital_manager = CapitalManager(
         enabled=capital_enabled,
-        initial_capital=cap_mgmt_cfg['paper_initial_capital'] if (args.paper_trading or args.dry_run) else cap_mgmt_cfg['initial_capital'],
+        # One capital for every mode (2026-11-11): paper and backtest size trades
+        # exactly as live does. capital_management.enabled=false means no mode
+        # refuses a signal for lack of capital, so a bigger paper number only
+        # made paper trades bigger than live's, never added room.
+        initial_capital=cap_mgmt_cfg['initial_capital'],
         max_positions=cap_mgmt_cfg['max_concurrent_positions'],
         min_notional_pct=cap_mgmt_cfg['min_notional_pct'],
         capital_utilization=cap_mgmt_cfg['capital_utilization'],
@@ -296,7 +300,7 @@ def main() -> int:
 
     # Intraday sizing is expressed as fractions of capital (config
     # `intraday_sizing`), so the orchestrator needs the run's ACTUAL capital —
-    # which differs by mode (paper Rs5L vs live) and by CLI flags. This is the
+    # the same in every mode (capital_management.initial_capital). This is the
     # single seam; set_base_config_override above writes base_config.json, which
     # the orchestrator does not read.
     from services.plan_orchestrator import (

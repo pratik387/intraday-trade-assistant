@@ -203,8 +203,9 @@ def main() -> int:
                          "Pass 1.0 to evaluate the book as the backtest traded it.")
     ap.add_argument("--max-notional", type=float, default=None,
                     help="per-trade notional ceiling applied after scaling. Default: "
-                         "config max_notional_pct_of_capital x paper_initial_capital "
-                         "(= Rs500k), the clamp the live sizer applies.")
+                         "config max_notional_pct_of_capital x capital_management.initial_capital "
+                         "(the clamp the live sizer applies; one capital for every mode "
+                         "since 2026-11-11).")
     ap.add_argument("--keep-flagged", action="store_true",
                     help="keep trades on symbol-days the bad-print scanners flagged "
                          "(default: drop them; see reports/data_health/)")
@@ -223,7 +224,7 @@ def main() -> int:
         args.scale = float(cfg["intraday_sizing"]["book_size_multiplier"])
     if args.max_notional is None:
         args.max_notional = (float(cfg["intraday_sizing"]["max_notional_pct_of_capital"])
-                             * float(cfg["capital_management"]["paper_initial_capital"]))
+                             * float(cfg["capital_management"]["initial_capital"]))
 
     days, n_dropped = load_trades(Path(args.trades), exclude_flagged=not args.keep_flagged)
     print("sessions with trades: %d  (%s .. %s) | %d trades on flagged symbol-days dropped" % (
