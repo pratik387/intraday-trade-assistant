@@ -2,7 +2,7 @@
 
 This document is the **single source of truth** for setups that were prototyped, (believed-)validated, then retired. It exists so we don't burn weeks re-implementing dead theses.
 
-**Inventory:** 26 retired setups across 8 retire batches:
+**Inventory:** 27 retired setups across 9 retire batches:
 
 - **Sub-5 ICT/SMC batch** (2026-04-25) — 3 setups: cargo-culted US/forex literature
 - **Sub-7 generic-pattern batch** (2026-04-25) — 5 setups: Indian-published but universal mechanics
@@ -50,6 +50,29 @@ These patterns killed multiple setups. Watch for them when designing or validati
 8. **Target-anchor stripping in plan dict.** Detector emits `target_anchor_type="r_multiple"` on the TradePlan, but the dict re-builder in `services/screener_live.py` strips the field — executor sees a missing key and defaults to `"structural"`, which keeps detect-time T1/T2 instead of recomputing from actual entry. Always verify `R_MULT_RECALCULATED` log lines fire for r-multiple detectors. See commits ee7e0a3 + 2c32a03.
 
 ---
+
+## `close_dn_overnight_long` — RETIRED 2026-11-11 (paper mirror stopped; live stopped 2026-11-04)
+
+**Thesis.** Buy at the close (15:26 order, 15:25-bar close in paper) small/illiquid names that closed down on an extreme closing-30-minute volume z after a >3% prior-day rise; sell at the next 09:15 open. MTF or CNC. Live 2026-06-22 to 2026-11-04.
+
+**Why it is retired.**
+- **Live lost; paper looked green.** Live 08-24..11-04: 189 trades, net −₹22.2k. All of it was MTF fees (MTF gross +₹8.4k, fees ₹30.6k). CNC was about ₹0 (gross +0.27%, fees 0.23%).
+- **Paper's profit was not capturable** (re-check 2026-11-11, 413 paper trades since 08-01 rebuilt from Upstox 1m bars). The paper arithmetic was right: entry equals the 15:25 5m close, exit equals the 09:15 open. The issue is which trades made it. Paper notional was a median ₹2L (₹1L margin × MTF leverage).
+  - In the 83 trades where that order was more than 5% of the stock's last-30-minute turnover, paper averaged +1.4% gross and made about ₹90k of its ₹133k net.
+  - The 330 fillable trades made +0.35% gross. Measured live entry shortfall is 0.29pp and CNC fees about 0.23%, so they net about −0.17% a trade.
+  - In 95 trades the sell was bigger than everything traded in the 09:15 minute.
+- **Not a last-print bounce.** Entry at the 15:25 decision-time price gives +0.72%, and at the last-30-minute VWAP +0.38%. Exit at the 09:15-09:20 VWAP is about the same as the open.
+- **Liquid-names rescue killed** (2026-11-04, branch `research/2026-11-04-overnight-liquid`). The overnight drift in liquid cash names is real but below CNC cost: +0.14-0.18%/night in 2025-26 against about 0.34% cost with shortfall.
+
+**Failure mode.** Paper filled the whole signal pool at an idealized size. The edge sits in names too thin to trade at the paper size, so "paper green every day" measured untradeable fills. Every future paper book needs a participation cap and a measured shortfall, or it repeats this.
+
+**What was removed (2026-11-11).**
+- VM crontab: 15:26 entry, 16:05 place-exit, 09:16/09:30/10:30 verify-exit, 16:10 OCI archive, 09:45 paper reconstruction. Backup: `~/crontab.bak-2026-11-11-overnight-stop`.
+- Config: `paper_enabled` set to false (`enabled` was already false).
+- The paper ledger and its daily backups were moved to `state/archive/overnight_paper_2026-11-11/` on the VM. The live ledger (`state/decay_tripwire_close_dn_overnight_long_live.json`) is the real-money record and stays.
+- Dashboard: the paper book was removed from the overnight page; live history is kept.
+
+**Code not yet deleted:** `services/execution/overnight_handlers.py`, the `--mode overnight` actions, `tools/overnight_paper_slippage.py`, `scripts/cron-*.sh` (overnight) and `oci/tools/upload_overnight_state.py`. Nothing schedules them any more.
 
 ## Multiday paper retirement — RETIRED 2026-11-11 (`low52_capitulation_revert_long` C1, `zscore_oversold_revert_long` C4)
 
