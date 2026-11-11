@@ -139,9 +139,10 @@ def _load_root_config() -> Dict[str, Any]:
 def set_runtime_capital(total_capital_inr: float) -> None:
     """Inject the run's actual capital into the cached root config.
 
-    Sizing is expressed as fractions of capital so it scales between the paper
-    book (Rs5L) and live (Rs50k) without per-mode constants. main.py owns the
-    capital (it differs by mode and by CLI flags), the orchestrator owns the
+    Sizing is expressed as fractions of capital so it scales with the book
+    without per-mode constants (one capital, capital_management.initial_capital,
+    for live, paper and backtest since 2026-11-11). main.py owns the
+    capital, the orchestrator owns the
     sizing, and this is the single explicit seam between them.
 
     NOT routed through set_base_config_override: that writes to

@@ -206,10 +206,15 @@ def main() -> int:
     mis_fetcher = None  # MIS validation fetcher (paper/live + universe pre-filter)
 
     if args.paper_trading or (not args.dry_run and not args.paper_trading):
-        # Paper trading or live trading: always enable
-        capital_enabled = True
+        # Live: the capital limits are always on (real margin). Paper: a config
+        # switch (required key). Paper exists to see every signal, so with the
+        # switch off it never refuses or scales a trade for capital; trades are
+        # still sized from initial_capital exactly as live sizes them.
+        capital_enabled = (bool(cap_mgmt_cfg['paper_capital_limits_enabled'])
+                           if args.paper_trading else True)
         mis_enabled = True
-        logger.info("[CAPITAL] Auto-enabled capital management (paper/live mode)")
+        logger.info(f"[CAPITAL] capital limits {'ON' if capital_enabled else 'OFF'} "
+                    f"({'paper' if args.paper_trading else 'live'} mode)")
 
         # Fetch MIS-allowed stocks from Zerodha
         # Used for: (1) paper trading order validation, (2) early universe filtering (when enabled)
@@ -276,9 +281,9 @@ def main() -> int:
     capital_manager = CapitalManager(
         enabled=capital_enabled,
         # One capital for every mode (2026-11-11): paper and backtest size trades
-        # exactly as live does. capital_management.enabled=false means no mode
-        # refuses a signal for lack of capital, so a bigger paper number only
-        # made paper trades bigger than live's, never added room.
+        # exactly as live does. Every size and every capital limit is a % of this
+        # number, so a bigger paper capital never added room, it only made paper
+        # trades bigger than live's. Room comes from paper_capital_limits_enabled.
         initial_capital=cap_mgmt_cfg['initial_capital'],
         max_positions=cap_mgmt_cfg['max_concurrent_positions'],
         min_notional_pct=cap_mgmt_cfg['min_notional_pct'],
