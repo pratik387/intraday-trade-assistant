@@ -2,7 +2,7 @@
 
 This document is the **single source of truth** for setups that were prototyped, (believed-)validated, then retired. It exists so we don't burn weeks re-implementing dead theses.
 
-**Inventory:** 24 retired setups across 7 retire batches:
+**Inventory:** 26 retired setups across 8 retire batches:
 
 - **Sub-5 ICT/SMC batch** (2026-04-25) — 3 setups: cargo-culted US/forex literature
 - **Sub-7 generic-pattern batch** (2026-04-25) — 5 setups: Indian-published but universal mechanics
@@ -11,6 +11,7 @@ This document is the **single source of truth** for setups that were prototyped,
 - **Sub-9 regulatory-regime batch** (2026-05-19) — 3 setups + 2 revival fails: `mis_unwind_vwap_revert_short`, `round_number_sweep_short`, `circuit_release_fade_short` (each shipped to production then collapsed in Holdout post-SEBI-Oct-2025); `capitulation_long_v2` (Phase 1-5 revival of earlier `capitulation_long_morning` — failed at Holdout ship gate); `pre_results_t1_fade` (Phase 1-5 candidate — failed v2 conservative re-run after data-classification correction; regime-conditioned edge with FII-positioning dependency)
 - **Active-trio retirement batch** (2026-05-22 → 2026-07-27) — the 3 production intraday setups themselves: `delivery_pct_anomaly_short` (Stage 13 soft-disable 2026-05-22), `circuit_t1_fade_short` (Stage 14 2026-05-23), `gap_fade_short` (disabled 2026-06-25/29, retirement confirmed after paper validation 2026-07-27). All three cleared the historical gauntlet, shipped, and died on forward/OCI-canonical data — the empirical basis for the 2026-07-27 lifecycle amendments (forward-only validation + experiment ledger, see `docs/setup_lifecycle.md`)
 - **Audit retirement batch** (2026-11-02) — `long_panic_gap_down`, `panic_crash_revert_long`, `or_window_failure_fade_short`: the 2026-11-01 nine-dimension audit (independently verified) showed each edge was untradeable names, data artefacts or decayed to zero
+- **Multiday paper retirement** (2026-11-11) — `low52_capitulation_revert_long` (C1), `zscore_oversold_revert_long` (C4): borderline Stage-6 cards that the CNC-valid card already failed (capped-8 PF<1, DSR~0); forward paper lost on their own picks; a pre-registered "2+ setups agree" rescue failed on development data
 - **Forward-paper retirement** (2026-10-29) — `earnings_downshock_continuation_short`: passed every historical gate (fresh-pool one-shot by 1.4bp), then lost on forward paper to post-results upside squeezes into the upper circuit that the research ledger never contained
 
 **Hard rule: do NOT re-implement any setup listed here without:**
@@ -47,6 +48,62 @@ These patterns killed multiple setups. Watch for them when designing or validati
 7. **MIS-leveraged fee math.** Fees scale with `qty × mis_leverage` (5× for MIS-eligible names), not base qty. Discovery PFs that were computed on base-qty fees are over-stated by Rs.650K+ on 2yr aggregates. See commit 271a149.
 
 8. **Target-anchor stripping in plan dict.** Detector emits `target_anchor_type="r_multiple"` on the TradePlan, but the dict re-builder in `services/screener_live.py` strips the field — executor sees a missing key and defaults to `"structural"`, which keeps detect-time T1/T2 instead of recomputing from actual entry. Always verify `R_MULT_RECALCULATED` log lines fire for r-multiple detectors. See commits ee7e0a3 + 2c32a03.
+
+---
+
+## Multiday paper retirement — RETIRED 2026-11-11 (`low52_capitulation_revert_long` C1, `zscore_oversold_revert_long` C4)
+
+**Thesis.** Multi-day CNC/MTF capitulation reversion on MTF-eligible tier-1-ADV names. Entry is T+1 open; exit is the close after a K=2 hold, or the 2σ target touch.
+- **C1:** close ≤ 5% above the 252-day low, with turnover ≥ 2× the 20-day average.
+- **C4:** close ≤ −1.5σ below the 20-day mean, with turnover ≥ 1.5×.
+
+Specs: `specs/2026-06-15-brief-2to3day-reversion-batch.md`, `specs/2026-06-15-brief-zscore_oversold_revert_long.md`.
+
+**Claimed validation (2026-06-15).** The iid Stage-6 cards were borderline passes:
+- C1: Disc PF 1.86, OOS 1.08, HO 1.39.
+- C4: Disc PF 1.43, OOS 1.06, HO 1.17.
+
+The same day, the CNC-valid card (`tools/sub9_research/confidence_card_cnc_batch.py`) failed both at the live 8-slot book:
+
+| Setup | PF [95% block-bootstrap CI] | daily Sharpe | OOS PF | HO PF | DSR |
+|---|---|---|---|---|---|
+| C1 | 0.831 [0.549, 1.235] | −0.055 (t −0.87) | 0.765 | 0.707* | 0.002 |
+| C4 | 0.914 [0.693, 1.196] | −0.031 (t −0.64) | 0.780 | 0.604* | 0.013 |
+
+*HO refreshed 2026-11-11 on data through 2026-07-24; June values were 0.713 and 0.606. Paper ran anyway to collect forward data at 100 slots.
+
+**Forward paper (Stage 14 evidence; owner rows, 2026-08-12..11-09).** Stationary block bootstrap of the daily series:
+- **C1:** n43, −0.99%/trade net, PF 0.43, daily PF CI [0.05, 0.96], win 35%.
+- **C4:** n78, −0.62%/trade, PF 0.70, CI [0.26, 1.47]; the decay tripwire has paused it since 2026-10-22.
+- **Book total:** −₹1.36L for the two setups combined.
+- **Cost:** ≈0.35pp/trade, and gross is already negative (C1 −0.63%, C4 −0.27%), so zero cost does not rescue them.
+- **Results-window split:** C4 on-results −1.18%, off −0.19%; it does not rescue either.
+- **Flip:** a multi-day cash-segment short is not available to retail.
+- **Per regime:** no Stage-9 OCI card exists (OCI cannot run the multiday family). The per-era split is in the consensus study below.
+
+**Rescue attempt (pre-registered, killed).** Paper showed solo picks losing (C4 −1.20%, C1 −1.01%/trade) and every 2+-setup group winning. The consensus rule was pre-registered (`specs/2026-11-11-brief-multiday_consensus.md`, `31fb2e4`) and tested on development 2023-01..2026-04 (`tools/sub9_research/phase2_multiday_consensus.py`):
+- **Consensus:** n1,447, day-clustered +0.041%/day, t 0.20 (bar 2.0); E2 −0.031%. The primary failed.
+- **C1/C4 solo:** −0.46%/day, t −3.28.
+- **Cost:** at zero cost consensus is +0.67%/day (t 3.26). The snapback is real, but the 0.63% delivery round trip absorbs it.
+
+The fresh window 2026-05..07 was not opened (`992e293`).
+
+**Failure mode.** One trigger alone mostly catches slow declines that keep falling (falling knife), not forced-selling washouts. Where a washout does occur, the gross snapback (~0.7–1.3%) is about the size of the CNC/MTF round-trip cost, so the net edge is roughly zero before selection bias. Tags added: `solo_trigger_falling_knife`, `delivery_cost_absorbed`.
+
+**Unaffected.** `mtf_capitulation_revert_long` (A2) continues in paper: forward n21, +2.9%/trade, but concentrated (top 3 = ₹61k of ₹92k). It no longer gets C1/C4 votes in the composite; at 100 paper slots selection does not depend on them.
+
+**Code removal list** (after the last open C1/C4 position has exited; exits run via `_managed_multiday_setups`):
+- `services/cross_sectional_ranker.py`: the `near_period_low` and `zscore_oversold` modes.
+- `services/daily_panel_provider.py`: the mode-aware windows for those two modes.
+- The two config blocks.
+- VM `~/multiday_cnc/.../state/{low52_capitulation,zscore_oversold}_slots_positions`, and the decay_tripwire JSONs (archive, don't delete).
+- Tests that use the modes: `tests/services/test_cross_sectional_ranker.py` (near_period_low/zscore cases), `tests/services/execution/test_mtf_capitulation_handlers.py`, `test_multiday_disabled_setup_winddown.py`, `test_multiday_news_gate.py`, `test_participation_cap.py`, `tests/config/test_multiday_config_keys.py`. Adapt these; several use C1 only as a second generic setup.
+- `tools/sub9_research/confidence_card_low52.py` and `confidence_card_zscore.py` (superseded).
+
+**Conditions for revival.**
+- A pre-registered mechanism that separates washouts from slow declines before the outcome, tested on development data with the fresh window opened once.
+- A net edge that clears the CNC round trip at the capped book (PF CI lower bound > 1 on the CNC-valid card).
+- Not a consensus re-weighting of this same data (anti-salvage).
 
 ---
 

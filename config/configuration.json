@@ -1219,12 +1219,14 @@
     },
     "low52_capitulation_revert_long": {
       "enabled": false,
-      "paper_enabled": true,
-      "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF capitulation-reversion, level-triggered (near 252d low). Stage-6 confidence card PASSED (borderline): Disc PF 1.86 [BCa 1.41,2.44], OOS 1.08, HO 2026 1.39, Harvey-Liu adj-Sharpe 0.93 at M=58. Regime-conditioned (weak in FII-exit). Brief: specs/2026-06-15-brief-2to3day-reversion-batch.md. Distinct trigger from mtf_capitulation_revert_long (level vs trailing-%-drop). Paper-batch with A2.",
+      "paper_enabled": false,
+      "_status": "RETIRED 2026-11-11 (Stage 14, docs/retired_setups.md): forward paper since 08-12 n43 owner -0.99%/trade PF 0.43 (daily CI [0.05,0.96]), gross negative; CNC card capped-8 PF 0.83, HO 0.71, DSR 0.002; pre-registered consensus rescue KILLED on dev (31fb2e4/992e293). paper_enabled false; open positions still exit via _managed_multiday_setups. RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF capitulation-reversion, level-triggered (near 252d low). Stage-6 confidence card PASSED (borderline): Disc PF 1.86 [BCa 1.41,2.44], OOS 1.08, HO 2026 1.39, Harvey-Liu adj-Sharpe 0.93 at M=58. Regime-conditioned (weak in FII-exit). Brief: specs/2026-06-15-brief-2to3day-reversion-batch.md. Distinct trigger from mtf_capitulation_revert_long (level vs trailing-%-drop). Paper-batch with A2.",
       "mechanism_tags": [
         "capitulation_overshoot",
         "retail_panic",
-        "illiquidity_premium"
+        "illiquidity_premium",
+        "solo_trigger_falling_knife",
+        "delivery_cost_absorbed"
       ],
       "mechanism_notes": "A thin MTF-eligible name trading at/near its trailing-252d low on a turnover shock is in terminal capitulation into a liquidity vacuum; with no institutional bid the over-shoot snaps back over 2-3 sessions. Distinct from mtf_capitulation_revert_long (which triggers on recent 5d %-drop, a rate; this triggers on price LEVEL vs the 1y low). Breaks if: near-low names keep making new lows (terminal decline not capitulation); low-vol regime (needs volatility — Disc shows it dies in FII-exit); MTF tier-1 leverage withdrawn.",
       "horizon": "multi_day",
@@ -1385,12 +1387,14 @@
     },
     "zscore_oversold_revert_long": {
       "enabled": false,
-      "paper_enabled": true,
-      "_status": "RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF reversion, volatility-normalized (close <= -1.5 sd below 20d mean). Stage-6 confidence card PASSED (borderline): Disc PF 1.43 [BCa 1.28,1.58], OOS 1.06, HO 2026 1.17, Harvey-Liu adj-Sharpe 0.73 at M=66. Most-stable candidate (dPF 0.37), high-freq, 3/4 Disc regimes positive (FII-exit 0.91). Brief: specs/2026-06-15-brief-zscore_oversold_revert_long.md. Distinct trigger (z-score, vol-normalized) from A2/C1. Paper-batch with A2+C1.",
+      "paper_enabled": false,
+      "_status": "RETIRED 2026-11-11 (Stage 14, docs/retired_setups.md): forward paper since 08-12 n78 owner -0.62%/trade PF 0.70, gross negative; tripwire-paused since 10-22; CNC card capped-8 PF 0.91, HO 0.60, DSR 0.013; pre-registered consensus rescue KILLED on dev (31fb2e4/992e293). paper_enabled false; open positions still exit via _managed_multiday_setups. RESEARCH 2026-06-15 (branch research/2026-06-14-mtf-capitulation-revert). Multi-day CNC/MTF reversion, volatility-normalized (close <= -1.5 sd below 20d mean). Stage-6 confidence card PASSED (borderline): Disc PF 1.43 [BCa 1.28,1.58], OOS 1.06, HO 2026 1.17, Harvey-Liu adj-Sharpe 0.73 at M=66. Most-stable candidate (dPF 0.37), high-freq, 3/4 Disc regimes positive (FII-exit 0.91). Brief: specs/2026-06-15-brief-zscore_oversold_revert_long.md. Distinct trigger (z-score, vol-normalized) from A2/C1. Paper-batch with A2+C1.",
       "mechanism_tags": [
         "capitulation_overshoot",
         "retail_panic",
-        "illiquidity_premium"
+        "illiquidity_premium",
+        "solo_trigger_falling_knife",
+        "delivery_cost_absorbed"
       ],
       "mechanism_notes": "An MTF tier-1 illiquid name whose close sits >=1.5 sd below its 20d mean on a turnover shock is statistically over-extended below its own band; in a thin book the deviation mean-reverts toward the band over 2-3 sessions. Distinct from mtf_capitulation_revert_long (raw 5d %-return) and low52_capitulation_revert_long (level vs 252d low): z-score normalizes by realized volatility, selecting a different cohort (a calm name with a statistically-extreme modest drop). Breaks if: the deviation is an informational regime shift (continues, no revert); low-vol regime (band too tight); shock filter removed (quiet drift-downs continue).",
       "horizon": "multi_day",
