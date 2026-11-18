@@ -1,7 +1,8 @@
 """
 Kite Access Token Generator
 
-Exchanges request_token for access_token.
+Exchanges request_token for access_token. Paste the whole redirect URL from the browser bar after login
+(or just the request_token); the token is taken out of it.
 
 Usage (interactive):
     python broker/kite/get_access_token.py
@@ -9,8 +10,8 @@ Usage (interactive):
 Usage (print login URL and exit):
     python broker/kite/get_access_token.py --print-url
 
-Usage (non-interactive):
-    python broker/kite/get_access_token.py --auth-code <request_token>
+Usage (non-interactive; quote the URL, the shell splits commands on &):
+    python broker/kite/get_access_token.py --auth-code '<redirect URL or request_token>'
 """
 
 import argparse
@@ -19,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from broker.oauth_callback import extract_callback_param
 from config.env_setup import env
 
 
@@ -52,7 +54,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Kite access token generator")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--print-url", action="store_true", help="Print login URL and exit")
-    group.add_argument("--auth-code", help="Exchange this request_token non-interactively")
+    group.add_argument("--auth-code", help="Exchange this request_token, or the whole redirect URL (quoted), non-interactively")
     args = parser.parse_args()
 
     api_key = env.KITE_API_KEY
@@ -66,17 +68,18 @@ def main() -> int:
         return 0
 
     if args.auth_code:
-        return _exchange(api_key, api_secret, args.auth_code.strip())
-
-    # Interactive fallback (original behavior).
-    print("=" * 70)
-    print("Kite Access Token Generator")
-    print("=" * 70)
-    print(f"Login URL: {_build_login_url(api_key)}")
-    print("After logging in, you'll be redirected to a URL with request_token=XXXXX")
-    request_token = input("Paste the request_token from the URL: ").strip()
-    if not request_token:
-        print("[ERROR] No request_token provided")
+        pasted = args.auth_code
+    else:
+        print("=" * 70)
+        print("Kite Access Token Generator")
+        print("=" * 70)
+        print(f"Login URL: {_build_login_url(api_key)}")
+        print("After logging in, copy the whole URL from the browser bar (it contains request_token=...)")
+        pasted = input("Paste the redirect URL (or just the request_token): ")
+    try:
+        request_token = extract_callback_param(pasted, "request_token")
+    except ValueError as e:
+        print(f"[ERROR] {e}")
         return 1
     return _exchange(api_key, api_secret, request_token)
 

@@ -3,6 +3,7 @@ Upstox OAuth2 Access Token Generator
 
 Exchanges authorization code for access token via Upstox OAuth2 flow.
 Run this daily before trading session (Upstox tokens expire at midnight).
+Paste the whole redirect URL from the browser bar after login (or just the code); the code is taken out of it.
 
 Usage (interactive):
     python broker/upstox/get_upstox_token.py
@@ -10,8 +11,8 @@ Usage (interactive):
 Usage (print login URL and exit):
     python broker/upstox/get_upstox_token.py --print-url
 
-Usage (non-interactive):
-    python broker/upstox/get_upstox_token.py --auth-code <code>
+Usage (non-interactive; quote the URL, the shell splits commands on &):
+    python broker/upstox/get_upstox_token.py --auth-code '<redirect URL or code>'
 """
 
 import argparse
@@ -22,6 +23,7 @@ from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from broker.oauth_callback import extract_callback_param
 from config.env_setup import env
 
 
@@ -87,7 +89,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Upstox OAuth2 token generator")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--print-url", action="store_true", help="Print login URL and exit")
-    group.add_argument("--auth-code", help="Exchange this authorization code non-interactively")
+    group.add_argument("--auth-code", help="Exchange this authorization code, or the whole redirect URL (quoted), non-interactively")
     args = parser.parse_args()
 
     api_key = getattr(env, "UPSTOX_API_KEY", None)
@@ -105,23 +107,24 @@ def main() -> int:
         return 0
 
     if args.auth_code:
-        return _exchange_code(api_key, api_secret, redirect_uri, args.auth_code.strip())
-
-    # Interactive fallback (original behavior).
-    print("=" * 70)
-    print("Upstox Access Token Generator")
-    print("=" * 70)
-    print(f"API Key: {api_key[:8]}...{api_key[-4:]}")
-    print(f"Redirect URI: {redirect_uri}")
-    print(f"Opening: {auth_url}")
+        pasted = args.auth_code
+    else:
+        print("=" * 70)
+        print("Upstox Access Token Generator")
+        print("=" * 70)
+        print(f"API Key: {api_key[:8]}...{api_key[-4:]}")
+        print(f"Redirect URI: {redirect_uri}")
+        print(f"Opening: {auth_url}")
+        try:
+            webbrowser.open(auth_url)
+        except Exception:
+            print("[WARN] Could not open browser. Copy the URL above manually.")
+        print(f"After logging in, you'll be redirected to: {redirect_uri}?code=XXXXX")
+        pasted = input("Paste the redirect URL (or just the code): ")
     try:
-        webbrowser.open(auth_url)
-    except Exception:
-        print("[WARN] Could not open browser. Copy the URL above manually.")
-    print(f"After logging in, you'll be redirected to: {redirect_uri}?code=XXXXX")
-    auth_code = input("Paste the 'code' from the redirect URL: ").strip()
-    if not auth_code:
-        print("[ERROR] No authorization code provided")
+        auth_code = extract_callback_param(pasted, "code")
+    except ValueError as e:
+        print(f"[ERROR] {e}")
         return 1
     return _exchange_code(api_key, api_secret, redirect_uri, auth_code)
 
